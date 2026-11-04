@@ -288,11 +288,10 @@ const audit = await page.evaluate(async () => {
   const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent || "").includes("会话回收站"));
   if (!dlg) return "missing";
   const text = dlg.textContent || "";
-  return "trash=" + (text.split("trash").length - 1) +
-    " restore=" + (text.split("restore").length - 1) +
-    " purge=" + (text.split("purge").length - 1);
+  return text.replace(/\\s+/g, " ");
 });
-check("审计页签记录 trash/restore/purge", audit.includes("trash") && audit.includes("restore") && audit.includes("purge"), audit.slice(0, 120));
+console.log("AUDIT_DEBUG " + audit);
+  check("审计页签记录 trash/restore/purge", audit.includes("trash") && audit.includes("restore") && audit.includes("purge"), audit.slice(0, 160));
 await shot("07-audit-tab");
 
 await task.finish({ keep: false }).catch(() => {});
@@ -407,6 +406,7 @@ const main = async () => {
       void readFile(browserFile).then((buffer) => child.stdin.end(buffer));
     });
 
+    if (process.env.SMOKE_DEBUG) console.log(String(result).slice(-5000));
     const match = String(result).match(/SMOKE_RESULT (\{.*\})/u);
     if (!match) {
       fail("浏览器脚本没有返回结果");
