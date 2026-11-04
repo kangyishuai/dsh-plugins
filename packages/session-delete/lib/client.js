@@ -145,27 +145,8 @@ window.__ModuleLoader__.load({
     }
 
     /** 主题化按钮：优先官方 Button，缺失时自绘。 */
-    const DANGER_HOVER = "var(--dsw-alias-interactive-bg-hover-danger, rgba(217, 83, 79, 0.14))";
-    const FOCUS_RING = "var(--dsw-alias-brand-primary, #4f7cff)";
-
-    /** 主题化按钮：自带 hover / 焦点环 / 按下反馈，键盘 Enter/Space 走原生行为。 */
+    /** 主题化按钮：hover / active / focus-visible 由注入的 CSS 类提供，不依赖合成事件。 */
     function Btn(/** @type {any} */ props) {
-      const hoverState = React.useState(false);
-      const hovered = hoverState[0];
-      const setHovered = hoverState[1];
-      const focusState = React.useState(false);
-      const focused = focusState[0];
-      const setFocused = focusState[1];
-      const pressState = React.useState(false);
-      const pressed = pressState[0];
-      const setPressed = pressState[1];
-      const background = props.disabled
-        ? "transparent"
-        : hovered || pressed
-          ? props.danger
-            ? DANGER_HOVER
-            : T.hover
-          : "transparent";
       return h(
         "button",
         {
@@ -173,28 +154,13 @@ window.__ModuleLoader__.load({
           autoFocus: props.autoFocus,
           disabled: props.disabled,
           onClick: props.onClick,
-          onMouseEnter: () => setHovered(true),
-          onMouseLeave: () => {
-            setHovered(false);
-            setPressed(false);
-          },
-          onMouseDown: () => setPressed(true),
-          onMouseUp: () => setPressed(false),
-          onFocus: () => setFocused(true),
-          onBlur: () => setFocused(false),
+          className: "dsh-sdel-btn" + (props.danger ? " dsh-sdel-btn--danger" : ""),
           style: {
             padding: "6px 14px",
             borderRadius: "8px",
-            border: "1px solid " + (focused ? FOCUS_RING : T.border),
-            background: background,
-            color: props.danger ? T.danger : T.text,
+            fontSize: "13px",
             cursor: props.disabled ? "not-allowed" : "pointer",
             opacity: props.disabled ? 0.45 : 1,
-            fontSize: "13px",
-            outline: "none",
-            transform: pressed && !props.disabled ? "scale(0.98)" : "scale(1)",
-            transition:
-              "background-color 150ms ease, border-color 150ms ease, transform 80ms ease, opacity 150ms ease",
           },
         },
         props.children,
@@ -396,12 +362,6 @@ window.__ModuleLoader__.load({
       var countState = React.useState(null);
       var count = countState[0];
       var setCount = countState[1];
-      var hoverState = React.useState(false);
-      var hovered = hoverState[0];
-      var setHovered = hoverState[1];
-      var focusState = React.useState(false);
-      var focused = focusState[0];
-      var setFocused = focusState[1];
       const fetchCount = () => {
         props
           .call("list")
@@ -431,10 +391,7 @@ window.__ModuleLoader__.load({
           title: label,
           "aria-label": label,
           onClick: () => props.openPanel(),
-          onMouseEnter: () => setHovered(true),
-          onMouseLeave: () => setHovered(false),
-          onFocus: () => setFocused(true),
-          onBlur: () => setFocused(false),
+          className: "dsh-sdel-footer",
           style: {
             display: "flex",
             alignItems: "center",
@@ -443,14 +400,8 @@ window.__ModuleLoader__.load({
             height: "32px",
             justifyContent: props.wide ? "flex-start" : "center",
             padding: props.wide ? "0 8px" : 0,
-            border: "1px solid " + (focused ? FOCUS_RING : "transparent"),
-            borderRadius: "8px",
-            background: hovered ? T.hover : "transparent",
-            color: hovered || focused ? T.text : T.dim,
             cursor: "pointer",
             fontSize: "12px",
-            outline: "none",
-            transition: "background-color 150ms ease, color 150ms ease, border-color 150ms ease",
           },
         },
         typeof IconTrash === "function" ? h(IconTrash, { size: 16 }) : h("span", null, "Trash"),
@@ -618,6 +569,15 @@ window.__ModuleLoader__.load({
       var confirmPurge = purgeState[0];
       var setConfirmPurge = purgeState[1];
 
+      const loadAudit = React.useCallback(() => {
+        props
+          .call("audit", { limit: 100 })
+          .then((/** @type {any} */ value) => {
+            setAudit(value && value.entries ? value.entries : []);
+          })
+          .catch(() => {});
+      }, []);
+
       var refresh = React.useCallback(() => {
         props
           .call("list")
@@ -638,12 +598,7 @@ window.__ModuleLoader__.load({
             setHealth(value);
           })
           .catch(() => {});
-        props
-          .call("audit", { limit: 100 })
-          .then((/** @type {any} */ value) => {
-            setAudit(value && value.entries ? value.entries : []);
-          })
-          .catch(() => {});
+        loadAudit();
         // 面板打开期间自动同步，不需要手动刷新按钮。
         const timer = setInterval(() => {
           if (document.visibilityState === "visible") refresh();
@@ -669,7 +624,8 @@ window.__ModuleLoader__.load({
         if (!keys.includes(event.key)) return;
         const root = listRef.current;
         if (!root) return;
-        const items = [root, ...root.querySelectorAll("button:not([disabled])")];
+        const items = [...root.querySelectorAll("button:not([disabled])")];
+        if (items.length === 0) return;
         const current = items.indexOf(document.activeElement);
         let next = 0;
         if (event.key === "Home") next = 0;
@@ -1006,6 +962,24 @@ window.__ModuleLoader__.load({
     exports.inject = ["slots", "locale", "connection"];
     exports.apply = function apply(/** @type {any} */ ctx) {
       ctx.effect(() => ctx.locale.register(NS, { zh: zh, en: en }), "session-delete: dictionaries");
+
+      // 用真实的 :hover / :focus-visible 伪类，避免依赖 React 合成事件与内联样式。
+      ctx.effect(() => {
+        const style = document.createElement("style");
+        style.textContent = [
+          ".dsh-sdel-btn{background:transparent;color:var(--dsw-alias-label-primary,inherit);border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));transition:background-color 150ms ease,border-color 150ms ease,transform 80ms ease,color 150ms ease;}",
+          ".dsh-sdel-btn:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.16));}",
+          ".dsh-sdel-btn:active{transform:scale(.98);}",
+          ".dsh-sdel-btn:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#4f7cff);outline-offset:1px;}",
+          ".dsh-sdel-btn--danger{color:var(--dsw-alias-state-error-primary,#d9534f);}",
+          ".dsh-sdel-btn--danger:hover{background:var(--dsw-alias-interactive-bg-hover-danger,rgba(217,83,79,.16));}",
+          ".dsh-sdel-footer{background:transparent;color:var(--dsw-alias-label-secondary,GrayText);border:1px solid transparent;border-radius:8px;transition:background-color 150ms ease,color 150ms ease;}",
+          ".dsh-sdel-footer:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.16));color:var(--dsw-alias-label-primary,inherit);}",
+          ".dsh-sdel-footer:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#4f7cff);outline-offset:1px;}",
+        ].join("\n");
+        document.head.appendChild(style);
+        return () => style.remove();
+      }, "session-delete: styles");
 
       var requestStore = createStore(null);
       var panelStore = createStore(false);
