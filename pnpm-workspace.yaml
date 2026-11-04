@@ -1,2 +1,4 @@
 packages:
-  - 'packages/*'
+  - "packages/*"
+allowBuilds:
+  simple-git-hooks: false

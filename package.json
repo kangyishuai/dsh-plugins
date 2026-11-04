@@ -2,16 +2,48 @@
   "name": "dsh-plugins",
   "version": "0.0.0",
   "private": true,
-  "description": "Personal DeepSeek Harness plugin monorepo",
+  "description": "Unofficial DeepSeek Harness (DSH) plugins by nano",
   "type": "module",
   "packageManager": "pnpm@11.28.10",
   "engines": {
     "node": ">=22.19.0"
   },
-  "scripts": {
-    "test": "pnpm -r --if-present test",
-    "list": "node -e \"const fs=require('fs');for(const d of fs.readdirSync('packages')){try{const p=require('./packages/'+d+'/package.json');console.log(p.name.padEnd(40),p.version)}catch{}}\""
-  },
+  "author": "nano (https://github.com/kangyishuai)",
   "license": "MIT",
-  "author": "kangyishuai"
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kangyishuai/dsh-plugins.git"
+  },
+  "scripts": {
+    "new": "node scripts/new-plugin.mjs",
+    "check": "node scripts/check-plugins.mjs",
+    "list-plugins": "node scripts/list-plugins.mjs",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "typecheck": "tsc -p .",
+    "test": "node --test \"scripts/test/**/*.test.js\" && pnpm -r --if-present test",
+    "verify": "pnpm lint && pnpm typecheck && pnpm check && pnpm test",
+    "changeset": "changeset",
+    "version-packages": "changeset version && pnpm install --lockfile-only",
+    "release": "pnpm verify && changeset publish",
+    "prepare": "simple-git-hooks"
+  },
+  "simple-git-hooks": {
+    "pre-commit": "pnpm exec lint-staged",
+    "commit-msg": "pnpm exec commitlint --edit \"$1\""
+  },
+  "lint-staged": {
+    "*.{js,mjs,json,jsonc,md,yml,yaml}": "biome check --write --no-errors-on-unmatched --files-ignore-unknown=true"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.6.4",
+    "@changesets/changelog-github": "^1.0.1",
+    "@changesets/cli": "^3.0.3",
+    "@commitlint/cli": "^21.2.4",
+    "@commitlint/config-conventional": "^21.2.4",
+    "@types/node": "^22.20.5",
+    "lint-staged": "^17.6.0",
+    "simple-git-hooks": "^2.14.0",
+    "typescript": "^7.0.2"
+  }
 }
