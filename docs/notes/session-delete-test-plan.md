@@ -56,7 +56,26 @@ pnpm verify   # lint + typecheck + 规范检查 + 33 个单测
 
 **没覆盖**：client 渲染与交互、RPC 线缆、真实宿主内部契约（`detachEntered`/`storageDomain`/`session-stop`）。所以下面两层不能省。
 
-## 2. 启动冒烟（1 分钟）
+## 2. 启动冒烟（1 分钟）与 GUI 冒烟脚本（约 3 分钟）
+
+```bash
+pnpm smoke:session-delete
+```
+
+它会自动：复制 desktop profile 到临时 `DSH_HOME` → 打包安装当前源码 → 起真实
+宿主（随机端口）→ 用 ego-browser 点一遍主链路 → 断言 8 项：
+
+1. 无 `[data-slot-error]`（锁住 slot 漏注入类回归）
+2. 页脚存在回收站入口
+3. 点页脚能打开面板
+4. 会话菜单能打开确认框且 plan 渲染出体积（锁住 hook 顺序类回归）
+5. 确认后会话行消失
+6. **刷新页面后不复活**
+7. 面板列出刚删的条目
+8. 彻底删除后面板立即变空
+
+缺 `dsh` 或 `ego-browser` 时打印 SKIP 并以 0 退出，方便 CI 跳过。
+
 
 1. 启动日志里 **没有** `did not activate`、没有 `failed to import`。
 2. 页面 DevTools Console 无红字；执行 `document.querySelectorAll('[data-slot-error]')` 应为空数组。
@@ -168,7 +187,7 @@ pnpm verify   # lint + typecheck + 规范检查 + 33 个单测
 
 ## 5. 已知未覆盖 / 风险
 
-1. **client 渲染无自动化**：全部靠手测；后续可以把第 3 节转成 ego-browser 脚本（本仓库已经用它跑过删除主流程）。
+1. **client 交互只覆盖主链路**：`pnpm smoke:session-delete` 覆盖删除/恢复/彻底删除，但键盘、角标、只读模式仍靠手测。
 2. **宿主内部契约**：`detachEntered`/`storageDomain`/`session-stop` 在真实宿主上只验证过「删除后刷新不复活」，没验证失败分支。
 3. **Windows**：`EBUSY` 重试、命名信号量路径未测（当前只在 macOS 上验证）。
 4. **多窗口/多 profile 并发**：审计与 journal 的并发写未在真实多窗口下压测。
