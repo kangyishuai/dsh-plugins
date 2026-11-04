@@ -26,7 +26,8 @@
     "changeset": "changeset",
     "version-packages": "changeset version && pnpm install --lockfile-only",
     "release": "pnpm verify && changeset publish",
-    "prepare": "simple-git-hooks"
+    "prepare": "simple-git-hooks",
+    "smoke:session-delete": "node scripts/smoke-session-delete.mjs"
   },
   "simple-git-hooks": {
     "pre-commit": "pnpm exec lint-staged",
