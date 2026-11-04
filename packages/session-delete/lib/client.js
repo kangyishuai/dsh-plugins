@@ -706,6 +706,7 @@ window.__ModuleLoader__.load({
             {
               onClick: () => {
                 setTab("audit");
+                loadAudit();
               },
             },
             props.t("panel.tabAudit"),
