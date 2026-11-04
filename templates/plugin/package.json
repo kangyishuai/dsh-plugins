@@ -1,0 +1,52 @@
+{
+  "name": "@kangyishuai/dsh-__NAME__",
+  "version": "0.0.0",
+  "description": "__DESCRIPTION__",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness"
+  ],
+  "license": "MIT",
+  "author": "nano (https://github.com/kangyishuai)",
+  "homepage": "https://github.com/kangyishuai/dsh-plugins/tree/main/packages/__NAME__#readme",
+  "bugs": "https://github.com/kangyishuai/dsh-plugins/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kangyishuai/dsh-plugins.git",
+    "directory": "packages/__NAME__"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "cordis.patch.yml",
+    "lib",
+    "locale",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
+    }
+  }
+}

@@ -1,0 +1,3 @@
+- insert:
+    - id: __NAME__
+      name: "@kangyishuai/dsh-__NAME__"
