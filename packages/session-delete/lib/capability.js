@@ -51,6 +51,7 @@ export function probeCapabilities(ctx) {
   const checks = {
     "persistence.stat": callable(persistence, "stat"),
     "persistence.locate": callable(persistence, "locate"),
+    "persistence.list": callable(persistence, "list"),
     "event.session-stop": typeof ctx?.parallel === "function",
     "event.session-activity": typeof ctx?.waterfall === "function",
     "sessions.get": callable(sessions, "get"),
@@ -76,6 +77,7 @@ export function probeCapabilities(ctx) {
   let tier = "api";
   const essential = ["persistence.stat", "workspace.archive", "workspace.unarchive"];
   const convenient = [
+    "persistence.list",
     "persistence.locate",
     "storage.domain",
     "sessions.detach",

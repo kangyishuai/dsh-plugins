@@ -30,10 +30,21 @@ test("核心齐全但缺 locate / storageDomain 时是 internal", () => {
   assert.equal(caps.checks["persistence.locate"], false);
 });
 
-test("全部齐全时是 api", () => {
+test("缺少 persistence.list 时降级为 internal（体检不可用）", () => {
   const caps = probeCapabilities(
     ctxWith({
       sessionPersistence: { stat() {}, locate() {} },
+      workspaceRegistry: { archiveSession() {}, unarchiveSession() {} },
+    }),
+  );
+  assert.equal(caps.tier, "internal");
+  assert.equal(caps.checks["persistence.list"], false);
+});
+
+test("全部齐全时是 api", () => {
+  const caps = probeCapabilities(
+    ctxWith({
+      sessionPersistence: { stat() {}, locate() {}, list() {} },
       sessions: { get() {}, flush() {}, detachEntered() {}, store: new Map() },
       workspaceRegistry: {
         archiveSession() {},

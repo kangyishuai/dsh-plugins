@@ -32,6 +32,15 @@
     "panel.readOnly": "Read-only: this DSH version is missing required APIs; deletion is disabled.",
     "panel.close": "Close",
     "toast.failed": "Operation failed: {message}",
-    "footer.trash": "Trash"
+    "footer.trash": "Trash",
+    "panel.tabHealth": "Health",
+    "health.loading": "Checking…",
+    "health.inventory": "stored {stored} · live {live} · archived {archived} · trash {trash} · pending {pending}",
+    "health.ok": "No dangling references found.",
+    "health.items": "{n} item(s)",
+    "health.unavailable": "Cannot run the check: {reason}",
+    "health.clean": "Clean dangling references ({n})",
+    "health.cleanConfirm": "Clean {n} dangling reference(s)? Bookkeeping only, no session files.",
+    "health.cleanDone": "Cleaned {n}"
   }
 }

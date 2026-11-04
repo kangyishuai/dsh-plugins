@@ -58,6 +58,8 @@ Everything starts from a session row in the sidebar:
    - **purge** it permanently;
    - read the audit log.
 
+**Health check**: the trash panel has a third tab. It reconciles the session store against the workspace bookkeeping and reports dangling references (archived/pinned ghosts, workspace membership, orphan session dirs, broken trash entries, unfinished operations). Cleaning removes **bookkeeping only** — session files are never touched.
+
 ## Side effects & risks
 
 Files and directories it touches:

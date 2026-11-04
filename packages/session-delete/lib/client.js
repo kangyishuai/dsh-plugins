@@ -67,6 +67,16 @@ window.__ModuleLoader__.load({
       "panel.title": "会话回收站",
       "panel.tabTrash": "回收站",
       "panel.tabAudit": "审计",
+      "panel.tabHealth": "体检",
+      "health.loading": "正在检查…",
+      "health.inventory":
+        "已存 {stored} · live {live} · 归档 {archived} · 回收站 {trash} · 待处理 {pending}",
+      "health.ok": "未发现失效引用。",
+      "health.items": "{n} 条",
+      "health.unavailable": "无法体检：{reason}",
+      "health.clean": "清理失效引用（{n}）",
+      "health.cleanConfirm": "确认清理 {n} 条？只动登记表，不碰会话文件",
+      "health.cleanDone": "已清理 {n} 条",
       "panel.empty": "回收站是空的。",
       "panel.auditEmpty": "还没有审计记录。",
       "panel.restore": "恢复",
@@ -104,6 +114,16 @@ window.__ModuleLoader__.load({
       "panel.title": "Session trash",
       "panel.tabTrash": "Trash",
       "panel.tabAudit": "Audit",
+      "panel.tabHealth": "Health",
+      "health.loading": "Checking…",
+      "health.inventory":
+        "stored {stored} · live {live} · archived {archived} · trash {trash} · pending {pending}",
+      "health.ok": "No dangling references found.",
+      "health.items": "{n} item(s)",
+      "health.unavailable": "Cannot run the check: {reason}",
+      "health.clean": "Clean dangling references ({n})",
+      "health.cleanConfirm": "Clean {n} dangling reference(s)? Bookkeeping only, no session files.",
+      "health.cleanDone": "Cleaned {n}",
       "panel.empty": "The trash is empty.",
       "panel.auditEmpty": "No audit entries yet.",
       "panel.restore": "Restore",
@@ -568,6 +588,31 @@ window.__ModuleLoader__.load({
       var purgeState = React.useState(null);
       var confirmPurge = purgeState[0];
       var setConfirmPurge = purgeState[1];
+      var scanState = React.useState(null);
+      var scan = scanState[0];
+      var setScan = scanState[1];
+      var scanErrorState = React.useState(null);
+      var scanError = scanErrorState[0];
+      var setScanError = scanErrorState[1];
+      var cleanState = React.useState(false);
+      var cleaning = cleanState[0];
+      var setCleaning = cleanState[1];
+      var cleanMsgState = React.useState("");
+      var cleanMsg = cleanMsgState[0];
+      var setCleanMsg = cleanMsgState[1];
+
+      const loadHealth = React.useCallback(() => {
+        setScan(null);
+        setScanError(null);
+        props
+          .call("healthScan")
+          .then((/** @type {any} */ value) => {
+            setScan(value);
+          })
+          .catch((/** @type {any} */ reason) => {
+            setScanError(errorText(reason));
+          });
+      }, []);
 
       const loadAudit = React.useCallback(() => {
         props
@@ -711,10 +756,136 @@ window.__ModuleLoader__.load({
             },
             props.t("panel.tabAudit"),
           ),
+          h(
+            Btn,
+            {
+              onClick: () => {
+                setTab("health");
+                loadHealth();
+              },
+            },
+            props.t("panel.tabHealth"),
+          ),
         ),
       );
 
-      if (tab === "trash") {
+      if (tab === "health") {
+        if (scanError) {
+          content.push(
+            h("div", { key: "scan-err", style: { color: T.danger, padding: "8px 0" } }, scanError),
+          );
+        } else if (!scan) {
+          content.push(
+            h(
+              "div",
+              { key: "scan-loading", style: { color: T.dim, padding: "8px 0" } },
+              props.t("health.loading"),
+            ),
+          );
+        } else if (!scan.ok) {
+          content.push(
+            h(
+              "div",
+              { key: "scan-na", style: { color: T.dim, padding: "8px 0" } },
+              props.t("health.unavailable", { reason: scan.reason || "" }),
+            ),
+          );
+        } else {
+          content.push(
+            h(
+              "div",
+              { key: "scan-inventory", style: { color: T.dim, fontSize: "12px" } },
+              props.t("health.inventory", scan.inventory || {}),
+            ),
+          );
+          if (scan.findings.length === 0) {
+            content.push(
+              h("div", { key: "scan-ok", style: { padding: "8px 0" } }, props.t("health.ok")),
+            );
+          }
+          scan.findings.forEach((/** @type {any} */ finding, /** @type {any} */ index) => {
+            content.push(
+              h(
+                "div",
+                {
+                  key: "finding-" + index,
+                  style: {
+                    borderTop: "1px solid " + T.border,
+                    padding: "8px 0",
+                    color: finding.severity === "warn" ? T.text : T.dim,
+                  },
+                },
+                h(
+                  "div",
+                  { style: { fontWeight: 600 } },
+                  finding.label + " · " + props.t("health.items", { n: finding.items.length }),
+                ),
+                h(
+                  "div",
+                  { style: { color: T.faint, fontSize: "12px", wordBreak: "break-all" } },
+                  finding.items
+                    .slice(0, 6)
+                    .map((/** @type {any} */ item) =>
+                      typeof item === "string" ? item : JSON.stringify(item),
+                    )
+                    .join(" · "),
+                ),
+              ),
+            );
+          });
+          if (scan.cleanable && scan.cleanable.total > 0) {
+            content.push(
+              h(
+                "div",
+                {
+                  key: "scan-clean",
+                  style: { marginTop: "10px", display: "flex", gap: "8px", alignItems: "center" },
+                },
+                confirmPurge === "__health__"
+                  ? h(
+                      Btn,
+                      {
+                        danger: true,
+                        disabled: cleaning,
+                        onClick: () => {
+                          setCleaning(true);
+                          setCleanMsg("");
+                          props
+                            .call("cleanHealth", { classes: ["archived", "pinned", "workspace"] })
+                            .then((/** @type {any} */ result) => {
+                              setCleaning(false);
+                              setConfirmPurge(null);
+                              setCleanMsg(props.t("health.cleanDone", { n: result.total }));
+                              loadHealth();
+                              props.bump?.();
+                            })
+                            .catch((/** @type {any} */ reason) => {
+                              setCleaning(false);
+                              setCleanMsg(errorText(reason));
+                            });
+                        },
+                      },
+                      props.t("health.cleanConfirm", { n: scan.cleanable.total }),
+                    )
+                  : h(
+                      Btn,
+                      { onClick: () => setConfirmPurge("__health__") },
+                      props.t("health.clean", { n: scan.cleanable.total }),
+                    ),
+              ),
+            );
+          }
+          if (cleanMsg) {
+            content.push(
+              h(
+                "div",
+                { key: "scan-msg", style: { color: T.dim, marginTop: "8px", fontSize: "12px" } },
+                cleanMsg,
+              ),
+            );
+          }
+        }
+      } else if (tab === "trash") {
         if (entries.length === 0) {
           content.push(
             h(

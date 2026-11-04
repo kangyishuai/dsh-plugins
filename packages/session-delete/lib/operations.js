@@ -1,6 +1,8 @@
 // @ts-check
 // 操作编排层：不依赖 typert，可在单元测试里用假 ctx 跑（真实宿主交互全部经 capability.js 探测）。
+import { readdir, readFile, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { join } from "node:path";
 import { setTimeout as delayMs } from "node:timers/promises";
 import { createAudit } from "./audit.js";
 import { describeCapabilities, probeCapabilities } from "./capability.js";
@@ -506,6 +508,272 @@ export function createOperations({ ctx, dataRoot, logger }) {
     return checks;
   }
 
+  /**
+   * 读取 workspace 存储快照（只读）。这是文件级兜底：
+   * 归档/置顶集合没有公开的读接口，只能读 storages/workspace.json。
+   * @returns {Promise<{ ok: boolean, reason?: string, archivedIds: string[], pinnedIds: string[],
+   *   workspaces: { id: string, sessionIds: string[] }[] }>}
+   */
+  async function readWorkspaceState() {
+    const file = join(dataRoot, "storages", "workspace.json");
+    let parsed;
+    try {
+      parsed = JSON.parse(await readFile(file, "utf8"));
+    } catch (error) {
+      return {
+        ok: false,
+        reason: "无法读取 " + file + "：" + messageOf(error),
+        archivedIds: [],
+        pinnedIds: [],
+        workspaces: [],
+      };
+    }
+    const global = parsed?.global ?? {};
+    const tables = parsed?.tables ?? {};
+    const workspaces = Object.entries(tables.workspaces ?? {}).map(([id, value]) => ({
+      id,
+      sessionIds: Array.isArray(value?.sessionIds) ? value.sessionIds.map(String) : [],
+    }));
+    return {
+      ok: true,
+      archivedIds: Array.isArray(global.archivedSessionIds)
+        ? global.archivedSessionIds.map(String)
+        : [],
+      pinnedIds: Array.isArray(global.pinnedSessionIds) ? global.pinnedSessionIds.map(String) : [],
+      workspaces,
+    };
+  }
+
+  /**
+   * 全库体检：找出指向已不存在会话的登记条目。只读，不修改任何东西。
+   */
+  async function scanHealth() {
+    if (!caps.checks["persistence.list"]) {
+      return {
+        ok: false,
+        reason: "当前宿主没有 sessionPersistence.list，无法枚举已存会话。",
+        findings: [],
+        inventory: null,
+      };
+    }
+    const persisted = (await caps.services.persistence.list()) ?? [];
+    const storedIds = new Set(
+      persisted
+        .map((/** @type {any} */ entry) => String(entry?.id ?? entry?.header?.id ?? ""))
+        .filter(Boolean),
+    );
+    const liveIds = new Set();
+    try {
+      for (const id of caps.services.sessions?.store?.keys?.() ?? []) liveIds.add(String(id));
+    } catch {
+      /* store 不可枚举时忽略 */
+    }
+    const known = new Set([...storedIds, ...liveIds]);
+
+    const state = await readWorkspaceState();
+    /** @type {{ id: string, label: string, severity: "warn" | "info", items: any[] }[]} */
+    const findings = [];
+    /** @type {{ archived: string[], pinned: string[], workspace: { workspaceId: string, sessionId: string }[] }} */
+    const cleanable = { archived: [], pinned: [], workspace: [] };
+
+    if (state.ok) {
+      const archivedGhosts = state.archivedIds.filter((id) => !known.has(id));
+      const pinnedGhosts = state.pinnedIds.filter((id) => !known.has(id));
+      const workspaceGhosts = [];
+      for (const workspace of state.workspaces) {
+        for (const sessionId of workspace.sessionIds) {
+          if (!known.has(sessionId)) workspaceGhosts.push({ workspaceId: workspace.id, sessionId });
+        }
+      }
+      if (archivedGhosts.length > 0) {
+        findings.push({
+          id: "archived-ghost",
+          label: "归档集合里的失效条目",
+          severity: "warn",
+          items: archivedGhosts,
+        });
+        cleanable.archived = archivedGhosts;
+      }
+      if (pinnedGhosts.length > 0) {
+        findings.push({
+          id: "pinned-ghost",
+          label: "置顶集合里的失效条目",
+          severity: "warn",
+          items: pinnedGhosts,
+        });
+        cleanable.pinned = pinnedGhosts;
+      }
+      if (workspaceGhosts.length > 0) {
+        findings.push({
+          id: "workspace-ghost",
+          label: "工作区记账里的失效会话",
+          severity: "warn",
+          items: workspaceGhosts,
+        });
+        cleanable.workspace = workspaceGhosts;
+      }
+    } else {
+      findings.push({
+        id: "workspace-unreadable",
+        label: "无法读取 workspace 存储",
+        severity: "info",
+        items: [state.reason],
+      });
+    }
+
+    // 孤儿会话目录：磁盘上有、但持久层与 live 都不认识。仅报告，绝不自动删。
+    /** @type {string[]} */
+    const orphanDirs = [];
+    try {
+      const projects = await readdir(sessionsRoot(dataRoot), { withFileTypes: true });
+      for (const project of projects) {
+        if (!project.isDirectory()) continue;
+        const entries = await readdir(join(sessionsRoot(dataRoot), project.name), {
+          withFileTypes: true,
+        });
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue;
+          const looksLikeSession =
+            /^[A-Za-z0-9][A-Za-z0-9_$.-]{0,127}$/u.test(entry.name) || entry.name.includes("~");
+          if (looksLikeSession && !known.has(entry.name)) {
+            orphanDirs.push(join(project.name, entry.name));
+          }
+        }
+      }
+    } catch {
+      /* sessions 根不存在时忽略 */
+    }
+    if (orphanDirs.length > 0) {
+      findings.push({
+        id: "orphan-session-dir",
+        label: "磁盘上的孤儿会话目录（仅报告）",
+        severity: "info",
+        items: orphanDirs,
+      });
+    }
+
+    // 回收站一致性：有 meta 没 data
+    /** @type {string[]} */
+    const brokenTrash = [];
+    const listed = await listEntries(dataRoot);
+    for (const entry of listed.entries) {
+      const exists = await stat(join(trashRoot(dataRoot), entry.entryId, "data"))
+        .then((value) => value.isDirectory())
+        .catch(() => false);
+      if (!exists) brokenTrash.push(entry.entryId);
+    }
+    if (brokenTrash.length > 0 || listed.unknown.length > 0) {
+      findings.push({
+        id: "trash-inconsistent",
+        label: "回收站条目与实际数据不一致",
+        severity: "warn",
+        items: [...brokenTrash, ...listed.unknown],
+      });
+    }
+
+    const pending = await listPending(dataRoot);
+    if (pending.length > 0) {
+      findings.push({
+        id: "pending-operation",
+        label: "未完成的操作（重启后自愈）",
+        severity: "info",
+        items: pending.map((record) => record.id),
+      });
+    }
+
+    return {
+      ok: true,
+      generatedAt: new Date().toISOString(),
+      inventory: {
+        stored: storedIds.size,
+        live: liveIds.size,
+        archived: state.archivedIds.length,
+        pinned: state.pinnedIds.length,
+        workspaces: state.workspaces.length,
+        trash: listed.entries.length,
+        pending: pending.length,
+      },
+      findings,
+      cleanable: {
+        archived: cleanable.archived.length,
+        pinned: cleanable.pinned.length,
+        workspace: cleanable.workspace.length,
+        total: cleanable.archived.length + cleanable.pinned.length + cleanable.workspace.length,
+      },
+    };
+  }
+
+  /**
+   * 清理体检发现的失效引用（只动登记表，不碰会话文件）。
+   * @param {{ classes?: string[], operator?: string }} [request]
+   */
+  async function cleanHealth(request = {}) {
+    const classes = Array.isArray(request.classes)
+      ? request.classes
+      : ["archived", "pinned", "workspace"];
+    const scan = await scanHealth();
+    if (!scan.ok)
+      throw failure(
+        "session-delete/health-unavailable",
+        "无法体检：" + (scan.reason ?? "未知原因"),
+      );
+    const state = await readWorkspaceState();
+    const counts = { archived: 0, pinned: 0, workspace: 0 };
+    /** @type {string[]} */
+    const errors = [];
+    if (classes.includes("archived")) {
+      for (const id of state.archivedIds) {
+        if (scan.findings.find((f) => f.id === "archived-ghost")?.items.includes(id) !== true)
+          continue;
+        try {
+          await caps.services.workspace?.unarchiveSession?.(id);
+          counts.archived += 1;
+        } catch (error) {
+          errors.push("unarchive " + id + ": " + messageOf(error));
+        }
+      }
+    }
+    if (classes.includes("pinned")) {
+      for (const id of state.pinnedIds) {
+        if (scan.findings.find((f) => f.id === "pinned-ghost")?.items.includes(id) !== true)
+          continue;
+        try {
+          await caps.services.workspace?.unpinSession?.(id);
+          counts.pinned += 1;
+        } catch (error) {
+          errors.push("unpin " + id + ": " + messageOf(error));
+        }
+      }
+    }
+    if (classes.includes("workspace")) {
+      const ghost = scan.findings.find((f) => f.id === "workspace-ghost");
+      for (const item of ghost?.items ?? []) {
+        const workspace = (caps.services.workspace?.list?.() ?? []).find(
+          (/** @type {any} */ candidate) => String(candidate.id) === String(item.workspaceId),
+        );
+        if (!workspace || typeof workspace.detachSession !== "function") continue;
+        try {
+          await workspace.detachSession(item.sessionId);
+          counts.workspace += 1;
+        } catch (error) {
+          errors.push("detach " + item.sessionId + ": " + messageOf(error));
+        }
+      }
+    }
+    const total = counts.archived + counts.pinned + counts.workspace;
+    await audit.append({
+      action: "health",
+      result: errors.length > 0 ? "failed" : "ok",
+      operator: request.operator ?? "ui",
+      detail:
+        "清理失效引用 " +
+        total +
+        " 条" +
+        (errors.length > 0 ? "，失败 " + errors.length + " 条" : ""),
+    });
+    return { ok: errors.length === 0, cleaned: counts, total, errors };
+  }
+
   async function health() {
     const pending = await listPending(dataRoot);
     return {
@@ -523,6 +791,8 @@ export function createOperations({ ctx, dataRoot, logger }) {
   return {
     caps,
     health,
+    scanHealth,
+    cleanHealth,
     plan: /** @param {unknown} sessionId */ async (sessionId) => (await makePlan(sessionId)).plan,
     trash,
     list,

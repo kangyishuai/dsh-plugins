@@ -32,6 +32,15 @@
     "panel.readOnly": "只读模式：当前 DSH 版本缺少依赖接口，删除功能已禁用。",
     "panel.close": "关闭",
     "toast.failed": "操作失败：{message}",
-    "footer.trash": "回收站"
+    "footer.trash": "回收站",
+    "panel.tabHealth": "体检",
+    "health.loading": "正在检查…",
+    "health.inventory": "已存 {stored} · live {live} · 归档 {archived} · 回收站 {trash} · 待处理 {pending}",
+    "health.ok": "未发现失效引用。",
+    "health.items": "{n} 条",
+    "health.unavailable": "无法体检：{reason}",
+    "health.clean": "清理失效引用（{n}）",
+    "health.cleanConfirm": "确认清理 {n} 条？只动登记表，不碰会话文件",
+    "health.cleanDone": "已清理 {n}"
   }
 }
