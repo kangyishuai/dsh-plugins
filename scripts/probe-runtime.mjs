@@ -6,7 +6,6 @@ import { existsSync } from "node:fs";
 // DSH 升级前/后的体检：直接解析 app.asar 的目录索引，核对本仓库插件依赖的
 // 宿主包、API 与 slot 是否还在。不启动宿主、不改任何文件。
 import { open } from "node:fs/promises";
-import { join } from "node:path";
 import { parseArgs } from "node:util";
 
 const DEFAULT_ASAR = "/Applications/DeepSeek Harness.app/Contents/Resources/app.asar";
