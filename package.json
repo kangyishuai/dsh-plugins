@@ -28,7 +28,8 @@
     "release": "pnpm verify && changeset publish",
     "prepare": "simple-git-hooks",
     "smoke:session-delete": "node scripts/smoke-session-delete.mjs",
-    "probe:runtime": "node scripts/probe-runtime.mjs"
+    "probe:runtime": "node scripts/probe-runtime.mjs",
+    "smoke:agent-tool": "node scripts/smoke-agent-tool.mjs"
   },
   "simple-git-hooks": {
     "pre-commit": "pnpm exec lint-staged",

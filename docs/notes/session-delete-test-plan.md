@@ -206,7 +206,16 @@ pnpm smoke:session-delete
 | K4  | P1     | 重复使用同一 token / 超过 2 分钟  | 拒绝（invalid-token / token-expired）    |
 | K5  | P1     | plan 之后会话被改名/改动再 delete | 拒绝（stale-plan），要求重新 plan        |
 
-> K1–K5 的状态机已在 `test/agent-tool.test.js` 覆盖；真实模型调用需要一条会话上下文，按需手测。
+> K1–K5 的状态机已在 `test/agent-tool.test.js` 覆盖；注册状态由 `pnpm smoke:session-delete` 的体检断言覆盖。
+> 真实模型调用可以跑：
+
+```bash
+DEEPSEEK_API_KEY=<key> pnpm smoke:agent-tool
+```
+
+> 它会临时建 headless profile、安装当前源码、让模型走一遍 plan→delete，并断言审计里出现
+> `operator=agent`；没有 key 时打印 SKIP。桌面版默认走 zhinao provider，这条脚本用官方
+> `deepseek-official` 路由，因此需要单独的 key。
 
 ## 4. 回归节奏
 
