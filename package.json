@@ -1,0 +1,17 @@
+{
+  "name": "dsh-plugins",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Personal DeepSeek Harness plugin monorepo",
+  "type": "module",
+  "packageManager": "pnpm@11.28.10",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "test": "pnpm -r --if-present test",
+    "list": "node -e \"const fs=require('fs');for(const d of fs.readdirSync('packages')){try{const p=require('./packages/'+d+'/package.json');console.log(p.name.padEnd(40),p.version)}catch{}}\""
+  },
+  "license": "MIT",
+  "author": "kangyishuai"
+}
