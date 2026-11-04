@@ -38,6 +38,8 @@ Restart the DSH desktop app afterwards. A fresh install adds a host half, so rel
 
 ## Usage
 
+**Agent tool**: models can call `session_delete`, but only in two steps — `action=plan` returns the impact summary plus a single-use token (2 minutes), and `action=delete` needs that token. It refuses to delete the calling session, and a changed session invalidates the token. Deleting from the UI never requires the tool.
+
 **Keyboard**: Tab between controls, Enter/Space to activate, Esc to close a dialog. In the trash panel, ↑/↓/Home/End move focus between rows. `⌘/Ctrl + Alt + T` opens the trash. There is no one-key delete shortcut — deletion always goes through the menu and a confirmation dialog.
 
 **Refresh**: the trash panel has no refresh button. It loads on open and re-syncs every 5 seconds, when the window becomes visible again, and after every restore or permanent delete.
@@ -115,7 +117,6 @@ After a DSH upgrade: restart, then open the plugin status (settings → plugins)
 The following are planned and not implemented yet:
 
 - batch deletion (multi-select);
-- an agent tool (plan first, then delete);
 - an undo toast after a delete.
 
 ## License

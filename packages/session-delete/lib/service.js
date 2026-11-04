@@ -2,6 +2,7 @@
 // Typert Remote 包装层：把 operations 的方法暴露给浏览器，一条 /api 通道。
 // declareRemote 的写法参考 Jaylor-Wang/dsh-tool-session-delete（MIT），见根目录 NOTICE。
 import { Remote, RemoteError, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
+import { createAgentToolController, summarizePlanForModel } from "./agent-tool.js";
 import { createOperations } from "./operations.js";
 import { resolveDataRoot } from "./paths.js";
 
@@ -51,6 +52,7 @@ export class SessionDeleteService extends TypertRemoteService {
     this.config = config ?? {};
     /** @type {any} */
     this._ops = null;
+    void this.installAgentTool();
   }
 
   /**
@@ -71,6 +73,85 @@ export class SessionDeleteService extends TypertRemoteService {
   /** 能力快照、数据根、待恢复的操作数。 */
   async health() {
     return this.ops.health();
+  }
+
+  /** 注册模型工具：两段式 plan → token → delete。失败不影响其余功能。 */
+  async installAgentTool() {
+    try {
+      const tools = /** @type {any} */ (this.ctx)?.tools;
+      if (!tools || typeof tools.register !== "function") return;
+      const module = await import("@deepseek-ai/dsh-tools");
+      const defineTool = module.defineTool;
+      if (typeof defineTool !== "function") return;
+      const controller = createAgentToolController({
+        ops: {
+          plan: (/** @type {string} */ sessionId) => this.ops.plan(sessionId),
+          trash: (/** @type {string} */ sessionId, /** @type {any} */ request) =>
+            this.ops.trash(sessionId, request),
+        },
+      });
+      tools.register(
+        defineTool({
+          name: "session_delete",
+          description:
+            "Delete a DSH session permanently but recoverably (moves it to the local trash). " +
+            "Two steps are mandatory: call with action=plan to preview what will be removed and obtain a single-use token, " +
+            "then call again with action=delete and that token. Never delete the caller's own session. " +
+            "The token expires in 2 minutes and becomes invalid if the session changes.",
+          parameters: {
+            action: {
+              type: "string",
+              required: true,
+              enum: ["plan", "delete"],
+              description: "plan = read-only preview and token; delete = execute with the token",
+            },
+            sessionId: { type: "string", required: true, description: "Target session id" },
+            token: { type: "string", description: "Required for action=delete; from action=plan" },
+            cascade: {
+              type: "boolean",
+              description: "Also delete child (subagent) sessions; default false",
+            },
+          },
+          output: {
+            schema: { type: "object", additionalProperties: true },
+            render: (/** @type {any} */ _args, /** @type {any} */ value) => [
+              { type: "text", text: JSON.stringify(value, null, 2) },
+            ],
+          },
+          async execute(/** @type {any} */ args, /** @type {any} */ exec) {
+            const agent = exec?.agent;
+            const callerSessionId =
+              agent?.session?.id ?? agent?.session?.header?.id ?? agent?.sessionId ?? undefined;
+            try {
+              if (args.action === "plan") {
+                const result = await controller.plan({
+                  sessionId: args.sessionId,
+                  cascade: args.cascade,
+                });
+                return Object.assign({}, result, { summary: summarizePlanForModel(result) });
+              }
+              return await controller.remove({
+                sessionId: args.sessionId,
+                token: args.token,
+                cascade: args.cascade,
+                callerSessionId: typeof callerSessionId === "string" ? callerSessionId : undefined,
+              });
+            } catch (error) {
+              return {
+                ok: false,
+                code: "error",
+                message: error instanceof Error ? error.message : String(error),
+              };
+            }
+          },
+        }),
+      );
+    } catch (error) {
+      this.ctx?.logger?.warn?.(
+        "session-delete: agent tool unavailable: " +
+          (error instanceof Error ? error.message : String(error)),
+      );
+    }
   }
 
   /**

@@ -38,6 +38,8 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-session-delete-*.tgz
 
 ## 使用
 
+**Agent 工具**：模型可以调用 `session_delete`，但必须两段式——`action=plan` 返回影响面摘要和一次性 token（2 分钟有效），`action=delete` 必须带这个 token。它拒绝删除调用者自己的会话，会话在此期间变化会让 token 失效。通过 UI 删除不需要这个工具。
+
 **键盘**：Tab 在各按钮间移动，Enter/Space 触发，Esc 关闭对话框；回收站面板里可用 ↑/↓/Home/End 在条目间移动焦点；`⌘/Ctrl + Alt + T` 直接打开回收站。删除始终需要菜单 + 确认框，没有一键删除的快捷键。
 
 **刷新**：回收站面板没有刷新按钮——打开时自动加载，之后每 5 秒、窗口重新可见、以及每次恢复/彻底删除后自动同步。
@@ -115,7 +117,6 @@ DSH 升级之后：重启，然后看插件的状态条（设置 → 插件）�
 下面这些是计划，尚未实现：
 
 - 批量删除（多选）；
-- agent 工具（先 plan 再删）；
 - 删除后的撤销 toast。
 
 ## License
