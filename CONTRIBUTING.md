@@ -51,6 +51,14 @@ pnpm verify    # lint + typecheck + 插件规范检查 + 测试，CI 跑的是�
 
 0.x 阶段：破坏性改动 bump minor，其余 bump patch。
 
+在本地跑 `pnpm version-packages` 需要 `GITHUB_TOKEN`（changelog 由 `@changesets/changelog-github` 生成）：
+
+```bash
+GITHUB_TOKEN=$(gh auth token) pnpm version-packages
+```
+
+`.changeset/` 已在 `biome.json` 里排除格式化——否则 Biome 会把 frontmatter 改写成 Markdown 标题，导致 changesets 解析失败。
+
 ## 引用第三方代码
 
 参考或借用其他 DSH 插件的代码前，先确认对方的许可证允许。借用了就在仓库根目录的 `NOTICE` 里写明出处和许可证（文件不存在就新建）。
