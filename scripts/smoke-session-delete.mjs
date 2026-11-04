@@ -303,7 +303,12 @@ const health = await page.evaluate(async () => {
   const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent || "").includes("会话回收站"));
   return dlg ? (dlg.textContent || "").replace(/\\s+/g, " ") : "missing";
 });
-check("体检页签给出库存与结论", health.includes("已存") && (health.includes("未发现") || health.includes("条")), health.slice(0, 160));
+check(
+  "体检页签给出库存与结论",
+  health.includes("已存") && (health.includes("未发现") || health.includes("条")),
+  health.slice(0, 160),
+);
+check("体检页签显示 agent 工具已注册", /模型工具 session_delete：已注册/.test(health), health.slice(0, 200));
 await shot("08-health-tab");
 
 // 12) 回执页签
@@ -317,6 +322,49 @@ const receiptText = await page.evaluate(async () => {
 });
 check("回执页签列出 trash/restore/purge 记录", /trash/.test(receiptText) && /purge/.test(receiptText), receiptText.slice(0, 160));
 await shot("09-receipts-tab");
+
+// 12) 级联勾选框：遍历会话行，找到带子会话的那一条（不改动任何东西）
+await page.keyboard.press("Escape");
+await page.waitForTimeout(400);
+const sessionRows = await page.evaluate(() =>
+  [...document.querySelectorAll("[data-row-key^='session:']")].map((el) => el.getAttribute("data-row-key")));
+let cascadeDetail = "no-parent-session";
+for (const rowKey of sessionRows) {
+  const rect = await page.evaluate((key) => {
+    const row = document.querySelector('[data-row-key="' + key + '"]');
+    if (!row) return null;
+    const r = row.getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  }, rowKey);
+  if (!rect) continue;
+  await page.mouse.move(rect.x, rect.y);
+  await page.waitForTimeout(350);
+  const probeResult = await page.evaluate(async (key) => {
+    const menuBtn = [...document.querySelectorAll("button")].find((b) =>
+      (b.getAttribute("aria-label") || "").startsWith("会话“"));
+    if (!menuBtn) return "no-menu";
+    menuBtn.click();
+    await new Promise((r) => setTimeout(r, 450));
+    const item = [...document.querySelectorAll("button, [role=menuitem]")].find(
+      (el) => (el.textContent || "").trim() === "删除会话…");
+    if (!item) return "no-item";
+    item.click();
+    await new Promise((r) => setTimeout(r, 1800));
+    const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) =>
+      (d.textContent || "").includes("移入回收站"));
+    if (!dlg) return "no-dialog";
+    const hasCheckbox =
+      Boolean(dlg.querySelector('input[type="checkbox"]')) ||
+      /同时删除|Also delete these/.test(dlg.textContent || "");
+    return hasCheckbox ? "found:" + key : "none";
+  }, rowKey);
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(300);
+  cascadeDetail = String(probeResult);
+  if (cascadeDetail.startsWith("found:")) break;
+}
+check("有子会话的确认框出现级联勾选框", cascadeDetail.startsWith("found:"), cascadeDetail);
+await shot("10-cascade-checkbox");
 
 await task.finish({ keep: false }).catch(() => {});
 console.log("SMOKE_RESULT " + JSON.stringify({ checks }));
@@ -437,6 +485,7 @@ const main = async () => {
       console.error(String(result).slice(-4000));
       return;
     }
+    /** @type {{ checks: { name: string, ok: boolean, detail: string }[] }} */
     /** @type {{ checks: { name: string, ok: boolean, detail: string }[] }} */
     const parsed = JSON.parse(match[1]);
     let failed = 0;

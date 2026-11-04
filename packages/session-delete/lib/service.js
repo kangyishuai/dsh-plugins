@@ -52,7 +52,9 @@ export class SessionDeleteService extends TypertRemoteService {
     this.config = config ?? {};
     /** @type {any} */
     this._ops = null;
-    void this.installAgentTool();
+    /** @type {boolean} */
+    this.agentToolRegistered = false;
+    this.installAgentTool();
   }
 
   /**
@@ -75,10 +77,35 @@ export class SessionDeleteService extends TypertRemoteService {
     return this.ops.health();
   }
 
-  /** 注册模型工具：两段式 plan → token → delete。失败不影响其余功能。 */
-  async installAgentTool() {
+  /**
+   * 注册模型工具：两段式 plan → token → delete。
+   * 必须等 ctx.tools 就绪：插件构造时 tools 运行时可能还没挂载，
+   * 用 ctx.inject 延迟到服务可用（并在服务重建时重新注册）。
+   */
+  installAgentTool() {
+    const register = (/** @type {any} */ scopedCtx) => {
+      void this.registerAgentTool(scopedCtx);
+    };
     try {
-      const tools = /** @type {any} */ (this.ctx)?.tools;
+      if (typeof this.ctx?.inject === "function") {
+        this.ctx.inject(["tools"], register);
+        return;
+      }
+      register(this.ctx);
+    } catch (error) {
+      this.ctx?.logger?.warn?.(
+        "session-delete: cannot schedule agent tool registration: " +
+          (error instanceof Error ? error.message : String(error)),
+      );
+    }
+  }
+
+  /**
+   * @param {any} scopedCtx 注入 tools 之后的上下文
+   */
+  async registerAgentTool(scopedCtx) {
+    try {
+      const tools = scopedCtx?.tools;
       if (!tools || typeof tools.register !== "function") return;
       const module = await import("@deepseek-ai/dsh-tools");
       const defineTool = module.defineTool;
@@ -146,8 +173,10 @@ export class SessionDeleteService extends TypertRemoteService {
           },
         }),
       );
+      this.agentToolRegistered = true;
+      this.ctx.logger?.info?.("session-delete: agent tool registered: session_delete");
     } catch (error) {
-      this.ctx?.logger?.warn?.(
+      this.ctx.logger?.warn?.(
         "session-delete: agent tool unavailable: " +
           (error instanceof Error ? error.message : String(error)),
       );
@@ -241,7 +270,8 @@ export class SessionDeleteService extends TypertRemoteService {
   /** 全库体检：只读。 */
   async healthScan() {
     try {
-      return await this.ops.scanHealth();
+      const report = await this.ops.scanHealth();
+      return Object.assign({}, report, { agentTool: this.agentToolRegistered === true });
     } catch (error) {
       rethrow(error);
     }

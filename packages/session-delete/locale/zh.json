@@ -45,6 +45,9 @@
     "panel.tabReceipts": "回执",
     "receipts.empty": "还没有操作回执。",
     "receipts.restored": "已移回原位置",
-    "confirm.cascade": "同时删除这 {n} 个子会话（各自进入回收站，需分别恢复）"
+    "confirm.cascade": "同时删除这 {n} 个子会话（各自进入回收站，需分别恢复）",
+    "health.agentTool": "模型工具 session_delete：{state}",
+    "health.agentToolOn": "已注册",
+    "health.agentToolOff": "未注册（宿主未提供 tools 运行时）"
   }
 }

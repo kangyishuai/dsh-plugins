@@ -77,6 +77,9 @@ window.__ModuleLoader__.load({
         "已存 {stored} · live {live} · 归档 {archived} · 回收站 {trash} · 待处理 {pending}",
       "health.ok": "未发现失效引用。",
       "health.items": "{n} 条",
+      "health.agentTool": "模型工具 session_delete：{state}",
+      "health.agentToolOn": "已注册",
+      "health.agentToolOff": "未注册（宿主未提供 tools 运行时）",
       "health.unavailable": "无法体检：{reason}",
       "health.clean": "清理失效引用（{n}）",
       "health.cleanConfirm": "确认清理 {n} 条？只动登记表，不碰会话文件",
@@ -128,6 +131,9 @@ window.__ModuleLoader__.load({
         "stored {stored} · live {live} · archived {archived} · trash {trash} · pending {pending}",
       "health.ok": "No dangling references found.",
       "health.items": "{n} item(s)",
+      "health.agentTool": "Agent tool session_delete: {state}",
+      "health.agentToolOn": "registered",
+      "health.agentToolOff": "not registered (host has no tools runtime)",
       "health.unavailable": "Cannot run the check: {reason}",
       "health.clean": "Clean dangling references ({n})",
       "health.cleanConfirm": "Clean {n} dangling reference(s)? Bookkeeping only, no session files.",
@@ -934,6 +940,17 @@ window.__ModuleLoader__.load({
               "div",
               { key: "scan-inventory", style: { color: T.dim, fontSize: "12px" } },
               props.t("health.inventory", scan.inventory || {}),
+            ),
+          );
+          content.push(
+            h(
+              "div",
+              { key: "scan-agent-tool", style: { color: T.dim, fontSize: "12px" } },
+              props.t("health.agentTool", {
+                state: scan.agentTool
+                  ? props.t("health.agentToolOn")
+                  : props.t("health.agentToolOff"),
+              }),
             ),
           );
           if (scan.findings.length === 0) {

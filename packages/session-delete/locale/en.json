@@ -45,6 +45,9 @@
     "panel.tabReceipts": "Receipts",
     "receipts.empty": "No operation receipts yet.",
     "receipts.restored": "restored",
-    "confirm.cascade": "Also delete these {n} child session(s) (each goes to trash separately)"
+    "confirm.cascade": "Also delete these {n} child session(s) (each goes to trash separately)",
+    "health.agentTool": "Agent tool session_delete: {state}",
+    "health.agentToolOn": "registered",
+    "health.agentToolOff": "not registered (host has no tools runtime)"
   }
 }
