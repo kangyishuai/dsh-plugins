@@ -15,8 +15,10 @@ window.__ModuleLoader__.load({
     /** @param {DSH.ClientContext} _ctx */
     exports.apply = function apply(_ctx) {
       // 示例：往会话行 "…" 菜单插一项（order 420 = Archive 之后、Copy ID 之前）
+      // 真实签名是 register(descriptor, Component)：第二个参数是 React 组件，descriptor 里没有 render。
       // _ctx.slots.inject("sidebar.workspaces.session.menu.item", () =>
-      //   _ctx.slots.register({ id: "__NAME__", order: 420, render: () => React.createElement("span", null, "…") }),
+      //   _ctx.slots.register({ name: "sidebar.workspaces.session.menu.item", id: "__NAME__", order: 420 },
+      //     () => React.createElement("span", null, "…")),
       // );
     };
 

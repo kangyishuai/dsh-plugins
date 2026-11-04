@@ -23,7 +23,7 @@
 ## 开发流程
 
 1. 新插件：`pnpm new <name>`，然后 `pnpm install`
-2. 安装到本地验证：`dsh plugin --profile desktop add "link:$PWD/packages/<name>"`
+2. 安装到本地验证：先打包再装——`cd packages/<name> && pnpm pack --pack-destination /tmp`，然后 `dsh plugin --profile desktop add /tmp/<tgz>`。**不要用 `link:`**：真实路径在 profile 外面，宿主注入的 `@deepseek-ai/*` 解析覆盖不到，插件会激活失败（见 [runtime](docs/runtime/0.2.1-rc.5.md) §6.9）
 3. host 半（`lib/index.js`）改动 → **重启 DSH 桌面版**；client 半（`lib/client.js`）改动 → **刷新页面**
 4. 验证完必须能在侧栏或设置里看到真实效果，不能只靠单元测试
 5. 需要发版的改动跑 `pnpm changeset`

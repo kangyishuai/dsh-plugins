@@ -93,5 +93,5 @@ packages/<name>/
 
 1. 单元测试：`node --test`，放在 `packages/<name>/test/`。文件系统相关逻辑一律在 `mkdtemp` 临时目录里测。
 2. `pnpm verify`：lint + 类型检查 + 规范检查 + 测试。
-3. 真实验证（必须做）：`dsh plugin --profile desktop add "link:$PWD/packages/<name>"`，然后重启桌面版（host 半改动）或刷新页面（client 半改动），在 GUI 里手动点一遍。
+3. 真实验证（必须做）：`cd packages/<name> && pnpm pack --pack-destination /tmp`，再 `dsh plugin --profile desktop add /tmp/<tgz>`，然后重启桌面版（host 半改动）或刷新页面（client 半改动），在 GUI 里手动点一遍。改完代码要**重新 pack 并再次 add** 才会更新已装副本；`link:` 安装会因宿主包解析不到而激活失败（[runtime](runtime/0.2.1-rc.5.md) §6.9）。
 4. 验证完可以 `dsh plugin --profile desktop remove <包名>`，再 `add` 正式版。
