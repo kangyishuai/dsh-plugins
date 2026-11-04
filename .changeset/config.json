@@ -1,0 +1,14 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@4.0.1/schema.json",
+  "baseBranch": "main",
+  "access": "public",
+  "changelog": ["@changesets/changelog-github", { "repo": "kangyishuai/dsh-plugins" }],
+  "commit": false,
+  "format": false,
+  "ignore": [],
+  "fixed": [],
+  "linked": [],
+  "updateInternalDependencies": "patch",
+  "privatePackages": { "version": false, "tag": false },
+  "changedFilePatterns": ["lib/**", "locale/**", "cordis.patch.yml", "package.json", "README*.md"]
+}
