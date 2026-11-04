@@ -1,0 +1,47 @@
+name: Bug report / 问题反馈
+description: 插件行为异常、报错或数据问题
+labels: [bug]
+body:
+  - type: dropdown
+    id: plugin
+    attributes:
+      label: 插件 / Plugin
+      description: 出问题的插件（列表里没有就选 other 并在描述里写包名）
+      options:
+        - other
+    validations:
+      required: true
+  - type: input
+    id: plugin-version
+    attributes:
+      label: 插件版本 / Plugin version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: dsh-version
+    attributes:
+      label: DSH 版本 / DSH version
+      placeholder: "0.2.1-rc.5（桌面版 / CLI）"
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: 系统与 profile / OS & profile
+      placeholder: "macOS 15.5, profile: desktop"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 发生了什么 / What happened
+      description: 复现步骤、期望行为、实际行为。涉及数据丢失请明确说明。
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志 / Logs
+      description: DSH 日志或 DevTools 控制台输出（请先去掉会话内容等隐私信息）
+      render: text

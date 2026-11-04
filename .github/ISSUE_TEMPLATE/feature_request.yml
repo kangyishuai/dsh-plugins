@@ -1,0 +1,19 @@
+name: Feature request / 功能建议
+description: 对现有插件的改进，或新插件的想法
+labels: [enhancement]
+body:
+  - type: input
+    id: plugin
+    attributes:
+      label: 插件 / Plugin
+      description: 现有插件的包名；新插件想法写 "new"
+  - type: textarea
+    id: problem
+    attributes:
+      label: 想解决什么问题 / Problem
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 期望的做法 / Proposal
