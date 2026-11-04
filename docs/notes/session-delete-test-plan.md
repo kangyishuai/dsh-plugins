@@ -196,6 +196,18 @@ pnpm smoke:session-delete
 | J4  | P1     | 点清理并确认                                                                  | 只改登记表；workspace.json 里该 id 消失；审计多一条 health |
 | J5  | P2     | 制造孤儿会话目录                                                              | 仅报告，不提供删除动作                                     |
 
+### K. Agent 工具（session_delete）
+
+| #   | 优先级 | 步骤                              | 预期                                     |
+| --- | ------ | --------------------------------- | ---------------------------------------- |
+| K1  | P0     | 让模型调用 action=plan            | 返回影响面摘要 + token，**不删任何东西** |
+| K2  | P0     | 用 token 调用 action=delete       | 会话进回收站，回执 operator=agent        |
+| K3  | P0     | 模型试图删除自己所在会话          | 明确拒绝（caller-session）               |
+| K4  | P1     | 重复使用同一 token / 超过 2 分钟  | 拒绝（invalid-token / token-expired）    |
+| K5  | P1     | plan 之后会话被改名/改动再 delete | 拒绝（stale-plan），要求重新 plan        |
+
+> K1–K5 的状态机已在 `test/agent-tool.test.js` 覆盖；真实模型调用需要一条会话上下文，按需手测。
+
 ## 4. 回归节奏
 
 - **每次提交**：`pnpm verify` + 冒烟 4 条。
