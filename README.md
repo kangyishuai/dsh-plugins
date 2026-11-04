@@ -11,9 +11,9 @@ Unofficial plugins for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai).
 
 ## Plugins
 
-| Package      | Description | Verified on DSH |
-| ------------ | ----------- | --------------- |
-| _(none yet)_ |             |                 |
+| Package                                                      | Description                                                                              | Verified on DSH |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------- | --------------- |
+| [`@kangyishuai/dsh-session-delete`](packages/session-delete) | Real session deletion: trash by default, dry-run plan, audit log, residue reconciliation | Not verified    |
 
 ## Install a plugin
 
@@ -30,7 +30,8 @@ Requirements: Node 24 (minimum 22.19), pnpm >= 11, a local DSH desktop app.
 ```bash
 pnpm install                   # also installs git hooks
 pnpm new my-plugin "What it does"
-dsh plugin --profile desktop add "link:$PWD/packages/my-plugin"
+cd packages/my-plugin && pnpm pack --pack-destination /tmp && cd ../..
+dsh plugin --profile desktop add /tmp/<tgz>
 pnpm verify                    # lint + typecheck + convention check + tests
 ```
 

@@ -8,9 +8,9 @@
 
 ## 插件清单
 
-| 包名         | 说明 | 已验证的 DSH 版本 |
-| ------------ | ---- | ----------------- |
-| _（待添加）_ |      |                   |
+| 包名                                                         | 说明                                             | 已验证的 DSH 版本 |
+| ------------------------------------------------------------ | ------------------------------------------------ | ----------------- |
+| [`@kangyishuai/dsh-session-delete`](packages/session-delete) | 真正的删除会话：回收站、预演、审计日志、残留对账 | 未验证            |
 
 ## 安装插件
 
@@ -31,7 +31,8 @@ dsh plugin --profile desktop add @kangyishuai/dsh-<name>
 ```bash
 pnpm install                   # 同时安装 git hooks
 pnpm new my-plugin "一句话描述"
-dsh plugin --profile desktop add "link:$PWD/packages/my-plugin"
+cd packages/my-plugin && pnpm pack --pack-destination /tmp && cd ../..
+dsh plugin --profile desktop add /tmp/<tgz>
 pnpm verify                    # lint + 类型检查 + 规范检查 + 测试
 ```
 

@@ -1,0 +1,31 @@
+# NOTICE
+
+DSH Plugins — <https://github.com/kangyishuai/dsh-plugins>
+
+The code in this repository is licensed under the MIT License; see [LICENSE](LICENSE).
+
+## Design credits
+
+Before implementing `packages/session-delete`, we read a number of community DSH plugins that also
+delete sessions. What we took from them is **design and sequencing, not code**. No source code from
+the projects below has been copied into this repository, so their copyright notices and license
+texts are not reproduced here: no such obligation has been triggered yet. If code is ever adopted
+from one of them, the corresponding notice and license text will be added to this file verbatim.
+
+| Project | License | Design we borrowed |
+| ------- | ------- | ------------------ |
+| [Jaylor-Wang/dsh-tool-session-delete](https://github.com/Jaylor-Wang/dsh-tool-session-delete) | MIT | Deletion ordering: archive first (which closes the provider `agent/pre-step` gate), then stop activity, flush, settle, and only then move the log directory out. Also the plain-JS `declareRemote()` pattern for registering Typert remote methods, because V8 decorators are unavailable in this runtime. |
+| [xohmai/dsh-session-delete](https://github.com/xohmai/dsh-session-delete) | Apache-2.0 | Trash layout: a dedicated trash root outside the session tree, one directory per operation with a `meta.json`, and an append-only `audit.log` in JSONL. Also the idea of reconciling "archived in the workspace state but gone from disk" ghost entries. |
+| [DDDMUC/dsh-delete-session](https://github.com/DDDMUC/dsh-delete-session) | MIT | The problem framing: prove that no writer is active before touching session files, and treat `EBUSY` / `EPERM` on the directory as a retryable state. We deliberately did **not** adopt its write-lease probe (`open(id, "write")`): that call publishes a new log generation on historical sessions (see [`docs/adr/0004-session-delete-architecture.md`](docs/adr/0004-session-delete-architecture.md) §6), so this plugin uses read-only liveness signals and retries the move on busy instead. |
+| [Lzcdebear/better-dsh-session-deletetool](https://github.com/Lzcdebear/better-dsh-session-deletetool) | MIT | Lineage-based identification of sub-sessions and forks (subagent catalog plus `SessionHeader.parentSession`), used to count related sessions in the delete plan. |
+
+## 中文摘要
+
+写 `packages/session-delete` 之前，我们读过上面四个 MIT / Apache-2.0 社区插件（Jaylor-Wang、xohmai、DDDMUC、Lzcdebear）。**只借鉴设计，没有复制代码**，对应关系：
+
+- 删除时序（先归档、再停活、flush、settle，最后移走日志目录），以及 plain JS 手工登记 remote 方法的写法 —— Jaylor-Wang；
+- 回收站目录布局、`meta.json` 与 `audit.log` 结构、归档幽灵的核对思路 —— xohmai；
+- 「先证明没有活写者再动文件」的问题意识与遇忙重试 —— DDDMUC（实现上没有采用它的 write-open 租约探测，见 ADR 0004 §6）；
+- 用血缘判定子会话 / fork 的思路 —— Lzcdebear。
+
+因为没有复制代码，本文件不附它们的版权声明与许可全文；一旦真的复制，会在此处逐字补上对应的版权与许可条款。
