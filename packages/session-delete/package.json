@@ -1,0 +1,60 @@
+{
+  "name": "@kangyishuai/dsh-session-delete",
+  "version": "0.0.0",
+  "description": "Real session deletion for DSH: trash by default, plan before delete, audit log, residue receipt",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "session",
+    "delete",
+    "trash",
+    "audit",
+    "dry-run"
+  ],
+  "license": "MIT",
+  "author": "nano (https://github.com/kangyishuai)",
+  "homepage": "https://github.com/kangyishuai/dsh-plugins/tree/main/packages/session-delete#readme",
+  "bugs": "https://github.com/kangyishuai/dsh-plugins/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kangyishuai/dsh-plugins.git",
+    "directory": "packages/session-delete"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "cordis.patch.yml",
+    "lib",
+    "locale",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ]
+    }
+  }
+}
