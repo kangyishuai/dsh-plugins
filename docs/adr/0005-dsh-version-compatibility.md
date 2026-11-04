@@ -53,7 +53,7 @@ DSH 停在 `0.2.1-rc.x` 的预发布阶段，宿主升级频繁；插件是**独
 
 **我们（维护者）**：
 
-1. 升级前：`node scripts/probe-runtime.mjs`——解析 `app.asar`，逐项核对插件依赖的 API 面（方法是否存在、slot 名是否还在 client bundle 里），输出 diff。
+1. 升级前：`pnpm probe:runtime`——解析 `app.asar` 的目录索引，逐项核对宿主包、API 特征与 slot 名（16 项检查），缺任何必需项就以退出码 1 失败。
 2. 升级后：新建 `docs/runtime/<新版本>.md`，逐项勾选；跑一遍 GUI 手测清单（删除/恢复/彻底删除/改到一半断电）。
 3. 发版：`pnpm changeset` → patch（兼容修复）/ minor（0.x 破坏性变更）→ README 兼容表更新。
 

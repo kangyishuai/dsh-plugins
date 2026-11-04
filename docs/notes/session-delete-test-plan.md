@@ -189,7 +189,9 @@ pnpm smoke:session-delete
 
 - **每次提交**：`pnpm verify` + 冒烟 4 条。
 - **每次发版**：冒烟 + P0 用例全跑（A1/A2、B1/B2、C1/C2/C3、D1/D2/D3、E1、F1、G1/G2）。
-- **每次 DSH 升级**：先跑 `docs/runtime` 里的探针思路核对接口，再跑 P0 + E4 + F1（降级路径最容易被升级打破）。
+- **每次 DSH 升级**：先跑 `pnpm probe:runtime`（解析 app.asar 核对宿主包/API/slot，16 项），
+  再跑 P0 + E4 + F1（降级路径最容易被升级打破）。换宿主版本后还要新建
+  `docs/runtime/<新版本>.md`。
 
 ## 5. 已知未覆盖 / 风险
 
