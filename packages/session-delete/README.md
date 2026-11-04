@@ -110,12 +110,11 @@ After a DSH upgrade: restart, then open the plugin status (settings → plugins)
 | Purge left something behind                                | Residue that the post-delete receipt lists                                       | Read the receipt and the audit log, clean the listed path by hand, and open an issue with the receipt |
 | The trash panel is empty after a delete                    | The plugin resolved a different data root than your DSH (`DSH_HOME` / config)    | Look at `~/.dsh/session-trash/` on disk and check the plugin's `dataRoot` config                      |
 
-## Roadmap (v0.2, not implemented yet)
+## Roadmap (later releases)
 
-The following are planned and are **not** part of v0.1 — don't expect them in the current release:
+The following are planned and not implemented yet:
 
 - batch deletion (multi-select);
-- cascade deletion with a checkbox per sub-session;
 - an agent tool (plan first, then delete);
 - an undo toast after a delete.
 
