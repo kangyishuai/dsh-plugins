@@ -44,6 +44,7 @@
     "health.cleanDone": "Cleaned {n}",
     "panel.tabReceipts": "Receipts",
     "receipts.empty": "No operation receipts yet.",
-    "receipts.restored": "restored"
+    "receipts.restored": "restored",
+    "confirm.cascade": "Also delete these {n} child session(s) (each goes to trash separately)"
   }
 }

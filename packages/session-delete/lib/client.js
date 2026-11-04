@@ -55,6 +55,7 @@ window.__ModuleLoader__.load({
       "confirm.size": "会话日志约 {size}",
       "confirm.live": "该会话仍在本机打开，删除前会先停止它的工作。",
       "confirm.children": "会一并带上 {n} 个子代理会话",
+      "confirm.cascade": "同时删除这 {n} 个子会话（各自进入回收站，需分别恢复）",
       "confirm.refs": "将清理：{list}",
       "confirm.trashPath": "回收站位置：{path}",
       "confirm.blocked": "暂时无法删除：{reason}",
@@ -105,6 +106,7 @@ window.__ModuleLoader__.load({
       "confirm.size": "Session log is about {size}",
       "confirm.live": "This session is still open; its work is stopped first.",
       "confirm.children": "{n} subagent session(s) come along",
+      "confirm.cascade": "Also delete these {n} child session(s) (each goes to trash separately)",
       "confirm.refs": "Will clean: {list}",
       "confirm.trashPath": "Trash location: {path}",
       "confirm.blocked": "Cannot delete right now: {reason}",
@@ -467,12 +469,16 @@ window.__ModuleLoader__.load({
       var busy = busyState[0];
       var setBusy = busyState[1];
       var requestId = request ? request.sessionId : null;
+      var cascadeState = React.useState(false);
+      var cascade = cascadeState[0];
+      var setCascade = cascadeState[1];
 
       React.useEffect(() => {
         if (!requestId) {
           setPlan(null);
           setError(null);
           setBusy(false);
+          setCascade(false);
           return undefined;
         }
         var alive = true;
@@ -505,6 +511,7 @@ window.__ModuleLoader__.load({
             sessionId: request.sessionId,
             digest: plan.digest,
             title: request.title || null,
+            cascade: cascade && plan.children.length > 0,
           })
           .then((/** @type {any} */ result) => {
             props.requestStore.set(null);
@@ -540,6 +547,42 @@ window.__ModuleLoader__.load({
         null,
         request.title
           ? h("div", { style: { fontWeight: 600, marginBottom: "10px" } }, request.title)
+          : null,
+        plan && plan.children.length > 0
+          ? h(
+              "label",
+              {
+                style: {
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: "8px",
+                  margin: "8px 0 4px",
+                  cursor: "pointer",
+                },
+              },
+              h("input", {
+                type: "checkbox",
+                checked: cascade,
+                disabled: busy,
+                onChange: (/** @type {any} */ event) => setCascade(Boolean(event.target.checked)),
+                style: { marginTop: "2px" },
+              }),
+              h(
+                "span",
+                null,
+                props.t("confirm.cascade", { n: plan.children.length }),
+                h(
+                  "span",
+                  {
+                    style: { display: "block", color: T.faint, fontSize: "12px", marginTop: "2px" },
+                  },
+                  plan.children
+                    .slice(0, 4)
+                    .map((/** @type {any} */ child) => child.title || child.id)
+                    .join(" · ") + (plan.children.length > 4 ? " …" : ""),
+                ),
+              ),
+            )
           : null,
         lines.map((/** @type {any} */ line, /** @type {any} */ index) =>
           h("div", { key: "line-" + index, style: { marginBottom: "4px" } }, line),

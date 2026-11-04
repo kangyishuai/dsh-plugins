@@ -44,6 +44,7 @@
     "health.cleanDone": "已清理 {n}",
     "panel.tabReceipts": "回执",
     "receipts.empty": "还没有操作回执。",
-    "receipts.restored": "已移回原位置"
+    "receipts.restored": "已移回原位置",
+    "confirm.cascade": "同时删除这 {n} 个子会话（各自进入回收站，需分别恢复）"
   }
 }

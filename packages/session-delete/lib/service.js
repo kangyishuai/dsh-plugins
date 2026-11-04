@@ -87,13 +87,14 @@ export class SessionDeleteService extends TypertRemoteService {
 
   /**
    * 把会话移入回收站。
-   * @param {{ sessionId: string, digest?: string, title?: string | null }} request
+   * @param {{ sessionId: string, digest?: string, title?: string | null, cascade?: boolean }} request
    */
   async trash(request) {
     try {
       return await this.ops.trash(request?.sessionId, {
         digest: request?.digest,
         title: request?.title,
+        cascade: request?.cascade === true,
         operator: "ui",
       });
     } catch (error) {

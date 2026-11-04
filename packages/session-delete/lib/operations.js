@@ -105,11 +105,49 @@ export function createOperations({ ctx, dataRoot, logger }) {
       }
     }
     const activity = normalizeActivity(rawActivity);
+
+    // 子会话 = live 活动里的 subagent + 持久层 header.parentSession 血缘（任意深度）。
+    // 后者需要 persistence.list()：对当前格式是 O(1) 级别，对历史格式可能按会话数扫描，
+    // 因此只在真的删除/预览时调用，不参与面板等批量路径。
+    /** @type {Map<string, { id: string, title: string | null }>} */
+    const childMap = new Map();
     const subagents = activity.find((group) => group.kind === "subagent");
-    const children = (subagents?.ids ?? []).map((id, index) => ({
-      id,
-      title: subagents?.labels[index] ?? null,
-    }));
+    (subagents?.ids ?? []).forEach((id, index) => {
+      childMap.set(id, { id, title: subagents?.labels[index] ?? null });
+    });
+    if (caps.checks["persistence.list"] && caps.services.persistence?.list) {
+      try {
+        const all = (await caps.services.persistence.list()) ?? [];
+        /** @type {Map<string, { id: string, title: string | null }[]>} */
+        const byParent = new Map();
+        for (const entry of all) {
+          const id = String(entry?.id ?? entry?.header?.id ?? "");
+          const parent = entry?.header?.parentSession;
+          if (!id || typeof parent !== "string" || parent.length === 0) continue;
+          const list = byParent.get(parent) ?? [];
+          list.push({
+            id,
+            title: typeof entry?.header?.title === "string" ? entry.header.title : null,
+          });
+          byParent.set(parent, list);
+        }
+        const queue = [sessionId];
+        const seen = new Set([sessionId]);
+        while (queue.length > 0) {
+          const current = /** @type {string} */ (queue.shift());
+          for (const child of byParent.get(current) ?? []) {
+            if (seen.has(child.id)) continue;
+            seen.add(child.id);
+            childMap.set(child.id, child);
+            queue.push(child.id);
+          }
+        }
+      } catch (error) {
+        notes.push("lineage unavailable: " + messageOf(error));
+      }
+    }
+    childMap.delete(sessionId);
+    const children = [...childMap.values()];
 
     const located = await locateSession({
       dataRoot,
@@ -199,7 +237,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
 
   /**
    * @param {string} sessionIdRaw
-   * @param {{ digest?: string, title?: string | null, operator?: string }} request
+   * @param {{ digest?: string, title?: string | null, operator?: string, cascade?: boolean, child?: boolean }} request
    */
   async function trash(sessionIdRaw, request = {}) {
     const loaded = await makePlan(sessionIdRaw);
@@ -228,6 +266,20 @@ export function createOperations({ ctx, dataRoot, logger }) {
       });
     }
     if (!location) throw failure("session-delete/location-unknown", "没有可移动的会话目录");
+
+    /** @type {{ id: string, ok: boolean, entryId?: string, error?: string }[]} */
+    const cascaded = [];
+    if (request.cascade === true && request.child !== true) {
+      for (const child of plan.children) {
+        try {
+          const result = await trash(child.id, { operator: request.operator, child: true });
+          cascaded.push({ id: child.id, ok: true, entryId: result.entryId });
+        } catch (error) {
+          cascaded.push({ id: child.id, ok: false, error: messageOf(error) });
+        }
+      }
+    }
+
     if (inFlight.has(plan.sessionId)) {
       throw failure("session-delete/busy", "这个会话正在被另一个删除操作处理。");
     }
@@ -335,6 +387,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
         digest: plan.digest,
         live: plan.live,
         children: plan.children,
+        cascaded,
         removed,
         checks,
       });
@@ -342,6 +395,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
         ok: true,
         entryId,
         receiptId,
+        cascaded,
         sessionId: plan.sessionId,
         digest: plan.digest,
         title: plan.title ?? (typeof request.title === "string" ? request.title : null),

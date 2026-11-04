@@ -8,11 +8,11 @@ import { createOperations } from "../lib/operations.js";
 import { encodeSegment, projectKey } from "../lib/paths.js";
 
 /**
- * 造一个「像宿主」的最小替身：persistence / sessions / workspaceRegistry / 活动查询 / 停止通道。
- * @param {{ live?: boolean, createDir?: boolean }} [options]
+ * 造一个「像宿主」的最小替身。
+ * @param {{ live?: boolean, createDir?: boolean, children?: { id: string, title: string | null }[] }} [options]
  */
 async function fixture(options = {}) {
-  const { live = false, createDir = true } = options;
+  const { live = false, createDir = true, children = [] } = options;
   const dataRoot = await mkdtemp(join(tmpdir(), "dsh-sdel-ops-"));
   const sessionId = "session-abc";
   const cwd = "/w";
@@ -60,10 +60,26 @@ async function fixture(options = {}) {
   };
 
   const persistence = {
-    stat: async (/** @type {string} */ id) =>
-      id === sessionId
-        ? { header: { id: sessionId, title: "hello", cwd }, sizeBytes: 4096 }
-        : undefined,
+    stat: async (/** @type {string} */ id) => {
+      if (id === sessionId) {
+        return { header: { id: sessionId, title: "hello", cwd }, sizeBytes: 4096 };
+      }
+      const child = children.find((/** @type {any} */ item) => item.id === id);
+      if (child) {
+        return {
+          header: { id, title: child.title, cwd, parentSession: sessionId },
+          sizeBytes: 128,
+        };
+      }
+      return undefined;
+    },
+    list: async () => [
+      { id: sessionId, header: { id: sessionId, title: "hello", cwd } },
+      ...children.map((/** @type {any} */ child) => ({
+        id: child.id,
+        header: { id: child.id, title: child.title, cwd, parentSession: sessionId },
+      })),
+    ],
   };
   const liveEntry = live ? { header: { id: sessionId, cwd } } : undefined;
   const sessions = {
@@ -84,8 +100,16 @@ async function fixture(options = {}) {
     waterfall: async () => [{ kind: "subagent", items: [{ id: "child-1", label: "子代理一" }] }],
   };
 
+  const childDirs = [];
+  for (const child of children) {
+    const dir = join(dataRoot, "sessions", projectKey(cwd), encodeSegment(child.id));
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "session.v4.jsonl.zstd"), "y".repeat(64));
+    childDirs.push(dir);
+  }
+
   const ops = createOperations({ ctx, dataRoot, logger: ctx.logger });
-  return { dataRoot, sessionId, sessionDir, state, ops, ctx };
+  return { dataRoot, sessionId, sessionDir, childDirs, state, ops, ctx };
 }
 
 test("plan 汇总体积、活动、子会话与引用清单", async () => {
@@ -208,5 +232,45 @@ test("并发 trash 同一会话时第二个被拒绝", async () => {
     (error) => /** @type {any} */ (error).code === "session-delete/busy",
   );
   await first;
+  await rm(dataRoot, { recursive: true, force: true });
+});
+
+test("plan 通过 parentSession 血缘发现子会话（任意深度）", async () => {
+  const { ops, sessionId, dataRoot } = await fixture({
+    children: [{ id: "child-1", title: "子会话一" }],
+  });
+  const plan = await ops.plan(sessionId);
+  const ids = plan.children.map((/** @type {any} */ child) => child.id);
+  assert.ok(ids.includes("child-1"));
+  assert.ok(plan.children.find((/** @type {any} */ c) => c.id === "child-1")?.title);
+  await rm(dataRoot, { recursive: true, force: true });
+});
+
+test("cascade 先删子会话再删自己，回执记录级联结果", async () => {
+  const { ops, sessionId, sessionDir, childDirs, dataRoot } = await fixture({
+    children: [{ id: "child-1", title: "子会话一" }],
+  });
+  const plan = await ops.plan(sessionId);
+  const result = await ops.trash(sessionId, { digest: plan.digest, cascade: true });
+  assert.equal(result.ok, true);
+  assert.equal(result.cascaded.length, 1);
+  assert.equal(result.cascaded[0].ok, true, JSON.stringify(result.cascaded));
+  await assert.rejects(stat(sessionDir));
+  await assert.rejects(stat(childDirs[0]));
+  const listed = await ops.list();
+  assert.equal(listed.entries.length, 2);
+  const receipts = await ops.receipts(5);
+  assert.ok(receipts.entries[0].cascaded.length === 1);
+  await rm(dataRoot, { recursive: true, force: true });
+});
+
+test("默认不级联：子会话留在原处", async () => {
+  const { ops, sessionId, childDirs, dataRoot } = await fixture({
+    children: [{ id: "child-1", title: "子会话一" }],
+  });
+  const plan = await ops.plan(sessionId);
+  const result = await ops.trash(sessionId, { digest: plan.digest });
+  assert.equal(result.cascaded.length, 0);
+  assert.ok((await stat(childDirs[0])).isDirectory());
   await rm(dataRoot, { recursive: true, force: true });
 });

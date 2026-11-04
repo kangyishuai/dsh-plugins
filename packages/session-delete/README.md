@@ -49,7 +49,7 @@ Everything starts from a session row in the sidebar:
 2. The confirmation dialog shows:
    - how much disk space the session occupies;
    - whether the session is live (running turn, subagents, background jobs) — a live session is stopped first, not refused;
-   - how many sub-sessions it has (informational: v0.1 deletes only the session you picked);
+   - how many sub-sessions it has, with a checkbox to delete them together (off by default; each child goes to trash separately);
    - the references that will be cleaned: archived set, pinned set, workspace membership, projection cache.
 3. Confirm. The session moves to the trash and disappears from the sidebar.
 4. **回收站…** (Trash…) in the same menu opens the trash panel, where you can:
