@@ -63,7 +63,7 @@ pnpm smoke:session-delete
 ```
 
 它会自动：复制 desktop profile 到临时 `DSH_HOME` → 打包安装当前源码 → 起真实
-宿主（随机端口）→ 用 ego-browser 点一遍主链路 → 断言 19 项，并把关键状态截图存到
+宿主（随机端口）→ 用 ego-browser 点一遍主链路 → 断言 23 项，并把关键状态截图存到
 系统临时目录 `dsh-smoke-shots/`（脚本结束会打印路径）：
 
 1. 无 `[data-slot-error]`（锁住 slot 漏注入类回归）

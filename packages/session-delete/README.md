@@ -6,7 +6,7 @@
 
 Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai). Not affiliated with DeepSeek.
 
-> **Status: v0.2, early.** Verified on DSH 0.2.1-rc.5 with `pnpm smoke:session-delete` (21 end-to-end assertions) plus a manual pass in the desktop GUI. Treat it as young software and keep backups of anything you cannot lose.
+> **Status: v0.2, early.** Verified on DSH 0.2.1-rc.5 with `pnpm smoke:session-delete` (23 end-to-end assertions) plus a manual pass in the desktop GUI. Treat it as young software and keep backups of anything you cannot lose.
 
 ## What it does
 
