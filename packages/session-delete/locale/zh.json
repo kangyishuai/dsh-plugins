@@ -41,6 +41,8 @@
     "health.unavailable": "无法体检：{reason}",
     "health.clean": "清理失效引用（{n}）",
     "health.cleanConfirm": "确认清理 {n} 条？只动登记表，不碰会话文件",
-    "health.cleanDone": "已清理 {n}"
+    "health.cleanDone": "已清理 {n}",
+    "panel.tabReceipts": "回执",
+    "receipts.empty": "还没有操作回执。"
   }
 }

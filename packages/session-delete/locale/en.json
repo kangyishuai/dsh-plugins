@@ -41,6 +41,8 @@
     "health.unavailable": "Cannot run the check: {reason}",
     "health.clean": "Clean dangling references ({n})",
     "health.cleanConfirm": "Clean {n} dangling reference(s)? Bookkeeping only, no session files.",
-    "health.cleanDone": "Cleaned {n}"
+    "health.cleanDone": "Cleaned {n}",
+    "panel.tabReceipts": "Receipts",
+    "receipts.empty": "No operation receipts yet."
   }
 }

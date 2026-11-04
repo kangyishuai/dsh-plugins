@@ -10,6 +10,7 @@ import { beginOperation, finishOperation, listPending } from "./journal.js";
 import { directorySize, locateSession } from "./locate.js";
 import { auditPath, requireSessionId, sessionsRoot, trashRoot } from "./paths.js";
 import { buildPlan, planExecutable, summarizePlan } from "./plan.js";
+import { listReceipts, writeReceipt } from "./receipts.js";
 import { buildRefs } from "./refs.js";
 import { listEntries, moveIntoTrash, purgeEntry, readEntry, restoreEntry } from "./trash.js";
 
@@ -324,9 +325,23 @@ export function createOperations({ ctx, dataRoot, logger }) {
         operator: request.operator ?? "ui",
         detail: summarizePlan(plan),
       });
+      const receiptId = await writeReceipt(dataRoot, {
+        action: "trash",
+        at: new Date().toISOString(),
+        sessionId: plan.sessionId,
+        entryId,
+        title: plan.title ?? (typeof request.title === "string" ? request.title : null),
+        sizeBytes: plan.sizeBytes,
+        digest: plan.digest,
+        live: plan.live,
+        children: plan.children,
+        removed,
+        checks,
+      });
       return {
         ok: true,
         entryId,
+        receiptId,
         sessionId: plan.sessionId,
         digest: plan.digest,
         title: plan.title ?? (typeof request.title === "string" ? request.title : null),
@@ -416,7 +431,15 @@ export function createOperations({ ctx, dataRoot, logger }) {
         entryId,
         operator: request.operator ?? "ui",
       });
-      return { ok: true, sessionId: meta.sessionId, restoredTo: restored.restoredTo };
+      const receiptId = await writeReceipt(dataRoot, {
+        action: "restore",
+        at: new Date().toISOString(),
+        sessionId: meta.sessionId,
+        entryId,
+        title: meta.title,
+        restoredTo: restored.restoredTo,
+      });
+      return { ok: true, sessionId: meta.sessionId, restoredTo: restored.restoredTo, receiptId };
     } catch (error) {
       await finishOperation({ dataRoot, id: record.id, state: "failed", detail: messageOf(error) });
       await audit.append({
@@ -452,7 +475,15 @@ export function createOperations({ ctx, dataRoot, logger }) {
         operator: request.operator ?? "ui",
         detail: "释放约 " + result.bytes + " 字节",
       });
-      return { ok: true, bytes: result.bytes, sessionId: meta.sessionId };
+      const receiptId = await writeReceipt(dataRoot, {
+        action: "purge",
+        at: new Date().toISOString(),
+        sessionId: meta.sessionId,
+        entryId,
+        title: meta.title,
+        bytes: result.bytes,
+      });
+      return { ok: true, bytes: result.bytes, sessionId: meta.sessionId, receiptId };
     } catch (error) {
       await finishOperation({ dataRoot, id: record.id, state: "failed", detail: messageOf(error) });
       await audit.append({
@@ -771,7 +802,14 @@ export function createOperations({ ctx, dataRoot, logger }) {
         " 条" +
         (errors.length > 0 ? "，失败 " + errors.length + " 条" : ""),
     });
-    return { ok: errors.length === 0, cleaned: counts, total, errors };
+    const receiptId = await writeReceipt(dataRoot, {
+      action: "health",
+      at: new Date().toISOString(),
+      cleaned: counts,
+      total,
+      errors,
+    });
+    return { ok: errors.length === 0, cleaned: counts, total, errors, receiptId };
   }
 
   async function health() {
@@ -788,9 +826,15 @@ export function createOperations({ ctx, dataRoot, logger }) {
     };
   }
 
+  /** @param {number} [limit] */
+  async function receipts(limit = 50) {
+    return { entries: await listReceipts(dataRoot, limit) };
+  }
+
   return {
     caps,
     health,
+    receipts,
     scanHealth,
     cleanHealth,
     plan: /** @param {unknown} sessionId */ async (sessionId) => (await makePlan(sessionId)).plan,

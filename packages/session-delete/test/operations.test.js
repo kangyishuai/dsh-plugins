@@ -114,6 +114,7 @@ test("trash：归档 → 停止 → 落盘 → 移动 → 摘引用，并留下�
   const result = await ops.trash(sessionId, { digest: plan.digest });
   assert.equal(result.ok, true);
   assert.ok(result.entryId);
+  assert.ok(result.receiptId);
   assert.equal(result.sessionId, sessionId);
   // 归档只是闸门：摘引用阶段会把归档标记再清掉，所以最终 archived 为 false
   assert.equal(state.archived, false);
@@ -133,6 +134,11 @@ test("trash：归档 → 停止 → 落盘 → 移动 → 摘引用，并留下�
 
   const checks = await ops.reconcile(sessionId);
   assert.ok(checks.every((c) => c.status !== "failed"));
+
+  const receipts = await ops.receipts(10);
+  assert.ok(
+    receipts.entries.some((entry) => entry.action === "trash" && entry.entryId === result.entryId),
+  );
   await rm(dataRoot, { recursive: true, force: true });
 });
 

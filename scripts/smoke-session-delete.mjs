@@ -306,6 +306,18 @@ const health = await page.evaluate(async () => {
 check("体检页签给出库存与结论", health.includes("已存") && (health.includes("未发现") || health.includes("条")), health.slice(0, 160));
 await shot("08-health-tab");
 
+// 12) 回执页签
+const receiptText = await page.evaluate(async () => {
+  const tab = [...document.querySelectorAll('[role="dialog"] button')].find((b) => (b.textContent || "").trim() === "回执");
+  if (!tab) return "no-receipts-tab";
+  tab.click();
+  await new Promise((r) => setTimeout(r, 1200));
+  const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent || "").includes("会话回收站"));
+  return dlg ? (dlg.textContent || "").replace(/\\s+/g, " ") : "missing";
+});
+check("回执页签列出 trash/restore/purge 记录", /trash/.test(receiptText) && /purge/.test(receiptText), receiptText.slice(0, 160));
+await shot("09-receipts-tab");
+
 await task.finish({ keep: false }).catch(() => {});
 console.log("SMOKE_RESULT " + JSON.stringify({ checks }));
 `;

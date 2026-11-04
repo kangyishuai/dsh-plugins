@@ -144,6 +144,18 @@ export class SessionDeleteService extends TypertRemoteService {
     }
   }
 
+  /**
+   * 最近的操作回执。
+   * @param {{ limit?: number }} [request]
+   */
+  async receipts(request) {
+    try {
+      return await this.ops.receipts(request?.limit ?? 50);
+    } catch (error) {
+      rethrow(error);
+    }
+  }
+
   /** 全库体检：只读。 */
   async healthScan() {
     try {
@@ -184,6 +196,7 @@ declareRemote(SessionDeleteService, "list");
 declareRemote(SessionDeleteService, "restore");
 declareRemote(SessionDeleteService, "purge");
 declareRemote(SessionDeleteService, "audit");
+declareRemote(SessionDeleteService, "receipts");
 declareRemote(SessionDeleteService, "healthScan");
 declareRemote(SessionDeleteService, "cleanHealth");
 declareRemote(SessionDeleteService, "reconcile");

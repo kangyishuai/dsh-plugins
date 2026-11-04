@@ -68,6 +68,8 @@ window.__ModuleLoader__.load({
       "panel.tabTrash": "回收站",
       "panel.tabAudit": "审计",
       "panel.tabHealth": "体检",
+      "panel.tabReceipts": "回执",
+      "receipts.empty": "还没有操作回执。",
       "health.loading": "正在检查…",
       "health.inventory":
         "已存 {stored} · live {live} · 归档 {archived} · 回收站 {trash} · 待处理 {pending}",
@@ -115,6 +117,8 @@ window.__ModuleLoader__.load({
       "panel.tabTrash": "Trash",
       "panel.tabAudit": "Audit",
       "panel.tabHealth": "Health",
+      "panel.tabReceipts": "Receipts",
+      "receipts.empty": "No operation receipts yet.",
       "health.loading": "Checking…",
       "health.inventory":
         "stored {stored} · live {live} · archived {archived} · trash {trash} · pending {pending}",
@@ -600,6 +604,18 @@ window.__ModuleLoader__.load({
       var cleanMsgState = React.useState("");
       var cleanMsg = cleanMsgState[0];
       var setCleanMsg = cleanMsgState[1];
+      var receiptsState = React.useState(null);
+      var receipts = receiptsState[0];
+      var setReceipts = receiptsState[1];
+
+      const loadReceipts = React.useCallback(() => {
+        props
+          .call("receipts", { limit: 50 })
+          .then((/** @type {any} */ value) => {
+            setReceipts(value && value.entries ? value.entries : []);
+          })
+          .catch(() => setReceipts([]));
+      }, []);
 
       const loadHealth = React.useCallback(() => {
         setScan(null);
@@ -766,10 +782,62 @@ window.__ModuleLoader__.load({
             },
             props.t("panel.tabHealth"),
           ),
+          h(
+            Btn,
+            {
+              onClick: () => {
+                setTab("receipts");
+                loadReceipts();
+              },
+            },
+            props.t("panel.tabReceipts"),
+          ),
         ),
       );
 
-      if (tab === "health") {
+      if (tab === "receipts") {
+        if (!receipts || receipts.length === 0) {
+          content.push(
+            h(
+              "div",
+              { key: "receipts-empty", style: { color: T.dim, padding: "8px 0" } },
+              props.t("receipts.empty"),
+            ),
+          );
+        } else {
+          receipts.forEach((/** @type {any} */ receipt, /** @type {any} */ index) => {
+            const detail =
+              receipt.action === "trash"
+                ? (receipt.sizeBytes ? formatBytes(receipt.sizeBytes) : "?") +
+                  " · " +
+                  (receipt.removed || []).filter((/** @type {any} */ item) => item.status === "ok")
+                    .length +
+                  "/" +
+                  (receipt.removed || []).length
+                : receipt.action === "restore"
+                  ? String(receipt.restoredTo || "")
+                  : receipt.action === "purge"
+                    ? formatBytes(receipt.bytes || 0)
+                    : String(receipt.total || 0);
+            content.push(
+              h(
+                "div",
+                {
+                  key: "receipt-" + index,
+                  style: { borderTop: "1px solid " + T.border, padding: "6px 0", fontSize: "12px" },
+                },
+                h("span", { style: { color: T.faint } }, formatTime(receipt.at) + " "),
+                h("span", { style: { fontWeight: 600 } }, String(receipt.action || "") + " "),
+                h(
+                  "span",
+                  { title: receipt.sessionId || "", style: { color: T.dim } },
+                  String(receipt.title || receipt.sessionId || "").slice(0, 24) + " · " + detail,
+                ),
+              ),
+            );
+          });
+        }
+      } else if (tab === "health") {
         if (scanError) {
           content.push(
             h("div", { key: "scan-err", style: { color: T.danger, padding: "8px 0" } }, scanError),
