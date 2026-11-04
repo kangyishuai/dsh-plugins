@@ -796,13 +796,13 @@ window.__ModuleLoader__.load({
                   key: "audit-" + index,
                   style: { borderTop: "1px solid " + T.border, padding: "6px 0", fontSize: "12px" },
                 },
-                h("span", { style: { color: T.faint } }, String(entry.ts || "") + " "),
+                h("span", { style: { color: T.faint } }, formatTime(entry.ts) + " "),
                 h("span", { style: { fontWeight: 600 } }, String(entry.action || "") + " "),
                 h(
                   "span",
-                  { style: { color: T.dim } },
+                  { title: entry.sessionId || "", style: { color: T.dim } },
                   String(entry.result || "") +
-                    (entry.sessionId ? " · " + entry.sessionId : "") +
+                    (entry.sessionId ? " · " + String(entry.sessionId).slice(0, 13) + "…" : "") +
                     (entry.detail ? " · " + entry.detail : ""),
                 ),
               ),
