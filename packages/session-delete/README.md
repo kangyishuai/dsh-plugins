@@ -6,7 +6,7 @@
 
 Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai). Not affiliated with DeepSeek.
 
-> **Status: v0.1, in development.** Not verified in a real GUI on any DSH version yet — see [Compatibility & degradation](#compatibility--degradation). Don't try it on sessions you can't afford to lose.
+> **Status: v0.1, early.** Verified on DSH 0.2.1-rc.5 with `pnpm smoke:session-delete` (19 end-to-end assertions) plus a manual pass in the desktop GUI. Treat it as young software and keep backups of anything you cannot lose.
 
 ## What it does
 
@@ -91,9 +91,9 @@ v0.1 declares no `engines.dsh` range. Instead there are three layers of defense:
 | L2 startup self-check    | plugin activation    | Probes every host capability it depends on and grades them api / internal / unknown.        | **Read-only mode**: plan, audit and trash listing keep working; delete, restore and purge are disabled. |
 | L3 per-operation refusal | every operation      | Each operation re-checks its own prerequisites; unknown always refuses.                     | A structured error code plus a human-readable reason, and no half-deleted state.                        |
 
-| Plugin          | Verified on DSH  | Notes                                                                                                          |
-| --------------- | ---------------- | -------------------------------------------------------------------------------------------------------------- |
-| 0.1.0 (planned) | **not verified** | No real-GUI acceptance run yet. This row is filled in only after the checklist passes on a named host version. |
+| Plugin | Verified on DSH          | Notes                                                                                       |
+| ------ | ------------------------ | ------------------------------------------------------------------------------------------- |
+| 0.1.0  | **0.2.1-rc.5** (desktop) | `pnpm smoke:session-delete`: 19 assertions green; manual GUI pass on the same host version. |
 
 After a DSH upgrade: restart, then open the plugin status (settings → plugins). If it reports read-only mode, the host API changed — upgrade the plugin or report the version pair; don't force it.
 
