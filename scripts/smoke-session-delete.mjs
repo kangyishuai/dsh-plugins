@@ -294,6 +294,18 @@ console.log("AUDIT_DEBUG " + audit);
   check("审计页签记录 trash/restore/purge", audit.includes("trash") && audit.includes("restore") && audit.includes("purge"), audit.slice(0, 160));
 await shot("07-audit-tab");
 
+// 11) 体检页签
+const health = await page.evaluate(async () => {
+  const tab = [...document.querySelectorAll('[role="dialog"] button')].find((b) => (b.textContent || "").trim() === "体检");
+  if (!tab) return "no-health-tab";
+  tab.click();
+  await new Promise((r) => setTimeout(r, 1600));
+  const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent || "").includes("会话回收站"));
+  return dlg ? (dlg.textContent || "").replace(/\\s+/g, " ") : "missing";
+});
+check("体检页签给出库存与结论", health.includes("已存") && (health.includes("未发现") || health.includes("条")), health.slice(0, 160));
+await shot("08-health-tab");
+
 await task.finish({ keep: false }).catch(() => {});
 console.log("SMOKE_RESULT " + JSON.stringify({ checks }));
 `;
