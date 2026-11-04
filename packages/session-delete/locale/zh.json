@@ -43,6 +43,7 @@
     "health.cleanConfirm": "确认清理 {n} 条？只动登记表，不碰会话文件",
     "health.cleanDone": "已清理 {n}",
     "panel.tabReceipts": "回执",
-    "receipts.empty": "还没有操作回执。"
+    "receipts.empty": "还没有操作回执。",
+    "receipts.restored": "已移回原位置"
   }
 }

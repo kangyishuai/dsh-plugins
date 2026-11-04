@@ -43,6 +43,7 @@
     "health.cleanConfirm": "Clean {n} dangling reference(s)? Bookkeeping only, no session files.",
     "health.cleanDone": "Cleaned {n}",
     "panel.tabReceipts": "Receipts",
-    "receipts.empty": "No operation receipts yet."
+    "receipts.empty": "No operation receipts yet.",
+    "receipts.restored": "restored"
   }
 }

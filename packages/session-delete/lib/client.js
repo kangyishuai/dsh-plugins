@@ -70,6 +70,7 @@ window.__ModuleLoader__.load({
       "panel.tabHealth": "体检",
       "panel.tabReceipts": "回执",
       "receipts.empty": "还没有操作回执。",
+      "receipts.restored": "已移回原位置",
       "health.loading": "正在检查…",
       "health.inventory":
         "已存 {stored} · live {live} · 归档 {archived} · 回收站 {trash} · 待处理 {pending}",
@@ -119,6 +120,7 @@ window.__ModuleLoader__.load({
       "panel.tabHealth": "Health",
       "panel.tabReceipts": "Receipts",
       "receipts.empty": "No operation receipts yet.",
+      "receipts.restored": "restored",
       "health.loading": "Checking…",
       "health.inventory":
         "stored {stored} · live {live} · archived {archived} · trash {trash} · pending {pending}",
@@ -806,16 +808,15 @@ window.__ModuleLoader__.load({
           );
         } else {
           receipts.forEach((/** @type {any} */ receipt, /** @type {any} */ index) => {
+            const removed = receipt.removed || [];
+            const okCount = removed.filter(
+              (/** @type {any} */ item) => item.status === "ok",
+            ).length;
             const detail =
               receipt.action === "trash"
-                ? (receipt.sizeBytes ? formatBytes(receipt.sizeBytes) : "?") +
-                  " · " +
-                  (receipt.removed || []).filter((/** @type {any} */ item) => item.status === "ok")
-                    .length +
-                  "/" +
-                  (receipt.removed || []).length
+                ? formatBytes(receipt.sizeBytes || 0) + " · " + okCount + "/" + removed.length
                 : receipt.action === "restore"
-                  ? String(receipt.restoredTo || "")
+                  ? props.t("receipts.restored")
                   : receipt.action === "purge"
                     ? formatBytes(receipt.bytes || 0)
                     : String(receipt.total || 0);
@@ -824,15 +825,41 @@ window.__ModuleLoader__.load({
                 "div",
                 {
                   key: "receipt-" + index,
-                  style: { borderTop: "1px solid " + T.border, padding: "6px 0", fontSize: "12px" },
+                  title: String(receipt.sessionId || ""),
+                  style: {
+                    borderTop: "1px solid " + T.border,
+                    padding: "7px 0",
+                    fontSize: "12px",
+                    display: "flex",
+                    alignItems: "baseline",
+                    gap: "6px",
+                  },
                 },
-                h("span", { style: { color: T.faint } }, formatTime(receipt.at) + " "),
-                h("span", { style: { fontWeight: 600 } }, String(receipt.action || "") + " "),
                 h(
                   "span",
-                  { title: receipt.sessionId || "", style: { color: T.dim } },
-                  String(receipt.title || receipt.sessionId || "").slice(0, 24) + " · " + detail,
+                  { style: { color: T.faint, whiteSpace: "nowrap" } },
+                  formatTime(receipt.at),
                 ),
+                h(
+                  "span",
+                  { style: { fontWeight: 600, whiteSpace: "nowrap" } },
+                  String(receipt.action || ""),
+                ),
+                h(
+                  "span",
+                  {
+                    style: {
+                      flex: 1,
+                      minWidth: 0,
+                      color: T.dim,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    },
+                  },
+                  String(receipt.title || receipt.sessionId || "—"),
+                ),
+                h("span", { style: { color: T.faint, whiteSpace: "nowrap" } }, detail),
               ),
             );
           });

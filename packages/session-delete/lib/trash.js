@@ -167,7 +167,11 @@ export async function listEntries(dataRoot) {
   try {
     names = (await readdir(root, { withFileTypes: true }))
       .filter(
-        (entry) => entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "journal",
+        (entry) =>
+          entry.isDirectory() &&
+          !entry.name.startsWith(".") &&
+          entry.name !== "journal" &&
+          entry.name !== "receipts",
       )
       .map((entry) => entry.name);
   } catch {
