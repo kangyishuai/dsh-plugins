@@ -11,6 +11,7 @@ import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 const REPO = resolve(import.meta.dirname, "..");
+const SHOTS_OUT = join(tmpdir(), "dsh-smoke-shots");
 const PKG_DIR = join(REPO, "packages", "session-delete");
 
 /** @param {string} message */
@@ -73,113 +74,226 @@ async function waitForBoot(logPath, timeoutMs) {
  * ego-browser 里跑的脚本：返回 { ok, checks }。
  * @param {string} url
  */
-function browserScript(url) {
+/**
+ * ego-browser 里跑的脚本：返回 { ok, checks }，并把关键状态截图存到 SHOTS。
+ * @param {string} url
+ * @param {string} shots
+ */
+function browserScript(url, shots) {
   return `
 const task = await taskSpace("dsh smoke: session-delete");
 const page = task.page("p1");
+const SHOTS = ${JSON.stringify(shots)};
 const checks = [];
 const check = (name, ok, detail) => checks.push({ name, ok: !!ok, detail: detail === undefined ? "" : String(detail) });
-
-await page.goto(${JSON.stringify(url)});
-await page.waitForTimeout(4500);
-for (let i = 0; i < 3; i++) {
-  await page.keyboard.press("Escape");
-  await page.waitForTimeout(200);
-}
-
-const slotErrors = await page.evaluate(() =>
-  [...document.querySelectorAll("[data-slot-error]")].map((el) => el.getAttribute("data-slot-error")),
-);
-check("无 slot 渲染错误", slotErrors.length === 0, JSON.stringify(slotErrors));
-
-const footer = await page.evaluate(() =>
-  [...document.querySelectorAll("button")].some((b) => (b.getAttribute("aria-label") || "").includes("回收站")),
-);
-check("侧栏页脚存在回收站入口", footer);
-
-// 1) 页脚 → 回收站面板
-const panel = await page.evaluate(async () => {
+const shot = async (name) => { await page.screenshot({ path: SHOTS + "/" + name + ".png" }); };
+const dismiss = async () => {
+  // 首启的「预览版说明 / 登录」弹层要点按钮关掉，Esc 不一定管用；
+  // 它们的遮罩会把我们的浮层压暗，也会挡住真实指针事件。
+  for (const label of ["继续", "开始使用", "跳过", "关闭"]) {
+    await page.evaluate((text) => {
+      const btn = [...document.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === text);
+      if (btn) btn.click();
+    }, label).catch(() => {});
+    await page.waitForTimeout(250);
+  }
+  for (let i = 0; i < 3; i++) { await page.keyboard.press("Escape"); await page.waitForTimeout(200); }
+};
+const rows = () => page.evaluate(() =>
+  [...document.querySelectorAll("[data-row-key^='session:']")].map((el) => el.getAttribute("data-row-key")));
+const openPanel = () => page.evaluate(async () => {
   const btn = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("回收站"));
-  if (!btn) return { ok: false, text: "no-footer" };
+  if (!btn) return "no-footer";
   btn.click();
-  await new Promise((r) => setTimeout(r, 1200));
+  await new Promise((r) => setTimeout(r, 1300));
   const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent || "").includes("会话回收站"));
-  return { ok: !!dlg, text: dlg ? (dlg.textContent || "").replace(/\\s+/g, " ").slice(0, 120) : "missing" };
+  return dlg ? (dlg.textContent || "").replace(/\\s+/g, " ") : "missing";
 });
-check("点击页脚可打开回收站面板", panel.ok, panel.text);
-await page.keyboard.press("Escape");
-await page.waitForTimeout(400);
-
-// 2) 会话菜单 → 确认框
-const confirm = await page.evaluate(async () => {
+const openConfirm = () => page.evaluate(async () => {
   const row = document.querySelector("[data-row-key^='session:']");
-  if (!row) return { ok: false, text: "no-session-row" };
+  if (!row) return "no-session-row";
   row.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
   await new Promise((r) => setTimeout(r, 400));
   const menuBtn = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").startsWith("会话“"));
-  if (!menuBtn) return { ok: false, text: "no-menu-button" };
+  if (!menuBtn) return "no-menu-button";
   menuBtn.click();
   await new Promise((r) => setTimeout(r, 500));
   const item = [...document.querySelectorAll("button, [role=menuitem]")].find((el) => (el.textContent || "").trim() === "删除会话…");
-  if (!item) return { ok: false, text: "no-delete-item" };
+  if (!item) return "no-delete-item";
   item.click();
   await new Promise((r) => setTimeout(r, 2200));
   const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent || "").includes("移入回收站"));
-  const text = dlg ? (dlg.textContent || "").replace(/\\s+/g, " ") : "";
-  return { ok: !!dlg && text.includes("会话日志约"), text: text.slice(0, 200) };
+  return dlg ? (dlg.textContent || "").replace(/\\s+/g, " ") : "missing";
 });
-check("会话菜单可打开确认框并渲染 plan", confirm.ok, confirm.text);
-
-// 3) 执行删除 → 行消失
-const beforeRows = await page.evaluate(() => [...document.querySelectorAll("[data-row-key^='session:']")].map((e) => e.getAttribute("data-row-key")));
-const confirmed = await page.evaluate(async () => {
-  const btn = [...document.querySelectorAll('[role="dialog"] button')].find((b) => (b.textContent || "").trim() === "移入回收站");
+const clickDialogButton = (text) => page.evaluate(async (label) => {
+  const btn = [...document.querySelectorAll('[role="dialog"] button')].find((b) => (b.textContent || "").trim() === label);
   if (!btn || btn.disabled) return false;
   btn.click();
-  await new Promise((r) => setTimeout(r, 2600));
   return true;
-});
-const afterRows = await page.evaluate(() => [...document.querySelectorAll("[data-row-key^='session:']")].map((e) => e.getAttribute("data-row-key")));
-check("确认后会话行消失", confirmed && afterRows.length === beforeRows.length - 1, beforeRows.length + " -> " + afterRows.length);
+}, text);
+const dialogOpen = (needle) => page.evaluate((text) =>
+  [...document.querySelectorAll('[role="dialog"]')].some((d) => (d.textContent || "").includes(text)), needle);
 
-// 4) 刷新页面后不复活
+await page.goto(${JSON.stringify(url)});
+await page.waitForTimeout(4500);
+await dismiss();
+
+// 1) slot 渲染
+const slotErrors = await page.evaluate(() =>
+  [...document.querySelectorAll("[data-slot-error]")].map((el) => el.getAttribute("data-slot-error")));
+check("无 slot 渲染错误", slotErrors.length === 0, JSON.stringify(slotErrors));
+
+// 2) 页脚入口 + hover 背景变化
+const footerRect = await page.evaluate(() => {
+  const btn = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("回收站"));
+  if (!btn) return null;
+  const r = btn.getBoundingClientRect();
+  return { x: r.x + r.width / 2, y: r.y + r.height / 2,
+    bg: getComputedStyle(btn).backgroundColor,
+    label: btn.getAttribute("aria-label") };
+});
+check("侧栏页脚存在回收站入口", !!footerRect, footerRect && footerRect.label);
+if (footerRect) {
+  await page.hover('button[aria-label^="回收站"]').catch((error) => console.log("DEBUG hover-miss", String(error).slice(0, 120)));
+  await page.waitForTimeout(500);
+  const hoverProbe = await page.evaluate(() => {
+    const btn = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("回收站"));
+    if (!btn) return "no-button";
+    const r = btn.getBoundingClientRect();
+    const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+    return JSON.stringify({
+      bg: getComputedStyle(btn).backgroundColor,
+      inline: (btn.getAttribute("style") || "").includes("background"),
+      topTag: top && top.tagName,
+      topLabel: top && top.getAttribute && top.getAttribute("aria-label"),
+      focused: document.hasFocus(),
+    });
+  });
+  let hoverBg = "";
+  try {
+    hoverBg = JSON.parse(hoverProbe).bg;
+  } catch (error) {
+    hoverBg = "";
+  }
+  check("页脚按钮 hover 有背景变化", hoverBg !== footerRect.bg, footerRect.bg + " -> " + hoverProbe);
+  await shot("01-footer-hover");
+}
+
+// 3) 页脚 → 面板；Esc 关闭
+const emptyPanel = await openPanel();
+check("点击页脚可打开回收站面板", emptyPanel.includes("会话回收站"), emptyPanel.slice(0, 60));
+check("空回收站显示空态", emptyPanel.includes("回收站是空的"), emptyPanel.slice(0, 60));
+await shot("02-panel-empty");
+await page.keyboard.press("Escape");
+await page.waitForTimeout(500);
+check("Esc 可关闭回收站面板", !(await dialogOpen("会话回收站")));
+
+// 4) 菜单 → 确认框（含 plan）；Esc 关闭
+const planText = await openConfirm();
+check("会话菜单可打开确认框并渲染 plan", planText.includes("会话日志约"), planText.slice(0, 120));
+await shot("03-confirm-dialog");
+await page.keyboard.press("Escape");
+await page.waitForTimeout(500);
+check("Esc 可关闭确认框", !(await dialogOpen("移入回收站")));
+
+// 5) 执行删除 → 行消失 + toast
+const beforeRows = await rows();
+await openConfirm();
+const confirmed = await clickDialogButton("移入回收站");
+await page.waitForTimeout(2600);
+const afterRows = await rows();
+check("确认后会话行消失", confirmed && afterRows.length === beforeRows.length - 1,
+  beforeRows.length + " -> " + afterRows.length);
+const toastVisible = await page.evaluate(() => document.body.innerText.includes("已移入回收站"));
+check("删除后出现回执 toast", toastVisible);
+await shot("04-after-delete");
+
+// 6) 刷新不复活 + 角标
 await page.reload();
 await page.waitForTimeout(4500);
-for (let i = 0; i < 3; i++) {
-  await page.keyboard.press("Escape");
-  await page.waitForTimeout(200);
-}
-const reloadRows = await page.evaluate(() => [...document.querySelectorAll("[data-row-key^='session:']")].map((e) => e.getAttribute("data-row-key")));
+await dismiss();
+const reloadRows = await rows();
 const resurrected = beforeRows.filter((id) => !afterRows.includes(id)).filter((id) => reloadRows.includes(id));
 check("刷新页面后已删会话不复活", resurrected.length === 0, JSON.stringify(resurrected));
-
-// 5) 面板里有刚删的条目
-const listState = await page.evaluate(async () => {
+const badge = await page.evaluate(() => {
   const btn = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("回收站"));
-  if (!btn) return { ok: false, text: "no-footer" };
-  btn.click();
-  await new Promise((r) => setTimeout(r, 1400));
-  const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent || "").includes("会话回收站"));
-  const text = dlg ? (dlg.textContent || "").replace(/\\s+/g, " ") : "";
-  return { ok: text.includes("恢复") && text.includes("彻底删除"), text: text.slice(0, 200) };
+  return btn ? btn.getAttribute("aria-label") : "";
 });
-check("回收站面板列出条目", listState.ok, listState.text);
+check("角标反映待恢复条目数", /\\(1\\)/.test(badge || ""), badge);
 
-// 6) 彻底删除 → 面板变空
-const purge = await page.evaluate(async () => {
-  const del = [...document.querySelectorAll('[role="dialog"] button')].find((b) => (b.textContent || "").trim() === "彻底删除");
-  if (!del) return { ok: false, text: "no-purge-button" };
-  del.click();
-  await new Promise((r) => setTimeout(r, 400));
-  const confirmBtn = [...document.querySelectorAll('[role="dialog"] button')].find((b) => (b.textContent || "").trim().includes("彻底删除？"));
-  if (!confirmBtn) return { ok: false, text: "no-confirm" };
-  confirmBtn.click();
+// 7) 面板条目 + 键盘导航
+const withEntry = await openPanel();
+check("回收站面板列出条目", withEntry.includes("恢复") && withEntry.includes("彻底删除"), withEntry.slice(0, 100));
+await shot("05-panel-with-entry");
+const keyboard = await page.evaluate(async () => {
+  const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent || "").includes("会话回收站"));
+  if (!dlg) return "no-dialog";
+  const restore = [...dlg.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === "恢复");
+  if (!restore) return "no-restore-button";
+  restore.focus();
+  const start = (document.activeElement && document.activeElement.textContent) || "";
+  restore.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+  await new Promise((r) => setTimeout(r, 200));
+  const end = (document.activeElement && document.activeElement.textContent) || "";
+  return start !== end ? "moved" : "unchanged:" + start;
+});
+check("面板方向键可移动焦点", keyboard === "moved", keyboard);
+
+// 8) 恢复
+const restored = await clickDialogButton("恢复");
+await page.waitForTimeout(2200);
+const rowsAfterRestore = await rows();
+const panelAfterRestore = await page.evaluate(() => {
+  const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent || "").includes("会话回收站"));
+  return dlg ? (dlg.textContent || "") : "";
+});
+check("恢复后会话回到列表", restored && rowsAfterRestore.length === beforeRows.length,
+  rowsAfterRestore.length + "/" + beforeRows.length);
+check("恢复后回收站清空", panelAfterRestore.includes("回收站是空的"));
+await shot("06-after-restore");
+await page.keyboard.press("Escape");
+await page.waitForTimeout(400);
+
+// 9) 再次删除 → 彻底删除
+await openConfirm();
+await clickDialogButton("移入回收站");
+await page.waitForTimeout(2600);
+await openPanel();
+const purge = await clickDialogButton("彻底删除");
+await page.waitForTimeout(400);
+const purgeConfirm = await page.evaluate(async () => {
+  const btn = [...document.querySelectorAll('[role="dialog"] button')].find((b) => (b.textContent || "").trim().includes("彻底删除？"));
+  if (!btn) return false;
+  btn.click();
+  await new Promise((r) => setTimeout(r, 1600));
+  return true;
+});
+const afterPurge = await page.evaluate(() => {
+  const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent || "").includes("会话回收站"));
+  return dlg ? (dlg.textContent || "") : "";
+});
+check("彻底删除后面板立即变空", purge && purgeConfirm && afterPurge.includes("回收站是空的"));
+const badgeAfterPurge = await page.evaluate(() => {
+  const btn = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("回收站"));
+  return btn ? btn.getAttribute("aria-label") : "";
+});
+check("彻底删除后角标归零", !/\\(\\d\\)/.test(badgeAfterPurge || ""), badgeAfterPurge);
+
+// 10) 审计页签
+const audit = await page.evaluate(async () => {
+  const tab = [...document.querySelectorAll('[role="dialog"] button')].find((b) => (b.textContent || "").trim() === "审计");
+  if (!tab) return "no-audit-tab";
+  tab.click();
   await new Promise((r) => setTimeout(r, 1600));
   const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent || "").includes("会话回收站"));
-  const text = dlg ? (dlg.textContent || "").replace(/\\s+/g, " ") : "";
-  return { ok: text.includes("回收站是空的"), text: text.slice(0, 160) };
+  if (!dlg) return "missing";
+  const text = dlg.textContent || "";
+  return "trash=" + (text.split("trash").length - 1) +
+    " restore=" + (text.split("restore").length - 1) +
+    " purge=" + (text.split("purge").length - 1);
 });
-check("彻底删除后面板立即变空", purge.ok, purge.text);
+check("审计页签记录 trash/restore/purge", audit.includes("trash") && audit.includes("restore") && audit.includes("purge"), audit.slice(0, 120));
+await shot("07-audit-tab");
 
 await task.finish({ keep: false }).catch(() => {});
 console.log("SMOKE_RESULT " + JSON.stringify({ checks }));
@@ -191,6 +305,7 @@ const main = async () => {
   if (!(await hasCommand("ego-browser")))
     return console.log("SKIP 未找到 ego-browser（GUI 冒烟需要本机浏览器环境）");
 
+  await rm(SHOTS_OUT, { recursive: true, force: true }).catch(() => {});
   const work = await mkdtemp(join(tmpdir(), "dsh-smoke-"));
   /** @type {import("node:child_process").ChildProcess | undefined} */
   let host;
@@ -208,6 +323,26 @@ const main = async () => {
     const profileJson = JSON.parse(await readFile(join(profile, "package.json"), "utf8"));
     profileJson.name = "dsh-profile-sdel-smoke";
     await writeFile(join(profile, "package.json"), JSON.stringify(profileJson, null, 2));
+
+    // 没有会话就没什么可删的，直接跳过而不是误报失败
+    const sessionRoots = await readdir(join(home, "sessions"), { withFileTypes: true }).catch(
+      () => [],
+    );
+    let hasSession = false;
+    for (const entry of sessionRoots) {
+      if (!entry.isDirectory()) continue;
+      const inner = await readdir(join(home, "sessions", entry.name), {
+        withFileTypes: true,
+      }).catch(() => []);
+      if (inner.some((item) => item.isDirectory())) {
+        hasSession = true;
+        break;
+      }
+    }
+    if (!hasSession) {
+      console.log("SKIP 临时 profile 里没有会话，先随便开一个会话再跑");
+      return;
+    }
 
     // 打当前源码的包，装进临时 profile
     await run("pnpm", ["pack", "--pack-destination", work], { cwd: PKG_DIR });
@@ -250,8 +385,10 @@ const main = async () => {
     }
 
     const url = "http://127.0.0.1:" + boot.port + "/?token=" + boot.token;
+    const shotsDir = join(work, "shots");
+    await mkdir(shotsDir, { recursive: true });
     const browserFile = join(work, "browser.mjs");
-    await writeFile(browserFile, browserScript(url));
+    await writeFile(browserFile, browserScript(url, shotsDir));
 
     const result = await new Promise((resolvePromise) => {
       const child = spawn("ego-browser", ["nodejs"], { stdio: ["pipe", "pipe", "pipe"] });
@@ -295,6 +432,9 @@ const main = async () => {
   } finally {
     host?.kill("SIGTERM");
     await sleep(500);
+    // 把截图留在固定路径，失败时也能看现场
+    await cp(join(work, "shots"), SHOTS_OUT, { recursive: true }).catch(() => {});
+    console.log("截图目录：" + SHOTS_OUT);
     await rm(work, { recursive: true, force: true });
   }
 };
