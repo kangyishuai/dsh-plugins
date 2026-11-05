@@ -5,7 +5,7 @@
 
 [中文](README.zh-CN.md)
 
-Unofficial plugins for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai). This is a monorepo: every directory under `packages/` is an independent npm package that can be published and installed on its own.
+Unofficial plugins for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). This is a monorepo: every directory under `packages/` is an independent npm package that can be published and installed on its own.
 
 > **Disclaimer**: this is a personal, community project. It is not affiliated with or endorsed by DeepSeek. Some plugins operate on local DSH data. Read each plugin's "Side effects & risks" section before installing.
 

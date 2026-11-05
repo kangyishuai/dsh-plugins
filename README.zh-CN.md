@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-非官方的 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai) 插件集合。**单仓多包**：`packages/` 下的每个目录都是一个独立的 npm 包，可以单独发布、单独安装。
+非官方的 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 插件集合。**单仓多包**：`packages/` 下的每个目录都是一个独立的 npm 包，可以单独发布、单独安装。
 
 > **声明**：个人社区项目，与 DeepSeek 没有关联，也未获其认可。部分插件会操作本地的 DSH 数据，安装前请阅读插件 README 的「副作用与风险」一节。
 

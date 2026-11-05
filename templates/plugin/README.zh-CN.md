@@ -4,7 +4,7 @@
 
 [English](./README.md)
 
-非官方 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai) 插件，与 DeepSeek 无关。
+非官方 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 插件，与 DeepSeek 无关。
 
 ## 做什么
 

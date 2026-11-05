@@ -4,7 +4,7 @@
 
 [中文](./README.zh-CN.md)
 
-Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai). Not affiliated with DeepSeek.
+Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). Not affiliated with DeepSeek.
 
 ## What it does
 
