@@ -62,9 +62,11 @@ async function latestSessionId(dir) {
 
 const main = async () => {
   if (!(await has("dsh"))) return console.log("SKIP 未找到 dsh");
-  if (!process.env.DEEPSEEK_API_KEY) {
+  const modelEnv = ["DEEPSEEK_API_KEY", "ZHINAO_API_KEY"].find((name) => process.env[name]);
+  const patchPath = process.env.DSH_AGENT_TOOL_PATCH;
+  if (!modelEnv && !patchPath) {
     return console.log(
-      "SKIP 未设置 DEEPSEEK_API_KEY（headless profile 默认走 deepseek-official）；设置后重跑即可",
+      "SKIP 没有可用模型凭据：设置 DEEPSEEK_API_KEY，或用 DSH_AGENT_TOOL_PATCH 指定包含模型配置的补丁文件",
     );
   }
 
@@ -73,6 +75,12 @@ const main = async () => {
     const home = join(work, "home");
     await mkdir(home, { recursive: true });
     const env = { ...process.env, DSH_HOME: home };
+    // 有凭据就复制一份，headless profile 才能解析 provider key
+    await run("cp", [
+      join(process.env.HOME ?? "", ".dsh", ".credentials.yaml"),
+      join(home, ".credentials.yaml"),
+    ]).catch(() => {});
+    const extraArgs = patchPath ? ["--patch", patchPath] : [];
 
     // 打包当前源码并装进 headless profile
     await run("pnpm", ["pack", "--pack-destination", work], { cwd: PKG_DIR });
@@ -100,7 +108,10 @@ const main = async () => {
       ". " +
       "First call it with action=plan, then call it again with action=delete and the token from the plan response. " +
       "Report the JSON of both calls verbatim.";
-    const result = await run("dsh", ["--profile", "headless", prompt], { env, timeout: 300_000 });
+    const result = await run("dsh", ["--profile", "headless", ...extraArgs, prompt], {
+      env,
+      timeout: 300_000,
+    });
     console.log("模型输出尾部：\n" + result.stdout.slice(-1200));
 
     // 3) 断言：回收站里有条目，且审计记录 operator=agent

@@ -216,8 +216,15 @@ pnpm smoke:session-delete
 > 真实模型调用可以跑：
 
 ```bash
+# 方式一：官方路由
 DEEPSEEK_API_KEY=<key> pnpm smoke:agent-tool
+
+# 方式二：复用桌面版的 provider 配置（从 ~/.dsh/profiles/desktop/cordis.patch.yml 抽出模型块）
+DSH_AGENT_TOOL_PATCH=/tmp/model-overlay.yml ZHINAO_API_KEY=<key> pnpm smoke:agent-tool
 ```
+
+> 脚本会把 `~/.dsh/.credentials.yaml` 复制进临时 home；但 provider 的 `apiKeyEnv`
+> 仍需要环境变量，所以方式二还要额外 export 对应 key。
 
 > 它会临时建 headless profile、安装当前源码、让模型走一遍 plan→delete，并断言审计里出现
 > `operator=agent`；没有 key 时打印 SKIP。桌面版默认走 zhinao provider，这条脚本用官方
