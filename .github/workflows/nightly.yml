@@ -1,0 +1,25 @@
+name: Nightly
+
+# 每天跑一次仓库级验证；DSH 相关的探针/冒烟脚本在缺少宿主或浏览器时自行 SKIP。
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm verify
+      - run: node scripts/probe-runtime.mjs
+      - run: node scripts/smoke-session-delete.mjs

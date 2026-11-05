@@ -114,9 +114,16 @@ const main = async () => {
   });
   const asarPath = values.asar ?? process.env.DSH_ASAR ?? DEFAULT_ASAR;
   if (!existsSync(asarPath)) {
-    console.error("找不到 app.asar：" + asarPath);
-    console.error("用 --asar <path> 或 DSH_ASAR=<path> 指定。");
-    process.exitCode = 2;
+    const explicit = Boolean(values.asar ?? process.env.DSH_ASAR);
+    if (explicit) {
+      console.error("找不到 app.asar：" + asarPath);
+      console.error("用 --asar <path> 或 DSH_ASAR=<path> 指定。");
+      process.exitCode = 2;
+      return;
+    }
+    console.log(
+      "SKIP 没找到默认的 DSH 安装（" + asarPath + "）；这通常意味着不在装了 DSH 的机器上",
+    );
     return;
   }
 
