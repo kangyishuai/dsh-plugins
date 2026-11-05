@@ -59,6 +59,10 @@ pnpm verify    # lint + typecheck + 插件规范检查 + 测试，CI 跑的是�
 
 `.changeset/` 已在 `biome.json` 里排除格式化——否则 Biome 会把 frontmatter 改写成 Markdown 标题，导致 changesets 解析失败。
 
+## 公开边界
+
+这是公开仓库。不要提交 token 和密钥、真实会话内容，也不要提交带真实用户名的本机路径。调研草稿和竞品点评留在本地，只把核实过的结论写进 `docs/`。提交时 `pnpm check:public` 会自动拦截常见问题，详细规则见 [AGENTS.md](AGENTS.md#公开边界)。
+
 ## 引用第三方代码
 
 参考或借用其他 DSH 插件的代码前，先确认对方的许可证允许。借用了就在仓库根目录的 `NOTICE` 里写明出处和许可证（文件不存在就新建）。
