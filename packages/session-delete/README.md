@@ -117,7 +117,6 @@ After a DSH upgrade: restart, then open the plugin status (settings → plugins)
 The following are planned and not implemented yet:
 
 - batch deletion (multi-select);
-- an undo toast after a delete.
 
 ## License
 
