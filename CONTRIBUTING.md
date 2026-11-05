@@ -140,7 +140,9 @@ pnpm wt rm feat/session-delete-batch --delete-branch   # PR 合并后清理
    - **走 PR**：直接把带 changeset 的提交推到 `main`，CI 会开一个「Version Packages」PR，合并它即可
 3. `main` 上出现尚未发布的版本号时，Release 工作流会发布到 npm 并打 tag `@kangyishuai/dsh-<name>@<version>`，同时创建 GitHub Release
 
-不要在本地 `npm publish`。
+发布由 [`scripts/publish.mjs`](scripts/publish.mjs) 完成。它用 `npm publish --provenance` 发布，npm 页面会显示「Built and signed on GitHub Actions」，用户能确认包来自本仓库的 CI。之所以不用 `changeset publish`，是因为它在 pnpm 仓库里调用 `pnpm publish`，而 pnpm 不支持 provenance。发布成功后脚本会运行 `changeset git-tag`，由工作流推送 tag、创建 GitHub Release。
+
+不要在本地 `npm publish`，脚本在 CI 之外也会拒绝执行。想看会发布什么，用 `node scripts/publish.mjs --dry-run`。
 
 0.x 阶段：破坏性改动 bump minor，其余 bump patch。
 

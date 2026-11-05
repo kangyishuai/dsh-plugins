@@ -27,7 +27,7 @@
     "verify": "pnpm lint && pnpm typecheck && pnpm check && pnpm check:public && pnpm test",
     "changeset": "changeset",
     "version-packages": "changeset version && pnpm install --lockfile-only",
-    "release": "pnpm verify && changeset publish",
+    "release": "pnpm verify && node scripts/publish.mjs",
     "prepare": "simple-git-hooks",
     "smoke:session-delete": "node scripts/smoke-session-delete.mjs",
     "probe:runtime": "node scripts/probe-runtime.mjs",
