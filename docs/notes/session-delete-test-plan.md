@@ -215,8 +215,12 @@ pnpm smoke:session-delete
 > - 会话变化：`plan 之后先让我把目标会话改个名/发一条消息，再 delete` → `stale-plan`。
 > 真实模型调用可以跑：
 
+> 以下命令都在**仓库根目录**执行（`pnpm` 需要找到根 `package.json`）；不在仓库根时可直接
+> `node <repo>/scripts/smoke-agent-tool.mjs`。
+
 ```bash
 # 方式一：官方路由
+cd <repo>
 DEEPSEEK_API_KEY=<key> pnpm smoke:agent-tool
 
 # 方式二：复用桌面版的 provider 配置（从 ~/.dsh/profiles/desktop/cordis.patch.yml 抽出模型块）
