@@ -1,7 +1,11 @@
 // @ts-check
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createAgentToolController, summarizePlanForModel } from "../lib/agent-tool.js";
+import {
+  createAgentToolController,
+  normalizeToolError,
+  summarizePlanForModel,
+} from "../lib/agent-tool.js";
 
 /** @param {{ digest?: string, blockers?: any[], children?: any[] }} [overrides] */
 function fakeOps(overrides = {}) {
@@ -113,4 +117,14 @@ test("cascade 从预览继承到执行", async () => {
   const preview = await controller.plan({ sessionId: "session-abc", cascade: true });
   await controller.remove({ sessionId: "session-abc", token: preview.token });
   assert.equal(ops.calls.trash[0].request.cascade, true);
+});
+
+test("内部错误归一成模型友好的 code", () => {
+  const notFound = Object.assign(new Error("no session named x"), { code: "session/not-found" });
+  assert.deepEqual(normalizeToolError(notFound), {
+    ok: false,
+    code: "not-found",
+    message: "no session named x",
+  });
+  assert.equal(normalizeToolError(new Error("boom")).code, "error");
 });

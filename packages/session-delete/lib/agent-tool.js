@@ -153,3 +153,21 @@ export function summarizePlanForModel(planResult) {
   parts.push("token " + planResult.token + " expires " + planResult.expiresAt);
   return parts.join(" | ");
 }
+
+/**
+ * 把内部错误归一成模型能理解的返回：session/not-found → not-found。
+ * @param {unknown} error
+ * @returns {{ ok: false, code: string, message: string }}
+ */
+export function normalizeToolError(error) {
+  const raw = /** @type {any} */ (error);
+  const code =
+    typeof raw?.code === "string" && raw.code.startsWith("session/")
+      ? raw.code.slice("session/".length)
+      : "error";
+  return {
+    ok: false,
+    code,
+    message: error instanceof Error ? error.message : String(error),
+  };
+}

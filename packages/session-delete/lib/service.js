@@ -2,7 +2,11 @@
 // Typert Remote 包装层：把 operations 的方法暴露给浏览器，一条 /api 通道。
 // declareRemote 的写法参考 Jaylor-Wang/dsh-tool-session-delete（MIT），见根目录 NOTICE。
 import { Remote, RemoteError, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
-import { createAgentToolController, summarizePlanForModel } from "./agent-tool.js";
+import {
+  createAgentToolController,
+  normalizeToolError,
+  summarizePlanForModel,
+} from "./agent-tool.js";
 import { createOperations } from "./operations.js";
 import { resolveDataRoot } from "./paths.js";
 
@@ -164,11 +168,7 @@ export class SessionDeleteService extends TypertRemoteService {
                 callerSessionId: typeof callerSessionId === "string" ? callerSessionId : undefined,
               });
             } catch (error) {
-              return {
-                ok: false,
-                code: "error",
-                message: error instanceof Error ? error.message : String(error),
-              };
+              return normalizeToolError(error);
             }
           },
         }),
