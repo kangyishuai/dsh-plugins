@@ -1,5 +1,12 @@
 # @kangyishuai/dsh-session-delete
 
+## 0.4.2
+
+### Patch Changes
+
+- 文档同步：兼容性章节改为「三层防线 + 四档能力」（api/internal/minimal/unknown），
+  补齐 0.4.x 的批量与刷新行为说明，并标注仅 macOS 实测、Windows 路径未验证。
+
 ## 0.4.1
 
 ### Patch Changes
