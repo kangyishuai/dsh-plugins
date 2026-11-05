@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 240" width="960" height="240" role="img" aria-labelledby="title">
+  <title id="title">DSH Plugins: careful, well-tested plugins for DeepSeek Harness</title>
+  <g transform="translate(40 40)">
+  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4b6bfb"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs>
+  <rect x="0" y="0" width="160" height="160" rx="40" fill="url(#g)"/>
+  <g fill="#fff">
+    <rect x="58" y="26" width="12" height="30" rx="6"/>
+    <rect x="90" y="26" width="12" height="30" rx="6"/>
+    <rect x="42" y="50" width="76" height="52" rx="16"/>
+    <rect x="70" y="100" width="20" height="14" rx="3"/>
+  </g>
+  <path d="M80 112 v14 c0 12 10 16 22 16 h18" fill="none" stroke="#fff" stroke-width="10" stroke-linecap="round"/>
+  </g>
+  <text x="236" y="126" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="72" font-weight="700" fill="#f0f6fc">DSH Plugins</text>
+  <text x="238" y="172" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="26" fill="#9198a1">Careful, well-tested plugins for DeepSeek Harness</text>
+</svg>

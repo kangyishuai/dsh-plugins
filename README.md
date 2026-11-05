@@ -1,21 +1,24 @@
-# DSH Plugins
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/banner-dark.svg">
+    <img src=".github/assets/banner-light.svg" alt="DSH Plugins: careful, well-tested plugins for DeepSeek Harness" width="640">
+  </picture>
+</p>
 
-[![CI](https://github.com/kangyishuai/dsh-plugins/actions/workflows/ci.yml/badge.svg)](https://github.com/kangyishuai/dsh-plugins/actions/workflows/ci.yml)
-[![npm scope](https://img.shields.io/badge/npm-%40kangyishuai-cb3837?logo=npm)](https://www.npmjs.com/search?q=%40kangyishuai%2Fdsh-)
-[![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.1--rc.5-4b6bfb)](docs/runtime/0.2.1-rc.5.md)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+<p align="center">
+  <a href="https://github.com/kangyishuai/dsh-plugins/actions/workflows/ci.yml"><img src="https://github.com/kangyishuai/dsh-plugins/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://www.npmjs.com/search?q=%40kangyishuai%2Fdsh-"><img src="https://img.shields.io/badge/npm-%40kangyishuai-cb3837?logo=npm" alt="npm scope"></a>
+  <a href="docs/runtime/0.2.1-rc.5.md"><img src="https://img.shields.io/badge/verified%20on%20DSH-0.2.1--rc.5-4b6bfb" alt="Verified on DSH 0.2.1-rc.5"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+</p>
 
-**Careful, well-tested plugins for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness).** Each one is an independent npm package. Each one is verified end to end against a real DSH host before release.
-
-[中文](README.zh-CN.md)
-
-![session-delete: the delete confirmation shows exactly what will happen before anything is touched](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/overview.png)
+<p align="center">Plugins for <a href="https://github.com/deepseek-ai/deepseek-harness">DeepSeek Harness (DSH)</a>. Each one is an independent npm package, verified end to end against a real DSH host before release.<br><b>English</b> · <a href="README.zh-CN.md">中文</a></p>
 
 ## Plugins
 
-| Plugin                                               | What it does                                                                                                                                                                                                                                                                                | Version                                                                                                                                      |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| [**session-delete**](packages/session-delete#readme) | Really deletes sessions instead of just archiving them. Deleted sessions go to a restorable trash, and the confirm dialog shows the plan first: size, sub-sessions, and the references that will be cleaned. Every action goes into an audit log, and a receipt lists anything left behind. | [![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-delete?label=)](https://www.npmjs.com/package/@kangyishuai/dsh-session-delete) |
+| Plugin                                                                                                                          | What it does                                                                                                                                                                                                                                                                                | Version                                                                                                                                      |
+| ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| [**session-delete**](packages/session-delete#readme)<br><sub>[screenshots](packages/session-delete/README.md#screenshots)</sub> | Really deletes sessions instead of just archiving them. Deleted sessions go to a restorable trash, and the confirm dialog shows the plan first: size, sub-sessions, and the references that will be cleaned. Every action goes into an audit log, and a receipt lists anything left behind. | [![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-delete?label=)](https://www.npmjs.com/package/@kangyishuai/dsh-session-delete) |
 
 More plugins are on the way.
 
