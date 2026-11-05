@@ -231,8 +231,11 @@ DSH_AGENT_TOOL_PATCH=/tmp/model-overlay.yml ZHINAO_API_KEY=<key> pnpm smoke:agen
 > 仍需要环境变量，所以方式二还要额外 export 对应 key。
 
 > 它会临时建 headless profile、安装当前源码、让模型走一遍 plan→delete，并断言审计里出现
-> `operator=agent`；没有 key 时打印 SKIP。桌面版默认走 zhinao provider，这条脚本用官方
-> `deepseek-official` 路由，因此需要单独的 key。
+> `operator=agent`；没有 key 时打印 SKIP。
+>
+> **真机结果（2026-11-05）**：通过。headless 组合没有 workspaceRegistry，能力探测落在
+> `minimal` 档：会话目录、投影缓存、宿主内存条目正常清理；归档/置顶/工作区记账/spill
+> 标记为 skipped 并在回执里逐项列出，模型据此说明「这些接口当前宿主不提供」。
 
 ## 4. 回归节奏
 
