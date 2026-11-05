@@ -29,7 +29,7 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec biome ci .
+      - run: pnpm exec biome ci --error-on-warnings .
       - run: pnpm typecheck
       - run: pnpm check
       - run: pnpm test

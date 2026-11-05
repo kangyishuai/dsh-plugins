@@ -4,6 +4,10 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    ignore:
+      # 类型版本跟随 package.json#engines 的下限（Node 22），不跟最新 Node
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       dev-tooling:
         patterns: ["*"]
