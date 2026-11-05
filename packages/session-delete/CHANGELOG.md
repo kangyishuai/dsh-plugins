@@ -1,5 +1,25 @@
 # @kangyishuai/dsh-session-delete
 
+## 0.3.0
+
+### Minor Changes
+
+- 新增模型工具 session_delete：两段式 plan → 一次性 token → delete。
+  拒绝删除调用者自己的会话；会话在预览后变化会让 token 失效；回执记录
+  operator=agent，便于区分人工与模型操作。
+
+- 删除确认框支持级联：通过 parentSession 血缘（任意深度）+ live 子代理活动
+  发现子会话，默认不删，勾选后父会话与子会话分别进入回收站（可分别恢复），
+  回执里记录每个子会话的结果。
+
+### Patch Changes
+
+- 模型工具对已删除的会话再 plan 时返回 code=not-found，而不是笼统的 error。
+
+- 修复外部删除（agent 工具、另一个窗口、CLI）后列表不刷新的问题：
+  客户端每 10 秒轮询一次会话列表、页面重新可见时立即拉取，已删除的行会自动消失；
+  同一轮询也会刷新侧栏页脚回收站的计数（agent 工具/另一个窗口的删除同样反映）。
+
 ## 0.2.0
 
 ### Minor Changes
