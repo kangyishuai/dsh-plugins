@@ -1390,7 +1390,11 @@ window.__ModuleLoader__.load({
       // 定期拉一次会话列表；页面重新可见时也立刻拉一次。
       ctx.effect(() => {
         const pull = () => {
-          if (document.visibilityState === "visible") void refreshRows(undefined);
+          if (document.visibilityState === "visible") {
+            void refreshRows(undefined);
+            // 回收站条目也可能被 agent 工具/另一个窗口改变，顺带刷新页脚计数
+            tickStore.set(tickStore.getSnapshot() + 1);
+          }
         };
         const timer = setInterval(pull, 10_000);
         document.addEventListener("visibilitychange", pull);
