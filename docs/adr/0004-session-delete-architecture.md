@@ -3,11 +3,11 @@
 - 状态：已接受
 - 日期：2026-11-04
 - 涉及：session-delete
-- 关联：[ADR 0002](0002-destructive-operations.md)、[ADR 0005](0005-dsh-version-compatibility.md)、[调研索引](../notes/session-delete-research.md)
+- 关联：[ADR 0002](0002-destructive-operations.md)、[ADR 0005](0005-dsh-version-compatibility.md)、[测试清单](../testing/session-delete.md)
 
 ## 背景
 
-产品形态见 [ADR 0003](0003-session-delete-product-shape.md)（回收站 / plan / 审计 / 对账四支柱），同类插件矩阵见 [research/feature-matrix.md](../notes/research/feature-matrix.md)：55 个同类里四项全有的是 0 个，但单看回收站已有 16 个。所以要赢只能赢在**组合的严密性与工程质量**，而不是功能数量。
+产品形态见 [ADR 0003](0003-session-delete-product-shape.md)（回收站 / plan / 审计 / 对账四支柱），据同类插件调研（私有笔记）：55 个同类里四项全有的是 0 个，但单看回收站已有 16 个。所以要赢只能赢在**组合的严密性与工程质量**，而不是功能数量。
 
 约束：plain JS + JSDoc 无构建（ADR 0001）、破坏性操作默认可恢复（ADR 0002）、不写死 DSH 内部实现（AGENTS.md 硬性约定 1）。
 

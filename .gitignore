@@ -30,3 +30,6 @@ tmp/
 # test output
 coverage/
 *.tgz
+
+# 私有调研笔记（独立私有仓库 kangyishuai/dsh-plugins-notes，见 AGENTS.md）
+/notes/

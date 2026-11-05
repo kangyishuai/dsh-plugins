@@ -52,7 +52,7 @@ dsh-plugins/
 ├── templates/plugin/    # pnpm new 用的脚手架模板
 ├── scripts/             # 脚手架、规范检查等仓库脚本
 ├── types/               # 手写的 DSH 宿主/client 类型声明（供 JSDoc 检查）
-├── docs/                # 约定、运行时勘察、ADR、调研笔记
+├── docs/                # 约定、运行时勘察、ADR、测试清单
 └── .changeset/          # 待发布的变更说明（Changesets）
 ```
 

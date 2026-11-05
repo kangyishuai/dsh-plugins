@@ -51,7 +51,7 @@ dsh-plugins/
 ├── templates/plugin/    # scaffold used by `pnpm new`
 ├── scripts/             # scaffold, convention checker, helpers
 ├── types/               # hand-written DSH host/client type declarations (JSDoc checking)
-├── docs/                # conventions, runtime notes, ADRs, research notes
+├── docs/                # conventions, runtime notes, ADRs, test plans
 └── .changeset/          # pending release notes (Changesets)
 ```
 

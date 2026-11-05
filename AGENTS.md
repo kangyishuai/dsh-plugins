@@ -32,6 +32,19 @@
 5. 需要发版的改动跑 `pnpm changeset`
 6. 新增插件时同步更新：根目录两份 README 的插件清单、`.github/ISSUE_TEMPLATE/bug_report.yml` 的插件下拉选项
 
+## 调研笔记（私有）
+
+调研笔记**不进本仓库**，放在独立的私有仓库 `kangyishuai/dsh-plugins-notes`，本地克隆到仓库根目录的 `notes/`（已被 `.gitignore` 忽略）：
+
+```bash
+git clone https://github.com/kangyishuai/dsh-plugins-notes.git notes
+```
+
+- 新插件开工前的调研写到 `notes/<plugin>/`，`README.md` 是索引；跨插件的生态调研放 `notes/ecosystem/`
+- `notes/` 有自己的 git，在里面单独提交、推送
+- 公开仓库里的文件**不能链接到 `notes/`**（公开后是死链）。调研结论要沉淀回公开仓库：已验证的宿主事实 → `docs/runtime/<版本>.md`；决策 → `docs/adr/`；借鉴来源 → `NOTICE`；测试步骤 → `docs/testing/<plugin>.md`
+- 笔记里指向公开仓库的链接用 GitHub 绝对地址
+
 ## 硬性约定
 
 1. **不写死 DSH 内部实现**。会话文件格式带版本号（如 `session.v4.jsonl.zstd`），目录布局也会变。一律按「扫描 + 匹配已知模式」实现，遇到不认识的条目保留并告警，不要 `rm -rf` 整个上层目录。

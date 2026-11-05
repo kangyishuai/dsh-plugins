@@ -8,7 +8,7 @@
 
 DSH 官方只支持**归档**会话（往 `workspace.json` 的 `archivedSessionIds` 加 id），日志文件原样留在磁盘上。session-delete 要提供真正的删除。
 
-调研结论见 [notes/session-delete-research.md](../notes/session-delete-research.md)、[notes/research/](../notes/research/)、[runtime/0.2.1-rc.5.md](../runtime/0.2.1-rc.5.md) `6。三条关键事实：
+调研结论见 [runtime/0.2.1-rc.5.md](../runtime/0.2.1-rc.5.md)（调研笔记原文为私有，未随仓库公开） `6。三条关键事实：
 
 1. **同类插件 ≈45 个**，回收站/恢复/批量/级联/撤销/自动过期都已有实现——功能列表不再是差异点。
 2. 官方 API 没有删除接口，但提供了 `stat` / `open(id,'write')`（写租约探测）/ `locate(header)`（真实路径）/ 归档集合闸门 / `workspace/session-stop`，足够拼出安全删除。
