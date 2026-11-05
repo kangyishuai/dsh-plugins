@@ -116,12 +116,6 @@ DSH 升级之后：重启，然后看插件的状态条（设置 → 插件）�
 | 彻底删除后还残留东西         | 删除回执里列出的残留                                             | 对回执和审计日志，按回执里的路径手动清理，并把回执附在 issue 里  |
 | 删完之后回收站是空的         | 插件解析到的数据根目录和你的 DSH 不是同一个（`DSH_HOME` / 配置） | 去磁盘上看 `~/.dsh/session-trash/`，再核对插件的 `dataRoot` 配置 |
 
-## 计划中（后续版本）
-
-下面这些是计划，尚未实现：
-
-- 批量删除（多选）；
-
 ## License
 
 MIT，见 [LICENSE](./LICENSE)。本插件借鉴了若干社区项目的**设计**（不是代码），来源记在仓库的 [NOTICE](https://github.com/kangyishuai/dsh-plugins/blob/main/NOTICE)。
