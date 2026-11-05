@@ -128,6 +128,21 @@ export function checkRepo(root = REPO_ROOT) {
       }
     }
   }
+  // 仓库级登记：PR 自动打标签、bug 报告下拉（pnpm new 会自动写入，手建的插件容易漏）
+  const labeler = join(root, ".github", "labeler.yml");
+  const bug = join(root, ".github", "ISSUE_TEMPLATE", "bug_report.yml");
+  for (const dir of listPluginDirs(root)) {
+    if (existsSync(labeler) && !readFileSync(labeler, "utf8").includes(`"plugin:${dir}"`)) {
+      issues.push({
+        level: "warn",
+        plugin: dir,
+        message: `.github/labeler.yml 缺少 "plugin:${dir}" 规则`,
+      });
+    }
+    if (existsSync(bug) && !readFileSync(bug, "utf8").includes(`"${PREFIX}${dir}"`)) {
+      issues.push({ level: "warn", plugin: dir, message: "bug_report.yml 的插件下拉缺少本插件" });
+    }
+  }
   return issues;
 }
 

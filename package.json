@@ -16,6 +16,7 @@
   },
   "scripts": {
     "new": "node scripts/new-plugin.mjs",
+    "wt": "node scripts/worktree.mjs",
     "check": "node scripts/check-plugins.mjs",
     "check:public": "node scripts/check-public.mjs",
     "list-plugins": "node scripts/list-plugins.mjs",

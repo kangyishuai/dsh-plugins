@@ -37,7 +37,33 @@ export function scaffold({ root = REPO_ROOT, name, description = "TODO: one-line
     );
     if (out !== text) writeFileSync(file, out);
   }
+  registerInRepo(root, name);
   return target;
+}
+
+/**
+ * 把新插件登记到仓库级配置：PR 自动打标签、bug 报告的插件下拉。
+ * 文件不存在（比如测试用的临时仓库）就跳过；`pnpm check` 会提示缺失的登记。
+ * @param {string} root
+ * @param {string} name
+ */
+export function registerInRepo(root, name) {
+  const labeler = join(root, ".github", "labeler.yml");
+  if (existsSync(labeler)) {
+    const text = readFileSync(labeler, "utf8");
+    if (!text.includes(`"plugin:${name}"`)) {
+      const block = `\n"plugin:${name}":\n  - changed-files:\n      - any-glob-to-any-file: "packages/${name}/**"\n`;
+      writeFileSync(labeler, text.replace(/\n*$/, "\n") + block);
+    }
+  }
+  const bug = join(root, ".github", "ISSUE_TEMPLATE", "bug_report.yml");
+  if (existsSync(bug)) {
+    const text = readFileSync(bug, "utf8");
+    const pkg = `"@kangyishuai/dsh-${name}"`;
+    if (!text.includes(pkg)) {
+      writeFileSync(bug, text.replace(/^(\s*)- other$/m, `$1- ${pkg}\n$1- other`));
+    }
+  }
 }
 
 /** @param {string} dir @returns {string[]} */
@@ -58,6 +84,8 @@ if (isMain(import.meta.url)) {
   try {
     const target = scaffold({ name, description: rest.join(" ") || undefined });
     console.log(`已生成 ${relative(REPO_ROOT, target)}`);
+    console.log("已登记到 .github/labeler.yml 与 bug_report.yml；记得在 GitHub 上建标签：");
+    console.log(`  gh label create "plugin:${name}" --color 7057ff`);
     console.log("下一步：pnpm install && pnpm check");
     console.log(`本地安装：dsh plugin --profile desktop add "link:${target}"`);
   } catch (error) {
