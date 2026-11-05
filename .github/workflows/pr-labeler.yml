@@ -1,0 +1,19 @@
+name: PR labeler
+
+# 按改动路径给 PR 打标签，规则见 .github/labeler.yml。
+# 用 pull_request_target 才能给 fork 来的 PR 打标签；本工作流不检出、不执行 PR 里的代码。
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/labeler@v7
+        with:
+          sync-labels: true

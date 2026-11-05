@@ -51,3 +51,35 @@ test("能发现 locale 不一致、宿主依赖和重复 cordis id", () => {
   assert.match(messages, /publishConfig\.access/);
   assert.match(messages, /hello-world: cordis id「hello-world」与 broken 重复/);
 });
+
+test("pnpm new 会登记到 labeler 与 bug 报告下拉，缺失时 check 给出警告", () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "dsh-plugins-register-"));
+  try {
+    mkdirSync(join(repoRoot, "packages"));
+    mkdirSync(join(repoRoot, ".github", "ISSUE_TEMPLATE"), { recursive: true });
+    writeFileSync(join(repoRoot, ".github", "labeler.yml"), '"area:ci":\n  - changed-files: []\n');
+    writeFileSync(
+      join(repoRoot, ".github", "ISSUE_TEMPLATE", "bug_report.yml"),
+      "body:\n  - type: dropdown\n    attributes:\n      options:\n        - other\n",
+    );
+    scaffold({ root: repoRoot, name: "foo-bar" });
+    const labeler = readFileSync(join(repoRoot, ".github", "labeler.yml"), "utf8");
+    assert.match(
+      labeler,
+      /"plugin:foo-bar":\n {2}- changed-files:\n {6}- any-glob-to-any-file: "packages\/foo-bar\/\*\*"/,
+    );
+    const bug = readFileSync(join(repoRoot, ".github", "ISSUE_TEMPLATE", "bug_report.yml"), "utf8");
+    assert.match(bug, / {8}- "@kangyishuai\/dsh-foo-bar"\n {8}- other/);
+    assert.deepEqual(checkRepo(repoRoot), []);
+
+    writeFileSync(join(repoRoot, ".github", "labeler.yml"), "");
+    assert.match(
+      checkRepo(repoRoot)
+        .map((i) => i.message)
+        .join("\n"),
+      /labeler\.yml 缺少/,
+    );
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});

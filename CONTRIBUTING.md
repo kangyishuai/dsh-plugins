@@ -62,6 +62,61 @@ SMOKE_DEMO=1 pnpm smoke:session-delete   # 截图在系统临时目录的 dsh-sm
 - 不引入打包器；client 半是手写的 classic script
 - 格式与 lint 都交给 Biome，不需要手动对齐
 
+## 工作流：Issue → 分支 → PR
+
+### 分支
+
+- `main` 永远可以发布。工作分支是短命的，合并后自动删除。
+- 命名：`<type>/<plugin>-<主题>`。`type` 与提交类型一致，主题用 kebab-case。
+  - 插件改动：`feat/session-delete-batch`、`fix/session-delete-ghost-entry`
+  - 仓库级改动：`chore/repo-worktree`、`docs/repo-workflow`、`ci/repo-gitleaks`
+- 一个分支只做一件事，只改一个插件。
+
+### 直推还是走 PR
+
+| 改动                                                    | 方式                                                            |
+| ------------------------------------------------------- | --------------------------------------------------------------- |
+| **插件代码**（`packages/<name>/lib`、`locale`、`test`） | **必须走 PR**：先看到 CI 结果和 changeset，再合并               |
+| 仓库脚本、模板、CI 配置                                 | 建议走 PR                                                       |
+| 纯文档、错别字、README 措辞                             | 可以直推 `main`                                                 |
+| 发版（`chore(release): …`）                             | 本地 `pnpm version-packages` 后直推，或合并 Version Packages PR |
+
+### PR
+
+- 一个 PR 只改一个插件，共享文件（`docs/`、根配置）另开 PR。
+- 合并方式：**squash**（已禁用 merge commit）。squash 后 PR 标题就是 `main` 上的提交信息，所以 **PR 标题也必须符合 Conventional Commits**，CI 的 `PR title` 检查会校验。
+- 描述里写 `Closes #<issue>`，按 PR 模板勾选自查清单。
+- 标签由 `actions/labeler` 按改动路径自动打（`plugin:<name>`、`area:repo`、`area:ci`、`documentation`），不用手动打。
+
+### Issue 与标签
+
+| 标签                                      | 含义                                                              |
+| ----------------------------------------- | ----------------------------------------------------------------- |
+| `bug` / `enhancement` / `question`        | 类型，由 issue 模板自动打                                         |
+| `plugin:<name>`                           | 涉及哪个插件（PR 自动打；issue 手动补）                           |
+| `area:repo` / `area:ci` / `documentation` | 仓库级改动                                                        |
+| `needs-dsh-verify`                        | 需要在真实 DSH 上手动验证才能关                                   |
+| `breaking`                                | 对用户的破坏性变更，发版要 bump minor 并在 changeset 里写迁移说明 |
+| `dependencies` / `release`                | Dependabot、Version Packages PR                                   |
+
+### 并行开发：一个分支一个 worktree
+
+同时开发多个插件（或多个 AI agent 并行）时，**不要在同一个目录里来回切分支**，每个分支用独立的 worktree：
+
+```bash
+pnpm wt feat/session-delete-batch      # 建分支 + worktree，链接 notes/，pnpm install
+pnpm wt list                           # 看所有 worktree
+pnpm wt rm feat/session-delete-batch --delete-branch   # PR 合并后清理
+```
+
+- worktree 统一放在主仓库旁边：`../dsh-plugins.worktrees/<分支名，/ 换成 -->`
+- git hooks 所有 worktree 共用；私有的 `notes/` 以符号链接接入，只有一份
+- `pnpm wt rm` 不会强删：有未提交改动时 git 会拒绝。squash 合并的分支 git 识别不出「已合并」，确认 PR 合并后用 `git branch -D` 删
+- **并行时的冲突点**：
+  - DSH 的 `desktop` profile 是共用的，两个 worktree 都装开发版会互相覆盖。并行时的 GUI 验证一律用 `pnpm smoke:<plugin>`（临时 DSH 目录），只在最后合并前装进 `desktop` 手测
+  - changeset 文件名随机，不会冲突；`pnpm-lock.yaml` 可能冲突，rebase 后重新 `pnpm install` 即可
+  - 同一个插件同时只在一个分支上开发
+
 ## 提交信息
 
 遵循 [Conventional Commits](https://www.conventionalcommits.org/)，commit-msg hook 会自动校验：

@@ -1,0 +1,29 @@
+# PR 按改动路径自动打标签（actions/labeler）。
+# 插件标签 plugin:<name> 由 `pnpm new` 自动追加；`pnpm check` 会提示缺失的条目。
+
+"area:repo":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "scripts/**"
+          - "templates/**"
+          - "types/**"
+          - "*.json"
+          - "*.yaml"
+          - "*.mjs"
+          - ".changeset/config.json"
+
+"area:ci":
+  - changed-files:
+      - any-glob-to-any-file: ".github/**"
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**"
+          - "*.md"
+
+# --- plugins ---
+
+"plugin:session-delete":
+  - changed-files:
+      - any-glob-to-any-file: "packages/session-delete/**"

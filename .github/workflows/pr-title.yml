@@ -1,0 +1,25 @@
+name: PR title
+
+# 合并方式是 squash，PR 标题会成为 main 上的提交信息，所以标题也要符合 Conventional Commits。
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  commitlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Lint PR title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: printf '%s\n' "$TITLE" | pnpm exec commitlint --verbose
