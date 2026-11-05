@@ -77,10 +77,12 @@
 
 ## 范围与顺序
 
-| 里程碑 | 内容                                                                                                                                                                                              |
-| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1   | 四支柱 + 单条路径：capability / paths / plan / trash / restore / reconcile(单 id) / audit / purge / 菜单 + 确认框 + 回收站面板（含审计页签）                                                      |
-| v0.2   | 批量（顺序执行 + 逐条结果）、级联勾选（**已实现**）、agent 工具（**已实现**：两段式 plan→token→delete，拒绝删除调用者）、撤销 toast、健康检查全库扫描（**已实现**）、回执（**已实现**，暂无导出） |
+| 里程碑 | 内容                                                                                                                                                                                      |
+| ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1   | 四支柱 + 单条路径：capability / paths / plan / trash / restore / reconcile(单 id) / audit / purge / 菜单 + 确认框 + 回收站面板（含审计页签）                                              |
+| v0.2   | 健康检查全库扫描、删除回执、面板的审计/体检/回执页签（**已随 0.2.0 发布**）                                                                                                               |
+| v0.3   | 级联勾选、agent 工具（两段式 plan→token→delete，拒绝删除调用者）、外部删除后列表与角标自动刷新（**已随 0.3.0 发布**）                                                                     |
+| v0.4   | minimal 能力档（没有 workspaceRegistry 的宿主仍可删除）、回收站内批量恢复/批量彻底删除、对话框长内容内部滚动（**已随 0.4.1 发布**；0.4.0 的「活跃会话批量删除」页签方向错误，0.4.1 已撤） |
 
 ## 影响
 
@@ -88,10 +90,12 @@
 - v0.1 不碰 `list()`、不碰日志正文，性能预算：plan < 5ms、trash/restore < 20ms、200 条面板 < 50ms。
 - 代价：v0.1 的 UI 只有「一条会话 + 一个回收站面板」，没有批量与级联，功能上打不过 `dsh-recycle-bin`，但四支柱完整度是 55 个里唯一的。
 
-## 待验证（落地时必须实测并回填 [runtime](../runtime/0.2.1-rc.5.md)）
+## 落地验证结果（0.2.0–0.4.1，已回填 [runtime](../runtime/0.2.1-rc.5.md)）
 
-1. `sessionPersistence.locate()`、`stat().header` 的实际字段；
-2. `sessions.get` / `detachEntered` / `store` 是否可按社区契约使用；
-3. `storageDomain.get("session_projcache")` 的表名与删除语义；
-4. `workspaceRegistry.unarchiveSession/unpinSession` 在 0.2.1-rc.5 的行为；
-5. projcache 文件形态（分片 + 总表）以及冷读是否会重建空壳行。
+1. `sessionPersistence.locate()` / `stat().header` —— 字段与文档一致，plan/trash 全程使用；
+2. `sessions.get` / `detachEntered` / `store` —— 桌面版可用（能力档 `api`）；缺失时降级为 `minimal`，跳过宿主内存条目清理；
+3. `storageDomain.get("session_projcache")` —— 表名与删除语义符合预期，回执里会逐项列出清理结果；
+4. `workspaceRegistry.unarchiveSession/unpinSession` —— 恢复路径实测可用；`minimal` 档会跳过并标记；
+5. projcache 形态 —— 分片 + 总表，删除时两者都清；冷读不会重建空壳行。
+
+仍未实测：Windows 下的 `EBUSY/EPERM` 与命名信号量路径（见 README 兼容性说明）。

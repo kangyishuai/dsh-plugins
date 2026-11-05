@@ -11,9 +11,9 @@ Unofficial plugins for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai).
 
 ## Plugins
 
-| Package                                                      | Description                                                                              | Verified on DSH |
-| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------- | --------------- |
-| [`@kangyishuai/dsh-session-delete`](packages/session-delete) | Real session deletion: trash by default, dry-run plan, audit log, residue reconciliation | 0.2.1-rc.5      |
+| Package                                                      | Description                                                                                                                | Verified on DSH |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| [`@kangyishuai/dsh-session-delete`](packages/session-delete) | Real session deletion: trash by default, dry-run plan, audit log, receipts, health check, cascade, agent tool, batch trash | 0.2.1-rc.5      |
 
 ## Install a plugin
 

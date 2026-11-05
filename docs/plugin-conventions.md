@@ -60,6 +60,7 @@ packages/<name>/
 ## 2. 代码约定
 
 - **host 半**导出 `apply(ctx, config)`（Cordis 插件约定），优先用 `ctx` 上的宿主服务。确实没有接口、只能直接操作文件系统时，在注释里写明原因。
+- 需要 host→client 的 Typert Remote 时，host 半改为**导出 Service 类本身**（不要包一层子类）：Remote 方法必须声明在这个被导出的类自己的原型上，否则网关不会 claim 端点，所有 `/api/<id>/*` 返回 404。细节见 [runtime](runtime/0.2.1-rc.5.md) §6.10。
 - **client 半**是 classic script，**不能用 `import`**，宿主模块通过 factory 的 `require()` 获取。所有副作用都写在 factory 里面。
 - 所有文件头加 `// @ts-check`，用 JSDoc 写类型。宿主的类型在 [`types/`](../types/) 里手写维护，只声明已经验证过的成员。
 - **路径必须可注入**：不要在模块顶层写死 `~/.dsh`。从 `ctx`、配置或参数里拿到数据根目录，这样测试可以在临时目录里跑。

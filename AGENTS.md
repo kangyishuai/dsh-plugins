@@ -12,13 +12,16 @@
 
 ## 常用命令
 
-| 命令                     | 作用                                                   |
-| ------------------------ | ------------------------------------------------------ |
-| `pnpm new <name> [描述]` | 从 `templates/plugin` 生成新插件（**不要手抄文件**）   |
-| `pnpm verify`            | lint + typecheck + 规范检查 + 测试，**交付前必须通过** |
-| `pnpm check`             | 只跑插件规范检查（`scripts/check-plugins.mjs`）        |
-| `pnpm format`            | Biome 格式化并自动修复                                 |
-| `pnpm changeset`         | 为需要发版的改动写变更说明                             |
+| 命令                        | 作用                                                   |
+| --------------------------- | ------------------------------------------------------ |
+| `pnpm new <name> [描述]`    | 从 `templates/plugin` 生成新插件（**不要手抄文件**）   |
+| `pnpm verify`               | lint + typecheck + 规范检查 + 测试，**交付前必须通过** |
+| `pnpm check`                | 只跑插件规范检查（`scripts/check-plugins.mjs`）        |
+| `pnpm format`               | Biome 格式化并自动修复                                 |
+| `pnpm changeset`            | 为需要发版的改动写变更说明                             |
+| `pnpm probe:runtime`        | 核对本机 DSH 安装里插件依赖的包/API/slot 是否还在      |
+| `pnpm smoke:session-delete` | 端到端 GUI 冒烟（临时 DSH_HOME，24 项断言）            |
+| `pnpm smoke:agent-tool`     | agent 工具真机冒烟（需要模型凭据，否则 SKIP）          |
 
 ## 开发流程
 
