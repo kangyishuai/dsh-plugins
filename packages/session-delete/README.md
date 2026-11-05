@@ -16,7 +16,7 @@ DSH's built-in _archive_ only hides a session: the id goes into the workspace's 
 - **Trash by default.** The first click erases nothing: the session goes to `~/.dsh/session-trash/` and can be restored. Permanent deletion is a separate, explicit action.
 - **Plan before you delete (dry-run).** The confirmation dialog is generated from a plan: on-disk size, whether the session is live, how many sub-sessions it has, and which references will be cleaned. Right before execution the plan is recomputed and compared with what you confirmed; a mismatch aborts the operation instead of deleting something you didn't see.
 - **Audit log.** Every delete / restore / purge appends one JSON line to `~/.dsh/session-trash/audit.log`, readable from the trash panel.
-- **Receipt after delete.** After the move, the plugin checks the places a session can be referenced and reports anything left behind (v0.1: one session at a time).
+- **Receipt after delete.** After the move, the plugin checks the places a session can be referenced and reports anything left behind (deletion is one session at a time; the trash tab supports batch restore / batch permanent delete).
 
 ## Install
 
@@ -81,7 +81,7 @@ Files and directories it touches:
 - **Restore is not a full undo.** The log and workspace membership come back; the pin and archive flags do not. DSH clears a pin when it archives a session and doesn't restore it when it unarchives.
 - **Uninstalling the plugin does not empty the trash.** `~/.dsh/session-trash/` is your recovery path and stays until you delete it yourself.
 - **Data root.** Resolved as plugin config `dataRoot` → `DSH_HOME` → `~/.dsh`. If your DSH keeps its data somewhere else, point the plugin at it. If the root doesn't look like a DSH data directory, the plugin refuses instead of guessing.
-- **Alpha software operating on your data.** Until v0.1 passes GUI acceptance, back up anything you care about.
+- **Alpha software operating on your data.** It has passed GUI acceptance on the version in the table below, but it is still early software: back up anything you cannot lose.
 
 ## How this differs from the built-in archive
 
@@ -89,15 +89,19 @@ Archive is a bookmark, not a deletion: DSH adds the session id to the workspace'
 
 ## Compatibility & degradation
 
-v0.1 declares no `engines.dsh` range. Instead there are three layers of defense:
+The package declares no `engines.dsh` range. Instead there are three layers of defense:
 
-| Layer                 | When it runs         | What it does                                                                                | What you see                                                                                                                                                                                                                                                                      |
-| --------------------- | -------------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| L1 version gate       | install / activation | `engines.dsh` version range. **Not declared in v0.1**, so this layer is currently inactive. | nothing                                                                                                                                                                                                                                                                           |
-| L2 startup self-check | plugin activation    | Probes every host capability it depends on and grades them api / internal / unknown.        | **Degraded mode**: a host without `workspaceRegistry` (for example the headless composition) still allows deletion — the archive gate and workspace bookkeeping steps are skipped and reported in the receipt. Only a missing persistence seam puts the plugin in read-only mode. |
+| Layer                    | When it runs         | What it does                                                              | What you see                                                   |
+| ------------------------ | -------------------- | ------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| L1 version gate          | install / activation | `engines.dsh` version range. **Not declared**, so this layer is inactive. | nothing                                                        |
+| L2 startup self-check    | plugin activation    | Probes every host capability it depends on.                               | a capability grade: `api` / `internal` / `minimal` / `unknown` |
+| L3 per-operation refusal | every operation      | Each operation re-checks its own prerequisites; unknown always refuses.   | structured error code + reason, no half-deleted state          |
 
-**Read-only mode**: plan, audit and trash listing keep working; delete, restore and purge are disabled. |
-| L3 per-operation refusal | every operation | Each operation re-checks its own prerequisites; unknown always refuses. | A structured error code plus a human-readable reason, and no half-deleted state. |
+Capability grades:
+
+- `api` / `internal` — full operation. `internal` means some steps rely on host contracts that are not in the public docs; they run and are reported.
+- `minimal` — the host has no `workspaceRegistry` (for example the headless composition). Deletion works; the archive gate, pin/workspace bookkeeping and projection-cache steps are skipped and listed in the receipt.
+- `unknown` — the persistence seam itself is missing: **read-only mode**. Plan, audit and trash listing keep working; delete/restore/purge are disabled.
 
 | Plugin | Verified on DSH          | Notes                                                                                       |
 | ------ | ------------------------ | ------------------------------------------------------------------------------------------- |
