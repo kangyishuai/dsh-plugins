@@ -2,7 +2,7 @@
 // 宿主能力探测。整个插件对宿主内部契约的依赖只在这里出现一次，
 // 这样 DSH 升级后需要改的地方永远只有一个文件（见 docs/adr/0005）。
 
-/** @typedef {"api" | "internal" | "unknown"} CapabilityTier */
+/** @typedef {"api" | "internal" | "minimal" | "unknown"} CapabilityTier */
 
 /**
  * @typedef {object} Capabilities
@@ -33,10 +33,12 @@ function callable(target, key) {
 }
 
 /**
- * 探测本插件依赖的全部宿主能力，并按三档给出结论：
+ * 探测本插件依赖的全部宿主能力，并按四档给出结论：
  * - api：官方文档里有的一等公民能力齐全；
  * - internal：核心可用，但有依赖社区契约的部件（会降级执行并告警）；
- * - unknown：核心能力缺失，破坏性操作必须拒绝。
+ * - minimal：缺少 workspaceRegistry（如 headless 组合），删除仍可做，
+ *   归档闸门/工作区记账等步骤跳过并在回执里标记；
+ * - unknown：持久化本体缺失，破坏性操作必须拒绝。
  *
  * @param {any} ctx host 上下文。
  * @returns {Capabilities}
@@ -75,7 +77,10 @@ export function probeCapabilities(ctx) {
 
   /** @type {CapabilityTier} */
   let tier = "api";
-  const essential = ["persistence.stat", "workspace.archive", "workspace.unarchive"];
+  // 删除本身只需要持久化读取 + 文件系统；工作区/归档只是闸门与记账，
+  // 缺失时降级为 minimal（跳过对应步骤并报告），不应整体禁用。
+  const essential = ["persistence.stat"];
+  const workspaceGate = ["workspace.archive", "workspace.unarchive"];
   const convenient = [
     "persistence.list",
     "persistence.locate",
@@ -86,6 +91,7 @@ export function probeCapabilities(ctx) {
     "event.session-activity",
   ];
   if (essential.some((k) => !table[k])) tier = "unknown";
+  else if (workspaceGate.some((k) => !table[k])) tier = "minimal";
   else if (convenient.some((k) => !table[k])) tier = "internal";
 
   return {

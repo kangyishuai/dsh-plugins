@@ -12,7 +12,7 @@ function ctxWith(services) {
   };
 }
 
-test("缺核心接口时是 unknown（只读模式）", () => {
+test("缺持久化本体时是 unknown（只读模式）", () => {
   const caps = probeCapabilities(ctxWith({}));
   assert.equal(caps.tier, "unknown");
   assert.ok(caps.notes.includes("missing: persistence.stat"));
@@ -59,4 +59,14 @@ test("全部齐全时是 api", () => {
   );
   assert.equal(caps.tier, "api");
   assert.deepEqual(caps.notes, []);
+});
+
+test("缺少 workspaceRegistry 时降级为 minimal，而不是禁用", () => {
+  const caps = probeCapabilities(
+    ctxWith({
+      sessionPersistence: { stat() {}, locate() {}, list() {} },
+    }),
+  );
+  assert.equal(caps.tier, "minimal");
+  assert.equal(caps.checks["workspace.archive"], false);
 });
