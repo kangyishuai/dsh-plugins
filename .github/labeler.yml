@@ -14,13 +14,18 @@
 
 "area:ci":
   - changed-files:
-      - any-glob-to-any-file: ".github/**"
+      - any-glob-to-any-file:
+          - ".github/workflows/**"
+          - ".github/*.yml"
 
 documentation:
   - changed-files:
       - any-glob-to-any-file:
           - "docs/**"
           - "*.md"
+          - ".github/assets/**"
+          - ".github/ISSUE_TEMPLATE/**"
+          - ".github/pull_request_template.md"
 
 # --- plugins ---
 

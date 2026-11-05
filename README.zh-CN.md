@@ -1,21 +1,24 @@
-# DSH Plugins
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/banner-dark.svg">
+    <img src=".github/assets/banner-light.svg" alt="DSH Plugins：为 DeepSeek Harness 打造、测试充分的插件" width="640">
+  </picture>
+</p>
 
-[![CI](https://github.com/kangyishuai/dsh-plugins/actions/workflows/ci.yml/badge.svg)](https://github.com/kangyishuai/dsh-plugins/actions/workflows/ci.yml)
-[![npm scope](https://img.shields.io/badge/npm-%40kangyishuai-cb3837?logo=npm)](https://www.npmjs.com/search?q=%40kangyishuai%2Fdsh-)
-[![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.1--rc.5-4b6bfb)](docs/runtime/0.2.1-rc.5.md)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+<p align="center">
+  <a href="https://github.com/kangyishuai/dsh-plugins/actions/workflows/ci.yml"><img src="https://github.com/kangyishuai/dsh-plugins/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://www.npmjs.com/search?q=%40kangyishuai%2Fdsh-"><img src="https://img.shields.io/badge/npm-%40kangyishuai-cb3837?logo=npm" alt="npm scope"></a>
+  <a href="docs/runtime/0.2.1-rc.5.md"><img src="https://img.shields.io/badge/verified%20on%20DSH-0.2.1--rc.5-4b6bfb" alt="Verified on DSH 0.2.1-rc.5"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+</p>
 
-**为 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 打造的插件，做事稳妥、测试充分。** 每个插件都是独立的 npm 包，发布前都在真实的 DSH 宿主上做过端到端验证。
-
-[English](README.md)
-
-![session-delete：删除前，确认框会先把要发生的事情讲清楚](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/overview.png)
+<p align="center">为 <a href="https://github.com/deepseek-ai/deepseek-harness">DeepSeek Harness (DSH)</a> 打造的插件。每个插件都是独立的 npm 包，发布前都在真实的 DSH 宿主上做过端到端验证。<br><a href="README.md">English</a> · <b>中文</b></p>
 
 ## 插件
 
-| 插件                                                          | 做什么                                                                                                                                                           | 版本                                                                                                                                         |
-| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| [**session-delete**](packages/session-delete/README.zh-CN.md) | 真正删除会话，而不只是归档。删掉的会话先进可恢复的回收站；确认框会先列出删除计划：体积、子会话、将要清理的引用。每次操作都写进审计日志，删完还会给一份残留回执。 | [![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-delete?label=)](https://www.npmjs.com/package/@kangyishuai/dsh-session-delete) |
+| 插件                                                                                                                             | 做什么                                                                                                                                                           | 版本                                                                                                                                         |
+| -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| [**session-delete**](packages/session-delete/README.zh-CN.md)<br><sub>[截图](packages/session-delete/README.zh-CN.md#截图)</sub> | 真正删除会话，而不只是归档。删掉的会话先进可恢复的回收站；确认框会先列出删除计划：体积、子会话、将要清理的引用。每次操作都写进审计日志，删完还会给一份残留回执。 | [![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-delete?label=)](https://www.npmjs.com/package/@kangyishuai/dsh-session-delete) |
 
 更多插件开发中。
 
