@@ -4,6 +4,8 @@
 
 ## 自查清单
 
+- [ ] PR 标题符合 Conventional Commits（squash 后就是 main 上的提交信息）
+- [ ] 分支名是 `<type>/<plugin>-<主题>`
 - [ ] 只改了一个插件的目录（共享文件 `docs/`、根配置等单独提交）
 - [ ] `pnpm verify` 本地通过
 - [ ] 需要发版的改动已经加了 changeset（`pnpm changeset`）
