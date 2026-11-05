@@ -2,11 +2,16 @@
 
 > Real session deletion for DeepSeek Harness: trash by default, a plan before you delete, an audit log, and a receipt for whatever is left behind.
 
+[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-delete?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-session-delete) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.1--rc.5-4b6bfb)](#compatibility--degradation) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+
 [中文](./README.zh-CN.md)
 
 Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). Not affiliated with DeepSeek.
 
 > **Status: v0.4.2, early.** Verified on DSH 0.2.1-rc.5 with `pnpm smoke:session-delete` (24 end-to-end assertions) plus a manual pass in the desktop GUI. Treat it as young software and keep backups of anything you cannot lose.
+
+
+![Delete confirmation with the plan: size, sub-sessions, references to clean](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/overview.png)
 
 ## What it does
 
@@ -17,6 +22,14 @@ DSH's built-in _archive_ only hides a session: the id goes into the workspace's 
 - **Plan before you delete (dry-run).** The confirmation dialog is generated from a plan: on-disk size, whether the session is live, how many sub-sessions it has, and which references will be cleaned. Right before execution the plan is recomputed and compared with what you confirmed; a mismatch aborts the operation instead of deleting something you didn't see.
 - **Audit log.** Every delete / restore / purge appends one JSON line to `~/.dsh/session-trash/audit.log`, readable from the trash panel.
 - **Receipt after delete.** After the move, the plugin checks the places a session can be referenced and reports anything left behind (deletion is one session at a time; the trash tab supports batch restore / batch permanent delete).
+
+## Screenshots
+
+| Plan before delete                                                                                                                           | Trash                                                                                                                        | Audit log                                                                                                                      | Receipts                                                                                                                         |
+| -------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| ![Plan before delete](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/confirm-dialog.png) | ![Trash](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/trash-panel.png) | ![Audit log](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/audit-tab.png) | ![Receipts](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/receipts-tab.png) |
+
+<sub>Screenshots come from <code>SMOKE_DEMO=1 pnpm smoke:session-delete</code>: workspace names, session titles and IDs are replaced with demo data. The UI language follows DSH (Chinese here).</sub>
 
 ## Install
 

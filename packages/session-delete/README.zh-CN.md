@@ -2,11 +2,16 @@
 
 > 真正的删除会话：默认进回收站、删前先预演、留审计日志，删完给你一份残留回执。
 
+[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-delete?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-session-delete) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.1--rc.5-4b6bfb)](#兼容性与降级) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+
 [English](./README.md)
 
 非官方 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 插件，与 DeepSeek 无关。
 
 > **状态：v0.4.2，早期可用。** 已在 DSH 0.2.1-rc.5 上用 `pnpm smoke:session-delete`（24 项端到端断言）加一轮桌面版人工验收。仍是年轻软件，重要数据请自行备份。
+
+
+![删除确认框：展示体积、子会话和将要清理的引用](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/overview.png)
 
 ## 做什么
 
@@ -17,6 +22,14 @@ DSH 自带的「归档」只是把会话藏起来：id 记进工作区的归档�
 - **删前预演（plan / dry-run）。** 确认框由一份计划生成：占用体积、是否 live、有几个子会话、将清理哪些引用。真正执行前会重新算一遍并与你确认时的计划比对，不一致就中止，避免删掉你没看到的东西。
 - **审计日志。** 每次删除 / 恢复 / 彻底删除都往 `~/.dsh/session-trash/audit.log` 追加一行 JSON，回收站面板里能直接看。
 - **删除回执。** 移走之后核对会话可能被引用的几处，把没清干净的残留列出来（删除仍是一次一条；回收站页签支持批量恢复 / 批量彻底删除）。
+
+## 截图
+
+| 删前预演                                                                                                                           | 回收站                                                                                                                        | 审计日志                                                                                                                      | 回执                                                                                                                         |
+| ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| ![删前预演](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/confirm-dialog.png) | ![回收站](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/trash-panel.png) | ![审计日志](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/audit-tab.png) | ![回执](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/receipts-tab.png) |
+
+<sub>截图由 <code>SMOKE_DEMO=1 pnpm smoke:session-delete</code> 生成，工作区名、会话标题和 ID 都已替换为演示数据。</sub>
 
 ## 安装
 
