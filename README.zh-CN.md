@@ -1,60 +1,45 @@
 # DSH Plugins
 
+[![CI](https://github.com/kangyishuai/dsh-plugins/actions/workflows/ci.yml/badge.svg)](https://github.com/kangyishuai/dsh-plugins/actions/workflows/ci.yml)
+[![npm scope](https://img.shields.io/badge/npm-%40kangyishuai-cb3837?logo=npm)](https://www.npmjs.com/search?q=%40kangyishuai%2Fdsh-)
+[![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.1--rc.5-4b6bfb)](docs/runtime/0.2.1-rc.5.md)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+**为 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 打造的插件，做事稳妥、测试充分。** 每个插件都是独立的 npm 包，发布前都在真实的 DSH 宿主上做过端到端验证。
+
 [English](README.md)
 
-非官方的 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 插件集合。**单仓多包**：`packages/` 下的每个目录都是一个独立的 npm 包，可以单独发布、单独安装。
+![session-delete：删除前，确认框会先把要发生的事情讲清楚](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/overview.png)
 
-> **声明**：个人社区项目，与 DeepSeek 没有关联，也未获其认可。部分插件会操作本地的 DSH 数据，安装前请阅读插件 README 的「副作用与风险」一节。
+## 插件
 
-## 插件清单
+| 插件                                                          | 做什么                                                                                                                                                           | 版本                                                                                                                                         |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| [**session-delete**](packages/session-delete/README.zh-CN.md) | 真正删除会话，而不只是归档。删掉的会话先进可恢复的回收站；确认框会先列出删除计划：体积、子会话、将要清理的引用。每次操作都写进审计日志，删完还会给一份残留回执。 | [![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-delete?label=)](https://www.npmjs.com/package/@kangyishuai/dsh-session-delete) |
 
-| 包名                                                         | 说明                                                                         | 已验证的 DSH 版本 |
-| ------------------------------------------------------------ | ---------------------------------------------------------------------------- | ----------------- |
-| [`@kangyishuai/dsh-session-delete`](packages/session-delete) | 真正的删除会话：回收站、预演、审计、回执、体检、级联、agent 工具、回收站批量 | 0.2.1-rc.5        |
+更多插件开发中。
 
-## 安装插件
-
-```bash
-dsh plugin --profile desktop add @kangyishuai/dsh-<name>
-```
-
-装完重启 DSH 桌面版。
-
-## 开发
-
-| 项目       | 版本                                     |
-| ---------- | ---------------------------------------- |
-| DSH 桌面版 | 0.2.1-rc.5                               |
-| Node       | 开发用 24（`.node-version`），最低 22.19 |
-| pnpm       | >= 11                                    |
+## 安装
 
 ```bash
-pnpm install                   # 同时安装 git hooks
-pnpm new my-plugin "一句话描述"
-cd packages/my-plugin && pnpm pack --pack-destination /tmp && cd ../..
-dsh plugin --profile desktop add /tmp/<tgz>
-pnpm verify                    # lint + 类型检查 + 规范检查 + 测试
+dsh plugin --profile desktop add @kangyishuai/dsh-session-delete
 ```
 
-改了 host 半（`lib/index.js`）要重启 DSH 桌面版；改了 client 半（`lib/client.js`）刷新页面就行。
+装完重启 DSH 桌面版。用法、副作用和兼容性见各插件的 README。
 
-- [CONTRIBUTING.md](CONTRIBUTING.md)：常用命令、提交规范、发版流程
-- [docs/plugin-conventions.md](docs/plugin-conventions.md)：插件结构和规则
-- [docs/runtime/](docs/runtime/)：针对具体 DSH 版本的勘察记录（slot、宿主服务、磁盘布局）
-- [docs/adr/](docs/adr/)：架构决策记录
-- [AGENTS.md](AGENTS.md)：给 AI agent 的工作约定
+## 这些插件怎么做
 
-## 目录结构
+- **破坏性操作一定留后路。** 删除先进回收站。确认框会写明影响：数量、大小、会话是否正在运行、能否恢复。见 [ADR 0002](docs/adr/0002-destructive-operations.md)。
+- **不写死内部实现。** DSH 还在预发布阶段，磁盘格式会变。插件按已知模式扫描和匹配，不认识的东西一律不动。
+- **在真实宿主上验证。** 除了单元测试，还会在一次性的 DSH 目录里跑端到端 GUI 冒烟测试。兼容性表格写明验证过的 DSH 版本。
+- **不联网，不上报。** 插件只读写本地的 DSH 数据目录，读写范围都写在文档里。
+- **纯 JavaScript，没有构建步骤。** 你装上的代码就是仓库里的代码（[ADR 0001](docs/adr/0001-plain-js-with-jsdoc.md)）。
 
-```
-dsh-plugins/
-├── packages/<name>/     # 一个插件 = 一个 npm 包
-├── templates/plugin/    # pnpm new 用的脚手架模板
-├── scripts/             # 脚手架、规范检查等仓库脚本
-├── types/               # 手写的 DSH 宿主/client 类型声明（供 JSDoc 检查）
-├── docs/                # 约定、运行时勘察、ADR、测试清单
-└── .changeset/          # 待发布的变更说明（Changesets）
-```
+> **声明：** 这是个人维护的社区项目，与 DeepSeek 没有关联，也未获其认可。插件还比较新，重要数据请自行备份。
+
+## 参与贡献
+
+欢迎提 issue 和 PR。建议先读 [CONTRIBUTING.md](CONTRIBUTING.md)，里面有环境准备、常用命令、提交规范和发版流程。设计文档见 [docs/](docs/README.md)。
 
 ## 安全
 

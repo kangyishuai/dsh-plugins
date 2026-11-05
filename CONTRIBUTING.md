@@ -13,6 +13,39 @@ pnpm install   # 同时会安装 git hooks（pre-commit 格式化，commit-msg �
 pnpm verify    # lint + typecheck + 插件规范检查 + 测试，CI 跑的是同一套
 ```
 
+## 目录结构
+
+```
+dsh-plugins/
+├── packages/<name>/     # 一个插件 = 一个 npm 包（docs/images 放 README 截图，不进 npm 包）
+├── templates/plugin/    # pnpm new 用的脚手架模板
+├── scripts/             # 脚手架、规范检查、公开边界检查、冒烟测试
+├── types/               # 手写的 DSH 宿主/client 类型声明（供 JSDoc 检查）
+├── docs/                # 约定、运行时勘察、ADR、测试清单（索引见 docs/README.md）
+└── .changeset/          # 待发布的变更说明（Changesets）
+```
+
+## 本地试装插件
+
+`link:` 安装不可用（原因见 [runtime](docs/runtime/0.2.1-rc.5.md)），要先打包再装：
+
+```bash
+cd packages/<name> && pnpm pack --pack-destination /tmp && cd ../..
+dsh plugin --profile desktop add /tmp/<tgz>
+```
+
+改了 host 半（`lib/index.js`）要重启 DSH；改了 client 半（`lib/client.js`）刷新页面就行。
+
+## 截图
+
+README 里的截图必须用演示数据生成，不能直接截真实界面：
+
+```bash
+SMOKE_DEMO=1 pnpm smoke:session-delete   # 截图在系统临时目录的 dsh-smoke-shots/
+```
+
+演示模式会把工作区名、会话标题和 ID 都换成演示数据。挑图之后**逐张检查**，确认没有残留的真实信息，再放进 `packages/<name>/docs/images/`。README 里用 `raw.githubusercontent.com` 绝对地址引用，这样 npm 页面也能显示。
+
 ## 常用命令
 
 | 命令                     | 作用                                                        |
@@ -69,4 +102,4 @@ pnpm verify    # lint + typecheck + 插件规范检查 + 测试，CI 跑的是�
 
 ## 行为准则
 
-友善、就事论事。
+见 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)。友善，就事论事。
