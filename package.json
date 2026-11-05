@@ -17,12 +17,13 @@
   "scripts": {
     "new": "node scripts/new-plugin.mjs",
     "check": "node scripts/check-plugins.mjs",
+    "check:public": "node scripts/check-public.mjs",
     "list-plugins": "node scripts/list-plugins.mjs",
     "lint": "biome check .",
     "format": "biome check --write .",
     "typecheck": "tsc -p .",
     "test": "node --test \"scripts/test/**/*.test.js\" && pnpm -r --if-present test",
-    "verify": "pnpm lint && pnpm typecheck && pnpm check && pnpm test",
+    "verify": "pnpm lint && pnpm typecheck && pnpm check && pnpm check:public && pnpm test",
     "changeset": "changeset",
     "version-packages": "changeset version && pnpm install --lockfile-only",
     "release": "pnpm verify && changeset publish",
@@ -32,7 +33,7 @@
     "smoke:agent-tool": "node scripts/smoke-agent-tool.mjs"
   },
   "simple-git-hooks": {
-    "pre-commit": "pnpm exec lint-staged",
+    "pre-commit": "pnpm exec lint-staged && node scripts/check-public.mjs",
     "commit-msg": "pnpm exec commitlint --edit \"$1\""
   },
   "lint-staged": {
