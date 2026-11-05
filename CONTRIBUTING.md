@@ -45,17 +45,17 @@ pnpm verify    # lint + typecheck + 插件规范检查 + 测试，CI 跑的是�
 
 使用 [Changesets](https://github.com/changesets/changesets)，各插件**独立**版本号：
 
-1. 改完代码运行 `pnpm changeset`，选择插件和 bump 类型，写一句面向用户的说明
-2. 把生成的 `.changeset/*.md` 一起提交
-3. 合并到 `main` 后，CI 会开一个「Version Packages」PR；合并这个 PR 就会发布到 npm（带 provenance）并打 tag `@kangyishuai/dsh-<name>@<version>`
+1. 改完代码运行 `pnpm changeset`，选择插件和 bump 类型，写一句面向用户的说明，和代码一起提交
+2. 发版时二选一：
+   - **本地出版本（维护者日常做法）**：`GITHUB_TOKEN=$(gh auth token) pnpm version-packages`，检查 `CHANGELOG.md` 和版本号，提交为 `chore(release): <plugin> <version>` 后推到 `main`
+   - **走 PR**：直接把带 changeset 的提交推到 `main`，CI 会开一个「Version Packages」PR，合并它即可
+3. `main` 上出现尚未发布的版本号时，Release 工作流会发布到 npm 并打 tag `@kangyishuai/dsh-<name>@<version>`，同时创建 GitHub Release
+
+不要在本地 `npm publish`。
 
 0.x 阶段：破坏性改动 bump minor，其余 bump patch。
 
-在本地跑 `pnpm version-packages` 需要 `GITHUB_TOKEN`（changelog 由 `@changesets/changelog-github` 生成）：
-
-```bash
-GITHUB_TOKEN=$(gh auth token) pnpm version-packages
-```
+本地跑 `pnpm version-packages` 需要 `GITHUB_TOKEN`，因为 changelog 由 `@changesets/changelog-github` 生成。
 
 `.changeset/` 已在 `biome.json` 里排除格式化——否则 Biome 会把 frontmatter 改写成 Markdown 标题，导致 changesets 解析失败。
 
