@@ -80,7 +80,7 @@ async function openAsar(asarPath) {
   /** @param {any} node @param {string} prefix */
   const walk = (node, prefix) => {
     for (const [name, value] of Object.entries(node.files ?? {})) {
-      const path = prefix + "/" + name;
+      const path = `${prefix}/${name}`;
       if (value && typeof value === "object" && "files" in value) walk(value, path);
       else if (value && typeof value === "object" && "size" in value && "offset" in value) {
         files.set(path, { offset: Number(value.offset), size: Number(value.size) });
@@ -116,14 +116,12 @@ const main = async () => {
   if (!existsSync(asarPath)) {
     const explicit = Boolean(values.asar ?? process.env.DSH_ASAR);
     if (explicit) {
-      console.error("找不到 app.asar：" + asarPath);
+      console.error(`找不到 app.asar：${asarPath}`);
       console.error("用 --asar <path> 或 DSH_ASAR=<path> 指定。");
       process.exitCode = 2;
       return;
     }
-    console.log(
-      "SKIP 没找到默认的 DSH 安装（" + asarPath + "）；这通常意味着不在装了 DSH 的机器上",
-    );
+    console.log(`SKIP 没找到默认的 DSH 安装（${asarPath}）；这通常意味着不在装了 DSH 的机器上`);
     return;
   }
 
@@ -150,17 +148,17 @@ const main = async () => {
 
   // 2) 必需宿主包
   for (const pkg of REQUIRED_PACKAGES) {
-    const path = "/dsh/node_modules/@deepseek-ai/" + pkg + "/package.json";
+    const path = `/dsh/node_modules/@deepseek-ai/${pkg}/package.json`;
     const found = asar.files.has(path);
-    push(found ? "PASS" : "FAIL", "宿主包 " + pkg, found ? "" : "app.asar 里不存在");
+    push(found ? "PASS" : "FAIL", `宿主包 ${pkg}`, found ? "" : "app.asar 里不存在");
   }
 
   // 3) API 面
   for (const check of API_CHECKS) {
-    const path = "/dsh/node_modules/" + check.file;
+    const path = `/dsh/node_modules/${check.file}`;
     const buffer = await asar.read(path);
     if (!buffer) {
-      push(check.optional ? "WARN" : "FAIL", check.name, "文件不存在：" + path);
+      push(check.optional ? "WARN" : "FAIL", check.name, `文件不存在：${path}`);
       continue;
     }
     const text = buffer.toString("utf8");
@@ -185,7 +183,7 @@ const main = async () => {
     if (!buffer) continue;
     const text = buffer.toString("utf8");
     for (const check of known) {
-      if (text.includes('"' + check.slot + '"') || text.includes("'" + check.slot + "'")) {
+      if (text.includes(`"${check.slot}"`) || text.includes(`'${check.slot}'`)) {
         slotOwner.set(check.slot, path.replace("/dsh/node_modules/@deepseek-ai/", ""));
       }
     }
@@ -194,7 +192,7 @@ const main = async () => {
     const owner = slotOwner.get(check.slot);
     push(
       owner ? "PASS" : "FAIL",
-      "slot " + check.slot + "（" + check.purpose + "）",
+      `slot ${check.slot}（${check.purpose}）`,
       owner ?? "客户端 bundle 里找不到",
     );
   }
@@ -205,12 +203,12 @@ const main = async () => {
     console.log(JSON.stringify({ asar: asarPath, version, results }, null, 2));
   } else {
     console.log("DSH runtime probe");
-    console.log("asar:    " + asarPath);
-    console.log("version: " + version);
+    console.log(`asar:    ${asarPath}`);
+    console.log(`version: ${version}`);
     console.log("");
     for (const item of results) {
       const tag = item.kind === "PASS" ? "PASS" : item.kind === "WARN" ? "WARN" : "FAIL";
-      console.log(tag + "  " + item.name + (item.detail ? " :: " + item.detail : ""));
+      console.log(`${tag}  ${item.name}${item.detail ? ` :: ${item.detail}` : ""}`);
     }
     const failed = results.filter((item) => item.kind === "FAIL").length;
     const warned = results.filter((item) => item.kind === "WARN").length;

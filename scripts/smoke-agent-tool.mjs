@@ -21,7 +21,7 @@ const PKG_DIR = join(REPO, "packages", "session-delete");
 
 /** @param {string} message */
 const fail = (message) => {
-  console.error("FAIL " + message);
+  console.error(`FAIL ${message}`);
   process.exitCode = 1;
 };
 
@@ -94,12 +94,12 @@ const main = async () => {
       timeout: 180_000,
     });
     if (!/seed-ok/i.test(seed.stdout)) {
-      console.log("SKIP 模型调用不可用，输出：" + seed.stdout.slice(-300));
+      console.log(`SKIP 模型调用不可用，输出：${seed.stdout.slice(-300)}`);
       return;
     }
     const target = await latestSessionId(join(home, "sessions"));
     if (!target) throw new Error("没有找到刚创建的会话");
-    console.log("目标会话：" + target);
+    console.log(`目标会话：${target}`);
 
     // 2) 要求模型两段式删除
     const prompt =
@@ -112,7 +112,7 @@ const main = async () => {
       env,
       timeout: 300_000,
     });
-    console.log("模型输出尾部：\n" + result.stdout.slice(-1200));
+    console.log(`模型输出尾部：\n${result.stdout.slice(-1200)}`);
 
     // 3) 断言：回收站里有条目，且审计记录 operator=agent
     const trashDir = join(home, "session-trash");
@@ -120,8 +120,8 @@ const main = async () => {
     const hasTrash = entries.some((entry) => entry.isDirectory() && !entry.name.startsWith("."));
     const audit = await readFile(join(trashDir, "audit.log"), "utf8").catch(() => "");
     const agentAudit = audit.includes('"operator":"agent"');
-    console.log((hasTrash ? "PASS" : "FAIL") + " 回收站出现条目");
-    console.log((agentAudit ? "PASS" : "FAIL") + " 审计记录 operator=agent");
+    console.log(`${hasTrash ? "PASS" : "FAIL"} 回收站出现条目`);
+    console.log(`${agentAudit ? "PASS" : "FAIL"} 审计记录 operator=agent`);
     if (!hasTrash || !agentAudit) {
       fail("真实模型调用没有产生预期的删除记录");
     } else {

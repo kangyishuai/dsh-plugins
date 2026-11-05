@@ -16,7 +16,7 @@ const PKG_DIR = join(REPO, "packages", "session-delete");
 
 /** @param {string} message */
 function fail(message) {
-  console.error("FAIL " + message);
+  console.error(`FAIL ${message}`);
   process.exitCode = 1;
 }
 
@@ -66,7 +66,7 @@ async function waitForBoot(logPath, timeoutMs) {
     await sleep(500);
   }
   throw new Error(
-    "宿主没有在超时时间内打印访问地址：\n" + (await readIfExists(logPath)).slice(-2000),
+    `宿主没有在超时时间内打印访问地址：\n${(await readIfExists(logPath)).slice(-2000)}`,
   );
 }
 
@@ -498,12 +498,12 @@ const main = async () => {
     }
     await run("dsh", ["--version"], { env }).catch(() => {});
     if (boot.activationFailures > 0) {
-      fail("宿主报告 " + boot.activationFailures + " 个插件未激活");
+      fail(`宿主报告 ${boot.activationFailures} 个插件未激活`);
       console.error(boot.text.slice(-3000));
       return;
     }
 
-    const url = "http://127.0.0.1:" + boot.port + "/?token=" + boot.token;
+    const url = `http://127.0.0.1:${boot.port}/?token=${boot.token}`;
     const shotsDir = join(work, "shots");
     await mkdir(shotsDir, { recursive: true });
     const browserFile = join(work, "browser.mjs");
@@ -541,15 +541,15 @@ const main = async () => {
     let failed = 0;
     for (const item of parsed.checks) {
       console.log(
-        (item.ok ? "PASS " : "FAIL ") + item.name + (item.ok ? "" : " :: " + item.detail),
+        (item.ok ? "PASS " : "FAIL ") + item.name + (item.ok ? "" : ` :: ${item.detail}`),
       );
       if (!item.ok) failed += 1;
     }
     if (failed > 0) {
-      fail(failed + " 项断言失败");
+      fail(`${failed} 项断言失败`);
       return;
     }
-    console.log("PASS 全部 " + parsed.checks.length + " 项冒烟断言通过");
+    console.log(`PASS 全部 ${parsed.checks.length} 项冒烟断言通过`);
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
   } finally {
@@ -557,7 +557,7 @@ const main = async () => {
     await sleep(500);
     // 把截图留在固定路径，失败时也能看现场
     await cp(join(work, "shots"), SHOTS_OUT, { recursive: true }).catch(() => {});
-    console.log("截图目录：" + SHOTS_OUT);
+    console.log(`截图目录：${SHOTS_OUT}`);
     await rm(work, { recursive: true, force: true });
   }
 };
