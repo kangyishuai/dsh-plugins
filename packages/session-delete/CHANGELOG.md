@@ -1,5 +1,11 @@
 # @kangyishuai/dsh-session-delete
 
+## 0.4.3
+
+### Patch Changes
+
+- [`03fc41b`](https://github.com/kangyishuai/dsh-plugins/commit/03fc41bb526ee0bf08e284dc2f48196c73f4090e) Thanks [@kangyishuai](https://github.com/kangyishuai)! - README 增加截图（演示数据生成）与 npm / DSH 版本徽章。
+
 ## 0.4.2
 
 ### Patch Changes
