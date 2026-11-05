@@ -1386,6 +1386,20 @@ window.__ModuleLoader__.load({
         void refreshRows(result && result.sessionId ? result.sessionId : undefined);
         tickStore.set(tickStore.getSnapshot() + 1);
       };
+      // 外部变更（agent 工具、另一个窗口、CLI）不会通知本页面，
+      // 定期拉一次会话列表；页面重新可见时也立刻拉一次。
+      ctx.effect(() => {
+        const pull = () => {
+          if (document.visibilityState === "visible") void refreshRows(undefined);
+        };
+        const timer = setInterval(pull, 10_000);
+        document.addEventListener("visibilitychange", pull);
+        return () => {
+          clearInterval(timer);
+          document.removeEventListener("visibilitychange", pull);
+        };
+      }, "session-delete: poll external session removals");
+
       const onPurged = (/** @type {any} */ sessionId) => {
         void refreshRows(sessionId || undefined);
       };
