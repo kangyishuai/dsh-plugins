@@ -275,31 +275,28 @@ test("默认不级联：子会话留在原处", async () => {
   await rm(dataRoot, { recursive: true, force: true });
 });
 
-test("listSessions 返回 id/标题/live，trashMany 逐条删除并写回执", async () => {
-  const { ops, sessionId, dataRoot } = await fixture({
-    children: [{ id: "child-1", title: "子会话一" }],
-  });
-  const listed = await ops.listSessions();
-  const ids = listed.sessions.map((/** @type {any} */ item) => item.id);
-  assert.ok(ids.includes(sessionId));
-  assert.ok(ids.includes("child-1"));
-
-  const result = await ops.trashMany({ sessionIds: [sessionId, "child-1"] });
+test("restoreMany 批量恢复回收站条目", async () => {
+  const { ops, sessionId, dataRoot } = await fixture();
+  const plan = await ops.plan(sessionId);
+  await ops.trash(sessionId, { digest: plan.digest });
+  const listed = await ops.list();
+  assert.equal(listed.entries.length, 1);
+  const result = await ops.restoreMany({ entryIds: [listed.entries[0].entryId] });
   assert.equal(result.ok, true);
-  assert.equal(result.total, 2);
-  assert.equal(result.succeeded, 2);
-  const receipts = await ops.receipts(5);
-  assert.ok(receipts.entries.some((entry) => entry.action === "trash-many"));
+  assert.equal(result.succeeded, 1);
+  assert.equal((await ops.list()).entries.length, 0);
   await rm(dataRoot, { recursive: true, force: true });
 });
 
-test("trashMany 会跳过不存在/失败项并如实返回", async () => {
+test("purgeMany 逐条彻底删除，并对不存在的条目如实报错", async () => {
   const { ops, sessionId, dataRoot } = await fixture();
-  const result = await ops.trashMany({ sessionIds: [sessionId, "missing-session"] });
+  const plan = await ops.plan(sessionId);
+  const trashed = await ops.trash(sessionId, { digest: plan.digest });
+  const result = await ops.purgeMany({ entryIds: [trashed.entryId, "missing-entry"] });
   assert.equal(result.ok, false);
   assert.equal(result.succeeded, 1);
   assert.equal(
-    result.results.find((/** @type {any} */ item) => item.id === "missing-session")?.ok,
+    result.results.find((/** @type {any} */ item) => item.entryId === "missing-entry")?.ok,
     false,
   );
   await rm(dataRoot, { recursive: true, force: true });

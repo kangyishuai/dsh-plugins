@@ -226,6 +226,11 @@ check("角标反映待恢复条目数", /\\(1\\)/.test(badge || ""), badge);
 // 7) 面板条目 + 键盘导航
 const withEntry = await openPanel();
 check("回收站面板列出条目", withEntry.includes("恢复") && withEntry.includes("彻底删除"), withEntry.slice(0, 100));
+check(
+  "回收站支持全选与批量恢复/彻底删除",
+  withEntry.includes("全选") && withEntry.includes("批量恢复") && withEntry.includes("批量彻底删除"),
+  withEntry.slice(0, 160),
+);
 await shot("05-panel-with-entry");
 const keyboard = await page.evaluate(async () => {
   const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent || "").includes("会话回收站"));
@@ -325,17 +330,6 @@ const receiptText = await page.evaluate(async () => {
 check("回执页签列出 trash/restore/purge 记录", /trash/.test(receiptText) && /purge/.test(receiptText), receiptText.slice(0, 160));
 await shot("09-receipts-tab");
 
-// 12) 批量页签
-const batchText = await page.evaluate(async () => {
-  const tab = [...document.querySelectorAll('[role="dialog"] button')].find((b) => (b.textContent || "").trim() === "批量");
-  if (!tab) return "no-batch-tab";
-  tab.click();
-  await new Promise((r) => setTimeout(r, 1600));
-  const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent || "").includes("会话回收站"));
-  return dlg ? (dlg.textContent || "").replace(/\\s+/g, " ") : "missing";
-});
-check("批量页签列出会话与选择控件", batchText.includes("全选") && batchText.includes("批量删除"), batchText.slice(0, 200));
-await shot("12-batch-tab");
 
 // 12) 级联勾选框：遍历非选中会话行，找到带子会话的那一条（不改动任何东西）
 await page.keyboard.press("Escape");

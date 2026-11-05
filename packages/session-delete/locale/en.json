@@ -49,14 +49,11 @@
     "health.agentTool": "Agent tool session_delete: {state}",
     "health.agentToolOn": "registered",
     "health.agentToolOff": "not registered (host has no tools runtime)",
-    "panel.tabBatch": "Batch",
-    "batch.empty": "No sessions to delete.",
-    "batch.selectAll": "Select all",
-    "batch.clear": "Clear",
-    "batch.delete": "Delete {n} selected",
-    "batch.confirm": "Delete {n} session(s)? Each goes to trash",
-    "batch.running": "Deleting…",
     "batch.done": "Done: {ok}/{total} succeeded",
-    "batch.live": "live"
+    "trash.selectAll": "Select all",
+    "trash.clear": "Clear",
+    "trash.restoreMany": "Restore {n}",
+    "trash.purgeMany": "Delete {n} permanently",
+    "trash.purgeManyConfirm": "Permanently delete {n}? This cannot be undone"
   }
 }

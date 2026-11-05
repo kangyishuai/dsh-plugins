@@ -38,6 +38,8 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-session-delete-*.tgz
 
 ## 使用
 
+**回收站内批量**：回收站页签支持全选/清空/批量恢复/批量彻底删除，逐条执行，失败的条目会在面板里说明。
+
 **Agent 工具**：模型可以调用 `session_delete`，但必须两段式——`action=plan` 返回影响面摘要和一次性 token（2 分钟有效），`action=delete` 必须带这个 token。它拒绝删除调用者自己的会话，会话在此期间变化会让 token 失效。通过 UI 删除不需要这个工具。
 
 **键盘**：Tab 在各按钮间移动，Enter/Space 触发，Esc 关闭对话框；回收站面板里可用 ↑/↓/Home/End 在条目间移动焦点；`⌘/Ctrl + Alt + T` 直接打开回收站。删除始终需要菜单 + 确认框，没有一键删除的快捷键。

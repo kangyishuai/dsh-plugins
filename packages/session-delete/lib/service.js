@@ -255,26 +255,25 @@ export class SessionDeleteService extends TypertRemoteService {
     }
   }
 
-  /** 批量删除的候选列表（只读）。 */
-  async listSessions() {
+  /**
+   * 批量恢复回收站条目。
+   * @param {{ entryIds?: string[] }} request
+   */
+  async restoreMany(request) {
     try {
-      return await this.ops.listSessions();
+      return await this.ops.restoreMany({ entryIds: request?.entryIds, operator: "ui" });
     } catch (error) {
       rethrow(error);
     }
   }
 
   /**
-   * 批量删除。
-   * @param {{ sessionIds?: string[], cascade?: boolean }} request
+   * 批量彻底删除回收站条目。
+   * @param {{ entryIds?: string[] }} request
    */
-  async trashMany(request) {
+  async purgeMany(request) {
     try {
-      return await this.ops.trashMany({
-        sessionIds: request?.sessionIds,
-        cascade: request?.cascade === true,
-        operator: "ui",
-      });
+      return await this.ops.purgeMany({ entryIds: request?.entryIds, operator: "ui" });
     } catch (error) {
       rethrow(error);
     }
@@ -333,8 +332,8 @@ declareRemote(SessionDeleteService, "list");
 declareRemote(SessionDeleteService, "restore");
 declareRemote(SessionDeleteService, "purge");
 declareRemote(SessionDeleteService, "audit");
-declareRemote(SessionDeleteService, "listSessions");
-declareRemote(SessionDeleteService, "trashMany");
+declareRemote(SessionDeleteService, "restoreMany");
+declareRemote(SessionDeleteService, "purgeMany");
 declareRemote(SessionDeleteService, "receipts");
 declareRemote(SessionDeleteService, "healthScan");
 declareRemote(SessionDeleteService, "cleanHealth");

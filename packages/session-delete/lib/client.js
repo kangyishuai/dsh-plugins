@@ -70,15 +70,12 @@ window.__ModuleLoader__.load({
       "panel.tabAudit": "审计",
       "panel.tabHealth": "体检",
       "panel.tabReceipts": "回执",
-      "panel.tabBatch": "批量",
-      "batch.empty": "没有可删除的会话。",
-      "batch.selectAll": "全选",
-      "batch.clear": "清空",
-      "batch.delete": "批量删除（{n}）",
-      "batch.confirm": "确认删除 {n} 个？各自进回收站",
-      "batch.running": "正在删除…",
+      "trash.selectAll": "全选",
+      "trash.clear": "清空",
+      "trash.restoreMany": "批量恢复（{n}）",
+      "trash.purgeMany": "批量彻底删除（{n}）",
+      "trash.purgeManyConfirm": "确认彻底删除 {n} 个？不可恢复",
       "batch.done": "完成：{ok}/{total} 成功",
-      "batch.live": "运行中",
       "receipts.empty": "还没有操作回执。",
       "receipts.restored": "已移回原位置",
       "health.loading": "正在检查…",
@@ -133,15 +130,12 @@ window.__ModuleLoader__.load({
       "panel.tabAudit": "Audit",
       "panel.tabHealth": "Health",
       "panel.tabReceipts": "Receipts",
-      "panel.tabBatch": "Batch",
-      "batch.empty": "No sessions to delete.",
-      "batch.selectAll": "Select all",
-      "batch.clear": "Clear",
-      "batch.delete": "Delete {n} selected",
-      "batch.confirm": "Delete {n} session(s)? Each goes to trash",
-      "batch.running": "Deleting…",
+      "trash.selectAll": "Select all",
+      "trash.clear": "Clear",
+      "trash.restoreMany": "Restore {n}",
+      "trash.purgeMany": "Delete {n} permanently",
+      "trash.purgeManyConfirm": "Permanently delete {n}? This cannot be undone",
       "batch.done": "Done: {ok}/{total} succeeded",
-      "batch.live": "live",
       "receipts.empty": "No operation receipts yet.",
       "receipts.restored": "restored",
       "health.loading": "Checking…",
@@ -261,7 +255,11 @@ window.__ModuleLoader__.load({
             description: props.description,
             footer: props.footer,
           },
-          h(Reveal, null, props.children),
+          h(
+            Reveal,
+            { style: { maxHeight: "60vh", overflowY: "auto", paddingRight: "4px" } },
+            props.children,
+          ),
         );
       }
       return h(
@@ -661,6 +659,15 @@ window.__ModuleLoader__.load({
       var purgeState = React.useState(null);
       var confirmPurge = purgeState[0];
       var setConfirmPurge = purgeState[1];
+      var selectedTrashState = React.useState({});
+      var selectedTrash = selectedTrashState[0];
+      var setSelectedTrash = selectedTrashState[1];
+      var trashBusyState = React.useState(false);
+      var trashBusy = trashBusyState[0];
+      var setTrashBusy = trashBusyState[1];
+      var trashMsgState = React.useState("");
+      var trashMsg = trashMsgState[0];
+      var setTrashMsg = trashMsgState[1];
       var scanState = React.useState(null);
       var scan = scanState[0];
       var setScan = scanState[1];
@@ -676,30 +683,6 @@ window.__ModuleLoader__.load({
       var receiptsState = React.useState(null);
       var receipts = receiptsState[0];
       var setReceipts = receiptsState[1];
-      var batchListState = React.useState(null);
-      var batchList = batchListState[0];
-      var setBatchList = batchListState[1];
-      var batchSelectedState = React.useState({});
-      var batchSelected = batchSelectedState[0];
-      var setBatchSelected = batchSelectedState[1];
-      var batchBusyState = React.useState(false);
-      var batchBusy = batchBusyState[0];
-      var setBatchBusy = batchBusyState[1];
-      var batchMsgState = React.useState("");
-      var batchMsg = batchMsgState[0];
-      var setBatchMsg = batchMsgState[1];
-
-      const loadBatch = React.useCallback(() => {
-        props
-          .call("listSessions")
-          .then((/** @type {any} */ value) => {
-            setBatchList(value && value.sessions ? value.sessions : []);
-          })
-          .catch((/** @type {any} */ reason) => {
-            setBatchList([]);
-            setBatchMsg(errorText(reason));
-          });
-      }, []);
 
       const loadReceipts = React.useCallback(() => {
         props
@@ -825,6 +808,49 @@ window.__ModuleLoader__.load({
           });
       };
 
+      var selectedEntryIds = Object.keys(selectedTrash).filter(
+        (/** @type {string} */ entryId) => /** @type {any} */ (selectedTrash)[entryId],
+      );
+      var doBatchRestore = () => {
+        if (selectedEntryIds.length === 0) return;
+        setTrashBusy(true);
+        setTrashMsg("");
+        props
+          .call("restoreMany", { entryIds: selectedEntryIds })
+          .then((/** @type {any} */ result) => {
+            setTrashBusy(false);
+            setTrashMsg(props.t("batch.done", { ok: result.succeeded, total: result.total }));
+            setSelectedTrash({});
+            refresh();
+            props.bump?.();
+            for (const item of result.results) if (item.ok) props.onRestored?.(item.sessionId);
+          })
+          .catch((/** @type {any} */ reason) => {
+            setTrashBusy(false);
+            setTrashMsg(errorText(reason));
+          });
+      };
+      var doBatchPurge = () => {
+        if (selectedEntryIds.length === 0) return;
+        setTrashBusy(true);
+        setTrashMsg("");
+        props
+          .call("purgeMany", { entryIds: selectedEntryIds })
+          .then((/** @type {any} */ result) => {
+            setTrashBusy(false);
+            setConfirmPurge(null);
+            setTrashMsg(props.t("batch.done", { ok: result.succeeded, total: result.total }));
+            setSelectedTrash({});
+            refresh();
+            props.bump?.();
+            for (const item of result.results) if (item.ok) props.onPurged?.(undefined);
+          })
+          .catch((/** @type {any} */ reason) => {
+            setTrashBusy(false);
+            setTrashMsg(errorText(reason));
+          });
+      };
+
       var entries = (data && data.entries) || [];
       var readOnly = !!(health && health.readOnly);
       var rowStyle = { borderTop: "1px solid " + T.border, padding: "10px 0" };
@@ -885,163 +911,10 @@ window.__ModuleLoader__.load({
             },
             props.t("panel.tabReceipts"),
           ),
-          h(
-            Btn,
-            {
-              onClick: () => {
-                setTab("batch");
-                loadBatch();
-              },
-            },
-            props.t("panel.tabBatch"),
-          ),
         ),
       );
 
-      if (tab === "batch") {
-        if (!batchList) {
-          content.push(
-            h(
-              "div",
-              { key: "batch-loading", style: { color: T.dim, padding: "8px 0" } },
-              props.t("health.loading"),
-            ),
-          );
-        } else if (batchList.length === 0) {
-          content.push(
-            h(
-              "div",
-              { key: "batch-empty", style: { color: T.dim, padding: "8px 0" } },
-              props.t("batch.empty"),
-            ),
-          );
-        } else {
-          const selectedIds = Object.keys(batchSelected).filter(
-            (id) => /** @type {any} */ (batchSelected)[id],
-          );
-          content.push(
-            h(
-              "div",
-              {
-                key: "batch-actions",
-                style: { display: "flex", gap: "8px", alignItems: "center", marginBottom: "8px" },
-              },
-              h(
-                Btn,
-                {
-                  onClick: () => {
-                    /** @type {Record<string, boolean>} */
-                    const all = {};
-                    for (const item of /** @type {any[]} */ (batchList)) all[item.id] = true;
-                    setBatchSelected(all);
-                  },
-                },
-                props.t("batch.selectAll"),
-              ),
-              h(Btn, { onClick: () => setBatchSelected({}) }, props.t("batch.clear")),
-              confirmPurge === "__batch__"
-                ? h(
-                    Btn,
-                    {
-                      danger: true,
-                      disabled: batchBusy || selectedIds.length === 0,
-                      onClick: () => {
-                        setBatchBusy(true);
-                        setBatchMsg("");
-                        props
-                          .call("trashMany", { sessionIds: selectedIds })
-                          .then((/** @type {any} */ result) => {
-                            setBatchBusy(false);
-                            setConfirmPurge(null);
-                            setBatchMsg(
-                              props.t("batch.done", { ok: result.succeeded, total: result.total }),
-                            );
-                            for (const item of result.results) {
-                              if (item.ok) props.onPurged?.(item.id);
-                            }
-                            setBatchSelected({});
-                            loadBatch();
-                            refresh();
-                            props.bump?.();
-                          })
-                          .catch((/** @type {any} */ reason) => {
-                            setBatchBusy(false);
-                            setBatchMsg(errorText(reason));
-                          });
-                      },
-                    },
-                    props.t("batch.confirm", { n: selectedIds.length }),
-                  )
-                : h(
-                    Btn,
-                    {
-                      danger: true,
-                      disabled: batchBusy || selectedIds.length === 0,
-                      onClick: () => setConfirmPurge("__batch__"),
-                    },
-                    batchBusy
-                      ? props.t("batch.running")
-                      : props.t("batch.delete", { n: selectedIds.length }),
-                  ),
-            ),
-          );
-          batchList.forEach((/** @type {any} */ item, /** @type {any} */ index) => {
-            const checked = Boolean(/** @type {any} */ (batchSelected)[item.id]);
-            content.push(
-              h(
-                "label",
-                {
-                  key: "batch-" + index,
-                  style: {
-                    display: "flex",
-                    alignItems: "baseline",
-                    gap: "8px",
-                    borderTop: "1px solid " + T.border,
-                    padding: "6px 0",
-                    fontSize: "12px",
-                    cursor: "pointer",
-                  },
-                },
-                h("input", {
-                  type: "checkbox",
-                  checked: checked,
-                  disabled: batchBusy,
-                  onChange: () =>
-                    setBatchSelected((/** @type {any} */ current) => ({
-                      ...current,
-                      [item.id]: !checked,
-                    })),
-                  style: { marginTop: "2px" },
-                }),
-                h(
-                  "span",
-                  {
-                    title: item.id,
-                    style: {
-                      flex: 1,
-                      minWidth: 0,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    },
-                  },
-                  item.title || item.id,
-                ),
-                item.live ? h("span", { style: { color: T.danger } }, props.t("batch.live")) : null,
-              ),
-            );
-          });
-        }
-        if (batchMsg) {
-          content.push(
-            h(
-              "div",
-              { key: "batch-msg", style: { color: T.dim, marginTop: "8px", fontSize: "12px" } },
-              batchMsg,
-            ),
-          );
-        }
-      } else if (tab === "receipts") {
+      if (tab === "receipts") {
         if (!receipts || receipts.length === 0) {
           content.push(
             h(
@@ -1245,12 +1118,99 @@ window.__ModuleLoader__.load({
             ),
           );
         } else {
+          content.push(
+            h(
+              "div",
+              {
+                key: "trash-tools",
+                style: {
+                  display: "flex",
+                  gap: "8px",
+                  alignItems: "center",
+                  marginBottom: "8px",
+                  flexWrap: "wrap",
+                },
+              },
+              h(
+                Btn,
+                {
+                  onClick: () => {
+                    /** @type {Record<string, boolean>} */
+                    const all = {};
+                    for (const item of entries) all[item.entryId] = true;
+                    setSelectedTrash(all);
+                  },
+                  disabled: trashBusy,
+                },
+                props.t("trash.selectAll"),
+              ),
+              h(
+                Btn,
+                { onClick: () => setSelectedTrash({}), disabled: trashBusy },
+                props.t("trash.clear"),
+              ),
+              h(
+                Btn,
+                {
+                  disabled: trashBusy || selectedEntryIds.length === 0,
+                  onClick: doBatchRestore,
+                },
+                props.t("trash.restoreMany", { n: selectedEntryIds.length }),
+              ),
+              confirmPurge === "__trashBatchPurge__"
+                ? h(
+                    Btn,
+                    {
+                      danger: true,
+                      disabled: trashBusy || selectedEntryIds.length === 0,
+                      onClick: doBatchPurge,
+                    },
+                    props.t("trash.purgeManyConfirm", { n: selectedEntryIds.length }),
+                  )
+                : h(
+                    Btn,
+                    {
+                      danger: true,
+                      disabled: trashBusy || selectedEntryIds.length === 0,
+                      onClick: () => setConfirmPurge("__trashBatchPurge__"),
+                    },
+                    props.t("trash.purgeMany", { n: selectedEntryIds.length }),
+                  ),
+            ),
+          );
+          if (trashMsg) {
+            content.push(
+              h(
+                "div",
+                {
+                  key: "trash-msg",
+                  style: { color: T.dim, fontSize: "12px", marginBottom: "6px" },
+                },
+                trashMsg,
+              ),
+            );
+          }
           entries.forEach((/** @type {any} */ entry) => {
             content.push(
               h(
                 "div",
                 { key: entry.entryId, style: rowStyle },
-                h("div", { style: { fontWeight: 600 } }, entry.title || entry.sessionId),
+                h(
+                  "label",
+                  { style: { display: "flex", alignItems: "baseline", gap: "8px" } },
+                  h("input", {
+                    type: "checkbox",
+                    checked: Boolean(/** @type {any} */ (selectedTrash)[entry.entryId]),
+                    disabled: trashBusy,
+                    onChange: () =>
+                      setSelectedTrash((/** @type {any} */ current) => ({
+                        ...current,
+                        [entry.entryId]: !current[entry.entryId],
+                      })),
+                    style: { marginTop: "2px" },
+                  }),
+                  h("span", { style: { fontWeight: 600 } }, entry.title || entry.sessionId),
+                ),
                 h(
                   "div",
                   { style: { color: T.dim, fontSize: "12px" } },
