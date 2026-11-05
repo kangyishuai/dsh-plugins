@@ -4,7 +4,7 @@
 
 [中文](./README.zh-CN.md)
 
-Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai). Not affiliated with DeepSeek.
+Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). Not affiliated with DeepSeek.
 
 > **Status: v0.4.2, early.** Verified on DSH 0.2.1-rc.5 with `pnpm smoke:session-delete` (24 end-to-end assertions) plus a manual pass in the desktop GUI. Treat it as young software and keep backups of anything you cannot lose.
 

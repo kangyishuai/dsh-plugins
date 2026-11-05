@@ -4,7 +4,7 @@
 
 [English](./README.md)
 
-非官方 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai) 插件，与 DeepSeek 无关。
+非官方 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 插件，与 DeepSeek 无关。
 
 > **状态：v0.4.2，早期可用。** 已在 DSH 0.2.1-rc.5 上用 `pnpm smoke:session-delete`（24 项端到端断言）加一轮桌面版人工验收。仍是年轻软件，重要数据请自行备份。
 
