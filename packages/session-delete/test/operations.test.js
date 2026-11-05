@@ -274,3 +274,33 @@ test("默认不级联：子会话留在原处", async () => {
   assert.ok((await stat(childDirs[0])).isDirectory());
   await rm(dataRoot, { recursive: true, force: true });
 });
+
+test("listSessions 返回 id/标题/live，trashMany 逐条删除并写回执", async () => {
+  const { ops, sessionId, dataRoot } = await fixture({
+    children: [{ id: "child-1", title: "子会话一" }],
+  });
+  const listed = await ops.listSessions();
+  const ids = listed.sessions.map((/** @type {any} */ item) => item.id);
+  assert.ok(ids.includes(sessionId));
+  assert.ok(ids.includes("child-1"));
+
+  const result = await ops.trashMany({ sessionIds: [sessionId, "child-1"] });
+  assert.equal(result.ok, true);
+  assert.equal(result.total, 2);
+  assert.equal(result.succeeded, 2);
+  const receipts = await ops.receipts(5);
+  assert.ok(receipts.entries.some((entry) => entry.action === "trash-many"));
+  await rm(dataRoot, { recursive: true, force: true });
+});
+
+test("trashMany 会跳过不存在/失败项并如实返回", async () => {
+  const { ops, sessionId, dataRoot } = await fixture();
+  const result = await ops.trashMany({ sessionIds: [sessionId, "missing-session"] });
+  assert.equal(result.ok, false);
+  assert.equal(result.succeeded, 1);
+  assert.equal(
+    result.results.find((/** @type {any} */ item) => item.id === "missing-session")?.ok,
+    false,
+  );
+  await rm(dataRoot, { recursive: true, force: true });
+});

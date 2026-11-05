@@ -48,6 +48,15 @@
     "confirm.cascade": "Also delete these {n} child session(s) (each goes to trash separately)",
     "health.agentTool": "Agent tool session_delete: {state}",
     "health.agentToolOn": "registered",
-    "health.agentToolOff": "not registered (host has no tools runtime)"
+    "health.agentToolOff": "not registered (host has no tools runtime)",
+    "panel.tabBatch": "Batch",
+    "batch.empty": "No sessions to delete.",
+    "batch.selectAll": "Select all",
+    "batch.clear": "Clear",
+    "batch.delete": "Delete {n} selected",
+    "batch.confirm": "Delete {n} session(s)? Each goes to trash",
+    "batch.running": "Deleting…",
+    "batch.done": "Done: {ok}/{total} succeeded",
+    "batch.live": "live"
   }
 }

@@ -70,6 +70,15 @@ window.__ModuleLoader__.load({
       "panel.tabAudit": "审计",
       "panel.tabHealth": "体检",
       "panel.tabReceipts": "回执",
+      "panel.tabBatch": "批量",
+      "batch.empty": "没有可删除的会话。",
+      "batch.selectAll": "全选",
+      "batch.clear": "清空",
+      "batch.delete": "批量删除（{n}）",
+      "batch.confirm": "确认删除 {n} 个？各自进回收站",
+      "batch.running": "正在删除…",
+      "batch.done": "完成：{ok}/{total} 成功",
+      "batch.live": "运行中",
       "receipts.empty": "还没有操作回执。",
       "receipts.restored": "已移回原位置",
       "health.loading": "正在检查…",
@@ -124,6 +133,15 @@ window.__ModuleLoader__.load({
       "panel.tabAudit": "Audit",
       "panel.tabHealth": "Health",
       "panel.tabReceipts": "Receipts",
+      "panel.tabBatch": "Batch",
+      "batch.empty": "No sessions to delete.",
+      "batch.selectAll": "Select all",
+      "batch.clear": "Clear",
+      "batch.delete": "Delete {n} selected",
+      "batch.confirm": "Delete {n} session(s)? Each goes to trash",
+      "batch.running": "Deleting…",
+      "batch.done": "Done: {ok}/{total} succeeded",
+      "batch.live": "live",
       "receipts.empty": "No operation receipts yet.",
       "receipts.restored": "restored",
       "health.loading": "Checking…",
@@ -658,6 +676,30 @@ window.__ModuleLoader__.load({
       var receiptsState = React.useState(null);
       var receipts = receiptsState[0];
       var setReceipts = receiptsState[1];
+      var batchListState = React.useState(null);
+      var batchList = batchListState[0];
+      var setBatchList = batchListState[1];
+      var batchSelectedState = React.useState({});
+      var batchSelected = batchSelectedState[0];
+      var setBatchSelected = batchSelectedState[1];
+      var batchBusyState = React.useState(false);
+      var batchBusy = batchBusyState[0];
+      var setBatchBusy = batchBusyState[1];
+      var batchMsgState = React.useState("");
+      var batchMsg = batchMsgState[0];
+      var setBatchMsg = batchMsgState[1];
+
+      const loadBatch = React.useCallback(() => {
+        props
+          .call("listSessions")
+          .then((/** @type {any} */ value) => {
+            setBatchList(value && value.sessions ? value.sessions : []);
+          })
+          .catch((/** @type {any} */ reason) => {
+            setBatchList([]);
+            setBatchMsg(errorText(reason));
+          });
+      }, []);
 
       const loadReceipts = React.useCallback(() => {
         props
@@ -843,10 +885,163 @@ window.__ModuleLoader__.load({
             },
             props.t("panel.tabReceipts"),
           ),
+          h(
+            Btn,
+            {
+              onClick: () => {
+                setTab("batch");
+                loadBatch();
+              },
+            },
+            props.t("panel.tabBatch"),
+          ),
         ),
       );
 
-      if (tab === "receipts") {
+      if (tab === "batch") {
+        if (!batchList) {
+          content.push(
+            h(
+              "div",
+              { key: "batch-loading", style: { color: T.dim, padding: "8px 0" } },
+              props.t("health.loading"),
+            ),
+          );
+        } else if (batchList.length === 0) {
+          content.push(
+            h(
+              "div",
+              { key: "batch-empty", style: { color: T.dim, padding: "8px 0" } },
+              props.t("batch.empty"),
+            ),
+          );
+        } else {
+          const selectedIds = Object.keys(batchSelected).filter(
+            (id) => /** @type {any} */ (batchSelected)[id],
+          );
+          content.push(
+            h(
+              "div",
+              {
+                key: "batch-actions",
+                style: { display: "flex", gap: "8px", alignItems: "center", marginBottom: "8px" },
+              },
+              h(
+                Btn,
+                {
+                  onClick: () => {
+                    /** @type {Record<string, boolean>} */
+                    const all = {};
+                    for (const /** @type {any} */ item of batchList) all[item.id] = true;
+                    setBatchSelected(all);
+                  },
+                },
+                props.t("batch.selectAll"),
+              ),
+              h(Btn, { onClick: () => setBatchSelected({}) }, props.t("batch.clear")),
+              confirmPurge === "__batch__"
+                ? h(
+                    Btn,
+                    {
+                      danger: true,
+                      disabled: batchBusy || selectedIds.length === 0,
+                      onClick: () => {
+                        setBatchBusy(true);
+                        setBatchMsg("");
+                        props
+                          .call("trashMany", { sessionIds: selectedIds })
+                          .then((/** @type {any} */ result) => {
+                            setBatchBusy(false);
+                            setConfirmPurge(null);
+                            setBatchMsg(
+                              props.t("batch.done", { ok: result.succeeded, total: result.total }),
+                            );
+                            for (const item of result.results) {
+                              if (item.ok) props.onPurged?.(item.id);
+                            }
+                            setBatchSelected({});
+                            loadBatch();
+                            refresh();
+                            props.bump?.();
+                          })
+                          .catch((/** @type {any} */ reason) => {
+                            setBatchBusy(false);
+                            setBatchMsg(errorText(reason));
+                          });
+                      },
+                    },
+                    props.t("batch.confirm", { n: selectedIds.length }),
+                  )
+                : h(
+                    Btn,
+                    {
+                      danger: true,
+                      disabled: batchBusy || selectedIds.length === 0,
+                      onClick: () => setConfirmPurge("__batch__"),
+                    },
+                    batchBusy
+                      ? props.t("batch.running")
+                      : props.t("batch.delete", { n: selectedIds.length }),
+                  ),
+            ),
+          );
+          batchList.forEach((/** @type {any} */ item, /** @type {any} */ index) => {
+            const checked = Boolean(/** @type {any} */ (batchSelected)[item.id]);
+            content.push(
+              h(
+                "label",
+                {
+                  key: "batch-" + index,
+                  style: {
+                    display: "flex",
+                    alignItems: "baseline",
+                    gap: "8px",
+                    borderTop: "1px solid " + T.border,
+                    padding: "6px 0",
+                    fontSize: "12px",
+                    cursor: "pointer",
+                  },
+                },
+                h("input", {
+                  type: "checkbox",
+                  checked: checked,
+                  disabled: batchBusy,
+                  onChange: () =>
+                    setBatchSelected((/** @type {any} */ current) => ({
+                      ...current,
+                      [item.id]: !checked,
+                    })),
+                  style: { marginTop: "2px" },
+                }),
+                h(
+                  "span",
+                  {
+                    title: item.id,
+                    style: {
+                      flex: 1,
+                      minWidth: 0,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    },
+                  },
+                  item.title || item.id,
+                ),
+                item.live ? h("span", { style: { color: T.danger } }, props.t("batch.live")) : null,
+              ),
+            );
+          });
+        }
+        if (batchMsg) {
+          content.push(
+            h(
+              "div",
+              { key: "batch-msg", style: { color: T.dim, marginTop: "8px", fontSize: "12px" } },
+              batchMsg,
+            ),
+          );
+        }
+      } else if (tab === "receipts") {
         if (!receipts || receipts.length === 0) {
           content.push(
             h(

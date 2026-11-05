@@ -255,6 +255,31 @@ export class SessionDeleteService extends TypertRemoteService {
     }
   }
 
+  /** 批量删除的候选列表（只读）。 */
+  async listSessions() {
+    try {
+      return await this.ops.listSessions();
+    } catch (error) {
+      rethrow(error);
+    }
+  }
+
+  /**
+   * 批量删除。
+   * @param {{ sessionIds?: string[], cascade?: boolean }} request
+   */
+  async trashMany(request) {
+    try {
+      return await this.ops.trashMany({
+        sessionIds: request?.sessionIds,
+        cascade: request?.cascade === true,
+        operator: "ui",
+      });
+    } catch (error) {
+      rethrow(error);
+    }
+  }
+
   /**
    * 最近的操作回执。
    * @param {{ limit?: number }} [request]
@@ -308,6 +333,8 @@ declareRemote(SessionDeleteService, "list");
 declareRemote(SessionDeleteService, "restore");
 declareRemote(SessionDeleteService, "purge");
 declareRemote(SessionDeleteService, "audit");
+declareRemote(SessionDeleteService, "listSessions");
+declareRemote(SessionDeleteService, "trashMany");
 declareRemote(SessionDeleteService, "receipts");
 declareRemote(SessionDeleteService, "healthScan");
 declareRemote(SessionDeleteService, "cleanHealth");

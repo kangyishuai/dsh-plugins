@@ -880,6 +880,72 @@ export function createOperations({ ctx, dataRoot, logger }) {
     };
   }
 
+  /** 列出会话（批量删除用）：只读，字段刻意保持最小。 */
+  async function listSessions() {
+    if (!caps.checks["persistence.list"]) {
+      throw failure("session-delete/unsupported-host", "当前宿主没有 sessionPersistence.list");
+    }
+    const list = (await caps.services.persistence.list()) ?? [];
+    const out = list.map((/** @type {any} */ entry) => {
+      const id = String(entry?.id ?? entry?.header?.id ?? "");
+      return {
+        id,
+        title: typeof entry?.header?.title === "string" ? entry.header.title : null,
+        cwd: typeof entry?.header?.cwd === "string" ? entry.header.cwd : null,
+        live: caps.services.sessions?.get?.(id) !== undefined,
+      };
+    });
+    out.sort((/** @type {any} */ a, /** @type {any} */ b) =>
+      String(b.title ?? b.id).localeCompare(String(a.title ?? a.id)),
+    );
+    return { sessions: out.filter((/** @type {any} */ item) => item.id.length > 0) };
+  }
+
+  /**
+   * 批量删除（顺序执行，逐条返回结果；单条失败不影响其它）。
+   * @param {{ sessionIds?: string[], cascade?: boolean, operator?: string }} request
+   */
+  async function trashMany(request = {}) {
+    const ids = Array.isArray(request.sessionIds) ? request.sessionIds : [];
+    if (ids.length === 0) throw failure("session-delete/invalid-request", "没有选择任何会话");
+    if (ids.length > 50) throw failure("session-delete/invalid-request", "一次最多 50 个会话");
+    /** @type {{ id: string, ok: boolean, entryId?: string, receiptId?: string, code?: string, error?: string }[]} */
+    const results = [];
+    for (const id of ids) {
+      try {
+        const result = await trash(id, {
+          cascade: request.cascade === true,
+          operator: request.operator ?? "ui",
+        });
+        results.push({ id, ok: true, entryId: result.entryId, receiptId: result.receiptId });
+      } catch (error) {
+        const raw = /** @type {any} */ (error);
+        results.push({
+          id,
+          ok: false,
+          code: typeof raw?.code === "string" ? raw.code : "error",
+          error: messageOf(error),
+        });
+      }
+    }
+    const okCount = results.filter((item) => item.ok).length;
+    const receiptId = await writeReceipt(dataRoot, {
+      action: "trash-many",
+      at: new Date().toISOString(),
+      requested: ids.length,
+      succeeded: okCount,
+      failed: results.length - okCount,
+      results,
+    });
+    return {
+      ok: okCount === results.length,
+      total: results.length,
+      succeeded: okCount,
+      results,
+      receiptId,
+    };
+  }
+
   /** @param {number} [limit] */
   async function receipts(limit = 50) {
     return { entries: await listReceipts(dataRoot, limit) };
@@ -888,6 +954,8 @@ export function createOperations({ ctx, dataRoot, logger }) {
   return {
     caps,
     health,
+    listSessions,
+    trashMany,
     receipts,
     scanHealth,
     cleanHealth,

@@ -48,6 +48,15 @@
     "confirm.cascade": "同时删除这 {n} 个子会话（各自进入回收站，需分别恢复）",
     "health.agentTool": "模型工具 session_delete：{state}",
     "health.agentToolOn": "已注册",
-    "health.agentToolOff": "未注册（宿主未提供 tools 运行时）"
+    "health.agentToolOff": "未注册（宿主未提供 tools 运行时）",
+    "panel.tabBatch": "批量",
+    "batch.empty": "没有可删除的会话。",
+    "batch.selectAll": "全选",
+    "batch.clear": "清空",
+    "batch.delete": "批量删除（{n}）",
+    "batch.confirm": "确认删除 {n} 个？各自进回收站",
+    "batch.running": "正在删除…",
+    "batch.done": "完成：{ok}/{total} 成功",
+    "batch.live": "运行中"
   }
 }
