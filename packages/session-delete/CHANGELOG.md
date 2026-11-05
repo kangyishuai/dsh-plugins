@@ -1,5 +1,15 @@
 # @kangyishuai/dsh-session-delete
 
+## 0.4.0
+
+### Minor Changes
+
+- 回收站面板新增「批量」页签：列出会话、多选后一次删除（逐条进回收站，
+  单条失败不影响其它），结果写进回执（action=trash-many）。一次最多 50 条。
+
+- 新增 minimal 能力档：宿主没有 workspaceRegistry（如 headless 组合）时仍允许删除，
+  归档闸门与工作区记账步骤跳过并在回执中标记；只有持久化本体缺失才进入只读模式。
+
 ## 0.3.0
 
 ### Minor Changes

@@ -6,7 +6,7 @@
 
 Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai). Not affiliated with DeepSeek.
 
-> **Status: v0.3, early.** Verified on DSH 0.2.1-rc.5 with `pnpm smoke:session-delete` (23 end-to-end assertions) plus a manual pass in the desktop GUI. Treat it as young software and keep backups of anything you cannot lose.
+> **Status: v0.4, early.** Verified on DSH 0.2.1-rc.5 with `pnpm smoke:session-delete` (24 end-to-end assertions) plus a manual pass in the desktop GUI. Treat it as young software and keep backups of anything you cannot lose.
 
 ## What it does
 
@@ -99,7 +99,7 @@ v0.1 declares no `engines.dsh` range. Instead there are three layers of defense:
 
 | Plugin | Verified on DSH          | Notes                                                                                       |
 | ------ | ------------------------ | ------------------------------------------------------------------------------------------- |
-| 0.3.0  | **0.2.1-rc.5** (desktop) | `pnpm smoke:session-delete`: 21 assertions green; manual GUI pass on the same host version. |
+| 0.4.0  | **0.2.1-rc.5** (desktop) | `pnpm smoke:session-delete`: 24 assertions green; manual GUI pass on the same host version. |
 
 After a DSH upgrade: restart, then open the plugin status (settings → plugins). If it reports read-only mode, the host API changed — upgrade the plugin or report the version pair; don't force it.
 
