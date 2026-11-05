@@ -55,14 +55,14 @@ import { createHash } from "node:crypto";
  */
 export function stableStringify(value) {
   if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
-  if (Array.isArray(value)) return "[" + value.map(stableStringify).join(",") + "]";
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
   const record = /** @type {Record<string, unknown>} */ (value);
   const keys = Object.keys(record).sort();
   return (
     "{" +
     keys
       .filter((k) => record[k] !== undefined)
-      .map((k) => JSON.stringify(k) + ":" + stableStringify(record[k]))
+      .map((k) => `${JSON.stringify(k)}:${stableStringify(record[k])}`)
       .join(",") +
     "}"
   );

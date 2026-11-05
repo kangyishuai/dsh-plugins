@@ -24,15 +24,15 @@ export async function writeReceipt(dataRoot, record) {
   const id =
     typeof record.id === "string" && record.id.length > 0
       ? record.id
-      : Date.now().toString(36) + "-" + randomUUID().slice(0, 6);
-  const file = join(dir, id + ".json");
+      : `${Date.now().toString(36)}-${randomUUID().slice(0, 6)}`;
+  const file = join(dir, `${id}.json`);
   requireInside(dataRoot, file);
   await mkdir(dir, { recursive: true });
   await writeFile(
-    file + ".tmp",
+    `${file}.tmp`,
     JSON.stringify({ ...record, schema: RECEIPT_SCHEMA, id }, null, 2),
   );
-  await rename(file + ".tmp", file);
+  await rename(`${file}.tmp`, file);
   return id;
 }
 

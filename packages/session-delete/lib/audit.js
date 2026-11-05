@@ -25,7 +25,7 @@ const MAX_LINE = 4096;
  */
 function clip(value) {
   if (typeof value !== "string") return "";
-  return value.length > 200 ? value.slice(0, 197) + "..." : value;
+  return value.length > 200 ? `${value.slice(0, 197)}...` : value;
 }
 
 /**
@@ -53,7 +53,7 @@ export function createAudit(dataRoot) {
       line = JSON.stringify({ ...record, detail: clip(record.detail).slice(0, 80) });
     const job = chain.then(async () => {
       await mkdir(dirname(file), { recursive: true });
-      await appendFile(file, line + "\n", { encoding: "utf8", mode: 0o600 });
+      await appendFile(file, `${line}\n`, { encoding: "utf8", mode: 0o600 });
       return { ok: true };
     });
     chain = job.catch(() => undefined);

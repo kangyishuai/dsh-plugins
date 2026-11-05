@@ -28,7 +28,7 @@ function declareRemote(Proto, method) {
     },
   });
   if (initializers.length !== 1) {
-    throw new Error("session-delete: cannot declare Remote method " + method);
+    throw new Error(`session-delete: cannot declare Remote method ${method}`);
   }
   initializers[0].call(Object.create(Proto.prototype));
 }

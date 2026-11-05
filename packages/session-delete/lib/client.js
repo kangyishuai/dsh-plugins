@@ -18,7 +18,7 @@ window.__ModuleLoader__.load({
     var primitives = {};
     try {
       primitives = require("@deepseek-ai/dsh-client-ui-primitives") || {};
-    } catch (error) {
+    } catch (_error) {
       primitives = {};
     }
     var MenuItemButton = primitives.MenuItemButton;
@@ -200,7 +200,7 @@ window.__ModuleLoader__.load({
           autoFocus: props.autoFocus,
           disabled: props.disabled,
           onClick: props.onClick,
-          className: "dsh-sdel-btn" + (props.danger ? " dsh-sdel-btn--danger" : ""),
+          className: `dsh-sdel-btn${props.danger ? " dsh-sdel-btn--danger" : ""}`,
           style: {
             padding: "6px 14px",
             borderRadius: "8px",
@@ -288,7 +288,7 @@ window.__ModuleLoader__.load({
                 overflow: "auto",
                 background: T.bg,
                 color: T.text,
-                border: "1px solid " + T.border,
+                border: `1px solid ${T.border}`,
                 borderRadius: T.radius,
                 padding: "18px 20px",
                 fontSize: "13px",
@@ -331,7 +331,7 @@ window.__ModuleLoader__.load({
 
     function formatBytes(/** @type {any} */ bytes) {
       if (typeof bytes !== "number" || bytes < 0) return "?";
-      if (bytes < 1024) return Math.round(bytes) + " B";
+      if (bytes < 1024) return `${Math.round(bytes)} B`;
       var units = ["KB", "MB", "GB", "TB"];
       var value = bytes / 1024;
       var unit = 0;
@@ -339,7 +339,7 @@ window.__ModuleLoader__.load({
         value = value / 1024;
         unit += 1;
       }
-      return (value >= 10 ? value.toFixed(0) : value.toFixed(1)) + " " + units[unit];
+      return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
     }
 
     function formatTime(/** @type {any} */ value) {
@@ -416,7 +416,7 @@ window.__ModuleLoader__.load({
         props
           .call("list")
           .then((/** @type {any} */ value) => {
-            setCount(value && value.entries ? value.entries.length : 0);
+            setCount(value?.entries ? value.entries.length : 0);
           })
           .catch(() => setCount(null));
       };
@@ -432,8 +432,7 @@ window.__ModuleLoader__.load({
       }, []);
 
       var label =
-        props.t("footer.trash") +
-        (typeof count === "number" && count > 0 ? " (" + count + ")" : "");
+        props.t("footer.trash") + (typeof count === "number" && count > 0 ? ` (${count})` : "");
       return h(
         "button",
         {
@@ -562,7 +561,7 @@ window.__ModuleLoader__.load({
         if (plan.blockers && plan.blockers.length > 0)
           lines.push(props.t("confirm.blocked", { reason: plan.blockers[0].message }));
       }
-      var blocked = !!(plan && plan.blockers && plan.blockers.length > 0);
+      var blocked = !!(plan?.blockers && plan.blockers.length > 0);
 
       var body = h(
         React.Fragment,
@@ -607,7 +606,7 @@ window.__ModuleLoader__.load({
             )
           : null,
         lines.map((/** @type {any} */ line, /** @type {any} */ index) =>
-          h("div", { key: "line-" + index, style: { marginBottom: "4px" } }, line),
+          h("div", { key: `line-${index}`, style: { marginBottom: "4px" } }, line),
         ),
         !plan && !error ? h("div", { style: { color: T.dim } }, props.t("confirm.loading")) : null,
         error ? h("div", { style: { color: T.danger, marginTop: "8px" } }, error) : null,
@@ -688,7 +687,7 @@ window.__ModuleLoader__.load({
         props
           .call("receipts", { limit: 50 })
           .then((/** @type {any} */ value) => {
-            setReceipts(value && value.entries ? value.entries : []);
+            setReceipts(value?.entries ? value.entries : []);
           })
           .catch(() => setReceipts([]));
       }, []);
@@ -710,7 +709,7 @@ window.__ModuleLoader__.load({
         props
           .call("audit", { limit: 100 })
           .then((/** @type {any} */ value) => {
-            setAudit(value && value.entries ? value.entries : []);
+            setAudit(value?.entries ? value.entries : []);
           })
           .catch(() => {});
       }, []);
@@ -851,9 +850,9 @@ window.__ModuleLoader__.load({
           });
       };
 
-      var entries = (data && data.entries) || [];
-      var readOnly = !!(health && health.readOnly);
-      var rowStyle = { borderTop: "1px solid " + T.border, padding: "10px 0" };
+      var entries = data?.entries || [];
+      var readOnly = !!health?.readOnly;
+      var rowStyle = { borderTop: `1px solid ${T.border}`, padding: "10px 0" };
 
       var content = [];
       if (readOnly)
@@ -879,7 +878,7 @@ window.__ModuleLoader__.load({
                 setTab("trash");
               },
             },
-            props.t("panel.tabTrash") + (entries.length ? " (" + entries.length + ")" : ""),
+            props.t("panel.tabTrash") + (entries.length ? ` (${entries.length})` : ""),
           ),
           h(
             Btn,
@@ -931,7 +930,7 @@ window.__ModuleLoader__.load({
             ).length;
             const detail =
               receipt.action === "trash"
-                ? formatBytes(receipt.sizeBytes || 0) + " · " + okCount + "/" + removed.length
+                ? `${formatBytes(receipt.sizeBytes || 0)} · ${okCount}/${removed.length}`
                 : receipt.action === "restore"
                   ? props.t("receipts.restored")
                   : receipt.action === "purge"
@@ -941,10 +940,10 @@ window.__ModuleLoader__.load({
               h(
                 "div",
                 {
-                  key: "receipt-" + index,
+                  key: `receipt-${index}`,
                   title: String(receipt.sessionId || ""),
                   style: {
-                    borderTop: "1px solid " + T.border,
+                    borderTop: `1px solid ${T.border}`,
                     padding: "7px 0",
                     fontSize: "12px",
                     display: "flex",
@@ -1031,9 +1030,9 @@ window.__ModuleLoader__.load({
               h(
                 "div",
                 {
-                  key: "finding-" + index,
+                  key: `finding-${index}`,
                   style: {
-                    borderTop: "1px solid " + T.border,
+                    borderTop: `1px solid ${T.border}`,
                     padding: "8px 0",
                     color: finding.severity === "warn" ? T.text : T.dim,
                   },
@@ -1041,7 +1040,7 @@ window.__ModuleLoader__.load({
                 h(
                   "div",
                   { style: { fontWeight: 600 } },
-                  finding.label + " · " + props.t("health.items", { n: finding.items.length }),
+                  `${finding.label} · ${props.t("health.items", { n: finding.items.length })}`,
                 ),
                 h(
                   "div",
@@ -1275,24 +1274,24 @@ window.__ModuleLoader__.load({
               h(
                 "div",
                 {
-                  key: "audit-" + index,
-                  style: { borderTop: "1px solid " + T.border, padding: "6px 0", fontSize: "12px" },
+                  key: `audit-${index}`,
+                  style: { borderTop: `1px solid ${T.border}`, padding: "6px 0", fontSize: "12px" },
                 },
-                h("span", { style: { color: T.faint } }, formatTime(entry.ts) + " "),
-                h("span", { style: { fontWeight: 600 } }, String(entry.action || "") + " "),
+                h("span", { style: { color: T.faint } }, `${formatTime(entry.ts)} `),
+                h("span", { style: { fontWeight: 600 } }, `${String(entry.action || "")} `),
                 h(
                   "span",
                   { title: entry.sessionId || "", style: { color: T.dim } },
                   String(entry.result || "") +
-                    (entry.sessionId ? " · " + String(entry.sessionId).slice(0, 13) + "…" : "") +
-                    (entry.detail ? " · " + entry.detail : ""),
+                    (entry.sessionId ? ` · ${String(entry.sessionId).slice(0, 13)}…` : "") +
+                    (entry.detail ? ` · ${entry.detail}` : ""),
                 ),
               ),
             );
           });
       }
 
-      if (data && data.unknown && data.unknown.length > 0) {
+      if (data?.unknown && data.unknown.length > 0) {
         content.push(
           h(
             "div",
@@ -1301,7 +1300,7 @@ window.__ModuleLoader__.load({
           ),
         );
       }
-      if (data && data.pending && data.pending.length > 0) {
+      if (data?.pending && data.pending.length > 0) {
         content.push(
           h(
             "div",
@@ -1377,7 +1376,7 @@ window.__ModuleLoader__.load({
             zIndex: 2147000000,
             background: T.toastBg,
             color: T.toastText,
-            border: "1px solid " + T.border,
+            border: `1px solid ${T.border}`,
             borderRadius: "10px",
             padding: "10px 14px",
             fontSize: "13px",
@@ -1476,19 +1475,19 @@ window.__ModuleLoader__.load({
        * @returns {Promise<any>}
        */
       function call(method, request) {
-        var rpc = ctx.connection && ctx.connection.rpc;
+        var rpc = ctx.connection?.rpc;
         if (!rpc || typeof rpc.call !== "function") {
           return Promise.reject(new Error("session-delete: no connection to the host"));
         }
         var payload = request === undefined ? { args: {} } : { args: { request: request } };
-        return Promise.resolve(rpc.call("/api", "sessionDelete/" + method, payload)).then(
+        return Promise.resolve(rpc.call("/api", `sessionDelete/${method}`, payload)).then(
           (/** @type {any} */ result) => {
             if (!result || typeof result !== "object") return result;
             if (result.ok === false) {
               const error = /** @type {any} */ (
-                new Error((result.error && result.error.message) || "host rejected the call")
+                new Error(result.error?.message || "host rejected the call")
               );
-              error.code = result.error && result.error.code;
+              error.code = result.error?.code;
               throw error;
             }
             return "value" in result ? result.value : result;
@@ -1502,7 +1501,7 @@ window.__ModuleLoader__.load({
       const hostSessions = () => {
         try {
           return ctx.get ? ctx.get("sessions") : undefined;
-        } catch (error) {
+        } catch (_error) {
           return undefined;
         }
       };
@@ -1512,13 +1511,13 @@ window.__ModuleLoader__.load({
         if (!sessions) return;
         try {
           await sessions.refresh?.();
-        } catch (error) {
+        } catch (_error) {
           /* 刷新失败不影响已经完成的删除 */
         }
         retired.forEach((id) => {
           try {
             sessions.handleSessionRemoved?.(id);
-          } catch (error) {
+          } catch (_error) {
             /* 旧版本没有该通道时忽略 */
           }
         });
@@ -1528,17 +1527,17 @@ window.__ModuleLoader__.load({
         if (!(event.metaKey || event.ctrlKey) || !event.altKey) return;
         if (event.key !== "t" && event.key !== "T") return;
         const target = /** @type {any} */ (event.target);
-        const tag = target && target.tagName ? String(target.tagName).toLowerCase() : "";
-        if (tag === "input" || tag === "textarea" || (target && target.isContentEditable)) return;
+        const tag = target?.tagName ? String(target.tagName).toLowerCase() : "";
+        if (tag === "input" || tag === "textarea" || target?.isContentEditable) return;
         event.preventDefault();
         panelStore.set(true);
       });
 
       const onTrashed = (/** @type {any} */ result) => {
-        if (result && result.entryId) {
+        if (result?.entryId) {
           toastStore.set({ entryId: result.entryId, title: result.title || null });
         }
-        void refreshRows(result && result.sessionId ? result.sessionId : undefined);
+        void refreshRows(result?.sessionId ? result.sessionId : undefined);
         tickStore.set(tickStore.getSnapshot() + 1);
       };
       // 外部变更（agent 工具、另一个窗口、CLI）不会通知本页面，

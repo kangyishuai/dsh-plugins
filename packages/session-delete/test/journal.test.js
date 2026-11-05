@@ -40,7 +40,7 @@ test("失败保留现场，列出 pending", async () => {
   assert.equal(pending.length, 1);
   assert.equal(pending[0].state, "failed");
   assert.equal(pending[0].detail, "boom");
-  const raw = await readFile(join(root, "session-trash", "journal", record.id + ".json"), "utf8");
+  const raw = await readFile(join(root, "session-trash", "journal", `${record.id}.json`), "utf8");
   assert.match(raw, /"digest": "abc"/);
   await rm(root, { recursive: true, force: true });
 });

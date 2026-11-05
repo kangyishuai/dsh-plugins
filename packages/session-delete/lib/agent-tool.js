@@ -140,17 +140,17 @@ export function summarizePlanForModel(planResult) {
     return (
       "Delete preview failed: " +
       (planResult.code || "blocked") +
-      (blockers ? " (" + blockers + ")" : "")
+      (blockers ? ` (${blockers})` : "")
     );
   }
   const parts = [
-    "Delete preview for " + (planResult.title || planResult.sessionId),
+    `Delete preview for ${planResult.title || planResult.sessionId}`,
     "size " +
-      (typeof planResult.sizeBytes === "number" ? planResult.sizeBytes + " bytes" : "unknown"),
+      (typeof planResult.sizeBytes === "number" ? `${planResult.sizeBytes} bytes` : "unknown"),
   ];
   if (planResult.live) parts.push("session is live");
-  if (planResult.children.length > 0) parts.push(planResult.children.length + " child session(s)");
-  parts.push("token " + planResult.token + " expires " + planResult.expiresAt);
+  if (planResult.children.length > 0) parts.push(`${planResult.children.length} child session(s)`);
+  parts.push(`token ${planResult.token} expires ${planResult.expiresAt}`);
   return parts.join(" | ");
 }
 

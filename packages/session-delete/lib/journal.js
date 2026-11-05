@@ -23,7 +23,7 @@ const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 
 /** @param {string} file @param {unknown} value @returns {Promise<void>} */
 async function writeAtomic(file, value) {
-  const tmp = file + ".tmp";
+  const tmp = `${file}.tmp`;
   await writeFile(tmp, JSON.stringify(value, null, 2), "utf8");
   await rename(tmp, file);
 }
@@ -35,7 +35,7 @@ async function writeAtomic(file, value) {
  */
 function recordPath(dataRoot, id) {
   if (!ID_RE.test(id)) throw new Error("invalid journal id");
-  const path = join(journalDir(dataRoot), id + ".json");
+  const path = join(journalDir(dataRoot), `${id}.json`);
   requireInside(dataRoot, path);
   return path;
 }

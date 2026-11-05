@@ -11,7 +11,7 @@ test("并发追加不产生交错的半行，read 按时间顺序返回", async 
   const audit = createAudit(root);
   await Promise.all(
     Array.from({ length: 20 }, (_, i) =>
-      audit.append({ action: "trash", result: "ok", sessionId: "s" + i, operator: "ui" }),
+      audit.append({ action: "trash", result: "ok", sessionId: `s${i}`, operator: "ui" }),
     ),
   );
   const entries = await audit.read(100);

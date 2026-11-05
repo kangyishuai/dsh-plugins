@@ -87,11 +87,11 @@ export function createOperations({ ctx, dataRoot, logger }) {
     try {
       stored = await caps.services.persistence?.stat?.(sessionId);
     } catch (error) {
-      notes.push("stat failed: " + messageOf(error));
+      notes.push(`stat failed: ${messageOf(error)}`);
     }
     const liveEntry = caps.services.sessions?.get?.(sessionId);
     if (!stored && !liveEntry) {
-      throw failure("session/not-found", "no session named " + sessionId, { sessionId });
+      throw failure("session/not-found", `no session named ${sessionId}`, { sessionId });
     }
     const header = stored?.header ?? liveEntry?.header ?? null;
 
@@ -101,7 +101,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
       try {
         rawActivity = await ctx.waterfall("workspace/session-activity", { sessionId }, () => []);
       } catch (error) {
-        notes.push("activity unavailable: " + messageOf(error));
+        notes.push(`activity unavailable: ${messageOf(error)}`);
       }
     }
     const activity = normalizeActivity(rawActivity);
@@ -143,7 +143,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
           }
         }
       } catch (error) {
-        notes.push("lineage unavailable: " + messageOf(error));
+        notes.push(`lineage unavailable: ${messageOf(error)}`);
       }
     }
     childMap.delete(sessionId);
@@ -176,7 +176,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
         ambiguous.length > 1
           ? {
               code: "session-delete/ambiguous-location",
-              message: "同一会话在 " + ambiguous.length + " 个项目目录下都有副本，已拒绝操作。",
+              message: `同一会话在 ${ambiguous.length} 个项目目录下都有副本，已拒绝操作。`,
             }
           : {
               code: "session-delete/location-unknown",
@@ -227,9 +227,9 @@ export function createOperations({ ctx, dataRoot, logger }) {
           operator: "system",
           detail: "会话目录在移走后被重建，已记录（复活守卫）",
         });
-        logger.warn("session-delete: session " + sessionId + " was recreated after deletion");
+        logger.warn(`session-delete: session ${sessionId} was recreated after deletion`);
       } catch (error) {
-        logger.warn("session-delete: revive check failed: " + messageOf(error));
+        logger.warn(`session-delete: revive check failed: ${messageOf(error)}`);
       }
     }, REVIVE_CHECK_MS);
     /** @type {any} */ (timer).unref?.();
@@ -315,7 +315,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
         try {
           snapshots[ref.id] = await ref.snapshot(plan.sessionId);
         } catch (error) {
-          logger.warn("session-delete: snapshot " + ref.id + " failed: " + messageOf(error));
+          logger.warn(`session-delete: snapshot ${ref.id} failed: ${messageOf(error)}`);
         }
       }
 
@@ -419,7 +419,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
         operator: request.operator ?? "ui",
         detail: messageOf(error),
       });
-      throw failure("session-delete/failed", "删除失败：" + messageOf(error), {
+      throw failure("session-delete/failed", `删除失败：${messageOf(error)}`, {
         partial: moved,
         entryId: moved ? entryId : null,
       });
@@ -474,7 +474,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
             pinned: meta.pinned,
           });
         } catch (error) {
-          logger.warn("session-delete: restore " + ref.id + " failed: " + messageOf(error));
+          logger.warn(`session-delete: restore ${ref.id} failed: ${messageOf(error)}`);
         }
       }
       await finishOperation({ dataRoot, id: record.id, state: "done" });
@@ -504,7 +504,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
         operator: request.operator ?? "ui",
         detail: messageOf(error),
       });
-      throw failure("session-delete/restore-failed", "恢复失败：" + messageOf(error));
+      throw failure("session-delete/restore-failed", `恢复失败：${messageOf(error)}`);
     }
   }
 
@@ -527,7 +527,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
         result: "ok",
         entryId,
         operator: request.operator ?? "ui",
-        detail: "释放约 " + result.bytes + " 字节",
+        detail: `释放约 ${result.bytes} 字节`,
       });
       const receiptId = await writeReceipt(dataRoot, {
         action: "purge",
@@ -547,7 +547,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
         operator: request.operator ?? "ui",
         detail: messageOf(error),
       });
-      throw failure("session-delete/purge-failed", "彻底删除失败：" + messageOf(error));
+      throw failure("session-delete/purge-failed", `彻底删除失败：${messageOf(error)}`);
     }
   }
 
@@ -576,7 +576,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
               id: "session-dir",
               label: "会话目录",
               status: "failed",
-              detail: "目录仍存在：" + located.location.path,
+              detail: `目录仍存在：${located.location.path}`,
             }
           : { id: "session-dir", label: "会话目录", status: "ok", detail: "会话目录已不存在" },
       );
@@ -607,7 +607,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
     } catch (error) {
       return {
         ok: false,
-        reason: "无法读取 " + file + "：" + messageOf(error),
+        reason: `无法读取 ${file}：${messageOf(error)}`,
         archivedIds: [],
         pinnedIds: [],
         workspaces: [],
@@ -798,10 +798,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
       : ["archived", "pinned", "workspace"];
     const scan = await scanHealth();
     if (!scan.ok)
-      throw failure(
-        "session-delete/health-unavailable",
-        "无法体检：" + (scan.reason ?? "未知原因"),
-      );
+      throw failure("session-delete/health-unavailable", `无法体检：${scan.reason ?? "未知原因"}`);
     const state = await readWorkspaceState();
     const counts = { archived: 0, pinned: 0, workspace: 0 };
     /** @type {string[]} */
@@ -814,7 +811,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
           await caps.services.workspace?.unarchiveSession?.(id);
           counts.archived += 1;
         } catch (error) {
-          errors.push("unarchive " + id + ": " + messageOf(error));
+          errors.push(`unarchive ${id}: ${messageOf(error)}`);
         }
       }
     }
@@ -826,7 +823,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
           await caps.services.workspace?.unpinSession?.(id);
           counts.pinned += 1;
         } catch (error) {
-          errors.push("unpin " + id + ": " + messageOf(error));
+          errors.push(`unpin ${id}: ${messageOf(error)}`);
         }
       }
     }
@@ -841,7 +838,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
           await workspace.detachSession(item.sessionId);
           counts.workspace += 1;
         } catch (error) {
-          errors.push("detach " + item.sessionId + ": " + messageOf(error));
+          errors.push(`detach ${item.sessionId}: ${messageOf(error)}`);
         }
       }
     }
@@ -851,10 +848,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
       result: errors.length > 0 ? "failed" : "ok",
       operator: request.operator ?? "ui",
       detail:
-        "清理失效引用 " +
-        total +
-        " 条" +
-        (errors.length > 0 ? "，失败 " + errors.length + " 条" : ""),
+        "清理失效引用 " + total + " 条" + (errors.length > 0 ? `，失败 ${errors.length} 条` : ""),
     });
     const receiptId = await writeReceipt(dataRoot, {
       action: "health",
