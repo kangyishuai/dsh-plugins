@@ -18,6 +18,7 @@
 | `pnpm verify`               | lint + typecheck + 规范检查 + 测试，**交付前必须通过** |
 | `pnpm check`                | 只跑插件规范检查（`scripts/check-plugins.mjs`）        |
 | `pnpm check:public`         | 公开边界检查（见「公开边界」一节）                     |
+| `pnpm wt <branch>`          | 新建分支 + worktree（并行开发用，见下文）              |
 | `pnpm format`               | Biome 格式化并自动修复                                 |
 | `pnpm changeset`            | 为需要发版的改动写变更说明                             |
 | `pnpm probe:runtime`        | 核对本机 DSH 安装里插件依赖的包/API/slot 是否还在      |
@@ -31,7 +32,7 @@
 3. host 半（`lib/index.js`）改动 → **重启 DSH 桌面版**；client 半（`lib/client.js`）改动 → **刷新页面**
 4. 验证完必须能在侧栏或设置里看到真实效果，不能只靠单元测试
 5. 需要发版的改动跑 `pnpm changeset`
-6. 新增插件时同步更新：根目录两份 README 的插件清单、`.github/ISSUE_TEMPLATE/bug_report.yml` 的插件下拉选项
+6. 新增插件时同步更新根目录两份 README 的插件清单；`pnpm new` 已自动登记 `.github/labeler.yml` 和 bug 报告下拉，按它的提示在 GitHub 上建 `plugin:<name>` 标签
 
 ## 公开边界
 
@@ -80,6 +81,16 @@ git clone https://github.com/kangyishuai/dsh-plugins-notes.git notes
 7. **数据根目录必须可注入**，不能在模块顶层写死 `~/.dsh`；文件系统相关逻辑在 `mkdtemp` 临时目录里测试。
 8. 宿主类型声明（`types/*.d.ts`）只写已验证的成员。新发现的 API、slot、坑记到 `docs/runtime/<版本>.md`，不要写进 `plugin-conventions.md`。
 9. 重要的取舍写成 ADR（`docs/adr/`）。
+
+## 分支、PR 与并行开发
+
+完整规则见 [CONTRIBUTING.md](CONTRIBUTING.md#工作流issue--分支--pr)。agent 必须遵守的部分：
+
+- 分支名：`<type>/<plugin>-<主题>`（如 `feat/session-delete-batch`），`pnpm wt` 会校验
+- **改插件代码不能直推 `main`**，开分支、提 PR；PR 标题符合 Conventional Commits（squash 后就是提交信息）
+- 并行任务（多个插件、多个 agent）**各用一个 worktree**：`pnpm wt <branch>`。不在别人的 worktree 里改文件；同一个插件同一时间只在一个分支上开发
+- 并行时的 GUI 验证用 `pnpm smoke:<plugin>`（临时 DSH 目录），不要往共用的 `desktop` profile 里装开发版
+- 收尾：PR 合并后 `pnpm wt rm <branch> --delete-branch`
 
 ## 提交约定
 
