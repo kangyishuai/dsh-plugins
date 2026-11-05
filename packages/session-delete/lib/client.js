@@ -932,7 +932,7 @@ window.__ModuleLoader__.load({
                   onClick: () => {
                     /** @type {Record<string, boolean>} */
                     const all = {};
-                    for (const /** @type {any} */ item of batchList) all[item.id] = true;
+                    for (const item of /** @type {any[]} */ (batchList)) all[item.id] = true;
                     setBatchSelected(all);
                   },
                 },
