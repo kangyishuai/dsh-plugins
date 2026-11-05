@@ -206,7 +206,13 @@ pnpm smoke:session-delete
 | K4  | P1     | 重复使用同一 token / 超过 2 分钟  | 拒绝（invalid-token / token-expired）    |
 | K5  | P1     | plan 之后会话被改名/改动再 delete | 拒绝（stale-plan），要求重新 plan        |
 
-> K1–K5 的状态机已在 `test/agent-tool.test.js` 覆盖；注册状态由 `pnpm smoke:session-delete` 的体检断言覆盖。
+> K1–K5 的状态机已在 `test/agent-tool.test.js` 覆盖；注册状态、以及「宿主侧删除后 UI 自动刷新」
+> 由 `pnpm smoke:session-delete` 覆盖（它会直接删掉临时 home 里的一个会话目录来模拟外部删除）。
+>
+> **K3/K4/K5 的手工测法**（模型不用凭记忆，一条指令里做完）：
+> - token 只能一次：`先 plan，然后用同一个 token 连续 delete 两次` → 第二次应返回 `invalid-token`；
+> - 过期：`plan 之后等 2 分钟以上再 delete` → `token-expired`；
+> - 会话变化：`plan 之后先让我把目标会话改个名/发一条消息，再 delete` → `stale-plan`。
 > 真实模型调用可以跑：
 
 ```bash

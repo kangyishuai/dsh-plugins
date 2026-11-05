@@ -78,12 +78,14 @@ async function waitForBoot(logPath, timeoutMs) {
  * ego-browser 里跑的脚本：返回 { ok, checks }，并把关键状态截图存到 SHOTS。
  * @param {string} url
  * @param {string} shots
+ * @param {string} home
  */
-function browserScript(url, shots) {
+function browserScript(url, shots, home) {
   return `
 const task = await taskSpace("dsh smoke: session-delete");
 const page = task.page("p1");
 const SHOTS = ${JSON.stringify(shots)};
+const HOME_DIR = ${JSON.stringify(home)};
 const checks = [];
 const check = (name, ok, detail) => checks.push({ name, ok: !!ok, detail: detail === undefined ? "" : String(detail) });
 const shot = async (name) => { await page.screenshot({ path: SHOTS + "/" + name + ".png" }); };
@@ -323,25 +325,65 @@ const receiptText = await page.evaluate(async () => {
 check("回执页签列出 trash/restore/purge 记录", /trash/.test(receiptText) && /purge/.test(receiptText), receiptText.slice(0, 160));
 await shot("09-receipts-tab");
 
-// 12) 级联勾选框：遍历会话行，找到带子会话的那一条（不改动任何东西）
+// 12) 级联勾选框：遍历非选中会话行，找到带子会话的那一条（不改动任何东西）
 await page.keyboard.press("Escape");
 await page.waitForTimeout(400);
+const ensureVictim = async () => {
+  await page.evaluate(() => {
+    for (const el of document.querySelectorAll('[data-row-key^="workspace:"][aria-expanded="false"]')) el.click();
+  });
+  await page.waitForTimeout(900);
+  const hasNonSelected = await page.evaluate(() =>
+    [...document.querySelectorAll("[data-row-key^='session:']")].some(
+      (el) => el.getAttribute("aria-selected") !== "true" && !String(el.className).includes("_selected")));
+  if (hasNonSelected) return;
+  await page.evaluate(() => {
+    const btn = [...document.querySelectorAll("button")].find((b) => b.getAttribute("aria-label") === "新建会话");
+    if (btn) btn.click();
+  });
+  await page.waitForTimeout(1600);
+  for (let i = 0; i < 2; i++) {
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(200);
+  }
+};
+await ensureVictim();
 const sessionRows = await page.evaluate(() =>
-  [...document.querySelectorAll("[data-row-key^='session:']")].map((el) => el.getAttribute("data-row-key")));
+  [...document.querySelectorAll("[data-row-key^='session:']")]
+    .filter((el) => el.getAttribute("aria-selected") !== "true" && !String(el.className).includes("_selected"))
+    .filter((el) => {
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    })
+    .map((el) => el.getAttribute("data-row-key")));
 let cascadeDetail = "no-parent-session";
 for (const rowKey of sessionRows) {
   const rect = await page.evaluate((key) => {
     const row = document.querySelector('[data-row-key="' + key + '"]');
     if (!row) return null;
+    row.scrollIntoView({ block: "center" });
     const r = row.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return null;
     return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
   }, rowKey);
   if (!rect) continue;
   await page.mouse.move(rect.x, rect.y);
-  await page.waitForTimeout(350);
+  await page.waitForTimeout(600);
+  await page.evaluate((key) => {
+    const row = document.querySelector('[data-row-key="' + key + '"]');
+    if (!row) return;
+    row.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    row.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+    row.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: document.body }));
+    row.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+  }, rowKey);
+  await page.waitForTimeout(300);
   const probeResult = await page.evaluate(async (key) => {
-    const menuBtn = [...document.querySelectorAll("button")].find((b) =>
-      (b.getAttribute("aria-label") || "").startsWith("会话“"));
+    const rowEl = document.querySelector('[data-row-key="' + key + '"]');
+    const rowButtons = rowEl ? [...rowEl.querySelectorAll("button")] : [];
+    const menuBtn =
+      rowButtons.find((b) => (b.getAttribute("aria-label") || "").includes("操作")) ||
+      rowButtons[rowButtons.length - 1];
     if (!menuBtn) return "no-menu";
     menuBtn.click();
     await new Promise((r) => setTimeout(r, 450));
@@ -359,7 +401,7 @@ for (const rowKey of sessionRows) {
     return hasCheckbox ? "found:" + key : "none";
   }, rowKey);
   await page.keyboard.press("Escape");
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(350);
   cascadeDetail = String(probeResult);
   if (cascadeDetail.startsWith("found:")) break;
 }
@@ -459,7 +501,9 @@ const main = async () => {
     const shotsDir = join(work, "shots");
     await mkdir(shotsDir, { recursive: true });
     const browserFile = join(work, "browser.mjs");
-    await writeFile(browserFile, browserScript(url, shotsDir));
+    const browserSource = browserScript(url, shotsDir, home);
+    await writeFile(browserFile, browserSource);
+    await writeFile(join(shotsDir, "browser.mjs"), browserSource);
 
     const result = await new Promise((resolvePromise) => {
       const child = spawn("ego-browser", ["nodejs"], { stdio: ["pipe", "pipe", "pipe"] });
