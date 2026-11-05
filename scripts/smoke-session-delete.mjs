@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // @ts-check
 // 用法：pnpm smoke:session-delete
+//       SMOKE_DEMO=1 pnpm smoke:session-delete  —— 截图里的工作区名、会话标题、UUID 换成演示数据，可用于 README
 // 端到端冒烟：临时 DSH_HOME 启动真实宿主 → 浏览器点一遍主链路 → 断言。
 // 需要本机有 dsh 与 ego-browser；缺任意一个就跳过（退出码 0，打印 SKIP），方便在没有浏览器的 CI 上跑。
 import { execFile, spawn } from "node:child_process";
@@ -79,8 +80,9 @@ async function waitForBoot(logPath, timeoutMs) {
  * @param {string} url
  * @param {string} shots
  * @param {string} home
+ * @param {boolean} [demo] 演示模式：截图前把工作区名、会话标题、UUID 换成演示数据（只改 DOM，用于公开截图）
  */
-function browserScript(url, shots, home) {
+function browserScript(url, shots, home, demo = false) {
   return `
 const task = await taskSpace("dsh smoke: session-delete");
 const page = task.page("p1");
@@ -88,7 +90,61 @@ const SHOTS = ${JSON.stringify(shots)};
 const HOME_DIR = ${JSON.stringify(home)};
 const checks = [];
 const check = (name, ok, detail) => checks.push({ name, ok: !!ok, detail: detail === undefined ? "" : String(detail) });
-const shot = async (name) => { await page.screenshot({ path: SHOTS + "/" + name + ".png" }); };
+const DEMO = ${JSON.stringify(demo)};
+// 演示模式：第一次截图时记下真实的工作区名 / 会话标题，之后每次截图前把它们和 UUID 换成演示数据。
+// 只改页面上的文字，不碰任何文件；React 重新渲染后会恢复，所以每张图前都要重新替换。
+// 替换表存在脚本这边（demoMap），页面刷新后 window 上的状态会丢，不能只存在页面里。
+let demoMap = null;
+const anonymize = async () => { demoMap = await page.evaluate((saved) => {
+  const DEMO_WORKSPACES = ["my-app", "blog", "sandbox", "notes", "infra"];
+  const DEMO_SESSIONS = ["重构登录模块", "修复 CI 偶发失败", "撰写发布说明", "整理依赖升级", "排查内存泄漏", "设计数据表结构"];
+  // 每次都重新扫描：折叠的工作区展开后会冒出新行，新标题追加进表，已分配的演示名保持不变
+  const map = saved ? saved.slice() : [];
+  const primaryText = (el) => {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const t = (n.textContent || "").trim();
+      if (t.length > 1 && !/^\\d+\\s*(秒|分钟|小时|天|周|个月|年)/.test(t)) return t;
+    }
+    return "";
+  };
+  const known = (t) => map.some(([real, fake]) => real === t || fake === t);
+  const count = (kind) => map.filter((entry) => entry[2] === kind).length;
+  for (const el of document.querySelectorAll("[data-row-key^='workspace:']")) {
+    const t = primaryText(el);
+    if (t && !known(t)) map.push([t, DEMO_WORKSPACES[count("w") % DEMO_WORKSPACES.length], "w"]);
+  }
+  for (const el of document.querySelectorAll("[data-row-key^='session:']")) {
+    const t = primaryText(el);
+    if (t && t !== "新会话" && t !== "未命名" && !known(t)) {
+      map.push([t, DEMO_SESSIONS[count("s") % DEMO_SESSIONS.length], "s"]);
+    }
+  }
+  map.sort((a, b) => b[0].length - a[0].length);
+  const uuids = new Map();
+  const fakeUuid = (u) => {
+    if (!uuids.has(u)) {
+      const i = uuids.size + 1;
+      uuids.set(u, "0000000" + i + "-0000-4000-8000-00000000000" + i);
+    }
+    return uuids.get(u);
+  };
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    let t = n.textContent || "";
+    const before = t;
+    for (const [real, fake] of map) if (t.includes(real)) t = t.split(real).join(fake);
+    t = t.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, fakeUuid);
+    // 界面截断过的 ID 片段（如 session-8773d…）匹配不到完整 UUID，单独抹成 0
+    t = t.replace(/(session-)([0-9a-f]{4,})(?![0-9a-f-])/gi, (_m, p, h) => p + "0".repeat(h.length));
+    if (t !== before) n.textContent = t;
+  }
+  return map;
+}, demoMap); };
+const shot = async (name) => {
+  if (DEMO) await anonymize().catch((error) => console.log("DEBUG anonymize", String(error).slice(0, 160)));
+  await page.screenshot({ path: SHOTS + "/" + name + ".png" });
+};
 const dismiss = async () => {
   // 首启的「预览版说明 / 登录」弹层要点按钮关掉，Esc 不一定管用；
   // 它们的遮罩会把我们的浮层压暗，也会挡住真实指针事件。
@@ -507,7 +563,7 @@ const main = async () => {
     const shotsDir = join(work, "shots");
     await mkdir(shotsDir, { recursive: true });
     const browserFile = join(work, "browser.mjs");
-    const browserSource = browserScript(url, shotsDir, home);
+    const browserSource = browserScript(url, shotsDir, home, process.env.SMOKE_DEMO === "1");
     await writeFile(browserFile, browserSource);
     await writeFile(join(shotsDir, "browser.mjs"), browserSource);
 
