@@ -2,13 +2,13 @@
 
 > Real session deletion for DeepSeek Harness: trash by default, a plan before you delete, an audit log, and a receipt for whatever is left behind.
 
-[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-delete?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-session-delete) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.1--rc.5-4b6bfb)](#compatibility--degradation) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-delete?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-session-delete) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.1-4b6bfb)](#compatibility--degradation) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
 [中文](./README.zh-CN.md)
 
 Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). Not affiliated with DeepSeek.
 
-> **Status: v0.4.2, early.** Verified on DSH 0.2.1-rc.5 with `pnpm smoke:session-delete` (24 end-to-end assertions) plus a manual pass in the desktop GUI. Treat it as young software and keep backups of anything you cannot lose.
+> **Status: v0.4.2, early.** Verified on DSH 0.2.2-rc.1 with `pnpm smoke:session-delete` (24 end-to-end assertions) plus a check of the plugin status in the desktop GUI. Treat it as young software and keep backups of anything you cannot lose.
 
 
 ![Delete confirmation with the plan: size, sub-sessions, references to clean](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/overview.png)
@@ -116,9 +116,10 @@ Capability grades:
 - `minimal` — the host has no `workspaceRegistry` (for example the headless composition). Deletion works; the archive gate, pin/workspace bookkeeping and projection-cache steps are skipped and listed in the receipt.
 - `unknown` — the persistence seam itself is missing: **read-only mode**. Plan, audit and trash listing keep working; delete/restore/purge are disabled.
 
-| Plugin | Verified on DSH          | Notes                                                                                       |
-| ------ | ------------------------ | ------------------------------------------------------------------------------------------- |
-| 0.4.2  | **0.2.1-rc.5** (desktop) | `pnpm smoke:session-delete`: 24 assertions green; manual GUI pass on the same host version. |
+| Plugin | Verified on DSH          | Notes                                                                                                          |
+| ------ | ------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| 0.4.2  | **0.2.2-rc.1** (desktop) | `pnpm smoke:session-delete`: 24 assertions green; plugin active with no bundle error on the same host version. |
+| 0.4.2  | 0.2.1-rc.5 (desktop)     | `pnpm smoke:session-delete`: 24 assertions green; manual GUI pass on the same host version.                    |
 
 After a DSH upgrade: restart, then open the plugin status (settings → plugins). If it reports read-only mode, the host API changed — upgrade the plugin or report the version pair; don't force it.
 

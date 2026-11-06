@@ -2,13 +2,13 @@
 
 > 真正的删除会话：默认进回收站、删前先预演、留审计日志，删完给你一份残留回执。
 
-[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-delete?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-session-delete) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.1--rc.5-4b6bfb)](#兼容性与降级) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-delete?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-session-delete) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.1-4b6bfb)](#兼容性与降级) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
 [English](./README.md)
 
 非官方 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 插件，与 DeepSeek 无关。
 
-> **状态：v0.4.2，早期可用。** 已在 DSH 0.2.1-rc.5 上用 `pnpm smoke:session-delete`（24 项端到端断言）加一轮桌面版人工验收。仍是年轻软件，重要数据请自行备份。
+> **状态：v0.4.2，早期可用。** 已在 DSH 0.2.2-rc.1 上用 `pnpm smoke:session-delete`（24 项端到端断言）验证，并确认桌面版里插件正常激活、状态条不是只读模式。仍是年轻软件，重要数据请自行备份。
 
 
 ![删除确认框：展示体积、子会话和将要清理的引用](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/overview.png)
@@ -116,9 +116,10 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-session-delete-*.tgz
 - `minimal` —— 宿主没有 `workspaceRegistry`（例如 headless 组合）。删除照常进行；归档闸门、置顶/工作区记账、投影缓存这些步骤被跳过并写进回执。
 - `unknown` —— 持久化本体缺失：**只读模式**。plan、审计、回收站列表还能用；删除、恢复、彻底删除被禁用。
 
-| 插件版本 | 已验证的 DSH 版本        | 说明                                                                             |
-| -------- | ------------------------ | -------------------------------------------------------------------------------- |
-| 0.4.2    | **0.2.1-rc.5**（桌面版） | `pnpm smoke:session-delete` 24 项断言全绿，并在同一版本桌面版做过人工 GUI 验收。 |
+| 插件版本 | 已验证的 DSH 版本        | 说明                                                                                              |
+| -------- | ------------------------ | ------------------------------------------------------------------------------------------------- |
+| 0.4.2    | **0.2.2-rc.1**（桌面版） | `pnpm smoke:session-delete` 24 项断言全绿，并确认同一版本桌面版里插件正常激活、没有 bundle 错误。 |
+| 0.4.2    | 0.2.1-rc.5（桌面版）     | `pnpm smoke:session-delete` 24 项断言全绿，并在同一版本桌面版做过人工 GUI 验收。                  |
 
 目前只在 **macOS** 上验证过。Windows 相关路径（`session.lock` 的 EBUSY/EPERM 重试、宿主在那儿用的命名信号量）代码里有，但**还没实测**。
 
