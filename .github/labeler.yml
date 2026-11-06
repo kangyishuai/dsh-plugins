@@ -32,3 +32,7 @@ documentation:
 "plugin:session-delete":
   - changed-files:
       - any-glob-to-any-file: "packages/session-delete/**"
+
+"plugin:session-rewind":
+  - changed-files:
+      - any-glob-to-any-file: "packages/session-rewind/**"
