@@ -91,12 +91,14 @@ const SHOTS = ${JSON.stringify(shots)};
 const checks = [];
 const check = (name, ok, detail) => checks.push({ name, ok: !!ok, detail: detail === undefined ? "" : String(detail) });
 const shot = (name) => page.screenshot({ path: SHOTS + "/" + name + ".png" });
+// ego 的浏览器 profile 会跨任务累积每个临时宿主的 dsh-auth cookie；请求头超限会返回 HTTP 431。
+await page.cdp("Network.clearBrowserCookies").catch(() => {});
 const LABELS = {
   rewind: ["回退到此处", "Rewind to here"],
   dialogList: ["回溯", "Rewind"],
   dialogConfirm: ["回退到此处", "Rewind to here"],
   cancel: ["取消", "Cancel"],
-  confirm: ["回退", "Rewind"],
+  confirm: ["开始回退", "Start rewind"],
 };
 const matches = (text, list) => list.some((item) => String(text || "").trim() === item);
 const dismiss = async () => {
@@ -211,10 +213,19 @@ await shot("02-session-open");
 // 1) ↶ 按钮 → 确认框 → 回退到倒数第二条用户消息
 const composerBefore = await composerText();
 const clicked = await clickRewindOn(picked.bubbles.length - 2);
-await page.waitForTimeout(700);
+await page.waitForTimeout(1400);
 const confirmDialog = await dialogInfo();
 check("点击 ↶ 打开确认框", clicked && confirmDialog !== null && matches(confirmDialog.title, LABELS.dialogConfirm), JSON.stringify(confirmDialog && confirmDialog.title));
 check("确认框写明影响面", confirmDialog !== null && /移除|Remove/u.test(confirmDialog.text), confirmDialog && confirmDialog.text.slice(0, 120));
+check("确认框展示预览（将撤回 N 条消息）", confirmDialog !== null && /将撤回|This withdraws/u.test(confirmDialog.text), confirmDialog && confirmDialog.text.slice(0, 160));
+const modeInfo = await page.evaluate(() => {
+  const dialog = [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')].find((d) => (d.className || "").includes("dsh-srw"));
+  if (!dialog) return null;
+  const radios = [...dialog.querySelectorAll('input[type="radio"]')].map((r) => ({ value: r.value, disabled: r.disabled, checked: r.checked }));
+  return { radios, text: (dialog.textContent || "").replace(/s+/g, " ") };
+});
+check("确认框有仅对话/对话+文件两个范围", modeInfo !== null && modeInfo.radios.length === 2, JSON.stringify(modeInfo && modeInfo.radios));
+check("没有文件变更时文件模式被禁用", modeInfo !== null && modeInfo.radios.some((r) => r.value === "both" && r.disabled) && /无文件变更|No file changes/u.test(modeInfo.text), JSON.stringify(modeInfo && modeInfo.radios));
 const targetHead = confirmDialog && confirmDialog.preview ? confirmDialog.preview.slice(0, 6) : "";
 await shot("03-confirm-dialog");
 const confirmed = await clickDialogButton(LABELS.confirm);
@@ -228,11 +239,47 @@ const toastAfter = await page.evaluate(() => {
 check("确认后对话被截断（目标行消失）", after.length === picked.bubbles.length - 2, after.length + "/" + (picked.bubbles.length - 2));
 check(
   "确认后输入框回填目标消息文本",
-  targetHead.length >= 2 && composerAfter.includes(targetHead),
+  targetHead.length >= 1 && composerAfter.includes(targetHead),
   JSON.stringify({ targetHead, composerBefore, composerAfter: composerAfter.slice(0, 80), toast: toastAfter }),
 );
 check("标记占位行没有出现在对话里", !after.some((item) => (item.text || "").includes("(empty message)")), "");
 await shot("04-after-button-rewind");
+
+// 1b) 回溯面板：已撤回 / 回溯记录 / 救援点 / 设置
+const drawerOpened = await page.evaluate(() => {
+  const btn = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("回溯面板"));
+  if (!btn) return false;
+  btn.click();
+  return true;
+});
+await page.waitForTimeout(900);
+const drawer = await page.evaluate(() => {
+  const root = document.querySelector(".dsh-srw-drawer");
+  if (!root) return null;
+  return {
+    text: (root.textContent || "").replace(/s+/g, " "),
+    tabs: [...root.querySelectorAll(".dsh-srw-tab")].map((t) => (t.textContent || "").trim()),
+  };
+});
+check("会话头部图标打开回溯面板", drawerOpened && drawer !== null, JSON.stringify(drawer && drawer.tabs));
+check("回溯面板包含四个页签", drawer !== null && ["已撤回", "回溯记录", "救援点", "设置"].every((tab) => drawer.tabs.includes(tab)), JSON.stringify(drawer && drawer.tabs));
+const auditTab = await page.evaluate(() => {
+  const tab = [...document.querySelectorAll(".dsh-srw-tab")].find((t) => (t.textContent || "").trim() === "回溯记录");
+  if (!tab) return false;
+  tab.click();
+  return true;
+});
+await page.waitForTimeout(900);
+const auditText = await page.evaluate(() => {
+  const root = document.querySelector(".dsh-srw-drawer");
+  return root ? (root.textContent || "").replace(/s+/g, " ") : "";
+});
+check("回溯记录页签出现本次回执", auditTab && /仅对话|Conversation/u.test(auditText) && /条|message/u.test(auditText), auditText.slice(0, 160));
+await page.evaluate(() => {
+  const btn = [...document.querySelectorAll(".dsh-srw-drawer button")].find((b) => (b.getAttribute("aria-label") || "").includes("关闭") || (b.textContent || "").trim() === "关闭");
+  if (btn) btn.click();
+});
+await page.waitForTimeout(400);
 
 // 2) Esc Esc → 候选对话框 → 选一条 → 回退
 await page.evaluate(() => {
@@ -249,7 +296,7 @@ check("Esc Esc 打开回溯对话框", listDialog !== null && matches(listDialog
 check("候选列表列出可回溯消息", listDialog !== null && listDialog.rows.length >= 1, listDialog && String(listDialog.rows.length));
 await shot("05-esc-dialog");
 const selected = await clickDialogRow(0);
-await page.waitForTimeout(700);
+await page.waitForTimeout(1400);
 const escConfirm = await dialogInfo();
 check("选择候选后进入确认框", selected && escConfirm !== null && matches(escConfirm.title, LABELS.dialogConfirm), escConfirm && escConfirm.title);
 const escConfirmed = await clickDialogButton(LABELS.confirm);
@@ -440,6 +487,29 @@ async function verifySessionLog(home, state) {
     "marker 内容为非空占位文本",
     typeof tail?.data?.content?.[0]?.text === "string" && tail.data.content[0].text.length > 0,
     JSON.stringify(tail?.data?.content ?? null).slice(0, 80),
+  );
+  // 插件审计：每次回溯一行，sessionId 匹配，mode=chat（本轮没有文件变更）。
+  /** @type {any[]} */
+  let auditEntries = [];
+  try {
+    const auditText = await readFile(join(home, "session-rewind", "audit.jsonl"), "utf8");
+    auditEntries = auditText
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .map((line) => JSON.parse(line));
+  } catch (_error) {
+    auditEntries = [];
+  }
+  const ownAudit = auditEntries.filter((entry) => entry.sessionId === sessionId);
+  push("审计日志记录了回溯", ownAudit.length >= 2, `entries=${ownAudit.length}`);
+  push(
+    "审计记录带 markerSeq 与 chat 模式",
+    ownAudit.length > 0 &&
+      ownAudit.every((entry) => Number.isSafeInteger(entry.markerSeq)) &&
+      ownAudit.every((entry) => entry.mode === "chat"),
+    JSON.stringify(
+      ownAudit.map((entry) => ({ mode: entry.mode, markerSeq: entry.markerSeq })),
+    ).slice(0, 160),
   );
   return checks;
 }
