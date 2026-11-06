@@ -74,7 +74,10 @@ async function openAsar(asarPath) {
   const jsonBuffer = Buffer.alloc(jsonLength);
   await handle.read(jsonBuffer, 0, jsonLength, 16);
   const index = JSON.parse(jsonBuffer.toString("utf8"));
-  const dataStart = 16 + jsonLength;
+  // header JSON 之后会补齐到 4 字节边界，文件数据从补齐后的位置开始。
+  // 少算这段填充（0–3 字节）会让每次按 offset 读文件都整体偏移，
+  // 表现为 package.json 解析失败、特征匹配落在错误位置（实测 0.2.2-rc.1 偏 2 字节）。
+  const dataStart = 16 + Math.ceil(jsonLength / 4) * 4;
   /** @type {Map<string, { offset: number, size: number }>} */
   const files = new Map();
   /** @param {any} node @param {string} prefix */
