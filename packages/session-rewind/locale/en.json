@@ -1,0 +1,28 @@
+{
+  "sessionRewind": {
+    "shortcut.rewind": "Rewind",
+    "dialog.title": "Rewind",
+    "dialog.desc": "Restore this conversation to an earlier message.",
+    "dialog.titleConfirm": "Rewind to here",
+    "dialog.descConfirm": "Remove this message and everything after it from the conversation.",
+    "dialog.cancel": "Cancel",
+    "dialog.confirm": "Rewind",
+    "dialog.loading": "Loading…",
+    "dialog.empty": "No messages to rewind to.",
+    "button.rewind": "Rewind to here",
+    "toast.done": "Rewound. The original message is back in the composer.",
+    "toast.draft": "Rewound. The composer already had content, so it was kept.",
+    "toast.noComposer": "Rewound, but no composer was found.",
+    "error.busy": "Stop the current turn first (Esc), then rewind.",
+    "error.notFound": "Session not found.",
+    "error.inert": "Subagent sessions cannot be rewound.",
+    "error.badTarget": "That message could not be located.",
+    "error.notOnSurface": "That message was shadowed by a compaction summary and cannot be rewound.",
+    "error.failed": "Rewind failed.",
+    "error.generic": "Operation failed: {message}",
+    "relative.justNow": "just now",
+    "relative.minutes": "{n} min ago",
+    "relative.hours": "{n} h ago",
+    "relative.days": "{n} d ago"
+  }
+}

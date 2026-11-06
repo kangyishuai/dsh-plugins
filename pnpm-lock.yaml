@@ -38,6 +38,8 @@ importers:
 
   packages/session-delete: {}
 
+  packages/session-rewind: {}
+
 packages:
 
   '@babel/code-frame@7.29.7':

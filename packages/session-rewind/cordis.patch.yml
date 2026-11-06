@@ -1,0 +1,3 @@
+- insert:
+    - id: session-rewind
+      name: "@kangyishuai/dsh-session-rewind"

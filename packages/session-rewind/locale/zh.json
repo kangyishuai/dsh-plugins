@@ -1,0 +1,28 @@
+{
+  "sessionRewind": {
+    "shortcut.rewind": "回溯",
+    "dialog.title": "回溯",
+    "dialog.desc": "将会话恢复到之前的某条消息。",
+    "dialog.titleConfirm": "回退到此处",
+    "dialog.descConfirm": "从对话中移除此消息及其后的所有内容。",
+    "dialog.cancel": "取消",
+    "dialog.confirm": "回退",
+    "dialog.loading": "正在读取…",
+    "dialog.empty": "没有可回溯的消息。",
+    "button.rewind": "回退到此处",
+    "toast.done": "已回退到此处，原消息已放回输入框",
+    "toast.draft": "已回退；输入框已有内容，未覆盖",
+    "toast.noComposer": "已回退，但未找到输入框",
+    "error.busy": "请先停止当前回合（Esc）再回溯",
+    "error.notFound": "会话不存在",
+    "error.inert": "子代理会话不支持回溯",
+    "error.badTarget": "无法定位这条消息",
+    "error.notOnSurface": "这条消息已被压缩摘要遮蔽，无法回溯",
+    "error.failed": "回溯失败",
+    "error.generic": "操作失败：{message}",
+    "relative.justNow": "刚刚",
+    "relative.minutes": "{n} 分钟前",
+    "relative.hours": "{n} 小时前",
+    "relative.days": "{n} 天前"
+  }
+}
