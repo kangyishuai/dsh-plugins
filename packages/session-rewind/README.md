@@ -1,6 +1,6 @@
 # @kangyishuai/dsh-session-rewind
 
-> In-place conversation rewind for DeepSeek Harness: send the conversation back to before any user message, withdraw everything after it from the model context and the transcript, and put that message back into the composer.
+> In-place conversation rewind for DeepSeek Harness: send the conversation back to before any user message, withdraw everything after it from the model context and the transcript, optionally restore the workspace files those turns changed, and put the message back into the composer.
 
 [![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-rewind?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-session-rewind) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.1-4b6bfb)](#compatibility) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
@@ -8,17 +8,18 @@
 
 Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). Not affiliated with DeepSeek.
 
-> **Status: early.** Verified on DSH 0.2.2-rc.1 with `pnpm smoke:session-rewind` (17 end-to-end assertions in a throwaway DSH home: two entry points, truncation, composer refill, reload persistence, and the append-only session log). The desktop Electron keyboard path has not been regressed separately. Young software — keep backups of anything you cannot lose.
+> **Status: early.** Verified on DSH 0.2.2-rc.1 with `pnpm smoke:session-rewind` (25 end-to-end GUI assertions) plus 155 unit tests, including the file engine. The desktop Electron pass is the next step after a DSH restart. Young software — keep backups of anything you cannot lose.
 
 ## What it does
 
 Long conversations drift. A few turns later you wish you had answered a prompt differently, but starting a new session loses everything before it, and continuing keeps the unwanted turns in the context window forever. This plugin rewinds **in place**:
 
-- **Two entries.** Press `Esc` `Esc` to open the rewind dialog and pick a user message; or click the ↶ button in any user message's action row (next to Copy).
-- **Withdraws the target and everything after it** from the model-visible context and from the rendered transcript. The conversation now looks the way it did before that message.
-- **Refills the composer** with the target message's text, so you can edit it and send again.
-- **Same session, no branch.** The session id, title, workspace and history before the target are untouched. No new session, no window switch, no leftover copy.
-- **Append-only safety.** History is never deleted or rewritten: the plugin appends one marker event. The withdrawn content stays in the session log (visible in Trajectory), and disabling the plugin makes it visible in the transcript again.
+- **Two entries.** Press `Esc` `Esc` to open the rewind dialog, or click the ↶ button in any user message's action row (next to Copy).
+- **Two scopes, chosen per rewind.** The confirmation dialog offers **Rewind conversation only** (default) and **Rewind conversation and files**. The dialog first shows a dry-run preview: how many messages and roughly how many tokens will be withdrawn, which files will be restored or moved to the trash, conflicts, and skipped files.
+- **Conversation.** The target message and everything after it are withdrawn from the model-visible context and from the transcript. The session id, title and earlier history are untouched. Nothing is deleted from the log — one marker event is appended.
+- **Files (optional).** Files changed by `write` / `edit` / `apply_patch` in the withdrawn turns are restored to their pre-change content. Files created after the target are moved to the plugin's trash instead of deleted. A rescue point of the current files is created before anything is written; failures roll back from it.
+- **Composer.** The target message's text (and images) is put back into the composer, ready to edit and send again. An existing draft is never overwritten.
+- **Rewind panel.** A new header action opens a panel with four tabs: **Withdrawn** (every message each rewind removed, searchable, copy or put back in the composer), **History** (audit of each rewind: scope, message count, tokens, file results), **Rescue points** (restore files from an earlier rescue), and **Settings** (default scope, page size, confirm-on-list, diagnostics).
 
 ## Install
 
@@ -38,58 +39,74 @@ Re-run `pnpm pack` + `add` after changing the code. The plugin has a host half, 
 
 ## Usage
 
-**Keyboard — `Esc` `Esc`.** In an idle conversation, press Escape twice quickly. The rewind dialog lists the conversation's user messages, newest first: pick one with ↑/↓ and Enter, or click it. The conversation rewinds immediately. While a turn is running, `Esc` `Esc` keeps its native meaning (stop the turn); press it again once the turn has stopped to open the rewind dialog.
+**Keyboard — `Esc` `Esc`.** In an idle conversation, press Escape twice quickly. The rewind dialog lists user messages, newest first; search, page to older messages with ↑/↓, Enter or click to choose. Then the preview opens; pick a scope and confirm. While a turn is running, `Esc` `Esc` keeps its native meaning (stop the turn); press it again when idle.
 
-**Message action — ↶.** Every user message has a ↶ button in its action row next to Copy. Hovering shows **回退到此处 / Rewind to here**; clicking opens a confirmation dialog that states what will be withdrawn, then rewinds.
+**Message action — ↶.** Every user message has a ↶ button next to Copy. It opens the same preview/confirmation dialog. Nothing is rewound until you confirm.
 
-**After a rewind** the target message's text is placed in the composer and the composer is focused. If the composer already held a draft, it is not overwritten — the rewind still happens and a notice tells you the draft was kept.
+**Commands.** `/rewind` opens the same candidate list. `/rewind @<seq> [chat|both]` executes directly (the preview's seq is shown in the list). `/rewind` is decorated by the client; the bare form never sends text to the model.
+
+**After a rewind** the target text returns to the composer (images are re-attached best-effort) and the composer is focused. If the composer already held a draft, the draft is kept and a notice says so.
 
 **What is refused**
 
-| Situation                                             | What happens                                                                                         |
-| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| The session has a running turn                        | The host refuses (`session-rewind/busy`); stop the turn first (`Esc` `Esc` while running) and retry. |
-| The session is a subagent child                       | No ↶ button and no `Esc` `Esc` dialog: the Harness refuses generic session RPCs there.               |
-| The target message was already shadowed by compaction | Refused; the rewind boundary must still be in the model context.                                     |
-| A running rewind on the same session                  | Refused; one at a time.                                                                              |
+| Situation                                                                | What happens                                                                           |
+| ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| The session has a running turn                                           | The host refuses (`session-rewind/busy`); stop the turn first and retry.               |
+| The session is a subagent child                                          | No ↶ button and no `Esc` `Esc` dialog: the Harness refuses generic session RPCs there. |
+| The target message was shadowed by compaction                            | Refused; the rewind boundary must still be in the model context.                       |
+| A file was changed outside the agent since the last recorded state       | File mode is refused with a conflict list; no file is touched.                         |
+| A file is larger than 8 MiB, a symlink, or under `.git` / `node_modules` | That file is skipped and reported; other files still proceed.                          |
+| A rewind is already running on this session                              | Refused; one at a time.                                                                |
 
-## How it works
+## File restore scope & safety
 
-DSH keeps sessions as append-only event logs and derives the model-visible history from an ordered _surface_. A message-producing event declares how it joins that surface; a `replace` operation can substitute a whole range of existing surface nodes — `/compact` uses exactly that to replace history with a summary.
+- **Tracked changes only.** Only DSH file tools `write`, `edit` and `apply_patch` are tracked, and only under the session's working directory. Changes made by `bash`, scripts, external programs or subagents are **not** tracked; the plugin never claims a complete workspace snapshot.
+- **Before every write.** The engine records the content before the tool runs, deduplicated by SHA-256 under `<DSH_HOME>/session-rewind/blobs/`. Before restoring, it verifies the current file still matches the last recorded state; any mismatch aborts the whole file operation with a conflict list.
+- **Rescue before mutation.** All current affected files are copied to a rescue point first. If that fails, nothing is written. A failed restore rolls back applied files from the rescue point; failed rollbacks are reported. The five latest rescue points per session can be restored from the Rewind panel (a new rescue is created first).
+- **Destructive operations go to trash.** Files created after the rewind target are moved to `<DSH_HOME>/session-rewind/trash/<session>/<auditId>/`, never `rm`'d. Files larger than 8 MiB, symlinks and excluded trees are left alone and reported.
+- **No undo.** This plugin deliberately does not implement conversation undo/redo (it would require patching DSH internals). The withdrawn content stays in the session log and the Rewind panel; file-level recovery is available through rescue points and trash.
+- **Order.** Preview and conflict checks run before anything is written; then the rescue point; then the conversation marker; then file writes. Once the marker is appended the conversation rewind stands even if file writes fail (they are reported and audited).
 
-Rewind appends one `user/message` marker whose `surfaceOp` replaces the target message and every surface node after it. The model now sees only the part before the target. The marker carries a constant `(empty message)` text (so strict OpenAI-compatible gateways accept it) and a producer-owned `source: { kind: "session-rewind", targetSeq }`.
+## Data & retention
 
-On the browser side the plugin wraps the registered Chat view builder and marks the nodes in `[targetSeq, markerSeq]` as `visibility: "hidden"` before the builder sees them. Hidden rows leave the transcript, Turn navigation and grouping but stay in the node store, which is what lets the composer still read the withdrawn text. The ↶ button is injected by taking over the `conversation.chat.node` slot's user renderer and adding one child to the official actions row.
+All plugin data lives under `<DSH_HOME>/session-rewind/` (`DSH_HOME` defaults to `~/.dsh`):
 
-Both are private client seams, not public APIs. They are checked for shape at install time; if a future DSH changes them, the plugin degrades to “context rewound, transcript not hidden” or “button missing” instead of breaking the session.
+| Path                            | Contents                                             |
+| ------------------------------- | ---------------------------------------------------- |
+| `blobs/`                        | content-addressed file contents (SHA-256)            |
+| `sessions/<id>/entries.jsonl`   | per-session file change records (newest shown first) |
+| `trash/<session>/<auditId>/`    | files created after a rewind target                  |
+| `rescues/<session>/<rescueId>/` | rescue points (current files before a restore)       |
+| `audit.jsonl`                   | one line per rewind (append-only)                    |
+
+Retention: the 20 latest message anchors per session, the 5 latest rescue points, the 20 latest trash operations (30 days), and a 1 GiB soft cap across blobs/trash/rescues. When the cap is exceeded, old trash → old rescues → unreferenced blobs → oldest anchors are cleaned in that order; if still over the cap, new captures stop and diagnostics report it (no referenced data is deleted). Uninstalling keeps the data. The data root can be overridden with the plugin's `dataRoot` config.
 
 ## Side effects & risks
 
-- **One event appended per rewind.** A `user/message` marker (text `(empty message)`, source `session-rewind`) is added to the current session log. Nothing is deleted or rewritten, and no other file is touched.
-- **The marker is visible to the model** as a short user message placed where the withdrawn turns used to be. Models ignore it; it is not shown in the transcript.
-- **No workspace file restore.** This plugin only rewinds the conversation. Files edited by the withdrawn turns stay as they are; use git or a snapshot plugin for files.
-- **No in-place undo.** Rewind is append-only, so there is no “redo”: the content is still in the log (Trajectory) and disabling the plugin reveals the rows again.
-- **Not-on-surface targets are refused.** Rewinding past a compaction boundary cannot place the cut in the model context, so it is rejected with an explanation.
-- **Text only in the composer.** If the withdrawn message had images or file attachments, they are not restored to the composer in this version; the text is.
-- **No network, no telemetry.** The host half only appends to the live session; the browser half talks to it over the local `/api` channel.
+- **Appends one marker event per rewind** to the current session log; nothing is deleted or rewritten.
+- **Writes and deletes workspace files only in file mode**, after confirmation, with the safety described above.
+- **The marker is visible to the model** as a short `(empty message)` user message where the withdrawn turns used to be. It is not shown in the transcript.
+- **No network, no telemetry.** Everything is local; file snapshots may contain sensitive content, so treat `<DSH_HOME>/session-rewind/` like your workspace.
+- **Private client seams.** Hiding rows and injecting the ↶ button rely on DSH's internal view/slot registries. They are shape-checked at install and degrade to “context rewound, transcript not hidden” or “button missing” rather than breaking a session.
+- **POSIX/macOS paths only** in this version; Windows separators and permission bits are not verified.
 
 ## Compatibility
 
-| DSH version | Status                                                                                                           |
-| ----------- | ---------------------------------------------------------------------------------------------------------------- |
-| 0.2.2-rc.1  | Verified: `pnpm smoke:session-rewind` (17/17) in a temporary DSH home; desktop Electron not regressed separately |
+| DSH version | Status                                                                                                                       |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| 0.2.2-rc.1  | Verified: `pnpm smoke:session-rewind` (25/25 GUI assertions) + 155 unit tests; desktop Electron pass pending (after restart) |
 
-The plugin declares no `engines.dsh` and no `@deepseek-ai/*` peer range: DSH is pre-release and semver ranges over prereleases are unreliable (see [ADR 0005](../../docs/adr/0005-dsh-version-compatibility.md)). Treat the table as the compatibility statement. When a DSH upgrade changes the Chat builder or slot ledger, the plugin's degraded modes above are the fallback; run the smoke test after upgrading.
+The plugin declares no `engines.dsh` and no `@deepseek-ai/*` peer range: DSH is pre-release and semver ranges over prereleases are unreliable (see [ADR 0005](../../docs/adr/0005-dsh-version-compatibility.md)). Treat the table as the compatibility statement. After a DSH upgrade run `pnpm probe:runtime`, `pnpm smoke:session-rewind`, and check the plugin's diagnostics tab; if a private seam changed, the plugin degrades instead of breaking the session.
 
 ## Development
 
 ```bash
-pnpm test           # unit tests (host pure modules + client helpers)
-pnpm verify         # repo-wide gates
-pnpm smoke:session-rewind   # temp DSH home + real GUI end-to-end (needs dsh & ego-browser)
+pnpm test                     # unit tests (host engine, host RPC, client helpers)
+pnpm verify                   # repo-wide gates
+pnpm smoke:session-rewind     # temp DSH home + real GUI end-to-end (needs dsh & ego-browser)
 ```
 
-Design notes: [ADR 0006](../../docs/adr/0006-session-rewind-architecture.md) (Chinese; the repository's docs are written in Chinese).
+Design notes: [ADR 0006](../../docs/adr/0006-session-rewind-architecture.md) and [ADR 0007](../../docs/adr/0007-session-rewind-file-restore.md) (Chinese; the repository docs are written in Chinese).
 
 ## License
 

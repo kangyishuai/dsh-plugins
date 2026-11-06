@@ -280,3 +280,125 @@ export function cutsOf(events) {
   }
   return cuts;
 }
+
+/**
+ * 分页/搜索候选：surface 上的真人用户消息，最新在前。
+ * `cursor` 是上一页最后一条的 seq（下一页取比它更早的候选）。
+ * `index` 是「全部候选（忽略 q）里从新到旧」的 1 基序号，便于 UI 显示。
+ * @param {any} events 会话事件日志
+ * @param {any} surfaceNodes surface 节点顺序
+ * @param {{limit?: number, cursor?: number, q?: string}} [options]
+ * @returns {{candidates: Candidate[], nextCursor: number | null}}
+ */
+export function listCandidatesPage(events, surfaceNodes, options = {}) {
+  const source = Array.isArray(events) ? events : [];
+  const surface = new Set(Array.isArray(surfaceNodes) ? surfaceNodes : []);
+  const rawLimit =
+    options && typeof options.limit === "number" ? options.limit : DEFAULT_CANDIDATE_LIMIT;
+  const limit =
+    Number.isSafeInteger(rawLimit) && rawLimit > 0
+      ? Math.min(rawLimit, 500)
+      : DEFAULT_CANDIDATE_LIMIT;
+  const cursor =
+    options &&
+    typeof options.cursor === "number" &&
+    Number.isSafeInteger(options.cursor) &&
+    options.cursor >= 0
+      ? options.cursor
+      : null;
+  const needle = options && typeof options.q === "string" ? options.q.trim().toLowerCase() : "";
+  /** @type {Candidate[]} */
+  const page = [];
+  let ordinal = 0;
+  let nextCursor = null;
+  for (let i = source.length - 1; i >= 0; i--) {
+    const event = source[i];
+    if (!isHumanUserMessageEvent(event)) continue;
+    if (!surface.has(event.seq)) continue;
+    ordinal += 1;
+    if (cursor !== null && event.seq >= cursor) continue;
+    const text = messageText(event.data);
+    if (needle !== "" && !text.toLowerCase().includes(needle)) continue;
+    if (page.length >= limit) {
+      nextCursor = page.length > 0 ? page[page.length - 1].seq : event.seq;
+      break;
+    }
+    page.push({
+      seq: event.seq,
+      index: ordinal,
+      time: event.time,
+      preview: messagePreview(event.data),
+      text,
+    });
+  }
+  return { candidates: page, nextCursor };
+}
+
+/**
+ * 目标之后（含目标）是否跨过未闭合的工具调用：存在 tool/call 没有对应 tool/result。
+ * 用于预览里提示「回退会截断未完成的工具调用」。
+ * @param {any} events 会话事件日志
+ * @param {number} fromSeq 起点（含）
+ * @returns {boolean}
+ */
+export function hasOpenToolCalls(events, fromSeq) {
+  const source = Array.isArray(events) ? events : [];
+  const calls = new Set();
+  const results = new Set();
+  for (const event of source) {
+    if (!isRecord(event) || typeof event.seq !== "number" || event.seq < fromSeq) continue;
+    if (
+      event.type === "tool/call" &&
+      isRecord(event.data) &&
+      typeof event.data.callId === "string"
+    ) {
+      calls.add(event.data.callId);
+    } else if (event.type === "tool/result" && isRecord(event.data)) {
+      const message = isRecord(event.data.message) ? event.data.message : undefined;
+      if (message && typeof message.toolCallId === "string") results.add(message.toolCallId);
+      else if (typeof event.data.callId === "string") results.add(event.data.callId);
+    }
+  }
+  for (const callId of calls) if (!results.has(callId)) return true;
+  return false;
+}
+
+/**
+ * 消息里的图片引用（用于回填输入框）。只保留结构完整的 image block。
+ * @param {any} message 用户消息
+ * @returns {{attachmentId: string, mediaType: string, bytes?: number, width?: number, height?: number, name?: string}[]}
+ */
+export function messageImages(message) {
+  const content = isRecord(message) && Array.isArray(message.content) ? message.content : [];
+  /** @type {any[]} */
+  const images = [];
+  for (const block of content) {
+    if (!isRecord(block) || block.type !== "image") continue;
+    const attachment = isRecord(block.attachment) ? block.attachment : undefined;
+    if (
+      !attachment ||
+      typeof attachment.attachmentId !== "string" ||
+      typeof attachment.mediaType !== "string"
+    )
+      continue;
+    images.push({
+      attachmentId: attachment.attachmentId,
+      mediaType: attachment.mediaType,
+      ...(typeof attachment.bytes === "number" ? { bytes: attachment.bytes } : {}),
+      ...(typeof attachment.width === "number" ? { width: attachment.width } : {}),
+      ...(typeof attachment.height === "number" ? { height: attachment.height } : {}),
+      ...(typeof attachment.name === "string" ? { name: attachment.name } : {}),
+    });
+  }
+  return images;
+}
+
+/**
+ * 从事件里取一条真人用户消息的完整内容 + 图片引用（回填用）。
+ * @param {any} event `user/message` 事件
+ * @returns {{text: string, images: any[]}}
+ */
+export function targetContent(event) {
+  const message = isRecord(event?.data) ? event.data : {};
+  return { text: messageText(message), images: messageImages(message) };
+}

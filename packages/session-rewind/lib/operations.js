@@ -6,7 +6,14 @@
 //   - service.js 里的 `RemoteError`（把下面的 code 搬到线上）。
 // 其余（解析 sessions/agents、错误码、append 参数）都在这里，可以用假的
 // session/agent 在 node --test 里覆盖全部错误分支。
-import { cutsOf, listCandidates, MARKER_SOURCE_KIND, MARKER_TEXT, planRewind } from "./plan.js";
+import {
+  cutsOf,
+  listCandidatesPage,
+  MARKER_SOURCE_KIND,
+  MARKER_TEXT,
+  messageImages,
+  planRewind,
+} from "./plan.js";
 
 /** RemoteError code 的统一前缀。 */
 export const ERROR_PREFIX = "session-rewind";
@@ -19,6 +26,12 @@ export const ERROR_CODES = Object.freeze({
   badTarget: `${ERROR_PREFIX}/bad-target`,
   notOnSurface: `${ERROR_PREFIX}/not-on-surface`,
   failed: `${ERROR_PREFIX}/failed`,
+  filesConflict: `${ERROR_PREFIX}/files-conflict`,
+  filesUnavailable: `${ERROR_PREFIX}/files-unavailable`,
+  filesRescueFailed: `${ERROR_PREFIX}/files-rescue-failed`,
+  filesFailed: `${ERROR_PREFIX}/files-failed`,
+  rescueNotFound: `${ERROR_PREFIX}/rescue-not-found`,
+  storageUnavailable: `${ERROR_PREFIX}/storage-unavailable`,
 });
 
 /**
@@ -43,8 +56,9 @@ export class RewindRequestError extends Error {
  * @property {(sessionId: string) => any} getAgent 取 agent（可能没有）
  * @property {(sessionId: string) => any} getSession 取 live session（可能没有）
  * @property {boolean} available 宿主是否提供了 sessions/agents 服务
- * @property {(targetSeq: number) => any} createMarkerMessage 构造 marker 消息
+ * @property {(targetSeq: number, extra?: {mode?: string, auditId?: string}) => any} createMarkerMessage 构造 marker 消息
  * @property {Set<string>} [inflight] 每会话的进行中标记（防重入）
+ * @property {(sessionId: string, targetSeq: number) => {fileCount?: number} | undefined} [summarizeFiles] 每个目标之后的文件改动摘要
  */
 
 /**
@@ -158,10 +172,19 @@ export function resolveSession(deps, sessionId) {
  * @param {number} targetSeq
  * @returns {{content: Array<{type: string, text: string}>, source: {kind: string, targetSeq: number}}}
  */
-export function createMarkerMessageInput(targetSeq) {
+/**
+ * @param {number} targetSeq
+ * @param {{mode?: string, auditId?: string}} [extra]
+ */
+export function createMarkerMessageInput(targetSeq, extra = {}) {
   return {
     content: [{ type: "text", text: MARKER_TEXT }],
-    source: { kind: MARKER_SOURCE_KIND, targetSeq },
+    source: {
+      kind: MARKER_SOURCE_KIND,
+      targetSeq,
+      ...(extra && typeof extra.mode === "string" ? { mode: extra.mode } : {}),
+      ...(extra && typeof extra.auditId === "string" ? { auditId: extra.auditId } : {}),
+    },
   };
 }
 
@@ -192,13 +215,31 @@ function throwPlanError(planError) {
  * `candidates`：surface 上的真人用户消息列表（最新在前）。
  * @param {ServiceDeps} deps
  * @param {any} request `{ sessionId, limit? }`
- * @returns {{sessionId: string, candidates: import("./plan.js").Candidate[]}}
+ * @returns {{sessionId: string, candidates: any[], nextCursor: number | null}}
  */
 export function candidatesResponse(deps, request) {
   const { session, sessionId } = resolveSession(deps, request?.sessionId);
+  const page = listCandidatesPage(snapshotEventsOf(session), surfaceNodesOf(session), {
+    limit: request?.limit,
+    cursor: request?.cursor,
+    q: request?.q,
+  });
+  const summarize =
+    typeof deps.summarizeFiles === "function" ? deps.summarizeFiles : () => undefined;
   return {
     sessionId,
-    candidates: listCandidates(snapshotEventsOf(session), surfaceNodesOf(session), request?.limit),
+    candidates: page.candidates.map((candidate) => {
+      const files = summarize(sessionId, candidate.seq);
+      const fileCount =
+        files !== undefined && typeof files.fileCount === "number" ? files.fileCount : 0;
+      return {
+        ...candidate,
+        hasFiles: fileCount > 0,
+        fileCount,
+        reachable: true,
+      };
+    }),
+    nextCursor: page.nextCursor,
   };
 }
 
@@ -206,7 +247,7 @@ export function candidatesResponse(deps, request) {
  * `rewind`：追加一条 marker，把目标消息及其后的 surface 节点整体替换掉。
  * @param {ServiceDeps} deps
  * @param {any} request `{ sessionId, targetSeq }`
- * @returns {{targetSeq: number, markerSeq: number, removedCount: number, text: string}}
+ * @returns {{targetSeq: number, markerSeq: number, removedCount: number, text: string, target: {text: string, images: any[]}}}
  */
 export function rewindResponse(deps, request) {
   const { session, sessionId } = resolveSession(deps, request?.sessionId);
@@ -229,9 +270,14 @@ export function rewindResponse(deps, request) {
   }
   inflight?.add(sessionId);
   try {
-    const plan = planRewind(snapshotEventsOf(session), surfaceNodesOf(session), targetSeq);
+    const events = snapshotEventsOf(session);
+    const plan = planRewind(events, surfaceNodesOf(session), targetSeq);
     if ("error" in plan) throwPlanError(plan.error);
-    const marker = deps.createMarkerMessage(targetSeq);
+    const targetEvent = events[targetSeq];
+    const marker = deps.createMarkerMessage(targetSeq, {
+      mode: request?.mode === "both" ? "both" : "chat",
+      ...(typeof request?.auditId === "string" ? { auditId: request.auditId } : {}),
+    });
     const event = session.append("user/message", marker, buildAppendOptions(plan));
     if (!isRecord(event) || !isEventSeq(event.seq)) {
       throw new RewindRequestError(
@@ -244,6 +290,10 @@ export function rewindResponse(deps, request) {
       markerSeq: event.seq,
       removedCount: plan.shadowedSeqs.length,
       text: plan.text,
+      target: {
+        text: plan.text,
+        images: targetEvent !== undefined ? messageImages(targetEvent.data) : [],
+      },
     };
   } finally {
     inflight?.delete(sessionId);
@@ -259,4 +309,55 @@ export function rewindResponse(deps, request) {
 export function cutsResponse(deps, request) {
   const { session } = resolveSession(deps, request?.sessionId);
   return { cuts: cutsOf(snapshotEventsOf(session)) };
+}
+
+/**
+ * 追加一条回溯 marker（mode=both 时由 service 在救援点建好后调用）。
+ * @param {any} session live session
+ * @param {any} plan planRewind 的成功结果
+ * @param {ServiceDeps} deps 依赖
+ * @param {{mode?: "chat" | "both", auditId?: string}} [extra]
+ * @returns {any} 落库事件
+ */
+export function appendRewindMarker(session, plan, deps, extra = {}) {
+  if (typeof session.append !== "function") {
+    throw new RewindRequestError(ERROR_CODES.failed, "session does not expose append()");
+  }
+  const marker = deps.createMarkerMessage(plan.targetSeq, {
+    mode: extra.mode === "both" ? "both" : "chat",
+    ...(typeof extra.auditId === "string" ? { auditId: extra.auditId } : {}),
+  });
+  return session.append("user/message", marker, buildAppendOptions(plan));
+}
+
+/**
+ * 解析一次回溯请求的目标（不做任何写操作）。
+ * @param {ServiceDeps} deps
+ * @param {any} request `{ sessionId, targetSeq }`
+ * @returns {{session: any, sessionId: string, plan: import("./plan.js").RewindPlan, targetEvent: any}}
+ */
+export function resolveRewindTarget(deps, request) {
+  const { session, sessionId } = resolveSession(deps, request?.sessionId);
+  const targetSeq = request?.targetSeq;
+  if (!isEventSeq(targetSeq)) {
+    throw new RewindRequestError(
+      ERROR_CODES.badTarget,
+      `targetSeq must be a non-negative safe integer, got ${String(targetSeq)}`,
+    );
+  }
+  const events = snapshotEventsOf(session);
+  const plan = planRewind(events, surfaceNodesOf(session), targetSeq);
+  if ("error" in plan) throwPlanError(plan.error);
+  return { session, sessionId, plan, targetEvent: events[targetSeq] };
+}
+
+/**
+ * 读取一个会话当前完整事件日志（给 ghost/health 用）。
+ * @param {ServiceDeps} deps
+ * @param {string} sessionId
+ * @returns {{session: any, events: any[]}}
+ */
+export function sessionEvents(deps, sessionId) {
+  const { session } = resolveSession(deps, sessionId);
+  return { session, events: snapshotEventsOf(session) };
 }

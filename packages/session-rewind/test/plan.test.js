@@ -330,3 +330,78 @@ test("cutsOf 对空/异常输入返回空数组", () => {
   assert.deepEqual(cutsOf(undefined), []);
   assert.deepEqual(cutsOf([]), []);
 });
+
+test("listCandidatesPage：分页 / 搜索 / 全局 index", async () => {
+  const { listCandidatesPage } = await import("../lib/plan.js");
+  /** @param {number} seq @param {string} text */
+  const user = (seq, text) => ({
+    seq,
+    type: "user/message",
+    time: seq,
+    data: { role: "user", content: [{ type: "text", text }], source: { kind: "user" } },
+  });
+  const events = [user(1, "alpha one"), user(3, "beta two"), user(5, "alpha three")];
+  const surface = [1, 3, 5];
+  const page1 = listCandidatesPage(events, surface, { limit: 2 });
+  assert.deepEqual(
+    page1.candidates.map((/** @type {any} */ item) => item.seq),
+    [5, 3],
+  );
+  assert.equal(page1.candidates[0].index, 1);
+  assert.equal(page1.candidates[1].index, 2);
+  assert.equal(page1.nextCursor, 3);
+  const page2 = listCandidatesPage(events, surface, { limit: 2, cursor: page1.nextCursor });
+  assert.deepEqual(
+    page2.candidates.map((/** @type {any} */ item) => item.seq),
+    [1],
+  );
+  assert.equal(page2.nextCursor, null);
+  const searched = listCandidatesPage(events, surface, { q: "ALPHA" });
+  assert.deepEqual(
+    searched.candidates.map((/** @type {any} */ item) => item.seq),
+    [5, 1],
+  );
+});
+
+test("hasOpenToolCalls 只统计目标之后未闭合的调用", async () => {
+  const { hasOpenToolCalls } = await import("../lib/plan.js");
+  const events = [
+    { seq: 0, type: "tool/call", time: 0, data: { callId: "c1" } },
+    { seq: 1, type: "tool/result", time: 0, data: { message: { role: "tool", toolCallId: "c1" } } },
+    { seq: 2, type: "tool/call", time: 0, data: { callId: "c2" } },
+  ];
+  assert.equal(hasOpenToolCalls(events, 0), true);
+  assert.equal(hasOpenToolCalls(events, 2), true);
+  assert.equal(hasOpenToolCalls(events, 3), false);
+});
+
+test("messageImages / targetContent 提取图片引用", async () => {
+  const { messageImages, targetContent } = await import("../lib/plan.js");
+  const message = {
+    role: "user",
+    content: [
+      { type: "text", text: "look" },
+      {
+        type: "image",
+        attachment: {
+          attachmentId: "a1",
+          mediaType: "image/png",
+          bytes: 12,
+          width: 1,
+          height: 2,
+          name: "x.png",
+        },
+      },
+      { type: "image", attachment: { attachmentId: "bad" } },
+    ],
+  };
+  assert.deepEqual(messageImages(message), [
+    { attachmentId: "a1", mediaType: "image/png", bytes: 12, width: 1, height: 2, name: "x.png" },
+  ]);
+  assert.deepEqual(targetContent({ data: message }), {
+    text: "look",
+    images: [
+      { attachmentId: "a1", mediaType: "image/png", bytes: 12, width: 1, height: 2, name: "x.png" },
+    ],
+  });
+});

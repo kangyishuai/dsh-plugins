@@ -128,6 +128,12 @@ test("ERROR_CODES 与设计约定的完整 code 一致", () => {
     badTarget: "session-rewind/bad-target",
     notOnSurface: "session-rewind/not-on-surface",
     failed: "session-rewind/failed",
+    filesConflict: "session-rewind/files-conflict",
+    filesUnavailable: "session-rewind/files-unavailable",
+    filesRescueFailed: "session-rewind/files-rescue-failed",
+    filesFailed: "session-rewind/files-failed",
+    rescueNotFound: "session-rewind/rescue-not-found",
+    storageUnavailable: "session-rewind/storage-unavailable",
   });
   const error = new RewindRequestError(ERROR_CODES.busy, "boom");
   assert.ok(error instanceof Error);
@@ -315,7 +321,13 @@ test("rewindResponse：追加正确 marker 并返回结果", () => {
 
   const response = rewindResponse(deps, { sessionId: "s1", targetSeq: 1 });
 
-  assert.deepEqual(response, { targetSeq: 1, markerSeq: 3, removedCount: 2, text: "hello" });
+  assert.deepEqual(response, {
+    targetSeq: 1,
+    markerSeq: 3,
+    removedCount: 2,
+    text: "hello",
+    target: { text: "hello", images: [] },
+  });
   assert.equal(appends.length, 1);
   const [{ type, data, opts }] = appends;
   assert.equal(type, "user/message");
