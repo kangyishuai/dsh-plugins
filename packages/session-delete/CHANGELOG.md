@@ -1,5 +1,11 @@
 # @kangyishuai/dsh-session-delete
 
+## 0.4.4
+
+### Patch Changes
+
+- [#6](https://github.com/kangyishuai/dsh-plugins/pull/6) [`83b4bd3`](https://github.com/kangyishuai/dsh-plugins/commit/83b4bd38d989e1f27302296cbb2231698f374b67) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 兼容性记录：补充 DSH 0.2.2-rc.1 的验证结果（`pnpm smoke:session-delete` 24 项断言全绿、插件在桌面版正常激活），README 徽章与兼容表更新到新宿主版本。
+
 ## 0.4.3
 
 ### Patch Changes
