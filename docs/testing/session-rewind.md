@@ -48,7 +48,7 @@ pnpm verify                               # 仓库门禁
 pnpm smoke:session-rewind
 ```
 
-临时 home 里启动真实宿主 + ego-browser，17 项断言：
+临时 home 里启动真实宿主 + ego-browser，25 项断言：
 
 | #    | 断言                                                                                                  |
 | ---- | ----------------------------------------------------------------------------------------------------- |
@@ -68,6 +68,31 @@ pnpm smoke:session-rewind
 
 失败时会打印断言明细并把截图留在 `/tmp/dsh-smoke-rewind-shots/`（截图含临时 home 里的真实
 会话内容，不要提交）。`SMOKE_DEBUG=1` 可看浏览器脚本完整输出。
+
+## 2.5 文件引擎单测（每次提交）
+
+`cd packages/session-rewind && pnpm test` 里包含 47 个文件引擎/追踪单测（临时目录）：
+
+- 捕获与记录：write create/update、edit、apply_patch add/update/delete/move；
+- 路径安全：cwd 逃逸、符号链接、`.git`/`node_modules`、非普通文件；
+- 限制：单文件 8 MiB 跳过、不可读文件跳过；
+- 恢复计划：多 anchor 同一路径取最早 before、冲突（外部修改/缺失/意外出现）、trash 列表；
+- 执行：救援点失败不写、写后哈希校验、失败回滚、回收站移动、保留/GC/软上限；
+- 工具钩子：`parsePatchPaths`、`commitFromToolResult`、`latestHumanUserSeq`、install 后
+  tools/execute + post-execute 的正常/异常路径。
+
+## 2.6 文件模式端到端（桌面版，发版前）
+
+目前 `pnpm smoke:session-rewind` 在临时 DSH 目录里验证到「文件模式 UI + 冲突禁用 + 会话回溯」，
+**尚未自动执行文件还原**（需要一个临时工作区 + 一次真实写工具/模型调用）。发版前在桌面版做一次：
+
+1. 新开一个**测试工作区**（或已有工作区的临时子目录），新会话里让模型只做一件事：
+   「用 write 工具创建 `rewind-smoke.txt`，内容 hello」；
+2. 等回合结束，确认文件存在；点该用户消息的 ↶ → 预览应显示「将还原/移入回收站 1 个文件」；
+3. 选「回退对话和文件」→ 确认：文件消失（进插件回收站），composer 回填；
+4. 回溯面板 → 救援点 → 恢复：文件内容回来；
+5. 制造冲突：再让模型改一次文件后，手工再改同一文件 → 回溯文件模式应拒绝并列出冲突；
+6. 检查 `~/Library/.../DSH_HOME/session-rewind/audit.jsonl` 有本次记录、trash 里有被移走的文件。
 
 ## 3. 界面手测 / 边界（发版与 DSH 升级后）
 
