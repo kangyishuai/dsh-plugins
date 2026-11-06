@@ -19,6 +19,22 @@ from one of them, the corresponding notice and license text will be added to thi
 | [DDDMUC/dsh-delete-session](https://github.com/DDDMUC/dsh-delete-session) | MIT | The problem framing: prove that no writer is active before touching session files, and treat `EBUSY` / `EPERM` on the directory as a retryable state. We deliberately did **not** adopt its write-lease probe (`open(id, "write")`): that call publishes a new log generation on historical sessions (see [`docs/adr/0004-session-delete-architecture.md`](docs/adr/0004-session-delete-architecture.md) §6), so this plugin uses read-only liveness signals and retries the move on busy instead. |
 | [Lzcdebear/better-dsh-session-deletetool](https://github.com/Lzcdebear/better-dsh-session-deletetool) | MIT | Lineage-based identification of sub-sessions and forks (subagent catalog plus `SessionHeader.parentSession`), used to count related sessions in the delete plan. |
 
+## Design credits（session-rewind）
+
+| Project | License | Design we borrowed |
+| ------- | ------- | ------------------ |
+| [SiriLee/dsh-rewind](https://github.com/SiriLee/dsh-rewind) | MIT | The in-place rewind mechanism: append one `user/message` marker whose `surfaceOp` replaces the target and every later surface node, keep the log append-only, hide the withdrawn rows in the client by wrapping the registered Chat view builder with `visibility: "hidden"`, and inject the ↶ action into the official message action row by taking over the `conversation.chat.node` slot entry. We read its source to verify these seams exist; the implementation here is independent plain JavaScript and no source code was copied. |
+
+## 中文摘要（session-rewind）
+
+写 `packages/session-rewind` 之前，我们读了 [SiriLee/dsh-rewind](https://github.com/SiriLee/dsh-rewind)（MIT，241★）。
+**只借鉴架构，没有复制代码**：确认了两条关键 seam ——「向日志追加一条 `surfaceOp: replace` 的
+`user/message` 标记」可以只截断模型可见上下文而不动历史；「包装已注册的 Chat builder，把节点标成
+`visibility: "hidden"`」可以让被撤回的行从渲染对话里消失，同时保留在节点 store 里供输入框回填；
+以及接管 `conversation.chat.node` 的 user 渲染器、往官方 actions 行的 `extraActions` 里塞按钮的
+消息动作注入方式。本仓库的实现是独立的 plain JS（无构建、无 TypeScript），若将来真的复制其代码，
+会在本文件逐字补上版权与许可全文。
+
 ## 中文摘要
 
 写 `packages/session-delete` 之前，我们读过上面四个 MIT / Apache-2.0 社区插件（Jaylor-Wang、xohmai、DDDMUC、Lzcdebear）。**只借鉴设计，没有复制代码**，对应关系：

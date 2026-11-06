@@ -9,5 +9,6 @@
 | [0003](0003-session-delete-product-shape.md) | session-delete 的产品形态                             | 已接受 |
 | [0004](0004-session-delete-architecture.md)  | session-delete 的架构：三内核 + 两阶段提交 + 能力降级 | 已接受 |
 | [0005](0005-dsh-version-compatibility.md)    | 插件与 DSH 版本的兼容与升级策略                       | 已接受 |
+| [0006](0006-session-rewind-architecture.md)  | session-rewind：只追加的回溯标记                      | 已接受 |
 
 新建：复制 [0000-template.md](0000-template.md)。
