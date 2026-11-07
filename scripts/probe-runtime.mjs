@@ -53,6 +53,51 @@ const API_CHECKS = [
     name: "TypertRemoteService / Remote（host 服务注册）",
     pattern: /TypertRemoteService/u,
   },
+  {
+    file: "@deepseek-ai/dsh-session/lib/index.js",
+    name: "session surface replace / deriveEventMessage（回溯 marker 依赖）",
+    pattern: /surfaceOp/u,
+  },
+  {
+    file: "@deepseek-ai/dsh-session/lib/index.js",
+    name: "session.deriveMessages / surface（可见性/幽灵历史依赖）",
+    pattern: /deriveMessages\s*\(/u,
+  },
+  {
+    file: "@deepseek-ai/dsh-session/lib/index.js",
+    name: "session.append（追加 marker 的唯一写入口）",
+    pattern: /append\(type, data/u,
+  },
+  {
+    file: "@deepseek-ai/dsh-tools/lib/pipeline.js",
+    name: "tools/execute / tools/post-execute / tools/result 工具钩子",
+    pattern: /tools\/execute[\s\S]*tools\/post-execute[\s\S]*tools\/result/u,
+  },
+  {
+    file: "@deepseek-ai/dsh-tool-fs/lib/index.js",
+    name: "write / edit / apply_patch 工具（文件追踪范围）",
+    pattern: /name: "write"[\s\S]*name: "apply_patch"/u,
+  },
+  {
+    file: "@deepseek-ai/dsh-tool-fs/lib/index.js",
+    name: "文件工具结果携带 before/after（写前快照依赖）",
+    pattern: /before[\s\S]{0,200}after/u,
+  },
+  {
+    file: "@deepseek-ai/dsh-client-ui-renderer/lib/client.js",
+    name: "client slots 服务（SlotRegistry）",
+    pattern: /super\(ctx, "slots"\)/u,
+  },
+  {
+    file: "@deepseek-ai/dsh-client-ui-commands/lib/client.js",
+    name: "commandUi.decorate（/rewind 命令装饰）",
+    pattern: /decorate\(decoration\)/u,
+  },
+  {
+    file: "@deepseek-ai/dsh-token-meter/lib/types/estimate.js",
+    name: "estimateMessage（预览 token 估算）",
+    pattern: /export function estimateMessage/u,
+  },
 ];
 
 /** slot 名字通过扫描 client 包确认（客户端 bundle 里以字符串出现）。 */
@@ -60,6 +105,10 @@ const SLOT_CHECKS = [
   { slot: "sidebar.workspaces.session.menu.item", purpose: "会话「…」菜单" },
   { slot: "sidebar.footer.action", purpose: "侧栏页脚回收站入口" },
   { slot: "shell.overlay", purpose: "确认框 / 面板 / toast" },
+  { slot: "conversation.chat.node", purpose: "消息行（↶ 按钮注入）" },
+  { slot: "conversation.session.header.actions", purpose: "会话头部（回溯面板入口）" },
+  { slot: "conversation.input.dock", purpose: "输入框 dock（命令面板）" },
+  { slot: "conversation.composer", purpose: "composer 插槽" },
 ];
 
 /**

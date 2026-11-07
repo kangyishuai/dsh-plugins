@@ -88,6 +88,17 @@ pnpm smoke:session-rewind
 救援点恢复、面板/审计/诊断。脚本思路：`/json/list` 取 renderer → `Runtime.evaluate` 点按钮/
 填 composer → `Page.captureScreenshot` 留证；工作区用临时目录，prompt 只让 agent 写一个测试文件。
 
+一键回归（只读、不写文件、不发模型请求）：
+
+```bash
+# 先带调试端口重启桌面版
+open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1
+pnpm smoke:session-rewind-desktop
+```
+
+脚本检查：插件 client 半加载、↶ 按钮与面板入口、Esc Esc 候选列表、搜索过滤、四页签、
+设置页诊断；截图写到 `/tmp/dsh-session-rewind-desktop-shots/`。
+
 如需人工复核，仍可按下面的手工步骤走一遍：
 
 1. 新开一个**测试工作区**（或已有工作区的临时子目录），新会话里让模型只做一件事：
