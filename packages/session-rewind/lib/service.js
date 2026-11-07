@@ -645,8 +645,7 @@ export class SessionRewindService extends TypertRemoteService {
         // 注入上下文（runtime-context / system-reminder 等）也是 user/message，
         // 但放回输入框毫无意义，只会把面板刷满噪音；工具结果同理，先不列。
         if (event.type === "user/message") {
-          const source = event.data?.source;
-          if (!source || source.kind !== "user") return null;
+          if (event.data?.source?.kind !== "user") return null;
           return { kind: "user", text: textOfMessage(message), messageId: message.id };
         }
         if (event.type === "assistant/message") {
