@@ -1,5 +1,11 @@
 # @kangyishuai/dsh-session-rewind
 
+## 0.1.1
+
+### Patch Changes
+
+- [#11](https://github.com/kangyishuai/dsh-plugins/pull/11) [`64822d3`](https://github.com/kangyishuai/dsh-plugins/commit/64822d3cc734524818d55441f7be6a6960543134) Thanks [@kangyishuai](https://github.com/kangyishuai)! - Clean up plugin data for sessions that no longer exist (entries, trash and rescue points) on startup, and report orphan data in the diagnostics tab. Audit history is kept.
+
 ## 0.1.0
 
 ### Minor Changes
