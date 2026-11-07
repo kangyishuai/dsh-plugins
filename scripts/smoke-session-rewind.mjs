@@ -244,6 +244,15 @@ const modeInfo = await page.evaluate(() => {
 });
 check("确认框有仅对话/对话+文件两个范围", modeInfo !== null && modeInfo.radios.length === 2, JSON.stringify(modeInfo && modeInfo.radios));
 check("没有文件变更时文件模式被禁用", modeInfo !== null && modeInfo.radios.some((r) => r.value === "both" && r.disabled) && /无文件变更|No file changes/u.test(modeInfo.text), JSON.stringify(modeInfo && modeInfo.radios));
+const resendBox = await page.evaluate(() => {
+  const box = document.querySelector('.dsh-srw-dialog input[data-rewind-resend="true"]');
+  return box ? { present: true, checked: box.checked } : { present: false, checked: false };
+});
+check(
+  "确认框提供「回退后立即重发」且默认不勾选",
+  resendBox.present === true && resendBox.checked === false,
+  JSON.stringify(resendBox),
+);
 const targetHead = confirmDialog && confirmDialog.preview ? confirmDialog.preview.slice(0, 6) : "";
 await shot("03-confirm-dialog");
 const confirmed = await clickDialogButton(LABELS.confirm);
