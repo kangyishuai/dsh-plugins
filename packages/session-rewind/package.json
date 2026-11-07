@@ -1,6 +1,6 @@
 {
   "name": "@kangyishuai/dsh-session-rewind",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "In-place conversation rewind for DSH: withdraw a user message and everything after it, then refill the composer",
   "keywords": [
     "dsh",
