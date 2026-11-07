@@ -633,20 +633,26 @@ export class SessionRewindService extends TypertRemoteService {
         if (typeof entry.markerSeq === "number" && typeof entry.mode === "string")
           modeByMarker.set(entry.markerSeq, entry.mode);
       }
-      const describe = (/** @type {any} */ event) => {
+      /**
+       * @param {any} event
+       * @returns {{kind: "user" | "assistant", text: string, messageId: string} | null}
+       */
+      const describe = (event) => {
         if (!isAppendSurfaceEvent(event)) return null;
         const message = deriveEventMessage(event);
         if (message === null) return null;
-        /** @type {"user" | "assistant" | "tool" | "other"} */
-        const kind =
-          event.type === "user/message"
-            ? "user"
-            : event.type === "assistant/message"
-              ? "assistant"
-              : event.type === "tool/result"
-                ? "tool"
-                : "other";
-        return { kind, text: textOfMessage(message), messageId: message.id };
+        // 只列「人能看到」的内容：真人用户消息 + assistant 文本。
+        // 注入上下文（runtime-context / system-reminder 等）也是 user/message，
+        // 但放回输入框毫无意义，只会把面板刷满噪音；工具结果同理，先不列。
+        if (event.type === "user/message") {
+          const source = event.data?.source;
+          if (!source || source.kind !== "user") return null;
+          return { kind: "user", text: textOfMessage(message), messageId: message.id };
+        }
+        if (event.type === "assistant/message") {
+          return { kind: "assistant", text: textOfMessage(message), messageId: message.id };
+        }
+        return null;
       };
       return collectGhost(events, describe, {
         q: request?.q,

@@ -8,7 +8,7 @@
 
 Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). Not affiliated with DeepSeek.
 
-> **Status: early.** Verified on DSH 0.2.2-rc.1 with `pnpm smoke:session-rewind` (25 end-to-end GUI assertions) plus 155 unit tests, including the file engine. The desktop Electron pass is the next step after a DSH restart. Young software — keep backups of anything you cannot lose.
+> **Status: early.** Verified end to end on DSH 0.2.2-rc.1: 25 GUI assertions in a throwaway DSH home, 155 unit tests, and a CDP-driven desktop pass (conflict refusal, conversation + file rewind, created-file trash, modified-file restore, rescue restore, panel/audit/diagnostics). Young software — keep backups of anything you cannot lose.
 
 ## What it does
 
