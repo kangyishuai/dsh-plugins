@@ -81,10 +81,14 @@ pnpm smoke:session-rewind
 - 工具钩子：`parsePatchPaths`、`commitFromToolResult`、`latestHumanUserSeq`、install 后
   tools/execute + post-execute 的正常/异常路径。
 
-## 2.6 文件模式端到端（桌面版，发版前）
+## 2.6 文件模式端到端（桌面版，已自动化）
 
-目前 `pnpm smoke:session-rewind` 在临时 DSH 目录里验证到「文件模式 UI + 冲突禁用 + 会话回溯」，
-**尚未自动执行文件还原**（需要一个临时工作区 + 一次真实写工具/模型调用）。发版前在桌面版做一次：
+2026-11-07 已用 CDP（`--remote-debugging-port=9222`，仅绑定 127.0.0.1，验证后关闭）在桌面版
+自动跑通：冲突时文件模式置灰并列出冲突、创建文件后回退进回收站、修改文件后回退还原内容、
+救援点恢复、面板/审计/诊断。脚本思路：`/json/list` 取 renderer → `Runtime.evaluate` 点按钮/
+填 composer → `Page.captureScreenshot` 留证；工作区用临时目录，prompt 只让 agent 写一个测试文件。
+
+如需人工复核，仍可按下面的手工步骤走一遍：
 
 1. 新开一个**测试工作区**（或已有工作区的临时子目录），新会话里让模型只做一件事：
    「用 write 工具创建 `rewind-smoke.txt`，内容 hello」；
