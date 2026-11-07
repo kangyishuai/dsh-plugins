@@ -291,10 +291,8 @@ test("candidatesResponse：缺 sessionId / 会话不存在 → not-found", () =>
 
   const session = fakeSession([systemEvent()]);
   const busy = depsOf({ agent: { status: "running", session }, session }).deps;
-  assert.equal(
-    codeOf(() => candidatesResponse(busy, { sessionId: "s1" })),
-    ERROR_CODES.busy,
-  );
+  // 只读接口不拒绝运行中的会话：候选列表照常返回，真正写日志的回退由宿主先停下回合。
+  assert.equal(candidatesResponse(busy, { sessionId: "s1" }).sessionId, "s1");
 });
 
 test("rewindResponse：追加正确 marker 并返回结果", () => {

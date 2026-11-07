@@ -736,6 +736,12 @@ describe("dictionaries", () => {
       "confirm.modeChat",
       "confirm.modeBoth",
       "confirm.busy",
+      "confirm.settling",
+      "confirm.resend",
+      "confirm.resendHint",
+      "dialog.settling",
+      "toast.stoppedTurn",
+      "toast.resent",
       "confirm.fileSummary",
       "toast.rewound",
       "toast.view",
@@ -954,7 +960,9 @@ function applyHarness(fixtures, options = {}) {
               return () => {};
             },
           }
-        : undefined,
+        : options.services && options.services[name] !== undefined
+          ? options.services[name]
+          : undefined,
   };
 
   exported.apply(ctx);
@@ -1176,7 +1184,50 @@ describe("apply() runtime wiring", () => {
     );
   });
 
-  it("marks the confirm dialog busy and refuses to execute while the turn runs", async () => {
+  it("回退后立即重发：勾选后成功回调会提交输入框", async () => {
+    /** @type {number} */
+    let submitted = 0;
+    const conversation = {
+      input: {
+        for: () => ({
+          snapshot: { draft: "" },
+          setDraft: () => {},
+          focus: () => {},
+          actions: {
+            submit: () => {
+              submitted += 1;
+            },
+          },
+        }),
+      },
+    };
+    const harness = applyHarness(fixtures(), { services: { conversation } });
+    const submittedBefore = submitted;
+    harness.api.openConfirm(candidate, "s1", "row");
+    await flush();
+    harness.api.setResend(true);
+    assert.equal(harness.store.getSnapshot().resend, true);
+    harness.api.doRewind();
+    await flush();
+    await flush();
+    assert.equal(submitted, submittedBefore + 1);
+    assert.equal(harness.store.getSnapshot().resend, false);
+  });
+
+  it("文件模式不重发", async () => {
+    const harness = applyHarness(fixtures(), {});
+    harness.api.openConfirm(candidate, "s1", "row");
+    await flush();
+    harness.api.setResend(true);
+    harness.api.setRewindMode("both");
+    harness.api.doRewind();
+    await flush();
+    await flush();
+    const rewind = harness.calls.find((/** @type {any} */ call) => call.name === "rewind");
+    assert.equal(rewind.request.mode, "both");
+  });
+
+  it("warns about the running turn and still executes (host stops it first)", async () => {
     const harness = applyHarness(fixtures(), { running: true });
     harness.api.openConfirm(candidate, "s1", "row");
     await flush();
@@ -1185,9 +1236,8 @@ describe("apply() runtime wiring", () => {
     await flush();
     assert.equal(
       harness.calls.some((/** @type {any} */ call) => call.name === "rewind"),
-      false,
-      "rewind must not run while the session is busy",
+      true,
+      "rewind runs; the host cancels the running turn and waits for idle",
     );
-    assert.equal(harness.store.getSnapshot().mode, "confirm");
   });
 });

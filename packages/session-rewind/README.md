@@ -15,10 +15,11 @@ Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/de
 Long conversations drift. A few turns later you wish you had answered a prompt differently, but starting a new session loses everything before it, and continuing keeps the unwanted turns in the context window forever. This plugin rewinds **in place**:
 
 - **Two entries.** Press `Esc` `Esc` to open the rewind dialog, or click the ↶ button in any user message's action row (next to Copy).
+- **Running turns are not a dead end.** Confirming a rewind while a turn is running cancels that turn (keeping the queue), waits for it to go idle, then re-plans against the settled history.
 - **Two scopes, chosen per rewind.** The confirmation dialog offers **Rewind conversation only** (default) and **Rewind conversation and files**. The dialog first shows a dry-run preview: how many messages and roughly how many tokens will be withdrawn, which files will be restored or moved to the trash, conflicts, and skipped files.
 - **Conversation.** The target message and everything after it are withdrawn from the model-visible context and from the transcript. The session id, title and earlier history are untouched. Nothing is deleted from the log — one marker event is appended.
 - **Files (optional).** Files changed by `write` / `edit` / `apply_patch` in the withdrawn turns are restored to their pre-change content. Files created after the target are moved to the plugin's trash instead of deleted. A rescue point of the current files is created before anything is written; failures roll back from it.
-- **Composer.** The target message's text (and images) is put back into the composer, ready to edit and send again. An existing draft is never overwritten.
+- **Composer.** The target message's text (and images) is put back into the composer, ready to edit and send again. An existing draft is never overwritten. Tick **Send this message again right after rewinding** in the confirmation dialog to retry the turn in one click (conversation-only rewinds).
 - **Rewind panel.** A new header action opens a panel with four tabs: **Withdrawn** (every message each rewind removed, searchable, copy or put back in the composer), **History** (audit of each rewind: scope, message count, tokens, file results), **Rescue points** (restore files from an earlier rescue), and **Settings** (default scope, page size, confirm-on-list, diagnostics).
 
 ## Install
@@ -49,14 +50,14 @@ Re-run `pnpm pack` + `add` after changing the code. The plugin has a host half, 
 
 **What is refused**
 
-| Situation                                                                | What happens                                                                           |
-| ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
-| The session has a running turn                                           | The host refuses (`session-rewind/busy`); stop the turn first and retry.               |
-| The session is a subagent child                                          | No ↶ button and no `Esc` `Esc` dialog: the Harness refuses generic session RPCs there. |
-| The target message was shadowed by compaction                            | Refused; the rewind boundary must still be in the model context.                       |
-| A file was changed outside the agent since the last recorded state       | File mode is refused with a conflict list; no file is touched.                         |
-| A file is larger than 8 MiB, a symlink, or under `.git` / `node_modules` | That file is skipped and reported; other files still proceed.                          |
-| A rewind is already running on this session                              | Refused; one at a time.                                                                |
+| Situation                                                                | What happens                                                                                                                                              |
+| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The session has a running turn                                           | It is cancelled first (queued steering messages are dropped), then the rewind runs. Set `cancelRunning: false` to refuse instead (`session-rewind/busy`). |
+| The session is a subagent child                                          | No ↶ button and no `Esc` `Esc` dialog: the Harness refuses generic session RPCs there.                                                                    |
+| The target message was shadowed by compaction                            | Refused; the rewind boundary must still be in the model context.                                                                                          |
+| A file was changed outside the agent since the last recorded state       | File mode is refused with a conflict list; no file is touched.                                                                                            |
+| A file is larger than 8 MiB, a symlink, or under `.git` / `node_modules` | That file is skipped and reported; other files still proceed.                                                                                             |
+| A rewind is already running on this session                              | Refused; one at a time.                                                                                                                                   |
 
 ## File restore scope & safety
 
