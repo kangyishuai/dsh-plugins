@@ -3,14 +3,19 @@
 // 用法：先带调试端口启动 DSH 桌面版：
 //   open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1
 // 然后：pnpm smoke:session-rewind-desktop
-// 只读的桌面 UI 回归：不写文件、不发模型请求、不改会话；只打开/关闭对话框与面板。
+//
+// 只读桌面回归：不写文件、不发模型请求、不改会话；只切会话、打开/关闭对话框与面板。
 // 端口可用 --port 或 DSH_CDP_PORT 覆盖（默认 9222）。
+//
+// 重要：Esc Esc 在「正在运行本 agent 的会话」里会触发内置的停止，取消正在跑的这一轮
+// （脚本自己的工具调用会被 abort）。所以脚本会先切到一个空闲会话再按 Esc，最后切回原会话。
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 
 const SHOTS = join(tmpdir(), "dsh-session-rewind-desktop-shots");
+const sleep = (/** @type {number} */ ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * @param {number} port
@@ -65,10 +70,25 @@ async function connect(port) {
     const { data } = await send("Page.captureScreenshot", { format: "png" });
     await writeFile(file, Buffer.from(data, "base64"));
   };
-  return { ws, send, evaluate, screenshot, page };
+  return { ws, send, evaluate, screenshot };
 }
 
-const sleep = (/** @type {number} */ ms) => new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * @param {ReturnType<typeof connect> extends Promise<infer T> ? T : never} cdp
+ * @param {string} key
+ * @param {number} vk
+ */
+async function pressEscape(cdp, key, vk) {
+  for (const type of ["keyDown", "keyUp"]) {
+    await cdp.send("Input.dispatchKeyEvent", {
+      type,
+      key,
+      code: "Escape",
+      windowsVirtualKeyCode: 27,
+      nativeVirtualKeyCode: vk,
+    });
+  }
+}
 
 const main = async () => {
   const { values } = parseArgs({
@@ -83,6 +103,7 @@ const main = async () => {
     /** @type {boolean} */ ok,
     /** @type {string} */ detail = "",
   ) => checks.push({ name, ok, detail });
+  /** @type {Awaited<ReturnType<typeof connect>> | undefined} */
   let cdp;
   try {
     cdp = await connect(port);
@@ -123,65 +144,71 @@ const main = async () => {
     );
     await cdp.screenshot(join(SHOTS, "01-overview.png"));
 
-    // Esc Esc → 候选列表 → 搜索 → 取消
-    await cdp.evaluate(
-      `(() => { const el = document.querySelector("[data-composer-input]"); if (el && el.focus) el.focus(); })()`,
-    );
-    await sleep(200);
-    await cdp.send("Input.dispatchKeyEvent", {
-      type: "keyDown",
-      key: "Escape",
-      code: "Escape",
-      windowsVirtualKeyCode: 27,
-      nativeVirtualKeyCode: 53,
-    });
-    await cdp.send("Input.dispatchKeyEvent", {
-      type: "keyUp",
-      key: "Escape",
-      code: "Escape",
-      windowsVirtualKeyCode: 27,
-      nativeVirtualKeyCode: 53,
-    });
-    await sleep(120);
-    await cdp.send("Input.dispatchKeyEvent", {
-      type: "keyDown",
-      key: "Escape",
-      code: "Escape",
-      windowsVirtualKeyCode: 27,
-      nativeVirtualKeyCode: 53,
-    });
-    await cdp.send("Input.dispatchKeyEvent", {
-      type: "keyUp",
-      key: "Escape",
-      code: "Escape",
-      windowsVirtualKeyCode: 27,
-      nativeVirtualKeyCode: 53,
-    });
-    await sleep(900);
-    const list = await cdp.evaluate(`(() => {
-      const dialog = document.querySelector(".dsh-srw-dialog");
-      if (!dialog) return null;
-      return {
-        title: dialog.getAttribute("aria-label") || "",
-        rows: [...dialog.querySelectorAll(".dsh-srw-row")].map((row) => (row.textContent || "").trim()),
-        hasSearch: !!dialog.querySelector('input[type="search"]'),
-      };
+    // 切到另一个会话，避免 Esc Esc 取消正在跑的这一轮。
+    const originalSession = await cdp.evaluate(`(() => {
+      const root = document.querySelector("[data-conversation-session]");
+      return root ? root.getAttribute("data-conversation-session") : null;
     })()`);
-    check("Esc Esc 打开候选列表", list !== null, list ? list.title : "no dialog");
-    check("候选列表可搜索", list?.hasSearch === true, "");
-    const needle = list && list.rows.length > 0 ? list.rows[0].slice(0, 2) : "";
-    let filteredRows = 0;
+    const sessionIds = await cdp.evaluate(`(() => {
+      const rows = [...document.querySelectorAll('[data-row-key^="session:"]')];
+      return rows.map((row) => (row.getAttribute("data-row-key") || "").replace("session:", ""));
+    })()`);
+    /** @type {string | null} */
+    let switched = null;
+    for (const id of Array.isArray(sessionIds) ? sessionIds : []) {
+      if (id === originalSession) continue;
+      await cdp.evaluate(`(() => {
+        const row = document.querySelector('[data-row-key="session:' + ${JSON.stringify(id)} + '"]');
+        if (row) row.click();
+      })()`);
+      await sleep(900);
+      const userRows = await cdp.evaluate(
+        `document.querySelectorAll('[data-chat-flow-kind="user"]').length`,
+      );
+      if (userRows > 0) {
+        switched = id;
+        break;
+      }
+    }
+    if (switched !== null) {
+      await cdp.evaluate(
+        `(() => { const el = document.querySelector("[data-composer-input]"); if (el && el.focus) el.focus(); })()`,
+      );
+      await sleep(200);
+    }
+    let candidates = null;
+    if (switched !== null) {
+      await pressEscape(cdp, "Escape", 53);
+      await sleep(120);
+      await pressEscape(cdp, "Escape", 53);
+      await sleep(900);
+      candidates = await cdp.evaluate(`(() => {
+        const dialog = document.querySelector(".dsh-srw-dialog");
+        if (!dialog) return null;
+        return {
+          title: dialog.getAttribute("aria-label") || "",
+          rows: [...dialog.querySelectorAll(".dsh-srw-row")].map((row) => (row.textContent || "").trim()),
+          hasSearch: !!dialog.querySelector('input[type="search"]'),
+        };
+      })()`);
+    }
+    check(
+      "Esc Esc 打开候选列表",
+      candidates !== null,
+      candidates ? candidates.title : switched === null ? "no idle second session" : "no dialog",
+    );
+    check("候选列表可搜索", candidates?.hasSearch === true, "");
+    const needle = candidates && candidates.rows.length > 0 ? candidates.rows[0].slice(0, 2) : "";
     if (needle !== "") {
       await cdp.evaluate(`(() => {
         const input = document.querySelector('.dsh-srw-dialog input[type="search"]');
-        const el = input;
-        if (!el) return;
+        if (!input) return;
         const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
-        setValue.call(el, ${JSON.stringify(needle)});
-        el.dispatchEvent(new Event("input", { bubbles: true }));
+        setValue.call(input, ${JSON.stringify(needle)});
+        input.dispatchEvent(new Event("input", { bubbles: true }));
       })()`);
       await sleep(900);
-      filteredRows = await cdp.evaluate(`document.querySelectorAll(".dsh-srw-row").length`);
+      const filteredRows = await cdp.evaluate(`document.querySelectorAll(".dsh-srw-row").length`);
       check("候选搜索过滤生效", filteredRows > 0, `needle=${needle}, rows=${filteredRows}`);
     } else {
       check("候选搜索过滤生效", false, "no candidate rows");
@@ -217,17 +244,25 @@ const main = async () => {
       if (!tab) return { ok: false, text: "no-settings-tab" };
       tab.click();
       await new Promise((resolve) => setTimeout(resolve, 1400));
-      const drawer = document.querySelector(".dsh-srw-drawer");
-      const text = drawer ? (drawer.textContent || "").replace(/\\s+/g, " ") : "";
+      const root = document.querySelector(".dsh-srw-drawer");
+      const text = root ? (root.textContent || "").replace(/\\s+/g, " ") : "";
       return { ok: text.includes("诊断") && (text.includes("正常") || text.includes("异常")), text: text.slice(0, 260) };
     })()`);
     check("设置页诊断可加载", settingsOk?.ok === true, String(settingsOk?.text ?? ""));
     await cdp.screenshot(join(SHOTS, "04-settings.png"));
     await cdp.evaluate(`(() => {
-      const drawer = document.querySelector(".dsh-srw-drawer");
-      const btn = drawer ? [...drawer.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === "关闭") : null;
+      const root = document.querySelector(".dsh-srw-drawer");
+      const btn = root ? [...root.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === "关闭") : null;
       if (btn) btn.click();
     })()`);
+    if (originalSession !== null) {
+      await sleep(400);
+      await cdp.evaluate(`(() => {
+        const row = document.querySelector('[data-row-key="session:' + ${JSON.stringify(originalSession)} + '"]');
+        if (row) row.click();
+      })()`);
+      await sleep(800);
+    }
   } catch (error) {
     check("桌面回归执行", false, error instanceof Error ? error.message : String(error));
   } finally {
