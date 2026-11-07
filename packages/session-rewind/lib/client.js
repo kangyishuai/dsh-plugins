@@ -45,6 +45,7 @@ window.__ModuleLoader__.load({
       "dialog.cancel": "取消",
       "dialog.confirm": "开始回退",
       "dialog.executing": "正在回退…",
+      "dialog.settling": "正在停止当前回合并回退…",
       "dialog.loading": "正在读取…",
       "dialog.empty": "没有可回溯的消息。",
       "dialog.previewLoading": "正在计算影响面…",
@@ -65,7 +66,11 @@ window.__ModuleLoader__.load({
       "confirm.pathsLess": "收起路径",
       "confirm.skipped": "{n} 个文件被跳过",
       "confirm.conflictsTitle": "冲突文件（前 5 个）",
-      "confirm.busy": "当前回合仍在运行，请先停止后再回退",
+      "confirm.busy": "当前回合仍在运行：回退时会先停止它，队列中未投递的插话会被丢弃",
+      "confirm.settling": "正在停止当前回合…",
+      "confirm.resend": "回退后立即重发这条消息",
+      "confirm.resendHint":
+        "适合「重试这一轮」：回退后自动把原文发出去，想改内容就在输入框里编辑后再发。",
       "confirm.openToolCall": "目标之后有未完成的工具调用，回溯会截断它",
       "toast.done": "已回退到此处，原消息已放回输入框",
       "toast.draft": "已回退；输入框已有内容，未覆盖",
@@ -73,6 +78,8 @@ window.__ModuleLoader__.load({
       "toast.rewound": "已回退 {n} 条消息（约 {tokens} token）",
       "toast.rewoundFiles": "，还原 {restored} 个文件、移入回收站 {trashed} 个",
       "toast.rewoundFailed": "，{n} 个文件处理失败",
+      "toast.resent": "，已重发这条消息",
+      "toast.stoppedTurn": "，已停止运行中的回合",
       "toast.draftKept": "；输入框已有内容，未覆盖",
       "toast.noComposerSuffix": "；未找到输入框",
       "toast.view": "查看",
@@ -166,6 +173,7 @@ window.__ModuleLoader__.load({
       "dialog.cancel": "Cancel",
       "dialog.confirm": "Start rewind",
       "dialog.executing": "Rewinding…",
+      "dialog.settling": "Stopping the running turn, then rewinding…",
       "dialog.loading": "Loading…",
       "dialog.empty": "No messages to rewind to.",
       "dialog.previewLoading": "Computing the impact…",
@@ -187,8 +195,15 @@ window.__ModuleLoader__.load({
       "confirm.pathsLess": "Hide paths",
       "confirm.skipped": "{n} file(s) skipped",
       "confirm.conflictsTitle": "Conflicting files (first 5)",
-      "confirm.busy": "The turn is still running; stop it before rewinding.",
+      "confirm.busy":
+        "The turn is still running: rewinding stops it first and drops any queued steering messages.",
+      "confirm.settling": "Stopping the running turn…",
+      "confirm.resend": "Send this message again right after rewinding",
+      "confirm.resendHint":
+        "Use this to retry a turn; to change the text, edit it in the composer instead.",
       "confirm.openToolCall": "An unfinished tool call follows the target; rewinding truncates it.",
+      "toast.stoppedTurn": ", and the running turn was stopped",
+      "toast.resent": ", and the message was sent again",
       "toast.done": "Rewound. The original message is back in the composer.",
       "toast.draft": "Rewound. The composer already had content, so it was kept.",
       "toast.noComposer": "Rewound, but no composer was found.",
@@ -1139,6 +1154,11 @@ window.__ModuleLoader__.load({
         text: text,
         images: imageRefsOf(source),
         files: filesReceiptOf(source.files),
+        cancelledTurn: source.cancelledTurn === true,
+        droppedSteering:
+          typeof source.droppedSteering === "number" && source.droppedSteering > 0
+            ? source.droppedSteering
+            : 0,
       };
     }
 
@@ -1960,8 +1980,37 @@ window.__ModuleLoader__.load({
         }
       }
 
+      // 「回退后立即重发」：仅对话模式提供（文件模式先还原文件，语义不同）。
+      if (state.rewindMode !== "both" && state.previewLoading !== true) {
+        blocks.push(
+          h(
+            "div",
+            { key: "resend", className: "dsh-srw-setting" },
+            h(
+              "label",
+              { className: "dsh-srw-check" },
+              h("input", {
+                type: "checkbox",
+                "data-rewind-resend": "true",
+                checked: state.resend === true,
+                onChange: (/** @type {any} */ event) => {
+                  if (event?.target) api.setResend(event.target.checked === true);
+                },
+              }),
+              h("span", null, t("confirm.resend")),
+            ),
+            h("div", { className: "dsh-srw-option-hint" }, t("confirm.resendHint")),
+          ),
+        );
+      }
       if (state.busy) {
-        blocks.push(h("div", { key: "busy", className: "dsh-srw-warn" }, t("confirm.busy")));
+        blocks.push(
+          h(
+            "div",
+            { key: "busy", className: "dsh-srw-warn" },
+            state.executing === true ? t("confirm.settling") : t("confirm.busy"),
+          ),
+        );
       }
       if (state.errorKey) {
         blocks.push(
@@ -2077,8 +2126,8 @@ window.__ModuleLoader__.load({
 
       let footer;
       if (confirmMode) {
-        let disabled =
-          state.busy === true || state.executing === true || state.previewLoading === true;
+        // v2.1：运行中的回合不再阻止执行——宿主会先取消并等到 idle 再回溯。
+        let disabled = state.executing === true || state.previewLoading === true;
         let executing = state.executing === true || state.loading === true;
         footer = h(
           Fragment,
@@ -2091,7 +2140,11 @@ window.__ModuleLoader__.load({
               disabled: disabled,
               onClick: () => api.doRewind(),
             },
-            executing ? t("dialog.executing") : t("dialog.confirm"),
+            executing
+              ? state.busy === true
+                ? t("dialog.settling")
+                : t("dialog.executing")
+              : t("dialog.confirm"),
           ),
         );
       } else {
@@ -2720,7 +2773,7 @@ window.__ModuleLoader__.load({
         } else if (state.mode === "confirm" && event.key === "Enter") {
           event.preventDefault();
           event.stopPropagation();
-          if (!state.busy && !state.executing && !state.previewLoading) api.doRewind();
+          if (!state.executing && !state.previewLoading) api.doRewind();
         }
         return;
       }
@@ -3059,6 +3112,7 @@ window.__ModuleLoader__.load({
         previewErrorParams: null,
         rewindMode: "chat",
         showAllPaths: false,
+        resend: false,
         busy: false,
         executing: false,
         loading: false,
@@ -3182,6 +3236,32 @@ window.__ModuleLoader__.load({
       }
 
       /** 回填输入框；返回 'ok' | 'draft' | 'none'。 */
+      /** 复用刚回填的 draft 直接提交（「回退后立即重发」）。 @param {any} sessionId */
+      function submitComposer(/** @type {any} */ sessionId) {
+        try {
+          let conversation = safeGet(ctx, "conversation");
+          let scope =
+            ctx.sessions && typeof ctx.sessions.scope === "function"
+              ? ctx.sessions.scope(sessionId)
+              : undefined;
+          if (!conversation?.input || typeof conversation.input.for !== "function") return false;
+          if (scope === undefined) return false;
+          let facade = conversation.input.for(scope);
+          if (!facade) return false;
+          if (facade.actions && typeof facade.actions.submit === "function") {
+            facade.actions.submit();
+            return true;
+          }
+          if (typeof facade.submit === "function") {
+            facade.submit("queue");
+            return true;
+          }
+          return false;
+        } catch (_error) {
+          return false;
+        }
+      }
+
       function fillComposer(/** @type {any} */ sessionId, /** @type {any} */ text) {
         let facade;
         try {
@@ -3298,6 +3378,7 @@ window.__ModuleLoader__.load({
           previewLoading: false,
           previewErrorKey: null,
           previewErrorParams: null,
+          resend: false,
           busy: false,
           executing: false,
           loading: false,
@@ -3393,6 +3474,7 @@ window.__ModuleLoader__.load({
           previewErrorParams: null,
           rewindMode: effectiveMode(prefs.defaultMode, null),
           showAllPaths: false,
+          resend: false,
           busy: busy,
           executing: false,
           loading: false,
@@ -3435,6 +3517,11 @@ window.__ModuleLoader__.load({
       }
 
       /** 确认框里切换回退范围。 */
+      /** 「回退后立即重发」勾选。 @param {boolean} value */
+      function setResend(/** @type {any} */ value) {
+        patch({ resend: value === true });
+      }
+
       function setRewindMode(/** @type {any} */ mode) {
         patch({ rewindMode: mode === "both" ? "both" : "chat" });
       }
@@ -3461,6 +3548,7 @@ window.__ModuleLoader__.load({
           previewLoading: false,
           previewErrorKey: null,
           previewErrorParams: null,
+          resend: false,
           busy: false,
           executing: false,
           loading: false,
@@ -3479,6 +3567,7 @@ window.__ModuleLoader__.load({
           previewLoading: false,
           previewErrorKey: null,
           previewErrorParams: null,
+          resend: false,
           busy: false,
           executing: false,
           loading: false,
@@ -3531,6 +3620,8 @@ window.__ModuleLoader__.load({
         let state = store.getSnapshot();
         if (state?.executing) return;
         let wasConfirm = state?.mode === "confirm";
+        // 仅对话模式下才有「回退后立即重发」。
+        let resend = wasConfirm && state?.resend === true && mode !== "both";
         /** @type {any} */
         let busyState = {
           origin: origin,
@@ -3550,7 +3641,7 @@ window.__ModuleLoader__.load({
           mode: mode === "both" ? "both" : "chat",
         })
           .then((/** @type {any} */ value) => {
-            handleRewindSuccess(sessionId, target, value);
+            handleRewindSuccess(sessionId, target, value, resend);
           })
           .catch((/** @type {any} */ error) => {
             handleRewindFailure(sessionId, target, origin, wasConfirm, error);
@@ -3562,6 +3653,7 @@ window.__ModuleLoader__.load({
         /** @type {any} */ sessionId,
         /** @type {any} */ target,
         /** @type {any} */ value,
+        /** @type {boolean} */ resend,
       ) {
         let summary = rewindSummaryOf(value);
         cutStore.add(sessionId, {
@@ -3583,6 +3675,12 @@ window.__ModuleLoader__.load({
             text += t("toast.rewoundFailed", { n: summary.files.failed.length });
           }
         }
+        if (summary.cancelledTurn) text += t("toast.stoppedTurn");
+        let resent = false;
+        if (resend === true && outcome === "ok") {
+          resent = submitComposer(sessionId);
+          if (resent) text += t("toast.resent");
+        }
         if (outcome === "draft") text += t("toast.draftKept");
         else if (outcome === "none") text += t("toast.noComposerSuffix");
         patch({
@@ -3593,6 +3691,7 @@ window.__ModuleLoader__.load({
           previewLoading: false,
           previewErrorKey: null,
           previewErrorParams: null,
+          resend: false,
           busy: false,
           executing: false,
           loading: false,
@@ -3655,8 +3754,8 @@ window.__ModuleLoader__.load({
       function doRewind() {
         let state = store.getSnapshot();
         if (state?.mode !== "confirm" || !state.target) return;
-        if (state.executing === true || state.busy === true || state.previewLoading === true)
-          return;
+        // 运行中的回合不再由客户端拒绝：宿主会先取消并等到 idle 再回溯（v2.1）。
+        if (state.executing === true || state.previewLoading === true) return;
         executeRewind(state.sessionId, state.target, state.rewindMode, state.origin || "row");
       }
 
@@ -4069,6 +4168,7 @@ window.__ModuleLoader__.load({
         pick: pick,
         doRewind: doRewind,
         setRewindMode: setRewindMode,
+        setResend: setResend,
         togglePathList: togglePathList,
         setListSearch: setListSearch,
         loadOlderCandidates: loadOlderCandidates,

@@ -28,7 +28,7 @@
     "confirm.pathsLess": "Hide paths",
     "confirm.skipped": "{n} file(s) skipped",
     "confirm.conflictsTitle": "Conflicting files (first 5)",
-    "confirm.busy": "The turn is still running; stop it before rewinding.",
+    "confirm.busy": "The turn is still running: rewinding stops it first and drops any queued steering messages.",
     "confirm.openToolCall": "An unfinished tool call follows the target; rewinding truncates it.",
     "toast.done": "Rewound. The original message is back in the composer.",
     "toast.draft": "Rewound. The composer already had content, so it was kept.",
@@ -116,6 +116,12 @@
     "relative.justNow": "just now",
     "relative.minutes": "{n} min ago",
     "relative.hours": "{n} h ago",
-    "relative.days": "{n} d ago"
+    "relative.days": "{n} d ago",
+    "dialog.settling": "Stopping the running turn, then rewinding…",
+    "confirm.settling": "Stopping the running turn…",
+    "toast.stoppedTurn": ", and the running turn was stopped",
+    "confirm.resend": "Send this message again right after rewinding",
+    "confirm.resendHint": "Use this to retry a turn; to change the text, edit it in the composer instead.",
+    "toast.resent": ", and the message was sent again"
   }
 }

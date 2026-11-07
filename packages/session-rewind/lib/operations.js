@@ -124,12 +124,16 @@ function surfaceNodesOf(session) {
  *
  * - not-found：没有 live session（agent 也没有）；
  * - inert：子代理会话（`header.origin === "subagent"` 或 `delegationDepth > 0`）；
- * - busy：agent 存在且 `status !== "idle"`（v1 不主动打断运行中的回合）。
+ * - busy：agent 存在且 `status !== "idle"`，且调用方不允许运行中的会话。
+ *
+ * 只读操作（候选列表、预览、幽灵历史）传 `allowRunning: true`：它们不改日志，
+ * 运行中也能安全求值；真正写日志的 rewind 会先停下回合再重新求值。
  * @param {ServiceDeps} deps
  * @param {any} sessionId
+ * @param {{allowRunning?: boolean}} [options]
  * @returns {ResolvedSession}
  */
-export function resolveSession(deps, sessionId) {
+export function resolveSession(deps, sessionId, options = {}) {
   if (deps.available !== true) {
     throw new RewindRequestError(
       ERROR_CODES.failed,
@@ -158,7 +162,12 @@ export function resolveSession(deps, sessionId) {
       `session "${sessionId}" is a subagent session and cannot be rewound`,
     );
   }
-  if (agent !== undefined && agent !== null && agent.status !== "idle") {
+  if (
+    options.allowRunning !== true &&
+    agent !== undefined &&
+    agent !== null &&
+    agent.status !== "idle"
+  ) {
     throw new RewindRequestError(
       ERROR_CODES.busy,
       `session "${sessionId}" is not idle; stop the running turn before rewinding`,
@@ -218,7 +227,8 @@ function throwPlanError(planError) {
  * @returns {{sessionId: string, candidates: any[], nextCursor: number | null}}
  */
 export function candidatesResponse(deps, request) {
-  const { session, sessionId } = resolveSession(deps, request?.sessionId);
+  // 只读：运行中的会话也能列候选（客户端据此让用户选择「停止并回退」）。
+  const { session, sessionId } = resolveSession(deps, request?.sessionId, { allowRunning: true });
   const page = listCandidatesPage(snapshotEventsOf(session), surfaceNodesOf(session), {
     limit: request?.limit,
     cursor: request?.cursor,
@@ -250,6 +260,8 @@ export function candidatesResponse(deps, request) {
  * @returns {{targetSeq: number, markerSeq: number, removedCount: number, text: string, target: {text: string, images: any[]}}}
  */
 export function rewindResponse(deps, request) {
+  // 严格模式：这个 helper 代表「append 时会话必须已 idle」。生产路径
+  // （SessionRewindService#executeRewind）会先停下运行中的回合再走到这里。
   const { session, sessionId } = resolveSession(deps, request?.sessionId);
   const targetSeq = request?.targetSeq;
   if (!isEventSeq(targetSeq)) {
@@ -336,8 +348,8 @@ export function appendRewindMarker(session, plan, deps, extra = {}) {
  * @param {any} request `{ sessionId, targetSeq }`
  * @returns {{session: any, sessionId: string, plan: import("./plan.js").RewindPlan, targetEvent: any}}
  */
-export function resolveRewindTarget(deps, request) {
-  const { session, sessionId } = resolveSession(deps, request?.sessionId);
+export function resolveRewindTarget(deps, request, options = {}) {
+  const { session, sessionId } = resolveSession(deps, request?.sessionId, options);
   const targetSeq = request?.targetSeq;
   if (!isEventSeq(targetSeq)) {
     throw new RewindRequestError(
@@ -358,6 +370,6 @@ export function resolveRewindTarget(deps, request) {
  * @returns {{session: any, events: any[]}}
  */
 export function sessionEvents(deps, sessionId) {
-  const { session } = resolveSession(deps, sessionId);
+  const { session } = resolveSession(deps, sessionId, { allowRunning: true });
   return { session, events: snapshotEventsOf(session) };
 }

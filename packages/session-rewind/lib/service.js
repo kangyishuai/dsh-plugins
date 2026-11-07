@@ -14,6 +14,7 @@ import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import { deriveEventMessage, isAppendSurfaceEvent } from "@deepseek-ai/dsh-session/surface";
 import { estimateMessage } from "@deepseek-ai/dsh-token-meter/estimate";
 import { Remote, RemoteError, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
+import { settleAgent } from "./agent-settle.js";
 import { installFileTracking } from "./file-tracking.js";
 import { createFileStore } from "./files.js";
 import { collectGhost } from "./ghost.js";
@@ -23,6 +24,7 @@ import {
   ERROR_CODES,
   RewindRequestError,
   resolveRewindTarget,
+  resolveSession,
   sessionEvents,
 } from "./operations.js";
 import { findOrphans, pruneOrphans } from "./orphans.js";
@@ -403,7 +405,9 @@ export class SessionRewindService extends TypertRemoteService {
   async preview(request) {
     try {
       const deps = this.deps();
-      const { session, sessionId, plan, targetEvent } = resolveRewindTarget(deps, request);
+      const { session, sessionId, plan, targetEvent } = resolveRewindTarget(deps, request, {
+        allowRunning: true,
+      });
       const events = session.snapshotEvents();
       const tokens = this.estimateTokens(events, plan.shadowedSeqs);
       const target = targetContent(targetEvent);
@@ -504,15 +508,36 @@ export class SessionRewindService extends TypertRemoteService {
    */
   async executeRewind(input) {
     const deps = this.deps();
+    // 先按「允许运行中」解析，拿到 agent；运行中的回合必须先停下，否则 surface 会在
+    // 我们求值与 append 之间继续增长，marker 的 replace 范围就失效了。
+    const pre = resolveSession(deps, input.sessionId, { allowRunning: true });
+    const agent = pre.agent;
+    /** @type {{cancelledTurn: boolean, droppedSteering: number}} */
+    const settle = { cancelledTurn: false, droppedSteering: 0 };
+    if (agent !== undefined && agent !== null && agent.status !== "idle") {
+      if (this.config.cancelRunning === false) {
+        throw new RewindRequestError(
+          ERROR_CODES.busy,
+          `session "${input.sessionId}" is not idle; stop the running turn before rewinding`,
+        );
+      }
+      const outcome = await settleAgent(agent, {
+        ...(typeof this.config.cancelTimeoutMs === "number"
+          ? { timeoutMs: this.config.cancelTimeoutMs }
+          : {}),
+      });
+      settle.cancelledTurn = outcome.cancelled;
+      settle.droppedSteering = outcome.droppedSteering.length;
+      if (!outcome.idle) {
+        throw new RewindRequestError(
+          ERROR_CODES.busy,
+          `session "${input.sessionId}" did not become idle after cancelling the running turn`,
+        );
+      }
+    }
+    // 停稳之后重新求值：取消前的快照可能已经被这一轮追加的事件改变。
     const resolved = resolveRewindTarget(deps, input);
     const { session, sessionId, plan, targetEvent } = resolved;
-    const agent = deps.getAgent(sessionId);
-    if (agent !== undefined && agent !== null && agent.status !== "idle") {
-      throw new RewindRequestError(
-        ERROR_CODES.busy,
-        `session "${sessionId}" is not idle; stop the running turn before rewinding`,
-      );
-    }
     if (this.inflight.has(sessionId)) {
       throw new RewindRequestError(
         ERROR_CODES.failed,
@@ -618,6 +643,9 @@ export class SessionRewindService extends TypertRemoteService {
         auditId,
         target: targetContent(targetEvent),
         files,
+        // v2.1：执行时是否为了回溯而停下了运行中的回合。
+        cancelledTurn: settle.cancelledTurn,
+        droppedSteering: settle.droppedSteering,
       };
       try {
         await this.store.appendAudit({
@@ -631,6 +659,8 @@ export class SessionRewindService extends TypertRemoteService {
           tokens,
           files,
           requestedBy: input.requestedBy,
+          cancelledTurn: settle.cancelledTurn,
+          droppedSteering: settle.droppedSteering,
         });
       } catch (error) {
         this.ctx?.logger?.warn?.(
