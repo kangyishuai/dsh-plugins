@@ -9,6 +9,7 @@ body:
       description: 出问题的插件（列表里没有就选 other 并在描述里写包名）
       options:
         - "@kangyishuai/dsh-session-delete"
+        - "@kangyishuai/dsh-session-rewind"
         - other
     validations:
       required: true

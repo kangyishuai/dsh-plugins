@@ -1,0 +1,65 @@
+{
+  "name": "@kangyishuai/dsh-session-rewind",
+  "version": "0.0.0",
+  "description": "In-place conversation rewind for DSH: withdraw a user message and everything after it, then refill the composer",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "rewind",
+    "undo",
+    "session",
+    "conversation",
+    "branch"
+  ],
+  "license": "MIT",
+  "author": "nano (https://github.com/kangyishuai)",
+  "homepage": "https://github.com/kangyishuai/dsh-plugins/tree/main/packages/session-rewind#readme",
+  "bugs": "https://github.com/kangyishuai/dsh-plugins/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kangyishuai/dsh-plugins.git",
+    "directory": "packages/session-rewind"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "cordis.patch.yml",
+    "lib",
+    "locale",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-shortcuts",
+        "@deepseek-ai/dsh-client-ui-primitives",
+        "@deepseek-ai/dsh-client-ui-chat",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ]
+    }
+  }
+}
