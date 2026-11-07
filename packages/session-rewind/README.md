@@ -8,7 +8,7 @@
 
 Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). Not affiliated with DeepSeek.
 
-> **Status: early.** Verified end to end on DSH 0.2.2-rc.1: 25 GUI assertions in a throwaway DSH home, 155 unit tests, and a CDP-driven desktop pass (conflict refusal, conversation + file rewind, created-file trash, modified-file restore, rescue restore, panel/audit/diagnostics). Young software — keep backups of anything you cannot lose.
+> **Status: early.** Verified end to end on DSH 0.2.2-rc.1: 31 GUI assertions in a throwaway DSH home, 155 unit tests, and a CDP-driven desktop pass (conflict refusal, conversation + file rewind, created-file trash, modified-file restore, rescue restore, panel/audit/diagnostics). Young software — keep backups of anything you cannot lose.
 
 ## What it does
 
@@ -92,9 +92,9 @@ Retention: the 20 latest message anchors per session, the 5 latest rescue points
 
 ## Compatibility
 
-| DSH version | Status                                                                                                                       |
-| ----------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| 0.2.2-rc.1  | Verified: `pnpm smoke:session-rewind` (25/25 GUI assertions) + 155 unit tests; desktop Electron pass pending (after restart) |
+| DSH version | Status                                                                                                                      |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------- |
+| 0.2.2-rc.1  | Verified: `pnpm smoke:session-rewind` (31/31) + 155 unit tests + CDP-driven desktop pass (conversation-only and file modes) |
 
 The plugin declares no `engines.dsh` and no `@deepseek-ai/*` peer range: DSH is pre-release and semver ranges over prereleases are unreliable (see [ADR 0005](../../docs/adr/0005-dsh-version-compatibility.md)). Treat the table as the compatibility statement. After a DSH upgrade run `pnpm probe:runtime`, `pnpm smoke:session-rewind`, and check the plugin's diagnostics tab; if a private seam changed, the plugin degrades instead of breaking the session.
 

@@ -197,8 +197,26 @@ for (const rowKey of rows) {
   const hasButton = (await rewindButtons()).some(Boolean);
   probe = rowKey + ":" + bubbles.length + ":" + hasButton;
   if (bubbles.length >= 2 && hasButton) {
-    picked = { rowKey, bubbles };
-    break;
+    // 只接受「候选列表里至少有 2 条可达消息」的会话：最后一条作为按钮流程目标，
+    // 剩余候选留给 Esc 流程，避免选中已被 compaction 遮蔽的目标。
+    await page.evaluate(() => {
+      const el = document.querySelector("[data-composer-input]");
+      if (el && typeof el.focus === "function") el.focus();
+    });
+    await page.waitForTimeout(150);
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(120);
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(800);
+    const candidateDialog = await dialogInfo();
+    const candidates = candidateDialog ? candidateDialog.rows.length : 0;
+    if (candidates > 0) await clickDialogButton(LABELS.cancel);
+    await page.waitForTimeout(300);
+    probe += ":" + candidates;
+    if (candidates >= 2) {
+      picked = { rowKey, bubbles };
+      break;
+    }
   }
 }
 check("找到可回溯的会话（≥2 条用户消息且出现 ↶ 按钮）", picked !== null, probe);
@@ -212,7 +230,7 @@ await shot("02-session-open");
 
 // 1) ↶ 按钮 → 确认框 → 回退到倒数第二条用户消息
 const composerBefore = await composerText();
-const clicked = await clickRewindOn(picked.bubbles.length - 2);
+const clicked = await clickRewindOn(picked.bubbles.length - 1);
 await page.waitForTimeout(1400);
 const confirmDialog = await dialogInfo();
 check("点击 ↶ 打开确认框", clicked && confirmDialog !== null && matches(confirmDialog.title, LABELS.dialogConfirm), JSON.stringify(confirmDialog && confirmDialog.title));
@@ -236,7 +254,7 @@ const toastAfter = await page.evaluate(() => {
   const el = document.querySelector(".dsh-srw-toast");
   return el ? (el.textContent || "").trim() : "";
 });
-check("确认后对话被截断（目标行消失）", after.length === picked.bubbles.length - 2, after.length + "/" + (picked.bubbles.length - 2));
+check("确认后对话被截断（目标行消失）", after.length === picked.bubbles.length - 1, after.length + "/" + (picked.bubbles.length - 1));
 check(
   "确认后输入框回填目标消息文本",
   targetHead.length >= 1 && composerAfter.includes(targetHead),
@@ -295,6 +313,38 @@ const listDialog = await dialogInfo();
 check("Esc Esc 打开回溯对话框", listDialog !== null && matches(listDialog.title, LABELS.dialogList), listDialog && listDialog.title);
 check("候选列表列出可回溯消息", listDialog !== null && listDialog.rows.length >= 1, listDialog && String(listDialog.rows.length));
 await shot("05-esc-dialog");
+const searchNeedle = listDialog !== null && listDialog.rows.length > 0 ? listDialog.rows[0].slice(0, 2) : "";
+const searched = await page.evaluate((value) => {
+  const input = document.querySelector('.dsh-srw-dialog input[type="search"]');
+  if (!input) return false;
+  const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+  setValue.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  return true;
+}, searchNeedle);
+await page.waitForTimeout(800);
+const filtered = await dialogInfo();
+check(
+  "候选列表可以搜索",
+  searched && searchNeedle.length > 0 && filtered !== null && filtered.rows.length >= 1 && filtered.rows.every((row) => row.includes(searchNeedle)),
+  JSON.stringify({ needle: searchNeedle, rows: filtered && filtered.rows.length }),
+);
+const loadOlder = await page.evaluate(async () => {
+  const input = document.querySelector('.dsh-srw-dialog input[type="search"]');
+  if (input) {
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    setValue.call(input, "");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  const btn = [...document.querySelectorAll(".dsh-srw-dialog button")].find((b) => (b.textContent || "").includes("加载更早"));
+  if (!btn) return { available: false };
+  const before = document.querySelectorAll(".dsh-srw-row").length;
+  btn.click();
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  return { available: true, before, after: document.querySelectorAll(".dsh-srw-row").length };
+});
+check("候选列表可以加载更早（无更多候选时记为通过）", loadOlder.available === false || loadOlder.after > loadOlder.before, JSON.stringify(loadOlder));
 const selected = await clickDialogRow(0);
 await page.waitForTimeout(1400);
 const escConfirm = await dialogInfo();
@@ -331,6 +381,126 @@ if (otherRows.length === 0) {
   check("切走再切回后仍隐藏被撤回的行", afterSwitch.length === expected, afterSwitch.length + "/" + expected);
 }
 await shot("08-after-switch");
+
+// 4) /rewind 命令 + 候选搜索 + 设置偏好（放在最后，避免影响主链路）
+const candidateRows = (await sessionRows()).filter((key) => key !== picked.rowKey);
+let commandSession = null;
+for (const rowKey of candidateRows.slice(0, 6)) {
+  await openSession(rowKey);
+  await page.waitForTimeout(700);
+  const composer = await composerText();
+  if (composer.trim() !== "") continue;
+  await page.evaluate(() => {
+    const el = document.querySelector("[data-composer-input]");
+    if (el && typeof el.focus === "function") el.focus();
+  });
+  await page.waitForTimeout(150);
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(120);
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(800);
+  const list = await dialogInfo();
+  const rows = list ? list.rows.length : 0;
+  if (rows > 0) {
+    await clickDialogButton(LABELS.cancel);
+    await page.waitForTimeout(300);
+    commandSession = rowKey;
+    break;
+  }
+  await clickDialogButton(LABELS.cancel).catch(() => {});
+  await page.waitForTimeout(300);
+}
+if (commandSession === null) {
+  check("/rewind 命令打开候选", false, "没有空闲草稿且候选可达的会话");
+} else {
+  await page.evaluate(() => {
+    const el = document.querySelector("[data-composer-input]");
+    if (el && typeof el.focus === "function") el.focus();
+  });
+  await page.keyboard.insertText("/rewind");
+  await page.waitForTimeout(300);
+  const filled = await page.evaluate(() => {
+    const el = document.querySelector("[data-composer-input]");
+    const text = el ? (el.textContent || "").trim() : "";
+    return { filled: text === "/rewind", text };
+  });
+  await page.waitForTimeout(200);
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(1400);
+  const popup = await page.evaluate(() => {
+    const root = document.querySelector('[role="listbox"], [role="menu"], [class*="popup"]');
+    if (!root) return { open: false, options: [] };
+    const options = [...root.querySelectorAll('[role="option"], [role="menuitem"], button')].map((el) => (el.textContent || "").trim()).filter((text) => text !== "");
+    return { open: true, options: options.slice(0, 6), html: (root.outerHTML || "").slice(0, 300) };
+  });
+  check("/rewind 命令打开候选", filled.filled && popup.open && popup.options.length > 0, JSON.stringify({ filled, popup }));
+  if (popup.open && popup.options.length > 0) {
+    await page.evaluate(() => {
+      const root = document.querySelector('[role="listbox"], [role="menu"], [class*="popup"]');
+      const option = root ? [...root.querySelectorAll('[role="option"], [role="menuitem"], button')].find((el) => (el.textContent || "").trim() !== "") : null;
+      if (option) option.click();
+    });
+    await page.waitForTimeout(1200);
+    const commandConfirm = await dialogInfo();
+    check("/rewind 选择候选后进入确认框", commandConfirm !== null && matches(commandConfirm.title, LABELS.dialogConfirm), commandConfirm && commandConfirm.title);
+    await clickDialogButton(LABELS.cancel);
+    await page.waitForTimeout(400);
+  }
+}
+
+// 设置偏好：改 → 持久化 → 恢复
+const drawerOpen2 = await page.evaluate(() => {
+  const btn = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("回溯面板"));
+  if (!btn) return false;
+  btn.click();
+  return true;
+});
+await page.waitForTimeout(700);
+await page.evaluate(() => {
+  const tab = [...document.querySelectorAll(".dsh-srw-tab")].find((t) => (t.textContent || "").trim() === "设置");
+  if (tab) tab.click();
+});
+await page.waitForTimeout(1000);
+const changed = await page.evaluate(() => {
+  const drawer = document.querySelector(".dsh-srw-drawer");
+  if (!drawer) return "no-drawer";
+  const radios = [...drawer.querySelectorAll('input[type="radio"]')];
+  const both = radios.find((r) => (r.parentElement && (r.parentElement.textContent || "").includes("回退对话和文件"))) || radios[radios.length - 1];
+  both.click();
+  const number = drawer.querySelector('input[type="number"]');
+  const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+  setValue.call(number, "20");
+  number.dispatchEvent(new Event("input", { bubbles: true }));
+  const checkbox = drawer.querySelector('input[type="checkbox"]');
+  if (checkbox && checkbox.checked) checkbox.click();
+  return "changed";
+});
+await page.waitForTimeout(500);
+const savedPrefs = await page.evaluate(() => localStorage.getItem("dsh-session-rewind.prefs.v1"));
+check(
+  "设置页修改默认范围/每页数量/列表确认并持久化",
+  drawerOpen2 && changed === "changed" && /"defaultMode":"both"/u.test(savedPrefs || "") && /"pageSize":20/u.test(savedPrefs || "") && /"confirmOnList":false/u.test(savedPrefs || ""),
+  savedPrefs || "",
+);
+await page.evaluate(() => {
+  const drawer = document.querySelector(".dsh-srw-drawer");
+  const radios = [...drawer.querySelectorAll('input[type="radio"]')];
+  const chat = radios.find((r) => (r.parentElement && (r.parentElement.textContent || "").includes("仅回退对话"))) || radios[0];
+  chat.click();
+  const number = drawer.querySelector('input[type="number"]');
+  const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+  setValue.call(number, "100");
+  number.dispatchEvent(new Event("input", { bubbles: true }));
+  const checkbox = drawer.querySelector('input[type="checkbox"]');
+  if (checkbox && !checkbox.checked) checkbox.click();
+});
+await page.waitForTimeout(400);
+const restoredPrefs = await page.evaluate(() => localStorage.getItem("dsh-session-rewind.prefs.v1"));
+check("设置页可以恢复默认偏好", /"defaultMode":"chat"/u.test(restoredPrefs || "") && /"pageSize":100/u.test(restoredPrefs || ""), restoredPrefs || "");
+await page.evaluate(() => {
+  const btn = [...document.querySelectorAll(".dsh-srw-drawer button")].find((b) => (b.textContent || "").trim() === "关闭");
+  if (btn) btn.click();
+});
 
 await task.finish({ keep: false }).catch(() => {});
 console.log("SMOKE_STATE " + JSON.stringify({ sessionId: picked.rowKey.replace("session:", ""), userCountBefore: picked.bubbles.length }));
