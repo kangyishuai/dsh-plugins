@@ -4225,52 +4225,70 @@ window.__ModuleLoader__.load({
 
       // /rewind 命令装饰：宿主 popupSelect 列出候选，选中后打开确认框。
       // 参数形式 /rewind @<seq> [chat|both] 由 host 命令直接执行，这里不实现。
-      try {
-        let commandUi = safeGet(ctx, "commandUi");
-        if (commandUi && typeof commandUi.decorate === "function") {
-          ctx.effect(
-            () =>
-              commandUi.decorate({
-                name: "rewind",
-                ui: {
-                  kind: "popupSelect",
-                  options: (/** @type {any} */ session) => {
-                    let sessionId =
-                      session && typeof session.sessionId === "string"
-                        ? session.sessionId
-                        : undefined;
-                    if (!sessionId) return Promise.resolve([]);
-                    return call(
-                      "candidates",
-                      Object.assign({ sessionId: sessionId }, pageParamsOf(prefs, null, "")),
-                    )
-                      .then((/** @type {any} */ value) => {
-                        let page = normalizeCandidatePage(value);
-                        commandCandidates = page.candidates;
-                        return page.candidates.map((/** @type {any} */ candidate) => ({
-                          id: String(candidate.seq),
-                          label: candidate.preview || candidate.text || String(candidate.seq),
-                          detail: formatClock(candidate.time),
-                        }));
-                      })
-                      .catch(() => []);
-                  },
-                  onSelect: (/** @type {any} */ option, /** @type {any} */ session) => {
-                    let sessionId =
-                      session && typeof session.sessionId === "string"
-                        ? session.sessionId
-                        : undefined;
-                    let seq = option ? Number(option.id) : NaN;
-                    if (!sessionId || !Number.isFinite(seq)) return;
-                    let candidate = commandCandidates.find(
-                      (/** @type {any} */ item) => item.seq === seq,
-                    );
-                    if (candidate) openConfirm(candidate, sessionId, "command");
-                  },
+      // 必须等 commandUi 服务就绪（它不一定在 apply 时已挂载），否则装饰会被静默跳过。
+      const installCommandDecoration = (/** @type {any} */ scope, /** @type {any} */ commandUi) => {
+        scope.effect(
+          () =>
+            commandUi.decorate({
+              name: "rewind",
+              // DSH 的 decoration 在菜单/直接回车时都会先问 available；缺了它这一步会抛错，
+              // 表现为「/rewind 回车没有任何反应」。候选是否为空交给 options 返回空列表。
+              available: (/** @type {any} */ session) =>
+                Boolean(session && typeof session.sessionId === "string"),
+              ui: {
+                kind: "popupSelect",
+                options: (/** @type {any} */ session) => {
+                  let sessionId =
+                    session && typeof session.sessionId === "string"
+                      ? session.sessionId
+                      : undefined;
+                  if (!sessionId) return Promise.resolve([]);
+                  return call(
+                    "candidates",
+                    Object.assign({ sessionId: sessionId }, pageParamsOf(prefs, null, "")),
+                  )
+                    .then((/** @type {any} */ value) => {
+                      let page = normalizeCandidatePage(value);
+                      commandCandidates = page.candidates;
+                      return page.candidates.map((/** @type {any} */ candidate) => ({
+                        id: String(candidate.seq),
+                        label: candidate.preview || candidate.text || String(candidate.seq),
+                        detail: formatClock(candidate.time),
+                      }));
+                    })
+                    .catch(() => []);
                 },
-              }),
-            "session-rewind: command decoration",
-          );
+                onSelect: (/** @type {any} */ option, /** @type {any} */ session) => {
+                  let sessionId =
+                    session && typeof session.sessionId === "string"
+                      ? session.sessionId
+                      : undefined;
+                  let seq = option ? Number(option.id) : NaN;
+                  if (!sessionId || !Number.isFinite(seq)) return;
+                  let candidate = commandCandidates.find(
+                    (/** @type {any} */ item) => item.seq === seq,
+                  );
+                  if (candidate) openConfirm(candidate, sessionId, "command");
+                },
+              },
+            }),
+          "session-rewind: command decoration",
+        );
+      };
+      try {
+        if (typeof ctx.inject === "function") {
+          ctx.inject(["commandUi"], (/** @type {any} */ scope) => {
+            const commandUi =
+              scope?.commandUi ?? scope?.get?.("commandUi") ?? safeGet(ctx, "commandUi");
+            if (commandUi && typeof commandUi.decorate === "function") {
+              installCommandDecoration(scope, commandUi);
+            }
+          });
+        } else {
+          const commandUi = safeGet(ctx, "commandUi");
+          if (commandUi && typeof commandUi.decorate === "function") {
+            installCommandDecoration(ctx, commandUi);
+          }
         }
       } catch (_error) {
         /* commandUi 缺失时降级：只有按钮/Esc Esc 入口 */
