@@ -32,7 +32,8 @@
     "smoke:session-delete": "node scripts/smoke-session-delete.mjs",
     "probe:runtime": "node scripts/probe-runtime.mjs",
     "smoke:agent-tool": "node scripts/smoke-agent-tool.mjs",
-    "smoke:session-rewind": "node scripts/smoke-session-rewind.mjs"
+    "smoke:session-rewind": "node scripts/smoke-session-rewind.mjs",
+    "smoke:session-rewind-desktop": "node scripts/smoke-session-rewind-desktop.mjs"
   },
   "simple-git-hooks": {
     "pre-commit": "pnpm exec lint-staged && node scripts/check-public.mjs",

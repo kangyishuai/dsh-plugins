@@ -8,7 +8,7 @@
 
 非官方插件，与 DeepSeek 无关。面向 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness)。
 
-> **状态：早期。** 已在 DSH 0.2.2-rc.1 上端到端验证：一次性 DSH 目录里 31 项 GUI 断言 + 155 个单测 + CDP 驱动的桌面版实测（冲突拒绝、对话+文件回退、新建文件进回收站、修改文件还原、救援点恢复、面板/审计/诊断）。插件还年轻，重要数据请自行备份。
+> **状态：早期。** 已在 DSH 0.2.2-rc.1 上端到端验证：一次性 DSH 目录里 31 项 GUI 断言 + 158 个单测 + CDP 驱动的桌面版实测（冲突拒绝、对话+文件回退、新建文件进回收站、修改文件还原、救援点恢复、面板/审计/诊断）。插件还年轻，重要数据请自行备份。
 
 ## 它做什么
 
@@ -79,7 +79,7 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-session-rewind-*.tgz
 | `rescues/<session>/<rescueId>/` | 还原前的救援点                |
 | `audit.jsonl`                   | 每次回溯一行（只追加）        |
 
-保留策略：每会话最近 20 个消息锚点、最近 5 份救援点、最近 20 次回收站操作（30 天）、blobs/trash/rescues 合计 1 GiB 软上限。超限时按「旧回收站 → 旧救援点 → 无引用 blob → 最旧锚点」清理；仍超限则停止新捕获并在诊断里告警（不删有引用的数据）。卸载保留数据。数据根可用插件配置 `dataRoot` 覆盖。
+启动时会自动清理已删除会话的残留数据（entries/trash/救援点）；审计日志保留。保留策略：每会话最近 20 个消息锚点、最近 5 份救援点、最近 20 次回收站操作（30 天）、blobs/trash/rescues 合计 1 GiB 软上限。超限时按「旧回收站 → 旧救援点 → 无引用 blob → 最旧锚点」清理；仍超限则停止新捕获并在诊断里告警（不删有引用的数据）。卸载保留数据。数据根可用插件配置 `dataRoot` 覆盖。
 
 ## 副作用与风险
 
@@ -94,7 +94,7 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-session-rewind-*.tgz
 
 | DSH 版本   | 状态                                                                                              |
 | ---------- | ------------------------------------------------------------------------------------------------- |
-| 0.2.2-rc.1 | 已验证：`pnpm smoke:session-rewind` 31/31 + 155 个单测 + CDP 驱动的桌面版实测（仅对话与文件模式） |
+| 0.2.2-rc.1 | 已验证：`pnpm smoke:session-rewind` 31/31 + 158 个单测 + CDP 驱动的桌面版实测（仅对话与文件模式） |
 
 插件不声明 `engines.dsh`，也不声明 `@deepseek-ai/*` 的 peer 范围：DSH 还在预发布阶段，预发布版本的 semver 范围不可靠（见 [ADR 0005](../../docs/adr/0005-dsh-version-compatibility.md)）。以这张表为准。DSH 升级后跑 `pnpm probe:runtime`、`pnpm smoke:session-rewind`，并看插件诊断页签；私有 seam 变了会降级而不是让会话出错。
 
@@ -103,7 +103,8 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-session-rewind-*.tgz
 ```bash
 pnpm test                     # 单测（宿主文件引擎、宿主 RPC、客户端 helper）
 pnpm verify                   # 仓库统一门禁
-pnpm smoke:session-rewind     # 临时 DSH 目录 + 真实 GUI 端到端（需要 dsh 与 ego-browser）
+pnpm smoke:session-rewind           # 临时 DSH 目录 + 真实 GUI 端到端（需要 dsh 与 ego-browser）
+pnpm smoke:session-rewind-desktop   # 只读桌面回归（需要以 --remote-debugging-port=9222 重启）
 ```
 
 设计记录：[ADR 0006](../../docs/adr/0006-session-rewind-architecture.md)、[ADR 0007](../../docs/adr/0007-session-rewind-file-restore.md)。

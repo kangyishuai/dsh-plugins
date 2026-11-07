@@ -25,6 +25,7 @@ import {
   resolveRewindTarget,
   sessionEvents,
 } from "./operations.js";
+import { findOrphans, pruneOrphans } from "./orphans.js";
 import { cutsOf, hasOpenToolCalls, listCandidatesPage, targetContent } from "./plan.js";
 
 /**
@@ -159,6 +160,8 @@ export class SessionRewindService extends TypertRemoteService {
     this._store = null;
     this.installFileTracking();
     this.installCommand();
+    // 启动时清一次已删除会话的残留数据（失败只告警，不阻塞插件）。
+    if (this.config.cleanupOrphans !== false) void this.cleanupOrphans();
   }
 
   /** 惰性创建文件引擎：数据根/配置在服务挂载后解析。 @returns {any} */
@@ -184,6 +187,44 @@ export class SessionRewindService extends TypertRemoteService {
       });
     }
     return this._store;
+  }
+
+  /**
+   * 删除已不存在会话的插件数据（entries/trash/rescues）。audit.jsonl 保留。
+   * @returns {Promise<void>}
+   */
+  async cleanupOrphans() {
+    try {
+      const result = await pruneOrphans({ dataRoot: this.dataRoot, dryRun: false });
+      const removed =
+        result.removed.sessions.length +
+        result.removed.trash.length +
+        result.removed.rescues.length;
+      if (removed > 0) {
+        this.ctx?.logger?.info?.(
+          `session-rewind: cleaned ${removed} orphan data dir(s) (${result.report.bytes} bytes)`,
+        );
+        try {
+          await this.store.appendAudit({
+            id: `cleanup-${Date.now()}`,
+            action: "cleanup-orphans",
+            time: Date.now(),
+            sessionId: null,
+            sessions: result.removed.sessions,
+            trash: result.removed.trash,
+            rescues: result.removed.rescues,
+            bytes: result.report.bytes,
+            failed: result.failed,
+          });
+        } catch (_error) {
+          /* 审计失败不影响清理 */
+        }
+      }
+    } catch (error) {
+      this.ctx?.logger?.warn?.(
+        `session-rewind: orphan cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   /** 文件追踪是否开启。 @returns {boolean} */
@@ -765,6 +806,17 @@ export class SessionRewindService extends TypertRemoteService {
       push("审计日志", true, `${audits.length} record(s) readable`);
     } catch (error) {
       push("审计日志", false, error instanceof Error ? error.message : String(error));
+    }
+    try {
+      const orphans = await findOrphans({ dataRoot: this.dataRoot });
+      const count = orphans.sessionIds.length + orphans.trashIds.length + orphans.rescueIds.length;
+      push(
+        "孤儿数据",
+        count === 0,
+        count === 0 ? "none" : `${count} dir(s), ${orphans.bytes} bytes`,
+      );
+    } catch (error) {
+      push("孤儿数据", false, error instanceof Error ? error.message : String(error));
     }
     if (typeof request?.sessionId === "string" && request.sessionId !== "") {
       try {

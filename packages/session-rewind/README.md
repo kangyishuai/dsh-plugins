@@ -8,7 +8,7 @@
 
 Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). Not affiliated with DeepSeek.
 
-> **Status: early.** Verified end to end on DSH 0.2.2-rc.1: 31 GUI assertions in a throwaway DSH home, 155 unit tests, and a CDP-driven desktop pass (conflict refusal, conversation + file rewind, created-file trash, modified-file restore, rescue restore, panel/audit/diagnostics). Young software — keep backups of anything you cannot lose.
+> **Status: early.** Verified end to end on DSH 0.2.2-rc.1: 31 GUI assertions in a throwaway DSH home, 158 unit tests, and a CDP-driven desktop pass (conflict refusal, conversation + file rewind, created-file trash, modified-file restore, rescue restore, panel/audit/diagnostics). Young software — keep backups of anything you cannot lose.
 
 ## What it does
 
@@ -79,7 +79,7 @@ All plugin data lives under `<DSH_HOME>/session-rewind/` (`DSH_HOME` defaults to
 | `rescues/<session>/<rescueId>/` | rescue points (current files before a restore)       |
 | `audit.jsonl`                   | one line per rewind (append-only)                    |
 
-Retention: the 20 latest message anchors per session, the 5 latest rescue points, the 20 latest trash operations (30 days), and a 1 GiB soft cap across blobs/trash/rescues. When the cap is exceeded, old trash → old rescues → unreferenced blobs → oldest anchors are cleaned in that order; if still over the cap, new captures stop and diagnostics report it (no referenced data is deleted). Uninstalling keeps the data. The data root can be overridden with the plugin's `dataRoot` config.
+On startup the plugin also removes data for sessions that no longer exist (they were deleted); the audit log is kept. Retention: the 20 latest message anchors per session, the 5 latest rescue points, the 20 latest trash operations (30 days), and a 1 GiB soft cap across blobs/trash/rescues. When the cap is exceeded, old trash → old rescues → unreferenced blobs → oldest anchors are cleaned in that order; if still over the cap, new captures stop and diagnostics report it (no referenced data is deleted). Uninstalling keeps the data. The data root can be overridden with the plugin's `dataRoot` config.
 
 ## Side effects & risks
 
@@ -94,7 +94,7 @@ Retention: the 20 latest message anchors per session, the 5 latest rescue points
 
 | DSH version | Status                                                                                                                      |
 | ----------- | --------------------------------------------------------------------------------------------------------------------------- |
-| 0.2.2-rc.1  | Verified: `pnpm smoke:session-rewind` (31/31) + 155 unit tests + CDP-driven desktop pass (conversation-only and file modes) |
+| 0.2.2-rc.1  | Verified: `pnpm smoke:session-rewind` (31/31) + 158 unit tests + CDP-driven desktop pass (conversation-only and file modes) |
 
 The plugin declares no `engines.dsh` and no `@deepseek-ai/*` peer range: DSH is pre-release and semver ranges over prereleases are unreliable (see [ADR 0005](../../docs/adr/0005-dsh-version-compatibility.md)). Treat the table as the compatibility statement. After a DSH upgrade run `pnpm probe:runtime`, `pnpm smoke:session-rewind`, and check the plugin's diagnostics tab; if a private seam changed, the plugin degrades instead of breaking the session.
 
@@ -103,7 +103,8 @@ The plugin declares no `engines.dsh` and no `@deepseek-ai/*` peer range: DSH is 
 ```bash
 pnpm test                     # unit tests (host engine, host RPC, client helpers)
 pnpm verify                   # repo-wide gates
-pnpm smoke:session-rewind     # temp DSH home + real GUI end-to-end (needs dsh & ego-browser)
+pnpm smoke:session-rewind           # temp DSH home + real GUI end-to-end (needs dsh & ego-browser)
+pnpm smoke:session-rewind-desktop   # read-only desktop check (needs --remote-debugging-port=9222)
 ```
 
 Design notes: [ADR 0006](../../docs/adr/0006-session-rewind-architecture.md) and [ADR 0007](../../docs/adr/0007-session-rewind-file-restore.md) (Chinese; the repository docs are written in Chinese).
