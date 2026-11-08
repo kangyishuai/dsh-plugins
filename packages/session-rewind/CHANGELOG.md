@@ -1,5 +1,13 @@
 # @kangyishuai/dsh-session-rewind
 
+## 0.3.0
+
+### Minor Changes
+
+- [#16](https://github.com/kangyishuai/dsh-plugins/pull/16) [`7cda33a`](https://github.com/kangyishuai/dsh-plugins/commit/7cda33aa327a195c2374db322e3aebb25bc928c2) Thanks [@kangyishuai](https://github.com/kangyishuai)! - Add a read-only agent tool, `session_rewind_candidates`.
+  
+  The model can list the messages this conversation can be rewound to (optionally filtered) and preview the impact of rewinding to one of them — how many messages would be withdrawn and whether an unfinished tool call would be truncated. The tool never rewinds, never touches files and never appends to the session log; the actual rewind stays a user action in the UI. Disable it with `readOnlyTool: false`; diagnostics now reports whether it registered.
+
 ## 0.2.0
 
 ### Minor Changes
