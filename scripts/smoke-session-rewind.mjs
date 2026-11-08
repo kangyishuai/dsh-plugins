@@ -228,6 +228,36 @@ if (picked === null) {
 }
 await shot("02-session-open");
 
+// 多视图一致性：在**另一个真实标签页**里打开同一个会话（它会在挂载时 seed 一次宿主 cuts），
+// 然后在主标签页回溯，检查它不用刷新也会把这些行隐藏掉。
+let page2 = null;
+let tab2Before = -1;
+try {
+  page2 = await task.newPage();
+  await page2.goto(${JSON.stringify(url)});
+  await page2.waitForTimeout(4500);
+  for (const label of ["继续", "开始使用", "跳过", "关闭"]) {
+    await page2.evaluate((text) => {
+      const btn = [...document.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === text);
+      if (btn) btn.click();
+    }, label).catch(() => {});
+    await page2.waitForTimeout(150);
+  }
+  await page2.evaluate(() => {
+    for (const el of document.querySelectorAll('[data-row-key^="workspace:"][aria-expanded="false"]')) el.click();
+  });
+  await page2.waitForTimeout(600);
+  await page2.evaluate((key) => {
+    const row = document.querySelector('[data-row-key="' + key + '"]');
+    if (row) { row.scrollIntoView({ block: "center" }); row.click(); }
+  }, picked.rowKey);
+  await page2.waitForTimeout(1500);
+  tab2Before = await page2.evaluate(() => document.querySelectorAll('[data-chat-flow-kind="user"]').length);
+} catch (error) {
+  page2 = null;
+}
+check("第二个标签页打开了同一个会话", tab2Before > 0, String(tab2Before));
+
 // 1) ↶ 按钮 → 确认框 → 回退到倒数第二条用户消息
 const composerBefore = await composerText();
 const clicked = await clickRewindOn(picked.bubbles.length - 1);
@@ -270,6 +300,49 @@ check(
   JSON.stringify({ targetHead, composerBefore, composerAfter: composerAfter.slice(0, 80), toast: toastAfter }),
 );
 check("标记占位行没有出现在对话里", !after.some((item) => (item.text || "").includes("(empty message)")), "");
+
+// 多视图一致性：回溯成功后要往 localStorage 写广播，其它标签页据此重新拉宿主 cuts。
+const broadcast = await page.evaluate(() => {
+  const raw = window.localStorage.getItem("dsh-session-rewind.cut-broadcast.v1");
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch (_error) {
+    return { broken: true };
+  }
+});
+check(
+  "回溯成功后写入跨视图广播（localStorage）",
+  broadcast !== null && typeof broadcast.sessionId === "string" && broadcast.sessionId.length > 0,
+  JSON.stringify(broadcast),
+);
+// 模拟另一个标签页收到 storage 事件：不应报错，且被撤回的行仍然隐藏。
+const afterBroadcast = await page.evaluate(async (raw) => {
+  try {
+    window.dispatchEvent(new StorageEvent("storage", { key: "dsh-session-rewind.cut-broadcast.v1", newValue: raw }));
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    return { ok: true, users: document.querySelectorAll('[data-chat-flow-kind="user"]').length };
+  } catch (error) {
+    return { ok: false, error: String(error) };
+  }
+}, JSON.stringify(broadcast));
+check(
+  "收到其它视图广播后重新隐藏且不报错",
+  afterBroadcast?.ok === true && afterBroadcast.users === after.length,
+  JSON.stringify(afterBroadcast),
+);
+// 真两标签页：第二个标签页没刷新，也应靠广播 + 宿主 cuts 自动同步。
+let tab2After = -1;
+if (page2 !== null) {
+  await page.waitForTimeout(2500);
+  tab2After = await page2.evaluate(() => document.querySelectorAll('[data-chat-flow-kind="user"]').length);
+  await page2.screenshot({ path: SHOTS + "/05-second-tab-synced.png" }).catch(() => {});
+}
+check(
+  "另一个标签页无需刷新即同步隐藏（真两标签页）",
+  page2 !== null && tab2Before > 0 && tab2After === after.length,
+  JSON.stringify({ tab2Before, tab2After, expected: after.length }),
+);
 await shot("04-after-button-rewind");
 
 // 1b) 回溯面板：已撤回 / 回溯记录 / 救援点 / 设置

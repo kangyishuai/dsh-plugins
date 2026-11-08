@@ -848,6 +848,8 @@ function applyHarness(fixtures, options = {}) {
   const registrations = [];
   /** @type {any} */
   let decorated = null;
+  /** @type {Map<string, any[]>} */
+  const listeners = new Map();
 
   /**
    * @param {any} key
@@ -864,8 +866,20 @@ function applyHarness(fixtures, options = {}) {
           captured = definition;
         },
       },
-      addEventListener: () => {},
-      removeEventListener: () => {},
+      /** @param {string} type @param {any} handler */
+      addEventListener: (type, handler) => {
+        const list = listeners.get(type) || [];
+        list.push(handler);
+        listeners.set(type, list);
+      },
+      /** @param {string} type @param {any} handler */
+      removeEventListener: (type, handler) => {
+        const list = listeners.get(type) || [];
+        listeners.set(
+          type,
+          list.filter((item) => item !== handler),
+        );
+      },
       /** @param {any} fn */
       setTimeout: (fn) => setTimeout(fn, 0),
       /** @param {any} id */
@@ -987,7 +1001,23 @@ function applyHarness(fixtures, options = {}) {
   assert.equal(typeof decorated?.ui?.options, "function", "commandUi.decorate was not called");
   const overlay = registrations.find((registration) => registration.entry.name === "shell.overlay");
   const element = overlay.component({ t });
-  return { api: element.props.api, store: element.props.store, calls, decorated, storage };
+  /**
+   * 模拟同源其它视图的 localStorage 写入触发本窗口的 storage 事件。
+   * @param {string} key
+   * @param {string} value
+   */
+  const fireStorage = (key, value) => {
+    for (const handler of listeners.get("storage") || []) handler({ key, newValue: value });
+  };
+  return {
+    api: element.props.api,
+    store: element.props.store,
+    calls,
+    decorated,
+    storage,
+    fireStorage,
+    listeners,
+  };
 }
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -1276,6 +1306,64 @@ describe("apply() runtime wiring", () => {
         ["a", "chat"],
       ],
     );
+  });
+
+  it("parseCutBroadcast 只接受合法载荷", () => {
+    assert.equal(testApi.parseCutBroadcast(""), null);
+    assert.equal(testApi.parseCutBroadcast("not json"), null);
+    assert.equal(testApi.parseCutBroadcast("{}"), null);
+    assert.equal(testApi.parseCutBroadcast(JSON.stringify({ sessionId: 42 })), null);
+    assert.deepEqual(
+      testApi.parseCutBroadcast(
+        JSON.stringify({ sessionId: "s1", targetSeq: 3, markerSeq: 9, at: 7 }),
+      ),
+      { sessionId: "s1", targetSeq: 3, markerSeq: 9, at: 7 },
+    );
+    assert.deepEqual(testApi.parseCutBroadcast(JSON.stringify({ sessionId: "s1" })), {
+      sessionId: "s1",
+      targetSeq: null,
+      markerSeq: null,
+      at: 0,
+    });
+  });
+
+  it("回溯成功后把 cut 广播写进 localStorage（供其它视图同步）", async () => {
+    const harness = applyHarness(fixtures(), {});
+    harness.api.openConfirm(candidate, "s1", "row");
+    await flush();
+    harness.api.doRewind();
+    await flush();
+    await flush();
+    const raw = harness.storage.get(testApi.CUT_BROADCAST_KEY);
+    assert.ok(raw, "broadcast key was not written");
+    const payload = testApi.parseCutBroadcast(raw);
+    assert.equal(payload.sessionId, "s1");
+    // 具体 seq 由夹具的 rewind 响应决定；这里只断言「带上了宿主给的 marker」。
+    assert.equal(payload.markerSeq, harness.store.getSnapshot().target ? null : payload.markerSeq);
+    assert.equal(typeof payload.markerSeq, "number");
+    assert.equal(typeof payload.targetSeq, "number");
+    assert.ok(payload.at > 0);
+  });
+
+  it("收到别的视图的广播后按宿主 cuts 重新求值", async () => {
+    const harness = applyHarness(fixtures(), {});
+    const before = harness.calls.filter((/** @type {any} */ call) => call.name === "cuts").length;
+    harness.fireStorage(
+      testApi.CUT_BROADCAST_KEY,
+      JSON.stringify({ sessionId: "s1", targetSeq: 3, markerSeq: 9, at: 1 }),
+    );
+    await flush();
+    const after = harness.calls.filter((/** @type {any} */ call) => call.name === "cuts");
+    assert.equal(after.length, before + 1);
+    assert.equal(after[after.length - 1].request.sessionId, "s1");
+  });
+
+  it("广播键之外的 storage 事件被忽略", async () => {
+    const harness = applyHarness(fixtures(), {});
+    harness.fireStorage("some-other-key", JSON.stringify({ sessionId: "s1" }));
+    harness.fireStorage(testApi.CUT_BROADCAST_KEY, "broken");
+    await flush();
+    assert.equal(harness.calls.filter((/** @type {any} */ call) => call.name === "cuts").length, 0);
   });
 
   it("warns about the running turn and still executes (host stops it first)", async () => {

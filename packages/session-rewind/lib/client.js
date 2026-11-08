@@ -574,6 +574,33 @@ window.__ModuleLoader__.load({
     /** localStorage 偏好键；版本化，方便未来迁移。 */
     let PREF_STORAGE_KEY = "dsh-session-rewind.prefs.v1";
 
+    /** 跨视图广播键：某个视图回溯成功后写入，其它视图据此重新拉宿主 cuts。 */
+    let CUT_BROADCAST_KEY = "dsh-session-rewind.cut-broadcast.v1";
+
+    /**
+     * 解析跨视图广播载荷（脏数据一律返回 null）。
+     * @param {any} raw localStorage 里的字符串
+     * @returns {{sessionId: string, targetSeq: number|null, markerSeq: number|null, at: number} | null}
+     */
+    function parseCutBroadcast(raw) {
+      if (typeof raw !== "string" || raw === "") return null;
+      let value;
+      try {
+        value = JSON.parse(raw);
+      } catch (_error) {
+        return null;
+      }
+      if (!value || typeof value !== "object") return null;
+      let sessionId = typeof value.sessionId === "string" ? value.sessionId : "";
+      if (sessionId === "") return null;
+      return {
+        sessionId: sessionId,
+        targetSeq: typeof value.targetSeq === "number" ? value.targetSeq : null,
+        markerSeq: typeof value.markerSeq === "number" ? value.markerSeq : null,
+        at: typeof value.at === "number" ? value.at : 0,
+      };
+    }
+
     /** 客户端偏好默认值：默认仅回退对话、每页 100 条、列表选择先确认。 */
     let PREF_DEFAULTS = Object.freeze({
       defaultMode: "chat",
@@ -3770,6 +3797,8 @@ window.__ModuleLoader__.load({
         });
         rebuildSessionById(sessionId);
         let outcome = fillComposer(sessionId, summary.text || target.text || "");
+        // 同源其它视图也要立刻隐藏这些行（它们不会被这次 append 唤醒）。
+        broadcastCut(sessionId, summary);
         let text = t("toast.rewound", {
           n: summary.removedCount,
           tokens: formatCount(summary.tokens),
@@ -4250,6 +4279,57 @@ window.__ModuleLoader__.load({
       }
 
       /** 拉一次宿主 cuts 作为可见性兜底（静默失败）。 */
+      /**
+       * 把「这个会话刚回溯过」广播给同源其它视图（多标签/多窗口一致性）。
+       * localStorage 的 storage 事件只在**其它** document 触发，不会回环到自己。
+       * @param {any} sessionId
+       * @param {any} summary
+       */
+      function broadcastCut(sessionId, summary) {
+        try {
+          if (!window.localStorage) return;
+          window.localStorage.setItem(
+            CUT_BROADCAST_KEY,
+            JSON.stringify({
+              sessionId: sessionId,
+              targetSeq:
+                summary && typeof summary.targetSeq === "number" ? summary.targetSeq : null,
+              markerSeq:
+                summary && typeof summary.markerSeq === "number" ? summary.markerSeq : null,
+              at: Date.now(),
+            }),
+          );
+        } catch (_error) {
+          /* 存储不可用时退化为「只有本视图知道」 */
+        }
+      }
+
+      /**
+       * 监听其它视图的广播：收到就按宿主 cuts 重新隐藏（宿主是权威来源，不信任广播内容）。
+       * @returns {() => void} disposer
+       */
+      function installCutBroadcast() {
+        /** @param {any} event */
+        function onStorage(event) {
+          if (!event || event.key !== CUT_BROADCAST_KEY) return;
+          let payload = parseCutBroadcast(event.newValue);
+          if (!payload) return;
+          seedCuts(payload.sessionId);
+        }
+        try {
+          window.addEventListener("storage", onStorage);
+        } catch (_error) {
+          return function noop() {};
+        }
+        return function dispose() {
+          try {
+            window.removeEventListener("storage", onStorage);
+          } catch (_error) {
+            /* ignore */
+          }
+        };
+      }
+
       function seedCuts(/** @type {any} */ sessionId) {
         return call("cuts", { sessionId: sessionId })
           .then((/** @type {any} */ value) => {
@@ -4302,6 +4382,9 @@ window.__ModuleLoader__.load({
       // ---- 安装各层 ----
 
       installChatVisibility(ctx, cutStore);
+
+      // 多视图一致性：别的标签页回溯后，本视图按宿主 cuts 重新隐藏。
+      ctx.effect(() => installCutBroadcast(), "session-rewind: cut broadcast");
 
       ctx.effect(
         () =>
@@ -4535,6 +4618,8 @@ window.__ModuleLoader__.load({
         normalizeFiles: normalizeFiles,
         normalizePreview: normalizePreview,
         normalizeStateChanges: normalizeStateChanges,
+        parseCutBroadcast: parseCutBroadcast,
+        CUT_BROADCAST_KEY: CUT_BROADCAST_KEY,
         fileModeState: fileModeState,
         effectiveMode: effectiveMode,
         conflictPathsOf: conflictPathsOf,
