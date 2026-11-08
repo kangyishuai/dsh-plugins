@@ -22,6 +22,17 @@ Long conversations drift. A few turns later you wish you had answered a prompt d
 - **Composer.** The target message's text (and images) is put back into the composer, ready to edit and send again. An existing draft is never overwritten. Tick **Send this message again right after rewinding** in the confirmation dialog to retry the turn in one click (conversation-only rewinds).
 - **Rewind panel.** A new header action opens a panel with four tabs: **Withdrawn** (every message each rewind removed, searchable, copy or put back in the composer), **History** (audit of each rewind: scope, message count, tokens, file results), **Rescue points** (restore files from an earlier rescue), and **Settings** (default scope, page size, confirm-on-list, diagnostics).
 
+## Read-only agent tool
+
+The plugin also registers one **read-only** tool, `session_rewind_candidates`, so the model can reason about rewinding without performing it:
+
+| Call                                       | Result                                                                                                                                         |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `session_rewind_candidates {}`             | Newest-first list of messages this conversation can be rewound to (`query` filters, `limit` caps at 50).                                       |
+| `session_rewind_candidates { target_seq }` | Impact preview for one message: how many messages would be withdrawn, whether an unfinished tool call would be truncated, and the target text. |
+
+The tool never rewinds, never edits files and never appends to the session log — the rewind itself stays a user action (that is the point of the ADR 0006 design). Set `readOnlyTool: false` to unregister it; **Settings → Diagnostics** reports whether it registered.
+
 ## Install
 
 ```bash
