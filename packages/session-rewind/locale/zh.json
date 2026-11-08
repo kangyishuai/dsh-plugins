@@ -122,6 +122,20 @@
     "toast.stoppedTurn": "，已停止运行中的回合",
     "confirm.resend": "回退后立即重发这条消息",
     "confirm.resendHint": "适合「重试这一轮」：回退后自动把原文发出去，想改内容就在输入框里编辑后再发。",
-    "toast.resent": "，已重发这条消息"
+    "toast.resent": "，已重发这条消息",
+    "confirm.stateChanges": "这段区间里改过会话状态：{list}；回溯只撤回对话，不会回滚这些状态",
+    "confirm.stateHint": "如需一并回退 plan/goal/待办等状态，请手动调整。",
+    "state.planMode": "计划模式",
+    "state.goal": "目标（goal）",
+    "state.todo": "待办清单",
+    "state.model": "模型选择",
+    "state.permission": "权限预设",
+    "state.sandbox": "沙箱模式",
+    "state.agentPreset": "智能体预设",
+    "state.schedule": "定时任务",
+    "state.workingDirectory": "工作目录",
+    "state.separator": "、",
+    "timeline.kindRescue": "文件恢复",
+    "timeline.rescueMeta": "从救援点恢复 {restored} 个文件 · {id}"
   }
 }

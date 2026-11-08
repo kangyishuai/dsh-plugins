@@ -302,6 +302,20 @@ const auditText = await page.evaluate(() => {
   return root ? (root.textContent || "").replace(/s+/g, " ") : "";
 });
 check("回溯记录页签出现本次回执", auditTab && /仅对话|Conversation/u.test(auditText) && /条|message/u.test(auditText), auditText.slice(0, 160));
+const timeline = await page.evaluate(() => {
+  const root = document.querySelector(".dsh-srw-timeline");
+  if (!root) return null;
+  return {
+    nodes: root.querySelectorAll(".dsh-srw-tl-node").length,
+    kinds: [...root.querySelectorAll(".dsh-srw-tl-node")].map((n) => n.getAttribute("data-kind")),
+    dots: root.querySelectorAll(".dsh-srw-tl-dot").length,
+  };
+});
+check(
+  "回溯记录以时间线渲染（节点 + 圆点）",
+  timeline !== null && timeline.nodes >= 1 && timeline.dots === timeline.nodes,
+  JSON.stringify(timeline),
+);
 await page.evaluate(() => {
   const btn = [...document.querySelectorAll(".dsh-srw-drawer button")].find((b) => (b.getAttribute("aria-label") || "").includes("关闭") || (b.textContent || "").trim() === "关闭");
   if (btn) btn.click();

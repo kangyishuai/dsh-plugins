@@ -742,6 +742,14 @@ describe("dictionaries", () => {
       "dialog.settling",
       "toast.stoppedTurn",
       "toast.resent",
+      "confirm.stateChanges",
+      "confirm.stateHint",
+      "state.planMode",
+      "state.goal",
+      "state.todo",
+      "state.separator",
+      "timeline.kindRescue",
+      "timeline.rescueMeta",
       "confirm.fileSummary",
       "toast.rewound",
       "toast.view",
@@ -1225,6 +1233,49 @@ describe("apply() runtime wiring", () => {
     await flush();
     const rewind = harness.calls.find((/** @type {any} */ call) => call.name === "rewind");
     assert.equal(rewind.request.mode, "both");
+  });
+
+  it("预览里的会话状态变更被归一化", () => {
+    const changes = testApi.normalizeStateChanges([
+      { type: "plan/mode", labelKey: "state.planMode", count: 1 },
+      { type: "goal/change", labelKey: "state.goal", count: 3 },
+      { labelKey: 42 },
+      null,
+    ]);
+    assert.deepEqual(changes, [
+      { type: "plan/mode", labelKey: "state.planMode", count: 1 },
+      { type: "goal/change", labelKey: "state.goal", count: 3 },
+    ]);
+    const preview = testApi.normalizePreview({
+      chat: { removedCount: 2, tokens: 10 },
+      stateChanges: [{ type: "todo/write", labelKey: "state.todo", count: 1 }],
+    });
+    assert.equal(preview.stateChanges.length, 1);
+    assert.equal(preview.stateChanges[0].labelKey, "state.todo");
+  });
+
+  it("审计记录区分回溯与文件恢复并按时间倒序", () => {
+    const entries = testApi.normalizeAuditEntries({
+      entries: [
+        { id: "a", time: 100, mode: "chat", removedCount: 1, tokens: 2 },
+        {
+          id: "b",
+          time: 300,
+          action: "rescue-restore",
+          rescueId: "r1",
+          files: { restored: ["x"] },
+        },
+        { id: "c", time: 200, mode: "both", removedCount: 3, tokens: 4 },
+      ],
+    });
+    assert.deepEqual(
+      entries.map((/** @type {any} */ entry) => [entry.id, entry.kind]),
+      [
+        ["b", "rescue-restore"],
+        ["c", "both"],
+        ["a", "chat"],
+      ],
+    );
   });
 
   it("warns about the running turn and still executes (host stops it first)", async () => {
