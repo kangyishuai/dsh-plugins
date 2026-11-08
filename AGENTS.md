@@ -21,7 +21,7 @@
 | `pnpm wt <branch>`          | 新建分支 + worktree（并行开发用，见下文）              |
 | `pnpm format`               | Biome 格式化并自动修复                                 |
 | `pnpm changeset`            | 为需要发版的改动写变更说明                             |
-| `pnpm probe:runtime`        | 核对本机 DSH 安装里插件依赖的包/API/slot 是否还在      |
+| `pnpm probe:runtime`        | 体检：宿主包/API/slot + 插件依赖的私有 seam 是否还在   |
 | `pnpm smoke:session-delete` | 端到端 GUI 冒烟（临时 DSH_HOME，24 项断言）            |
 | `pnpm smoke:agent-tool`     | agent 工具真机冒烟（需要模型凭据，否则 SKIP）          |
 
