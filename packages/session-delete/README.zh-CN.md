@@ -8,7 +8,7 @@
 
 非官方 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 插件，与 DeepSeek 无关。
 
-> **状态：v0.4.2，早期可用。** 已在 DSH 0.2.2-rc.1 上用 `pnpm smoke:session-delete`（24 项端到端断言）验证，并确认桌面版里插件正常激活、状态条不是只读模式。仍是年轻软件，重要数据请自行备份。
+> **状态：早期可用。** 已在 DSH 0.2.2-rc.1 上用 `pnpm smoke:session-delete`（24 项端到端断言 + 一次只读桌面回归）和 `pnpm probe:runtime` 验证。`pnpm gate session-delete` 一条命令跑完发版门禁。仍是年轻软件，重要数据请自行备份。
 
 
 ![删除确认框：展示体积、子会话和将要清理的引用](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/overview.png)
