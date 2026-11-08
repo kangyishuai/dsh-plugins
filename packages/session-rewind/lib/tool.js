@@ -197,7 +197,7 @@ export function createRewindToolDefinition(host) {
           limit: typeof args?.limit === "number" ? args.limit : undefined,
           targetSeq: typeof args?.target_seq === "number" ? args.target_seq : undefined,
         });
-        if (!payload || payload.ok !== true) {
+        if (payload?.ok !== true) {
           return { kind: "error", error: String(payload?.error ?? "unavailable") };
         }
         return payload.value;
