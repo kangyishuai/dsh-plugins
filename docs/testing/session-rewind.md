@@ -64,7 +64,7 @@ pnpm gate:session-rewind -- --deep --workspace ~/Workspace/dsh-rewind-ui-smoke
 pnpm smoke:session-rewind
 ```
 
-临时 home 里启动真实宿主 + ego-browser，34 项断言：
+临时 home 里启动真实宿主 + ego-browser，38 项断言：
 
 | #     | 断言                                                                                                  |
 | ----- | ----------------------------------------------------------------------------------------------------- |
