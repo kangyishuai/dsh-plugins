@@ -45,7 +45,8 @@ pnpm verify                               # 仓库门禁
 ## 1.5 一条命令跑完门禁（发版前）
 
 ```bash
-pnpm gate:session-rewind -- --deep --workspace ~/Workspace/dsh-rewind-ui-smoke
+pnpm gate session-rewind --deep --workspace ~/Workspace/dsh-rewind-ui-smoke
+# 等价写法：pnpm gate:session-rewind -- --deep --workspace ...
 ```
 
 按「便宜的先跑」排序，任何一步失败立刻停并给出下一步提示：

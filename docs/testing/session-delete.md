@@ -58,9 +58,27 @@ pnpm verify   # lint + typecheck + 规范检查 + 33 个单测
 
 ## 2. 启动冒烟（1 分钟）与 GUI 冒烟脚本（约 3 分钟）
 
+````bash
+## 一键门禁（发版前）
+
 ```bash
+pnpm gate session-delete                        # 只读 3 步：verify → probe → web 冒烟
+pnpm gate session-delete --skip-desktop         # 明确跳过桌面端（会提示门禁不完整）
+````
+
+门禁脚本 `scripts/gate.mjs` 是**通用**的（`pnpm gate <plugin>`），按「便宜的先跑」排序：
+
+1. `pnpm verify`（lint + 类型 + 规范 + 公开边界 + 全部单测）
+2. `pnpm probe:runtime`（含本插件依赖的私有 seam：`archiveSession`/`unarchiveSession`、
+   后端 `locate()`、`sessions.detachEntered`、会话「…」菜单槽、页脚 action 槽）
+3. `pnpm smoke:session-delete`（临时 DSH_HOME 的 web 端到端，24 项）
+4. 桌面只读回归（`pnpm smoke:session-delete-desktop`，**永远带 `--require`**：没开调试端口就是失败）
+
+> 桌面端要先用 `open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1`
+> 重启；它只打开菜单/确认框/面板再 Esc 关闭，**从不确认删除**。
+
 pnpm smoke:session-delete
-```
+````
 
 它会自动：复制 desktop profile 到临时 `DSH_HOME` → 打包安装当前源码 → 起真实
 宿主（随机端口）→ 用 ego-browser 点一遍主链路 → 断言 24 项，并把关键状态截图存到
@@ -229,7 +247,7 @@ DEEPSEEK_API_KEY=<key> pnpm smoke:agent-tool
 
 # 方式二：复用桌面版的 provider 配置（从 ~/.dsh/profiles/desktop/cordis.patch.yml 抽出模型块）
 DSH_AGENT_TOOL_PATCH=/tmp/model-overlay.yml ZHINAO_API_KEY=<key> pnpm smoke:agent-tool
-```
+````
 
 > 脚本会把 `~/.dsh/.credentials.yaml` 复制进临时 home；但 provider 的 `apiKeyEnv`
 > 仍需要环境变量，所以方式二还要额外 export 对应 key。

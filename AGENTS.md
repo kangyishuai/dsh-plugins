@@ -22,7 +22,8 @@
 | `pnpm format`               | Biome 格式化并自动修复                                 |
 | `pnpm changeset`            | 为需要发版的改动写变更说明                             |
 | `pnpm probe:runtime`        | 体检：宿主包/API/slot + 插件依赖的私有 seam 是否还在   |
-| `pnpm gate:session-rewind`  | session-rewind 一键发版门禁（verify→体检→web→桌面）    |
+| `pnpm gate <plugin>`        | 一键发版门禁（verify→体检→web→桌面，通用）             |
+| `pnpm gate:<plugin>`        | 同上，固定插件名的等价写法                             |
 | `pnpm smoke:session-delete` | 端到端 GUI 冒烟（临时 DSH_HOME，24 项断言）            |
 | `pnpm smoke:agent-tool`     | agent 工具真机冒烟（需要模型凭据，否则 SKIP）          |
 
