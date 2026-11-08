@@ -191,6 +191,46 @@ const SEAM_CHECKS = [
   },
 ];
 
+/** session-delete 依赖的私有 seam（服务方法级别的能力探测）。 */
+const SEAM_CHECKS_SESSION_DELETE = [
+  {
+    file: "@deepseek-ai/dsh-workspace/lib/index.js",
+    name: "workspace.archiveSession（删除即归档）",
+    pattern: /archiveSession\s*\(/u,
+    breaks: "删除会话时把它从工作区摘掉",
+  },
+  {
+    file: "@deepseek-ai/dsh-workspace/lib/index.js",
+    name: "workspace.unarchiveSession（恢复即取消归档）",
+    pattern: /unarchiveSession\s*\(/u,
+    breaks: "从回收站恢复会话时把它挂回工作区",
+  },
+  {
+    file: "@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js",
+    name: "后端 locate()（拿会话真实目录，避免全盘扫描）",
+    pattern: /locate\s*\(/u,
+    breaks: "删除/恢复时定位会话目录（退化为扫描，仍可用但更慢）",
+  },
+  {
+    file: "@deepseek-ai/dsh-session/lib/index.js",
+    name: "sessions.detachEntered（摘掉 live 条目）",
+    pattern: /detachEntered/u,
+    breaks: "删除正在被宿主持有的会话（不摘会残留 live 句柄）",
+  },
+  {
+    file: "@deepseek-ai/dsh-client-ui-workspace/lib/client.js",
+    name: "sidebar.workspaces.session.menu.item 槽（会话「…」菜单项）",
+    pattern: /sidebar\.workspaces\.session\.menu\.item/u,
+    breaks: "会话右键菜单里的「删除」入口",
+  },
+  {
+    file: "@deepseek-ai/dsh-client-ui-cordis/lib/client.js",
+    name: "sidebar.footer.action 槽（回收站入口）",
+    pattern: /sidebar\.footer\.action/u,
+    breaks: "侧栏页脚的回收站入口与角标",
+  },
+];
+
 /** slot 名字通过扫描 client 包确认（客户端 bundle 里以字符串出现）。 */
 const SLOT_CHECKS = [
   { slot: "sidebar.workspaces.session.menu.item", purpose: "会话「…」菜单" },
@@ -315,6 +355,22 @@ const main = async () => {
 
   // 3.5) 私有 seam（按功能影响分组报告）
   for (const check of SEAM_CHECKS) {
+    const path = `/dsh/node_modules/${check.file}`;
+    const buffer = await asar.read(path);
+    if (!buffer) {
+      push("FAIL", `seam ${check.name}`, `文件不存在：${check.file}｜影响：${check.breaks}`);
+      continue;
+    }
+    const ok = check.pattern.test(buffer.toString("utf8"));
+    push(
+      ok ? "PASS" : "FAIL",
+      `seam ${check.name}`,
+      ok ? "" : `源码里没有匹配到特征｜影响：${check.breaks}`,
+    );
+  }
+
+  // 3.6) session-delete 的私有 seam
+  for (const check of SEAM_CHECKS_SESSION_DELETE) {
     const path = `/dsh/node_modules/${check.file}`;
     const buffer = await asar.read(path);
     if (!buffer) {
