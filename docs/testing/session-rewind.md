@@ -42,6 +42,22 @@ pnpm verify                               # 仓库门禁
   append 抛错时的 in-flight 清理；
 - 客户端纯函数：`DoubleEscape` 双击窗口、`cutOfMarkerNode`/`collectCuts`、`errorTextKey`。
 
+## 1.5 一条命令跑完门禁（发版前）
+
+```bash
+pnpm gate:session-rewind -- --deep --workspace ~/Workspace/dsh-rewind-ui-smoke
+```
+
+按「便宜的先跑」排序，任何一步失败立刻停并给出下一步提示：
+
+1. `pnpm verify`（lint + 类型 + 规范 + 公开边界 + 185 单测）
+2. `pnpm probe:runtime`（宿主包/API/slot/私有 seam，43 项）
+3. `pnpm smoke:session-rewind`（临时 DSH_HOME 的 web 端到端，34 项）
+4. 桌面只读回归（21 项，**永远带 `--require`**：没开调试端口就是失败，不是跳过）
+5. 桌面 `--deep` 文件模式 e2e（36 项，需 `--workspace`）
+
+只有显式 `--skip-desktop` 才跳过桌面端，且结束时会明确打印「门禁不完整」。
+
 ## 2. 端到端 GUI 冒烟（每次提交，改客户端后必跑）
 
 ```bash
