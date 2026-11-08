@@ -9,16 +9,21 @@
 //   # 发版门禁用 --require：连不上端口时不是 SKIP，而是失败（避免「没测也绿」）
 //   pnpm smoke:session-rewind-desktop --require
 //
-// 只读：只切会话、开/关对话框与面板、点取消；**不回溯、不写文件、不发模型请求**，因此可以直接
-// 跑在真实 profile 上。端口可用 --port 或 DSH_CDP_PORT 覆盖（默认 9222）。
+// 默认只读：只切会话、开/关对话框与面板、点取消；**不回溯、不写文件、不发模型请求**，因此可以
+// 直接跑在真实 profile 上。端口可用 --port 或 DSH_CDP_PORT 覆盖（默认 9222）。
+//
+// `--deep --workspace <专用测试目录>`：额外跑**文件模式端到端**（会在该目录新建会话、发一次模型
+// 请求让它写一个文件、然后回溯并还原文件）。必须显式给出测试目录，脚本会拒绝其它路径；它只碰
+// 该目录里的 `rewind-desktop-smoke.txt`，但会消耗一次模型额度并在侧栏留下一个测试会话。
+//   pnpm smoke:session-rewind-desktop -- --deep --workspace ~/Workspace/dsh-rewind-ui-smoke
 //
 // 两条踩过的坑：
 //   1. `Esc` `Esc` 在「正在运行本 agent 的会话」里会触发内置停止，取消正在跑的这一轮
 //      （脚本自己的工具调用会被 abort）。所以先切到一个**有消息的空闲会话**再按 Esc。
 //   2. 侧栏里可能有没有消息的会话，切过去候选列表是空的；必须挑选有用户消息的会话。
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { parseArgs } from "node:util";
 
 const SHOTS = join(tmpdir(), "dsh-session-rewind-desktop-shots");
@@ -145,11 +150,71 @@ const openDrawerTab = (cdp, tab) =>
     return true;
   })()`);
 
+/** @param {string} path */
+async function exists(path) {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 输入框里是否还有「停止」按钮（回合仍在跑）。 */
+const isRunning = (/** @type {any} */ cdp) =>
+  cdp.evaluate(`(() => [...document.querySelectorAll("button")].some((b) => {
+    const aria = (b.getAttribute("aria-label") || "").trim();
+    const ttl = (b.getAttribute("title") || "").trim();
+    return /停止|Stop/i.test(aria + " " + ttl);
+  }))()`);
+
+/** @param {any} cdp @param {number} timeoutMs */
+async function waitForTurnEnd(cdp, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!(await isRunning(cdp))) {
+      // 再等一拍，避免「还没开始渲染」被当成结束
+      await sleep(1200);
+      if (!(await isRunning(cdp))) return true;
+    }
+    await sleep(1000);
+  }
+  return false;
+}
+
+/** 往 composer 里打字（Lexical 需要 execCommand 才进得去）。 */
+const typeIntoComposer = (/** @type {any} */ cdp, /** @type {string} */ text) =>
+  cdp.evaluate(`(() => {
+    const el = document.querySelector("[data-composer-input]");
+    if (!el) return false;
+    el.focus();
+    try { return document.execCommand("insertText", false, ${JSON.stringify(text)}); } catch (_error) {
+      el.textContent = ${JSON.stringify(text)};
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      return true;
+    }
+  })()`);
+
+const clickSend = (/** @type {any} */ cdp) =>
+  cdp.evaluate(`(() => {
+    const btn = [...document.querySelectorAll("button")].find((b) => /发送消息|Send/.test((b.getAttribute("aria-label") || "") + " " + (b.getAttribute("title") || "")));
+    if (!btn || btn.disabled) return false;
+    btn.click();
+    return true;
+  })()`);
+
+const composerText = (/** @type {any} */ cdp) =>
+  cdp.evaluate(
+    `(() => { const el = document.querySelector("[data-composer-input]"); return el ? (el.textContent || "") : ""; })()`,
+  );
+
 const main = async () => {
   const { values } = parseArgs({
     options: {
       port: { type: "string" },
       require: { type: "boolean", default: false },
+      deep: { type: "boolean", default: false },
+      workspace: { type: "string" },
     },
     allowPositionals: false,
   });
@@ -206,14 +271,18 @@ const main = async () => {
       JSON.stringify(info?.pluginStyles ?? []),
     );
     check("会话头部有回溯面板入口", info?.headerButton === true, "");
+    // 注意：当前会话可能本来就没有用户消息（例如刚被回溯过），不能在这断言 ↶ 存在；
+    // 挑到候选可达的会话之后再断言（见下）。
     check(
-      "用户消息旁有 ↶ 按钮",
-      info?.rewindButtons > 0,
+      "当前会话渲染正常（用户行与 ↶ 按钮数量自洽）",
+      info?.rewindButtons === 0 || info.rewindButtons === info.userRows,
       `${info?.userRows ?? 0} user rows / ${info?.rewindButtons ?? 0} buttons`,
     );
     await cdp.screenshot(join(SHOTS, "01-overview.png"));
 
-    // ---------- B. 切到有消息的空闲会话（Esc 不能在本 agent 会话里按） ----------
+    // ---------- B. 挑一个「候选可达」的空闲会话（Esc 不能在本 agent 会话里按） ----------
+    // 只看「有没有渲染出来的用户消息」不够：会话可能因为压缩遮蔽、或之前已回溯过，
+    // 候选列表是空的。所以逐个会话按一次 Esc 数候选，取候选 ≥2 的那个。
     const originalSession = await cdp.evaluate(`(() => {
       const root = document.querySelector("[data-conversation-session]");
       return root ? root.getAttribute("data-conversation-session") : null;
@@ -222,28 +291,71 @@ const main = async () => {
       const rows = [...document.querySelectorAll('[data-row-key^="session:"]')];
       return rows.map((row) => (row.getAttribute("data-row-key") || "").replace("session:", ""));
     })()`);
-    /** @type {string | null} */
-    let idleSession = null;
-    for (const id of Array.isArray(sessionIds) ? sessionIds : []) {
-      if (id === originalSession) continue;
+    /** @param {string} id */
+    const switchTo = async (id) => {
       await cdp.evaluate(`(() => {
         const row = document.querySelector('[data-row-key="session:' + ${JSON.stringify(id)} + '"]');
         if (row) row.click();
       })()`);
       await sleep(900);
+    };
+    /** 打开候选框并返回候选行，然后取消。 */
+    const probeCandidates = async () => {
+      await cdp.evaluate(
+        `(() => { const el = document.querySelector("[data-composer-input]"); if (el && el.focus) el.focus(); })()`,
+      );
+      await sleep(150);
+      await pressEscape(cdp, "Escape", 53);
+      await sleep(120);
+      await pressEscape(cdp, "Escape", 53);
+      await sleep(800);
+      const dialog = await dialogInfo(cdp);
+      const rows = dialog && Array.isArray(dialog.rows) ? dialog.rows.length : 0;
+      if (dialog) {
+        await clickDialogButton(cdp, ["取消", "Cancel"]);
+        await sleep(350);
+      }
+      return rows;
+    };
+    /** @type {string | null} */
+    let idleSession = null;
+    /** @type {string[]} */
+    const probeLog = [];
+    for (const id of Array.isArray(sessionIds) ? sessionIds : []) {
+      if (id === originalSession) continue;
+      await switchTo(id);
       const users = await cdp.evaluate(
         `document.querySelectorAll('[data-chat-flow-kind="user"]').length`,
       );
-      if (users > 0) {
+      if (users === 0) {
+        probeLog.push(`${id.slice(8, 16)}:0users`);
+        continue;
+      }
+      const candidates = await probeCandidates();
+      probeLog.push(`${id.slice(8, 16)}:${candidates}`);
+      if (candidates >= 2) {
         idleSession = id;
         break;
       }
     }
     check(
-      "找到一个有消息的空闲会话用于 Esc 流程",
+      "找到一个候选可达（≥2 条）的空闲会话用于 Esc 流程",
       idleSession !== null,
-      idleSession ?? "侧栏里没有第二个有消息的会话",
+      probeLog.join(" ") || "侧栏里没有第二个会话",
     );
+    if (idleSession !== null) {
+      await switchTo(idleSession);
+      const rowButtons = await cdp.evaluate(`(() => {
+        const users = [...document.querySelectorAll('[data-chat-flow-kind="user"]')];
+        const withButton = users.filter((row) => [...row.querySelectorAll("button")].some((b) => (b.getAttribute("aria-label") || "").includes("回退到此处")));
+        return { users: users.length, withButton: withButton.length };
+      })()`);
+      check(
+        "每条用户消息旁都有 ↶ 按钮",
+        rowButtons.users > 0 && rowButtons.withButton === rowButtons.users,
+        JSON.stringify(rowButtons),
+      );
+    }
 
     // ---------- C. Esc Esc → 候选列表 → 搜索 ----------
     /** @type {any} */
@@ -315,14 +427,27 @@ const main = async () => {
       confirm?.resend?.present === true && confirm.resend.checked === false,
       JSON.stringify(confirm?.resend ?? null),
     );
+    // 从候选列表进的确认框，取消会**退回候选列表**（方便换一条），不是直接关闭——
+    // 这是设计而非 bug，所以先断言这一步，再关掉列表。
+    const cancelled = await clickDialogButton(cdp, ["取消", "Cancel"]);
+    await sleep(700);
+    const afterCancel = await dialogInfo(cdp);
     check(
-      "确认框可取消（不执行回退）",
-      await clickDialogButton(cdp, ["取消", "Cancel"]),
-      "点不到取消按钮",
+      "确认框取消后退回候选列表（不执行回退）",
+      cancelled &&
+        afterCancel !== null &&
+        Array.isArray(afterCancel.rows) &&
+        afterCancel.rows.length > 0 &&
+        Array.isArray(afterCancel.radios) &&
+        afterCancel.radios.length === 0,
+      afterCancel
+        ? JSON.stringify({ rows: afterCancel.rows.length, radios: afterCancel.radios.length })
+        : "对话框直接关闭了",
     );
+    await clickDialogButton(cdp, ["取消", "Cancel"]);
     await sleep(600);
     const closed = await dialogInfo(cdp);
-    check("取消后对话框关闭且未回溯", closed === null, closed ? "对话框仍在" : "");
+    check("再取消后对话框关闭且未回溯", closed === null, closed ? "对话框仍在" : "");
 
     // ---------- E. 回溯面板四页签 ----------
     await cdp.evaluate(`(() => {
@@ -401,6 +526,223 @@ const main = async () => {
         if (row) row.click();
       })()`);
       await sleep(800);
+    }
+
+    // ---------- H. --deep：文件模式端到端（新建会话 → 写文件 → 回溯 → 还原） ----------
+    if (values.deep === true) {
+      const workspacePath = values.workspace;
+      const fileName = "rewind-desktop-smoke.txt";
+      const filePath = workspacePath === undefined ? "" : join(workspacePath, fileName);
+      // 每次跑用唯一内容：否则重复运行时 write 是幂等的（beforeHash === afterHash），
+      // 文件引擎正确地认为「没有变化」，文件模式也就理所当然地不可用。
+      const content = `hello-rewind-desktop-${Date.now()}`;
+      const prompt =
+        `只做一件事：用 write 工具在当前工作区创建 ${fileName}，内容为 ${content}。` +
+        "不要做其他任何操作，完成后回复一句简短确认。";
+
+      // 安全闸：必须显式给出一个已存在的专用目录，且不能是仓库所在目录。
+      let workspaceOk = false;
+      let workspaceDetail = "缺少 --workspace";
+      if (typeof workspacePath === "string" && workspacePath !== "") {
+        try {
+          const info = await stat(workspacePath);
+          const repo = process.cwd();
+          workspaceOk = info.isDirectory() && !workspacePath.startsWith(repo);
+          workspaceDetail = workspaceOk ? "" : `不是目录，或位于仓库内（${repo}）`;
+        } catch {
+          workspaceDetail = `目录不存在：${workspacePath}`;
+        }
+      }
+      check("--deep 提供了可用的专用测试工作区", workspaceOk, workspaceDetail);
+
+      if (workspaceOk && typeof workspacePath === "string") {
+        // 干净起点：上一次跑留下的同名文件会变成「已存在」而不是「新建」，语义不同。
+        await rm(filePath, { force: true }).catch(() => {});
+        check("测试文件在开始前不存在（保证是新建语义）", !(await exists(filePath)), filePath);
+        // 打开该工作区 → 新建会话
+        const workspaceTitle = basename(workspacePath);
+        const created = await cdp.evaluate(`(() => {
+          const row = [...document.querySelectorAll('[data-row-key^="workspace:"]')].find((r) => (r.textContent || "").includes(${JSON.stringify(workspaceTitle)}));
+          if (!row) return "no-workspace";
+          const btn = [...row.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("新建会话"));
+          if (!btn) return "no-new-session-button";
+          btn.click();
+          return "clicked";
+        })()`);
+        check("在测试工作区新建会话", created === "clicked", created);
+        await sleep(1800);
+
+        const typed = await typeIntoComposer(cdp, prompt);
+        await sleep(300);
+        const sent = await clickSend(cdp);
+        check(
+          "发送「创建测试文件」的请求",
+          typed !== false && sent === true,
+          JSON.stringify({ typed, sent }),
+        );
+
+        const finished = await waitForTurnEnd(cdp, 180000);
+        let fileBody = "";
+        try {
+          fileBody = (await readFile(filePath, "utf8")).trim();
+        } catch {
+          fileBody = "";
+        }
+        check(
+          "agent 确实用 write 创建了测试文件",
+          finished && fileBody === content,
+          JSON.stringify({ finished, fileBody: fileBody.slice(0, 40) }),
+        );
+
+        // 点这条用户消息的 ↶ → 确认框（文件模式应该可用）
+        const opened = await cdp.evaluate(`(() => {
+          const row = document.querySelector('[data-chat-flow-kind="user"]');
+          if (!row) return "no-user-row";
+          const btn = [...row.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("回退到此处"));
+          if (!btn) return "no-rewind-button";
+          btn.click();
+          return "clicked";
+        })()`);
+        await sleep(2200);
+        const deepConfirm = await dialogInfo(cdp);
+        const bothReady = await cdp.evaluate(`(() => {
+          const radio = document.querySelector('.dsh-srw-dialog input[type="radio"][value="both"]');
+          return radio ? !radio.disabled : false;
+        })()`);
+        check(
+          "文件模式在确认框里可用（有文件变更）",
+          opened === "clicked" && bothReady === true,
+          JSON.stringify({ opened, bothReady }),
+        );
+        check(
+          "确认框预览写明文件动作",
+          typeof deepConfirm?.text === "string" &&
+            /将还原|还原 \d|移入回收站|Restore/u.test(deepConfirm.text),
+          (deepConfirm?.text ?? "").slice(0, 200),
+        );
+
+        // 选「对话+文件」并执行
+        await cdp.evaluate(`(() => {
+          const radio = document.querySelector('.dsh-srw-dialog input[type="radio"][value="both"]');
+          if (radio && !radio.disabled) radio.click();
+        })()`);
+        await sleep(400);
+        const confirmed = await clickDialogButton(cdp, ["开始回退", "Rewind"]);
+        let dialogGone = false;
+        for (let i = 0; i < 40; i += 1) {
+          await sleep(500);
+          if ((await dialogInfo(cdp)) === null) {
+            dialogGone = true;
+            break;
+          }
+        }
+        let afterBody = "exists";
+        try {
+          await stat(filePath);
+        } catch {
+          afterBody = "";
+        }
+        check(
+          "确认后对话框关闭",
+          confirmed && dialogGone,
+          JSON.stringify({ confirmed, dialogGone }),
+        );
+        check(
+          "文件被移入插件回收站（工作区里已不存在）",
+          afterBody === "",
+          afterBody === "" ? "" : "文件仍在",
+        );
+
+        const toast = await cdp.evaluate(
+          `(() => { const el = document.querySelector(".dsh-srw-toast"); return el ? (el.textContent || "").trim() : ""; })()`,
+        );
+        check(
+          "toast 报告撤回与文件结果",
+          /回退|Rewound/u.test(toast) && /回收站|trash/u.test(toast),
+          toast.slice(0, 160),
+        );
+        const refilled = await composerText(cdp);
+        check(
+          "输入框回填被撤回的消息文本",
+          refilled.trim().length > 0 && refilled.includes("rewind-desktop-smoke"),
+          refilled.slice(0, 80),
+        );
+
+        // 清掉回填的草稿，避免影响后续面板操作
+        await cdp.evaluate(`(() => {
+          const el = document.querySelector("[data-composer-input]");
+          if (!el) return;
+          el.focus();
+          const sel = document.getSelection();
+          if (!sel) return;
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          sel.removeAllRanges();
+          sel.addRange(range);
+          document.execCommand("delete", false);
+        })()`);
+
+        // 救援点恢复：面板 → 救援点 → 恢复 → 确认
+        await cdp.evaluate(`(() => {
+          const btn = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("回溯面板"));
+          if (btn) btn.click();
+        })()`);
+        await sleep(900);
+        await openDrawerTab(cdp, "救援点");
+        await sleep(1200);
+        const restoreClicked = await cdp.evaluate(`(() => {
+          const root = document.querySelector(".dsh-srw-drawer");
+          if (!root) return "no-drawer";
+          const btn = [...root.querySelectorAll("button")].find((b) => /恢复这些文件|Restore/u.test((b.textContent || "").trim()));
+          if (!btn) return "no-restore-button";
+          btn.click();
+          return "clicked";
+        })()`);
+        await sleep(900);
+        const restoreConfirmed = await cdp.evaluate(`(() => {
+          const root = document.querySelector(".dsh-srw-drawer");
+          if (!root) return "no-drawer";
+          const btn = [...root.querySelectorAll("button")].find((b) => /恢复这些文件|Restore/u.test((b.textContent || "").trim()));
+          if (!btn) return "no-confirm-button";
+          btn.click();
+          return "clicked";
+        })()`);
+        await sleep(2200);
+        let restored = "";
+        try {
+          restored = (await readFile(filePath, "utf8")).trim();
+        } catch {
+          restored = "";
+        }
+        check(
+          "从救援点恢复后文件内容回到工作区",
+          (restoreClicked === "clicked" || restoreConfirmed === "clicked") && restored === content,
+          JSON.stringify({ restoreClicked, restoreConfirmed, restored: restored.slice(0, 40) }),
+        );
+        await cdp.screenshot(join(SHOTS, "05-deep-restored.png"));
+
+        // 时间线里应出现一条「文件恢复」节点
+        await openDrawerTab(cdp, "回溯记录");
+        await sleep(1200);
+        const timelineKinds = await cdp.evaluate(`(() => {
+          const root = document.querySelector(".dsh-srw-timeline");
+          return root ? [...root.querySelectorAll(".dsh-srw-tl-node")].map((n) => n.getAttribute("data-kind")) : null;
+        })()`);
+        check(
+          "时间线里出现文件恢复节点",
+          Array.isArray(timelineKinds) && timelineKinds.includes("rescue-restore"),
+          JSON.stringify(timelineKinds),
+        );
+        await cdp.evaluate(`(() => {
+          const root = document.querySelector(".dsh-srw-drawer");
+          const btn = root ? [...root.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === "关闭") : null;
+          if (btn) btn.click();
+        })()`);
+        await sleep(400);
+        // 收尾：删掉测试文件，别把垃圾留在工作区。
+        await rm(filePath, { force: true }).catch(() => {});
+        check("测试文件已清理", !(await exists(filePath)), filePath);
+      }
     }
   } catch (error) {
     check("桌面回归执行", false, error instanceof Error ? error.message : String(error));
