@@ -117,10 +117,21 @@ pnpm smoke:session-rewind-desktop
 `--require` 则判为 FAIL（exit 1）——避免「没跑也说通过」。
 
 ```bash
-pnpm smoke:session-rewind-desktop -- --require   # 发版前必须 PASS
+pnpm smoke:session-rewind-desktop -- --require                       # 发版前必须 PASS（只读 21 项）
+pnpm smoke:session-rewind-desktop -- --require --deep \
+  --workspace ~/Workspace/dsh-rewind-ui-smoke                        # 加上文件模式 e2e（共 33 项）
 ```
 
-15 项断言：
+**`--deep`：文件模式端到端（真机、真模型）。** 它会：在给定测试工作区**新建会话** → 发一次模型
+请求让 agent 用 `write` 创建 `rewind-desktop-smoke.txt` → 点该消息 ↶ → 确认「对话+文件」→ 断言
+文件进回收站、toast 与输入框回填 → 面板「救援点」恢复 → 断言文件内容回到工作区 → 断言时间线
+出现 `rescue-restore` 节点。
+
+安全闸：**必须**用 `--workspace` 显式给一个已存在、且不在本仓库内的目录，否则该项 FAIL 并跳过
+后续步骤。它只读写该目录里的那一个测试文件名，但会消耗一次模型额度，并在侧栏留下一个测试会话
+（需要时手动删掉）。
+
+21 项只读断言：
 
 | #     | 断言                                                               |
 | ----- | ------------------------------------------------------------------ |
