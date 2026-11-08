@@ -408,11 +408,28 @@ await shot("08-after-switch");
 // 4) /rewind 命令 + 候选搜索 + 设置偏好（放在最后，避免影响主链路）
 const candidateRows = (await sessionRows()).filter((key) => key !== picked.rowKey);
 let commandSession = null;
-for (const rowKey of candidateRows.slice(0, 6)) {
+// 不假设「前 6 个会话里一定有空草稿」：临时 home 是从真实 profile 复制的，会话数量和草稿
+// 状态都会随使用变化。这里遍历全部会话，必要时先把草稿清空再按 Esc。
+for (const rowKey of candidateRows) {
   await openSession(rowKey);
   await page.waitForTimeout(700);
   const composer = await composerText();
-  if (composer.trim() !== "") continue;
+  if (composer.trim() !== "") {
+    const cleared = await page.evaluate(() => {
+      const el = document.querySelector("[data-composer-input]");
+      if (!el) return false;
+      el.focus();
+      const sel = document.getSelection();
+      if (!sel) return false;
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      return document.execCommand("delete", false) === true;
+    });
+    if (!cleared) continue;
+    await page.waitForTimeout(200);
+  }
   await page.evaluate(() => {
     const el = document.querySelector("[data-composer-input]");
     if (el && typeof el.focus === "function") el.focus();

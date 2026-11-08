@@ -8,7 +8,7 @@
 
 非官方插件，与 DeepSeek 无关。面向 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness)。
 
-> **状态：早期。** 已在 DSH 0.2.2-rc.1 上端到端验证：一次性 DSH 目录里 34 项 GUI 断言 + 185 个单测 + CDP 驱动的桌面版实测（冲突拒绝、对话+文件回退、新建文件进回收站、修改文件还原、救援点恢复、面板/审计/诊断）。插件还年轻，重要数据请自行备份。
+> **状态：早期。** 已在 DSH 0.2.2-rc.1 上端到端验证：185 个单测、一次性 DSH 目录里 34 项 GUI 断言、以及**真实桌面版 36 项断言**（只读界面 + 文件模式：新建文件进回收站、修改文件还原、救援点恢复、时间线）。`pnpm gate:session-rewind` 一条命令跑完发版门禁。插件还年轻，重要数据请自行备份。
 
 ## 它做什么
 
@@ -105,9 +105,9 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-session-rewind-*.tgz
 
 ## 兼容性
 
-| DSH 版本   | 状态                                                                                              |
-| ---------- | ------------------------------------------------------------------------------------------------- |
-| 0.2.2-rc.1 | 已验证：`pnpm smoke:session-rewind` 34/34 + 185 个单测 + CDP 驱动的桌面版实测（仅对话与文件模式） |
+| DSH 版本   | 状态                                                                                     |
+| ---------- | ---------------------------------------------------------------------------------------- |
+| 0.2.2-rc.1 | 已验证：185 个单测 + `smoke:session-rewind` 34/34 + 桌面版 36/36（`--deep`，含文件模式） |
 
 插件不声明 `engines.dsh`，也不声明 `@deepseek-ai/*` 的 peer 范围：DSH 还在预发布阶段，预发布版本的 semver 范围不可靠（见 [ADR 0005](../../docs/adr/0005-dsh-version-compatibility.md)）。以这张表为准。DSH 升级后跑 `pnpm probe:runtime`、`pnpm smoke:session-rewind`，并看插件诊断页签；私有 seam 变了会降级而不是让会话出错。
 
