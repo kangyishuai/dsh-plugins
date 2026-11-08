@@ -2,7 +2,7 @@
 
 面向在本仓库开发 DSH 插件的人和 AI agent。这里只写**稳定的工程约定**；跟具体 DSH 版本绑定的勘察结果（可用的 slot、`ctx` 服务、磁盘布局、已知的坑）放在 [`docs/runtime/`](runtime/)：
 
-- 当前目标运行时：[DSH 0.2.1-rc.5](runtime/0.2.1-rc.5.md)
+- 当前目标运行时：[DSH 0.2.2-rc.1](runtime/0.2.2-rc.1.md)（旧版本记录保留在同目录）
 
 重要决策的来龙去脉记在 [`docs/adr/`](adr/)。
 
@@ -90,7 +90,18 @@ packages/<name>/
 
 ---
 
-## 5. 测试与验证
+## 5. 文档与验证
+
+`pnpm check:docs`（CI 与 `pnpm verify` 都跑）拦「代码改了、文档没跟上」这类漂移：
+
+- 文档里的「目标运行时 / 当前目标运行时」与根 README 徽章，必须等于 `docs/runtime/` 里**最新**的版本；
+- 插件 README 的状态行**不要写死版本号**（换成不依赖版本的措辞，否则每次发版都会漂）；
+- `docs/adr/` 里每个 ADR 必须在 `docs/adr/README.md` 索引里；
+- `docs/runtime/<版本>.md` 必须被至少一处文档引用。
+
+升级 DSH 时：新建 `docs/runtime/<新版本>.md`，再把上面几处「当前版本」指向它——漏了任何一处，`pnpm check:docs` 会直接报出来。
+
+## 6. 测试与验证
 
 1. 单元测试：`node --test`，放在 `packages/<name>/test/`。文件系统相关逻辑一律在 `mkdtemp` 临时目录里测。
 2. `pnpm verify`：lint + 类型检查 + 规范检查 + 测试。
