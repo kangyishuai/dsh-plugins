@@ -58,6 +58,23 @@ pnpm gate:session-rewind -- --deep --workspace ~/Workspace/dsh-rewind-ui-smoke
 
 只有显式 `--skip-desktop` 才跳过桌面端，且结束时会明确打印「门禁不完整」。
 
+## 1.6 README 效果图（改了界面才需要重跑）
+
+```bash
+pnpm shots:session-rewind
+```
+
+在临时 `DSH_HOME` 里只放**一个合成工作区 + 一个合成会话**（`/tmp/atlas-shots-workspace`、假想项目
+atlas 的对话），装当前源码打的包，启动真实宿主后用 ego-browser 打开会话，截「确认框 / 面板」，
+再按 DOM 矩形裁剪成 `packages/session-rewind/assets/*.png`。
+
+隐私边界（因为图片没法像文本那样被 `check:public` 扫描）：
+
+- 临时 home 里不放任何真实会话，侧栏只有合成工作区；
+- 截图按矩形裁剪，账号区、其它工作区、真实路径都不在画面里；
+- 脚本会把**裁剪矩形内的可见文本** dump 到 stdout，便于程序化核对（本次核对结果：只出现合成句子，
+  唯一命中「token」的是插件自己的「约 50 token」文案）。
+
 ## 2. 端到端 GUI 冒烟（每次提交，改客户端后必跑）
 
 ```bash

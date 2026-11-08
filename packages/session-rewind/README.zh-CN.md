@@ -35,6 +35,14 @@
 
 这个工具不回溯、不碰文件、不写会话日志——真正的回退始终由用户在界面确认（这是 ADR 0006 的设计前提）。设 `readOnlyTool: false` 可关闭；**设置 → 诊断**里能看到它是否注册成功。
 
+## 长什么样
+
+![回溯确认框：目标消息、将撤回多少条消息与 token、仅对话 vs 对话+文件、以及重发选项](./assets/session-rewind-confirm.png)
+
+![回溯面板：已撤回、回溯记录、救援点、设置](./assets/session-rewind-panel.png)
+
+两张图都来自一个只含**合成工作区与合成会话**的临时 DSH 目录（`pnpm shots:session-rewind` 可重新生成），并且按 DOM 矩形裁剪到对话框/面板本身。
+
 ## 安装
 
 ```bash
