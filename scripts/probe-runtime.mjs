@@ -100,6 +100,97 @@ const API_CHECKS = [
   },
 ];
 
+/**
+ * 本仓库插件实际依赖的**私有 seam**（不是公开 API，随时可能变）。
+ * 每条都写清「如果它没了，哪个功能会坏」——升级时先看这里。
+ */
+const SEAM_CHECKS = [
+  {
+    file: "@deepseek-ai/dsh-client-ui-conversation/lib/client.js",
+    name: "uiConversation.views（target/create 可替换）",
+    pattern: /entries\s*\(\)/u,
+    breaks: "回溯后把被撤回的行从对话里隐藏（只剩日志层面撤回）",
+  },
+  {
+    file: "@deepseek-ai/dsh-client-ui-conversation/lib/client.js",
+    name: "uiConversation.views.subscribe",
+    pattern: /subscribe\s*[(:]/u,
+    breaks: "视图定义变化后重新接管（新开会话时隐藏可能失效）",
+  },
+  {
+    file: "@deepseek-ai/dsh-client-ui-chat/lib/client.js",
+    name: "chat builder 支持 visibility 字段",
+    pattern: /visibility/u,
+    breaks: "被撤回行的隐藏渲染（模型上下文仍然正确，但界面会照常显示）",
+  },
+  {
+    file: "@deepseek-ai/dsh-client-ui-chat/lib/client.js",
+    name: "消息行 extraActions 槽位（↶ 按钮注入点）",
+    pattern: /extraActions/u,
+    breaks: "每条用户消息旁的 ↶ 按钮",
+  },
+  {
+    file: "@deepseek-ai/dsh-client-ui-chat/lib/client.js",
+    name: 'conversation.chat.node 以 key: "user" 注册（按 user 行接管）',
+    pattern: /conversation\.chat\.node[\s\S]{0,200}key:\s*"user"/u,
+    breaks: "↶ 按钮注入（接管不到 user 行构造）",
+  },
+  {
+    file: "@deepseek-ai/dsh-client-ui-conversation/lib/client.js",
+    name: "conversation.input.for(actx) facade",
+    pattern: /for\s*\(\s*actx\s*\)/u,
+    breaks: "回溯后回填输入框 / 回退后立即重发",
+  },
+  {
+    file: "@deepseek-ai/dsh-client-ui-conversation/lib/client.js",
+    name: "输入框 setDraft + submit('queue')",
+    pattern: /setDraft\s*\(/u,
+    breaks: "回填草稿与一键重发",
+  },
+  {
+    file: "@deepseek-ai/dsh-client-ui-conversation/lib/client.js",
+    name: "输入框附件通道（addAttachments / createDrafts）",
+    pattern: /addAttachments/u,
+    breaks: "回溯后被撤回消息里的图片重新挂回输入框",
+  },
+  {
+    file: "@deepseek-ai/dsh-client-shortcuts/lib/client.js",
+    name: "shortcuts.registerFixed（Esc Esc 固定快捷键）",
+    pattern: /registerFixed/u,
+    breaks: "Esc Esc 打开回溯对话框（↶ 按钮与 /rewind 仍在）",
+  },
+  {
+    file: "@deepseek-ai/dsh-client-shortcuts/lib/client.js",
+    name: "shortcuts.observeFixedInput（判断是否空闲）",
+    pattern: /observeFixedInput/u,
+    breaks: "Esc Esc 只在空闲会话生效（可能抢内置停止）",
+  },
+  {
+    file: "@deepseek-ai/dsh-tools/lib/index.js",
+    name: "tools.register(definition)（插件注册 agent 工具）",
+    pattern: /register\(definition/u,
+    breaks: "只读工具 session_rewind_candidates",
+  },
+  {
+    file: "@deepseek-ai/dsh-tools/lib/index.js",
+    name: "受支持的 JSON Schema 子集校验（assertSupportedJsonSchema）",
+    pattern: /assertSupportedJsonSchema/u,
+    breaks: "只读工具的 schema 是否被接受（子集变了会静默不注册）",
+  },
+  {
+    file: "@deepseek-ai/dsh-agent-loop/lib/index.js",
+    name: "Agent.cancel(cause, {keepInbox}) + whenIdle()",
+    pattern: /keepInbox[\s\S]{0,400}whenIdle|whenIdle[\s\S]{0,400}keepInbox/u,
+    breaks: "运行中回合的回溯（会退回「先停止再回溯」）",
+  },
+  {
+    file: "@deepseek-ai/dsh-agent-loop/lib/index.js",
+    name: "agent.inbox.nextStep / remove（丢弃未投递插话）",
+    pattern: /get nextStep\(\)[\s\S]{0,800}remove\(messageId\)|remove\(messageId\)/u,
+    breaks: "回溯时清理排队中的插话消息",
+  },
+];
+
 /** slot 名字通过扫描 client 包确认（客户端 bundle 里以字符串出现）。 */
 const SLOT_CHECKS = [
   { slot: "sidebar.workspaces.session.menu.item", purpose: "会话「…」菜单" },
@@ -222,6 +313,22 @@ const main = async () => {
     );
   }
 
+  // 3.5) 私有 seam（按功能影响分组报告）
+  for (const check of SEAM_CHECKS) {
+    const path = `/dsh/node_modules/${check.file}`;
+    const buffer = await asar.read(path);
+    if (!buffer) {
+      push("FAIL", `seam ${check.name}`, `文件不存在：${check.file}｜影响：${check.breaks}`);
+      continue;
+    }
+    const ok = check.pattern.test(buffer.toString("utf8"));
+    push(
+      ok ? "PASS" : "FAIL",
+      `seam ${check.name}`,
+      ok ? "" : `源码里没有匹配到特征｜影响：${check.breaks}`,
+    );
+  }
+
   // 4) slot：扫描所有 client 包的 lib/*.js
   const clientFiles = [...asar.files.keys()].filter((path) =>
     /^\/dsh\/node_modules\/@deepseek-ai\/dsh-client-[^/]+\/lib\/[^/]+\.js$/u.test(path),
@@ -264,6 +371,16 @@ const main = async () => {
     }
     const failed = results.filter((item) => item.kind === "FAIL").length;
     const warned = results.filter((item) => item.kind === "WARN").length;
+    if (failed > 0) {
+      console.log("");
+      console.log("升级影响（按功能）：");
+      for (const item of results) {
+        if (item.kind !== "FAIL") continue;
+        console.log(`  - ${item.name}`);
+      }
+      console.log("  上面每一项都对应本仓库插件的一条依赖；FAIL 不等于插件立刻崩，");
+      console.log("  多数会走「能力探测 → 降级」，但对应功能会静默消失，请读 README 的兼容性表。");
+    }
     console.log("");
     console.log(
       "合计 " +
