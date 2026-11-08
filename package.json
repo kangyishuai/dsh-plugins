@@ -24,7 +24,7 @@
     "format": "biome check --write .",
     "typecheck": "tsc -p .",
     "test": "node --test \"scripts/test/**/*.test.js\" && pnpm -r --if-present test",
-    "verify": "pnpm lint && pnpm typecheck && pnpm check && pnpm check:public && pnpm test",
+    "verify": "pnpm lint && pnpm typecheck && pnpm check && pnpm check:docs && pnpm check:public && pnpm test",
     "changeset": "changeset",
     "version-packages": "changeset version && pnpm install --lockfile-only",
     "release": "pnpm verify && node scripts/publish.mjs",
@@ -38,7 +38,8 @@
     "gate": "node scripts/gate.mjs",
     "gate:session-rewind": "node scripts/gate.mjs session-rewind",
     "gate:session-delete": "node scripts/gate.mjs session-delete",
-    "smoke:session-delete-desktop": "node scripts/smoke-session-delete-desktop.mjs"
+    "smoke:session-delete-desktop": "node scripts/smoke-session-delete-desktop.mjs",
+    "check:docs": "node scripts/check-docs.mjs"
   },
   "simple-git-hooks": {
     "pre-commit": "pnpm exec lint-staged && node scripts/check-public.mjs",

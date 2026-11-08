@@ -8,7 +8,7 @@
 
 Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). Not affiliated with DeepSeek.
 
-> **Status: v0.4.2, early.** Verified on DSH 0.2.2-rc.1 with `pnpm smoke:session-delete` (24 end-to-end assertions) plus a check of the plugin status in the desktop GUI. Treat it as young software and keep backups of anything you cannot lose.
+> **Status: early.** Verified on DSH 0.2.2-rc.1 with `pnpm smoke:session-delete` (24 end-to-end assertions plus a read-only desktop pass) and `pnpm probe:runtime`. `pnpm gate session-delete` runs the whole release gate in one command. Treat it as young software and keep backups of anything you cannot lose.
 
 
 ![Delete confirmation with the plan: size, sub-sessions, references to clean](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/overview.png)

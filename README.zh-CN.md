@@ -8,7 +8,7 @@
 <p align="center">
   <a href="https://github.com/kangyishuai/dsh-plugins/actions/workflows/ci.yml"><img src="https://github.com/kangyishuai/dsh-plugins/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://www.npmjs.com/search?q=%40kangyishuai%2Fdsh-"><img src="https://img.shields.io/badge/npm-%40kangyishuai-cb3837?logo=npm" alt="npm scope"></a>
-  <a href="docs/runtime/0.2.1-rc.5.md"><img src="https://img.shields.io/badge/verified%20on%20DSH-0.2.1--rc.5-4b6bfb" alt="Verified on DSH 0.2.1-rc.5"></a>
+  <a href="docs/runtime/0.2.2-rc.1.md"><img src="https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.1-4b6bfb" alt="Verified on DSH 0.2.2-rc.1"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
 </p>
 
