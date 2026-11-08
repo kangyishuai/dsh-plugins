@@ -29,6 +29,7 @@ import {
 } from "./operations.js";
 import { findOrphans, pruneOrphans } from "./orphans.js";
 import { cutsOf, hasOpenToolCalls, listCandidatesPage, targetContent } from "./plan.js";
+import { describeToolImpact, installRewindTool, listToolCandidates } from "./tool.js";
 
 /**
  * 在 decorator 语法不可用（V8 装饰器关闭）的运行时里登记一个 Remote 方法。
@@ -162,6 +163,18 @@ export class SessionRewindService extends TypertRemoteService {
     this._store = null;
     this.installFileTracking();
     this.installCommand();
+    // 只读 agent 工具：让模型自己看清候选与影响面（绝不执行回溯）。
+    this.readOnlyToolInstalled = false;
+    if (this.config.readOnlyTool !== false) {
+      installRewindTool({
+        ctx: this.ctx,
+        logger: this.ctx?.logger ?? console,
+        host: { call: (sessionId, request) => this.toolPayload(sessionId, request) },
+        onInstalled: () => {
+          this.readOnlyToolInstalled = true;
+        },
+      });
+    }
     // 启动时清一次已删除会话的残留数据（失败只告警，不阻塞插件）。
     if (this.config.cleanupOrphans !== false) void this.cleanupOrphans();
   }
@@ -395,6 +408,58 @@ export class SessionRewindService extends TypertRemoteService {
       return { sessionId, candidates, nextCursor: page.nextCursor };
     } catch (error) {
       rethrowRemote(error);
+    }
+  }
+
+  /**
+   * 只读工具的数据面：候选列表 / 单条影响面。绝不写日志。
+   * @param {string} sessionId
+   * @param {{query?: string, limit?: number, targetSeq?: number}} [request]
+   * @returns {Promise<any>}
+   */
+  async toolPayload(sessionId, request) {
+    try {
+      const deps = this.deps();
+      const { session } = sessionEvents(deps, sessionId);
+      const events = session.snapshotEvents();
+      const nodes = Array.isArray(session.surface?.nodes) ? session.surface.nodes : [];
+      if (typeof request?.targetSeq === "number") {
+        const impact = describeToolImpact(events, nodes, request.targetSeq);
+        if (impact.ok !== true)
+          return { ok: true, value: { kind: "error", session_id: sessionId, error: impact.error } };
+        return {
+          ok: true,
+          value: {
+            kind: "impact",
+            session_id: sessionId,
+            impact: {
+              target_seq: impact.targetSeq,
+              removed_messages: impact.removedCount,
+              crosses_open_tool_call: impact.crossesOpenToolCall,
+              text: impact.text,
+            },
+          },
+        };
+      }
+      const listed = listToolCandidates(events, nodes, {
+        ...(typeof request?.query === "string" ? { query: request.query } : {}),
+        ...(typeof request?.limit === "number" ? { limit: request.limit } : {}),
+      });
+      return {
+        ok: true,
+        value: {
+          kind: "list",
+          session_id: sessionId,
+          total: listed.total,
+          candidates: listed.items.map((item) => ({
+            seq: item.seq,
+            ...(typeof item.time === "number" ? { time: item.time } : {}),
+            preview: item.preview,
+          })),
+        },
+      };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
 
@@ -837,6 +902,15 @@ export class SessionRewindService extends TypertRemoteService {
     } catch (error) {
       push("审计日志", false, error instanceof Error ? error.message : String(error));
     }
+    push(
+      "只读工具",
+      this.config.readOnlyTool === false ? true : this.readOnlyToolInstalled === true,
+      this.config.readOnlyTool === false
+        ? "disabled by config"
+        : this.readOnlyToolInstalled === true
+          ? "enabled"
+          : "not registered",
+    );
     try {
       const orphans = await findOrphans({ dataRoot: this.dataRoot });
       const count = orphans.sessionIds.length + orphans.trashIds.length + orphans.rescueIds.length;

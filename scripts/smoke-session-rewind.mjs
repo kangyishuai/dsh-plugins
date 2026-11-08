@@ -469,7 +469,20 @@ await page.evaluate(() => {
   const tab = [...document.querySelectorAll(".dsh-srw-tab")].find((t) => (t.textContent || "").trim() === "设置");
   if (tab) tab.click();
 });
-await page.waitForTimeout(1000);
+await page.waitForTimeout(1400);
+const healthText = await page.evaluate(async () => {
+  const drawer = document.querySelector(".dsh-srw-drawer");
+  if (!drawer) return "";
+  const refresh = [...drawer.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === "刷新");
+  if (refresh) refresh.click();
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  return (drawer.textContent || "").replace(/s+/g, " ");
+});
+check(
+  "诊断页报告只读工具已注册",
+  /只读工具/u.test(healthText) && /enabled|disabled by config/u.test(healthText),
+  healthText.slice(0, 400),
+);
 const changed = await page.evaluate(() => {
   const drawer = document.querySelector(".dsh-srw-drawer");
   if (!drawer) return "no-drawer";
