@@ -37,11 +37,13 @@
 
 ## 长什么样
 
-![回溯确认框：目标消息、将撤回多少条消息与 token、仅对话 vs 对话+文件、以及重发选项](./assets/session-rewind-confirm.png)
+![回溯确认框：目标消息、将撤回多少条消息与 token、仅对话 vs 对话+文件、以及重发选项](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-rewind/assets/session-rewind-confirm.png)
 
-![回溯面板：已撤回、回溯记录、救援点、设置](./assets/session-rewind-panel.png)
+![回溯面板：已撤回、回溯记录、救援点、设置](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-rewind/assets/session-rewind-panel.png)
 
 两张图都来自一个只含**合成工作区与合成会话**的临时 DSH 目录（`pnpm shots:session-rewind` 可重新生成），并且按 DOM 矩形裁剪到对话框/面板本身。
+
+> 图片用绝对地址（`raw.githubusercontent.com`）而不是相对路径：npm 的 tarball 不含 `assets/`，相对路径在 npmjs.com 上会是破图。
 
 ## 安装
 

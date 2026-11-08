@@ -37,11 +37,13 @@ The tool never rewinds, never edits files and never appends to the session log â
 
 ## What it looks like
 
-![The rewind confirmation dialog: target message, how many messages and tokens will be withdrawn, conversation-only vs conversation-and-files, and the resend option](./assets/session-rewind-confirm.png)
+![The rewind confirmation dialog: target message, how many messages and tokens will be withdrawn, conversation-only vs conversation-and-files, and the resend option](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-rewind/assets/session-rewind-confirm.png)
 
-![The rewind panel: withdrawn messages, history timeline, rescue points and settings](./assets/session-rewind-panel.png)
+![The rewind panel: withdrawn messages, history timeline, rescue points and settings](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-rewind/assets/session-rewind-panel.png)
 
 Both screenshots come from a throwaway DSH home containing only a synthetic workspace and session (`pnpm shots:session-rewind` regenerates them), cropped to the dialog and the panel.
+
+> Image links are absolute (`raw.githubusercontent.com`) on purpose: npm does not ship `assets/` in the tarball, so a relative path would render as a broken image on npmjs.com.
 
 ## Install
 
