@@ -72,6 +72,20 @@ window.__ModuleLoader__.load({
       "confirm.resendHint":
         "适合「重试这一轮」：回退后自动把原文发出去，想改内容就在输入框里编辑后再发。",
       "confirm.openToolCall": "目标之后有未完成的工具调用，回溯会截断它",
+      "confirm.stateChanges": "这段区间里改过会话状态：{list}；回溯只撤回对话，不会回滚这些状态",
+      "confirm.stateHint": "如需一并回退 plan/goal/待办等状态，请手动调整。",
+      "state.planMode": "计划模式",
+      "state.goal": "目标（goal）",
+      "state.todo": "待办清单",
+      "state.model": "模型选择",
+      "state.permission": "权限预设",
+      "state.sandbox": "沙箱模式",
+      "state.agentPreset": "智能体预设",
+      "state.schedule": "定时任务",
+      "state.workingDirectory": "工作目录",
+      "state.separator": "、",
+      "timeline.kindRescue": "文件恢复",
+      "timeline.rescueMeta": "从救援点恢复 {restored} 个文件 · {id}",
       "toast.done": "已回退到此处，原消息已放回输入框",
       "toast.draft": "已回退；输入框已有内容，未覆盖",
       "toast.noComposer": "已回退，但未找到输入框",
@@ -202,6 +216,21 @@ window.__ModuleLoader__.load({
       "confirm.resendHint":
         "Use this to retry a turn; to change the text, edit it in the composer instead.",
       "confirm.openToolCall": "An unfinished tool call follows the target; rewinding truncates it.",
+      "confirm.stateChanges":
+        "Session state changed inside this range: {list}. Rewinding only withdraws messages; these stay as they are.",
+      "confirm.stateHint": "Adjust plan/goal/todo state by hand if you need it rolled back too.",
+      "state.planMode": "plan mode",
+      "state.goal": "goal",
+      "state.todo": "todo list",
+      "state.model": "model selection",
+      "state.permission": "permission preset",
+      "state.sandbox": "sandbox mode",
+      "state.agentPreset": "agent preset",
+      "state.schedule": "scheduled task",
+      "state.workingDirectory": "working directory",
+      "state.separator": ", ",
+      "timeline.kindRescue": "File restore",
+      "timeline.rescueMeta": "Restored {restored} file(s) from rescue {id}",
       "toast.stoppedTurn": ", and the running turn was stopped",
       "toast.resent": ", and the message was sent again",
       "toast.done": "Rewound. The original message is back in the composer.",
@@ -691,7 +720,25 @@ window.__ModuleLoader__.load({
      * @param {any} value
      * @returns {any}
      */
-    function normalizePreview(value) {
+    /** 会话状态变更提示（plan/goal/todo/模型…）。 @param {any} value */
+    function normalizeStateChanges(value) {
+      /** @type {any[]} */
+      let out = [];
+      let source = Array.isArray(value) ? value : [];
+      for (let i = 0; i < source.length; i += 1) {
+        let item = source[i];
+        if (!item || typeof item !== "object") continue;
+        if (typeof item.labelKey !== "string") continue;
+        out.push({
+          type: typeof item.type === "string" ? item.type : "",
+          labelKey: item.labelKey,
+          count: typeof item.count === "number" && item.count > 0 ? item.count : 1,
+        });
+      }
+      return out;
+    }
+
+    function normalizePreview(/** @type {any} */ value) {
       let source = value && typeof value === "object" ? value : {};
       let target = source.target && typeof source.target === "object" ? source.target : {};
       let chat = source.chat && typeof source.chat === "object" ? source.chat : {};
@@ -731,6 +778,7 @@ window.__ModuleLoader__.load({
           crossesOpenToolCall: chat.crossesOpenToolCall === true,
           reachable: chat.reachable !== false,
         },
+        stateChanges: normalizeStateChanges(source.stateChanges ?? chat.stateChanges),
         files: normalizeFiles(source.files),
         warnings: warnings,
       };
@@ -965,8 +1013,13 @@ window.__ModuleLoader__.load({
           : typeof entry.id === "number"
             ? String(entry.id)
             : "";
+      let action = typeof entry.action === "string" ? entry.action : "";
+      let kind =
+        action === "rescue-restore" ? "rescue-restore" : entry.mode === "both" ? "both" : "chat";
       return {
         id: id,
+        action: action,
+        kind: kind,
         time: typeof entry.time === "number" ? entry.time : null,
         targetSeq: typeof entry.targetSeq === "number" ? entry.targetSeq : null,
         markerSeq: typeof entry.markerSeq === "number" ? entry.markerSeq : null,
@@ -989,6 +1042,12 @@ window.__ModuleLoader__.load({
         if (entry.id === "") continue;
         out.push(entry);
       }
+      // 时间线按时间倒序（新在上）；缺时间戳的排最后。
+      out.sort((/** @type {any} */ left, /** @type {any} */ right) => {
+        let l = typeof left.time === "number" ? left.time : -1;
+        let r = typeof right.time === "number" ? right.time : -1;
+        return r - l;
+      });
       return out;
     }
 
@@ -1928,6 +1987,27 @@ window.__ModuleLoader__.load({
             h("div", { key: "tool", className: "dsh-srw-warn" }, t("confirm.openToolCall")),
           );
         }
+        // 区间里改过的会话状态：回溯只切模型上下文，不会回滚这些设置。
+        let stateChanges = Array.isArray(preview.stateChanges) ? preview.stateChanges : [];
+        if (stateChanges.length > 0) {
+          let labels = stateChanges
+            .map((/** @type {any} */ item) =>
+              item.count > 1 ? `${t(item.labelKey)} ×${item.count}` : t(item.labelKey),
+            )
+            .join(t("state.separator"));
+          blocks.push(
+            h(
+              "div",
+              { key: "state", className: "dsh-srw-warn", "data-rewind-state": "true" },
+              t("confirm.stateChanges", { list: labels }),
+            ),
+            h(
+              "div",
+              { key: "state-hint", className: "dsh-srw-option-hint" },
+              t("confirm.stateHint"),
+            ),
+          );
+        }
         blocks.push(
           h(ModePicker, {
             key: "modes",
@@ -2307,12 +2387,14 @@ window.__ModuleLoader__.load({
       if (data.entries.length === 0) {
         return h("div", { className: "dsh-srw-dim" }, t("audit.empty"));
       }
+      // 时间线：竖线 + 节点。回溯事件与「从救援点恢复文件」放在同一条轴上，按时间倒序。
       return h(
         "div",
-        { className: "dsh-srw-cuts" },
+        { className: "dsh-srw-timeline" },
         data.entries.map((/** @type {any} */ entry) => {
           let expanded = data.expanded && data.expanded[entry.id] === true;
           let files = entry.files;
+          let isRescueRestore = entry.kind === "rescue-restore";
           /** @type {any[]} */
           let pathGroups = [];
           if (files) {
@@ -2334,70 +2416,86 @@ window.__ModuleLoader__.load({
             (/** @type {any} */ sum, /** @type {any} */ group) => sum + group.paths.length,
             0,
           );
+          let badge = isRescueRestore ? t("timeline.kindRescue") : t(modeLabelKey(entry.mode));
+          let meta = isRescueRestore
+            ? t("timeline.rescueMeta", {
+                restored: files ? files.restored.length : 0,
+                id: entry.rescueId || "",
+              })
+            : t("audit.meta", {
+                mode: t(modeLabelKey(entry.mode)),
+                n: entry.removedCount,
+                tokens: formatCount(entry.tokens),
+              });
           return h(
             "div",
-            { key: entry.id, className: "dsh-srw-cut" },
+            {
+              key: entry.id,
+              className: "dsh-srw-tl-node",
+              "data-kind": isRescueRestore ? "rescue-restore" : entry.mode,
+            },
+            h("span", { className: "dsh-srw-tl-dot", "aria-hidden": "true" }),
             h(
               "div",
-              { className: "dsh-srw-cut-head" },
-              h("span", { className: "dsh-srw-strong" }, formatDateTime(entry.time) || entry.id),
-              h("span", { className: "dsh-srw-badge" }, t(modeLabelKey(entry.mode))),
+              { className: "dsh-srw-tl-card" },
               h(
-                "span",
-                { className: "dsh-srw-time" },
-                t("audit.meta", {
-                  mode: t(modeLabelKey(entry.mode)),
-                  n: entry.removedCount,
-                  tokens: formatCount(entry.tokens),
-                }),
+                "div",
+                { className: "dsh-srw-tl-head" },
+                h("span", { className: "dsh-srw-strong" }, formatDateTime(entry.time) || entry.id),
+                h("span", { className: "dsh-srw-badge" }, badge),
               ),
-            ),
-            files
-              ? h(
-                  "div",
-                  { className: "dsh-srw-audit-files" },
-                  t("audit.files", {
-                    restored: files.restored.length,
-                    trashed: files.trashed.length,
-                    skipped: files.skipped.length,
-                    failed: files.failed.length,
-                  }),
-                )
-              : null,
-            files?.rescueId
-              ? h("div", { className: "dsh-srw-dim" }, t("audit.rescueId", { id: files.rescueId }))
-              : null,
-            h(
-              "div",
-              { className: "dsh-srw-item-actions dsh-srw-audit-actions" },
-              pathCount > 0
+              h("div", { className: "dsh-srw-time" }, meta),
+              files
                 ? h(
-                    LinkBtn,
-                    { onClick: () => api.toggleAuditPaths(entry.id) },
-                    expanded ? t("audit.pathsLess") : t("audit.paths", { n: pathCount }),
+                    "div",
+                    { className: "dsh-srw-audit-files" },
+                    t("audit.files", {
+                      restored: files.restored.length,
+                      trashed: files.trashed.length,
+                      skipped: files.skipped.length,
+                      failed: files.failed.length,
+                    }),
                   )
                 : null,
-              h(LinkBtn, { onClick: () => api.copyJson(entry) }, t("audit.copyJson")),
-            ),
-            expanded
-              ? h(
-                  "div",
-                  { className: "dsh-srw-paths" },
-                  pathGroups.map((/** @type {any} */ group) =>
-                    group.paths.map((/** @type {any} */ path) =>
-                      h(
-                        "div",
-                        {
-                          key: `${group.kind}:${path}`,
-                          className: "dsh-srw-path",
-                          "data-kind": group.kind,
-                        },
-                        h("span", { className: "dsh-srw-path-name", title: path }, path),
+              files?.rescueId
+                ? h(
+                    "div",
+                    { className: "dsh-srw-dim" },
+                    t("audit.rescueId", { id: files.rescueId }),
+                  )
+                : null,
+              h(
+                "div",
+                { className: "dsh-srw-item-actions dsh-srw-audit-actions" },
+                pathCount > 0
+                  ? h(
+                      LinkBtn,
+                      { onClick: () => api.toggleAuditPaths(entry.id) },
+                      expanded ? t("audit.pathsLess") : t("audit.paths", { n: pathCount }),
+                    )
+                  : null,
+                h(LinkBtn, { onClick: () => api.copyJson(entry) }, t("audit.copyJson")),
+              ),
+              expanded
+                ? h(
+                    "div",
+                    { className: "dsh-srw-paths" },
+                    pathGroups.map((/** @type {any} */ group) =>
+                      group.paths.map((/** @type {any} */ path) =>
+                        h(
+                          "div",
+                          {
+                            key: `${group.kind}:${path}`,
+                            className: "dsh-srw-path",
+                            "data-kind": group.kind,
+                          },
+                          h("span", { className: "dsh-srw-path-name", title: path }, path),
+                        ),
                       ),
                     ),
-                  ),
-                )
-              : null,
+                  )
+                : null,
+            ),
           );
         }),
       );
@@ -3004,6 +3102,16 @@ window.__ModuleLoader__.load({
           ".dsh-srw-tab[data-active=true]{color:var(--dsw-alias-label-primary,inherit);border-bottom-color:var(--dsw-alias-brand-primary,#4f7cff);}",
           ".dsh-srw-tab-body{display:flex;flex-direction:column;gap:10px;}",
           ".dsh-srw-cuts{display:flex;flex-direction:column;gap:12px;}",
+          // 时间线：竖线 + 圆点 + 卡片
+          ".dsh-srw-timeline{display:flex;flex-direction:column;gap:0;position:relative;}",
+          ".dsh-srw-tl-node{position:relative;display:flex;gap:12px;padding:0 0 14px 0;}",
+          ".dsh-srw-tl-node::before{content:'';position:absolute;left:5px;top:14px;bottom:0;width:1px;background:var(--dsw-alias-border-secondary,rgba(128,128,128,.35));}",
+          ".dsh-srw-tl-node:last-child{padding-bottom:0;}",
+          ".dsh-srw-tl-node:last-child::before{display:none;}",
+          ".dsh-srw-tl-dot{flex:none;width:11px;height:11px;margin-top:4px;border-radius:50%;background:var(--dsw-alias-brand-primary,#4f7cff);box-shadow:0 0 0 2px var(--dsw-alias-bg-primary,transparent);}",
+          ".dsh-srw-tl-node[data-kind='rescue-restore'] .dsh-srw-tl-dot{background:var(--dsw-alias-label-secondary,GrayText);}",
+          ".dsh-srw-tl-card{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1;}",
+          ".dsh-srw-tl-head{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;}",
           ".dsh-srw-cut{display:flex;flex-direction:column;gap:4px;}",
           ".dsh-srw-cut-head{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;}",
           ".dsh-srw-strong{font-weight:600;}",
@@ -4426,6 +4534,7 @@ window.__ModuleLoader__.load({
         normalizePathList: normalizePathList,
         normalizeFiles: normalizeFiles,
         normalizePreview: normalizePreview,
+        normalizeStateChanges: normalizeStateChanges,
         fileModeState: fileModeState,
         effectiveMode: effectiveMode,
         conflictPathsOf: conflictPathsOf,

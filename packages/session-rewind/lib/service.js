@@ -29,6 +29,7 @@ import {
 } from "./operations.js";
 import { findOrphans, pruneOrphans } from "./orphans.js";
 import { cutsOf, hasOpenToolCalls, listCandidatesPage, targetContent } from "./plan.js";
+import { stateChangeSummary } from "./state-changes.js";
 import { describeToolImpact, installRewindTool, listToolCandidates } from "./tool.js";
 
 /**
@@ -477,6 +478,8 @@ export class SessionRewindService extends TypertRemoteService {
       const tokens = this.estimateTokens(events, plan.shadowedSeqs);
       const target = targetContent(targetEvent);
       const subtitle = target.text.replace(/\s+/gu, " ").trim();
+      // 被撤回区间里改过的会话状态（plan/goal/todo/模型…）：回溯不会回滚它们，只提示。
+      const stateChanges = stateChangeSummary(events, plan.surfaceStart, plan.surfaceEnd);
       /** @type {any} */
       let files = {
         available: false,
@@ -541,7 +544,9 @@ export class SessionRewindService extends TypertRemoteService {
           tokens,
           crossesOpenToolCall: hasOpenToolCalls(events, plan.targetSeq),
           reachable: true,
+          stateChanges,
         },
+        stateChanges,
         files,
         warnings,
       };
@@ -852,6 +857,37 @@ export class SessionRewindService extends TypertRemoteService {
         throw new RewindRequestError(ERROR_CODES.rescueNotFound, "a rescue id is required");
       }
       const result = await this.store.restoreRescue({ sessionId, cwd, rescueId });
+      // 审计：时间线里要把「从救援点恢复文件」和回溯事件放在同一条轴上。
+      try {
+        await this.store.appendAudit({
+          version: 1,
+          action: "rescue-restore",
+          id:
+            typeof this.store.newAuditId === "function"
+              ? this.store.newAuditId()
+              : `rr-${Date.now()}`,
+          time: Date.now(),
+          sessionId,
+          rescueId,
+          mode: "files",
+          targetSeq: null,
+          markerSeq: null,
+          removedCount: null,
+          tokens: null,
+          files: {
+            restored: result.restored ?? [],
+            trashed: [],
+            skipped: [],
+            failed: result.failed ?? [],
+            rescueId: result.safetyRescueId ?? null,
+          },
+          requestedBy: "ui",
+        });
+      } catch (error) {
+        this.ctx?.logger?.warn?.(
+          `session-rewind: rescue-restore audit failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
       if (Array.isArray(result.failed) && result.failed.length > 0) {
         const error = new RewindRequestError(
           ERROR_CODES.filesFailed,
