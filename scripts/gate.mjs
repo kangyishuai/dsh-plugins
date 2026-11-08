@@ -44,6 +44,8 @@ const main = async () => {
       deep: { type: "boolean", default: false },
       workspace: { type: "string" },
       "skip-desktop": { type: "boolean", default: false },
+      // 只打印门禁步骤不执行：CI 用它检查「每个插件都有完整门禁」。
+      "dry-run": { type: "boolean", default: false },
     },
     allowPositionals: true,
   });
@@ -91,6 +93,27 @@ const main = async () => {
         optional: true,
       });
     }
+  }
+
+  if (values["dry-run"] === true) {
+    // 只校验结构：web 冒烟缺失算失败（桌面端允许缺失，因为不是每个插件都有 GUI 入口）。
+    let missing = 0;
+    let index = 0;
+    for (const stage of stages) {
+      index += 1;
+      const hasScript = stage.args.length > 0;
+      const isDesktop = String(stage.args[0] ?? "").endsWith("-desktop");
+      const mark = hasScript ? "ok  " : isDesktop ? "opt " : "MISS";
+      if (!hasScript && !isDesktop) missing += 1;
+      console.log(`${mark} [${index}/${stages.length}] ${stage.title}`);
+    }
+    if (missing > 0) {
+      console.error(`FAIL ${plugin}: 有 ${missing} 个必需门禁步骤没有对应脚本（见 MISS）`);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(`PASS ${plugin}: 门禁结构完整`);
+    return;
   }
 
   const started = Date.now();

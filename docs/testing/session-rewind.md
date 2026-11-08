@@ -59,6 +59,19 @@ pnpm gate session-rewind --deep --workspace ~/Workspace/dsh-rewind-ui-smoke
 
 只有显式 `--skip-desktop` 才跳过桌面端，且结束时会明确打印「门禁不完整」。
 
+## 1.55 CI 里跑什么（每次 PR）
+
+CI 无法跑 GUI（没有 ego-browser / 桌面版），所以只跑**确定性**的三件事：
+
+| CI job                   | 内容                                                                                        |
+| ------------------------ | ------------------------------------------------------------------------------------------- |
+| `verify`                 | biome + typecheck + 插件规范 + 公开边界 + 全部单测（node 22.19 / 24）                       |
+| `probe`                  | `pnpm probe:runtime`（没装 DSH 时脚本自己 SKIP）+ 每个插件的 `pnpm gate <plugin> --dry-run` |
+| `secrets` / `commitlint` | gitleaks 全历史、Conventional Commits                                                       |
+
+`--dry-run` 只检查「门禁结构完整」：每个插件必须有 verify / probe / web 冒烟三个必需步骤
+（桌面端允许缺失）。web 冒烟与桌面端仍在本地跑（`pnpm gate <plugin>`），因为需要真实宿主与浏览器。
+
 ## 1.6 README 效果图（改了界面才需要重跑）
 
 ```bash

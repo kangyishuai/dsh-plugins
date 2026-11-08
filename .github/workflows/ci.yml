@@ -35,6 +35,23 @@ jobs:
       - run: pnpm check:public
       - run: pnpm test
 
+  probe:
+    name: runtime probe (DSH surface)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # 没有安装 DSH 时探针会打印 SKIP 并以 0 退出（脚本自己判断），所以这里不做额外条件。
+      - run: pnpm probe:runtime
+      # 门禁结构检查：每个插件都必须有 verify/probe/web 冒烟三个必需步骤。
+      - run: pnpm gate session-rewind --dry-run
+      - run: pnpm gate session-delete --dry-run
+
   secrets:
     name: gitleaks (full history)
     runs-on: ubuntu-latest
