@@ -8,7 +8,7 @@
 
 非官方插件，与 DeepSeek 无关。面向 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness)。
 
-> **状态：早期。** 已在 DSH 0.2.2-rc.1 上端到端验证：185 个单测、一次性 DSH 目录里 34 项 GUI 断言、以及**真实桌面版 36 项断言**（只读界面 + 文件模式：新建文件进回收站、修改文件还原、救援点恢复、时间线）。`pnpm gate:session-rewind` 一条命令跑完发版门禁。插件还年轻，重要数据请自行备份。
+> **状态：早期。** 已针对当前目标 DSH 版本端到端验证——具体跑了什么、什么时候跑的，见[兼容性](#兼容性)表格（单测、一次性 DSH 目录里的 GUI 冒烟、真实桌面版只读与 `--recall`）。`pnpm gate:session-rewind` 一条命令跑完发版门禁。插件还年轻，重要数据请自行备份。
 
 ## 它做什么
 
@@ -132,7 +132,7 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-session-rewind-*.tgz
 pnpm test                     # 单测（宿主文件引擎、宿主 RPC、客户端 helper）
 pnpm verify                   # 仓库统一门禁
 pnpm smoke:session-rewind           # 临时 DSH 目录 + 真实 GUI 端到端（需要 dsh 与 ego-browser）
-pnpm smoke:session-rewind-desktop   # 桌面（Electron）只读回归（23 项）；--recall 再加 5 条召回断言，--deep --workspace <dir> 再跑文件模式
+pnpm smoke:session-rewind-desktop   # 桌面（Electron）只读回归（23 项）；--recall 再加 7 条召回断言，--deep --workspace <dir> 再跑文件模式
 ```
 
 设计记录：[ADR 0006](../../docs/adr/0006-session-rewind-architecture.md)、[ADR 0007](../../docs/adr/0007-session-rewind-file-restore.md)。

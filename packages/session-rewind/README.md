@@ -8,7 +8,7 @@
 
 Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). Not affiliated with DeepSeek.
 
-> **Status: early.** Verified end to end on DSH 0.2.2-rc.1: 185 unit tests, 34 GUI assertions in a throwaway DSH home, and **36 assertions against the real desktop app** (read-only surface plus file mode: created-file trash, modified-file restore, rescue restore, timeline). `pnpm gate:session-rewind` runs the whole release gate in one command. Young software — keep backups of anything you cannot lose.
+> **Status: early.** End to end verified against the current target DSH version — the [Compatibility](#compatibility) table records exactly what was run (unit tests, throwaway-home GUI suite, real-desktop read-only and `--recall` suites) and when. `pnpm gate:session-rewind` runs the whole release gate in one command. Young software — keep backups of anything you cannot lose.
 
 ## What it does
 
@@ -132,7 +132,7 @@ The plugin declares no `engines.dsh` and no `@deepseek-ai/*` peer range: DSH is 
 pnpm test                     # unit tests (host engine, host RPC, client helpers)
 pnpm verify                   # repo-wide gates
 pnpm smoke:session-rewind           # temp DSH home + real GUI end-to-end (needs dsh & ego-browser)
-pnpm smoke:session-rewind-desktop   # desktop (Electron) read-only check (23); --recall adds 5 composer-recall checks, --deep --workspace <dir> adds the file-mode run
+pnpm smoke:session-rewind-desktop   # desktop (Electron) read-only check (23); --recall adds 7 composer-recall checks, --deep --workspace <dir> adds the file-mode run
 ```
 
 Design notes: [ADR 0006](../../docs/adr/0006-session-rewind-architecture.md) and [ADR 0007](../../docs/adr/0007-session-rewind-file-restore.md) (Chinese; the repository docs are written in Chinese).

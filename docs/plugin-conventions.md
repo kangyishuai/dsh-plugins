@@ -123,7 +123,7 @@ packages/<name>/
 
 参考实现：
 
-- `scripts/smoke-session-rewind-desktop.mjs`（23 项只读 + `--deep` 文件模式 e2e，共 37 项）
+- `scripts/smoke-session-rewind-desktop.mjs`（23 项只读；`--recall` 再加 7 项输入框召回，`--deep` 再加文件模式 e2e）
 - `scripts/smoke-session-delete-desktop.mjs`（14 项只读；`--workspace` 时 15 项）
 
 发版前用 `pnpm gate <plugin>` 一次跑完（桌面步骤永远带 `--require`）：
