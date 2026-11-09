@@ -6,6 +6,7 @@ import {
   copyFileSync,
   cpSync,
   existsSync,
+  mkdirSync,
   readdirSync,
   readFileSync,
   statSync,
@@ -37,8 +38,41 @@ export function scaffold({ root = REPO_ROOT, name, description = "TODO: one-line
     );
     if (out !== text) writeFileSync(file, out);
   }
+  scaffoldDesktopSmoke(root, name);
   registerInRepo(root, name);
   return target;
+}
+
+/**
+ * 给新插件生成桌面端冒烟骨架并登记根脚本。
+ * 有 client 半就必须有桌面套件（docs/plugin-conventions.md §6.1），否则 `pnpm check` 报错。
+ * @param {string} root
+ * @param {string} name
+ */
+export function scaffoldDesktopSmoke(root, name) {
+  const template = join(REPO_ROOT, "templates", "plugin-desktop-smoke", "smoke.js");
+  if (!existsSync(template)) return;
+  const scriptsDir = join(root, "scripts");
+  mkdirSync(scriptsDir, { recursive: true });
+  const target = join(scriptsDir, `smoke-${name}-desktop.mjs`);
+  if (!existsSync(target)) {
+    writeFileSync(target, readFileSync(template, "utf8").replace(/__NAME__/g, name));
+  }
+  const pkgPath = join(root, "package.json");
+  // 极简仓库（比如测试用的临时目录）可能没有根 package.json：补一个，保证脚本能登记上。
+  if (!existsSync(pkgPath)) {
+    writeFileSync(
+      pkgPath,
+      `${JSON.stringify({ name: "dsh-plugins", private: true, scripts: {} }, null, 2)}\n`,
+    );
+  }
+  const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+  pkg.scripts = pkg.scripts ?? {};
+  const scriptName = `smoke:${name}-desktop`;
+  if (pkg.scripts[scriptName] === undefined) {
+    pkg.scripts[scriptName] = `node scripts/smoke-${name}-desktop.mjs`;
+    writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+  }
 }
 
 /**
@@ -86,6 +120,9 @@ if (isMain(import.meta.url)) {
     console.log(`已生成 ${relative(REPO_ROOT, target)}`);
     console.log("已登记到 .github/labeler.yml 与 bug_report.yml；记得在 GitHub 上建标签：");
     console.log(`  gh label create "plugin:${name}" --color 7057ff`);
+    console.log(
+      `已生成 scripts/smoke-${name}-desktop.mjs（桌面端冒烟骨架，去把 TODO 换成真实断言）`,
+    );
     console.log("下一步：pnpm install && pnpm check");
     console.log(`本地安装：dsh plugin --profile desktop add "link:${target}"`);
   } catch (error) {

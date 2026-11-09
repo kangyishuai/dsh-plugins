@@ -847,8 +847,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
       action: "health",
       result: errors.length > 0 ? "failed" : "ok",
       operator: request.operator ?? "ui",
-      detail:
-        "清理失效引用 " + total + " 条" + (errors.length > 0 ? `，失败 ${errors.length} 条` : ""),
+      detail: `清理失效引用 ${total} 条${errors.length > 0 ? `，失败 ${errors.length} 条` : ""}`,
     });
     const receiptId = await writeReceipt(dataRoot, {
       action: "health",

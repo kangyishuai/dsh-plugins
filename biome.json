@@ -69,7 +69,7 @@
       }
     },
     {
-      "includes": ["scripts/**", "**/test/**"],
+      "includes": ["scripts/**", "**/test/**", "templates/*/smoke.js"],
       "linter": {
         "rules": {
           "suspicious": {
