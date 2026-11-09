@@ -169,7 +169,8 @@ pnpm smoke:session-rewind-desktop -- --require --deep \
   --workspace ~/Workspace/dsh-rewind-ui-smoke                        # 加上文件模式 e2e（共 33 项）
 ```
 
-**`--deep`：文件模式端到端（真机、真模型）。** 它会：在给定测试工作区**新建会话** → 发一次模型
+**`--deep`：文件模式端到端（真机、真模型）。** 实测它**自己就能**在给定测试工作区新建会话
+（不需要事先手动开一个），所以门禁可以全自动跑完；它会：新建会话 → 发一次模型
 请求让 agent 用 `write` 创建 `rewind-desktop-smoke.txt` → 点该消息 ↶ → 确认「对话+文件」→ 断言
 文件进回收站、toast 与输入框回填 → 面板「救援点」恢复 → 断言文件内容回到工作区 → 断言时间线
 出现 `rescue-restore` 节点。
