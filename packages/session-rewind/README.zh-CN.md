@@ -120,9 +120,9 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-session-rewind-*.tgz
 
 ## 兼容性
 
-| DSH 版本   | 状态                                                                                                                                                                                       |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 0.2.2-rc.1 | 2026-11-09 已验证：205 个单测 + Web `smoke:session-rewind` 49/49（临时 DSH home）+ 桌面 `smoke:session-rewind-desktop` 只读 23/23、加 `--recall` 30/30（真实 Electron 渲染进程，走 CDP）。 |
+| DSH 版本   | 状态                                                                                                                                                                                                                        |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.2.2-rc.1 | 2026-11-09 已验证：205 个单测 + Web `smoke:session-rewind` 49/49（临时 DSH home）+ 桌面 `smoke:session-rewind-desktop` 只读 23/23、加 `--recall` 30/30、加 `--deep` 39/39（文件模式端到端，真实 Electron 渲染进程走 CDP）。 |
 
 插件不声明 `engines.dsh`，也不声明 `@deepseek-ai/*` 的 peer 范围：DSH 还在预发布阶段，预发布版本的 semver 范围不可靠（见 [ADR 0005](../../docs/adr/0005-dsh-version-compatibility.md)）。以这张表为准。DSH 升级后跑 `pnpm probe:runtime`、`pnpm smoke:session-rewind`，并看插件诊断页签；私有 seam 变了会降级而不是让会话出错。
 
@@ -132,7 +132,7 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-session-rewind-*.tgz
 pnpm test                     # 单测（宿主文件引擎、宿主 RPC、客户端 helper）
 pnpm verify                   # 仓库统一门禁
 pnpm smoke:session-rewind           # 临时 DSH 目录 + 真实 GUI 端到端（需要 dsh 与 ego-browser）
-pnpm smoke:session-rewind-desktop   # 桌面（Electron）只读回归（23 项）；--recall 再加 7 条召回断言，--deep --workspace <dir> 再跑文件模式
+pnpm smoke:session-rewind-desktop   # 桌面（Electron）只读回归（23 项）；--recall 再加 7 条召回断言；--deep --workspace <dir> 再跑文件模式（合计 39 项）
 ```
 
 设计记录：[ADR 0006](../../docs/adr/0006-session-rewind-architecture.md)、[ADR 0007](../../docs/adr/0007-session-rewind-file-restore.md)。
