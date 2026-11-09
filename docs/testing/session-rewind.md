@@ -178,6 +178,17 @@ open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debuggin
 pnpm smoke:session-rewind-desktop
 ```
 
+加 `--recall` 会在同一个 Electron 渲染进程里额外验证**输入框 ↑/↓ 历史召回**（5 条断言）：
+空草稿按 ↑ 召回最新一条用户消息（并核对它确实出现在对话行里）、再按 ↑ 往前翻、↓↓ 走回并恢复空草稿、
+全程对话行数不变且不弹回溯框。它**只写草稿**，结束时清空；不发送、不回溯、不写会话日志。
+随机按键通过 CDP `Input.dispatchKeyEvent` 派发，走的是真实 DOM keydown 路径（也就是
+`shortcuts.observeFixedInput` 的上游），但不经过桌面版的原生键盘桥——原生桥只拦截**已注册组合**，
+而召回刻意不注册快捷键。
+
+```bash
+pnpm smoke:session-rewind-desktop --require --recall
+```
+
 **发版门禁要加 `--require`**：连不上端口时默认是 SKIP（exit 0，适合日常随手跑），加
 `--require` 则判为 FAIL（exit 1）——避免「没跑也说通过」。
 
