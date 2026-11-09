@@ -12,6 +12,7 @@
 // （source 需要 producer-owned kind、tool/result 需要 toolCallId、title 需引用真实人类消息…），
 // 所以这里刻意只用 user/message + turn/step 事件，够截图、且不会写出非法日志。
 import { execFile, spawn } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -110,6 +111,28 @@ userMessage("帮助文本先不用。我改主意了：--pretty 不要了，默�
 push({ type: "step/end", seq: ++seq, time: tick(5), data: { turn: 5, step: 1 } });
 push({ type: "turn/end", seq: ++seq, time: tick(2), data: { turn: 5, reason: "complete" } });
 
+/**
+ * 去掉 PNG 里的 eXIf / tEXt / iTXt / zTXt / tIME 块：截图流水线（sips）会带时间戳等元数据，
+ * 进公开仓库前应清掉。只重算块结构，不动像素。
+ * @param {string} path
+ */
+function stripPngMetadata(path) {
+  const strip = new Set(["eXIf", "tEXt", "iTXt", "zTXt", "tIME"]);
+  const buffer = readFileSync(path);
+  /** @type {Buffer[]} */
+  const chunks = [buffer.subarray(0, 8)];
+  let offset = 8;
+  while (offset + 8 <= buffer.length) {
+    const length = buffer.readUInt32BE(offset);
+    const type = buffer.toString("ascii", offset + 4, offset + 8);
+    const total = 12 + length;
+    if (!strip.has(type)) chunks.push(buffer.subarray(offset, offset + total));
+    if (type === "IEND") break;
+    offset += total;
+  }
+  writeFileSync(path, Buffer.concat(chunks));
+}
+
 const main = async () => {
   await mkdir(WORKSPACE_PATH, { recursive: true });
   const work = await mkdtemp(join(tmpdir(), "dsh-readme-shots-"));
@@ -202,7 +225,29 @@ const main = async () => {
 const task = await taskSpace("dsh readme shots");
 const page = task.page("p1");
 const OUT = ${JSON.stringify(join(work, "shots"))};
-await page.cdp("Network.clearBrowserCookies").catch(() => {});
+// 只清掉本脚本自己那个临时宿主留下的 loopback cookie；清空整个浏览器会毁掉用户真实登录态。
+const purgeLoopbackCookies = async () => {
+  try {
+    await page.cdp("Network.enable");
+    const all = await page.cdp("Network.getAllCookies");
+    const cookies = Array.isArray(all) ? all : all?.cookies ?? [];
+    const loopback = cookies.filter((c) => {
+      const domain = String(c.domain || "").replace(/^./u, "");
+      return domain === "127.0.0.1" || domain === "localhost" || domain === "[::1]";
+    });
+    for (const cookie of loopback) {
+      await page.cdp("Network.deleteCookies", {
+        name: cookie.name,
+        domain: cookie.domain,
+        path: cookie.path || "/",
+      }).catch(() => {});
+    }
+    return { removed: loopback.length, total: cookies.length };
+  } catch (_error) {
+    return { removed: 0, total: 0 };
+  }
+};
+await purgeLoopbackCookies();
 await page.goto(${JSON.stringify(url)});
 await page.waitForTimeout(5000);
 for (const label of ["继续", "开始使用", "跳过", "关闭"]) {
@@ -354,6 +399,7 @@ console.log("SHOT_STATE " + JSON.stringify({ opened, rows, clicked, dialogRect, 
       "--out",
       target,
     ]);
+    stripPngMetadata(target);
     console.log("wrote", target);
   }
   console.log("raw shots（临时，未提交）:", join(work, "shots"));

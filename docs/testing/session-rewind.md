@@ -121,6 +121,9 @@ pnpm smoke:session-rewind
 | 28    | 诊断页报告只读工具已注册                                                                              |
 | 29–34 | 审计记录、marker 计数与形状、日志只追加等收尾断言                                                     |
 
+冒烟会先**定向清理** loopback（127.0.0.1 / localhost）的 cookie 后再打开页面：ego-browser 是用户真实的
+浏览器 profile，绝不能整库清空（会踢掉真实登录态）。清理结果打印成 `SMOKE_COOKIES {"removed":…,"total":…}`。
+
 失败时会打印断言明细并把截图留在 `/tmp/dsh-smoke-rewind-shots/`（截图含临时 home 里的真实
 会话内容，不要提交）。`SMOKE_DEBUG=1` 可看浏览器脚本完整输出。
 
