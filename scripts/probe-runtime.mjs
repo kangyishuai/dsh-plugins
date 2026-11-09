@@ -161,9 +161,15 @@ const SEAM_CHECKS = [
   },
   {
     file: "@deepseek-ai/dsh-client-shortcuts/lib/client.js",
-    name: "shortcuts.observeFixedInput（判断是否空闲）",
+    name: "shortcuts.observeFixedInput（每个 keydown 都会送达观察者）",
     pattern: /observeFixedInput/u,
-    breaks: "Esc Esc 只在空闲会话生效（可能抢内置停止）",
+    breaks: "Esc Esc 只在空闲会话生效（可能抢内置停止）；输入框 ↑/↓ 召回",
+  },
+  {
+    file: "@deepseek-ai/dsh-client-ui-conversation/lib/client.js",
+    name: "会话根 DOM 标记 data-conversation-session（定位当前会话）",
+    pattern: /data-conversation-session/u,
+    breaks: "输入框 ↑/↓ 召回与 Esc Esc 无法判断是哪个会话",
   },
   {
     file: "@deepseek-ai/dsh-tools/lib/index.js",

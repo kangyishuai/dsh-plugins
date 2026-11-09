@@ -82,12 +82,27 @@ async function waitForBoot(logPath, timeoutMs) {
  * ego-browser 里跑的脚本：返回 { checks }，并把截图存到 shots。
  * @param {string} url
  * @param {string} shots
+ * @param {string} home 临时 DSH_HOME（召回断言从这里读会话日志）
  */
-function browserScript(url, shots) {
+function browserScript(url, shots, home) {
   return `(async () => {
 const task = await taskSpace("dsh smoke: session-rewind");
 const page = task.page("p1");
 const SHOTS = ${JSON.stringify(shots)};
+const HOME = ${JSON.stringify(home)};
+// 期望文本从会话日志读：ego-browser 的 nodejs 运行时是完整 Node，可以直接 fs。
+const { readFile, readdir } = await import("node:fs/promises");
+const { join } = await import("node:path");
+const { zstdDecompressSync, gunzipSync } = await import("node:zlib");
+const decodeZstdFrames = ${decodeZstdFrames.toString()};
+const readSessionDigest = ${readSessionDigest.toString()};
+const digestDeps = {
+  readFile: readFile,
+  readdir: readdir,
+  join: join,
+  gunzipSync: gunzipSync,
+  decodeZstdFrames: decodeZstdFrames,
+};
 const checks = [];
 const check = (name, ok, detail) => checks.push({ name, ok: !!ok, detail: detail === undefined ? "" : String(detail) });
 const shot = (name) => page.screenshot({ path: SHOTS + "/" + name + ".png" });
@@ -203,6 +218,141 @@ const composerText = () => page.evaluate(() => {
   const el = document.querySelector("[data-composer-input]");
   return el ? (el.textContent || "") : "";
 });
+// —— 输入框召回断言用的浏览器侧辅助（↑/↓ 历史召回，非破坏性）——
+// 统一用 textContent 判文本：Lexical 的空草稿渲染成空段落，innerText 只有一个换行，textContent 是空串。
+const composerDetail = () => page.evaluate(() => {
+  const el = document.querySelector("[data-composer-input]");
+  if (!el) return { present: false, text: "", innerText: "", active: false, sessionAttr: null, caret: null, box: null, lineHeight: null };
+  const selection = document.getSelection();
+  let caret = null;
+  const box = el.getBoundingClientRect();
+  if (selection && selection.rangeCount > 0) {
+    const range = selection.getRangeAt(0).cloneRange();
+    range.collapse(true);
+    const rect = range.getBoundingClientRect();
+    caret = { top: rect.top, bottom: rect.bottom, height: rect.height };
+  }
+  const occurrence = el.closest ? el.closest("[data-conversation-session]") : null;
+  const style = getComputedStyle(el);
+  return {
+    present: true,
+    text: el.textContent || "",
+    innerText: el.innerText || "",
+    active: document.activeElement === el,
+    collapsed: selection ? selection.isCollapsed : null,
+    sessionAttr: occurrence ? occurrence.getAttribute("data-conversation-session") : null,
+    caret: caret,
+    box: { top: box.top, bottom: box.bottom, height: box.height },
+    lineHeight: style.lineHeight,
+  };
+});
+const selectRecallComposerContents = () => page.evaluate(() => {
+  const el = document.querySelector("[data-composer-input]");
+  if (!el) return false;
+  el.focus();
+  const selection = document.getSelection();
+  if (!selection) return false;
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return true;
+});
+// 清空草稿必须走真实按键：document.execCommand("delete") 只改 DOM、不改 Lexical 编辑器状态，
+// 下一次宿主重渲染会把旧草稿“还”回来（实测会让后面「回溯回填」的既有断言失败）。
+const clearRecallDraft = async () => {
+  let state = await composerDetail();
+  if (state.text.trim() === "") return { ok: true, text: state.text, attempts: 0 };
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const selected = await selectRecallComposerContents();
+    if (!selected) return { ok: false, text: state.text, attempts: attempt };
+    await page.keyboard.press("Backspace");
+    await page.waitForTimeout(220);
+    state = await composerDetail();
+    if (state.text.trim() === "") return { ok: true, text: state.text, attempts: attempt + 1 };
+  }
+  return { ok: false, text: state.text, attempts: 3 };
+};
+const focusRecallComposer = async () => {
+  await page.evaluate(() => {
+    const el = document.querySelector("[data-composer-input]");
+    if (!el) return false;
+    el.focus();
+    const selection = document.getSelection();
+    if (!selection) return false;
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return true;
+  });
+  await page.waitForTimeout(200);
+};
+const putRecallCaretOnFirstLine = () => page.evaluate(() => {
+  const el = document.querySelector("[data-composer-input]");
+  if (!el) return false;
+  el.focus();
+  const selection = document.getSelection();
+  if (!selection) return false;
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  const first = walker.nextNode();
+  const range = document.createRange();
+  if (first) range.setStart(first, 0);
+  else range.selectNodeContents(el);
+  range.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return true;
+});
+const collapseRecallText = (value) => String(value === null || value === undefined ? "" : value).replace(/\\s+/gu, " ").trim();
+const sameRecallText = (left, right) => {
+  const a = collapseRecallText(left);
+  const b = collapseRecallText(right);
+  return a.length > 0 && a === b;
+};
+const waitForRecallDraft = async (expected, timeoutMs) => {
+  const deadline = Date.now() + (typeof timeoutMs === "number" ? timeoutMs : 3000);
+  let state = await composerDetail();
+  while (Date.now() < deadline) {
+    if (sameRecallText(state.text, expected)) return state;
+    await page.waitForTimeout(120);
+    state = await composerDetail();
+  }
+  return state;
+};
+const recallDetail = (expected, state) => JSON.stringify({
+  expected: collapseRecallText(expected).slice(0, 60),
+  got: collapseRecallText(state && state.text).slice(0, 60),
+  gotLen: String((state && state.text) || "").length,
+  expectedLen: String(expected || "").length,
+  caret: state ? state.caret : null,
+  box: state ? state.box : null,
+  lineHeight: state ? state.lineHeight : null,
+});
+// 观察 ↑/↓ 在各阶段是否被 consume：element/document 冒泡（宿主 composer 内部）→ window-late
+// （宿主 fixed input 派发之后，也就是插件观察者跑过之后）。用来断言「关掉设置后不再吞键」。
+const installRecallKeyProbe = () => page.evaluate(() => {
+  window.__recallStages = [];
+  const record = (stage) => (event) => {
+    if (event.code !== "ArrowUp" && event.code !== "ArrowDown") return;
+    window.__recallStages.push({ stage: stage, code: event.code, prevented: event.defaultPrevented });
+  };
+  const el = document.querySelector("[data-composer-input]");
+  if (!el) return false;
+  if (window.__recallKeyProbeBound !== true) {
+    window.__recallKeyProbeBound = true;
+    el.addEventListener("keydown", record("element"));
+    document.addEventListener("keydown", record("document"));
+    window.addEventListener("keydown", record("window-late"));
+  }
+  return true;
+});
+const readRecallStages = () => page.evaluate(() => (window.__recallStages || []).slice());
+const lastRecallStage = (stages, code, stage) => {
+  const hits = (stages || []).filter((item) => item.code === code && item.stage === stage);
+  return hits.length > 0 ? hits[hits.length - 1].prevented : null;
+};
 
 await page.goto(${JSON.stringify(url)});
 await page.waitForTimeout(5000);
@@ -251,6 +401,264 @@ if (picked === null) {
   return;
 }
 await shot("02-session-open");
+
+// 0) 输入框 ↑/↓ 召回历史输入（非破坏性）：必须放在任何回溯之前，会话历史才完整。
+//    期望文本从**会话日志**里读（不硬编码句子），并剔除已被既有 cuts 遮蔽的消息。
+//    注意：上面选中的 picked 会话可能整段已经被回溯过（用户消息都被 cuts 遮蔽），召回历史为空；
+//    所以这里单独挑一个「≥2 条未回滚用户消息」的会话，测完再切回 picked，不干扰后续流程。
+const recallDigestOf = (sessionId) => readSessionDigest({ home: HOME, sessionId: sessionId }, digestDeps);
+const recallCandidates = [picked.rowKey].concat(rows.filter((key) => key !== picked.rowKey));
+let recallPickRow = null;
+let recallDigestBefore = null;
+for (let i = 0; i < recallCandidates.length; i += 1) {
+  let candidateDigest = null;
+  try {
+    candidateDigest = await recallDigestOf(recallCandidates[i].replace("session:", ""));
+  } catch (_error) {
+    candidateDigest = null;
+  }
+  if (candidateDigest && Array.isArray(candidateDigest.visibleTexts) && candidateDigest.visibleTexts.length >= 2) {
+    recallPickRow = recallCandidates[i];
+    recallDigestBefore = candidateDigest;
+    break;
+  }
+}
+check(
+  "召回：找到含 ≥2 条未回滚用户消息的会话",
+  recallPickRow !== null && recallDigestBefore !== null,
+  recallDigestBefore ? "visible=" + recallDigestBefore.visibleTexts.length : "临时 profile 里没有可召回的会话",
+);
+const recallPrompts = recallDigestBefore && Array.isArray(recallDigestBefore.visibleTexts) ? recallDigestBefore.visibleTexts : [];
+const recallNewest = recallPrompts.length > 0 ? recallPrompts[recallPrompts.length - 1] : "";
+const recallPrevious = recallPrompts.length > 1 ? recallPrompts[recallPrompts.length - 2] : "";
+const recallSessionId = recallPickRow === null ? "" : recallPickRow.replace("session:", "");
+const recallSameSession = recallPickRow === picked.rowKey;
+if (recallPickRow !== null && !recallSameSession) {
+  await openSession(recallPickRow);
+  await page.waitForTimeout(1400);
+}
+if (recallPickRow !== null) {
+  const recallBubblesBefore = await userBubbles();
+  // A1：空草稿按 ↑ → 最新一条用户输入
+  const clearedForA1 = await clearRecallDraft();
+  await focusRecallComposer();
+  const composerReady = await composerDetail();
+  check(
+    "召回前提：输入框已聚焦、草稿为空、能定位当前会话",
+    clearedForA1.ok === true &&
+      composerReady.present === true &&
+      composerReady.active === true &&
+      composerReady.text.trim() === "" &&
+      composerReady.sessionAttr === recallSessionId,
+    JSON.stringify({
+      cleared: clearedForA1.ok,
+      active: composerReady.active,
+      sessionAttr: composerReady.sessionAttr,
+      expectedSession: recallSessionId,
+      draft: composerReady.text.slice(0, 40),
+    }),
+  );
+  await installRecallKeyProbe();
+  await page.keyboard.press("ArrowUp");
+  const afterA1 = await waitForRecallDraft(recallNewest, 3000);
+  const stagesA1 = await readRecallStages();
+  check(
+    "空草稿按 ↑ 召回最新一条用户输入",
+    sameRecallText(afterA1.text, recallNewest),
+    recallDetail(recallNewest, afterA1) + " stages=" + JSON.stringify(stagesA1),
+  );
+  // A2：再按 ↑ → 上一条
+  await page.keyboard.press("ArrowUp");
+  const afterA2 = await waitForRecallDraft(recallPrevious, 3000);
+  check(
+    "再按 ↑ 往前走一条用户输入",
+    sameRecallText(afterA2.text, recallPrevious),
+    recallDetail(recallPrevious, afterA2),
+  );
+  // A3：↓ → 最新一条；再 ↓ → 还原原来的空草稿
+  await page.keyboard.press("ArrowDown");
+  const afterA3a = await waitForRecallDraft(recallNewest, 3000);
+  await page.keyboard.press("ArrowDown");
+  const afterA3b = await waitForRecallDraft("", 3000);
+  check(
+    "按 ↓ 回到最新一条、再按 ↓ 还原原来的空草稿",
+    sameRecallText(afterA3a.text, recallNewest) && afterA3b.text.trim() === "",
+    JSON.stringify({
+      forward: recallDetail(recallNewest, afterA3a),
+      restoredText: afterA3b.text.slice(0, 20),
+      restoredInnerText: afterA3b.innerText.slice(0, 20),
+    }),
+  );
+  // A4：非空草稿 + 光标在第一行 → ↑ 召回；一路 ↓ 到底原样还回草稿
+  const ownDraft = "召回草稿 keep-me " + Date.now();
+  const clearedForA4 = await clearRecallDraft();
+  await page.keyboard.insertText(ownDraft);
+  await page.waitForTimeout(300);
+  await putRecallCaretOnFirstLine();
+  await page.waitForTimeout(200);
+  const beforeA4 = await composerDetail();
+  await page.keyboard.press("ArrowUp");
+  const afterA4recall = await waitForRecallDraft(recallNewest, 3000);
+  let afterA4restore = await composerDetail();
+  for (let i = 0; i <= recallPrompts.length + 1; i += 1) {
+    if (afterA4restore.text.trim() === ownDraft) break;
+    await page.keyboard.press("ArrowDown");
+    await page.waitForTimeout(200);
+    afterA4restore = await composerDetail();
+    if (afterA4restore.text.trim() === ownDraft) break;
+  }
+  check(
+    "非空草稿（光标在第一行）按 ↑ 也能召回",
+    clearedForA4.ok === true && beforeA4.text.trim() === ownDraft && sameRecallText(afterA4recall.text, recallNewest),
+    recallDetail(recallNewest, afterA4recall) + " draft=" + JSON.stringify(beforeA4.text.slice(0, 40)),
+  );
+  check(
+    "按 ↓ 到底原样还回用户自己的草稿（stash/restore）",
+    afterA4restore.text.trim() === ownDraft,
+    JSON.stringify({ expected: ownDraft, restored: afterA4restore.text.slice(0, 60), caret: afterA4restore.caret }),
+  );
+  // A5：非破坏性——没有新增 user/message、没有回溯标记、对话行数不变
+  const clearedAfterA4 = await clearRecallDraft();
+  await page.waitForTimeout(1200);
+  let digestAfterRecall = await recallDigestOf(recallSessionId);
+  await page.waitForTimeout(900);
+  const digestAfterRecallLate = await recallDigestOf(recallSessionId);
+  const sameSeqList = (left, right) => JSON.stringify(left || []) === JSON.stringify(right || []);
+  const bubblesAfterRecall = await userBubbles();
+  const dialogAfterRecall = await dialogInfo();
+  const toastAfterRecall = await page.evaluate(() => {
+    const el = document.querySelector(".dsh-srw-toast");
+    return el ? (el.textContent || "").trim() : "";
+  });
+  const nonDestructive =
+    clearedAfterA4.ok === true &&
+    digestAfterRecall !== null &&
+    digestAfterRecallLate !== null &&
+    sameSeqList(digestAfterRecall.userMessageSeqs, recallDigestBefore.userMessageSeqs) &&
+    sameSeqList(digestAfterRecallLate.userMessageSeqs, recallDigestBefore.userMessageSeqs) &&
+    sameSeqList(digestAfterRecallLate.humanSeqs, recallDigestBefore.humanSeqs) &&
+    digestAfterRecall.markerCount === recallDigestBefore.markerCount &&
+    digestAfterRecallLate.markerCount === recallDigestBefore.markerCount &&
+    bubblesAfterRecall.length === recallBubblesBefore.length &&
+    dialogAfterRecall === null &&
+    toastAfterRecall === "";
+  check(
+    "召回全程非破坏：无新 user/message、无回溯标记、对话行数不变",
+    nonDestructive,
+    JSON.stringify({
+      userMessagesBefore: (recallDigestBefore.userMessageSeqs || []).length,
+      userMessagesAfter: digestAfterRecall ? (digestAfterRecall.userMessageSeqs || []).length : null,
+      humanBefore: (recallDigestBefore.humanSeqs || []).length,
+      humanAfterLate: digestAfterRecallLate ? (digestAfterRecallLate.humanSeqs || []).length : null,
+      maxSeqBefore: recallDigestBefore.maxSeq,
+      maxSeqAfter: digestAfterRecall ? digestAfterRecall.maxSeq : null,
+      markersBefore: recallDigestBefore.markerCount,
+      markersAfter: digestAfterRecall ? digestAfterRecall.markerCount : null,
+      bubblesBefore: recallBubblesBefore.length,
+      bubblesAfter: bubblesAfterRecall.length,
+      dialogOpen: dialogAfterRecall !== null,
+      toast: toastAfterRecall,
+    }),
+  );
+  // A6：关掉设置里的召回开关后，↑ 既不吞键也不填草稿（降级为纯光标移动）
+  const drawerOpenedForRecall = await page.evaluate(() => {
+    const btn = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("回溯面板"));
+    if (!btn) return false;
+    btn.click();
+    return true;
+  });
+  await page.waitForTimeout(800);
+  await page.evaluate(() => {
+    const tab = [...document.querySelectorAll(".dsh-srw-tab")].find((t) => (t.textContent || "").trim() === "设置");
+    if (tab) tab.click();
+  });
+  await page.waitForTimeout(1200);
+  const recallToggleOff = await page.evaluate(() => {
+    const drawer = document.querySelector(".dsh-srw-drawer");
+    if (!drawer) return "no-drawer";
+    const label = [...drawer.querySelectorAll("label")].find((el) => /召回|recalls earlier/iu.test(el.textContent || ""));
+    const box = label ? label.querySelector('input[type="checkbox"]') : null;
+    if (!box) return "no-checkbox";
+    if (box.checked) box.click();
+    return box.checked ? "still-checked" : "unchecked";
+  });
+  await page.waitForTimeout(500);
+  await page.evaluate(() => {
+    const btn = [...document.querySelectorAll(".dsh-srw-drawer button")].find((b) => (b.textContent || "").trim() === "关闭");
+    if (btn) btn.click();
+  });
+  await page.waitForTimeout(500);
+  const recallPrefsOff = await page.evaluate(() => localStorage.getItem("dsh-session-rewind.prefs.v1"));
+  const clearedForA6 = await clearRecallDraft();
+  await focusRecallComposer();
+  await installRecallKeyProbe();
+  await page.keyboard.press("ArrowUp");
+  await page.waitForTimeout(1200);
+  const afterA6 = await composerDetail();
+  const stagesA6 = await readRecallStages();
+  const consumedA6 = lastRecallStage(stagesA6, "ArrowUp", "window-late");
+  check(
+    "关掉召回设置后 ↑ 既不填草稿也不吞键",
+    drawerOpenedForRecall === true &&
+      recallToggleOff === "unchecked" &&
+      /"recallEnabled":false/u.test(recallPrefsOff || "") &&
+      clearedForA6.ok === true &&
+      afterA6.text.trim() === "" &&
+      consumedA6 === false,
+    JSON.stringify({
+      drawerOpened: drawerOpenedForRecall,
+      toggle: recallToggleOff,
+      prefs: (recallPrefsOff || "").slice(0, 120),
+      draft: afterA6.text.slice(0, 40),
+      consumedAtWindow: consumedA6,
+      stages: stagesA6,
+    }),
+  );
+  // 恢复开关，免得污染后面的既有断言（设置页偏好恢复那段）
+  await page.evaluate(() => {
+    const btn = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("回溯面板"));
+    if (btn) btn.click();
+  });
+  await page.waitForTimeout(800);
+  await page.evaluate(() => {
+    const tab = [...document.querySelectorAll(".dsh-srw-tab")].find((t) => (t.textContent || "").trim() === "设置");
+    if (tab) tab.click();
+  });
+  await page.waitForTimeout(1000);
+  const recallToggleOn = await page.evaluate(() => {
+    const drawer = document.querySelector(".dsh-srw-drawer");
+    if (!drawer) return "no-drawer";
+    const label = [...drawer.querySelectorAll("label")].find((el) => /召回|recalls earlier/iu.test(el.textContent || ""));
+    const box = label ? label.querySelector('input[type="checkbox"]') : null;
+    if (!box) return "no-checkbox";
+    if (!box.checked) box.click();
+    return box.checked ? "checked" : "still-unchecked";
+  });
+  await page.waitForTimeout(500);
+  const recallPrefsOn = await page.evaluate(() => localStorage.getItem("dsh-session-rewind.prefs.v1"));
+  check(
+    "召回设置可以恢复为开启",
+    recallToggleOn === "checked" && /"recallEnabled":true/u.test(recallPrefsOn || ""),
+    JSON.stringify({ toggle: recallToggleOn, prefs: (recallPrefsOn || "").slice(0, 120) }),
+  );
+  await page.evaluate(() => {
+    const btn = [...document.querySelectorAll(".dsh-srw-drawer button")].find((b) => (b.textContent || "").trim() === "关闭");
+    if (btn) btn.click();
+  });
+  await page.waitForTimeout(400);
+  await clearRecallDraft();
+  const leftoverRecallDraft = await composerDetail();
+  check(
+    "召回测试后草稿清空（不残留影响后续回溯回填）",
+    leftoverRecallDraft.text.trim() === "" && leftoverRecallDraft.active === true,
+    JSON.stringify({ draft: leftoverRecallDraft.text.slice(0, 40), active: leftoverRecallDraft.active }),
+  );
+  await shot("02b-composer-recall");
+}
+if (recallPickRow !== null && !recallSameSession) {
+  await openSession(picked.rowKey);
+  await page.waitForTimeout(1200);
+}
 
 // 多视图一致性：在**另一个真实标签页**里打开同一个会话（它会在挂载时 seed 一次宿主 cuts），
 // 然后在主标签页回溯，检查它不用刷新也会把这些行隐藏掉。
@@ -665,8 +1073,6 @@ console.log("SMOKE_RESULT " + JSON.stringify({ checks }));
 `;
 }
 
-const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
-
 /**
  * Node 的 zstdDecompressSync 只解第一帧；DSH 的 JSONL 日志是「一帧头 + 每批事件一帧」。
  * 按 zstd 魔数切帧后逐帧解压（真实日志实测 482/482 帧可解）。
@@ -674,14 +1080,15 @@ const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
  * @returns {string}
  */
 function decodeZstdFrames(buffer) {
+  const magic = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
   /** @type {number[]} */
   const starts = [];
   let cursor = 0;
   while (cursor < buffer.length) {
-    const index = buffer.indexOf(ZSTD_MAGIC, cursor);
+    const index = buffer.indexOf(magic, cursor);
     if (index < 0) break;
     starts.push(index);
-    cursor = index + ZSTD_MAGIC.length;
+    cursor = index + magic.length;
   }
   if (starts.length === 0) return zstdDecompressSync(buffer).toString("utf8");
   let text = "";
@@ -695,6 +1102,125 @@ function decodeZstdFrames(buffer) {
     }
   }
   return text;
+}
+
+/**
+ * 直接读会话日志，得到「输入框召回历史」的期望值。
+ *
+ * 为什么读日志而不是读 DOM：召回要还原文案（多行、markdown 原样），DOM 里是渲染后的文本；
+ * 而且会话日志是唯一能同时给出「未回滚的真人消息」与「user/message 事件计数」的来源。
+ * 同一份实现要跑在 Node 与浏览器脚本（ego-browser 的 nodejs 运行时）两处，用 toString()
+ * 内联进浏览器脚本，所以只能依赖 deps 里传进来的能力，不能引用模块级变量。
+ * @param {{ home?: string, sessionId?: string }} args
+ * @param {{ readFile: any, readdir: any, join: any, gunzipSync: any, decodeZstdFrames: any }} deps
+ * @returns {Promise<null | { logName: string, eventCount: number, maxSeq: number, humanSeqs: number[], userMessageSeqs: number[], visibleTexts: string[], markerCount: number, cutCount: number }>}
+ */
+async function readSessionDigest(args, deps) {
+  const home = args && typeof args.home === "string" ? args.home : "";
+  const sessionId = args && typeof args.sessionId === "string" ? args.sessionId : "";
+  if (home === "" || sessionId === "") return null;
+  const readFile = deps.readFile;
+  const readdir = deps.readdir;
+  const join = deps.join;
+  const gunzipSync = deps.gunzipSync;
+  const decodeZstdFrames = deps.decodeZstdFrames;
+  let roots = [];
+  try {
+    roots = await readdir(join(home, "sessions"), { withFileTypes: true });
+  } catch (_error) {
+    return null;
+  }
+  let logPath = null;
+  for (let i = 0; i < roots.length && logPath === null; i += 1) {
+    const entry = roots[i];
+    if (!entry || typeof entry.isDirectory !== "function" || !entry.isDirectory()) continue;
+    const dir = join(home, "sessions", entry.name, sessionId);
+    let files = [];
+    try {
+      files = await readdir(dir);
+    } catch (_error) {
+      files = [];
+    }
+    for (let j = 0; j < files.length; j += 1) {
+      if (/^session\.v\d+\.jsonl(\.(zst|zstd|gz))?$/u.test(files[j])) {
+        logPath = join(dir, files[j]);
+        break;
+      }
+    }
+  }
+  if (logPath === null) return null;
+  let buffer;
+  try {
+    buffer = await readFile(logPath);
+  } catch (_error) {
+    return null;
+  }
+  let text = "";
+  try {
+    if (/\.(zst|zstd)$/u.test(logPath)) text = decodeZstdFrames(buffer);
+    else if (/\.gz$/u.test(logPath)) text = gunzipSync(buffer).toString("utf8");
+    else text = buffer.toString("utf8");
+  } catch (_error) {
+    return null;
+  }
+  /** @type {any[]} */
+  const events = [];
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lines[i].trim() === "") continue;
+    try {
+      events.push(JSON.parse(lines[i]));
+    } catch (_error) {
+      /* 尾部不完整行忽略 */
+    }
+  }
+  const textOf = (/** @type {any} */ event) => {
+    const content = Array.isArray(event?.data?.content) ? event.data.content : [];
+    let out = "";
+    for (let i = 0; i < content.length; i += 1) {
+      const block = content[i];
+      if (block && block.type === "text" && typeof block.text === "string") out += block.text;
+    }
+    return out;
+  };
+  const userMessages = events.filter((event) => event?.type === "user/message");
+  const human = userMessages.filter(
+    (event) => event?.data?.source?.kind === "user" && typeof event.seq === "number",
+  );
+  const markers = userMessages.filter(
+    (event) =>
+      event?.data?.source?.kind === "session-rewind" &&
+      typeof event.data.source.targetSeq === "number" &&
+      typeof event.seq === "number",
+  );
+  /* cuts 与客户端一致：[targetSeq, markerSeq] 闭区间内的真人消息算被回滚掉。 */
+  const cuts = markers.map((event) => ({
+    targetSeq: event.data.source.targetSeq,
+    markerSeq: event.seq,
+  }));
+  const visible = human.filter((event) => {
+    for (let i = 0; i < cuts.length; i += 1) {
+      if (cuts[i].targetSeq <= event.seq && event.seq <= cuts[i].markerSeq) return false;
+    }
+    return true;
+  });
+  let maxSeq = 0;
+  for (let i = 0; i < events.length; i += 1) {
+    if (events[i] && typeof events[i].seq === "number" && events[i].seq > maxSeq)
+      maxSeq = events[i].seq;
+  }
+  return {
+    logName: logPath.split("/").pop() || logPath,
+    eventCount: events.length,
+    maxSeq: maxSeq,
+    humanSeqs: human.map((event) => event.seq),
+    userMessageSeqs: userMessages
+      .filter((event) => typeof event.seq === "number")
+      .map((event) => event.seq),
+    visibleTexts: visible.map(textOf).filter((value) => value.trim() !== ""),
+    markerCount: markers.length,
+    cutCount: cuts.length,
+  };
 }
 
 /**
@@ -925,7 +1451,7 @@ const main = async () => {
     const shotsDir = join(work, "shots");
     await mkdir(shotsDir, { recursive: true });
     const browserFile = join(work, "browser.mjs");
-    const browserSource = browserScript(url, shotsDir);
+    const browserSource = browserScript(url, shotsDir, home);
     await writeFile(browserFile, browserSource);
     await writeFile(join(shotsDir, "browser.mjs"), browserSource);
 

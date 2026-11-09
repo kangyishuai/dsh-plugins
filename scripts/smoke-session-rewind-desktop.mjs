@@ -28,6 +28,10 @@
 //   2. 侧栏里可能有没有消息的会话，切过去候选列表是空的；必须挑选有用户消息的会话。
 //
 // `--sidebar-workspace <标题>`：只在该工作区的分组里找会话，**不碰别的工作区的会话**。
+//
+// `--recall`：额外验证「输入框 ↑/↓ 历史召回」（在真实 Electron 渲染进程里派发真实按键）。
+// 它会往输入框里写草稿、并在结束时清空；**不发送、不回溯、不写会话日志**。
+//   pnpm smoke:session-rewind-desktop --require --recall
 // 找不到合格会话就判失败（而不是随手点开别人的会话）。
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -270,6 +274,8 @@ const main = async () => {
       workspace: { type: "string" },
       // 侧栏工作区标题：把会话交互严格限制在该工作区分组内。
       "sidebar-workspace": { type: "string" },
+      // 输入框 ↑/↓ 历史召回：会往输入框里按方向键并写草稿，跑完清空。
+      recall: { type: "boolean", default: false },
     },
     allowPositionals: true,
   });
@@ -443,6 +449,141 @@ const main = async () => {
         rowButtons.users > 0 && rowButtons.withButton === rowButtons.users,
         JSON.stringify(rowButtons),
       );
+    }
+
+    // ---------- B2. --recall：输入框 ↑/↓ 历史召回（真实 Electron 渲染进程按键） ----------
+    // 需要一个「至少有 2 条可召回消息」的会话：section B 只要求 ≥1 条候选，
+    // 而召回要验证「再按 ↑ 往前翻一条」，1 条历史翻不出差异。
+    /** @type {string | null} */
+    let recallSession = null;
+    if (values.recall === true) {
+      /** 草稿文本（Lexical 空段落 textContent 是空串，innerText 是 "\n"）。 */
+      const recallDraft = () =>
+        cdp.evaluate(`(() => {
+          const el = document.querySelector("[data-composer-input]");
+          return el ? (el.textContent || "").replace(/\\s+/g, " ").trim() : null;
+        })()`);
+      /** 当前会话里每条用户消息的文本（用于核对召回的是真消息）。 */
+      const recallRows = () =>
+        cdp.evaluate(
+          `(() => [...document.querySelectorAll('[data-chat-flow-kind="user"]')].map((row) => (row.textContent || "").replace(/\\s+/g, " ").trim()))()`,
+        );
+      const recallFocus = () =>
+        cdp.evaluate(
+          `(() => { const el = document.querySelector("[data-composer-input]"); if (el && el.focus) el.focus(); return !!el; })()`,
+        );
+      /** @param {string} key @param {string} code @param {number} keyCode @param {number} nativeCode */
+      const recallPress = async (key, code, keyCode, nativeCode) => {
+        for (const type of ["keyDown", "keyUp"]) {
+          await cdp.send("Input.dispatchKeyEvent", {
+            type,
+            key,
+            code,
+            windowsVirtualKeyCode: keyCode,
+            nativeVirtualKeyCode: nativeCode,
+          });
+        }
+      };
+      const recallUp = () => recallPress("ArrowUp", "ArrowUp", 38, 126);
+      const recallDown = () => recallPress("ArrowDown", "ArrowDown", 40, 125);
+
+      // 优先挑 ≥2 条的会话（能验证「继续往前翻」）；只有 1 条也照测，但那条断言退化为
+      // 「停在最旧一条、内容不变」——新装 profile 里常常只有一条历史。
+      /** @type {string | null} */
+      let recallFallback = null;
+      let recallHasOlder = false;
+      for (const id of Array.isArray(sessionIds?.ids) ? sessionIds.ids : []) {
+        if (id === originalSession) continue;
+        await switchTo(id);
+        /** @type {string[]} */
+        const probeRows = await recallRows();
+        const usable = probeRows.filter((/** @type {string} */ text) => text !== "").length;
+        if (usable >= 2) {
+          recallSession = id;
+          recallHasOlder = true;
+          break;
+        }
+        if (usable === 1 && recallFallback === null) recallFallback = id;
+      }
+      if (recallSession === null && recallFallback !== null) {
+        recallSession = recallFallback;
+        await switchTo(recallFallback);
+      }
+      check(
+        "召回：找到一个可召回的会话（空闲、有用户消息）",
+        recallSession !== null,
+        recallSession
+          ? `${recallSession.slice(0, 16)}${recallHasOlder ? "（≥2 条，可验证往前翻）" : "（仅 1 条，部分断言退化）"}`
+          : "侧栏里没有第二个带用户消息的空闲会话",
+      );
+
+      const focused = await recallFocus();
+      await sleep(250);
+      const startingDraft = await recallDraft();
+      /** @type {string[]} */
+      const startingRows = await recallRows();
+      check(
+        "召回：输入框已聚焦且草稿为空",
+        focused === true && startingDraft === "",
+        JSON.stringify({ focused, draft: startingDraft }),
+      );
+
+      await recallUp();
+      await sleep(500);
+      /** @type {string | null} */
+      const newest = await recallDraft();
+      check(
+        "空草稿按 ↑ 召回最新一条用户输入（桌面版按键路径）",
+        typeof newest === "string" && newest !== "" && newest !== startingDraft,
+        JSON.stringify({ draft: (newest || "").slice(0, 60) }),
+      );
+      check(
+        "召回的文本确实来自会话里的某条用户消息",
+        typeof newest === "string" && newest !== ""
+          ? startingRows.some((/** @type {string} */ row) =>
+              row.includes(newest.slice(0, Math.min(24, newest.length))),
+            )
+          : false,
+        JSON.stringify({ rows: startingRows.length }),
+      );
+
+      await recallUp();
+      await sleep(400);
+      /** @type {string | null} */
+      const older = await recallDraft();
+      if (recallHasOlder) {
+        check(
+          "再按 ↑ 继续往前翻一条（内容变化）",
+          typeof older === "string" && older !== "" && older !== newest,
+          JSON.stringify({ from: (newest || "").slice(0, 30), to: (older || "").slice(0, 30) }),
+        );
+      } else {
+        check(
+          "只有一条历史时，再按 ↑ 停在最旧一条（不环绕、不清空）",
+          typeof older === "string" && older !== "" && older === newest,
+          JSON.stringify({ draft: (older || "").slice(0, 30) }),
+        );
+      }
+
+      await recallDown();
+      await sleep(300);
+      await recallDown();
+      await sleep(400);
+      const restored = await recallDraft();
+      check("↓↓ 走回正在编辑的那一行，草稿恢复为空", restored === "", JSON.stringify(restored));
+
+      /** @type {string[]} */
+      const afterRows = await recallRows();
+      const afterDialog = await dialogInfo(cdp);
+      check(
+        "召回全程非破坏：对话行数不变、没有弹出回溯框",
+        afterRows.length === startingRows.length && afterDialog === null,
+        JSON.stringify({ before: startingRows.length, after: afterRows.length }),
+      );
+      await cdp.evaluate(
+        `(() => { const el = document.querySelector("[data-composer-input]"); if (el && el.focus) el.focus(); })()`,
+      );
+      await sleep(120);
     }
 
     // ---------- C. Esc Esc → 候选列表 → 搜索 ----------

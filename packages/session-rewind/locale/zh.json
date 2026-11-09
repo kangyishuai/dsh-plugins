@@ -89,6 +89,8 @@
     "settings.pageSize": "候选每页数量",
     "settings.confirmOnList": "从候选列表选择时先确认",
     "settings.confirmOnListHint": "关闭后，默认「仅回退对话」时会直接执行；文件模式始终先确认。",
+    "settings.recall": "输入框 ↑/↓ 召回历史输入",
+    "settings.recallHint": "空草稿（或光标在第一行）按 ↑ 召回上一条已发送消息，↓ 前进、到底恢复你原来的草稿；只填草稿，不回溯、不发送。",
     "settings.saved": "已保存",
     "settings.healthTitle": "诊断",
     "settings.healthRefresh": "刷新",

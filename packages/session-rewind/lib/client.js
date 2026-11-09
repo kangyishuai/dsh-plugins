@@ -147,6 +147,9 @@ window.__ModuleLoader__.load({
       "settings.pageSize": "候选每页数量",
       "settings.confirmOnList": "从候选列表选择时先确认",
       "settings.confirmOnListHint": "关闭后，默认「仅回退对话」时会直接执行；文件模式始终先确认。",
+      "settings.recall": "输入框 ↑/↓ 召回历史输入",
+      "settings.recallHint":
+        "空草稿（或光标在第一行）按 ↑ 召回上一条已发送消息，↓ 前进、到底恢复你原来的草稿；只填草稿，不回溯、不发送。",
       "settings.saved": "已保存",
       "settings.healthTitle": "诊断",
       "settings.healthRefresh": "刷新",
@@ -295,6 +298,9 @@ window.__ModuleLoader__.load({
       "settings.confirmOnList": "Confirm before executing from the list",
       "settings.confirmOnListHint":
         "When off, the default conversation-only mode runs directly; file mode always asks first.",
+      "settings.recall": "↑/↓ recalls earlier prompts in the composer",
+      "settings.recallHint":
+        "In an empty draft (or with the caret on the first line) ↑ recalls the last prompt you sent, ↓ walks forward and restores your own draft at the bottom; it only fills the draft — never rewinds, never sends.",
       "settings.saved": "Saved",
       "settings.healthTitle": "Diagnostics",
       "settings.healthRefresh": "Refresh",
@@ -606,6 +612,7 @@ window.__ModuleLoader__.load({
       defaultMode: "chat",
       pageSize: 100,
       confirmOnList: true,
+      recallEnabled: true,
     });
 
     /** 候选每页数量的合法范围。 */
@@ -642,7 +649,7 @@ window.__ModuleLoader__.load({
     /**
      * 规整客户端偏好（localStorage 里可能是旧版本、脏数据或非对象）。
      * @param {any} raw
-     * @returns {{ defaultMode: "chat" | "both", pageSize: number, confirmOnList: boolean }}
+     * @returns {{ defaultMode: "chat" | "both", pageSize: number, confirmOnList: boolean, recallEnabled: boolean }}
      */
     function sanitizePrefs(raw) {
       let source = raw && typeof raw === "object" ? raw : {};
@@ -650,6 +657,155 @@ window.__ModuleLoader__.load({
         defaultMode: source.defaultMode === "both" ? "both" : "chat",
         pageSize: clampInt(source.pageSize, PAGE_SIZE_MIN, PAGE_SIZE_MAX, PREF_DEFAULTS.pageSize),
         confirmOnList: source.confirmOnList !== false,
+        recallEnabled: source.recallEnabled !== false,
+      };
+    }
+
+    // ------------------------------------------------------------------
+    // 输入历史召回（非破坏性）：纯数据部分
+    // ------------------------------------------------------------------
+
+    /** 召回历史条目上限（更旧的先丢）。 */
+    let RECALL_LIMIT = 100;
+
+    /**
+     * 历史缓存的保鲜期（ms）。宿主 RPC 是本地调用，成本很低；用「先给旧的、后台刷新」
+     * 而不是每次按键都等一次往返。
+     */
+    let RECALL_TTL_MS = 1500;
+
+    /** 判定首/末行时允许的误差（行高比例）：行内任意位置都算该行。 */
+    let CARET_LINE_RATIO = 0.6;
+
+    /**
+     * 把宿主 `sessionRewind/candidates` 的一页（新→旧）转成召回历史（旧→新）。
+     * host 已经过滤掉非真人消息、已被 compaction 遮蔽的消息，这里只补两件事：
+     * 丢掉空文本、截到 RECALL_LIMIT。
+     * @param {any} candidates
+     * @returns {Array<{seq: number, text: string}>}
+     */
+    function historyFromCandidates(candidates) {
+      let source = Array.isArray(candidates) ? candidates : [];
+      /** @type {Array<{seq: number, text: string}>} */
+      let out = [];
+      for (let i = 0; i < source.length; i += 1) {
+        let item = source[i];
+        if (!item || typeof item.seq !== "number") continue;
+        let text = typeof item.text === "string" ? item.text : "";
+        if (text.trim() === "") continue;
+        out.push({ seq: item.seq, text: text });
+      }
+      /* host 给的是新→旧；召回要按时间升序（末尾最新） */
+      out.reverse();
+      return out.slice(-RECALL_LIMIT);
+    }
+
+    /**
+     * 是否是召回手势：裸 ↑/↓、无组合键、非输入法组合、尚未被别的监听者消费。
+     * 宿主在 fixed input 通道里已经算好 composing/defaultPrevented，这里只做判定。
+     * @param {any} gesture
+     * @returns {boolean}
+     */
+    function isRecallGesture(gesture) {
+      if (!gesture || typeof gesture !== "object") return false;
+      if (gesture.code !== "ArrowUp" && gesture.code !== "ArrowDown") return false;
+      if (gesture.control || gesture.alt || gesture.shift || gesture.meta) return false;
+      if (gesture.composing) return false;
+      if (gesture.defaultPrevented) return false;
+      return true;
+    }
+
+    /**
+     * 浏览一步（纯函数）：
+     * - `index === -1` 表示停在「正在编辑的那一行」；
+     * - `saved` 是开始浏览前用户自己的草稿，一路 ↓ 到底时原样还回去；
+     * - `restore !== null` 表示这一步要写回的文本（live line），否则按 index 取历史。
+     * @param {{index: number, saved: string}} state
+     * @param {"ArrowUp" | "ArrowDown"} code
+     * @param {number} total 历史条数
+     * @param {string} draft 当前草稿
+     * @returns {{index: number, saved: string, restore: string | null}}
+     */
+    function recallStep(state, code, total, draft) {
+      let index = state ? state.index : -1;
+      let saved = state ? state.saved : "";
+      if (total <= 0) return { index: -1, saved: "", restore: null };
+      if (code === "ArrowUp") {
+        if (index < 0) return { index: total - 1, saved: draft || "", restore: null };
+        return { index: Math.max(0, index - 1), saved: saved, restore: null };
+      }
+      if (index < 0) return { index: -1, saved: "", restore: null };
+      let next = index + 1;
+      if (next >= total) return { index: -1, saved: "", restore: saved };
+      return { index: next, saved: saved, restore: null };
+    }
+
+    /**
+     * 光标是否贴着输入框的首行 / 末行（只看矩形，便于单测）。
+     *
+     * 返回两个独立的布尔值而不是一个枚举：单行草稿的「首行」就是「末行」，
+     * 用枚举会丢掉其中一个（↑ 能用、↓ 反而被挡住的经典 bug）。
+     * @param {any} rect 光标的 getBoundingClientRect()
+     * @param {any} box 输入框的 getBoundingClientRect()
+     * @param {number} lineHeight 行高（px）
+     * @returns {{first: boolean, last: boolean}}
+     */
+    function caretEdges(rect, box, lineHeight) {
+      let none = { first: false, last: false };
+      if (!rect || !box) return none;
+      if (
+        typeof rect.top !== "number" ||
+        typeof rect.bottom !== "number" ||
+        typeof box.top !== "number" ||
+        typeof box.bottom !== "number"
+      )
+        return none;
+      let line = typeof lineHeight === "number" && lineHeight > 0 ? lineHeight : 20;
+      let tolerance = line * CARET_LINE_RATIO;
+      return {
+        first: rect.top - box.top <= tolerance,
+        last: box.bottom - rect.bottom <= tolerance,
+      };
+    }
+
+    /**
+     * 每会话的召回历史缓存：`peek` 拿旧值（立刻可用），`fresh` 判断要不要后台刷新。
+     * 宿主会话日志是唯一事实来源，这里只缓存它的投影。
+     * @param {() => number} [now] 可注入的时钟，便于单测
+     */
+    function createRecallCache(now) {
+      let clock = typeof now === "function" ? now : Date.now;
+      /** @type {Map<string, {items: Array<{seq: number, text: string}>, at: number}>} */
+      let entries = new Map();
+
+      /** @param {any} sessionId */
+      function keyOf(sessionId) {
+        return typeof sessionId === "string" ? sessionId : "";
+      }
+
+      return {
+        /** 最近一次读到的历史（可能已过期；没有时 undefined）。 */
+        peek(/** @type {any} */ sessionId) {
+          let entry = entries.get(keyOf(sessionId));
+          return entry ? entry.items : undefined;
+        },
+        /** 是否还在保鲜期内。 */
+        fresh(/** @type {any} */ sessionId) {
+          let entry = entries.get(keyOf(sessionId));
+          if (!entry) return false;
+          return clock() - entry.at < RECALL_TTL_MS;
+        },
+        /** 写入一页历史。 */
+        set(/** @type {any} */ sessionId, /** @type {any} */ items) {
+          entries.set(keyOf(sessionId), {
+            items: Array.isArray(items) ? items : [],
+            at: clock(),
+          });
+        },
+        /** 回溯/切换后丢弃缓存，下一次按键重新拉。 */
+        forget(/** @type {any} */ sessionId) {
+          entries.delete(keyOf(sessionId));
+        },
       };
     }
 
@@ -2708,6 +2864,24 @@ window.__ModuleLoader__.load({
         h("div", { className: "dsh-srw-option-hint" }, t("settings.confirmOnListHint")),
       );
 
+      let recallRow = h(
+        "div",
+        { className: "dsh-srw-setting" },
+        h(
+          "label",
+          { className: "dsh-srw-check" },
+          h("input", {
+            type: "checkbox",
+            checked: prefs.recallEnabled !== false,
+            onChange: (/** @type {any} */ event) => {
+              if (event?.target) api.updatePrefs({ recallEnabled: event.target.checked === true });
+            },
+          }),
+          h("span", null, t("settings.recall")),
+        ),
+        h("div", { className: "dsh-srw-option-hint" }, t("settings.recallHint")),
+      );
+
       let healthBlock;
       if (health.loading) {
         healthBlock = h("div", { className: "dsh-srw-dim" }, t("settings.healthLoading"));
@@ -2787,6 +2961,7 @@ window.__ModuleLoader__.load({
         ),
         pageRow,
         confirmRow,
+        recallRow,
         data.saved === true
           ? h("div", { className: "dsh-srw-dim dsh-srw-saved" }, t("settings.saved"))
           : null,
@@ -3174,6 +3349,9 @@ window.__ModuleLoader__.load({
 
       let cutStore = createCutStore();
 
+      /** 输入框召回历史缓存（来源是宿主 sessionRewind/candidates）。 */
+      let recallCache = createRecallCache();
+
       /** 读客户端偏好（localStorage 缺失/脏数据都退回默认值）。 */
       function readPrefs() {
         try {
@@ -3397,8 +3575,13 @@ window.__ModuleLoader__.load({
         }
       }
 
-      function fillComposer(/** @type {any} */ sessionId, /** @type {any} */ text) {
-        let facade;
+      /**
+       * 某会话输入框的 façade（`conversation.input.for(scope)`）。
+       * 拿不到时返回 undefined —— 调用方自己决定退化路径。
+       * @param {any} sessionId
+       * @returns {any}
+       */
+      function composerFacadeOf(/** @type {any} */ sessionId) {
         try {
           let conversation = safeGet(ctx, "conversation");
           let scope =
@@ -3410,11 +3593,281 @@ window.__ModuleLoader__.load({
             typeof conversation.input.for === "function" &&
             scope !== undefined
           ) {
-            facade = conversation.input.for(scope);
+            return conversation.input.for(scope);
           }
         } catch (_error) {
-          facade = undefined;
+          /* 退化到 DOM 通道 */
         }
+        return undefined;
+      }
+
+      /**
+       * 把整段文本写进输入框草稿（召回用：允许覆盖当前草稿，与 fillComposer 的区别就在这里）。
+       * 优先走宿主 façade 的 `setDraft`；退化路径与 fillComposer 的 DOM 兜底一致。
+       * @param {any} sessionId
+       * @param {any} text
+       * @returns {"ok" | "none"}
+       */
+      function writeComposerDraft(/** @type {any} */ sessionId, /** @type {any} */ text) {
+        let value = typeof text === "string" ? text : "";
+        let facade = composerFacadeOf(sessionId);
+        if (facade && typeof facade.setDraft === "function") {
+          try {
+            facade.setDraft(value);
+            return "ok";
+          } catch (_error) {
+            /* 退化到 DOM 通道 */
+          }
+        }
+        let el = null;
+        try {
+          el = document.querySelector("[data-composer-input]");
+        } catch (_error) {
+          el = null;
+        }
+        if (!el || !(el instanceof HTMLElement)) return "none";
+        try {
+          el.focus();
+          let selection =
+            typeof document.getSelection === "function" ? document.getSelection() : null;
+          if (selection) {
+            let range = document.createRange();
+            range.selectNodeContents(el);
+            selection.removeAllRanges();
+            selection.addRange(range);
+          }
+          let ok = false;
+          try {
+            ok = document.execCommand("insertText", false, value);
+          } catch (_error) {
+            ok = false;
+          }
+          if (!ok) {
+            el.textContent = value;
+            el.dispatchEvent(new Event("input", { bubbles: true }));
+            ok = true;
+          }
+          return ok ? "ok" : "none";
+        } catch (_error) {
+          return "none";
+        }
+      }
+
+      /**
+       * 光标是否贴着输入框首/末行（浏览器侧封装；纯判定交给 caretEdges）。
+       * @param {any} el contenteditable 输入框
+       * @returns {{first: boolean, last: boolean}}
+       */
+      function caretEdgesOf(/** @type {any} */ el) {
+        try {
+          let selection =
+            typeof document.getSelection === "function" ? document.getSelection() : null;
+          if (!selection || selection.rangeCount === 0 || selection.isCollapsed !== true)
+            return { first: false, last: false };
+          let range = selection.getRangeAt(0).cloneRange();
+          range.collapse(true);
+          let rect = range.getBoundingClientRect();
+          if (
+            !rect ||
+            (rect.top === 0 && rect.bottom === 0 && rect.width === 0 && rect.height === 0)
+          ) {
+            let rects = range.getClientRects();
+            if (rects && rects.length > 0) rect = rects[0];
+          }
+          let box = el.getBoundingClientRect();
+          let style =
+            typeof window.getComputedStyle === "function" ? window.getComputedStyle(el) : null;
+          let lineHeight = style ? parseFloat(style.lineHeight) : NaN;
+          if (!Number.isFinite(lineHeight) || lineHeight <= 0)
+            lineHeight = rect && rect.height > 0 ? rect.height : 20;
+          return caretEdges(rect, box, lineHeight);
+        } catch (_error) {
+          return { first: false, last: false };
+        }
+      }
+
+      /**
+       * 读输入框草稿与提交阶段：优先宿主 façade，拿不到时退回 DOM 文本。
+       * @param {any} sessionId
+       * @param {any} target 焦点里的 contenteditable
+       * @returns {{draft: string, phase: string}}
+       */
+      function readComposer(/** @type {any} */ sessionId, /** @type {any} */ target) {
+        let facade = composerFacadeOf(sessionId);
+        let snapshot = facade ? facade.snapshot : undefined;
+        if (snapshot) {
+          return {
+            draft: typeof snapshot.draft === "string" ? snapshot.draft : "",
+            phase: typeof snapshot.phase === "string" ? snapshot.phase : "plain",
+          };
+        }
+        return {
+          draft: typeof target?.textContent === "string" ? target.textContent : "",
+          phase: "plain",
+        };
+      }
+
+      /**
+       * 输入框历史召回（↑/↓）：只替换草稿，绝不回溯、绝不发送。
+       *
+       * 历史来自本插件自己的宿主 RPC `sessionRewind/candidates`（真人消息、surface 感知、
+       * 完整文本），按会话缓存；键处理走宿主的 fixed input 通道
+       * （`shortcuts.observeFixedInput`）——裸 ↑/↓ 已被宿主固定动作 `move` 占用，
+       * 注册快捷键会冲突，而观察通道连输入法组合与「是否已被消费」都替我们算好了。
+       * @param {any} scope 拿到 shortcuts 的作用域
+       * @param {any} cache createRecallCache() 的实例
+       */
+      function installComposerRecall(/** @type {any} */ scope, /** @type {any} */ cache) {
+        let shortcuts = scope?.shortcuts;
+        if (!shortcuts || typeof shortcuts.observeFixedInput !== "function") return;
+        /**
+         * 每会话的浏览状态。`written` 记录我们最后写进草稿的文本：
+         * façade 的快照可能晚一拍，用它区分「快照还没跟上」和「用户真的改了」。
+         * @type {Map<string, {index: number, saved: string, written: string}>}
+         */
+        let states = new Map();
+        /** @type {Map<string, Promise<any>>} 并发合并：同一会话只发一次 RPC。 */
+        let inflight = new Map();
+
+        /** @param {any} sessionId */
+        function stateOf(sessionId) {
+          let found = states.get(sessionId);
+          if (!found) {
+            found = { index: -1, saved: "", written: "" };
+            states.set(sessionId, found);
+          }
+          return found;
+        }
+
+        /**
+         * 拉一页历史写进缓存。
+         * @param {any} sessionId
+         * @returns {Promise<Array<{seq: number, text: string}>>}
+         */
+        function loadHistory(sessionId) {
+          let running = inflight.get(sessionId);
+          if (running) return running;
+          let promise = call("candidates", { sessionId: sessionId, limit: RECALL_LIMIT })
+            .then((value) => historyFromCandidates(normalizeCandidatePage(value).candidates))
+            .catch(() => [])
+            .then((items) => {
+              inflight.delete(sessionId);
+              cache.set(sessionId, items);
+              return items;
+            });
+          inflight.set(sessionId, promise);
+          return promise;
+        }
+
+        /**
+         * 走一步浏览：算新状态、必要时写草稿。
+         * @param {any} sessionId
+         * @param {"ArrowUp" | "ArrowDown"} code
+         * @param {string} draft
+         * @param {Array<{seq: number, text: string}>} items
+         * @param {any} input fixed-input 输入（异步补填时传空对象，没有 consume）
+         * @returns {void}
+         */
+        function stepOnce(sessionId, code, draft, items, input) {
+          let state = stateOf(sessionId);
+          if (state.index >= 0) {
+            let current = items[state.index];
+            /* 用户自己改过草稿（既不是我们填的那条，也不是刚写进去的那条）→ 退出浏览 */
+            if (!current || (current.text !== draft && state.written !== draft)) {
+              state.index = -1;
+              state.saved = "";
+              state.written = "";
+              return;
+            }
+          }
+          let step = recallStep(state, code, items.length, draft);
+          state.index = step.index;
+          state.saved = step.saved;
+          let value =
+            step.restore !== null
+              ? step.restore
+              : step.index >= 0 && items[step.index]
+                ? items[step.index].text
+                : null;
+          if (typeof input?.consume === "function") input.consume();
+          if (value === null) return;
+          if (writeComposerDraft(sessionId, value) !== "ok") {
+            showToastKey("toast.refillNoComposer");
+            return;
+          }
+          state.written = value;
+        }
+
+        /** @param {any} input */
+        function onFixedInput(input) {
+          try {
+            if (!prefs.recallEnabled) return;
+            if (input?.type !== "keydown") return;
+            if (!isRecallGesture(input.gesture)) return;
+            let context = input.context || {};
+            if (context.modal !== null && context.modal !== undefined) return;
+            if (context.region !== "editable") return;
+            let target = context.target;
+            if (target?.isContentEditable !== true) return;
+            let occurrence = target.closest ? target.closest("[data-conversation-session]") : null;
+            if (!occurrence) return;
+            let sessionId = occurrence.getAttribute("data-conversation-session");
+            if (!sessionId || isInert(sessionId)) return;
+
+            let code = input.gesture.code;
+            let composer = readComposer(sessionId, target);
+            if (composer.phase !== "plain") return;
+            let draft = composer.draft;
+            let browsing = stateOf(sessionId).index >= 0;
+
+            if (!browsing) {
+              if (code === "ArrowDown") return;
+              /* 有草稿时只有光标贴着首行才接管 ↑，否则方向键交给编辑器 */
+              if (draft.trim() !== "" && !caretEdgesOf(target).first) return;
+            } else if (code === "ArrowDown" && !caretEdgesOf(target).last) {
+              return;
+            }
+
+            /* 浏览中：列表必须保持稳定（否则下标会指向别的消息），只有浏览开始时才重拉。 */
+            if (browsing) {
+              let browsingItems = cache.peek(sessionId);
+              if (browsingItems === undefined || browsingItems.length === 0) return;
+              stepOnce(sessionId, code, draft, browsingItems, input);
+              return;
+            }
+
+            /* 开始浏览：缓存还新鲜就直接用，否则先拉一份最新的（本地 RPC，毫秒级），
+             * 这样「刚发出去的那条」一定在历史里。 */
+            let items = cache.peek(sessionId);
+            if (items !== undefined && cache.fresh(sessionId)) {
+              stepOnce(sessionId, code, draft, items, input);
+              return;
+            }
+
+            /* 冷启动或过期：先把方向键吃掉（避免光标乱跳），拿到历史再填草稿 */
+            if (typeof input.consume === "function") input.consume();
+            loadHistory(sessionId)
+              .then((loaded) => {
+                if (loaded.length === 0) return;
+                let again = readComposer(sessionId, target);
+                if (again.phase !== "plain" || again.draft !== draft) return;
+                if (stateOf(sessionId).index >= 0) return;
+                stepOnce(sessionId, "ArrowUp", draft, loaded, null);
+              })
+              .catch(() => {});
+          } catch (_error) {
+            /* 召回是锦上添花：任何异常都不影响输入框本身 */
+          }
+        }
+
+        scope.effect(
+          () => shortcuts.observeFixedInput(onFixedInput),
+          "session-rewind: composer recall",
+        );
+      }
+
+      function fillComposer(/** @type {any} */ sessionId, /** @type {any} */ text) {
+        let facade = composerFacadeOf(sessionId);
         if (facade) {
           let draft = "";
           try {
@@ -3796,6 +4249,8 @@ window.__ModuleLoader__.load({
           markerSeq: summary.markerSeq === null ? target.seq : summary.markerSeq,
         });
         rebuildSessionById(sessionId);
+        /* 召回历史也要跟着收缩：被这次回溯撤下的消息不能再被 ↑ 翻出来 */
+        recallCache.forget(sessionId);
         let outcome = fillComposer(sessionId, summary.text || target.text || "");
         // 同源其它视图也要立刻隐藏这些行（它们不会被这次 append 唤醒）。
         broadcastCut(sessionId, summary);
@@ -4476,6 +4931,9 @@ window.__ModuleLoader__.load({
               }),
             "session-rewind: esc esc",
           );
+
+          // 输入框 ↑/↓ 历史召回（非破坏性）：同一通道的第二个观察者。
+          installComposerRecall(scope, recallCache);
         });
       } catch (_error) {
         /* shortcuts 缺失时降级：无 Esc Esc 入口 */
@@ -4645,6 +5103,15 @@ window.__ModuleLoader__.load({
         rewindSummaryOf: rewindSummaryOf,
         normalizeTab: normalizeTab,
         modeLabelKey: modeLabelKey,
+        // v3：输入历史召回（非破坏性）
+        RECALL_LIMIT: RECALL_LIMIT,
+        CARET_LINE_RATIO: CARET_LINE_RATIO,
+        historyFromCandidates: historyFromCandidates,
+        isRecallGesture: isRecallGesture,
+        recallStep: recallStep,
+        caretEdges: caretEdges,
+        createRecallCache: createRecallCache,
+        RECALL_TTL_MS: RECALL_TTL_MS,
         dictionaries: Object.freeze({ zh: zh, en: en }),
       }),
     });

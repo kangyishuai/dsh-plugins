@@ -293,6 +293,7 @@ describe("prefs (sanitizePrefs / clampInt)", () => {
       defaultMode: "chat",
       pageSize: 100,
       confirmOnList: true,
+      recallEnabled: true,
     });
     assert.deepEqual(testApi.sanitizePrefs("not an object"), testApi.PREF_DEFAULTS);
     assert.deepEqual(testApi.sanitizePrefs({}), testApi.PREF_DEFAULTS);
@@ -301,8 +302,9 @@ describe("prefs (sanitizePrefs / clampInt)", () => {
   it("keeps valid values and normalizes the mode", () => {
     assert.deepEqual(
       testApi.sanitizePrefs({ defaultMode: "both", pageSize: 50, confirmOnList: false }),
-      { defaultMode: "both", pageSize: 50, confirmOnList: false },
+      { defaultMode: "both", pageSize: 50, confirmOnList: false, recallEnabled: true },
     );
+    assert.equal(testApi.sanitizePrefs({ recallEnabled: false }).recallEnabled, false);
     assert.equal(testApi.sanitizePrefs({ defaultMode: "weird" }).defaultMode, "chat");
     assert.equal(testApi.sanitizePrefs({ confirmOnList: 0 }).confirmOnList, true);
   });
@@ -1378,5 +1380,197 @@ describe("apply() runtime wiring", () => {
       true,
       "rewind runs; the host cancels the running turn and waits for idle",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v3：输入历史召回（非破坏性）——纯数据部分
+// ---------------------------------------------------------------------------
+
+describe("isRecallGesture", () => {
+  it("accepts a bare ArrowUp / ArrowDown", () => {
+    assert.equal(testApi.isRecallGesture({ code: "ArrowUp" }), true);
+    assert.equal(testApi.isRecallGesture({ code: "ArrowDown" }), true);
+  });
+
+  it("rejects modified, composing, consumed and unrelated keys", () => {
+    for (const gesture of [
+      { code: "ArrowUp", control: true },
+      { code: "ArrowUp", alt: true },
+      { code: "ArrowUp", shift: true },
+      { code: "ArrowUp", meta: true },
+      { code: "ArrowUp", composing: true },
+      { code: "ArrowUp", defaultPrevented: true },
+      { code: "Enter" },
+      { code: "PageUp" },
+      {},
+      null,
+      undefined,
+    ]) {
+      assert.equal(testApi.isRecallGesture(gesture), false, JSON.stringify(gesture));
+    }
+  });
+});
+
+describe("recallStep", () => {
+  it("enters history from the live line and remembers the draft", () => {
+    const step = testApi.recallStep({ index: -1, saved: "" }, "ArrowUp", 3, "half typed");
+    assert.deepEqual(step, { index: 2, saved: "half typed", restore: null });
+  });
+
+  it("walks back and stops at the oldest entry without wrapping", () => {
+    let state = { index: 2, saved: "draft" };
+    state = testApi.recallStep(state, "ArrowUp", 3, "");
+    assert.deepEqual(state, { index: 1, saved: "draft", restore: null });
+    state = testApi.recallStep(state, "ArrowUp", 3, "");
+    assert.deepEqual(state, { index: 0, saved: "draft", restore: null });
+    state = testApi.recallStep(state, "ArrowUp", 3, "");
+    assert.deepEqual(state, { index: 0, saved: "draft", restore: null }, "no wrap");
+  });
+
+  it("walks forward and restores the pending line past the newest entry", () => {
+    let state = { index: 0, saved: "draft" };
+    state = testApi.recallStep(state, "ArrowDown", 3, "");
+    assert.deepEqual(state, { index: 1, saved: "draft", restore: null });
+    state = testApi.recallStep(state, "ArrowDown", 3, "");
+    assert.deepEqual(state, { index: 2, saved: "draft", restore: null });
+    state = testApi.recallStep(state, "ArrowDown", 3, "");
+    assert.deepEqual(state, { index: -1, saved: "", restore: "draft" });
+  });
+
+  it("does nothing at the live line or with an empty history", () => {
+    assert.deepEqual(testApi.recallStep({ index: -1, saved: "" }, "ArrowDown", 3, "x"), {
+      index: -1,
+      saved: "",
+      restore: null,
+    });
+    assert.deepEqual(testApi.recallStep({ index: -1, saved: "" }, "ArrowUp", 0, "x"), {
+      index: -1,
+      saved: "",
+      restore: null,
+    });
+  });
+});
+
+describe("caretEdges", () => {
+  const box = { top: 100, bottom: 200 };
+  it("classifies the first and last visual line", () => {
+    assert.deepEqual(testApi.caretEdges({ top: 100, bottom: 120 }, box, 20), {
+      first: true,
+      last: false,
+    });
+    assert.deepEqual(testApi.caretEdges({ top: 180, bottom: 200 }, box, 20), {
+      first: false,
+      last: true,
+    });
+  });
+
+  it("reports both edges on a single-line composer", () => {
+    assert.deepEqual(testApi.caretEdges({ top: 110, bottom: 130 }, { top: 100, bottom: 130 }, 20), {
+      first: true,
+      last: true,
+    });
+  });
+
+  it("reports neither edge on a middle line and degrades on missing input", () => {
+    assert.deepEqual(testApi.caretEdges({ top: 140, bottom: 160 }, box, 20), {
+      first: false,
+      last: false,
+    });
+    assert.deepEqual(testApi.caretEdges(null, box, 20), { first: false, last: false });
+    assert.deepEqual(testApi.caretEdges({ top: 100 }, null, 20), { first: false, last: false });
+  });
+
+  it("falls back to a sane line height", () => {
+    assert.equal(testApi.caretEdges({ top: 100, bottom: 120 }, box, NaN).first, true);
+  });
+});
+
+describe("historyFromCandidates", () => {
+  it("flips the host order (newest first) into oldest-first", () => {
+    const page = [
+      { seq: 9, text: "third" },
+      { seq: 5, text: "second" },
+      { seq: 2, text: "first" },
+    ];
+    const list = testApi.historyFromCandidates(page);
+    assert.deepEqual(
+      Array.from(list).map((/** @type {any} */ item) => item.text),
+      ["first", "second", "third"],
+    );
+    assert.deepEqual(
+      Array.from(list).map((/** @type {any} */ item) => item.seq),
+      [2, 5, 9],
+    );
+  });
+
+  it("drops empty and malformed entries", () => {
+    const list = testApi.historyFromCandidates([
+      { seq: 4, text: "   " },
+      { seq: 3, preview: "only preview" },
+      { text: "no seq" },
+      null,
+      { seq: 1, text: "keep" },
+    ]);
+    assert.deepEqual(Array.from(list), [{ seq: 1, text: "keep" }]);
+  });
+
+  it("keeps only the newest RECALL_LIMIT entries", () => {
+    const page = [];
+    for (let seq = testApi.RECALL_LIMIT + 5; seq >= 1; seq -= 1) {
+      page.push({ seq, text: `p${seq}` });
+    }
+    const list = testApi.historyFromCandidates(page);
+    assert.equal(list.length, testApi.RECALL_LIMIT);
+    assert.equal(list[0].seq, 6);
+    assert.equal(list[list.length - 1].seq, testApi.RECALL_LIMIT + 5);
+  });
+
+  it("tolerates non-array input", () => {
+    assert.deepEqual(Array.from(testApi.historyFromCandidates(null)), []);
+    assert.deepEqual(Array.from(testApi.historyFromCandidates(undefined)), []);
+  });
+});
+
+describe("createRecallCache", () => {
+  /** @param {number} start 起始毫秒 */
+  function clockFrom(start) {
+    let now = start;
+    return {
+      now: () => now,
+      advance: (/** @type {number} */ ms) => {
+        now += ms;
+      },
+    };
+  }
+
+  it("peeks, reports freshness and forgets", () => {
+    const clock = clockFrom(1000);
+    const cache = testApi.createRecallCache(clock.now);
+    assert.equal(cache.peek("s1"), undefined);
+    assert.equal(cache.fresh("s1"), false);
+
+    const items = [{ seq: 1, text: "a" }];
+    cache.set("s1", items);
+    assert.deepEqual(Array.from(cache.peek("s1")), items);
+    assert.equal(cache.fresh("s1"), true);
+
+    clock.advance(testApi.RECALL_TTL_MS + 1);
+    assert.equal(cache.fresh("s1"), false, "stale after the TTL");
+    assert.deepEqual(Array.from(cache.peek("s1")), items, "stale value stays readable");
+
+    cache.forget("s1");
+    assert.equal(cache.peek("s1"), undefined);
+  });
+
+  it("keeps sessions apart and normalizes bad ids", () => {
+    const cache = testApi.createRecallCache(() => 0);
+    cache.set("s1", [{ seq: 1, text: "one" }]);
+    cache.set("s2", [{ seq: 2, text: "two" }]);
+    assert.equal(cache.peek("s1")[0].text, "one");
+    assert.equal(cache.peek("s2")[0].text, "two");
+    assert.equal(cache.peek(null), undefined, "unknown session has no cache entry");
+    cache.forget(null);
+    assert.equal(cache.peek("s1")[0].text, "one");
   });
 });
