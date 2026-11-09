@@ -1,5 +1,11 @@
 # @kangyishuai/dsh-session-delete
 
+## 0.4.5
+
+### Patch Changes
+
+- [#31](https://github.com/kangyishuai/dsh-plugins/pull/31) [`52d86f0`](https://github.com/kangyishuai/dsh-plugins/commit/52d86f02372073d8fe7ee471881b125ed7e7d356) Thanks [@kangyishuai](https://github.com/kangyishuai)! - Tag the injected stylesheet with `data-plugin` so it is identifiable in DevTools (and by tests) as belonging to this plugin, matching the sibling plugin.
+
 ## 0.4.4
 
 ### Patch Changes
