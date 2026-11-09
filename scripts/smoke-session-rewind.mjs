@@ -91,8 +91,32 @@ const SHOTS = ${JSON.stringify(shots)};
 const checks = [];
 const check = (name, ok, detail) => checks.push({ name, ok: !!ok, detail: detail === undefined ? "" : String(detail) });
 const shot = (name) => page.screenshot({ path: SHOTS + "/" + name + ".png" });
-// ego 的浏览器 profile 会跨任务累积每个临时宿主的 dsh-auth cookie；请求头超限会返回 HTTP 431。
-await page.cdp("Network.clearBrowserCookies").catch(() => {});
+// ego 的浏览器 profile 会跨任务累积每个**临时宿主**的 dsh-auth cookie；请求头超限会返回 HTTP 431。
+// 但绝不能清空整个浏览器：那是用户真实的浏览器 profile（.github.com / .claude.ai 等都在里面）。
+// 只删 host 是 loopback 的 cookie（127.0.0.1 / localhost），也就是本脚本自己攒下来的那些。
+const purgeLoopbackCookies = async () => {
+  try {
+    await page.cdp("Network.enable");
+    const all = await page.cdp("Network.getAllCookies");
+    const cookies = Array.isArray(all) ? all : all?.cookies ?? [];
+    const loopback = cookies.filter((c) => {
+      const domain = String(c.domain || "").replace(/^./u, "");
+      return domain === "127.0.0.1" || domain === "localhost" || domain === "[::1]";
+    });
+    for (const cookie of loopback) {
+      await page.cdp("Network.deleteCookies", {
+        name: cookie.name,
+        domain: cookie.domain,
+        path: cookie.path || "/",
+      }).catch(() => {});
+    }
+    return { removed: loopback.length, total: cookies.length };
+  } catch (_error) {
+    return { removed: 0, total: 0 };
+  }
+};
+const cookieScope = await purgeLoopbackCookies();
+console.log("SMOKE_COOKIES " + JSON.stringify(cookieScope));
 const LABELS = {
   rewind: ["回退到此处", "Rewind to here"],
   dialogList: ["回溯", "Rewind"],
