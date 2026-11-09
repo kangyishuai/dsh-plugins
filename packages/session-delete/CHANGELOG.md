@@ -1,5 +1,11 @@
 # @kangyishuai/dsh-session-delete
 
+## 0.4.7
+
+### Patch Changes
+
+- [#36](https://github.com/kangyishuai/dsh-plugins/pull/36) [`9bb615e`](https://github.com/kangyishuai/dsh-plugins/commit/9bb615e7369a604200d50333835eb154ce9e5354) Thanks [@kangyishuai](https://github.com/kangyishuai)! - Use a template literal for the health-cleanup audit detail (Biome `useTemplate`), so `biome ci --error-on-warnings` stays clean on CI.
+
 ## 0.4.6
 
 ### Patch Changes

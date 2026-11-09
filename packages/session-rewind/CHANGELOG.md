@@ -1,5 +1,11 @@
 # @kangyishuai/dsh-session-rewind
 
+## 0.6.0
+
+### Minor Changes
+
+- [#38](https://github.com/kangyishuai/dsh-plugins/pull/38) [`9753de2`](https://github.com/kangyishuai/dsh-plugins/commit/9753de2a0466317d25d0a67f93bc9f262e05d7cf) Thanks [@kangyishuai](https://github.com/kangyishuai)! - Add non-destructive composer prompt recall: bare `↑` / `↓` in the focused composer walks back and forth through the prompts you already sent in the session (first-line gated, draft stashed and restored at the bottom, IME- and menu-safe), filling the draft only — it never rewinds, sends or writes to the session log. Wired through the host's fixed-input channel instead of registering shortcuts, with a Settings toggle and bilingual docs (ADR 0008).
+
 ## 0.5.1
 
 ### Patch Changes
