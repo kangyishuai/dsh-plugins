@@ -83,3 +83,51 @@ test("pnpm new 会登记到 labeler 与 bug 报告下拉，缺失时 check 给�
     rmSync(repoRoot, { recursive: true, force: true });
   }
 });
+
+test("有 client 半却没有桌面端套件时 check 报错", () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "dsh-plugins-desktop-rule-"));
+  try {
+    mkdirSync(join(repoRoot, "packages"));
+    writeFileSync(join(repoRoot, "package.json"), JSON.stringify({ name: "repo", scripts: {} }));
+    // 脚手架会同时生成桌面骨架，所以这里先删掉脚本登记与文件，模拟「有人漏做」
+    const dir = scaffold({ root: repoRoot, name: "no-desktop", description: "x" });
+    rmSync(join(repoRoot, "scripts", "smoke-no-desktop-desktop.mjs"), { force: true });
+    const pkgPath = join(repoRoot, "package.json");
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+    delete pkg.scripts["smoke:no-desktop-desktop"];
+    writeFileSync(pkgPath, JSON.stringify(pkg));
+
+    const messages = checkRepo(repoRoot)
+      .filter((i) => i.level === "error" && i.plugin === "no-desktop")
+      .map((i) => i.message)
+      .join("\n");
+    assert.match(messages, /有 client 半，必须提供桌面端自动化测试/);
+    assert.ok(
+      readFileSync(join(dir, "package.json"), "utf8").includes('"dsh"'),
+      "client 半标记应存在",
+    );
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("桌面端套件缺 --require 时 check 报错", () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "dsh-plugins-desktop-require-"));
+  try {
+    mkdirSync(join(repoRoot, "packages"));
+    writeFileSync(join(repoRoot, "package.json"), JSON.stringify({ name: "repo", scripts: {} }));
+    scaffold({ root: repoRoot, name: "no-require", description: "x" });
+    // 覆盖成不含 --require 的版本
+    writeFileSync(
+      join(repoRoot, "scripts", "smoke-no-require-desktop.mjs"),
+      "// remote-debugging-port but no gate flag\nconsole.log('x');\n",
+    );
+    const messages = checkRepo(repoRoot)
+      .filter((i) => i.level === "error" && i.plugin === "no-require")
+      .map((i) => i.message)
+      .join("\n");
+    assert.match(messages, /必须支持 --require/);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});

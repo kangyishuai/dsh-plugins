@@ -110,6 +110,39 @@ export function checkRepo(root = REPO_ROOT) {
       }
     }
 
+    // 桌面端自动化测试（硬性要求：有 client 半就必须有桌面套件）
+    if (pkg.dsh?.client) {
+      const rootPkgPath = join(root, "package.json");
+      /** @type {Record<string, string>} */
+      let rootScripts = {};
+      try {
+        rootScripts = JSON.parse(readFileSync(rootPkgPath, "utf8")).scripts ?? {};
+      } catch {
+        rootScripts = {};
+      }
+      const desktopScript = `smoke:${dir}-desktop`;
+      const desktopFile = join(root, "scripts", `smoke-${dir}-desktop.mjs`);
+      if (rootScripts[desktopScript] === undefined) {
+        report(
+          "error",
+          `有 client 半，必须提供桌面端自动化测试：根 package.json 缺少 "${desktopScript}" 脚本（约定见 docs/plugin-conventions.md §6）`,
+        );
+      } else if (!existsSync(desktopFile)) {
+        report("error", `${desktopScript} 指向的 scripts/smoke-${dir}-desktop.mjs 不存在`);
+      } else {
+        const src = readFileSync(desktopFile, "utf8");
+        if (!/remote-debugging-port|DSH_CDP_PORT/u.test(src)) {
+          report(
+            "error",
+            `${desktopScript} 没有走 CDP（应支持 --remote-debugging-port / DSH_CDP_PORT）`,
+          );
+        }
+        if (!/--require|require:/u.test(src)) {
+          report("error", `${desktopScript} 必须支持 --require（连不上端口时判失败，而不是跳过）`);
+        }
+      }
+    }
+
     // locale：zh/en 必须同时存在且 key 完全一致
     const zhPath = join(base, "locale/zh.json");
     const enPath = join(base, "locale/en.json");

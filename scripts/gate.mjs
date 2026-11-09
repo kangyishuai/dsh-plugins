@@ -27,6 +27,7 @@ const REPO = resolve(import.meta.dirname, "..");
  * @property {string} title
  * @property {string[]} args
  * @property {boolean} [optional] 没有对应脚本时跳过而不是失败
+ * @property {boolean} [missing] 本应有脚本却缺失（跳过也算失败）
  */
 
 /**
@@ -36,6 +37,20 @@ const REPO = resolve(import.meta.dirname, "..");
 async function readScripts() {
   const raw = await readFile(join(REPO, "package.json"), "utf8");
   return JSON.parse(raw).scripts ?? {};
+}
+
+/**
+ * 插件是否有 client 半（有的话桌面端套件是**必需**的，见 docs/plugin-conventions.md §6）。
+ * @param {string} plugin
+ * @returns {Promise<boolean>}
+ */
+async function hasClientHalf(plugin) {
+  try {
+    const raw = await readFile(join(REPO, "packages", plugin, "package.json"), "utf8");
+    return Boolean(JSON.parse(raw).dsh?.client);
+  } catch {
+    return false;
+  }
 }
 
 const main = async () => {
@@ -86,9 +101,16 @@ const main = async () => {
         if (typeof values.workspace === "string") extra.push("--workspace", values.workspace);
         stages.push({ title: "桌面 --deep 端到端", args: extra });
       }
+    } else if (await hasClientHalf(plugin)) {
+      stages.push({
+        title: `桌面回归（pnpm ${desktopSmoke}）—— 有 client 半但脚本缺失`,
+        args: [],
+        optional: true,
+        missing: true,
+      });
     } else {
       stages.push({
-        title: `桌面回归（pnpm ${desktopSmoke}）—— 未定义，跳过`,
+        title: `桌面回归（pnpm ${desktopSmoke}）—— 无 client 半，跳过`,
         args: [],
         optional: true,
       });
@@ -96,23 +118,32 @@ const main = async () => {
   }
 
   if (values["dry-run"] === true) {
-    // 只校验结构：web 冒烟缺失算失败（桌面端允许缺失，因为不是每个插件都有 GUI 入口）。
+    // 结构校验：必需步骤没有对应脚本就算失败。
+    // 桌面端对「有 client 半」的插件是必需的（见 docs/plugin-conventions.md §6）。
+    const client = await hasClientHalf(plugin);
     let missing = 0;
     let index = 0;
     for (const stage of stages) {
       index += 1;
       const hasScript = stage.args.length > 0;
       const isDesktop = String(stage.args[0] ?? "").endsWith("-desktop");
-      const mark = hasScript ? "ok  " : isDesktop ? "opt " : "MISS";
-      if (!hasScript && !isDesktop) missing += 1;
+      const mark = hasScript ? "ok  " : isDesktop && !client ? "n/a " : "MISS";
+      if (!hasScript && !(isDesktop && !client)) missing += 1;
       console.log(`${mark} [${index}/${stages.length}] ${stage.title}`);
     }
     if (missing > 0) {
       console.error(`FAIL ${plugin}: 有 ${missing} 个必需门禁步骤没有对应脚本（见 MISS）`);
+      if (client) {
+        console.error(
+          "      有 client 半的插件必须提供桌面端自动化测试（docs/plugin-conventions.md §6）。",
+        );
+      }
       process.exitCode = 1;
       return;
     }
-    console.log(`PASS ${plugin}: 门禁结构完整`);
+    console.log(
+      `PASS ${plugin}: 门禁结构完整${client ? "（含桌面端）" : "（无 client 半，桌面端不适用）"}`,
+    );
     return;
   }
 
@@ -122,6 +153,14 @@ const main = async () => {
   for (const stage of stages) {
     index += 1;
     if (stage.args.length === 0) {
+      if (stage.missing === true) {
+        console.error(`\nFAIL ${plugin}: ${stage.title}`);
+        console.error(
+          "      有 client 半的插件必须提供桌面端自动化测试（docs/plugin-conventions.md §6）。",
+        );
+        process.exitCode = 1;
+        return;
+      }
       console.log(`- [${index}/${stages.length}] ${stage.title}`);
       skipped += 1;
       continue;
