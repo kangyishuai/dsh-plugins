@@ -1,5 +1,11 @@
 # @kangyishuai/dsh-session-delete
 
+## 0.4.6
+
+### Patch Changes
+
+- [#35](https://github.com/kangyishuai/dsh-plugins/pull/35) [`01070d1`](https://github.com/kangyishuai/dsh-plugins/commit/01070d1f53e78aed4bc162de2123b23488264b9c) Thanks [@kangyishuai](https://github.com/kangyishuai)! - Repository description and topics now cover both plugins (rewind and delete), so the packages are discoverable from the GitHub side as well.
+
 ## 0.4.5
 
 ### Patch Changes
