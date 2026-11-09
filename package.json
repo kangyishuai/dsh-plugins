@@ -2,7 +2,7 @@
   "name": "dsh-plugins",
   "version": "0.0.0",
   "private": true,
-  "description": "Unofficial DeepSeek Harness (DSH) plugins by nano",
+  "description": "Unofficial DeepSeek Harness (DSH) plugins: in-place conversation rewind with file restore, and real session deletion with trash + audit log.",
   "type": "module",
   "packageManager": "pnpm@11.28.10",
   "engines": {
