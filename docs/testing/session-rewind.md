@@ -198,6 +198,8 @@ pnpm smoke:session-rewind-desktop --require --recall
 pnpm smoke:session-rewind-desktop -- --require                       # 发版前必须 PASS（只读 23 项）
 pnpm smoke:session-rewind-desktop -- --require --deep \
   --workspace ~/Workspace/dsh-rewind-ui-smoke                        # 加上文件模式 e2e（23 + 16 = 39 项）
+pnpm smoke:session-rewind-desktop -- --require --recall --deep \
+  --workspace ~/Workspace/dsh-rewind-ui-smoke                        # 全量组合（23 + 7 + 16 = 46 项）
 ```
 
 **`--deep`：文件模式端到端（真机、真模型）。** 它**自己**会在给定测试工作区点「新建会话」
@@ -237,6 +239,9 @@ pnpm smoke:session-rewind-desktop -- --require --deep \
 | 21  | 诊断报告只读工具已注册                                          |
 | 22  | 诊断报告孤儿数据检查存在                                        |
 | 23  | 面板可关闭                                                      |
+
+门禁建议直接跑**全量组合** `--recall --deep`（46 项，2026-11-09 实测全绿）：召回段会切会话、`--deep`
+段自己新建会话，互不干扰；召回段结束会把草稿清空，`--deep` 的输入才不会被旧草稿污染。
 
 `--recall` 追加的 7 项（合计 30 项）：找到可召回的会话 → 输入框已聚焦且草稿为空 → 空草稿按 `↑`
 召回最新一条 → 召回的文本确实来自会话里的某条用户消息 → 再按 `↑` 换一条（只有 1 条历史时
