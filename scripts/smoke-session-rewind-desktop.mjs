@@ -12,15 +12,23 @@
 // 默认只读：只切会话、开/关对话框与面板、点取消；**不回溯、不写文件、不发模型请求**，因此可以
 // 直接跑在真实 profile 上。端口可用 --port 或 DSH_CDP_PORT 覆盖（默认 9222）。
 //
-// `--deep --workspace <专用测试目录>`：额外跑**文件模式端到端**（会在该目录新建会话、发一次模型
-// 请求让它写一个文件、然后回溯并还原文件）。必须显式给出测试目录，脚本会拒绝其它路径；它只碰
-// 该目录里的 `rewind-desktop-smoke.txt`，但会消耗一次模型额度并在侧栏留下一个测试会话。
-//   pnpm smoke:session-rewind-desktop -- --deep --workspace ~/Workspace/dsh-rewind-ui-smoke
+// `--deep --workspace <专用测试目录>`：额外跑**文件模式端到端**（在该目录的会话里发一次模型请求，
+// 让它写一个文件、然后回溯并还原）。两道硬前置：
+//   1. 必须显式给 `--workspace`，且它必须存在、不在本仓库内；
+//   2. 当前必须已打开一个**绑定到该工作区**的会话——即输入框可编辑。
+//      「点 + 新建会话」在未绑定工作区时会停在「选择一个工作区开始」，而那个工作区选择器是
+//      无头环境里点不动的弹层（合成 click、CDP 真鼠标事件、键盘导航都试过），所以无法可靠自动化；
+//      请先手工在 DSH 里打开该工作区、新建一个会话，
+//      然后再跑。脚本绝不会退而求其次去用工作区里别的会话（可能是有价值的真实内容）。
+//   pnpm smoke:session-rewind-desktop --require --deep --workspace ~/Workspace/dsh-rewind-ui-smoke
 //
 // 两条踩过的坑：
 //   1. `Esc` `Esc` 在「正在运行本 agent 的会话」里会触发内置停止，取消正在跑的这一轮
 //      （脚本自己的工具调用会被 abort）。所以先切到一个**有消息的空闲会话**再按 Esc。
 //   2. 侧栏里可能有没有消息的会话，切过去候选列表是空的；必须挑选有用户消息的会话。
+//
+// `--sidebar-workspace <标题>`：只在该工作区的分组里找会话，**不碰别的工作区的会话**。
+// 找不到合格会话就判失败（而不是随手点开别人的会话）。
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -182,6 +190,31 @@ async function waitForTurnEnd(cdp, timeoutMs) {
   return false;
 }
 
+/**
+ * 等输入框**可编辑**。新建会话后宿主可能先要求「选择一个工作区开始」，
+ * 此时输入框存在但 contenteditable=false，光看存在性会误判为就绪。
+ */
+async function waitForComposer(/** @type {any} */ cdp, /** @type {number} */ timeoutMs = 15000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const state = await cdp.evaluate(`(() => {
+      const el = document.querySelector("[data-composer-input]");
+      if (!el) return { ready: false, needsWorkspace: false };
+      const rect = el.getBoundingClientRect();
+      const editable = el.getAttribute("contenteditable") === "true";
+      const placeholder = el.getAttribute("data-placeholder") || el.getAttribute("aria-placeholder") || "";
+      return {
+        ready: editable && rect.width > 0 && rect.height > 0,
+        needsWorkspace: !editable && String(placeholder).includes("选择一个工作区"),
+      };
+    })()`);
+    if (state?.ready === true) return true;
+    if (state?.needsWorkspace === true) return false;
+    await sleep(400);
+  }
+  return false;
+}
+
 /** 往 composer 里打字（Lexical 需要 execCommand 才进得去）。 */
 const typeIntoComposer = (/** @type {any} */ cdp, /** @type {string} */ text) =>
   cdp.evaluate(`(() => {
@@ -208,6 +241,26 @@ const composerText = (/** @type {any} */ cdp) =>
     `(() => { const el = document.querySelector("[data-composer-input]"); return el ? (el.textContent || "") : ""; })()`,
   );
 
+/**
+ * 等页面可交互：document.readyState complete 且根节点有内容，最多等 ~15s。
+ * @param {any} cdp
+ */
+async function ensureReady(cdp) {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const ready = await cdp
+      .evaluate(
+        `(() => document.readyState === "complete" && document.body && document.body.innerText.trim().length > 20)()`,
+      )
+      .catch(() => false);
+    if (ready === true) {
+      await sleep(600);
+      return;
+    }
+    await sleep(400);
+  }
+}
+
 const main = async () => {
   const { values } = parseArgs({
     options: {
@@ -215,9 +268,12 @@ const main = async () => {
       require: { type: "boolean", default: false },
       deep: { type: "boolean", default: false },
       workspace: { type: "string" },
+      // 侧栏工作区标题：把会话交互严格限制在该工作区分组内。
+      "sidebar-workspace": { type: "string" },
     },
-    allowPositionals: false,
+    allowPositionals: true,
   });
+  // 容忍 `pnpm <script> -- --require`：多余的 `--` 会被当成位置参数，这里忽略它。
   const port = Number(values.port ?? process.env.DSH_CDP_PORT ?? 9222);
   /** @type {{name: string, ok: boolean, detail: string}[]} */
   const checks = [];
@@ -248,6 +304,8 @@ const main = async () => {
   }
 
   await mkdir(SHOTS, { recursive: true }).catch(() => {});
+  // 紧接着别的 GUI 冒烟跑时，渲染线程可能还在忙；先等页面稳定再断言。
+  await ensureReady(cdp);
   try {
     // ---------- A. 插件加载与入口 ----------
     const info = await cdp.evaluate(`(() => {
@@ -270,7 +328,12 @@ const main = async () => {
       info?.pluginStyles?.length > 0,
       JSON.stringify(info?.pluginStyles ?? []),
     );
-    check("会话头部有回溯面板入口", info?.headerButton === true, "");
+    // 没打开任何会话时头部本来就没有动作区，这时不该判失败。
+    check(
+      "会话头部有回溯面板入口",
+      info?.headerButton === true || (info?.userRows ?? 0) === 0,
+      info?.headerButton === true ? "" : "当前没有打开会话，跳过该断言",
+    );
     // 注意：当前会话可能本来就没有用户消息（例如刚被回溯过），不能在这断言 ↶ 存在；
     // 挑到候选可达的会话之后再断言（见下）。
     check(
@@ -287,9 +350,24 @@ const main = async () => {
       const root = document.querySelector("[data-conversation-session]");
       return root ? root.getAttribute("data-conversation-session") : null;
     })()`);
+    // 只挑**空闲**会话：Esc Esc 在内置语义里是「停止当前回合」，如果挑到正在跑的会话
+    // （包括正在调用本脚本的 agent 会话），会把那一轮取消掉。
+    const sidebarWorkspace =
+      typeof values["sidebar-workspace"] === "string" ? values["sidebar-workspace"] : null;
     const sessionIds = await cdp.evaluate(`(() => {
-      const rows = [...document.querySelectorAll('[data-row-key^="session:"]')];
-      return rows.map((row) => (row.getAttribute("data-row-key") || "").replace("session:", ""));
+      const title = ${JSON.stringify(sidebarWorkspace)};
+      let scope = null;
+      if (title) {
+        const wsRow = [...document.querySelectorAll('[data-row-key^="workspace:"]')].find((r) => (r.textContent || "").includes(title));
+        if (!wsRow) return { status: "no-workspace" };
+        scope = wsRow.parentElement && wsRow.parentElement.parentElement;
+        if (!scope) return { status: "no-section" };
+      }
+      const rows = [...(scope || document).querySelectorAll('[data-row-key^="session:"]')];
+      const ids = rows
+        .filter((row) => !(row.textContent || "").includes("进行中"))
+        .map((row) => (row.getAttribute("data-row-key") || "").replace("session:", ""));
+      return { status: "ok", ids };
     })()`);
     /** @param {string} id */
     const switchTo = async (id) => {
@@ -321,7 +399,16 @@ const main = async () => {
     let idleSession = null;
     /** @type {string[]} */
     const probeLog = [];
-    for (const id of Array.isArray(sessionIds) ? sessionIds : []) {
+    check(
+      sidebarWorkspace === null
+        ? "未限定侧栏工作区（会遍历全部会话）"
+        : `会话遍历限定在工作区「${sidebarWorkspace}」`,
+      sidebarWorkspace === null || sessionIds?.status === "ok",
+      sidebarWorkspace === null
+        ? "提示：建议加 --sidebar-workspace 避免碰到其它工作区的会话"
+        : JSON.stringify(sessionIds?.status),
+    );
+    for (const id of Array.isArray(sessionIds?.ids) ? sessionIds.ids : []) {
       if (id === originalSession) continue;
       await switchTo(id);
       const users = await cdp.evaluate(
@@ -333,13 +420,14 @@ const main = async () => {
       }
       const candidates = await probeCandidates();
       probeLog.push(`${id.slice(8, 16)}:${candidates}`);
-      if (candidates >= 2) {
+      // 只需要 ≥1 条候选：Esc 流程本身只要求能列出并选中一条。
+      if (candidates >= 1) {
         idleSession = id;
         break;
       }
     }
     check(
-      "找到一个候选可达（≥2 条）的空闲会话用于 Esc 流程",
+      "找到一个候选可达（≥1 条）的空闲会话用于 Esc 流程",
       idleSession !== null,
       probeLog.join(" ") || "侧栏里没有第二个会话",
     );
@@ -555,22 +643,21 @@ const main = async () => {
       }
       check("--deep 提供了可用的专用测试工作区", workspaceOk, workspaceDetail);
 
+      const workspaceTitle = typeof workspacePath === "string" ? basename(workspacePath) : "";
+
       if (workspaceOk && typeof workspacePath === "string") {
         // 干净起点：上一次跑留下的同名文件会变成「已存在」而不是「新建」，语义不同。
         await rm(filePath, { force: true }).catch(() => {});
         check("测试文件在开始前不存在（保证是新建语义）", !(await exists(filePath)), filePath);
-        // 打开该工作区 → 新建会话
-        const workspaceTitle = basename(workspacePath);
-        const created = await cdp.evaluate(`(() => {
-          const row = [...document.querySelectorAll('[data-row-key^="workspace:"]')].find((r) => (r.textContent || "").includes(${JSON.stringify(workspaceTitle)}));
-          if (!row) return "no-workspace";
-          const btn = [...row.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("新建会话"));
-          if (!btn) return "no-new-session-button";
-          btn.click();
-          return "clicked";
-        })()`);
-        check("在测试工作区新建会话", created === "clicked", created);
-        await sleep(1800);
+        // 要求当前会话已绑定工作区且输入框可编辑：见文件头说明（新建会话的绑定无法可靠自动化）。
+        const ready = await waitForComposer(cdp, 4000);
+        check(
+          "当前会话输入框可编辑（已绑定测试工作区）",
+          ready,
+          ready
+            ? ""
+            : `请先在 DSH 里打开「${workspaceTitle}」工作区并新建/打开一个会话，使输入框可编辑，再重跑 --deep`,
+        );
 
         const typed = await typeIntoComposer(cdp, prompt);
         await sleep(300);
