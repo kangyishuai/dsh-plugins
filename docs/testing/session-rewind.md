@@ -40,7 +40,11 @@ pnpm verify                               # 仓库门禁
   replace 区间（目标及其后全部 surface 节点）、`bad-target` / `not-on-surface`；
 - `resolveSession` / `rewindResponse`：`not-found` / `busy` / `inert` 的优先级、并发重入、
   append 抛错时的 in-flight 清理；
-- 客户端纯函数：`DoubleEscape` 双击窗口、`cutOfMarkerNode`/`collectCuts`、`errorTextKey`。
+- 客户端纯函数：`DoubleEscape` 双击窗口、`cutOfMarkerNode`/`collectCuts`、`errorTextKey`；
+- 输入历史召回：`isRecallGesture`（组合键/输入法/已被消费一律放行）、`recallStep`（进入、到底不环绕、
+  越过最新一条恢复 pending line）、`caretEdges`（首/末行为两个独立布尔，单行草稿两者都成立）、
+  `historyFromCandidates`（宿主新→旧翻成旧→新、丢空文本、截 100）、`createRecallCache`（TTL 失真、
+  `peek` 仍可读、按会话隔离、`forget`）。
 
 ## 1.5 一条命令跑完门禁（发版前）
 
@@ -95,7 +99,7 @@ atlas 的对话），装当前源码打的包，启动真实宿主后用 ego-bro
 pnpm smoke:session-rewind
 ```
 
-临时 home 里启动真实宿主 + ego-browser，38 项断言：
+临时 home 里启动真实宿主 + ego-browser，49 项断言：
 
 | #     | 断言                                                                                                  |
 | ----- | ----------------------------------------------------------------------------------------------------- |
@@ -120,6 +124,17 @@ pnpm smoke:session-rewind
 | 26–27 | 设置页偏好持久化与恢复                                                                                |
 | 28    | 诊断页报告只读工具已注册                                                                              |
 | 29–34 | 审计记录、marker 计数与形状、日志只追加等收尾断言                                                     |
+| 35    | 召回：找到含 ≥2 条未被回溯遮蔽的用户消息的会话（期望值直接来自会话日志，不写死文案）                  |
+| 36    | 召回前提：输入框已聚焦、草稿为空、能用 `[data-conversation-session]` 定位当前会话                     |
+| 37    | 空草稿按 `↑` → 草稿等于最新一条用户输入（A1）                                                         |
+| 38    | 再按 `↑` → 草稿等于上一条用户输入（A2）                                                               |
+| 39    | 按 `↓` 回到最新一条，再按 `↓` → 恢复浏览前的空草稿（A3）                                              |
+| 40    | 非空草稿 + 光标在第一行时按 `↑` 也能召回（A4）                                                        |
+| 41    | 一路 `↓` 到底 → 原样还回用户自己的草稿（stash/restore，A4）                                           |
+| 42    | 召回全程非破坏：无新 `user/message`、无回溯 marker、对话行数不变（A5）                                |
+| 43    | 关掉「输入框 ↑/↓ 召回历史输入」后 `↑` 既不填草稿，也不在 window 阶段被 `preventDefault`（A6）         |
+| 44    | 设置可以恢复为开启（后续设置类断言不受影响）                                                          |
+| 45–49 | 草稿清理（不残留影响回溯回填）、截图与收尾断言                                                        |
 
 冒烟会先**定向清理** loopback（127.0.0.1 / localhost）的 cookie 后再打开页面：ego-browser 是用户真实的
 浏览器 profile，绝不能整库清空（会踢掉真实登录态）。清理结果打印成 `SMOKE_COOKIES {"removed":…,"total":…}`。
@@ -232,6 +247,11 @@ pnpm smoke:session-rewind-desktop -- --require --deep \
 | 连续回溯到同一会话更早的位置           | 每次都截断在目标之前；重载后所有区间仍然隐藏            |
 | 回溯到会话第一条用户消息               | 对话只剩系统提示，输入框回填第一条消息                  |
 | 禁用/卸载插件后打开会话                | 被撤回的行重新显示（日志从未删改）                      |
+| 空草稿按 `↑`，随后开始打字             | 召回立刻退出浏览；再按 `↓` 不会覆盖刚打的字             |
+| 多行草稿光标在中间行按 `↑`             | 仍是光标上移，不召回（第一行才接管）                    |
+| 正在运行回合（草稿在排队）按 `↑`       | 仍可召回，但 `phase !== plain` 时不接管                 |
+| `/`、`@` 候选菜单打开时按 `↑` `↓`      | 菜单自己移动选中项，召回不插手                          |
+| 回溯之后再按 `↑`                       | 被这次回溯撤下的消息不会出现在召回里                    |
 
 ## 4. DSH 升级时要重点看的宿主事实
 
@@ -240,5 +260,7 @@ pnpm smoke:session-rewind-desktop -- --require --deep \
 1. `Session.append` 的 surface `replace` 约束有没有变（`sourceEventSeqs` 完整覆盖被遮蔽节点）；
 2. Chat 快照 builder 的 `visibility` 语义与 `uiConversation.views`/`definition.create` 是否还在；
 3. `conversation.chat.node` 的键控账本（`entries`/`subscribe`/`component` 可写）是否还在；
-4. `ctx.get("conversation").input.shell(id).setDraft`、`shortcuts.observeFixedInput` 的过滤器语义；
+4. `ctx.get("conversation").input.shell(id).setDraft`、`shortcuts.observeFixedInput` 的过滤器语义
+   （输入历史召回依赖它把**每个 keydown** 都送给观察者，并附带 `context.region` / `gesture.composing`）；
+   `data-conversation-session` 这个会话根 DOM 标记也由 `dsh-client-ui-conversation` 提供；
 5. Typert Remote 的 SRC 网关仍要求 `method(request)` 且形参不可解构。

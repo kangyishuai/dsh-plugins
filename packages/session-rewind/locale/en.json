@@ -89,6 +89,8 @@
     "settings.pageSize": "Candidates per page",
     "settings.confirmOnList": "Confirm before executing from the list",
     "settings.confirmOnListHint": "When off, the default conversation-only mode runs directly; file mode always asks first.",
+    "settings.recall": "↑/↓ recalls earlier prompts in the composer",
+    "settings.recallHint": "In an empty draft (or with the caret on the first line) ↑ recalls the last prompt you sent, ↓ walks forward and restores your own draft at the bottom; it only fills the draft — never rewinds, never sends.",
     "settings.saved": "Saved",
     "settings.healthTitle": "Diagnostics",
     "settings.healthRefresh": "Refresh",

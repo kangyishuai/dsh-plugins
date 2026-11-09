@@ -21,6 +21,7 @@ Long conversations drift. A few turns later you wish you had answered a prompt d
 - **Conversation.** The target message and everything after it are withdrawn from the model-visible context and from the transcript. The session id, title and earlier history are untouched. Nothing is deleted from the log — one marker event is appended.
 - **Files (optional).** Files changed by `write` / `edit` / `apply_patch` in the withdrawn turns are restored to their pre-change content. Files created after the target are moved to the plugin's trash instead of deleted. A rescue point of the current files is created before anything is written; failures roll back from it.
 - **Composer.** The target message's text (and images) is put back into the composer, ready to edit and send again. An existing draft is never overwritten. Tick **Send this message again right after rewinding** in the confirmation dialog to retry the turn in one click (conversation-only rewinds).
+- **Prompt recall without rewinding.** In the composer, bare `↑` on an empty draft (or with the caret on the first line) recalls the last prompt you sent in this session — `↑` again walks further back, `↓` walks forward and restores the draft you had before browsing. It only replaces the draft text: nothing is withdrawn from the context, sent or rewritten. Toggle it in **Settings**.
 - **Every view stays in sync.** Rewind in one tab or window and other open views of the same session hide the withdrawn rows immediately, without a reload (the notice travels through `localStorage`; the host's cuts remain the only source of truth).
 - **Rewind panel.** A new header action opens a panel with four tabs: **Withdrawn** (every message each rewind removed, searchable, copy or put back in the composer), **History** (a timeline of each rewind and each rescue-point file restore, newest first: scope, message count, tokens, file results), **Rescue points** (restore files from an earlier rescue), and **Settings** (default scope, page size, confirm-on-list, diagnostics).
 
@@ -69,6 +70,8 @@ Re-run `pnpm pack` + `add` after changing the code. The plugin has a host half, 
 
 **Commands.** `/rewind` opens the same candidate list. `/rewind @<seq> [chat|both]` executes directly (the preview's seq is shown in the list). `/rewind` is decorated by the client; the bare form never sends text to the model.
 
+**Composer history — `↑` / `↓`.** Focus the composer and press `↑`: the newest prompt you sent in this session fills the draft; `↑` again walks further back, `↓` walks forward, and one more `↓` past the newest entry restores the draft you were typing. It works with an empty draft or when the caret sits on the first line — inside a multi-line draft on a later line the arrows keep moving the caret. Recall never rewinds, never sends and never writes to the session log. History covers the messages still in the model-visible surface (100 newest, older ones dropped) and excludes what an earlier rewind withdrew — those live in the panel's **Withdrawn** tab.
+
 **After a rewind** the target text returns to the composer (images are re-attached best-effort) and the composer is focused. If the composer already held a draft, the draft is kept and a notice says so.
 
 **What is refused**
@@ -112,13 +115,14 @@ On startup the plugin also removes data for sessions that no longer exist (they 
 - **The marker is visible to the model** as a short `(empty message)` user message where the withdrawn turns used to be. It is not shown in the transcript.
 - **No network, no telemetry.** Everything is local; file snapshots may contain sensitive content, so treat `<DSH_HOME>/session-rewind/` like your workspace.
 - **Private client seams.** Hiding rows and injecting the ↶ button rely on DSH's internal view/slot registries. They are shape-checked at install and degrade to “context rewound, transcript not hidden” or “button missing” rather than breaking a session.
+- **Recall is a draft edit.** It fills the composer through the host facade, so `Ctrl+Z` steps back through recalls like any other draft change; it never appends to the session or the model context.
 - **POSIX/macOS paths only** in this version; Windows separators and permission bits are not verified.
 
 ## Compatibility
 
-| DSH version | Status                                                                                                 |
-| ----------- | ------------------------------------------------------------------------------------------------------ |
-| 0.2.2-rc.1  | Verified: 185 unit tests + `smoke:session-rewind` 34/34 + desktop 36/36 (`--deep`, file mode included) |
+| DSH version | Status                                                                                                                                                                                        |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.2.2-rc.1  | Verified: 205 unit tests + `smoke:session-rewind` 49/49 (web, temp home). The read-only desktop smoke (36/36 on this DSH version) has **not** been re-run for the composer-recall change yet. |
 
 The plugin declares no `engines.dsh` and no `@deepseek-ai/*` peer range: DSH is pre-release and semver ranges over prereleases are unreliable (see [ADR 0005](../../docs/adr/0005-dsh-version-compatibility.md)). Treat the table as the compatibility statement. After a DSH upgrade run `pnpm probe:runtime`, `pnpm smoke:session-rewind`, and check the plugin's diagnostics tab; if a private seam changed, the plugin degrades instead of breaking the session.
 
