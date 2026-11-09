@@ -178,7 +178,9 @@ open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debuggin
 pnpm smoke:session-rewind-desktop
 ```
 
-加 `--recall` 会在同一个 Electron 渲染进程里额外验证**输入框 ↑/↓ 历史召回**（5 条断言）：
+桌面只读回归实测 **23 项**（2026-11-09，DSH 0.2.2-rc.1 / Electron 44）。
+
+加 `--recall` 会在同一个 Electron 渲染进程里额外验证**输入框 ↑/↓ 历史召回**（5 条断言，合计 30 项）：
 空草稿按 ↑ 召回最新一条用户消息（并核对它确实出现在对话行里）、再按 ↑ 往前翻、↓↓ 走回并恢复空草稿、
 全程对话行数不变且不弹回溯框。它**只写草稿**，结束时清空；不发送、不回溯、不写会话日志。
 随机按键通过 CDP `Input.dispatchKeyEvent` 派发，走的是真实 DOM keydown 路径（也就是

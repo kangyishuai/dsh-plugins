@@ -452,7 +452,11 @@ const main = async () => {
     }
 
     // ---------- B2. --recall：输入框 ↑/↓ 历史召回（真实 Electron 渲染进程按键） ----------
-    if (values.recall === true && idleSession !== null) {
+    // 需要一个「至少有 2 条可召回消息」的会话：section B 只要求 ≥1 条候选，
+    // 而召回要验证「再按 ↑ 往前翻一条」，1 条历史翻不出差异。
+    /** @type {string | null} */
+    let recallSession = null;
+    if (values.recall === true) {
       /** 草稿文本（Lexical 空段落 textContent 是空串，innerText 是 "\n"）。 */
       const recallDraft = () =>
         cdp.evaluate(`(() => {
@@ -482,6 +486,36 @@ const main = async () => {
       };
       const recallUp = () => recallPress("ArrowUp", "ArrowUp", 38, 126);
       const recallDown = () => recallPress("ArrowDown", "ArrowDown", 40, 125);
+
+      // 优先挑 ≥2 条的会话（能验证「继续往前翻」）；只有 1 条也照测，但那条断言退化为
+      // 「停在最旧一条、内容不变」——新装 profile 里常常只有一条历史。
+      /** @type {string | null} */
+      let recallFallback = null;
+      let recallHasOlder = false;
+      for (const id of Array.isArray(sessionIds?.ids) ? sessionIds.ids : []) {
+        if (id === originalSession) continue;
+        await switchTo(id);
+        /** @type {string[]} */
+        const probeRows = await recallRows();
+        const usable = probeRows.filter((/** @type {string} */ text) => text !== "").length;
+        if (usable >= 2) {
+          recallSession = id;
+          recallHasOlder = true;
+          break;
+        }
+        if (usable === 1 && recallFallback === null) recallFallback = id;
+      }
+      if (recallSession === null && recallFallback !== null) {
+        recallSession = recallFallback;
+        await switchTo(recallFallback);
+      }
+      check(
+        "召回：找到一个可召回的会话（空闲、有用户消息）",
+        recallSession !== null,
+        recallSession
+          ? `${recallSession.slice(0, 16)}${recallHasOlder ? "（≥2 条，可验证往前翻）" : "（仅 1 条，部分断言退化）"}`
+          : "侧栏里没有第二个带用户消息的空闲会话",
+      );
 
       const focused = await recallFocus();
       await sleep(250);
@@ -517,11 +551,19 @@ const main = async () => {
       await sleep(400);
       /** @type {string | null} */
       const older = await recallDraft();
-      check(
-        "再按 ↑ 继续往前翻一条（内容变化）",
-        typeof older === "string" && older !== "" && older !== newest,
-        JSON.stringify({ from: (newest || "").slice(0, 30), to: (older || "").slice(0, 30) }),
-      );
+      if (recallHasOlder) {
+        check(
+          "再按 ↑ 继续往前翻一条（内容变化）",
+          typeof older === "string" && older !== "" && older !== newest,
+          JSON.stringify({ from: (newest || "").slice(0, 30), to: (older || "").slice(0, 30) }),
+        );
+      } else {
+        check(
+          "只有一条历史时，再按 ↑ 停在最旧一条（不环绕、不清空）",
+          typeof older === "string" && older !== "" && older === newest,
+          JSON.stringify({ draft: (older || "").slice(0, 30) }),
+        );
+      }
 
       await recallDown();
       await sleep(300);

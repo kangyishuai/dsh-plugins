@@ -120,9 +120,9 @@ On startup the plugin also removes data for sessions that no longer exist (they 
 
 ## Compatibility
 
-| DSH version | Status                                                                                                                                                                                        |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0.2.2-rc.1  | Verified: 205 unit tests + `smoke:session-rewind` 49/49 (web, temp home). The read-only desktop smoke (36/36 on this DSH version) has **not** been re-run for the composer-recall change yet. |
+| DSH version | Status                                                                                                                                                                                                   |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.2.2-rc.1  | Verified 2026-11-09: 205 unit tests + web `smoke:session-rewind` 49/49 (temp DSH home) + desktop `smoke:session-rewind-desktop` 23/23 read-only and 30/30 with `--recall` (real Electron renderer, CDP). |
 
 The plugin declares no `engines.dsh` and no `@deepseek-ai/*` peer range: DSH is pre-release and semver ranges over prereleases are unreliable (see [ADR 0005](../../docs/adr/0005-dsh-version-compatibility.md)). Treat the table as the compatibility statement. After a DSH upgrade run `pnpm probe:runtime`, `pnpm smoke:session-rewind`, and check the plugin's diagnostics tab; if a private seam changed, the plugin degrades instead of breaking the session.
 
@@ -132,7 +132,7 @@ The plugin declares no `engines.dsh` and no `@deepseek-ai/*` peer range: DSH is 
 pnpm test                     # unit tests (host engine, host RPC, client helpers)
 pnpm verify                   # repo-wide gates
 pnpm smoke:session-rewind           # temp DSH home + real GUI end-to-end (needs dsh & ego-browser)
-pnpm smoke:session-rewind-desktop   # desktop (Electron) check: 21 read-only + 12 with --deep --workspace <dir>
+pnpm smoke:session-rewind-desktop   # desktop (Electron) read-only check (23); --recall adds 5 composer-recall checks, --deep --workspace <dir> adds the file-mode run
 ```
 
 Design notes: [ADR 0006](../../docs/adr/0006-session-rewind-architecture.md) and [ADR 0007](../../docs/adr/0007-session-rewind-file-restore.md) (Chinese; the repository docs are written in Chinese).
