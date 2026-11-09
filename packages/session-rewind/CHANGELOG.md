@@ -1,5 +1,13 @@
 # @kangyishuai/dsh-session-rewind
 
+## 0.5.1
+
+### Patch Changes
+
+- [#35](https://github.com/kangyishuai/dsh-plugins/pull/35) [`01070d1`](https://github.com/kangyishuai/dsh-plugins/commit/01070d1f53e78aed4bc162de2123b23488264b9c) Thanks [@kangyishuai](https://github.com/kangyishuai)! - Repository description and topics now cover both plugins (rewind and delete), so the packages are discoverable from the GitHub side as well.
+
+- [#33](https://github.com/kangyishuai/dsh-plugins/pull/33) [`0246dee`](https://github.com/kangyishuai/dsh-plugins/commit/0246dee767b972bedbb87ff197de229344199e5f) Thanks [@kangyishuai](https://github.com/kangyishuai)! - Ship the README screenshots to npm and keep them sanitized: the confirmation dialog and the rewind panel are generated from a throwaway DSH home containing only a synthetic workspace and session, cropped to the dialog/panel, and have their PNG metadata stripped. No documentation or behaviour change.
+
 ## 0.5.0
 
 ### Minor Changes
