@@ -103,7 +103,42 @@ packages/<name>/
 
 ## 6. 测试与验证
 
+### 6.1 桌面端自动化测试是**硬性要求**
+
+**凡是带 client 半（`dsh.client`）的插件，必须同时提供 DSH 桌面版（Electron）的自动化测试。**
+`pnpm check`、`pnpm gate <plugin>` 和 CI 的 `--dry-run` 都会拦这条，缺了直接报错。
+
+要求与原因：
+
+| 要求                                                                                      | 原因                                                                                                                        |
+| ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| 根 `package.json` 有 `smoke:<name>-desktop` 脚本，指向 `scripts/smoke-<name>-desktop.mjs` | 一条命令可跑；`pnpm gate` 能自动串起来                                                                                      |
+| 走 CDP（支持 `--port` / `DSH_CDP_PORT`，默认 9222）                                       | 真正驱动**用户的桌面版**，不是另起一个 web 组合                                                                             |
+| 支持 `--require`：连不上端口时**失败**而不是跳过                                          | 否则「没跑」会被当成「通过」——这是最容易自欺的地方                                                                          |
+| 默认**只读**：只开菜单/对话框/面板再 Esc 关闭，不执行破坏性操作                           | 要能安全地跑在默认 profile 上；破坏性流程要么放到 web 冒烟（临时 `DSH_HOME`），要么用专门的 `--deep --workspace <专用目录>` |
+| 会打印截图目录与断言明细                                                                  | 失败时可复现、可留证                                                                                                        |
+
+为什么必须做：client 半大量依赖宿主**私有 seam**（slot、`extraActions`、`views` 接管、`commandUi.decorate`…），
+这些没有类型、没有契约，单测和 web 冒烟都覆盖不到**真实 Electron 渲染进程**里的行为。
+
+参考实现：
+
+- `scripts/smoke-session-rewind-desktop.mjs`（23 项只读 + `--deep` 文件模式 e2e，共 37 项）
+- `scripts/smoke-session-delete-desktop.mjs`（14 项只读；`--workspace` 时 15 项）
+
+发版前用 `pnpm gate <plugin>` 一次跑完（桌面步骤永远带 `--require`）：
+
+```bash
+open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1
+pnpm gate session-rewind
+```
+
+细节与坑见 [docs/testing/session-rewind.md](testing/session-rewind.md)（Esc Esc 会打断当前会话、
+挑选「候选可达」的会话、紧跟 web 冒烟后要等页面可交互等）。
+
+### 6.2 其余测试层次
+
 1. 单元测试：`node --test`，放在 `packages/<name>/test/`。文件系统相关逻辑一律在 `mkdtemp` 临时目录里测。
-2. `pnpm verify`：lint + 类型检查 + 规范检查 + 测试。
+2. `pnpm verify`：lint + 类型检查 + 规范检查 + 文档一致性 + 测试。
 3. 真实验证（必须做）：`cd packages/<name> && pnpm pack --pack-destination /tmp`，再 `dsh plugin --profile desktop add /tmp/<tgz>`，然后重启桌面版（host 半改动）或刷新页面（client 半改动），在 GUI 里手动点一遍。改完代码要**重新 pack 并再次 add** 才会更新已装副本；`link:` 安装会因宿主包解析不到而激活失败（[runtime](runtime/0.2.1-rc.5.md) §6.9）。
 4. 验证完可以 `dsh plugin --profile desktop remove <包名>`，再 `add` 正式版。
