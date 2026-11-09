@@ -59,7 +59,7 @@ pnpm gate session-rewind --deep --workspace ~/Workspace/dsh-rewind-ui-smoke
 2. `pnpm probe:runtime`（宿主包/API/slot/私有 seam，50 项）
 3. `pnpm smoke:session-rewind`（临时 DSH_HOME 的 web 端到端，49 项）
 4. 桌面只读回归（23 项，**永远带 `--require`**：没开调试端口就是失败，不是跳过）
-5. 桌面 `--deep` 文件模式 e2e（需 `--workspace`；本版发布未重跑，改用 web 冒烟覆盖召回语义）
+5. 桌面 `--deep` 文件模式 e2e（23 只读 + 16 深链 = 39 项，需 `--workspace`；2026-11-09 实测全绿）
 
 只有显式 `--skip-desktop` 才跳过桌面端，且结束时会明确打印「门禁不完整」。
 
@@ -197,11 +197,11 @@ pnpm smoke:session-rewind-desktop --require --recall
 ```bash
 pnpm smoke:session-rewind-desktop -- --require                       # 发版前必须 PASS（只读 23 项）
 pnpm smoke:session-rewind-desktop -- --require --deep \
-  --workspace ~/Workspace/dsh-rewind-ui-smoke                        # 加上文件模式 e2e（本次未重跑）
+  --workspace ~/Workspace/dsh-rewind-ui-smoke                        # 加上文件模式 e2e（23 + 16 = 39 项）
 ```
 
-**`--deep`：文件模式端到端（真机、真模型）。** 实测它**自己就能**在给定测试工作区新建会话
-（不需要事先手动开一个），所以门禁可以全自动跑完；它会：新建会话 → 发一次模型
+**`--deep`：文件模式端到端（真机、真模型）。** 它**自己**会在给定测试工作区点「新建会话」
+（2026-11-09 起 H 段显式做这件事并断言会话为空），不再依赖调用者先手工开好会话；它会：新建会话 → 发一次模型
 请求让 agent 用 `write` 创建 `rewind-desktop-smoke.txt` → 点该消息 ↶ → 确认「对话+文件」→ 断言
 文件进回收站、toast 与输入框回填 → 面板「救援点」恢复 → 断言文件内容回到工作区 → 断言时间线
 出现 `rescue-restore` 节点。

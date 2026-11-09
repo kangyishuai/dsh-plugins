@@ -589,21 +589,37 @@ const main = async () => {
     // ---------- C. Esc Esc → 候选列表 → 搜索 ----------
     /** @type {any} */
     let candidates = null;
-    if (idleSession !== null) {
-      await cdp.evaluate(
-        `(() => { const el = document.querySelector("[data-composer-input]"); if (el && el.focus) el.focus(); })()`,
+    /** 把焦点放回输入框。 */
+    const focusComposer = () =>
+      cdp.evaluate(
+        `(() => { const el = document.querySelector("[data-composer-input]"); if (el && el.focus) el.focus(); return !!el; })()`,
       );
+    /** 按一次 Esc Esc 并返回对话框信息（没有对话框时 null）。 */
+    const fireDoubleEscape = async () => {
+      await focusComposer();
       await sleep(200);
       await pressEscape(cdp, "Escape", 53);
       await sleep(120);
       await pressEscape(cdp, "Escape", 53);
       await sleep(900);
-      candidates = await dialogInfo(cdp);
+      return dialogInfo(cdp);
+    };
+    if (idleSession !== null) {
+      candidates = await fireDoubleEscape();
+      // 重试一次：切换会话、取消上一个对话框之后，焦点/回合状态可能还没就绪
+      // （实测偶发「第一次按不出、第二次就出来」）。只重试，不降低断言。
+      if (candidates === null) {
+        await switchTo(idleSession);
+        await sleep(300);
+        candidates = await fireDoubleEscape();
+      }
     }
     check(
       "Esc Esc 打开候选列表",
       candidates !== null,
-      candidates ? candidates.title : "没有对话框",
+      candidates
+        ? candidates.title
+        : `没有对话框（session=${String(idleSession).slice(0, 20)}，userRows=${await cdp.evaluate(`document.querySelectorAll('[data-chat-flow-kind="user"]').length`)}）`,
     );
     check("候选列表可搜索", candidates?.hasSearch === true, "");
     const needle = candidates && candidates.rows.length > 0 ? candidates.rows[0].slice(0, 2) : "";
@@ -790,6 +806,33 @@ const main = async () => {
         // 干净起点：上一次跑留下的同名文件会变成「已存在」而不是「新建」，语义不同。
         await rm(filePath, { force: true }).catch(() => {});
         check("测试文件在开始前不存在（保证是新建语义）", !(await exists(filePath)), filePath);
+        // 显式在测试工作区里开一个新会话：靠 section G「切回原会话」不够可靠（行可能在折叠分组里，
+        // 点击不生效时仍停在上一个会话），而 H 段必须在**绑定该工作区**的会话里跑，否则模型没有
+        // 写文件的权限、断言会以「文件不存在」的形式失败，看起来像插件 bug。
+        const opened = await cdp.evaluate(`(() => {
+          const title = ${JSON.stringify(workspaceTitle)};
+          const btn = [...document.querySelectorAll("button")].find((b) => {
+            const label = b.getAttribute("aria-label") || "";
+            return label.includes("中新建会话") && label.includes(title);
+          });
+          if (!btn) return "no-button";
+          btn.click();
+          return "clicked";
+        })()`);
+        await sleep(2500);
+        const fresh = await cdp.evaluate(`(() => {
+          const root = document.querySelector("[data-conversation-session]");
+          return {
+            session: root ? root.getAttribute("data-conversation-session") : null,
+            userRows: document.querySelectorAll('[data-chat-flow-kind="user"]').length,
+          };
+        })()`);
+        check(
+          "在测试工作区里打开一个新会话（H 段的前置）",
+          opened === "clicked" && fresh.userRows === 0,
+          JSON.stringify({ opened, ...fresh }),
+        );
+
         // 要求当前会话已绑定工作区且输入框可编辑：见文件头说明（新建会话的绑定无法可靠自动化）。
         const ready = await waitForComposer(cdp, 4000);
         check(
@@ -823,7 +866,7 @@ const main = async () => {
         );
 
         // 点这条用户消息的 ↶ → 确认框（文件模式应该可用）
-        const opened = await cdp.evaluate(`(() => {
+        const rewound = await cdp.evaluate(`(() => {
           const row = document.querySelector('[data-chat-flow-kind="user"]');
           if (!row) return "no-user-row";
           const btn = [...row.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("回退到此处"));
@@ -839,8 +882,8 @@ const main = async () => {
         })()`);
         check(
           "文件模式在确认框里可用（有文件变更）",
-          opened === "clicked" && bothReady === true,
-          JSON.stringify({ opened, bothReady }),
+          rewound === "clicked" && bothReady === true,
+          JSON.stringify({ rewound, bothReady }),
         );
         check(
           "确认框预览写明文件动作",
@@ -970,6 +1013,13 @@ const main = async () => {
         // 收尾：删掉测试文件，别把垃圾留在工作区。
         await rm(filePath, { force: true }).catch(() => {});
         check("测试文件已清理", !(await exists(filePath)), filePath);
+        // 防回归：会话没绑定测试工作区时，模型的 write 会落到**脚本自身 cwd**（本仓库）里。
+        // 那会在仓库根留下一个未跟踪的测试文件，并在断言里表现为「文件不存在」。
+        check(
+          "测试文件没有漏到仓库目录",
+          !(await exists(join(process.cwd(), fileName))),
+          join(process.cwd(), fileName),
+        );
       }
     }
   } catch (error) {
