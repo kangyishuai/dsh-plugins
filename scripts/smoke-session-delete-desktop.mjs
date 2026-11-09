@@ -12,6 +12,9 @@
 // 只读：只打开会话菜单、确认框、回收站面板与其页签，然后 Esc 关闭。
 // **从不确认删除、不恢复、不彻底删除**，因此可以直接跑在真实 profile 上。
 // 端口可用 --port 或 DSH_CDP_PORT 覆盖（默认 9222）。
+//
+// `--workspace <侧栏里的工作区标题>`：把会话相关操作**严格限制**在该工作区内。
+// 指定后脚本只在那个工作区的分组里找会话行；找不到就判失败，**不会**去碰别的工作区的会话。
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -96,11 +99,36 @@ const dialogText = (/** @type {any} */ cdp, /** @type {string} */ needle) =>
     return dlg ? (dlg.textContent || "").replace(/\\s+/g, " ") : null;
   })()`);
 
+/**
+ * 等页面可交互：document.readyState complete 且根节点有内容，最多等 ~15s。
+ * @param {any} cdp
+ */
+async function ensureReady(cdp) {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const ready = await cdp
+      .evaluate(
+        `(() => document.readyState === "complete" && document.body && document.body.innerText.trim().length > 20)()`,
+      )
+      .catch(() => false);
+    if (ready === true) {
+      await sleep(600);
+      return;
+    }
+    await sleep(400);
+  }
+}
+
 const main = async () => {
   const { values } = parseArgs({
-    options: { port: { type: "string" }, require: { type: "boolean", default: false } },
-    allowPositionals: false,
+    options: {
+      port: { type: "string" },
+      require: { type: "boolean", default: false },
+      workspace: { type: "string" },
+    },
+    allowPositionals: true,
   });
+  // 容忍 `pnpm <script> -- --require`：多余的 `--` 会被当成位置参数，这里忽略它。
   const port = Number(values.port ?? process.env.DSH_CDP_PORT ?? 9222);
   /** @type {{name: string, ok: boolean, detail: string}[]} */
   const checks = [];
@@ -130,16 +158,53 @@ const main = async () => {
   }
 
   await mkdir(SHOTS, { recursive: true }).catch(() => {});
+  // 紧接着别的 GUI 冒烟跑时，渲染线程可能还在忙；先等页面稳定再断言。
+  await ensureReady(cdp);
   try {
     // ---------- A. 插件加载 ----------
+    const workspaceTitle = typeof values.workspace === "string" ? values.workspace : null;
+    /** 目标工作区里第一个会话行的 key；未指定工作区时为 null（此时不碰任何会话行）。 */
+    const scopedRow = await cdp.evaluate(`(() => {
+      const title = ${JSON.stringify(workspaceTitle)};
+      if (!title) return { status: "unscoped" };
+      // 侧栏显示的是目录名而不是完整路径，所以按 basename 匹配。
+      const base = title.split("/").filter(Boolean).pop() || title;
+      // 折叠的工作区里没有会话行，先点开。
+      for (const el of document.querySelectorAll('[data-row-key^="workspace:"][aria-expanded="false"]')) el.click();
+      const wsRow = [...document.querySelectorAll('[data-row-key^="workspace:"]')].find((r) => (r.textContent || "").includes(base));
+      if (!wsRow) return { status: "no-workspace" };
+      // 分组容器是 workspace 行的祖父节点（不依赖 class 名，结构变了也不会乱点）
+      const section = wsRow.parentElement && wsRow.parentElement.parentElement;
+      if (!section) return { status: "no-section" };
+      const rows = [...section.querySelectorAll('[data-row-key^="session:"]')];
+      if (rows.length === 0) return { status: "no-session" };
+      const row = rows[0];
+      const menu = [...row.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("操作"));
+      return {
+        status: "ok",
+        key: row.getAttribute("data-row-key"),
+        label: (row.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 60),
+        hasMenu: Boolean(menu),
+      };
+    })()`);
+
+    /** 目标工作区当前会话行数（只统计该分组，用于前后对比）。 */
+    const scopedBefore =
+      workspaceTitle === null
+        ? 0
+        : await cdp.evaluate(`(() => {
+            const raw = ${JSON.stringify(String(values.workspace ?? ""))};
+            const base = raw.split("/").filter(Boolean).pop() || raw;
+            const wsRow = [...document.querySelectorAll('[data-row-key^="workspace:"]')].find((r) => (r.textContent || "").includes(base));
+            const section = wsRow && wsRow.parentElement && wsRow.parentElement.parentElement;
+            return section ? section.querySelectorAll('[data-row-key^="session:"]').length : 0;
+          })()`);
     const info = await cdp.evaluate(`(() => {
       const buttons = [...document.querySelectorAll("button")].map((b) => b.getAttribute("aria-label") || "");
       return {
         title: document.title,
         pluginStyles: [...document.querySelectorAll("style[data-plugin]")].map((s) => s.dataset.plugin).filter((p) => p && p.includes("session-delete")),
         footerEntry: buttons.some((aria) => aria.includes("回收站")),
-        sessionRows: document.querySelectorAll('[data-row-key^="session:"]').length,
-        menuButtons: [...document.querySelectorAll('[data-row-key^="session:"] button')].filter((b) => (b.getAttribute("aria-label") || "").includes("操作")).length,
       };
     })()`);
     check(
@@ -153,11 +218,16 @@ const main = async () => {
       JSON.stringify(info?.pluginStyles ?? []),
     );
     check("侧栏页脚有回收站入口", info?.footerEntry === true, "");
-    check(
-      "会话行有「操作」菜单按钮",
-      info?.menuButtons > 0,
-      `${info?.sessionRows ?? 0} rows / ${info?.menuButtons ?? 0} menu buttons`,
-    );
+    if (workspaceTitle === null) {
+      check("未指定 --workspace（不碰任何会话行）", true, "会话相关检查将跳过");
+    } else {
+      check(
+        `工作区「${workspaceTitle}」里找到会话行`,
+        scopedRow?.status === "ok",
+        JSON.stringify(scopedRow),
+      );
+      check("该会话行有「操作」菜单按钮", scopedRow?.hasMenu === true, JSON.stringify(scopedRow));
+    }
     await cdp.screenshot(join(SHOTS, "01-overview.png"));
 
     // ---------- B. 回收站面板（只读：打开 → 四个页签 → Esc 关闭） ----------
@@ -202,8 +272,11 @@ const main = async () => {
     check("Esc 关闭回收站面板", (await dialogText(cdp, "会话回收站")) === null, "面板仍在");
 
     // ---------- C. 会话菜单 → 删除确认框（只看不删） ----------
-    const opened = await cdp.evaluate(`(async () => {
-      const row = document.querySelector('[data-row-key^="session:"]');
+    const opened =
+      workspaceTitle === null
+        ? "skipped"
+        : await cdp.evaluate(`(async () => {
+      const row = document.querySelector('[data-row-key="' + ${JSON.stringify(scopedRow?.key ?? "")} + '"]');
       if (!row) return "no-row";
       const btn = [...row.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("操作"));
       if (!btn) return "no-menu-button";
@@ -218,13 +291,15 @@ const main = async () => {
     const confirm = await dialogText(cdp, "移入回收站");
     check(
       "会话菜单能打开删除确认框",
-      opened === "clicked" && confirm !== null,
+      // 没给 --workspace 时这一步是**故意跳过**的（不碰任何真实会话），不算失败。
+      opened === "skipped" || (opened === "clicked" && confirm !== null),
       JSON.stringify({ opened, has: confirm !== null }),
     );
     check(
       "确认框写明影响面（日志大小/是否 live）",
-      typeof confirm === "string" && /会话日志约|MB|KB|live|恢复/u.test(confirm),
-      (confirm ?? "").slice(0, 160),
+      opened === "skipped" ||
+        (typeof confirm === "string" && /会话日志约|MB|KB|live|恢复/u.test(confirm)),
+      (confirm ?? "skipped").slice(0, 160),
     );
     await cdp.screenshot(join(SHOTS, "04-confirm.png"));
     await pressEscape(cdp);
@@ -235,14 +310,23 @@ const main = async () => {
     })()`);
     check("Esc 关闭确认框且未执行删除", afterEsc === true, "");
 
-    // 侧栏行数没变 = 确实没删
-    const rowsAfter = await cdp.evaluate(
-      `document.querySelectorAll('[data-row-key^="session:"]').length`,
-    );
+    // 目标工作区的会话行数前后一致 = 确实没删（只比较该工作区，不看别人的会话）
+    const afterCount =
+      workspaceTitle === null
+        ? null
+        : await cdp.evaluate(`(() => {
+            const raw = ${JSON.stringify(workspaceTitle)};
+            const base = raw.split("/").filter(Boolean).pop() || raw;
+            const wsRow = [...document.querySelectorAll('[data-row-key^="workspace:"]')].find((r) => (r.textContent || "").includes(base));
+            const section = wsRow && wsRow.parentElement && wsRow.parentElement.parentElement;
+            return section ? section.querySelectorAll('[data-row-key^="session:"]').length : null;
+          })()`);
     check(
-      "会话行数未变（只读验证）",
-      rowsAfter === info.sessionRows,
-      `${rowsAfter}/${info.sessionRows}`,
+      "目标工作区会话数未变（只读验证）",
+      workspaceTitle === null || afterCount === scopedBefore,
+      workspaceTitle === null || scopedBefore === null
+        ? "skipped"
+        : `${afterCount}/${scopedBefore}`,
     );
   } catch (error) {
     check("桌面回归执行", false, error instanceof Error ? error.message : String(error));

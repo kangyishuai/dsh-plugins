@@ -326,22 +326,28 @@ const afterBroadcast = await page.evaluate(async (raw) => {
     return { ok: false, error: String(error) };
   }
 }, JSON.stringify(broadcast));
+// 断言的是「重新求值没有坏、且不会再显示更多行」，不是「行数等于广播前的快照」——
+// 收到的广播会让客户端按**宿主** cuts 重算，宿主可能知道比本地更多的折叠区间（例如这个临时
+// 会话本身就是从已有回溯的真实会话复制来的），此时多隐藏几行才是正确的。
 check(
-  "收到其它视图广播后重新隐藏且不报错",
-  afterBroadcast?.ok === true && afterBroadcast.users === after.length,
-  JSON.stringify(afterBroadcast),
+  "收到其它视图广播后按宿主 cuts 重新求值且不报错",
+  afterBroadcast?.ok === true && afterBroadcast.users <= after.length,
+  JSON.stringify({ after: after.length, ...afterBroadcast }),
 );
 // 真两标签页：第二个标签页没刷新，也应靠广播 + 宿主 cuts 自动同步。
+// 判据是「两个视图看到的一致」，而不是「等于某个快照」。
 let tab2After = -1;
+let tab1After = -1;
 if (page2 !== null) {
   await page.waitForTimeout(2500);
   tab2After = await page2.evaluate(() => document.querySelectorAll('[data-chat-flow-kind="user"]').length);
+  tab1After = await page.evaluate(() => document.querySelectorAll('[data-chat-flow-kind="user"]').length);
   await page2.screenshot({ path: SHOTS + "/05-second-tab-synced.png" }).catch(() => {});
 }
 check(
-  "另一个标签页无需刷新即同步隐藏（真两标签页）",
-  page2 !== null && tab2Before > 0 && tab2After === after.length,
-  JSON.stringify({ tab2Before, tab2After, expected: after.length }),
+  "另一个标签页无需刷新即同步（真两标签页，两视图一致）",
+  page2 !== null && tab2Before > 0 && tab2After === tab1After,
+  JSON.stringify({ tab2Before, tab2After, tab1After }),
 );
 await shot("04-after-button-rewind");
 

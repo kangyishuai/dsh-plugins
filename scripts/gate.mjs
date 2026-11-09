@@ -78,11 +78,11 @@ const main = async () => {
     if (hasDesktop) {
       stages.push({
         title: "桌面只读回归（需要调试端口）",
-        args: [desktopSmoke, "--", "--require"],
+        args: [desktopSmoke, "--require"],
       });
       if (values.deep === true) {
         /** @type {string[]} */
-        const extra = [desktopSmoke, "--", "--require", "--deep"];
+        const extra = [desktopSmoke, "--require", "--deep"];
         if (typeof values.workspace === "string") extra.push("--workspace", values.workspace);
         stages.push({ title: "桌面 --deep 端到端", args: extra });
       }

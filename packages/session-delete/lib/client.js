@@ -1447,6 +1447,8 @@ window.__ModuleLoader__.load({
       // 用真实的 :hover / :focus-visible 伪类，避免依赖 React 合成事件与内联样式。
       ctx.effect(() => {
         const style = document.createElement("style");
+        // 标注归属：便于在 DevTools 里认出这段样式、也方便测试断言插件确实加载了。
+        style.setAttribute("data-plugin", "@kangyishuai/dsh-session-delete");
         style.textContent = [
           ".dsh-sdel-btn{background:transparent;color:var(--dsw-alias-label-primary,inherit);border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));transition:background-color 150ms ease,border-color 150ms ease,transform 80ms ease,color 150ms ease;}",
           ".dsh-sdel-btn:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.16));}",
