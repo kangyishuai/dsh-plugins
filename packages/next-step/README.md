@@ -99,9 +99,9 @@ The row writes the same `$DSH_HOME/next-step.settings.json` that the host re-rea
 
 ## Compatibility
 
-| DSH version | Status                                                                                                                                                                                                                                                                                      |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0.2.2-rc.1  | Web composition verified end-to-end on 2026-11-10 (`pnpm smoke:next-step`: 42/42 assertions; real host + real model calls); 67 unit tests; runtime probe 60/60. Desktop real-machine regression is still **pending** (`pnpm smoke:next-step-desktop`). Other DSH versions are not verified. |
+| DSH version | Status                                                                                                                                                                                                                                                                                                                           |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.2.2-rc.1  | Web composition verified end-to-end on 2026-11-10 (`pnpm smoke:next-step`: 42 passing assertions + 1 skipped settings-page check; real host + real model calls); 67 unit tests; runtime probe 60/60. Desktop real-machine regression is still **pending** (`pnpm smoke:next-step-desktop`). Other DSH versions are not verified. |
 
 The plugin declares no `engines.dsh` and no `@deepseek-ai/*` peer range: DSH is pre-release and semver ranges over prereleases are unreliable (see [ADR 0005](../../docs/adr/0005-dsh-version-compatibility.md)). Treat the table as the compatibility statement. After a DSH upgrade run `pnpm probe:runtime`, `pnpm smoke:next-step` and `pnpm smoke:next-step-desktop`, then check the plugin's diagnostics.
 

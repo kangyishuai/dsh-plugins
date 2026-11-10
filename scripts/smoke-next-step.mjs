@@ -658,6 +658,100 @@ check(
 );
 await shot("07-disabled");
 
+// ---------- 6. 设置页：开关 / 暂停 / 预算 / 诊断（UI 写入 = updateSettings RPC） ----------
+const clickLabel = (pattern, exact) =>
+  page.evaluate(
+    (src, strict) => {
+      const re = new RegExp(src, "i");
+      const label = (el) =>
+        ((el.getAttribute("aria-label") || el.getAttribute("title") || el.textContent || "") + "").trim();
+      const candidates = [...document.querySelectorAll("button, [role=button], a, [role=menuitem], [role=switch]")];
+      const hit = candidates.find((el) => (strict ? re.test(label(el)) && label(el).length <= 12 : re.test(label(el))));
+      if (!hit) return { clicked: false, sample: candidates.map(label).filter((x) => x !== "").slice(0, 14) };
+      hit.click();
+      return { clicked: true, label: label(hit).slice(0, 40) };
+    },
+    pattern,
+    exact,
+  );
+
+// 设置入口在不同 DSH 版本里可能在侧栏「更多」菜单或账户菜单后面：按顺序试。
+let settingsEntry = await clickLabel("^(设置|settings|preferences)$", true);
+if (!settingsEntry.clicked) {
+  const more = await clickLabel("^(更多|more)$", true);
+  if (more.clicked) {
+    await page.waitForTimeout(800);
+    settingsEntry = await clickLabel("^(设置|settings|preferences)$", false);
+  }
+}
+if (!settingsEntry.clicked) {
+  const account = await clickLabel("账户|account|profile|avatar", false);
+  if (account.clicked) {
+    await page.waitForTimeout(800);
+    settingsEntry = await clickLabel("^(设置|settings|preferences)$", false);
+  }
+}
+await page.waitForTimeout(1200);
+let settingsRow = null;
+for (let attempt = 0; attempt < 25; attempt += 1) {
+  settingsRow = await page.evaluate(() => {
+    const row = document.querySelector("[data-next-step-settings]");
+    if (!row) return null;
+    return {
+      switches: [...row.querySelectorAll("[data-next-step-switch]")].map((el) => ({
+        key: el.getAttribute("data-next-step-switch"),
+        on: el.getAttribute("aria-checked"),
+      })),
+      diag: (row.querySelector("[data-next-step-diag]") || {}).textContent || "",
+      budget: !!row.querySelector("[data-next-step-budget]"),
+      pause: !!row.querySelector("[data-next-step-pause]"),
+    };
+  });
+  if (settingsRow !== null) break;
+  await page.waitForTimeout(300);
+}
+if (settingsRow === null) {
+  skip(
+    "设置页那一行（开关 / 暂停 / 预算 / 诊断）",
+    settingsEntry.clicked
+      ? "点到了「设置」但页面上没有 data-next-step-settings（设置页未渲染或槽位变了）"
+      : "页面上找不到「设置 / Settings」入口；候选按钮=" + JSON.stringify(settingsEntry.sample),
+  );
+} else {
+  check(
+    "设置页出现「下一步建议」行（3 个开关 + 暂停 + 预算）",
+    settingsRow.switches.length === 3 && settingsRow.budget === true && settingsRow.pause === true,
+    JSON.stringify(settingsRow),
+  );
+  check(
+    "设置行显示诊断信息",
+    typeof settingsRow.diag === "string" && settingsRow.diag.length > 0,
+    "diag=" + String(settingsRow.diag).slice(0, 60),
+  );
+  const enabledBefore = (settingsRow.switches.find((s) => s.key === "enabled") || {}).on || "";
+  const toggledOn = await page.evaluate(() => {
+    const el = document.querySelector('[data-next-step-switch="enabled"]');
+    if (!el) return false;
+    el.click();
+    return true;
+  });
+  let enabledAfter = "";
+  for (let attempt = 0; attempt < 24; attempt += 1) {
+    enabledAfter = await page.evaluate(() => {
+      const el = document.querySelector('[data-next-step-switch="enabled"]');
+      return el ? el.getAttribute("aria-checked") || "" : "";
+    });
+    if (enabledAfter === "true") break;
+    await page.waitForTimeout(250);
+  }
+  check(
+    "点开关走 updateSettings RPC 并回读成功",
+    enabledBefore === "false" && toggledOn === true && enabledAfter === "true",
+    JSON.stringify({ enabledBefore: enabledBefore, toggledOn: toggledOn, enabledAfter: enabledAfter }),
+  );
+  await shot("08-settings");
+}
+
 await task.finish({ keep: false }).catch(() => {});
 console.log("SMOKE_STATE " + JSON.stringify({
   sessionId: sessionId,
