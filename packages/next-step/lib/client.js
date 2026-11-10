@@ -121,7 +121,7 @@ window.__ModuleLoader__.load({
     // 颜色/尺寸严格照契约 §5 的表：优先用宿主 token，token 缺失时用截图实测值兜底。
     // 只注入这一份样式（data-plugin-css 判重，HMR/重复挂载不会再插一份）。
     let CSS = `
-.ns_card{box-sizing:border-box;position:relative;margin:16px 0;padding:14px 16px 16px;border:1px solid var(--dsw-alias-border-l2,#242424);border-radius:10px;background:var(--dsw-alias-bg-layer-1,#191919);color:var(--dsw-alias-label-primary,#e8e8e8);font-size:13px;line-height:20px;box-shadow:none;}
+.ns_card{box-sizing:border-box;position:relative;margin:8px 8px 2px;padding:12px 14px 14px;border:1px solid var(--dsw-alias-border-l2,#242424);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#202020);color:var(--dsw-alias-label-primary,#e8e8e8);font-size:13px;line-height:20px;box-shadow:none;}
 .ns_body{min-width:0;padding-right:22px;}
 .ns_summary{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;margin:0;font-size:13px;line-height:20px;color:var(--dsw-alias-label-secondary,#a4a4a4);white-space:pre-wrap;overflow-wrap:anywhere;}
 .ns_card[data-ns-expanded="true"] .ns_summary{display:block;-webkit-line-clamp:unset;line-clamp:unset;overflow:visible;}

@@ -10,6 +10,8 @@ Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/de
 
 > **Status: early.** Verified against the current target DSH version — see the [Compatibility](#compatibility) table. Both faces sit on host seams that are not public API, so a DSH upgrade can silently disable them (read [Side effects & risks](#side-effects--risks) first). Young software: keep your own notes of anything you would hate to lose.
 
+![Decision card under a completed answer](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/next-step/docs/images/decision-card.png)
+
 ## What it does
 
 - **A card under every completed answer.** When a turn ends normally, the plugin makes one extra model call and appends a decision card below the answer: a one-to-three sentence **summary** of the conversation state (folded to two lines, with an expand/collapse control when it is longer), one **question** that names the decision you have to make, and **two pills** for two mutually exclusive directions. Each pill has a short label (up to 20 characters); the full instruction behind it is what gets sent.
@@ -90,12 +92,15 @@ The row writes the same `$DSH_HOME/next-step.settings.json` that the host re-rea
 
 ## Known limitations
 
+- **The card is attached to the composer area**, not to the transcript. It renders in the composer's overlay layer so it is visible without scrolling; the trade-off is that it reads as part of the input box rather than as a block inside the conversation (ADR 0009 §4).
 - **Exactly two proposals.** Every card has two options that must point in different (mutually exclusive) directions.
 - **The `⌘↵` / `Ctrl+↵` keycap on the primary pill is decorative.** v1 does not bind the shortcut; it is a visual hint only.
 - **No cross-device sync.** Cards and decisions live in the local session log of the machine that generated them.
 - **No cards in subagent sessions**, and none for interrupted or empty turns.
 - **The ghost only offers the latest card's next prompt**, and only when the composer is empty and idle.
 - **The card text is model output.** The plugin validates the shape (two options, distinct stances, label length) but does not rewrite the wording.
+
+![After a click: the summary and question stay, the pills disappear](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/next-step/docs/images/after-click.png)
 
 ## Compatibility
 
