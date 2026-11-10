@@ -493,7 +493,7 @@ export class NextStepService extends TypertRemoteService {
    */
   async settings() {
     try {
-      return { ok: true, settings: await this.settings() };
+      return { ok: true, settings: await this.currentSettings() };
     } catch (error) {
       rethrowRemote(error);
     }
