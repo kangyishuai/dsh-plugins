@@ -1,0 +1,17 @@
+{
+  "nextStep": {
+    "card.aria": "下一步建议",
+    "summary.expand": "展开",
+    "summary.collapse": "收起",
+    "pill.aria": "发送：{label}",
+    "pill.draftBusy": "输入框已有内容，先清空再发送",
+    "sent": "已发出",
+    "dismiss": "关闭",
+    "ghost.aria": "按 Tab 或 → 接受这条建议",
+    "error.stale": "这条建议已过期，请用最新的一条",
+    "error.missing": "找不到这条建议",
+    "error.disabled": "插件已停用",
+    "error.failed": "操作失败，请重试",
+    "error.send": "没能把建议写进输入框"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "nextStep": {
+    "card.aria": "Next-step suggestion",
+    "summary.expand": "Show more",
+    "summary.collapse": "Show less",
+    "pill.aria": "Send: {label}",
+    "pill.draftBusy": "Clear the composer first",
+    "sent": "Sent",
+    "dismiss": "Dismiss",
+    "ghost.aria": "Press Tab or → to accept this suggestion",
+    "error.stale": "This suggestion is out of date; use the newest one",
+    "error.missing": "That suggestion is no longer available",
+    "error.disabled": "The plugin is disabled",
+    "error.failed": "Something went wrong. Try again.",
+    "error.send": "Could not fill the composer"
+  }
+}

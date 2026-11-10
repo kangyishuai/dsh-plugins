@@ -1,0 +1,61 @@
+{
+  "name": "@kangyishuai/dsh-next-step",
+  "version": "0.0.0",
+  "description": "Next-step decision card under each completed answer, plus an optional greyed-out next-prompt hint in the composer",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "suggestion",
+    "next-step",
+    "ghost-text",
+    "composer"
+  ],
+  "license": "MIT",
+  "author": "nano (https://github.com/kangyishuai)",
+  "homepage": "https://github.com/kangyishuai/dsh-plugins/tree/main/packages/next-step#readme",
+  "bugs": "https://github.com/kangyishuai/dsh-plugins/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kangyishuai/dsh-plugins.git",
+    "directory": "packages/next-step"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "cordis.patch.yml",
+    "lib",
+    "locale",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-chat",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-shortcuts"
+      ]
+    }
+  }
+}
