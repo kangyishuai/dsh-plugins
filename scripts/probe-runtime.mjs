@@ -237,6 +237,58 @@ const SEAM_CHECKS_SESSION_DELETE = [
   },
 ];
 
+/** next-step 依赖的私有 seam（决策卡 + 幽灵提示）。 */
+const SEAM_CHECKS_NEXT_STEP = [
+  {
+    file: "@deepseek-ai/dsh-client-ui-chat/lib/client.js",
+    name: "conversation.chat.turnTail 槽（答后卡片的渲染位置）",
+    pattern: /conversation\.chat\.turnTail[\s\S]{0,400}openFile/u,
+    breaks: "决策卡没有渲染位置（卡片仍会落库，但界面永远空白）",
+  },
+  {
+    file: "@deepseek-ai/dsh-client-ui-conversation/lib/client.js",
+    name: "conversation.input.overlay 槽（幽灵提示载体）",
+    pattern: /conversation\.input\.overlay/u,
+    breaks: "输入框幽灵提示无处渲染（该面默认关闭）",
+  },
+  {
+    file: "@deepseek-ai/dsh-client-ui-conversation/lib/client.js",
+    name: "composer placeholder DOM（幽灵提示对齐用）",
+    pattern: /data-composer-placeholder/u,
+    breaks: "幽灵提示无法与真实输入同基线（会错位或落回左上角）",
+  },
+  {
+    file: "@deepseek-ai/dsh-session-projection/lib/index.js",
+    name: "sessionProjections.register(definition)（卡片状态投影）",
+    pattern: /super\(ctx, "sessionProjections"\)[\s\S]{0,4000}register\(definition\)/u,
+    breaks: "客户端读不到卡片状态（卡片仍落库，界面不显示）",
+  },
+  {
+    file: "@deepseek-ai/dsh-session/lib/index.js",
+    name: "appendPluginRecord / pluginRecordOf（卡片与决策的落库通道）",
+    pattern: /function appendPluginRecord\([\s\S]{0,600}function pluginRecordOf\(/u,
+    breaks: "卡片与决策无法写入/重建，刷新后状态全丢",
+  },
+  {
+    file: "@deepseek-ai/dsh-agent-loop/lib/index.js",
+    name: "turn/end 事件与 reason.kind（生成时机门控）",
+    pattern: /append\("turn\/end",\s*\{[\s\S]{0,120}reason/u,
+    breaks: "插件不知道一轮何时正常结束（会退化为不生成或乱生成）",
+  },
+  {
+    file: "@deepseek-ai/dsh-llm/lib/index.js",
+    name: "llm.prepareCall + call.stream（一次额外补全）",
+    pattern: /async prepareCall\(config, signal[\s\S]{0,4000}stream: \(options\)/u,
+    breaks: "无法发起额外模型调用 → 决策卡与幽灵提示整体失效",
+  },
+  {
+    file: "@deepseek-ai/dsh-client-ui-conversation/lib/client.js",
+    name: '输入框 submit(mode = "queue")（点击即发送的通道）',
+    pattern: /submit\(mode = "queue", source\)/u,
+    breaks: "点击胶囊无法把文本作为用户消息发出",
+  },
+];
+
 /** slot 名字通过扫描 client 包确认（客户端 bundle 里以字符串出现）。 */
 const SLOT_CHECKS = [
   { slot: "sidebar.workspaces.session.menu.item", purpose: "会话「…」菜单" },
@@ -246,6 +298,8 @@ const SLOT_CHECKS = [
   { slot: "conversation.session.header.actions", purpose: "会话头部（回溯面板入口）" },
   { slot: "conversation.input.dock", purpose: "输入框 dock（命令面板）" },
   { slot: "conversation.composer", purpose: "composer 插槽" },
+  { slot: "conversation.chat.turnTail", purpose: "答后卡片（决策卡）" },
+  { slot: "conversation.input.overlay", purpose: "输入框幽灵提示" },
 ];
 
 /**
@@ -377,6 +431,22 @@ const main = async () => {
 
   // 3.6) session-delete 的私有 seam
   for (const check of SEAM_CHECKS_SESSION_DELETE) {
+    const path = `/dsh/node_modules/${check.file}`;
+    const buffer = await asar.read(path);
+    if (!buffer) {
+      push("FAIL", `seam ${check.name}`, `文件不存在：${check.file}｜影响：${check.breaks}`);
+      continue;
+    }
+    const ok = check.pattern.test(buffer.toString("utf8"));
+    push(
+      ok ? "PASS" : "FAIL",
+      `seam ${check.name}`,
+      ok ? "" : `源码里没有匹配到特征｜影响：${check.breaks}`,
+    );
+  }
+
+  // 3.7) next-step 的私有 seam
+  for (const check of SEAM_CHECKS_NEXT_STEP) {
     const path = `/dsh/node_modules/${check.file}`;
     const buffer = await asar.read(path);
     if (!buffer) {
