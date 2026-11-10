@@ -39,7 +39,10 @@
     "gate:session-rewind": "node scripts/gate.mjs session-rewind",
     "gate:session-delete": "node scripts/gate.mjs session-delete",
     "smoke:session-delete-desktop": "node scripts/smoke-session-delete-desktop.mjs",
-    "check:docs": "node scripts/check-docs.mjs"
+    "check:docs": "node scripts/check-docs.mjs",
+    "smoke:next-step-desktop": "node scripts/smoke-next-step-desktop.mjs",
+    "smoke:next-step": "node scripts/smoke-next-step.mjs",
+    "gate:next-step": "node scripts/gate.mjs next-step"
   },
   "simple-git-hooks": {
     "pre-commit": "pnpm exec lint-staged && node scripts/check-public.mjs",
