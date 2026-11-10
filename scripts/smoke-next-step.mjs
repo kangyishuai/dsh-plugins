@@ -450,31 +450,69 @@ const clearComposer = async () => {
   return false;
 };
 
-let ghostValue = "";
-for (let attempt = 0; attempt < 40; attempt += 1) {
-  await focusComposer();
-  ghostValue = await ghostText();
-  if (ghostValue !== "") break;
-  await page.waitForTimeout(250);
-}
-const ghostDebug = await page.evaluate(() => {
-  const off = document.querySelector("[data-next-step-ghost-off]");
-  const anchor = document.querySelector(".overlayAnchor");
-  const input = document.querySelector("[data-composer-input]");
-  return {
-    off: off ? off.getAttribute("data-next-step-ghost-off") : null,
-    overlayChildren: anchor ? anchor.children.length : -1,
-    draft: (input && input.textContent) || "",
-  };
-});
+const waitGhost = async (timeoutMs) => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await focusComposer();
+    const value = await ghostText();
+    if (value !== "") return value;
+    await page.waitForTimeout(250);
+  }
+  return "";
+};
+const ghostDebug = () =>
+  page.evaluate(() => {
+    const off = document.querySelector("[data-next-step-ghost-off]");
+    const anchor = document.querySelector(".overlayAnchor");
+    const input = document.querySelector("[data-composer-input]");
+    return {
+      off: off ? off.getAttribute("data-next-step-ghost-off") : null,
+      overlayChildren: anchor ? anchor.children.length : -1,
+      draft: (input && input.textContent) || "",
+    };
+  });
+
+const ghostValue = await waitGhost(12000);
 check(
   "幽灵提示出现（ghost 打开 + 输入框空 + 会话空闲）",
   ghostValue !== "",
-  JSON.stringify({ ghost: ghostValue.slice(0, 80), debug: ghostDebug }),
+  JSON.stringify({ ghost: ghostValue.slice(0, 80), debug: await ghostDebug() }),
 );
 await shot("03b-ghost");
 
-const ghostBeforeTab = await ghostText();
+// 规格硬规则：输入框为空时按 Enter 绝不把建议发出去
+const userRowsBeforeGhostEnter = await countRows("user");
+await focusComposer();
+await page.keyboard.press("Enter");
+await page.waitForTimeout(1600);
+const userRowsAfterGhostEnter = await countRows("user");
+check(
+  "空草稿按 Enter 不会发出幽灵建议",
+  userRowsAfterGhostEnter === userRowsBeforeGhostEnter,
+  JSON.stringify({ before: userRowsBeforeGhostEnter, after: userRowsAfterGhostEnter }),
+);
+const ghostAfterEnter = await waitGhost(6000);
+check(
+  "按 Enter 只是隐藏、抑制期过后幽灵会恢复",
+  ghostAfterEnter !== "",
+  JSON.stringify({ ghost: ghostAfterEnter.slice(0, 60), debug: await ghostDebug() }),
+);
+
+// 规格硬规则：输入第一个字符 → 立即消失，且 1–2s 内不闪回
+await focusComposer();
+await page.keyboard.insertText("x");
+await page.waitForTimeout(300);
+const ghostAfterTyping = await ghostText();
+await page.waitForTimeout(1600);
+const ghostInFlashbackWindow = await ghostText();
+check(
+  "输入字符后幽灵立即消失，且 1.9s 内不闪回",
+  ghostAfterTyping === "" && ghostInFlashbackWindow === "",
+  JSON.stringify({ immediate: ghostAfterTyping, after1900ms: ghostInFlashbackWindow }),
+);
+await clearComposer();
+
+const ghostBeforeTab = await waitGhost(8000);
 await focusComposer();
 await page.keyboard.press("Tab");
 await page.waitForTimeout(700);
@@ -492,6 +530,23 @@ check(
   clearedOk === true && (await composerText()) === "",
   "draft=" + (await composerText()).slice(0, 40),
 );
+const ghostBeforeEsc = await waitGhost(8000);
+await focusComposer();
+await page.keyboard.press("Escape");
+await page.waitForTimeout(400);
+const ghostAfterEsc = await ghostText();
+await page.waitForTimeout(2600);
+const ghostAfterEscWait = await ghostText();
+check(
+  "Esc 清除本次建议且不会自动回来",
+  ghostBeforeEsc !== "" && ghostAfterEsc === "" && ghostAfterEscWait === "",
+  JSON.stringify({
+    ghost: ghostBeforeEsc.slice(0, 40),
+    immediate: ghostAfterEsc,
+    after2600ms: ghostAfterEscWait,
+  }),
+);
+
 
 // ---------- 3. 点胶囊 = 发送一条用户消息 ----------
 const clicked = await page.evaluate(() => {
