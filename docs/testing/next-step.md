@@ -120,28 +120,51 @@ pnpm smoke:next-step
 ## 3. 桌面只读回归（有 client 半，硬性要求）
 
 ```bash
-# 1) 带调试端口重启桌面版（验证完正常重启一次即可关闭端口）
+# 1) 带调试端口启动/重启桌面版（验证完正常重启一次即可关掉端口）
 open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1
-# 2) 跑
+# 2) 跑（--require：连不上端口时失败而不是跳过）
 pnpm smoke:next-step-desktop --require
+# 端口不同时：DSH_CDP_PORT=9333 pnpm smoke:next-step-desktop --require
 ```
 
-默认**只读**：只切会话、开关卡片、展开/收起、点 ✕、开关设置，不点胶囊、不发模型请求，可以直接跑在真实 profile 上。
-断言应覆盖：CDP 连上页面 → 插件 client 半已加载（`style[data-plugin]`）→ 找到最后一段完整回答 →
-卡片渲染在回答下方 → 摘要/提问文案非空 → 展开/收起可切换 → ✕ 后转只读（另有 decision 记录）→
-刷新后仍只读 → 设置里能开关 card / ghost、暂停、预算 → 全程不抢焦点、不写草稿。
+默认**只读**：只切会话、读 DOM、开关卡片（不点胶囊、不发模型请求、不写文件），可以直接跑在真实 profile 上。
+当前脚本的 **10 项断言**：
 
-**发版门禁要加 `--require`**：连不上端口时默认是 SKIP（exit 0，适合日常随手跑），加 `--require` 则判为 FAIL（exit 1）——避免「没跑也说通过」。
+1. 连上桌面 UI（CDP）
+2. 插件 client 半已加载：`style[data-plugin="@kangyishuai/dsh-next-step"]`
+3. 输入框可编辑（Esc / 点击不会把界面搞坏的前提）
+4. 幽灵提示默认不出现（`ghost` 默认关 + 草稿为空）
+5. 当前会话卡片总数可读
+6. 投影健康：没有「会话历史加载失败」的报错（投影坏掉时是静默全灭，必须有这条）
+7. 每张卡结构不变量：≤2 粒胶囊、只读态无胶囊、摘要与提问非空
+8. 最多一张可交互卡
+9. 找一个带可交互卡的会话（探测现有会话；**没有就 FAIL，不静默跳过**）
+10. 该会话的卡片结构（无卡时 SKIP）
 
-### `--deep`：真正发出一次（会消耗额度）
+**注意**：脚本要求插件已装进**正在运行的那个 profile**。没装时第 2 项会失败，并把页面上全部
+`data-plugin` 打出来——这是最省事的「是不是装错 profile / 没重启」判断依据。
 
-`--deep` 才做有副作用的链路：由脚本在一个专用测试会话里让模型完成一轮 → 点胶囊 → 断言草稿被写入后发出、
-会话多一条用户消息、卡片转只读、刷新后仍只读。它会消耗一次模型额度并往该会话写记录，所以
-默认不跑，且不应在正在跑本 agent 的会话里跑（会打断当前回合）。
+### `--deep`：真正发一轮（会消耗额度）
 
 ```bash
-pnpm smoke:next-step-desktop -- --require --deep
+pnpm smoke:next-step-desktop --require --deep --workspace /tmp/next-step-deep
 ```
+
+只有 `--deep` 才做有副作用的链路：在专用工作区里新建会话 → 发一条消息 → 等卡出现 →
+点胶囊 → 断言草稿被写入且消息发出、卡片转只读、刷新后仍只读。会消耗模型额度，
+且**不要**在正在跑本 agent 的会话里跑（会打断当前回合）。
+
+### 本机实测记录（2026-11-10，真实 Electron，插件**未**安装进当前 profile）
+
+`pnpm smoke:next-step-desktop --require` → **8 PASS / 2 FAIL / 1 SKIP**：
+
+- PASS：连接、输入框可编辑、幽灵默认不出现、卡片总数可读、投影健康、结构不变量（空集）、最多一张可交互卡
+- FAIL：插件 client 半未加载（`data-plugin` 列表里只有宿主包 + session-delete/rewind/ai-radar）、
+  找不到带可交互卡的会话（插件没装，自然没有卡）
+- SKIP：当前会话无卡片 → 结构断言无对象
+
+结论：脚本在真 Electron 上行为正确——**没装插件时它明确报错而不是假绿**。等插件装进 profile
+并重启后，这两条 FAIL 应当转 PASS；`--deep` 的那段仍需单独跑一次。
 
 ## 4. 手工 GUI 验证步骤（发版、DSH 升级、改私有 seam 后）
 
