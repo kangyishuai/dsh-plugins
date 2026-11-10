@@ -124,6 +124,16 @@ const CAN_MODEL = ${canModel ? "true" : "false"};
 const WORKSPACE_TITLE = ${JSON.stringify(WORKSPACE_TITLE)};
 const { writeFile } = await import("node:fs/promises");
 const { join } = await import("node:path");
+// 幽灵面默认关：冒烟一开始就在设置文件里打开它，顺带验证 B 面；后面的「关闭开关」段会覆盖成 enabled:false。
+try {
+  await writeFile(
+    join(HOME, "next-step.settings.json"),
+    JSON.stringify({ enabled: true, ghost: true }, null, 2) + "\\n",
+    "utf8",
+  );
+} catch (_error) {
+  /* 写不进去就让后面的幽灵断言红，不要静默通过 */
+}
 const checks = [];
 const check = (name, ok, detail) => checks.push({ name, ok: !!ok, detail: detail === undefined ? "" : String(detail) });
 // SKIP 不是通过：单独标记，最后打印时用 SKIP 前缀和原因，不计入失败。
@@ -410,6 +420,78 @@ check(
 );
 check("卡片有 ✕ 关闭入口", card.hasDismiss === true, "期望有 button[data-next-step-dismiss]，实际=" + card.hasDismiss);
 await shot("03-card");
+
+// ---------- 2.5 幽灵提示（B 面；ghost 已在设置文件里打开） ----------
+const ghostText = () =>
+  page.evaluate(() => {
+    const el = document.querySelector("[data-next-step-ghost]");
+    if (!el) return "";
+    return (el.getAttribute("data-next-step-ghost-text") || el.textContent || "").trim();
+  });
+const focusComposer = async () => {
+  await page.evaluate(() => {
+    const el = document.querySelector("[data-composer-input]");
+    if (el && typeof el.focus === "function") el.focus();
+  });
+  await page.waitForTimeout(250);
+};
+const clearComposer = async () => {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await focusComposer();
+    await page.keyboard.press("Meta+A");
+    await page.keyboard.press("Backspace");
+    await page.waitForTimeout(250);
+    if ((await composerText()) === "") return true;
+    await page.keyboard.press("Control+A");
+    await page.keyboard.press("Backspace");
+    await page.waitForTimeout(250);
+    if ((await composerText()) === "") return true;
+  }
+  return false;
+};
+
+let ghostValue = "";
+for (let attempt = 0; attempt < 40; attempt += 1) {
+  await focusComposer();
+  ghostValue = await ghostText();
+  if (ghostValue !== "") break;
+  await page.waitForTimeout(250);
+}
+const ghostDebug = await page.evaluate(() => {
+  const off = document.querySelector("[data-next-step-ghost-off]");
+  const anchor = document.querySelector(".overlayAnchor");
+  const input = document.querySelector("[data-composer-input]");
+  return {
+    off: off ? off.getAttribute("data-next-step-ghost-off") : null,
+    overlayChildren: anchor ? anchor.children.length : -1,
+    draft: (input && input.textContent) || "",
+  };
+});
+check(
+  "幽灵提示出现（ghost 打开 + 输入框空 + 会话空闲）",
+  ghostValue !== "",
+  JSON.stringify({ ghost: ghostValue.slice(0, 80), debug: ghostDebug }),
+);
+await shot("03b-ghost");
+
+const ghostBeforeTab = await ghostText();
+await focusComposer();
+await page.keyboard.press("Tab");
+await page.waitForTimeout(700);
+const draftAfterTab = (await composerText()).trim();
+check(
+  "Tab 接受幽灵提示进草稿（可编辑、不发送）",
+  ghostBeforeTab !== "" && draftAfterTab === ghostBeforeTab,
+  JSON.stringify({ draft: draftAfterTab.slice(0, 80), ghost: ghostBeforeTab.slice(0, 80) }),
+);
+const ghostAfterAccept = await ghostText();
+check("接受后幽灵提示消失", ghostAfterAccept === "", "ghost=" + ghostAfterAccept.slice(0, 60));
+const clearedOk = await clearComposer();
+check(
+  "清空草稿后可以继续点胶囊",
+  clearedOk === true && (await composerText()) === "",
+  "draft=" + (await composerText()).slice(0, 40),
+);
 
 // ---------- 3. 点胶囊 = 发送一条用户消息 ----------
 const clicked = await page.evaluate(() => {
@@ -842,6 +924,11 @@ async function verifySessionLog(home, state) {
         label: o?.label,
       })),
     }),
+  );
+  push(
+    "卡片记录带 nextPrompt（幽灵提示的取数来源）",
+    typeof card.data?.nextPrompt === "string" && card.data.nextPrompt.trim() !== "",
+    JSON.stringify({ nextPrompt: String(card.data?.nextPrompt ?? "").slice(0, 80) }),
   );
   push(
     "卡片记录：summary/question 非空、nextPrompt 长度 ≤ 120",
