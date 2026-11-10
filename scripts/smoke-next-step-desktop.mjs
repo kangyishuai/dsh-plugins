@@ -662,6 +662,112 @@ const main = async () => {
         await switchTo(originalSession);
     }
 
+    // ---------- E2. 设置页：一行开关 + 诊断（含运行时版本 / 构建哈希） ----------
+    // 入口是账号菜单 →「设置」→ 左栏「通用设置」（不要盲点坐标：先取元素 rect 再派发原生事件）。
+    {
+      const clickRect = async (/** @type {{x:number,y:number}} */ rect) => {
+        for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) {
+          await cdp.send("Input.dispatchMouseEvent", {
+            type,
+            x: rect.x,
+            y: rect.y,
+            button: "left",
+            clickCount: 1,
+          });
+          await sleep(80);
+        }
+      };
+      /** @param {string} selector @param {string} [label] */
+      const rectOf = (selector, label) =>
+        cdp.evaluate(`(() => {
+          const nodes = [...document.querySelectorAll(${JSON.stringify(selector)})];
+          const hit = nodes.find((el) => ${label === undefined ? "true" : `(el.textContent || "").includes(${JSON.stringify(label)})`});
+          if (!hit) return null;
+          const r = hit.getBoundingClientRect();
+          if (r.width <= 0 || r.height <= 0) return null;
+          return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+        })()`);
+
+      const openSettings = async () => {
+        if (await cdp.evaluate(`!!document.querySelector('[data-shortcut-modal="settings"]')`))
+          return true;
+        const trigger = await rectOf('button[aria-label="账号菜单"]');
+        if (trigger === null) return false;
+        await clickRect(trigger);
+        await sleep(1200);
+        const item = await rectOf('button[role="menuitem"]', "设置");
+        if (item === null) return false;
+        await clickRect(item);
+        await sleep(1500);
+        return Boolean(
+          await cdp.evaluate(`!!document.querySelector('[data-shortcut-modal="settings"]')`),
+        );
+      };
+
+      const opened = await openSettings();
+      const general = opened
+        ? await rectOf('[data-shortcut-modal="settings"] button', "通用设置")
+        : null;
+      if (general !== null) {
+        await clickRect(general);
+        await sleep(1000);
+      }
+      let row = null;
+      const rowDeadline = Date.now() + 10000;
+      while (Date.now() < rowDeadline) {
+        row = await cdp.evaluate(`(() => {
+          const host = document.querySelector("[data-next-step-settings]");
+          if (!host) return null;
+          const diag = document.querySelector("[data-next-step-diag]");
+          return {
+            switches: [...host.querySelectorAll("[data-next-step-switch]")].map((el) => el.getAttribute("data-next-step-switch")),
+            budget: !!host.querySelector("[data-next-step-budget]"),
+            pause: !!host.querySelector("[data-next-step-pause]"),
+            diag: diag ? (diag.textContent || "").trim() : "",
+          };
+        })()`);
+        if (row !== null) break;
+        await sleep(400);
+      }
+      check(
+        "设置页出现「下一步建议」行（3 开关 + 预算 + 暂停）",
+        row !== null &&
+          Array.isArray(row.switches) &&
+          row.switches.length === 3 &&
+          row.budget === true &&
+          row.pause === true,
+        JSON.stringify({
+          opened,
+          generalFound: general !== null,
+          row:
+            row === null ? null : { switches: row.switches, budget: row.budget, pause: row.pause },
+        }),
+      );
+      check(
+        "诊断行显示运行时版本与构建哈希",
+        row !== null && /版本\s+\d+\.\d+\.\d+\s+·\s+构建\s+[0-9a-f]{8}/u.test(row.diag),
+        JSON.stringify({ diag: row === null ? null : row.diag }),
+      );
+      if (row !== null) console.log(`      diagnostics: ${row.diag.replace(/\n/gu, " | ")}`);
+      await cdp.screenshot(join(SHOTS, "05-settings.png"));
+      // 关掉设置面板，别把界面留在设置里。
+      for (let i = 0; i < 2; i += 1) {
+        await cdp.send("Input.dispatchKeyEvent", {
+          type: "keyDown",
+          key: "Escape",
+          code: "Escape",
+          windowsVirtualKeyCode: 27,
+        });
+        await cdp.send("Input.dispatchKeyEvent", {
+          type: "keyUp",
+          key: "Escape",
+          code: "Escape",
+          windowsVirtualKeyCode: 27,
+        });
+        await sleep(300);
+      }
+    }
+
     // ---------- F. --deep：真发消息（破坏性，自己建立前置状态） ----------
     if (values.deep === true) {
       const workspacePath = values.workspace;
