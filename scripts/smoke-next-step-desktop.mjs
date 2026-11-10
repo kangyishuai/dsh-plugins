@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { readdirSync } from "node:fs";
 // @ts-check
 // 桌面版（Electron）回归：next-step。
 // 硬性要求见 docs/plugin-conventions.md §6.1 —— 走真实 CDP 驱动**用户的桌面版**。
@@ -25,6 +24,34 @@ import { readdirSync } from "node:fs";
 // 侧栏行在折叠分组里时点击不生效，会静默跑在上一个会话上，而那个会话没有该工作区的权限。
 //   必须显式给 `--workspace`，且它必须是已存在、且**不在本仓库内**的目录。
 //
+// ---------------------------------------------------------------------------
+// 当前能力边界（**跑过 ≠ 全绿**，下一个人务必先读这段）
+// ---------------------------------------------------------------------------
+// 1. 无条件可断言（不要求插件已装、不要求有卡片）：
+//    - 能连上 CDP、页面可交互；
+//    - **投影健康**：页面上没有「历史加载失败 / failed to project / Cannot read properties」
+//      ——投影一旦坏掉是「静默全灭」（消息能发、会话日志正常，只是历史加载失败、卡片永不渲染），
+//      这条是唯一能把那种状态和「本来就没有卡」区分开的断言；
+//    - 卡片结构不变量（当前会话里已有的卡）：胶囊数 0 或 2、只读态无胶囊、摘要/提问非空、
+//      任何时刻最多一张可交互卡；没有卡时这些断言**空跑通过**（不是验证过卡片）；
+//    - 幽灵提示默认不出现（ghost 默认关）。
+// 2. **插件未安装时必然 FAIL（这是对的，不是脚本坏了）**：
+//    - `插件 client 半已加载（style[data-plugin="@kangyishuai/dsh-next-step"]）`。
+//      失败信息会列出页面上实际有哪些 data-plugin。修复方式：
+//      `cd packages/next-step && pnpm pack --pack-destination /tmp` →
+//      `dsh plugin --profile <正在运行的那个 profile> add /tmp/<tgz>` → **重启桌面版**（host 半要重启）。
+//      注意：桌面版用的 profile 不一定是 `desktop`（本机实测是 `ai-radar`），装错 profile 等于没装。
+// 3. **需要已有卡片才能真跑的交互断言**（默认只读**不会**生成卡片）：
+//    - 找到带可交互卡的会话 → 点「展开」（摘要变高，带一次重试）→ 按一次 Esc（不误关卡片）
+//      → 点 ✕（进入 dismissed、胶囊消失，带一次重试）→ 刷新后 dismissed 仍在。
+//    - 一条卡都没有时，「找到一个带可交互卡的会话」会 **FAIL** 并打印每个会话的探测结果。
+//      播种办法：先跑一次 `--deep --workspace /tmp/next-step-deep`（会真发一轮模型请求并留下真卡），
+//      之后再跑只读回归；或者平时手动用过插件、profile 里已经有卡。
+// 4. `--require` 只影响**连接**语义：连不上 CDP 时 FAIL（退出码 1）而不是 SKIP；
+//    连上了但插件没装、没有卡，仍然是 FAIL（由上面第 2、3 条决定，不受 `--require` 影响）。
+// 5. 以下内容**本脚本不覆盖**：幽灵提示接受（Tab/→）、设置面板改开关、`nextStep/*` RPC 的
+//    错误分支（stale/missing/disabled）、流式中不渲染。这些在 web 冒烟与单测里覆盖。
+//
 // 三条踩过的坑（照 session-rewind 的经验）：
 //   1. 手势断言（点 ✕ / 点「展开」）留**一次重试**：刚切完会话时焦点与回合状态可能差一拍，
 //      第一次点不动、第二次就成；重试不降低断言（最终仍要求状态真的变了）。
@@ -32,6 +59,9 @@ import { readdirSync } from "node:fs";
 //      脚本自身 cwd（本仓库），断言只表现为「文件不存在」，污染完全静默。
 //   3. 不按 `Esc Esc`（在运行本 agent 的会话里等于内置「停止」），最多按**一次** Esc，
 //      且只断言「没有误关卡片」。
+// 4. 宿主的 flow kind **没有** `"assistant"`：回答正文是 `assistant-step`
+//    （值域 user / turn-process / assistant-step / tool-call / turn-tail / model-retry / turn-trigger）。
+import { readdirSync } from "node:fs";
 import { mkdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -755,7 +785,9 @@ const main = async () => {
         }
         // 防回归：会话没绑对工作区时模型写入会落到**脚本自身 cwd**（本仓库）。
         const repoRootAfter = readdirSync(process.cwd()).sort();
-        const leaked = repoRootAfter.filter((name) => repoRootBefore.indexOf(name) < 0);
+        const leaked = repoRootAfter.filter(
+          (/** @type {string} */ name) => repoRootBefore.indexOf(name) < 0,
+        );
         check(
           "仓库根目录没有多出文件（模型写入没漏到 cwd）",
           leaked.length === 0,

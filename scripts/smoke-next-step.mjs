@@ -23,7 +23,17 @@
 // 模型即便写了文件也落不到真实工作区。跑完删掉整个临时目录（SMOKE_KEEP=1 除外）。
 import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { cp, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -616,24 +626,87 @@ function decodeZstdFrames(buffer) {
 }
 
 /**
- * 读临时 DSH_HOME 里某个会话的 JSONL 事件（不解压失败就重试几次）。
+ * 读临时 DSH_HOME 里某个会话的 JSONL 事件。
+ *
+ * 会话目录名不保证等于 `data-conversation-session` 给的 id：真实 home 里同一 workspace 下
+ * 既有 `<uuid>` 也有 `session-<uuid>` 形式，前端可能还套了一层包装。所以：① 三种匹配都接受
+ * （全等 / 去 `session-` 前缀后全等 / endsWith）；② **发现阶段也重试**（宿主刚退出时目录可能
+ * 还没落盘）；③ 都匹配不到就兜底取最新的会话目录（临时 home 里只有本次会话），并让调用方
+ * 在断言里标出 fallback，避免「悄悄读到别的会话」还当成通过。
  * @param {string} home
  * @param {string} sessionId
- * @returns {Promise<{ logName: string, events: any[] } | null>}
+ * @returns {Promise<{ missing: boolean, logName: string, logPath?: string, dirName: string, candidates: string[], fallback: boolean, events: any[] }>}
  */
 async function readSessionEvents(home, sessionId) {
-  const roots = await readdir(join(home, "sessions"), { withFileTypes: true }).catch(() => []);
-  /** @type {string | null} */
-  let logPath = null;
-  for (const entry of roots) {
-    if (!entry.isDirectory()) continue;
-    const dir = join(home, "sessions", entry.name, sessionId);
-    if (!existsSync(dir)) continue;
-    const files = await readdir(dir).catch(() => []);
-    const hit = files.find((name) => /^session\.v\d+\.jsonl(\.(zst|zstd|gz))?$/u.test(name));
-    if (hit) logPath = join(dir, hit);
+  const sessionsRoot = join(home, "sessions");
+  const normalize = (/** @type {string} */ name) => String(name).replace(/^session-/u, "");
+  const wanted = normalize(sessionId);
+  /** @type {{ logPath: string | null, dirName: string, candidates: string[], fallback: boolean }} */
+  let located = { logPath: null, dirName: "", candidates: [], fallback: false };
+
+  // 发现阶段也要重试：宿主刚退出时 session 目录/日志可能还没落盘。
+  for (let attempt = 0; attempt < 20 && located.logPath === null; attempt += 1) {
+    if (attempt > 0) await sleep(500);
+    const workspaceDirs = await readdir(sessionsRoot, { withFileTypes: true }).catch(() => []);
+    /** @type {{ name: string, dir: string, mtime: number }[]} */
+    const sessionDirs = [];
+    for (const entry of workspaceDirs) {
+      if (!entry.isDirectory()) continue;
+      const workspaceDir = join(sessionsRoot, entry.name);
+      const inner = await readdir(workspaceDir, { withFileTypes: true }).catch(() => []);
+      for (const item of inner) {
+        if (!item.isDirectory()) continue;
+        const dir = join(workspaceDir, item.name);
+        const info = await stat(dir).catch(() => null);
+        sessionDirs.push({ name: item.name, dir, mtime: info?.mtimeMs ?? 0 });
+      }
+    }
+    located.candidates = sessionDirs.map((item) => item.name).slice(0, 20);
+    if (sessionDirs.length === 0) {
+      located.dirName = "";
+      continue;
+    }
+    // 目录名可能是 `<uuid>` 或 `session-<uuid>`，也可能带前端包装；三种匹配都接受。
+    const preferred =
+      sessionDirs.find((item) => item.name === sessionId) ??
+      sessionDirs.find((item) => normalize(item.name) === wanted) ??
+      sessionDirs.find((item) => item.name.endsWith(sessionId) || sessionId.endsWith(item.name)) ??
+      sessionDirs.find((item) => wanted !== "" && item.name.includes(wanted));
+    // 兜底：临时 home 里只有本次会话，取最新的那个（并把 fallback=true 写进 detail）。
+    const chosen = preferred ?? [...sessionDirs].sort((a, b) => b.mtime - a.mtime)[0];
+    const files = await readdir(chosen.dir).catch(() => []);
+    const hits = files
+      .filter((name) => /^session\.v\d+\.jsonl(\.(zst|zstd|gz))?$/u.test(name))
+      .sort();
+    if (hits.length === 0) {
+      located = {
+        logPath: null,
+        dirName: chosen.name,
+        candidates: located.candidates,
+        fallback: preferred === undefined,
+      };
+      continue;
+    }
+    located = {
+      logPath: join(chosen.dir, hits[hits.length - 1]),
+      dirName: chosen.name,
+      candidates: located.candidates,
+      fallback: preferred === undefined,
+    };
   }
-  if (logPath === null) return null;
+
+  if (located.logPath === null) {
+    return {
+      missing: true,
+      logName: "",
+      dirName: located.dirName,
+      candidates: located.candidates,
+      fallback: located.fallback,
+      events: [],
+    };
+  }
+
+  const logPath = located.logPath;
   /** @type {any[]} */
   let events = [];
   for (let attempt = 0; attempt < 10; attempt += 1) {
@@ -661,7 +734,15 @@ async function readSessionEvents(home, sessionId) {
     }
     await sleep(500);
   }
-  return { logName: logPath.split("/").pop() ?? "", events };
+  return {
+    missing: false,
+    logName: logPath.split("/").pop() ?? "",
+    logPath,
+    dirName: located.dirName,
+    candidates: located.candidates,
+    fallback: located.fallback,
+    events,
+  };
 }
 
 /**
@@ -718,14 +799,22 @@ async function verifySessionLog(home, state) {
     return checks;
   }
   const log = await readSessionEvents(home, sessionId);
-  if (log === null) {
+  if (log.missing === true) {
     push(
       "读会话日志：找到当前格式的日志文件",
       false,
-      "没有匹配 session.v<N>.jsonl[.zstd|.gz] 的文件",
+      `sessions/ 下没找到该会话的 session.v<N>.jsonl[.zstd|.gz]：sessionId=${JSON.stringify(sessionId)} 命中的目录=${JSON.stringify(log.dirName)} 候选目录=${JSON.stringify(log.candidates)} home=${home}`,
     );
     return checks;
   }
+  // 目录名兜底（<uuid> / session-<uuid> / 包装层）命中时把证据写进 detail，避免「悄悄读到别的会话」。
+  push(
+    "读会话日志：会话目录与 sessionId 对得上",
+    log.fallback !== true,
+    log.fallback === true
+      ? `sessionId=${JSON.stringify(sessionId)} 没能直接匹配，已兜底取最新的会话目录 ${JSON.stringify(log.dirName)}（候选=${JSON.stringify(log.candidates)}）；临时 home 里通常只有本次会话，但请留意`
+      : `目录=${JSON.stringify(log.dirName)} 日志=${JSON.stringify(log.logName)}`,
+  );
   if (state.canModel !== true) {
     skip("读会话日志：卡片/决策记录", "没有模型凭据，本轮不产生卡片记录");
     return checks;
