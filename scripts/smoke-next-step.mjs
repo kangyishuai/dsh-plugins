@@ -480,6 +480,41 @@ check(
 );
 await shot("03b-ghost");
 
+// 斜杠与 @ 的候选菜单打开时，幽灵必须让位（否则会和候选列表抢同一块位置）
+await focusComposer();
+await page.keyboard.insertText("@");
+await page.waitForTimeout(800);
+const ghostWithAtMenu = await ghostText();
+check(
+  "输入 @ 打开引用菜单时幽灵隐藏",
+  ghostWithAtMenu === "",
+  JSON.stringify({ ghost: ghostWithAtMenu.slice(0, 40), debug: await ghostDebug() }),
+);
+await clearComposer();
+const ghostBackAfterAt = await waitGhost(8000);
+check(
+  "关掉引用菜单后幽灵恢复",
+  ghostBackAfterAt !== "",
+  JSON.stringify({ ghost: ghostBackAfterAt.slice(0, 40), debug: await ghostDebug() }),
+);
+
+await focusComposer();
+await page.keyboard.insertText("/");
+await page.waitForTimeout(800);
+const ghostWithSlashMenu = await ghostText();
+check(
+  "输入 / 打开命令菜单时幽灵隐藏",
+  ghostWithSlashMenu === "",
+  JSON.stringify({ ghost: ghostWithSlashMenu.slice(0, 40), debug: await ghostDebug() }),
+);
+await clearComposer();
+const ghostBackAfterSlash = await waitGhost(8000);
+check(
+  "关掉命令菜单后幽灵恢复",
+  ghostBackAfterSlash !== "",
+  JSON.stringify({ ghost: ghostBackAfterSlash.slice(0, 40), debug: await ghostDebug() }),
+);
+
 // 规格硬规则：输入框为空时按 Enter 绝不把建议发出去
 const userRowsBeforeGhostEnter = await countRows("user");
 await focusComposer();

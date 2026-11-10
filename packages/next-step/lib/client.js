@@ -799,6 +799,38 @@ window.__ModuleLoader__.load({
       let promptKey = ghostKeyOf(latestTurn, prompt);
       let suppressed = suppressUntil > Date.now();
       let enabled = Boolean(settings) && settings.ghost === true;
+      // `/` 与 `@` 的候选菜单是 composer 卡片里的 role="listbox"（宿主 input-trigger / commands）。
+      // 菜单打开时不能画幽灵：它会和候选列表抢同一块位置（phase 只在斜杠命令下变 claimed，
+      // `@` 引用菜单打开时 phase 仍是 plain，所以这里补一层 DOM 观察）。
+      let menuState = React.useState(false);
+      let menuOpen = menuState[0];
+      let setMenuOpen = menuState[1];
+      React.useEffect(() => {
+        if (typeof document === "undefined" || typeof MutationObserver !== "function") {
+          return undefined;
+        }
+        /** @type {any} */
+        let observer = null;
+        /** @type {any} */
+        let timer = null;
+        let attach = () => {
+          let card = document.querySelector("[data-composer-card]");
+          if (!card) {
+            timer = setTimeout(attach, 300);
+            return;
+          }
+          let update = () => setMenuOpen(card.querySelector('[role="listbox"]') !== null);
+          update();
+          observer = new MutationObserver(update);
+          observer.observe(card, { childList: true, subtree: true });
+        };
+        attach();
+        return () => {
+          if (timer !== null) clearTimeout(timer);
+          if (observer !== null) observer.disconnect();
+        };
+      }, []);
+
       let visible =
         sessionId !== "" &&
         enabled &&
@@ -809,6 +841,7 @@ window.__ModuleLoader__.load({
         draft === "" &&
         phase === "plain" &&
         !hasClaim &&
+        !menuOpen &&
         attachmentCount === 0 &&
         occurrenceCount === 0 &&
         idle === true;
@@ -907,6 +940,7 @@ window.__ModuleLoader__.load({
         else if (draft !== "") reason = "draft";
         else if (phase !== "plain") reason = "phase:" + phase;
         else if (hasClaim) reason = "claim";
+        else if (menuOpen) reason = "menu";
         else if (attachmentCount !== 0) reason = "attachments";
         else if (occurrenceCount !== 0) reason = "refs";
         else if (idle !== true) reason = "not-idle";
