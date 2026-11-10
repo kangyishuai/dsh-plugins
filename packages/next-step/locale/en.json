@@ -29,6 +29,7 @@
     "settings.lastError": "Last error: {message}",
     "settings.noError": "No errors",
     "settings.paused": "Paused; resumes in about {time}",
-    "settings.updateFailed": "Could not save"
+    "settings.updateFailed": "Could not save",
+    "settings.version": "Version {version} · build {hash}"
   }
 }

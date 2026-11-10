@@ -192,6 +192,23 @@ pnpm smoke:next-step-desktop --require --deep --workspace /tmp/next-step-deep
 11. **子代理**：在子代理会话里完成一轮 → 不出卡。
 12. **升级回归**：升级 DSH 后重跑第 4–10 步；卡片不出、胶囊点了没反应、或幽灵提示消失，多半是宿主私有 seam 变了——先看诊断，再对照[第 5 节](#5-dsh-升级时要重点看的宿主事实)核对。
 
+## 4.5 运行时自证版本（0.1.1 起）
+
+`nextStep/diagnostics` 返回 `{ version, buildHash, buildFiles, packagePath }`，设置页诊断行也会显示「版本 x.y.z · 构建 abcdef12」。
+排查「装没装 / 装的是哪个版本」时按这个顺序对照，**不需要启动日志**：
+
+```bash
+# 1) profile 声明与磁盘上的包
+node -e "console.log(require(process.env.HOME+'/.dsh/profiles/desktop/package.json').dependencies['@kangyishuai/dsh-next-step'])"
+node -e "console.log(require(process.env.HOME+'/.dsh/profiles/desktop/node_modules/@kangyishuai/dsh-next-step/package.json').version)"
+# 2) npm 上发布了什么
+npm view @kangyishuai/dsh-next-step version
+# 3) 运行时自己报的（设置页诊断行，或页面里调 nextStep/diagnostics）
+```
+
+`buildHash` 覆盖 `package.json`、`cordis.patch.yml`、`lib/**`、`locale/**`（**不含** README / LICENSE：改文档不该改变构建身份），
+按相对路径排序后对「路径 + 长度 + 内容」做 sha256，跨平台一致。
+
 ## 5. DSH 升级时要重点看的宿主事实
 
 1. `conversation.chat.turnTail` 槽位是否还在、props 是否仍是 `{ turn, seq, openFile, t }`，以及
