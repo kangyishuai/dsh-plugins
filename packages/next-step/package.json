@@ -1,6 +1,6 @@
 {
   "name": "@kangyishuai/dsh-next-step",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Next-step decision card under each completed answer, plus an optional greyed-out next-prompt hint in the composer",
   "keywords": [
     "dsh",
