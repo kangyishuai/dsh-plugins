@@ -93,6 +93,7 @@ The row writes the same `$DSH_HOME/next-step.settings.json` that the host re-rea
 ## Known limitations
 
 - **The card is attached to the composer area**, not to the transcript. It renders in the composer's overlay layer so it is visible without scrolling; the trade-off is that it reads as part of the input box rather than as a block inside the conversation (ADR 0009 §4).
+- **No card while messages are queued.** If you already have 2+ messages waiting to be sent, the plugin skips generation for that turn (the official action cards use the same limit); nothing is queued or sent by the plugin itself.
 - **Exactly two proposals.** Every card has two options that must point in different (mutually exclusive) directions.
 - **The `⌘↵` / `Ctrl+↵` keycap on the primary pill is decorative.** v1 does not bind the shortcut; it is a visual hint only.
 - **No cross-device sync.** Cards and decisions live in the local session log of the machine that generated them.
