@@ -19,7 +19,10 @@
 1. **一个包，两个可独立开关的面。** `card`（默认开）与 `ghost`（默认关）共用一个包 `@kangyishuai/dsh-next-step`，共享触发点、一次模型调用、设置与预算。理由：两者的触发时刻相同（轮末）、产物同源（同一次补全）、必须互斥（卡在时不显示幽灵）；拆两个包会重复一遍触发/调用/开关，并把「互斥」变成跨插件协调，且仓库硬性要求每个带 client 半的包各有一份桌面冒烟。
 2. **一次调用产出三个结果。** 同一次补全返回 `{summary, question, options[2], nextPrompt}`：卡片用前三个，幽灵提示用最后一个。相邻生态的成熟做法（Open WebUI 把 `followUps[0]` 直接当输入框灰字候选）证明这样省一半 token。
 3. **状态属于会话数据：插件记录 + 会话投影。** 卡片与决策分别用 `appendPluginRecord(session, "plugin:next-step/card" | "plugin:next-step/decision", data)` 写进会话日志；host 半注册 `ctx.sessionProjections.register({key:"nextStep", …})`，客户端用 `useProjection("nextStep")` 读。刷新、切会话、fork 之后状态都还在；「点击后卡片保留、按钮消失」不再是界面技巧，而是记录了 `phase: "sent"` 的自然结果。
-4. **卡片是对话的一部分，不是浮层。** 渲染在 `conversation.chat.turnTail`（宿主官方 slot，官方 action-cards/plan/deliverables/schedule 都用它），位置天然在回答正文与消息操作行之间。历史轮次的卡片**保留但只读**；任何时刻最多一张可交互卡（只对最后一轮渲染胶囊）。这复刻了 Claude 的行为，也避免「两张卡叠放」。
+4. **状态是对话的一部分；卡片本体贴在输入框上方。** 卡片渲染在 `conversation.input.overlay`（composer 卡片内的覆盖层锚点），因此它**始终在视口里**——不用为了看建议去滚动，也不会盖住输入框；代价是它视觉上属于输入区（在 composer 卡片内部顶部），而不是像 Claude 那样排在 transcript 里。
+   最初的设计是渲染在 `conversation.chat.turnTail`（答后 footer，官方 action-cards 用的位置），实测发现：卡片虽然位置「正确」，但答完时视图停在答案底部，出现在更上方的卡片经常在视口之外，用户根本看不到；因此改为 composer 覆盖层，并在 README 与 §2.5 里如实写明这个取舍。
+   无论渲染在哪，**状态都属于会话数据**：历史轮次的卡片保留但只读，任何时刻最多一张可交互卡（只对最后一轮渲染胶囊），复刻 Claude 的「点过之后只留记录」。
+
 5. **点击 = 用户消息，走宿主输入框。** `setDraft(text)` → 轮询等编辑器草稿落定 → `submit()`（内部 `mode: "queue"`，与手动回车同一条提交链）。不伪造会话事件。发送前的决策记录让界面立即进入只读态；草稿非空时禁用胶囊（`setDraft` 是整篇替换，会覆盖用户正在打的字）。
 6. **严格门控。** 只在 `turn/end` 且 `reason.kind === "completed"` 时生成；Stop/报错/`max-tokens`/待审批一律不出卡；子代理会话不出卡；流式期间宿主本来就不渲染 turnTail 节点。官方 action-cards 只判「有没有最终文本」，会在 `max-tokens` 后误出卡——这里做对，是产品可信度上的差异点。
 7. **开关 = 不再发请求，而不是隐藏 UI。** 设置在 `$DSH_HOME/next-step.settings.json`，host 每次生成前重读（1s 缓存），所以改文件即生效、不需要重启；`enabled=false` 时在发请求之前就返回。另有 `pauseUntil`、`maxCardsPerSession` 预算闸与超时（默认 20s）、失败静默。
