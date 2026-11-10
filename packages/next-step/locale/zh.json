@@ -12,6 +12,23 @@
     "error.missing": "找不到这条建议",
     "error.disabled": "插件已停用",
     "error.failed": "操作失败，请重试",
-    "error.send": "没能把建议写进输入框"
+    "error.send": "没能把建议写进输入框",
+    "settings.title": "下一步建议",
+    "settings.desc": "每轮回答正常结束后生成一张决策卡（一次额外模型调用）。",
+    "settings.enabled": "启用插件",
+    "settings.card": "回答下方的决策卡",
+    "settings.ghost": "输入框里的幽灵提示",
+    "settings.pauseLabel": "生成节奏",
+    "settings.pause": "暂停 1 小时",
+    "settings.resume": "恢复生成",
+    "settings.budget": "每会话最多",
+    "settings.budgetUnit": "张卡",
+    "settings.diagnostics": "诊断",
+    "settings.refresh": "刷新",
+    "settings.stats": "已生成 {generated} · 失败 {failed} · 跳过 {skipped} · 在途 {inflight}",
+    "settings.lastError": "最近错误：{message}",
+    "settings.noError": "无错误",
+    "settings.paused": "已暂停，约 {time} 后恢复",
+    "settings.updateFailed": "保存失败"
   }
 }

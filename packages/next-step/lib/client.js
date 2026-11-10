@@ -50,6 +50,23 @@ window.__ModuleLoader__.load({
       "error.disabled": "插件已停用",
       "error.failed": "操作失败，请重试",
       "error.send": "没能把建议写进输入框",
+      "settings.title": "下一步建议",
+      "settings.desc": "每轮回答正常结束后生成一张决策卡（一次额外模型调用）。",
+      "settings.enabled": "启用插件",
+      "settings.card": "回答下方的决策卡",
+      "settings.ghost": "输入框里的幽灵提示",
+      "settings.pauseLabel": "生成节奏",
+      "settings.pause": "暂停 1 小时",
+      "settings.resume": "恢复生成",
+      "settings.budget": "每会话最多",
+      "settings.budgetUnit": "张卡",
+      "settings.diagnostics": "诊断",
+      "settings.refresh": "刷新",
+      "settings.stats": "已生成 {generated} · 失败 {failed} · 跳过 {skipped} · 在途 {inflight}",
+      "settings.lastError": "最近错误：{message}",
+      "settings.noError": "无错误",
+      "settings.paused": "已暂停，约 {time} 后恢复",
+      "settings.updateFailed": "保存失败",
     };
 
     /**
@@ -70,6 +87,25 @@ window.__ModuleLoader__.load({
       "error.disabled": "The plugin is disabled",
       "error.failed": "Something went wrong. Try again.",
       "error.send": "Could not fill the composer",
+      "settings.title": "Next-step suggestions",
+      "settings.desc":
+        "After each completed answer, generate one decision card (one extra model call).",
+      "settings.enabled": "Enable the plugin",
+      "settings.card": "Decision card under the answer",
+      "settings.ghost": "Ghost hint in the composer",
+      "settings.pauseLabel": "Cadence",
+      "settings.pause": "Pause for 1 hour",
+      "settings.resume": "Resume",
+      "settings.budget": "Per session, at most",
+      "settings.budgetUnit": "cards",
+      "settings.diagnostics": "Diagnostics",
+      "settings.refresh": "Refresh",
+      "settings.stats":
+        "Generated {generated} · failed {failed} · skipped {skipped} · in flight {inflight}",
+      "settings.lastError": "Last error: {message}",
+      "settings.noError": "No errors",
+      "settings.paused": "Paused; resumes in about {time}",
+      "settings.updateFailed": "Could not save",
     };
 
     /**
@@ -113,6 +149,23 @@ window.__ModuleLoader__.load({
 .ns_ghost{position:absolute;z-index:1;top:12px;left:14px;right:12px;color:var(--dsw-alias-label-caption,#81858c);font-size:inherit;line-height:inherit;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;user-select:none;}
 @keyframes ns_spin{to{transform:rotate(360deg);}}
 @media (prefers-reduced-motion:reduce){.ns_spinner{animation-duration:2.4s;}}
+.ns_settings{display:flex;flex-direction:column;gap:10px;padding:12px 0;font-size:13px;line-height:20px;}
+.ns_setTitle{font-size:13px;font-weight:500;color:var(--dsw-alias-label-primary,#e8e8e8);}
+.ns_setDesc{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#a4a4a4);}
+.ns_setRow{display:flex;align-items:center;justify-content:space-between;gap:12px;}
+.ns_setLabel{color:var(--dsw-alias-label-primary,#e8e8e8);}
+.ns_switch{appearance:none;border:0;background:transparent;padding:0;cursor:pointer;display:inline-flex;line-height:0;}
+.ns_switch:disabled{opacity:.5;cursor:default;}
+.ns_track{width:34px;height:20px;border-radius:10px;background:var(--dsw-alias-border-l3,#3a3a3a);position:relative;transition:background-color .12s;display:inline-block;}
+.ns_track[data-on="true"]{background:var(--dsw-alias-state-business-primary,#4d7cfe);}
+.ns_thumb{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:8px;background:#fff;transition:transform .12s;}
+.ns_track[data-on="true"] .ns_thumb{transform:translateX(14px);}
+.ns_setBtn{height:26px;padding:0 10px;border-radius:13px;border:1px solid var(--dsw-alias-border-l3,#3a3a3a);background:transparent;color:var(--dsw-alias-label-secondary,#a4a4a4);font-size:12px;cursor:pointer;}
+.ns_setBtn:hover{color:var(--dsw-alias-label-primary,#e8e8e8);border-color:var(--dsw-alias-border-l4,#4a4a4a);}
+.ns_setBtn:disabled{opacity:.5;cursor:default;}
+.ns_setInput{width:64px;height:26px;border-radius:8px;border:1px solid var(--dsw-alias-border-l3,#3a3a3a);background:transparent;color:var(--dsw-alias-label-primary,#e8e8e8);font-size:12px;padding:0 8px;}
+.ns_diag{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8a8a8a);white-space:pre-wrap;overflow-wrap:anywhere;}
+.ns_setError{font-size:12px;color:var(--dsw-alias-label-primary,#e8e8e8);}
 `;
 
     // ------------------------------------------------------------------
@@ -861,6 +914,216 @@ window.__ModuleLoader__.load({
     // 插件主体
     // ------------------------------------------------------------------
 
+    /**
+     * 设置页 → 通用 里的「下一步建议」行：总开关、两个面、暂停、预算与诊断。
+     * `settings.general.item` 是无 owner props 的 list 槽，数据全部由 api 自取。
+     * @param {any} props
+     * @returns {any}
+     */
+    function NextStepSettings(props) {
+      let api = props.api;
+      let t = typeof props.t === "function" ? props.t : fallbackTranslate;
+      let settingsState = React.useState(/** @type {any} */ (null));
+      let settings = settingsState[0];
+      let setSettings = settingsState[1];
+      let statsState = React.useState(/** @type {any} */ (null));
+      let stats = statsState[0];
+      let setStats = statsState[1];
+      let errorState = React.useState("");
+      let errorKey = errorState[0];
+      let setErrorKey = errorState[1];
+      let busyState = React.useState("");
+      let busy = busyState[0];
+      let setBusy = busyState[1];
+      let budgetState = React.useState("");
+      let budgetDraft = budgetState[0];
+      let setBudgetDraft = budgetState[1];
+
+      let refresh = React.useCallback(() => {
+        if (!api) return;
+        if (typeof api.settings === "function") {
+          Promise.resolve(api.settings())
+            .then((value) => {
+              if (value) setSettings(value);
+            })
+            .catch(() => undefined);
+        }
+        if (typeof api.diagnostics === "function") {
+          Promise.resolve(api.diagnostics())
+            .then((value) => {
+              if (value) setStats(value);
+            })
+            .catch(() => undefined);
+        }
+      }, [api]);
+
+      React.useEffect(() => {
+        refresh();
+      }, [refresh]);
+
+      let patch = (/** @type {any} */ value, /** @type {string} */ label) => {
+        if (!api || typeof api.updateSettings !== "function") {
+          setErrorKey("settings.updateFailed");
+          return;
+        }
+        setBusy(label);
+        setErrorKey("");
+        Promise.resolve(api.updateSettings(value))
+          .then((result) => {
+            setBusy("");
+            if (result?.ok !== true) {
+              setErrorKey("settings.updateFailed");
+              return;
+            }
+            if (result.settings) setSettings(result.settings);
+            if (typeof api.diagnostics === "function") {
+              Promise.resolve(api.diagnostics())
+                .then((value) => {
+                  if (value) setStats(value);
+                })
+                .catch(() => undefined);
+            }
+          })
+          .catch(() => {
+            setBusy("");
+            setErrorKey("settings.updateFailed");
+          });
+      };
+
+      if (settings === null) {
+        return h(
+          "div",
+          { className: "ns_settings", "data-next-step-settings": "" },
+          h("div", { className: "ns_setTitle" }, t("settings.title")),
+          h("div", { className: "ns_setDesc" }, "…"),
+        );
+      }
+
+      let switchRow = (/** @type {string} */ key, /** @type {string} */ labelKey) => {
+        let on = settings[key] === true;
+        return h("div", { className: "ns_setRow", key: key }, [
+          h("span", { className: "ns_setLabel", key: "label" }, t(labelKey)),
+          h(
+            "button",
+            {
+              key: "switch",
+              type: "button",
+              role: "switch",
+              "aria-checked": on ? "true" : "false",
+              "data-next-step-switch": key,
+              className: "ns_switch",
+              disabled: busy === key,
+              onClick: () => patch({ [key]: !on }, key),
+            },
+            h(
+              "span",
+              { className: "ns_track", "data-on": on ? "true" : "false", "aria-hidden": "true" },
+              h("span", { className: "ns_thumb" }),
+            ),
+          ),
+        ]);
+      };
+
+      let paused = typeof settings.pauseUntil === "number" && settings.pauseUntil > Date.now();
+      let minutes = paused
+        ? Math.max(1, Math.round((settings.pauseUntil - Date.now()) / 60000))
+        : 0;
+
+      let diagText = "";
+      if (stats !== null) {
+        diagText = t("settings.stats", {
+          generated: String(stats.generated || 0),
+          failed: String(stats.failed || 0),
+          skipped: String(stats.skipped || 0),
+          inflight: String(stats.inflight || 0),
+        });
+        let lastError = typeof stats.lastError === "string" ? stats.lastError : "";
+        diagText +=
+          "\n" +
+          (lastError === ""
+            ? t("settings.noError")
+            : t("settings.lastError", { message: lastError }));
+      }
+
+      return h("div", { className: "ns_settings", "data-next-step-settings": "" }, [
+        h("div", { key: "head" }, [
+          h("div", { className: "ns_setTitle", key: "title" }, t("settings.title")),
+          h("div", { className: "ns_setDesc", key: "desc" }, t("settings.desc")),
+        ]),
+        switchRow("enabled", "settings.enabled"),
+        switchRow("card", "settings.card"),
+        switchRow("ghost", "settings.ghost"),
+        h("div", { className: "ns_setRow", key: "pause" }, [
+          h(
+            "span",
+            { className: "ns_setLabel", key: "label" },
+            paused
+              ? t("settings.paused", { time: `${String(minutes)}m` })
+              : t("settings.pauseLabel"),
+          ),
+          h(
+            "button",
+            {
+              key: "btn",
+              type: "button",
+              className: "ns_setBtn",
+              "data-next-step-pause": "",
+              disabled: busy === "pause",
+              onClick: () => patch({ pauseUntil: paused ? 0 : Date.now() + 3600000 }, "pause"),
+            },
+            paused ? t("settings.resume") : t("settings.pause"),
+          ),
+        ]),
+        h("div", { className: "ns_setRow", key: "budget" }, [
+          h(
+            "span",
+            { className: "ns_setLabel", key: "label" },
+            `${t("settings.budget")} ${t("settings.budgetUnit")}`,
+          ),
+          h("input", {
+            key: "input",
+            type: "number",
+            min: "0",
+            max: "1000",
+            className: "ns_setInput",
+            "data-next-step-budget": "",
+            "aria-label": `${t("settings.budget")} ${t("settings.budgetUnit")}`,
+            value: budgetDraft === "" ? String(settings.maxCardsPerSession) : budgetDraft,
+            onChange: (/** @type {any} */ event) => setBudgetDraft(String(event.target.value)),
+            onBlur: () => {
+              if (budgetDraft === "") return;
+              patch({ maxCardsPerSession: Number(budgetDraft) }, "budget");
+              setBudgetDraft("");
+            },
+          }),
+        ]),
+        h("div", { className: "ns_setRow", key: "diag" }, [
+          h("span", { className: "ns_setLabel", key: "label" }, t("settings.diagnostics")),
+          h(
+            "button",
+            {
+              key: "refresh",
+              type: "button",
+              className: "ns_setBtn",
+              "data-next-step-refresh": "",
+              onClick: () => refresh(),
+            },
+            t("settings.refresh"),
+          ),
+        ]),
+        diagText === ""
+          ? null
+          : h(
+              "div",
+              { className: "ns_diag", key: "diagText", "data-next-step-diag": "" },
+              diagText,
+            ),
+        errorKey === ""
+          ? null
+          : h("div", { className: "ns_setError", key: "error", role: "alert" }, t(errorKey)),
+      ]);
+    }
+
     exports.inject = ["slots", "locale", "connection"];
 
     /** @param {any} ctx */
@@ -1021,6 +1284,15 @@ window.__ModuleLoader__.load({
               : result;
           }),
         sendText: sendText,
+        updateSettings: (/** @type {any} */ patch) =>
+          callRemote("updateSettings", { patch: patch }).then((result) =>
+            result && typeof result === "object" ? result : { ok: false },
+          ),
+        diagnostics: () =>
+          callRemote("diagnostics").then((result) => {
+            if (!result || typeof result !== "object" || result.ok !== true) return null;
+            return result.stats && typeof result.stats === "object" ? result.stats : null;
+          }),
       };
 
       // 决策卡：每轮答案尾部一张。
@@ -1056,6 +1328,24 @@ window.__ModuleLoader__.load({
             ),
           ),
         "next-step: ghost",
+      );
+
+      // 设置页 → 通用：总开关、两个面、暂停、预算与诊断。
+      ctx.effect(
+        () =>
+          ctx.slots.inject("settings.general.item", () =>
+            ctx.slots.register(
+              {
+                name: "settings.general.item",
+                id: "next-step",
+                order: 900,
+                locale: NS,
+                inject: () => ({ api: api }),
+              },
+              NextStepSettings,
+            ),
+          ),
+        "next-step: settings",
       );
 
       // 键盘：宿主的 fixed-input 观察通道（Tab / → 接受，Esc 清除）。
