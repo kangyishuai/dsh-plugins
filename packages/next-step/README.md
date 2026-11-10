@@ -62,6 +62,18 @@ Re-run `pnpm pack` + `add` after changing the code. The plugin has a host half, 
 
 **Where the switches are.** The plugin's settings expose the two faces (`card` / `ghost`), the global switch, the pause and the per-session budget. The global switch off stops requests entirely, not just rendering.
 
+## Settings & diagnostics
+
+Settings → **General** → “Next-step suggestions” is one row with everything you need to control it:
+
+- **Enable the plugin** — the global switch. Off means **no generation request at all**, not a hidden UI.
+- **Decision card under the answer** / **Ghost hint in the composer** — one switch per face.
+- **Cadence** — “Pause for 1 hour” / “Resume”.
+- **Per session, at most N cards** — the budget (`maxCardsPerSession`, clamped to 0–1000).
+- **Diagnostics** — generated / failed / skipped / in-flight counters, the last error, and a Refresh button.
+
+The row writes the same `$DSH_HOME/next-step.settings.json` that the host re-reads (1 s cache) before every generation, so a change applies on the next turn — no restart. If the row is missing because a host seam moved, editing the file still works.
+
 ## When no card appears
 
 | Situation                                                                                         | What happens                                                               |
