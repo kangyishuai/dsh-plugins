@@ -12,5 +12,6 @@
 | [0006](0006-session-rewind-architecture.md)           | session-rewind：只追加的回溯标记                      | 已接受 |
 | [0007](0007-session-rewind-file-restore.md)           | session-rewind：文件还原的写前快照与救援点            | 已接受 |
 | [0008](0008-session-rewind-non-destructive-recall.md) | session-rewind：非破坏性召回（召回 vs 回溯分工）      | 已接受 |
+| [0009](0009-next-step-architecture.md)                | next-step：一个包两个面，状态属于会话数据             | 已接受 |
 
 新建：复制 [0000-template.md](0000-template.md)。

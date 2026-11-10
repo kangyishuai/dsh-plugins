@@ -10,6 +10,7 @@ body:
       options:
         - "@kangyishuai/dsh-session-delete"
         - "@kangyishuai/dsh-session-rewind"
+        - "@kangyishuai/dsh-next-step"
         - other
     validations:
       required: true

@@ -36,3 +36,7 @@ documentation:
 "plugin:session-rewind":
   - changed-files:
       - any-glob-to-any-file: "packages/session-rewind/**"
+
+"plugin:next-step":
+  - changed-files:
+      - any-glob-to-any-file: "packages/next-step/**"
