@@ -894,7 +894,27 @@ window.__ModuleLoader__.load({
         }
       });
 
-      if (!visible) return null;
+      if (!visible) {
+        // 诊断用：ghost 面已打开但没显示时，留一个隐藏标记说明是哪条门挡住了。
+        // 不参与视觉、不影响可访问性，但让「幽灵不出现」可定位（冒烟/桌面/升级排障都用它）。
+        if (!enabled) return null;
+        let reason = "unknown";
+        if (sessionId === "") reason = "no-session";
+        else if (prompt === "") reason = "no-prompt";
+        else if (decided) reason = "decided";
+        else if (clearedKey === promptKey) reason = "cleared";
+        else if (suppressed) reason = "suppressed";
+        else if (draft !== "") reason = "draft";
+        else if (phase !== "plain") reason = "phase:" + phase;
+        else if (hasClaim) reason = "claim";
+        else if (attachmentCount !== 0) reason = "attachments";
+        else if (occurrenceCount !== 0) reason = "refs";
+        else if (idle !== true) reason = "not-idle";
+        return h("span", {
+          "data-next-step-ghost-off": reason,
+          style: { display: "none" },
+        });
+      }
 
       return h(
         "span",
