@@ -44,7 +44,8 @@
 // 3. **需要已有卡片才能真跑的交互断言**（默认只读**不会**生成卡片）：
 //    - 找到带可交互卡的会话 → 点「展开」（摘要变高，带一次重试）→ 按一次 Esc（不误关卡片）
 //      → 点 ✕（进入 dismissed、胶囊消失，带一次重试）→ 刷新后 dismissed 仍在。
-//    - 一条卡都没有时，「找到一个带可交互卡的会话」会 **FAIL** 并打印每个会话的探测结果。
+//    - 只读模式不发消息，「找到带可交互卡的会话」通常是 SKIP（只有最后一轮可交互）；
+//      要验交互必须用 --deep。
 //      播种办法：先跑一次 `--deep --workspace /tmp/next-step-deep`（会真发一轮模型请求并留下真卡），
 //      之后再跑只读回归；或者平时手动用过插件、profile 里已经有卡。
 // 4. `--require` 只影响**连接**语义：连不上 CDP 时 FAIL（退出码 1）而不是 SKIP；
@@ -428,10 +429,13 @@ const main = async () => {
     if (initialCards.length > 0) {
       const newest = initialCards[initialCards.length - 1];
       check(
-        "当前会话的卡片有摘要 / 提问 / ✕",
-        newest.summary !== "" && newest.question !== "" && newest.hasDismiss === true,
+        "当前会话的卡片有摘要 / 提问（可交互态另需 ✕）",
+        newest.summary !== "" &&
+          newest.question !== "" &&
+          (newest.state !== "interactive" || newest.hasDismiss === true),
         JSON.stringify({
           turn: newest.turn,
+          state: newest.state,
           summary: newest.summary.slice(0, 40),
           question: newest.question.slice(0, 40),
           hasDismiss: newest.hasDismiss,
@@ -478,13 +482,19 @@ const main = async () => {
         break;
       }
     }
-    check(
-      "找到一个带可交互卡的会话（默认只读：只切会话，不发消息）",
-      target !== null,
-      target !== null
-        ? `session=${target.sessionId} turn=${target.turn}（探测：${probeLog.join(" ")}）`
-        : `没找到；探测=${probeLog.join(" ") || "侧栏里没有会话"} —— 真实 profile 里可能还没生成过卡，用 --deep 造一张`,
-    );
+    if (target === null) {
+      // 只有「最后一轮」的卡可交互；只读回归不发消息，因此找不到是**正常状态**，不该判红。
+      skip(
+        "找到带可交互卡的会话（只读模式不需要）",
+        `探测=${probeLog.join(" ") || "侧栏里没有会话"} —— 只读回归不发消息造卡；要验交互用 --deep`,
+      );
+    } else {
+      check(
+        "找到一个带可交互卡的会话（默认只读：只切会话，不发消息）",
+        true,
+        `session=${target.sessionId} turn=${target.turn}（探测：${probeLog.join(" ")}）`,
+      );
+    }
     let deepSession = null;
     if (target !== null) {
       const cards = await cardsNow(cdp);
