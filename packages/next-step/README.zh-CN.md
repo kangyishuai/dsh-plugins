@@ -72,7 +72,7 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-next-step-*.tgz
 - **回答下方的决策卡** / **输入框里的幽灵提示** —— 每个面一个开关。
 - **生成节奏** —— 「暂停 1 小时」/「恢复生成」。
 - **每会话最多 N 张卡** —— 预算（`maxCardsPerSession`，夹在 0–1000）。
-- **诊断** —— 已生成 / 失败 / 跳过 / 在途计数、最近错误、刷新按钮。
+- **诊断** —— 已生成 / 失败 / 跳过 / 在途计数、最近错误、**运行时版本 + 构建哈希**、刷新按钮。`nextStep/diagnostics` 同样返回 `version` / `buildHash` / `buildFiles` / `packagePath`，所以运行中的构建可以和 `dsh plugin list` 或 npm 上的 tarball 对照，不需要翻启动日志。
 
 这一行写入的就是宿主每次生成前重读（1s 缓存）的 `$DSH_HOME/next-step.settings.json`，所以改完下一轮就生效、不用重启；万一宿主 seam 变了导致这一行不显示，直接改文件同样有效。
 

@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { BlockAssembler, createUserMessage } from "@deepseek-ai/dsh-llm";
 import { appendPluginRecord, pluginRecordOf } from "@deepseek-ai/dsh-session";
 import { Remote, RemoteError, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
+import { buildIdentity } from "./build-info.js";
 import {
   CARD_RECORD,
   DECISION_RECORD,
@@ -524,6 +525,7 @@ export class NextStepService extends TypertRemoteService {
    */
   async diagnostics() {
     try {
+      const identity = await buildIdentity();
       return {
         ok: true,
         stats: {
@@ -532,6 +534,11 @@ export class NextStepService extends TypertRemoteService {
           lastError: this.lastError,
           dataRoot: this.dataRoot,
           settings: await this.currentSettings(),
+          // 运行时自证：与 `dsh plugin list` / npm tarball 对照用。
+          version: identity.version,
+          buildHash: identity.buildHash,
+          buildFiles: identity.buildFiles,
+          packagePath: identity.packagePath,
         },
       };
     } catch (error) {

@@ -29,6 +29,7 @@
     "settings.lastError": "最近错误：{message}",
     "settings.noError": "无错误",
     "settings.paused": "已暂停，约 {time} 后恢复",
-    "settings.updateFailed": "保存失败"
+    "settings.updateFailed": "保存失败",
+    "settings.version": "版本 {version} · 构建 {hash}"
   }
 }

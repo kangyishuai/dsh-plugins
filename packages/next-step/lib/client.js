@@ -67,6 +67,7 @@ window.__ModuleLoader__.load({
       "settings.noError": "无错误",
       "settings.paused": "已暂停，约 {time} 后恢复",
       "settings.updateFailed": "保存失败",
+      "settings.version": "版本 {version} · 构建 {hash}",
     };
 
     /**
@@ -106,6 +107,7 @@ window.__ModuleLoader__.load({
       "settings.noError": "No errors",
       "settings.paused": "Paused; resumes in about {time}",
       "settings.updateFailed": "Could not save",
+      "settings.version": "Version {version} · build {hash}",
     };
 
     /**
@@ -1097,6 +1099,10 @@ window.__ModuleLoader__.load({
           (lastError === ""
             ? t("settings.noError")
             : t("settings.lastError", { message: lastError }));
+        if (typeof stats.version === "string" && stats.version !== "") {
+          let buildHash = typeof stats.buildHash === "string" ? stats.buildHash.slice(0, 8) : "";
+          diagText += "\n" + t("settings.version", { version: stats.version, hash: buildHash });
+        }
       }
 
       return h("div", { className: "ns_settings", "data-next-step-settings": "" }, [

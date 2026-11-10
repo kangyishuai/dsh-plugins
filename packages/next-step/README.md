@@ -72,7 +72,7 @@ Settings → **General** → “Next-step suggestions” is one row with everyth
 - **Decision card under the answer** / **Ghost hint in the composer** — one switch per face.
 - **Cadence** — “Pause for 1 hour” / “Resume”.
 - **Per session, at most N cards** — the budget (`maxCardsPerSession`, clamped to 0–1000).
-- **Diagnostics** — generated / failed / skipped / in-flight counters, the last error, and a Refresh button.
+- **Diagnostics** — generated / failed / skipped / in-flight counters, the last error, the runtime **version + build hash**, and a Refresh button. `nextStep/diagnostics` returns the same `version` / `buildHash` / `buildFiles` / `packagePath`, so a running build can be matched against `dsh plugin list` or the npm tarball without digging through startup logs.
 
 The row writes the same `$DSH_HOME/next-step.settings.json` that the host re-reads (1 s cache) before every generation, so a change applies on the next turn — no restart. If the row is missing because a host seam moved, editing the file still works.
 
