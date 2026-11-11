@@ -42,12 +42,12 @@ DSH_HOME=$H dsh --profile ad --port 0 --no-open
 
 ## 0.5 本次核查记录（2026-11-11，DSH 0.2.2-rc.1）
 
-| 层                                         | 结果                                                                                                                                                     |
-| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `node --test`（`packages/advisor`）        | **51 pass / 0 fail**（settings / route / guard / prompt / redact / tool-schema / transcript）                                                            |
-| `pnpm probe:runtime`                       | **60/60 PASS**（advisor 的 5 条 seam 尚未加进 `SEAM_CHECKS`，见 [§5](#5-dsh-升级时要重点看的宿主事实)）                                                  |
-| `pnpm smoke:advisor-desktop --require`     | **12/12 PASS（真机，DSH 桌面版 0.2.2-rc.1，Electron 44）**：插件已加载、`/advisor` 弹出选择器（52 个真实候选）、Esc 关闭、`status`、`doctor`、收尾无残留 |
-| 真机徵询（`pnpm pack` → `add` → 手动徵询） | **未做**（P1 收尾的验收项，步骤见 [§4](#4-手工-gui-验证步骤)）                                                                                           |
+| 层                                         | 结果                                                                                                                                                                                                                                                     |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `node --test`（`packages/advisor`）        | **74 pass / 0 fail**（settings / route / guard / prompt / redact / tool-schema / transcript / anchors / adoption / catalog / budget / verifier）                                                                                                         |
+| `pnpm probe:runtime`                       | **67/67 PASS**（含 advisor 的 7 条 seam：`resolveModelInfo` / `prepareCall+configure` / `UNSUPPORTED_REASONING_EFFORT` / usage 分片 / `commands.register` / `commandUi.decorate` / `popupSelect`）                                                       |
+| `pnpm smoke:advisor-desktop --require`     | **12/12 PASS（P1 时，真机 DSH 桌面版 0.2.2-rc.1，Electron 44）**：插件已加载、`/advisor` 弹出选择器（52 个真实候选）、Esc 关闭、`status`、`doctor`、收尾无残留。P3 起脚本扩到默认 19 项 / `--advice` 23 项（含设置卡与顾问线，见 [§3](#3-桌面只读回归)） |
+| 真机徵询（`pnpm pack` → `add` → 手动徵询） | **未做**（P1 收尾的验收项，步骤见 [§4](#4-手工-gui-验证步骤)）                                                                                                                                                                                           |
 
 单测与 seam 数字都会随实现增长，上面只是本次核对时的快照。
 
@@ -105,31 +105,48 @@ open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debuggin
 # 2) 跑（--require：连不上端口时失败而不是跳过）
 pnpm smoke:advisor-desktop --require
 # 端口不同时：DSH_CDP_PORT=9333 pnpm smoke:advisor-desktop --require
+# 连真实徵询记录一起看（opt-in；只读，脚本不发起徵询）：
+pnpm smoke:advisor-desktop --require --advice
 ```
 
-默认**只读**：只开菜单/对话框、读 DOM/文本、再 Esc 关闭；**不选任何模型、不触发真实徵询、不写账本**，
-因此可以直接跑在真实 profile 上。断言清单（✅ = 脚本已覆盖；⬜ = 仍是待补项）：
+默认**只读**：只开菜单/对话框、读 DOM/文本、再 Esc 关闭；**不选任何模型、不改任何设置值、不点保存、
+不触发真实徵询、不写账本**，因此可以直接跑在真实 profile 上。默认 19 项、加 `--advice` 后 23 项
+（没有顾问记录 / 没有选中 provider 的项记 SKIP，不算失败）。断言清单（✅ = 脚本已覆盖；⬜ = 仍是待补项）：
 
 1. ✅ 连上桌面 UI（CDP）；
 2. ✅ 插件 client 半已加载：`style[data-plugin="@kangyishuai/dsh-advisor"]`；
 3. ⬜ `/` 菜单里能搜到 `advisor`，且描述非空（证明 `commands.register` 生效、宿主目录已刷新）；
-4. ✅ 输入 `/advisor` 回车 → 打开**宿主选择器**（有搜索框、有行），按 Esc 关闭、焦点回到输入框；
-5. ⬜ 选择器行里至少有一条来自宿主已配置路由（`provider/model` 文本可读），且**没有任何一行**泄露
+4. ✅ 设置页卡片（只读）：账号菜单 →「设置」→「通用设置」；卡片有 provider 下拉（≥1 个候选）与 model 下拉，
+   没有 `[data-advisor-error]`（宿主 RPC 正常），并出现新增字段「工作区」预算、「预览会发什么」、模型白名单、
+   「确认跨 provider 发送」（没选 provider 时这项记 SKIP）；**不点保存、不改任何值**；关掉后对话框消失。
+   文案从 `packages/advisor/locale/{zh,en}.json` 读，英文界面同样能过；
+5. ✅ 回合尾部顾问线（只读）：页面上有 `.dsh-advisor-turn` 时 headline 为「顾问 · 严重度」
+   （`declined` 时是「顾问认为无需建议」）；**没有记录就记 SKIP**——脚本不制造徵询；
+6. ✅ 输入 `/advisor` 回车 → 打开**宿主选择器**（有搜索框、有行），按 Esc 关闭、焦点回到输入框；
+7. ⬜ 选择器行里至少有一条来自宿主已配置路由（`provider/model` 文本可读），且**没有任何一行**泄露
    `baseURL`/`apiKey`；
-6. ⬜ 没有可用路由时**不显示空列表**，而是显示引导项（"去 设置 → 模型 配置"）；
-7. ✅ `/advisor status` 输出多行文本：模式、顾问、本会话用量、最近一次结果/跳过原因（主模型与配对结论在 P2 的设置卡里显示）；
-8. ✅ `/advisor doctor` 每行都有结论（`✅`/`⚠️`/`❌`）+ 下一步动作，不允许只回一句 error；
-9. ⬜ 整个只读过程**账本行数不变**（`$DSH_HOME/advisor/usage.jsonl` 前后对比；临时 profile 也可读 DOM 计数）；
-10. ⬜ 仓库 cwd 没有多出文件（脚本自身 cwd 污染是最容易漏的一条）。
+8. ⬜ 没有可用路由时**不显示空列表**，而是显示引导项（"去 设置 → 模型 配置"）；
+9. ✅ `/advisor status` 输出多行文本：模式、顾问、本会话用量、最近一次结果/跳过原因（主模型与配对结论在 P2 的设置卡里显示）；
+10. ✅ `/advisor doctor` 每行都有结论（`✅`/`⚠️`/`❌`）+ 下一步动作，不允许只回一句 error；
+11. ⬜ 整个只读过程**账本行数不变**（`$DSH_HOME/advisor/usage.jsonl` 前后对比；临时 profile 也可读 DOM 计数）；
+12. ⬜ 仓库 cwd 没有多出文件（脚本自身 cwd 污染是最容易漏的一条）。
+
+`--advice`（opt-in，只读已有记录，**脚本本身不发起徵询**；会被打印一行 `COST:` 提醒）再加 4 项：
+
+- ✅ `/advisor report` 输出含「顾问报告」或「还没有顾问记录」；
+- ✅ 有 `.dsh-advisor-turn` 时点开 headline，展开体含 `model · usage`（`910 in / 354 out`，上万会缩成 `9.1k`），
+  再点一次收起；没有记录时两项都记 SKIP。
 
 **注意**：脚本要求插件已装进**正在运行的那个 profile**。没装时第 2 项会失败，并把页面上全部
-`data-plugin` 打出来——这是最省事的"是不是装错 profile / 没重启"判断依据。
+`data-plugin` 打出来——这是最省事的"是不是装错 profile / 没重启"判断依据。第 4 项的新字段是 P3 才有的：
+桌面装的是旧构建（如 0.1.0）时会失败，先 `pnpm pack` + `dsh plugin add` 再重跑，失败 detail 里也写了这句提示。
 
 `--deep`（可选，P1 不做）：真要跑徵询链时再补，要求显式传专用工作区、并在临时 profile 里跑。
 
-## 3.5 设置页卡片（真机 5 步，CDP 脚本）
+## 3.5 设置页卡片（写操作 5 步，CDP 脚本）
 
-设置页卡片不在只读 desktop 冒烟里（那段脚本刻意不碰设置）。卡片用一次性 CDP 脚本验证，**它会改 `maxTokens` 再改回**，所以只跑在确认过基线的机器上：
+只读冒烟（§3 第 4 项）只**打开**设置读文本、不点保存。下面这段会**改 `maxTokens` 再改回**，
+所以只跑在确认过基线的机器上：
 
 1. 新 client bundle 已加载（`style[data-plugin]` 里含 `dsh-advisor-settings`）；
 2. 设置 → 通用设置：卡片加载出 provider/model（**不是**「宿主未响应」），有预算与隐私分组；

@@ -911,6 +911,13 @@ window.__ModuleLoader__.load({
           if (!same) patch[key] = after === undefined ? null : after;
           continue;
         }
+        // 数组字段每次解析都是新实例：按内容比较，避免「没改也发一次」。
+        if (key === "allowedModels") {
+          let beforeList = normalizeStringList(before);
+          let afterList = normalizeStringList(after);
+          if (beforeList.join("\u0000") !== afterList.join("\u0000")) patch[key] = afterList;
+          continue;
+        }
         if (!Object.is(before, after)) patch[key] = after;
       }
       return patch;
@@ -1397,6 +1404,13 @@ window.__ModuleLoader__.load({
       let busyState = React.useState("");
       let busy = busyState[0];
       let setBusy = busyState[1];
+      /** 「预览会发什么」的返回正文；空串表示还没预览。 */
+      let previewState = React.useState("");
+      let previewText = previewState[0];
+      let setPreviewText = previewState[1];
+      let previewOpenState = React.useState(false);
+      let previewOpen = previewOpenState[0];
+      let setPreviewOpen = previewOpenState[1];
       /** provider/model 切换可能并发：只接受最后一次请求的返回。 */
       let modelsSeq = React.useRef(0);
       let infoSeq = React.useRef(0);
@@ -1439,6 +1453,27 @@ window.__ModuleLoader__.load({
           out[key] = String(settings[key]);
         }
         out.temperature = settings.temperature === null ? "" : String(settings.temperature);
+        out.allowedModels = normalizeStringList(settings.allowedModels).join(", ");
+        return out;
+      }
+
+      /**
+       * 「逗号分隔」的白名单文本 → 数组：trim、去重、去空（半角/全角逗号都认）。
+       * @param {string} text
+       * @param {string[]} fallback 文本不可用时的当前值
+       * @returns {string[]}
+       */
+      function parseAllowedModels(text, fallback) {
+        if (typeof text !== "string") return normalizeStringList(fallback);
+        let parts = text.split(/[,，]/);
+        /** @type {string[]} */
+        let out = [];
+        for (let index = 0; index < parts.length; index += 1) {
+          let value = parts[index].trim();
+          if (value === "" || out.indexOf(value) >= 0) continue;
+          out.push(value);
+          if (out.length >= 50) break;
+        }
         return out;
       }
 
@@ -1553,6 +1588,8 @@ window.__ModuleLoader__.load({
               setModels(null);
               setInfo({ state: "idle", efforts: [], defaultEffort: "" });
               setDoctor(null);
+              setPreviewText("");
+              setPreviewOpen(false);
               setLoad("ready");
               if (data.settings.provider !== "") {
                 loadModelsFor(data.settings.provider);
@@ -1633,6 +1670,7 @@ window.__ModuleLoader__.load({
       function save() {
         if (!draft || !snap) return;
         let committed = commitNumbers(draft);
+        committed.allowedModels = parseAllowedModels(texts.allowedModels, committed.allowedModels);
         setDraft(committed);
         setTexts(textsOf(committed));
         let patch = diffSettings(snap.settings, committed);
@@ -1711,6 +1749,106 @@ window.__ModuleLoader__.load({
         );
       }
 
+      /** 预览：把「这一次会发出去什么」拉回来（不发送）；失败只显示内联错误。 */
+      function runPreview() {
+        if (!api || typeof api.preview !== "function") {
+          setError({ text: t("settings.error.unreachable"), retry: "preview" });
+          return;
+        }
+        setBusy("preview");
+        setError(null);
+        invoke(api.preview, sessionId).then(
+          function onPreview(raw) {
+            setBusy("");
+            let text = normalizePreview(raw);
+            if (text === null) {
+              setError({
+                text:
+                  raw === undefined ? t("settings.error.unreachable") : t("settings.error.preview"),
+                retry: "preview",
+              });
+              return;
+            }
+            setPreviewText(text);
+            setPreviewOpen(true);
+            clearErrorFor("preview");
+          },
+          function onPreviewFailed() {
+            setBusy("");
+            setError({ text: t("settings.error.unreachable"), retry: "preview" });
+          },
+        );
+      }
+
+      /** 折叠 / 展开已拉回来的预览正文。 */
+      function togglePreview() {
+        setPreviewOpen(function flip(/** @type {boolean} */ prev) {
+          return !prev;
+        });
+      }
+
+      /**
+       * 把当前 provider 加进 confirmedHosts（去重后整表写回）。
+       * 成功后用返回值刷新本地 settings，既有草稿改动保留。
+       */
+      function confirmHost() {
+        if (!draft || !snap) return;
+        let provider = asString(draft.provider).trim();
+        if (provider === "") return;
+        let next = normalizeStringList(
+          normalizeStringList(snap.settings.confirmedHosts).concat([provider]),
+        );
+        if (!api || typeof api.updateSettings !== "function") {
+          setError({ text: t("settings.error.unreachable"), retry: "confirm" });
+          return;
+        }
+        setBusy("confirm");
+        setError(null);
+        setNotice("");
+        invoke(api.updateSettings, { confirmedHosts: next }).then(
+          function onConfirmed(raw) {
+            setBusy("");
+            let outcome = interpretUpdate(raw);
+            if (!outcome.ok) {
+              let message;
+              if (outcome.message !== "") {
+                message = t("settings.error.saveHost").replace("{message}", outcome.message);
+              } else {
+                message =
+                  raw === undefined ? t("settings.error.unreachable") : t("settings.error.confirm");
+              }
+              setError({ text: message, retry: "confirm" });
+              return;
+            }
+            let settings = normalizeSettingsView(
+              outcome.settings === null
+                ? Object.assign({}, snap.settings, { confirmedHosts: next })
+                : outcome.settings,
+            );
+            setSnap(Object.assign({}, snap, { settings: settings }));
+            setDraft(Object.assign({}, draft, { confirmedHosts: settings.confirmedHosts }));
+            let done = t("settings.confirm.done").replace("{provider}", provider);
+            setNotice(done);
+            clearErrorFor("confirm");
+            if (api && typeof api.notify === "function") api.notify(done, "ok");
+          },
+          function onConfirmFailed() {
+            setBusy("");
+            setError({ text: t("settings.error.unreachable"), retry: "confirm" });
+          },
+        );
+      }
+
+      /** 白名单输入失焦：回写规范化文本（去重、逗号统一成「, 」）。 */
+      function commitAllowedModels() {
+        if (!draft) return;
+        let list = parseAllowedModels(texts.allowedModels, draft.allowedModels);
+        setDraft(Object.assign({}, draft, { allowedModels: list }));
+        setTexts(function mergeAllowed(/** @type {any} */ prev) {
+          return Object.assign({}, prev, { allowedModels: list.join(", ") });
+        });
+      }
+
       /** 重新拉 options（含当前设置、路由与账本摘要）。 */
       function reload() {
         setDoctor(null);
@@ -1736,6 +1874,14 @@ window.__ModuleLoader__.load({
         }
         if (action === "doctor") {
           runDoctor();
+          return;
+        }
+        if (action === "preview") {
+          runPreview();
+          return;
+        }
+        if (action === "confirm") {
+          confirmHost();
           return;
         }
         refresh();
@@ -1776,6 +1922,16 @@ window.__ModuleLoader__.load({
       function chooseScope(scope) {
         if (!draft) return;
         setDraft(Object.assign({}, draft, { privacyScope: scope }));
+      }
+
+      /** @param {string} value */
+      function choosePostAnswer(value) {
+        if (!draft) return;
+        setDraft(
+          Object.assign({}, draft, {
+            postAnswer: SETTINGS_POST_ANSWER.indexOf(value) >= 0 ? value : "off",
+          }),
+        );
       }
 
       /**
@@ -1996,6 +2152,84 @@ window.__ModuleLoader__.load({
             type: "checkbox",
           }),
           h("span", { className: "dsh-advisor-hint", key: "hint" }, t(hintKey)),
+        ]);
+      }
+
+      /**
+       * 下拉一行（枚举字段，如 postAnswer）。
+       * @param {string} key
+       * @param {string} labelKey
+       * @param {string[]} values 合法取值；选项文案拼成 `${prefix}${value}`
+       * @param {string} prefix
+       * @param {string} current
+       * @param {(value: string) => void} onPick
+       * @param {string} hintKey
+       * @returns {any}
+       */
+      function selectField(key, labelKey, values, prefix, current, onPick, hintKey) {
+        let options = values.map(function renderOption(/** @type {string} */ value) {
+          return h("option", { key: value, value: value }, t(prefix + value));
+        });
+        return h("div", { className: "dsh-advisor-row", key: key, "data-advisor-row": key }, [
+          h(
+            "label",
+            { className: "dsh-advisor-label", htmlFor: `dsh-advisor-${key}`, key: "label" },
+            t(labelKey),
+          ),
+          h(
+            "select",
+            {
+              className: "dsh-advisor-select",
+              "data-advisor-select": key,
+              id: `dsh-advisor-${key}`,
+              key: "select",
+              onChange: function onSelectChange(/** @type {any} */ event) {
+                onPick(String(event.target.value));
+              },
+              value: current,
+            },
+            options,
+          ),
+          h("span", { className: "dsh-advisor-hint", key: "hint" }, t(hintKey)),
+        ]);
+      }
+
+      /**
+       * 白名单一行：逗号分隔文本；保存时才转成数组。
+       * @returns {any}
+       */
+      function allowedModelsField() {
+        return h("div", { className: "dsh-advisor-row", key: "allowedModels" }, [
+          h(
+            "label",
+            {
+              className: "dsh-advisor-label",
+              htmlFor: "dsh-advisor-allowedModels",
+              key: "label",
+            },
+            t("settings.advanced.allowedModels"),
+          ),
+          h("input", {
+            className: "dsh-advisor-input",
+            "data-advisor-field": "allowedModels",
+            id: "dsh-advisor-allowedModels",
+            key: "input",
+            onBlur: commitAllowedModels,
+            onChange: function onAllowedModelsChange(/** @type {any} */ event) {
+              let value = String(event.target.value);
+              setTexts(function mergeAllowed(/** @type {any} */ prev) {
+                return Object.assign({}, prev, { allowedModels: value });
+              });
+            },
+            placeholder: t("settings.advanced.allowedModelsPlaceholder"),
+            type: "text",
+            value: typeof texts.allowedModels === "string" ? texts.allowedModels : "",
+          }),
+          h(
+            "span",
+            { className: "dsh-advisor-hint", key: "hint" },
+            t("settings.advanced.allowedModelsHint"),
+          ),
         ]);
       }
 
@@ -2254,28 +2488,124 @@ window.__ModuleLoader__.load({
         }
       }
 
+      let priceSourceText = t(`settings.budget.priceSource.${snap.price.source}`);
+      let poolLine = t("settings.budget.poolLine")
+        .replace("{calls}", formatCount(snap.pool.calls))
+        .replace("{cost}", Number(snap.pool.costUsd).toFixed(4));
+
       let budgetGroup = [
         numberField("maxCallsPerTurn", "settings.budget.maxCallsPerTurn", ""),
         numberField("maxCallsPerSession", "settings.budget.maxCallsPerSession", ""),
         numberField("maxCallsPerHour", "settings.budget.maxCallsPerHour", ""),
         numberField("maxCostPerDayUsd", "settings.budget.maxCostPerDayUsd", ""),
         numberField(
+          "workspaceMaxCallsPerDay",
+          "settings.budget.workspaceMaxCallsPerDay",
+          t("settings.budget.workspaceHint"),
+        ),
+        numberField(
+          "workspaceMaxCostPerDayUsd",
+          "settings.budget.workspaceMaxCostPerDayUsd",
+          t("settings.budget.workspaceHint"),
+        ),
+        h(
+          "div",
+          {
+            className: "dsh-advisor-readout",
+            "data-advisor-pool": "",
+            key: "pool",
+          },
+          poolLine,
+        ),
+        numberField(
           "priceInputPerMTok",
           "settings.budget.priceInputPerMTok",
-          t("settings.budget.priceHint"),
+          `${t("settings.budget.priceHint")} · ${priceSourceText}`,
         ),
         numberField(
           "priceOutputPerMTok",
           "settings.budget.priceOutputPerMTok",
-          t("settings.budget.priceHint"),
+          `${t("settings.budget.priceHint")} · ${priceSourceText}`,
         ),
       ];
+
+      // 「预览会发什么」的返回：可折叠 <pre>，空正文时整块不渲染。
+      let previewNode = null;
+      if (previewText !== "") {
+        previewNode = h("div", { className: "dsh-advisor-preview", key: "previewBody" }, [
+          h("div", { className: "dsh-advisor-row", key: "toggleRow" }, [
+            h(
+              "span",
+              { className: "dsh-advisor-label", key: "label" },
+              t("settings.preview.title"),
+            ),
+            h(
+              "button",
+              {
+                "aria-expanded": previewOpen ? "true" : "false",
+                className: "dsh-advisor-btn",
+                "data-advisor-preview-toggle": "",
+                key: "toggle",
+                onClick: togglePreview,
+                type: "button",
+              },
+              previewOpen ? t("settings.preview.collapse") : t("settings.preview.expand"),
+            ),
+          ]),
+          previewOpen
+            ? h(
+                "pre",
+                { className: "dsh-advisor-pre", "data-advisor-preview": "", key: "pre" },
+                previewText,
+              )
+            : null,
+        ]);
+      }
+
+      // 跨 provider 确认：没选 provider 就不显示（没有可确认的对象）。
+      let confirmRow = null;
+      if (draft.provider !== "") {
+        confirmRow = h("div", { className: "dsh-advisor-row", key: "confirmRow" }, [
+          h("span", { className: "dsh-advisor-label", key: "label" }, t("settings.confirm")),
+          h(
+            "button",
+            {
+              className: "dsh-advisor-btn",
+              "data-advisor-confirm": "",
+              disabled: busy === "confirm",
+              key: "run",
+              onClick: confirmHost,
+              type: "button",
+            },
+            busy === "confirm" ? t("settings.confirm.running") : t("settings.confirm.run"),
+          ),
+          h("span", { className: "dsh-advisor-hint", key: "hint" }, t("settings.confirm.hint")),
+        ]);
+      }
 
       let advancedGroup = [
         numberField("maxTokens", "settings.advanced.maxTokens", ""),
         temperatureField(),
         numberField("maxInputChars", "settings.advanced.maxInputChars", ""),
         numberField("sessionCap", "settings.advanced.sessionCap", ""),
+        allowedModelsField(),
+        h("div", { className: "dsh-advisor-row", key: "previewRow" }, [
+          h("span", { className: "dsh-advisor-label", key: "label" }, t("settings.preview")),
+          h(
+            "button",
+            {
+              className: "dsh-advisor-btn",
+              "data-advisor-preview-run": "",
+              disabled: busy === "preview",
+              key: "run",
+              onClick: runPreview,
+              type: "button",
+            },
+            busy === "preview" ? t("settings.preview.running") : t("settings.preview.run"),
+          ),
+        ]),
+        previewNode,
+        confirmRow,
         h("div", { className: "dsh-advisor-divider", key: "divider" }),
         h(
           "div",
@@ -2346,6 +2676,16 @@ window.__ModuleLoader__.load({
               providerField(),
               modelField(),
               effortField(),
+              selectField(
+                "postAnswer",
+                "settings.postAnswer",
+                SETTINGS_POST_ANSWER,
+                "settings.postAnswer.",
+                draft.postAnswer,
+                choosePostAnswer,
+                "settings.postAnswer.hint",
+              ),
+              switchField("advisorTools", "settings.advisorTools", "settings.advisorToolsHint"),
             ],
             "basic",
           ),
@@ -2796,6 +3136,8 @@ window.__ModuleLoader__.load({
         updateSettings: (/** @type {any} */ patch) =>
           callRemote("updateSettings", { patch: patch }),
         doctor: (/** @type {string} */ sessionId) => callRemote("doctor", { sessionId: sessionId }),
+        preview: (/** @type {string} */ sessionId) =>
+          callRemote("preview", { sessionId: sessionId }),
         notify: (/** @type {string} */ message, /** @type {string} */ tone) =>
           showToast(message, tone === "error" || tone === "ok" ? tone : "info"),
       };
@@ -2935,6 +3277,8 @@ window.__ModuleLoader__.load({
         normalizeModels: normalizeModels,
         normalizeModelInfo: normalizeModelInfo,
         normalizeDoctor: normalizeDoctor,
+        normalizePreview: normalizePreview,
+        normalizeStringList: normalizeStringList,
         diffSettings: diffSettings,
         interpretUpdate: interpretUpdate,
         normalizeAdviceItems: normalizeAdviceItems,
