@@ -868,7 +868,7 @@ const main = async () => {
             const pill = card.querySelector("button[data-next-step-pill]");
             if (!pill) return "no-pill";
             if (pill.disabled) return "disabled";
-            const label = (pill.textContent || "").trim();
+            const label = (pill.getAttribute("data-text") || "").trim();
             pill.click();
             return "clicked:" + label;
           })()`);
@@ -895,6 +895,25 @@ const main = async () => {
             "点胶囊发送出一条新的用户消息",
             userRowsAfter >= userRowsBefore + 1,
             JSON.stringify({ before: userRowsBefore, after: userRowsAfter, pillClick }),
+          );
+          const sentEcho = await cdp.evaluate(`(() => {
+            const card = [...document.querySelectorAll("[data-next-step-card]")].find((el) => Number(el.getAttribute("data-next-step-turn")) === ${JSON.stringify(deepCard.turn)});
+            const node = card ? card.querySelector("[data-next-step-sent]") : null;
+            return {
+              label: node ? node.getAttribute("data-next-step-sent-label") || "" : "",
+              text: node ? (node.textContent || "").replace(/\\s+/g, " ").trim() : "",
+            };
+          })()`);
+          const clickedLabel =
+            typeof pillClick === "string" && pillClick.startsWith("clicked:")
+              ? pillClick.slice("clicked:".length)
+              : "";
+          check(
+            "点后回显被点的按钮文本（选中态 + 已发出）",
+            clickedLabel !== "" &&
+              sentEcho.label === clickedLabel &&
+              sentEcho.text.includes(clickedLabel),
+            JSON.stringify({ clickedLabel, sentEcho }),
           );
           await cdp.screenshot(join(SHOTS, "08-deep-sent.png"));
           await waitForTurnEnd(cdp, 240000);

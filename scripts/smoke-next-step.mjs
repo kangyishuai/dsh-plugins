@@ -22,7 +22,7 @@
 // 隔离：会话、工作区、设置全部落在 `mkdtemp` 出来的临时目录里；临时工作区也是空目录，
 // 模型即便写了文件也落不到真实工作区。跑完删掉整个临时目录（SMOKE_KEEP=1 除外）。
 import { execFile, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { createWriteStream, existsSync } from "node:fs";
 import {
   cp,
   mkdir,
@@ -226,14 +226,23 @@ const cardsNow = () => page.evaluate(() => [...document.querySelectorAll("[data-
     hasDismiss: !!el.querySelector("button[data-next-step-dismiss]"),
     hasMore: !!el.querySelector("button[data-next-step-more]"),
     pills: [...el.querySelectorAll("button[data-next-step-pill]")].map((b) => ({
-      label: (b.textContent || "").trim(),
+      // 胶囊的 textContent 会把 primary 的键帽（⌘↵）也算进去；标签以 data-text 为准。
+      label: (b.getAttribute("data-text") || b.textContent || "").trim(),
       stance: b.getAttribute("data-stance") || "",
       index: Number(b.getAttribute("data-index")),
       disabled: b.disabled === true,
       title: b.getAttribute("title") || "",
-      // 点下去真正发出去的指令（= option.text），DOM 侧直接断言用；没实现时是空串。
+      // 点下去真正发出去的用户消息（v0.2 起 = 按钮文本 label）。
       text: b.getAttribute("data-text") || "",
     })),
+    // 点过之后回显的那一粒（选中态 + ✓ + 「已发出」）。
+    sent: el.querySelector("[data-next-step-sent]")
+      ? el.querySelector("[data-next-step-sent]").getAttribute("data-next-step-sent-label") || ""
+      : "",
+    sentText: (() => {
+      const node = el.querySelector("[data-next-step-sent]");
+      return node ? (node.textContent || "").replace(/\\s+/g, " ").trim() : "";
+    })(),
     text: (el.textContent || "").replace(/\\s+/g, " ").trim(),
   };
 }));
@@ -245,6 +254,19 @@ const waitForCards = async (timeoutMs, minimum) => {
     cards = await cardsNow();
   }
   return cards;
+};
+// 模型判断「这一轮不需要继续」时不写卡，最新回答下方会露出补生成按钮（2.5s grace 后）。
+const waitForRetry = async (timeoutMs) => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const present = await page.evaluate(() => {
+      const button = document.querySelector("[data-next-step-generate]");
+      return !!button && button.disabled !== true;
+    });
+    if (present) return true;
+    await page.waitForTimeout(400);
+  }
+  return false;
 };
 // 卡片集合稳定（连续 quietMs 内数量与轮次不变）——用来等「点击触发的又一轮」的卡出炉，
 // 免得把「新卡还没出现」误判成「关闭开关后不再出卡」。
@@ -412,12 +434,36 @@ check(
 );
 await shot("02-first-answer");
 
-// ---------- 2. 卡片在答后出现 ----------
-const cards = await waitForCards(90000, 1);
+// ---------- 2. 卡片在答后出现（或由「补生成」按钮补一张） ----------
+let cards = await waitForCards(30000, 1);
+let generatedManually = false;
+if (cards.length === 0) {
+  // v0.2：模型会先判断这一轮是否值得继续，判断不需要时不出卡。这不是 bug，
+  // 所以冒烟在这里改走用户可见的兜底路径：等补生成按钮 → 点它 → 强制出卡。
+  const retryVisible = await waitForRetry(20000);
+  check(
+    "模型判断无需继续时出现「生成下一步建议」按钮",
+    retryVisible === true,
+    retryVisible ? "" : "既没有自动出卡，也没有补生成按钮（宿主链路/客户端渲染可能坏了）",
+  );
+  if (retryVisible) {
+    const retryClicked = await page.evaluate(() => {
+      const button = document.querySelector("[data-next-step-generate]");
+      if (!button || button.disabled === true) return false;
+      button.click();
+      return true;
+    });
+    check("点「生成下一步建议」按钮", retryClicked === true, retryClicked ? "" : "按钮不可点");
+    cards = await waitForCards(90000, 1);
+    generatedManually = true;
+  }
+}
 check(
   "卡片在答后出现（conversation.chat.turnTail）",
   cards.length >= 1,
-  cards.length >= 1 ? describeCards(cards) : "等 90s 后没有任何 section[data-next-step-card]（宿主生成失败/被门挡/客户端没渲染）",
+  cards.length >= 1
+    ? describeCards(cards) + (generatedManually ? " （由补生成按钮强制产出）" : "")
+    : "等 120s 后没有任何 section[data-next-step-card]（宿主生成失败/被门挡/客户端没渲染）",
 );
 const card = cards.length === 0 ? null : cards[cards.length - 1];
 if (card === null) {
@@ -617,12 +663,14 @@ const clicked = await page.evaluate(() => {
   const pill = target.querySelector("button[data-next-step-pill]");
   if (!pill) return { clicked: false, reason: "no-pill" };
   if (pill.disabled) return { clicked: false, reason: "disabled" };
+  const text = (pill.getAttribute("data-text") || "").trim();
   const info = {
-    label: (pill.textContent || "").trim(),
+    // textContent 含 primary 的键帽，label 以 data-text 为准（v0.2 起它就是要发送的消息）。
+    label: text,
     index: Number(pill.getAttribute("data-index")),
     stance: pill.getAttribute("data-stance") || "",
     title: pill.getAttribute("title") || "",
-    text: pill.getAttribute("data-text") || "",
+    text: text,
   };
   pill.click();
   return { clicked: true, captured: info };
@@ -662,21 +710,33 @@ check(
   "clicked=" + JSON.stringify(clicked) + " 期望 userRows>=" + userCountAfterClick + " 实际=" + actualUserCount,
 );
 if (clicked.clicked === true && clicked.captured.text === "") {
-  skip("发出去的用户消息文本 === option.text（DOM 侧）", "胶囊上没有 data-text（client 未实现该属性），改由会话日志断言覆盖");
+  skip("发出去的用户消息文本 === 按钮文本（DOM 侧）", "胶囊上没有 data-text（client 未实现该属性），改由会话日志断言覆盖");
 } else {
   check(
-    "发出去的用户消息文本 === option.text（DOM 侧，不是 label）",
+    "发出去的用户消息文本 === 按钮文本（WYSIWYG，不是背后的隐藏指令）",
     clicked.clicked === true &&
       clicked.captured.text !== "" &&
       lastUserRowText.includes(clicked.captured.text.slice(0, 24)) &&
-      clicked.captured.text !== clicked.captured.label,
+      clicked.captured.text === clicked.captured.label,
     JSON.stringify({
-      optionText: clicked.clicked === true ? clicked.captured.text.slice(0, 80) : "",
+      dataText: clicked.clicked === true ? clicked.captured.text.slice(0, 80) : "",
       label: clicked.clicked === true ? clicked.captured.label : "",
       lastUserRowText: lastUserRowText.slice(0, 80),
     }),
   );
 }
+check(
+  "点后卡片回显被点的按钮文本（不再只是「已发出」）",
+  clicked.clicked === true &&
+    clickedCard !== null &&
+    clickedCard.sent === clicked.captured.label &&
+    clickedCard.sentText.includes(clicked.captured.label),
+  JSON.stringify(
+    clickedCard === null
+      ? null
+      : { sent: clickedCard.sent, sentText: clickedCard.sentText, label: clicked.clicked === true ? clicked.captured.label : "" },
+  ),
+);
 check(
   "点击后胶囊消失",
   clickedCard !== null && clickedCard.pills.length === 0,
@@ -815,9 +875,8 @@ const switchState = (selector) =>
   );
 const CARD_SWITCH = '[data-next-step-switch="card"]';
 
-let settingsRow = null;
-for (let attempt = 0; attempt < 30; attempt += 1) {
-  settingsRow = await page.evaluate(() => {
+const readSettingsRow = () =>
+  page.evaluate(() => {
     const row = document.querySelector("[data-next-step-settings]");
     if (!row) return null;
     return {
@@ -828,27 +887,56 @@ for (let attempt = 0; attempt < 30; attempt += 1) {
       diag: (row.querySelector("[data-next-step-diag]") || {}).textContent || "",
       budget: !!row.querySelector("[data-next-step-budget]"),
       pause: !!row.querySelector("[data-next-step-pause]"),
+      offHint: !!row.querySelector("[data-next-step-off]"),
+      generateHint: !!row.querySelector("[data-next-step-hint]"),
     };
   });
+let settingsRow = null;
+for (let attempt = 0; attempt < 30; attempt += 1) {
+  settingsRow = await readSettingsRow();
   if (settingsRow !== null) break;
   await page.waitForTimeout(300);
 }
 const navDetail = JSON.stringify({ menuHit, settingsHit, generalHit });
+// 上一段把设置文件写成了 enabled:false —— 关闭态只应显示总开关 + 说明，依赖项全部不渲染。
 check(
-  "设置页出现「下一步建议」行（3 开关 + 预算 + 暂停 + 诊断含版本）",
+  "关闭时设置行只留总开关 + 说明（依赖项不渲染）",
   settingsRow !== null &&
     Array.isArray(settingsRow.switches) &&
-    settingsRow.switches.length === 3 &&
-    settingsRow.budget === true &&
-    settingsRow.pause === true &&
-    settingsRow !== null &&
-    settingsRow.diag.includes("版本 ") &&
-    settingsRow.diag.includes("构建 ") &&
-    /[0-9]+.[0-9]+.[0-9]+/u.test(settingsRow.diag) &&
-    /[0-9a-f]{8}/u.test(settingsRow.diag),
-  settingsRow === null ? "导航=" + navDetail : JSON.stringify({ switches: settingsRow.switches, budget: settingsRow.budget, pause: settingsRow.pause, diag: settingsRow.diag }),
+    settingsRow.switches.length === 1 &&
+    settingsRow.switches[0].key === "enabled" &&
+    settingsRow.switches[0].on === "false" &&
+    settingsRow.offHint === true &&
+    settingsRow.budget === false &&
+    settingsRow.pause === false &&
+    settingsRow.diag === "",
+  settingsRow === null ? "导航=" + navDetail : JSON.stringify(settingsRow),
 );
-await shot("08-settings");
+await shot("08-settings-off");
+
+// 点开总开关 → 依赖项出现（渐进披露：启用后才展示其他设置）。
+const enabledClicked = await fireClick('[data-next-step-switch="enabled"]');
+let settingsOn = null;
+for (let attempt = 0; attempt < 24; attempt += 1) {
+  settingsOn = await readSettingsRow();
+  if (settingsOn !== null && settingsOn.switches.length === 3) break;
+  await page.waitForTimeout(300);
+}
+check(
+  "启用后才展示其他设置项（3 开关 + 预算 + 暂停 + 诊断含版本）",
+  enabledClicked.ok === true &&
+    settingsOn !== null &&
+    settingsOn.switches.length === 3 &&
+    settingsOn.budget === true &&
+    settingsOn.pause === true &&
+    settingsOn.generateHint === true &&
+    settingsOn.diag.includes("版本 ") &&
+    settingsOn.diag.includes("构建 ") &&
+    /[0-9]+.[0-9]+.[0-9]+/u.test(settingsOn.diag) &&
+    /[0-9a-f]{8}/u.test(settingsOn.diag),
+  settingsOn === null ? "导航=" + navDetail : JSON.stringify(settingsOn),
+);
+await shot("08-settings-on");
 
 // 断言 2：点 card 开关 → aria-checked 立即翻转
 const cardBefore = await switchState(CARD_SWITCH);
@@ -1205,10 +1293,11 @@ async function verifySessionLog(home, state) {
       decision.data?.index === clickedIndex,
     `${JSON.stringify(decision?.data ?? null)} 期望 index=${clickedIndex}`,
   );
-  // 核心：点击后原样发出的那条 option.text 必须作为**真人 user/message** 出现在决策记录之后。
-  const optionText =
+  // 核心：点击后原样发出的那条文本（v0.2 起 = 按钮文本 label）必须作为**真人 user/message**
+  // 出现在决策记录之后。
+  const sentText =
     Array.isArray(card.data?.options) && card.data.options[clickedIndex] !== undefined
-      ? String(card.data.options[clickedIndex].text ?? "")
+      ? String(card.data.options[clickedIndex].label ?? "")
       : "";
   const decisionSeq = decision?.seq ?? -1;
   /** @type {{ seq: number, text: string }[]} */
@@ -1227,28 +1316,36 @@ async function verifySessionLog(home, state) {
   }
   push(
     "点击的胶囊文本作为真人用户消息发出（且晚于决策记录）",
-    optionText !== "" &&
-      humanMessages.some((message) => message.text === optionText && message.seq > decisionSeq),
+    sentText !== "" &&
+      humanMessages.some((message) => message.text === sentText && message.seq > decisionSeq),
     JSON.stringify({
-      optionText: optionText.slice(0, 80),
+      sentText: sentText.slice(0, 80),
       decisionSeq,
       matches: humanMessages
-        .filter((message) => message.text === optionText)
+        .filter((message) => message.text === sentText)
         .map((message) => message.seq),
       humanCount: humanMessages.length,
     }),
   );
-  // 硬约束：发出去的是 option.text（完整指令），不是 option.label（按钮文案）。
-  const label = String(card.data?.options?.[clickedIndex]?.label ?? "");
-  const lastHuman = humanMessages[humanMessages.length - 1];
+  // 硬约束（v0.2）：发出去的就是按钮文本，记录里不再有隐藏的 option.text。
+  // 注意取「决策记录之后的第一条真人消息」——冒烟后面还会再发几条提示词，不能用最后一条。
+  const clickedHuman = humanMessages.find((message) => message.seq > decisionSeq);
   push(
-    "最后一条用户消息文本 === option.text（不是 label）",
-    lastHuman !== undefined && lastHuman.text === optionText && optionText !== label,
+    "点击后第一条用户消息文本 === 按钮文本（WYSIWYG）",
+    clickedHuman !== undefined && clickedHuman.text === sentText,
     JSON.stringify({
-      expectedText: optionText.slice(0, 80),
-      actualLastHuman: (lastHuman?.text ?? "").slice(0, 80),
-      label,
-      textDiffersFromLabel: optionText !== label,
+      expectedText: sentText.slice(0, 80),
+      actualClickedHuman: (clickedHuman?.text ?? "").slice(0, 80),
+    }),
+  );
+  push(
+    "卡片记录里的 option 不再携带隐藏 text 字段",
+    Array.isArray(card.data?.options) &&
+      card.data.options.every((/** @type {any} */ option) => option?.text === undefined),
+    JSON.stringify({
+      options: Array.isArray(card.data?.options)
+        ? card.data.options.map((/** @type {any} */ option) => Object.keys(option ?? {}).sort())
+        : null,
     }),
   );
   push(
@@ -1269,6 +1366,8 @@ const main = async () => {
   const realHome = process.env.HOME ?? "";
   /** @type {import("node:child_process").ChildProcess | undefined} */
   let host;
+  /** @type {import("node:fs").WriteStream | undefined} */
+  let hostLog;
   try {
     const home = join(work, "home");
     const profile = join(home, "profiles", PROFILE);
@@ -1280,10 +1379,26 @@ const main = async () => {
     const workspaceDir = await realpath(workspaceDirRaw);
     await mkdir(profile, { recursive: true });
     await cp(join(realHome, ".dsh", "profiles", "desktop"), profile, { recursive: true });
+    // 宿主的 pnpm 在临时 DSH_HOME（/var 卷）里会改用 /private/tmp 的 store，而真实 profile 的
+    // node_modules 是从 ~/Library/pnpm/store 链过来的：`plugin add` 会以 ERR_PNPM_UNEXPECTED_STORE
+    // 直接拒绝。丢掉复制来的 node_modules 与 lockfile，让下面的 `plugin install` 按 package.json
+    // 重新解析（走本机 pnpm 缓存，实测 1.5s，不需要联网下载新包）。
+    await rm(join(profile, "node_modules"), { recursive: true, force: true });
+    await rm(join(profile, "pnpm-lock.yaml"), { force: true });
 
     const profileJson = JSON.parse(await readFile(join(profile, "package.json"), "utf8"));
     profileJson.name = `dsh-profile-${PROFILE}-smoke`;
-    await writeFile(join(profile, "package.json"), JSON.stringify(profileJson, null, 2));
+    // 临时 profile 只保留宿主 bundle + 待测插件：用户装的第三方插件的副作用（例如把数据写到
+    // 真实 HOME、进而被 DSH 文件沙箱判成只读）与本插件无关，却能让整个冒烟死在宿主启动阶段。
+    // 让冒烟跑在「干净宿主 + next-step」上，和真实 profile 解耦。
+    profileJson.dependencies = {};
+    if (Array.isArray(profileJson.dsh?.profile?.bundles)) {
+      profileJson.dsh.profile.bundles = profileJson.dsh.profile.bundles.filter(
+        (/** @type {unknown} */ entry) =>
+          typeof entry === "string" && entry.startsWith("@deepseek-ai/"),
+      );
+    }
+    await writeFile(join(profile, "package.json"), `${JSON.stringify(profileJson, null, 2)}\n`);
     // 用户的 desktop profile 里可能已经装了正式版 next-step（例如 0.1.1）：
     // 复制过来后必须**彻底摘掉**再装待测 tgz，否则同一个包会以两种来源同时存在于组合里，
     // 宿主启动时组合失败、页面直接返回 HTTP 错误（表现为 page.goto ERR_HTTP_RESPONSE_CODE_FAILURE）。
@@ -1387,20 +1502,21 @@ const main = async () => {
     });
     /** @type {string[]} */
     const chunks = [];
-    host.stdout?.on("data", (/** @type {any} */ c) => chunks.push(String(c)));
-    host.stderr?.on("data", (/** @type {any} */ c) => chunks.push(String(c)));
-    await writeFile(logPath, "");
-    const flush = async () => writeFile(logPath, chunks.join(""));
-    const poll = setInterval(flush, 300);
+    // 常驻写盘：启动后的告警（卡片生成失败 / 解析不符 / 投影异常）也要留下证据，
+    // 否则排障时 host.log 只有一行启动地址。
+    hostLog = createWriteStream(logPath, { flags: "w" });
+    host.stdout?.on("data", (/** @type {any} */ c) => {
+      chunks.push(String(c));
+      hostLog?.write(String(c));
+    });
+    host.stderr?.on("data", (/** @type {any} */ c) => {
+      chunks.push(String(c));
+      hostLog?.write(String(c));
+    });
 
     /** @type {{ port: number, token: string, activationFailures: number, text: string }} */
     let boot;
-    try {
-      boot = await waitForBoot(logPath, 90_000);
-    } finally {
-      clearInterval(poll);
-      await flush();
-    }
+    boot = await waitForBoot(logPath, 90_000);
     if (boot.activationFailures > 0) {
       fail(`宿主报告 ${boot.activationFailures} 个插件未激活`);
       console.error(boot.text.slice(-3000));
@@ -1477,6 +1593,7 @@ const main = async () => {
   } finally {
     host?.kill("SIGTERM");
     await sleep(500);
+    hostLog?.end();
     // 先搬截图，再删临时目录（顺序反了会把证据一起删掉）。
     await mkdir(SHOTS_OUT, { recursive: true }).catch(() => {});
     await cp(join(work, "shots"), SHOTS_OUT, { recursive: true }).catch(() => {});
