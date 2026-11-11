@@ -2743,7 +2743,89 @@ window.__ModuleLoader__.load({
 
     /** @param {any} ctx */
     exports.apply = function apply(ctx) {
-      ctx.effect(() => ctx.locale.register(NS, { zh: zh, en: en }), "advisor: dictionaries");
+      // 新增文案集中在这里合并进内嵌字典：locale/*.json 是「给人看的清单 + 宿主侧文案」，
+      // 而 slot 的 t() 只认这里注册的字典。两处必须同步（`test/locale-parity.test.js` 会守住）。
+      const LOCALE_EXTRA = {
+        zh: {
+          title: "让主模型在关键时刻咨询一个更强的顾问模型",
+          "settings.postAnswer": "回合结束后",
+          "settings.postAnswer.off": "off（不跑）",
+          "settings.postAnswer.card": "card（只记录一行）",
+          "settings.postAnswer.hint": "advisory 模式下，回合结束后自动跑一次顾问；只记录不回灌。",
+          "settings.advisorTools": "允许顾问读文件核实",
+          "settings.advisorToolsHint":
+            "允许顾问请求读取工作目录内的文件（≤5 个、≤64 KiB、只读）来核实它的结论；会多一次模型调用。",
+          "settings.budget.workspaceMaxCallsPerDay": "工作区每日最多调用",
+          "settings.budget.workspaceMaxCostPerDayUsd": "工作区每日预算（USD）",
+          "settings.budget.workspaceHint": "工作区级，跨会话累计、按本地日重置",
+          "settings.budget.poolLine": "工作区今日：{calls} 次 · ≈${cost}",
+          "settings.budget.priceSource.builtin": "单价来源：内置参考价",
+          "settings.budget.priceSource.settings": "单价来源：你设置的",
+          "settings.budget.priceSource.none": "单价来源：未配置（只记 token）",
+          "settings.advanced.allowedModels": "模型白名单 allowedModels",
+          "settings.advanced.allowedModelsHint": "留空=不限制；可写 provider/model 或裸 model id",
+          "settings.advanced.allowedModelsPlaceholder": "例如 deepseek/deepseek-chat, gpt-4o",
+          "settings.preview": "发送预览",
+          "settings.preview.run": "预览会发什么",
+          "settings.preview.running": "预览中…",
+          "settings.preview.title": "预览内容",
+          "settings.preview.expand": "展开",
+          "settings.preview.collapse": "收起",
+          "settings.confirm": "跨 provider 发送",
+          "settings.confirm.run": "确认跨 provider 发送",
+          "settings.confirm.running": "确认中…",
+          "settings.confirm.hint": "把当前 provider 加进确认名单；跨 provider 徵询不再中断。",
+          "settings.confirm.done": "已确认 {provider}",
+          "settings.error.preview": "预览失败，稍后重试",
+          "settings.error.confirm": "确认失败，稍后重试",
+        },
+        en: {
+          title: "Pair the main model with a stronger advisor model it can consult at key moments",
+          "settings.postAnswer": "After each turn",
+          "settings.postAnswer.off": "off (do not run)",
+          "settings.postAnswer.card": "card (record one line)",
+          "settings.postAnswer.hint":
+            "In advisory mode, run the advisor once after each turn; record only, never feed back.",
+          "settings.advisorTools": "Let the advisor read files",
+          "settings.advisorToolsHint":
+            "Let the advisor request files inside the working directory (≤5 files, ≤64 KiB, read-only) to verify its conclusions; costs one extra model call.",
+          "settings.budget.workspaceMaxCallsPerDay": "Workspace max calls per day",
+          "settings.budget.workspaceMaxCostPerDayUsd": "Workspace daily budget (USD)",
+          "settings.budget.workspaceHint":
+            "Workspace-wide: shared across sessions, resets on the local day",
+          "settings.budget.poolLine": "Workspace today: {calls} calls · ≈${cost}",
+          "settings.budget.priceSource.builtin": "Price source: built-in reference",
+          "settings.budget.priceSource.settings": "Price source: yours",
+          "settings.budget.priceSource.none": "Price source: not set (tokens only)",
+          "settings.advanced.allowedModels": "Model allowlist allowedModels",
+          "settings.advanced.allowedModelsHint":
+            "Empty = no limit; accepts provider/model or a bare model id",
+          "settings.advanced.allowedModelsPlaceholder": "e.g. deepseek/deepseek-chat, gpt-4o",
+          "settings.preview": "Send preview",
+          "settings.preview.run": "Preview what will be sent",
+          "settings.preview.running": "Previewing…",
+          "settings.preview.title": "Preview",
+          "settings.preview.expand": "Expand",
+          "settings.preview.collapse": "Collapse",
+          "settings.confirm": "Cross-provider send",
+          "settings.confirm.run": "Confirm cross-provider send",
+          "settings.confirm.running": "Confirming…",
+          "settings.confirm.hint":
+            "Add the current provider to the confirmed list so cross-provider consultations stop being interrupted.",
+          "settings.confirm.done": "Confirmed {provider}",
+          "settings.error.preview": "Preview failed — try again later",
+          "settings.error.confirm": "Confirmation failed — try again later",
+        },
+      };
+
+      ctx.effect(
+        () =>
+          ctx.locale.register(NS, {
+            zh: Object.assign({}, zh, LOCALE_EXTRA.zh),
+            en: Object.assign({}, en, LOCALE_EXTRA.en),
+          }),
+        "advisor: dictionaries",
+      );
 
       /** @type {any} */
       let t;
