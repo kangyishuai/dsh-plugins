@@ -82,7 +82,7 @@
     "settings.budget.rangeUnlimited": "默认 {default} · 范围 {min}–{max}（0 = 不限）",
     "settings.budget.priceHint": "0 = 不算钱，只统计 token",
     "settings.budget.workspaceHint": "工作区级，跨会话累计、按本地日重置",
-    "settings.budget.poolLine": "工作区今日：{calls} 次 · ≈${cost}",
+    "settings.budget.poolLine": "工作区今日：{calls} 次 · ≈{cost}",
     "settings.budget.priceSource.builtin": "单价来源：内置参考价",
     "settings.budget.priceSource.settings": "单价来源：你设置的",
     "settings.budget.priceSource.none": "单价来源：未配置（只记 token）",

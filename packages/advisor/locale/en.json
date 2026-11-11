@@ -82,7 +82,7 @@
     "settings.budget.rangeUnlimited": "default {default} · range {min}–{max} (0 = unlimited)",
     "settings.budget.priceHint": "0 = do not price tokens",
     "settings.budget.workspaceHint": "Workspace-wide: shared across sessions, resets on the local day",
-    "settings.budget.poolLine": "Workspace today: {calls} calls · ≈${cost}",
+    "settings.budget.poolLine": "Workspace today: {calls} calls · ≈{cost}",
     "settings.budget.priceSource.builtin": "Price source: built-in reference",
     "settings.budget.priceSource.settings": "Price source: yours",
     "settings.budget.priceSource.none": "Price source: not set (tokens only)",

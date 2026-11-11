@@ -2531,7 +2531,7 @@ window.__ModuleLoader__.load({
       let priceSourceText = t(`settings.budget.priceSource.${snap.price.source}`);
       let poolLine = t("settings.budget.poolLine")
         .replace("{calls}", formatCount(snap.pool.calls))
-        .replace("{cost}", Number(snap.pool.costUsd).toFixed(4));
+        .replace("{cost}", `$${Number(snap.pool.costUsd).toFixed(4)}`);
 
       let budgetGroup = [
         numberField("maxCallsPerTurn", "settings.budget.maxCallsPerTurn", ""),
@@ -2798,7 +2798,7 @@ window.__ModuleLoader__.load({
           "settings.budget.workspaceMaxCallsPerDay": "工作区每日最多调用",
           "settings.budget.workspaceMaxCostPerDayUsd": "工作区每日预算（USD）",
           "settings.budget.workspaceHint": "工作区级，跨会话累计、按本地日重置",
-          "settings.budget.poolLine": "工作区今日：{calls} 次 · ≈${cost}",
+          "settings.budget.poolLine": "工作区今日：{calls} 次 · ≈{cost}",
           "settings.budget.priceSource.builtin": "单价来源：内置参考价",
           "settings.budget.priceSource.settings": "单价来源：你设置的",
           "settings.budget.priceSource.none": "单价来源：未配置（只记 token）",
@@ -2833,7 +2833,7 @@ window.__ModuleLoader__.load({
           "settings.budget.workspaceMaxCostPerDayUsd": "Workspace daily budget (USD)",
           "settings.budget.workspaceHint":
             "Workspace-wide: shared across sessions, resets on the local day",
-          "settings.budget.poolLine": "Workspace today: {calls} calls · ≈${cost}",
+          "settings.budget.poolLine": "Workspace today: {calls} calls · ≈{cost}",
           "settings.budget.priceSource.builtin": "Price source: built-in reference",
           "settings.budget.priceSource.settings": "Price source: yours",
           "settings.budget.priceSource.none": "Price source: not set (tokens only)",
