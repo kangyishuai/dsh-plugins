@@ -31,6 +31,8 @@ window.__ModuleLoader__.load({
     let DRAFT_POLL_INTERVAL_MS = 20;
     /** 输入第一个字符后，幽灵提示在这段时间内不闪回。 */
     let GHOST_SUPPRESS_MS = 2000;
+    /** 没出卡时，等多久再露出「补生成」按钮（给自动生成留窗口，避免闪一下）。 */
+    let RETRY_GRACE_MS = 2500;
 
     /**
      * 简体中文字典（键集的事实来源）。
@@ -43,6 +45,7 @@ window.__ModuleLoader__.load({
       "pill.aria": "发送：{label}",
       "pill.draftBusy": "输入框已有内容，先清空再发送",
       sent: "已发出",
+      sentLabel: "已发出：{label}",
       dismiss: "关闭",
       "ghost.aria": "按 Tab 或 → 接受这条建议",
       "error.stale": "这条建议已过期，请用最新的一条",
@@ -50,8 +53,15 @@ window.__ModuleLoader__.load({
       "error.disabled": "插件已停用",
       "error.failed": "操作失败，请重试",
       "error.send": "没能把建议写进输入框",
+      "error.budget": "本会话的卡片预算已用完",
+      "error.exists": "这一轮已经有卡片了",
+      "error.inflight": "正在生成，请稍候",
+      "error.noTurn": "没有可生成建议的回合",
+      "retry.generate": "生成下一步建议",
+      "retry.generating": "正在生成…",
       "settings.title": "下一步建议",
-      "settings.desc": "每轮回答正常结束后生成一张决策卡（一次额外模型调用）。",
+      "settings.desc":
+        "答完后判断是否值得继续；需要时生成一张含摘要与两个方向建议的决策卡（一次额外模型调用）。",
       "settings.enabled": "启用插件",
       "settings.card": "回答下方的决策卡",
       "settings.ghost": "输入框里的幽灵提示",
@@ -66,6 +76,10 @@ window.__ModuleLoader__.load({
       "settings.lastError": "最近错误：{message}",
       "settings.noError": "无错误",
       "settings.paused": "已暂停，约 {time} 后恢复",
+      "settings.offHint": "关闭后不会发起任何请求；已生成的卡片仍留在对话里。",
+      "settings.lastSkip": "最近跳过：{kind} · {reason}",
+      "settings.generateHint":
+        "没有自动出卡时，最新回答下方会出现「生成下一步建议」，点一下即可补一张。",
       "settings.updateFailed": "保存失败",
       "settings.version": "版本 {version} · 构建 {hash}",
     };
@@ -81,6 +95,7 @@ window.__ModuleLoader__.load({
       "pill.aria": "Send: {label}",
       "pill.draftBusy": "Clear the composer first",
       sent: "Sent",
+      sentLabel: "Sent: {label}",
       dismiss: "Dismiss",
       "ghost.aria": "Press Tab or → to accept this suggestion",
       "error.stale": "This suggestion is out of date; use the newest one",
@@ -88,9 +103,15 @@ window.__ModuleLoader__.load({
       "error.disabled": "The plugin is disabled",
       "error.failed": "Something went wrong. Try again.",
       "error.send": "Could not fill the composer",
+      "error.budget": "This session has used up its card budget",
+      "error.exists": "This turn already has a card",
+      "error.inflight": "Already generating; try again in a moment",
+      "error.noTurn": "No completed turn to generate a card for",
+      "retry.generate": "Generate a next-step card",
+      "retry.generating": "Generating…",
       "settings.title": "Next-step suggestions",
       "settings.desc":
-        "After each completed answer, generate one decision card (one extra model call).",
+        "Judges whether a turn is worth continuing; when it is, adds a status summary and two directions (one extra model call).",
       "settings.enabled": "Enable the plugin",
       "settings.card": "Decision card under the answer",
       "settings.ghost": "Ghost hint in the composer",
@@ -106,6 +127,10 @@ window.__ModuleLoader__.load({
       "settings.lastError": "Last error: {message}",
       "settings.noError": "No errors",
       "settings.paused": "Paused; resumes in about {time}",
+      "settings.offHint": "While off, no request is made; cards already in the conversation stay.",
+      "settings.lastSkip": "Last skipped: {kind} · {reason}",
+      "settings.generateHint":
+        "When no card appears, a “Generate a next-step card” button shows under the latest answer.",
       "settings.updateFailed": "Could not save",
       "settings.version": "Version {version} · build {hash}",
     };
@@ -120,6 +145,20 @@ window.__ModuleLoader__.load({
       disabled: "error.disabled",
     };
 
+    /** 手动补生成失败原因 → 文案 key。 @type {Record<string, string>} */
+    let RETRY_ERROR_KEYS = {
+      stale: "error.stale",
+      disabled: "error.disabled",
+      budget: "error.budget",
+      exists: "error.exists",
+      inflight: "error.inflight",
+      "no-turn": "error.noTurn",
+      failed: "error.failed",
+      schema: "error.failed",
+      aborted: "error.failed",
+      "not-needed": "error.failed",
+    };
+
     // 颜色/尺寸严格照契约 §5 的表：优先用宿主 token，token 缺失时用截图实测值兜底。
     // 只注入这一份样式（data-plugin-css 判重，HMR/重复挂载不会再插一份）。
     let CSS = `
@@ -132,22 +171,31 @@ window.__ModuleLoader__.load({
 .ns_more:focus-visible{outline:2px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#4176e6));outline-offset:2px;border-radius:4px;}
 .ns_question{margin:16px 0 0;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary,#e8e8e8);white-space:pre-wrap;overflow-wrap:anywhere;}
 .ns_pills{display:flex;flex-wrap:wrap;gap:12px;margin-top:20px;}
-.ns_pill{display:inline-flex;align-items:center;gap:6px;max-width:100%;height:28px;padding:0 12px;border:1px solid transparent;border-radius:14px;font-family:inherit;font-size:13px;line-height:20px;font-weight:400;cursor:pointer;transition:opacity 120ms ease,border-color 120ms ease,color 120ms ease;}
+.ns_pill{display:inline-flex;align-items:center;gap:6px;max-width:100%;min-height:28px;height:auto;padding:4px 12px;border:1px solid transparent;border-radius:16px;font-family:inherit;font-size:13px;line-height:20px;font-weight:400;text-align:left;cursor:pointer;transition:opacity 120ms ease,border-color 120ms ease,color 120ms ease;}
 .ns_pillPrimary{background:var(--dsw-alias-label-primary,#efefef);color:var(--dsw-alias-bg-base,#191919);font-weight:500;}
 .ns_pillPrimary:hover:not(:disabled){opacity:.9;}
 .ns_pillSecondary{background:transparent;border-color:var(--dsw-alias-border-l4,#424242);color:var(--dsw-alias-label-secondary,#d2d2d2);}
 .ns_pillSecondary:hover:not(:disabled){border-color:var(--dsw-alias-label-tertiary,#a4a4a4);color:var(--dsw-alias-label-primary,#e8e8e8);}
 .ns_pill:focus-visible{outline:2px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#4176e6));outline-offset:2px;}
 .ns_pill:disabled{cursor:not-allowed;opacity:.5;}
-.ns_label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ns_label{min-width:0;overflow-wrap:anywhere;white-space:normal;}
 .ns_key{flex:none;padding:0 4px;border-radius:4px;background:var(--dsw-alias-label-secondary,#c5c5c5);color:var(--dsw-alias-bg-base,#191919);font-size:11px;font-weight:400;line-height:16px;}
 .ns_spinner{flex:none;width:12px;height:12px;border:1.5px solid currentColor;border-top-color:transparent;border-radius:50%;animation:ns_spin .8s linear infinite;}
 .ns_close{position:absolute;top:8px;right:8px;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border:none;border-radius:6px;background:transparent;color:var(--dsw-alias-label-tertiary,#a4a4a4);font-family:inherit;font-size:13px;line-height:1;cursor:pointer;}
 .ns_close:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.16));color:var(--dsw-alias-label-primary,#e8e8e8);}
 .ns_close:focus-visible{outline:2px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#4176e6));outline-offset:1px;}
 .ns_close:disabled{cursor:not-allowed;opacity:.5;}
-.ns_sent{margin:12px 0 0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-caption,#81858c);}
+.ns_sentRow{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:12px 0 0;}
+.ns_sentChip{display:inline-flex;align-items:center;gap:6px;max-width:100%;min-height:28px;padding:4px 12px;border:1px solid var(--dsw-alias-border-l3,#3a3a3a);border-radius:16px;background:transparent;color:var(--dsw-alias-label-secondary,#a4a4a4);font-family:inherit;font-size:13px;line-height:20px;overflow-wrap:anywhere;text-align:left;}
+.ns_sentMark{flex:none;color:var(--dsw-alias-state-success-secondary,#4fb477);font-size:12px;line-height:16px;}
+.ns_sent{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-caption,#81858c);}
 .ns_error{margin:12px 0 0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary,#f25a5a);}
+.ns_retry{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:6px 8px 2px 8px;}
+.ns_retryBtn{display:inline-flex;align-items:center;gap:6px;min-height:24px;padding:2px 10px;border:1px dashed var(--dsw-alias-border-l3,#3a3a3a);border-radius:12px;background:transparent;color:var(--dsw-alias-label-tertiary,#8a8a8a);font-family:inherit;font-size:12px;line-height:18px;cursor:pointer;}
+.ns_retryBtn:hover:not(:disabled){color:var(--dsw-alias-label-secondary,#a4a4a4);border-color:var(--dsw-alias-border-l4,#4a4a4a);}
+.ns_retryBtn:focus-visible{outline:2px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#4176e6));outline-offset:2px;}
+.ns_retryBtn:disabled{cursor:default;opacity:.6;}
+.ns_retryError{font-size:12px;line-height:18px;color:var(--dsw-alias-label-caption,#81858c);}
 .ns_ghost{position:absolute;z-index:1;top:12px;left:14px;right:12px;color:var(--dsw-alias-label-caption,#81858c);font-size:inherit;line-height:inherit;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;user-select:none;}
 @keyframes ns_spin{to{transform:rotate(360deg);}}
 @media (prefers-reduced-motion:reduce){.ns_spinner{animation-duration:2.4s;}}
@@ -156,6 +204,7 @@ window.__ModuleLoader__.load({
 .ns_setDesc{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#a4a4a4);}
 .ns_setRow{display:flex;align-items:center;justify-content:space-between;gap:12px;}
 .ns_setLabel{color:var(--dsw-alias-label-primary,#e8e8e8);}
+.ns_setHint{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8a8a8a);}
 .ns_switch{appearance:none;border:0;background:transparent;padding:0;cursor:pointer;display:inline-flex;line-height:0;}
 .ns_switch:disabled{opacity:.5;cursor:default;}
 .ns_track{width:34px;height:20px;border-radius:10px;background:var(--dsw-alias-border-l3,#3a3a3a);position:relative;transition:background-color .12s;display:inline-block;}
@@ -409,16 +458,37 @@ window.__ModuleLoader__.load({
     }
 
     // ------------------------------------------------------------------
-    // 幽灵提示的键盘桥：组件登记当前建议，apply 里的 fixed-input 观察者消费
+    // 键盘桥：组件登记「当前可交互的卡 / 幽灵」，apply 里的 fixed-input 观察者消费
     // ------------------------------------------------------------------
 
     /** @type {Map<string, {insert: () => boolean, typed: () => void, clear: () => void}>} */
     let ghostEntries = new Map();
+    /** 决策卡的 ⌘/Ctrl+Enter 桥：只有可交互时才登记。 @type {Map<string, {ready: () => boolean, accept: () => void}>} */
+    let cardEntries = new Map();
 
     /**
-     * 宿主 fixed-input 观察通道（docs/runtime/0.2.2-rc.1.md §9.5）：Tab / → 接受，Esc 清除，
-     * 其它按键 → 2s 内不闪回。裸 Tab / 方向键在输入框里是编辑动作，注册快捷键会冲突；
-     * 这条通道连输入法组合与「是否已被消费」都替我们算好了。
+     * 输入框候选菜单（斜杠命令 / @ 引用）是否开着：开着时 Enter 归菜单，别抢。
+     * @param {any} target 键盘事件的焦点元素
+     * @returns {boolean}
+     */
+    function hasComposerMenu(target) {
+      try {
+        let card =
+          target && typeof target.closest === "function"
+            ? target.closest("[data-composer-card]")
+            : null;
+        if (!card || typeof card.querySelector !== "function") return false;
+        return card.querySelector('[role="listbox"]') !== null;
+      } catch (_error) {
+        return false;
+      }
+    }
+
+    /**
+     * 宿主 fixed-input 观察通道（docs/runtime/0.2.2-rc.1.md §9.5）：
+     * - 卡片：⌘/Ctrl+Enter 接受 primary（只在输入框干净、空闲、卡片可交互时接管）；
+     * - 幽灵：Tab / → 接受，Esc 清除，其它按键 → 2s 内不闪回。
+     * 裸 Tab / 方向键在输入框里是编辑动作，注册快捷键会冲突；这条通道连输入法组合都替我们算好了。
      * @param {any} input
      * @returns {void}
      */
@@ -436,10 +506,37 @@ window.__ModuleLoader__.load({
       if (!occurrence || typeof occurrence.getAttribute !== "function") return;
       let sessionId = occurrence.getAttribute("data-conversation-session");
       if (!sessionId) return;
-      let entry = ghostEntries.get(sessionId);
-      if (!entry) return;
 
       let code = typeof gesture.code === "string" ? gesture.code : "";
+      let primaryModifier = gesture.meta === true || gesture.control === true;
+
+      // 卡片快捷键：宿主的同一个手势是「Queue/Steer 互补发送」，但空草稿时它是 no-op
+      // （dsh-client-ui-conversation 的 empty-draft no-op），所以只在「输入干净 + 空闲 +
+      // 本会话有可交互卡」时接管；其余情况完全透传，绝不抢排队/插话的语义。
+      if (
+        code === "Enter" &&
+        primaryModifier &&
+        !(gesture.meta === true && gesture.control === true) &&
+        !gesture.alt &&
+        !gesture.shift
+      ) {
+        let cardEntry = cardEntries.get(sessionId);
+        if (!cardEntry || gesture.repeat || gesture.composing) return;
+        if (hasComposerMenu(target)) return;
+        if (!cardEntry.ready()) return;
+        if (typeof input.consume === "function") {
+          try {
+            input.consume();
+          } catch (_error) {
+            /* consume 失败不影响发送 */
+          }
+        }
+        cardEntry.accept();
+        return;
+      }
+
+      let entry = ghostEntries.get(sessionId);
+      if (!entry) return;
 
       // Esc：只清除本次建议，不 consume（把宿主 / 其它插件的 Esc Esc 让出去）。
       if (code === "Escape" && !gesture.control && !gesture.alt && !gesture.meta) {
@@ -496,10 +593,27 @@ window.__ModuleLoader__.load({
           ? order[order.length - 1] === turnNumber
           : false;
       });
+      let useSession =
+        typeof props.useSession === "function" ? props.useSession : emptySelectorHook;
       let inputDraft = useInput((/** @type {any} */ input) =>
         input && typeof input.draft === "string" ? input.draft : "",
       );
       let draft = typeof inputDraft === "string" ? inputDraft : "";
+      // ⌘/Ctrl+Enter 的门：输入框必须干净（与幽灵提示同一套条件），会话必须空闲。
+      let attachmentCount = useInput((/** @type {any} */ input) =>
+        input && Array.isArray(input.attachmentIds) ? input.attachmentIds.length : 0,
+      );
+      let occurrenceCount = useInput((/** @type {any} */ input) =>
+        Array.isArray(input?.occurrences) ? input.occurrences.length : 0,
+      );
+      let inputPhase = useInput((/** @type {any} */ input) =>
+        input && typeof input.phase === "string" ? input.phase : "",
+      );
+      let hasClaim = useInput((/** @type {any} */ input) => Boolean(input?.claim));
+      let idle = useSession(
+        (/** @type {any} */ session) =>
+          Boolean(session) && session.running !== true && !session.removed && !session.subagent,
+      );
 
       // 发送流程要拿「最新」草稿（façade 缺失时的兜底信号），不能读渲染期的旧值。
       let draftRef = React.useRef(draft);
@@ -508,6 +622,10 @@ window.__ModuleLoader__.load({
       let pendingState = React.useState(-1);
       let pendingIndex = pendingState[0];
       let setPendingIndex = pendingState[1];
+      // 点过之后要回显的那一粒（投影追上之前先记在这里；投影里的 decision.index 优先）。
+      let chosenState = React.useState(-1);
+      let chosenIndex = chosenState[0];
+      let setChosenIndex = chosenState[1];
       let optimisticState = React.useState("");
       let optimistic = optimisticState[0];
       let setOptimistic = optimisticState[1];
@@ -522,8 +640,49 @@ window.__ModuleLoader__.load({
       let setShowMore = moreState[1];
       let summaryRef = React.useRef(/** @type {any} */ (null));
 
+      // 「没出卡时」的补生成入口：设置只从宿主 RPC 读（投影里没有 settings）。
+      let settingsState = React.useState(/** @type {any} */ (null));
+      let settings = settingsState[0];
+      let setSettings = settingsState[1];
+      let retryState = React.useState("");
+      let retryPhase = retryState[0];
+      let setRetryPhase = retryState[1];
+      let retryErrorState = React.useState("");
+      let retryErrorKey = retryErrorState[0];
+      let setRetryErrorKey = retryErrorState[1];
+      let graceState = React.useState(false);
+      let grace = graceState[0];
+      let setGrace = graceState[1];
+
       let card = cardOf(view, turnNumber);
       let decision = decisionOf(view, turnNumber);
+
+      // 只有「最新一轮且没有卡」才需要读设置（决定要不要画补生成按钮），
+      // 历史轮次不读，避免一个长会话里每个 turn-tail 都发一次 RPC。
+      React.useEffect(() => {
+        if (!api || typeof api.settings !== "function") return undefined;
+        if (!isLastTurn) return undefined;
+        if (card !== undefined && card !== null) return undefined;
+        let alive = true;
+        Promise.resolve(api.settings())
+          .then((value) => {
+            if (alive) setSettings(value || null);
+          })
+          .catch(() => undefined);
+        return () => {
+          alive = false;
+        };
+      }, [api, card, isLastTurn]);
+
+      // 留 2.5s 给自动生成：期间按钮不出现，避免「按钮闪一下又被卡片顶掉」。
+      React.useEffect(() => {
+        if (!isLastTurn || (card !== undefined && card !== null)) {
+          setGrace(false);
+          return undefined;
+        }
+        let timer = setTimeout(() => setGrace(true), RETRY_GRACE_MS);
+        return () => clearTimeout(timer);
+      }, [turnNumber, card, sessionId, isLastTurn]);
 
       // 投影一旦追上，乐观态就退场（投影是唯一事实来源）。
       React.useEffect(() => {
@@ -538,12 +697,9 @@ window.__ModuleLoader__.load({
         setShowMore(overflowing);
       });
 
-      if (turnNumber < 0 || !isTurnTailReady(turn)) return null;
-      if (card === undefined || card === null) return null;
-
-      let options = Array.isArray(card.options) ? card.options : [];
-      let summary = typeof card.summary === "string" ? card.summary : "";
-      let question = typeof card.question === "string" ? card.question : "";
+      let options = card && Array.isArray(card.options) ? card.options : [];
+      let summary = card && typeof card.summary === "string" ? card.summary : "";
+      let question = card && typeof card.question === "string" ? card.question : "";
       let status = phaseOf(decision, optimistic, pendingIndex, isLastTurn);
       let busy = status === "sending";
       let showPills = (status === "interactive" || status === "sending") && options.length > 0;
@@ -564,6 +720,7 @@ window.__ModuleLoader__.load({
         }
         setErrorKey("");
         setPendingIndex(index);
+        setChosenIndex(index);
         Promise.resolve(api.act(sessionId, turnNumber, index))
           .then((result) => {
             let text = answerTextOf(result);
@@ -603,6 +760,96 @@ window.__ModuleLoader__.load({
           });
       };
 
+      // 卡片快捷键桥：只有「这一步真的能点」时才登记，键盘观察者据此决定是否接管 ⌘/Ctrl+Enter。
+      let sendPillRef = React.useRef(/** @type {(index: number) => void} */ (() => {}));
+      sendPillRef.current = sendPill;
+      let gateRef = React.useRef({ ready: false });
+      gateRef.current = {
+        ready:
+          sessionId !== "" &&
+          draft === "" &&
+          attachmentCount === 0 &&
+          occurrenceCount === 0 &&
+          inputPhase === "plain" &&
+          !hasClaim &&
+          idle === true &&
+          !busy &&
+          pendingIndex < 0 &&
+          optimistic === "",
+      };
+
+      React.useEffect(() => {
+        if (sessionId === "" || status !== "interactive" || !card || options.length === 0) {
+          return undefined;
+        }
+        let entry = {
+          ready: () => gateRef.current.ready,
+          accept: () => sendPillRef.current(0),
+        };
+        cardEntries.set(sessionId, entry);
+        return () => {
+          if (cardEntries.get(sessionId) === entry) cardEntries.delete(sessionId);
+        };
+      }, [sessionId, status]);
+
+      if (turnNumber < 0 || !isTurnTailReady(turn)) return null;
+      if (card === undefined || card === null) {
+        // 只在最新一轮、且卡面开着的时候给「补生成」入口。
+        let retryEnabled =
+          sessionId !== "" &&
+          isLastTurn &&
+          grace &&
+          settings !== null &&
+          settings.enabled === true &&
+          settings.card === true &&
+          Boolean(api) &&
+          typeof api.generate === "function";
+        if (!retryEnabled) return null;
+        let generating = retryPhase === "loading";
+        return h(
+          "section",
+          {
+            className: "ns_retry",
+            "data-next-step-retry": "",
+            "data-next-step-turn": String(turnNumber),
+          },
+          h(
+            "button",
+            {
+              type: "button",
+              className: "ns_retryBtn",
+              "data-next-step-generate": "",
+              disabled: generating,
+              onClick: () => {
+                if (generating || !api || typeof api.generate !== "function") return;
+                setRetryPhase("loading");
+                setRetryErrorKey("");
+                Promise.resolve(api.generate(sessionId, turnNumber))
+                  .then((result) => {
+                    setRetryPhase("");
+                    if (result && typeof result === "object" && result.ok === true) return;
+                    let reason =
+                      result && typeof result.reason === "string" ? result.reason : "failed";
+                    setRetryErrorKey(RETRY_ERROR_KEYS[reason] ?? "error.failed");
+                  })
+                  .catch(() => {
+                    setRetryPhase("");
+                    setRetryErrorKey("error.failed");
+                  });
+              },
+            },
+            generating ? t("retry.generating") : t("retry.generate"),
+          ),
+          retryErrorKey === ""
+            ? null
+            : h(
+                "span",
+                { className: "ns_retryError", role: "alert", "data-next-step-retry-error": "" },
+                t(retryErrorKey),
+              ),
+        );
+      }
+
       /**
        * 一粒胶囊：第 0 条是 primary（带纯视觉键帽），第 1 条是 secondary。
        * @param {any} option
@@ -636,7 +883,7 @@ window.__ModuleLoader__.load({
             "data-next-step-pill": "",
             "data-stance": stance,
             "data-index": String(index),
-            "data-text": typeof option?.text === "string" ? option.text : "",
+            "data-text": label,
             disabled: disabled,
             title: title,
             "aria-label": t("pill.aria", { label: label }),
@@ -701,7 +948,35 @@ window.__ModuleLoader__.load({
         );
       }
       if (status === "sent") {
-        body.push(h("p", { key: "sent", className: "ns_sent", role: "status" }, t("sent")));
+        // 回显被点的那一粒：投影里的 decision.index 优先，投影追上之前用本轮乐观态。
+        let sentIndex =
+          decision && Number.isSafeInteger(decision.index) ? decision.index : chosenIndex;
+        let sentOption = sentIndex >= 0 ? options[sentIndex] : undefined;
+        let sentLabel = sentOption && typeof sentOption.label === "string" ? sentOption.label : "";
+        body.push(
+          h(
+            "p",
+            {
+              key: "sent",
+              className: "ns_sentRow",
+              role: "status",
+              "data-next-step-sent": "",
+              "data-next-step-sent-label": sentLabel,
+              "aria-label": sentLabel === "" ? t("sent") : t("sentLabel", { label: sentLabel }),
+            },
+            sentLabel === ""
+              ? h("span", { key: "word", className: "ns_sent" }, t("sent"))
+              : [
+                  h(
+                    "span",
+                    { key: "chip", className: "ns_sentChip" },
+                    h("span", { className: "ns_sentMark", "aria-hidden": "true" }, "✓"),
+                    h("span", { className: "ns_label" }, sentLabel),
+                  ),
+                  h("span", { key: "word", className: "ns_sent" }, t("sent")),
+                ],
+          ),
+        );
       }
       if (errorKey !== "") {
         body.push(h("p", { key: "error", className: "ns_error", role: "alert" }, t(errorKey)));
@@ -1099,89 +1374,124 @@ window.__ModuleLoader__.load({
           (lastError === ""
             ? t("settings.noError")
             : t("settings.lastError", { message: lastError }));
+        // 「最近为什么没出卡」：模型判断不需要 / 排队 / 暂停 / 预算，都写在这里。
+        let lastSkip = stats.lastSkip;
+        if (
+          lastSkip &&
+          typeof lastSkip === "object" &&
+          typeof lastSkip.reason === "string" &&
+          lastSkip.reason !== ""
+        ) {
+          diagText += `\n${t("settings.lastSkip", {
+            kind: typeof lastSkip.kind === "string" ? lastSkip.kind : "",
+            reason: lastSkip.reason,
+          })}`;
+        }
         if (typeof stats.version === "string" && stats.version !== "") {
           let buildHash = typeof stats.buildHash === "string" ? stats.buildHash.slice(0, 8) : "";
           diagText += `\n${t("settings.version", { version: stats.version, hash: buildHash })}`;
         }
       }
 
-      return h("div", { className: "ns_settings", "data-next-step-settings": "" }, [
+      // 关闭 = 不发请求，所以依赖它的设置项（卡片/幽灵/暂停/预算/诊断）一律不渲染，
+      // 只留总开关和一行说明；重新启用时这些开关的取值仍然保留。
+      let enabledOn = settings.enabled === true;
+      let rows = [
         h("div", { key: "head" }, [
           h("div", { className: "ns_setTitle", key: "title" }, t("settings.title")),
           h("div", { className: "ns_setDesc", key: "desc" }, t("settings.desc")),
         ]),
         switchRow("enabled", "settings.enabled"),
-        switchRow("card", "settings.card"),
-        switchRow("ghost", "settings.ghost"),
-        h("div", { className: "ns_setRow", key: "pause" }, [
+      ];
+      if (!enabledOn) {
+        rows.push(
           h(
-            "span",
-            { className: "ns_setLabel", key: "label" },
-            paused
-              ? t("settings.paused", { time: `${String(minutes)}m` })
-              : t("settings.pauseLabel"),
+            "div",
+            { key: "off", className: "ns_setHint", "data-next-step-off": "" },
+            t("settings.offHint"),
           ),
-          h(
-            "button",
-            {
-              key: "btn",
-              type: "button",
-              className: "ns_setBtn",
-              "data-next-step-pause": "",
-              disabled: busy === "pause",
-              onClick: () => patch({ pauseUntil: paused ? 0 : Date.now() + 3600000 }, "pause"),
-            },
-            paused ? t("settings.resume") : t("settings.pause"),
-          ),
-        ]),
-        h("div", { className: "ns_setRow", key: "budget" }, [
-          h(
-            "span",
-            { className: "ns_setLabel", key: "label" },
-            `${t("settings.budget")} ${t("settings.budgetUnit")}`,
-          ),
-          h("input", {
-            key: "input",
-            type: "number",
-            min: "0",
-            max: "1000",
-            className: "ns_setInput",
-            "data-next-step-budget": "",
-            "aria-label": `${t("settings.budget")} ${t("settings.budgetUnit")}`,
-            value: budgetDraft === "" ? String(settings.maxCardsPerSession) : budgetDraft,
-            onChange: (/** @type {any} */ event) => setBudgetDraft(String(event.target.value)),
-            onBlur: () => {
-              if (budgetDraft === "") return;
-              patch({ maxCardsPerSession: Number(budgetDraft) }, "budget");
-              setBudgetDraft("");
-            },
-          }),
-        ]),
-        h("div", { className: "ns_setRow", key: "diag" }, [
-          h("span", { className: "ns_setLabel", key: "label" }, t("settings.diagnostics")),
-          h(
-            "button",
-            {
-              key: "refresh",
-              type: "button",
-              className: "ns_setBtn",
-              "data-next-step-refresh": "",
-              onClick: () => refresh(),
-            },
-            t("settings.refresh"),
-          ),
-        ]),
-        diagText === ""
-          ? null
-          : h(
-              "div",
-              { className: "ns_diag", key: "diagText", "data-next-step-diag": "" },
-              diagText,
+        );
+      } else {
+        rows.push(
+          switchRow("card", "settings.card"),
+          switchRow("ghost", "settings.ghost"),
+          h("div", { className: "ns_setRow", key: "pause" }, [
+            h(
+              "span",
+              { className: "ns_setLabel", key: "label" },
+              paused
+                ? t("settings.paused", { time: `${String(minutes)}m` })
+                : t("settings.pauseLabel"),
             ),
-        errorKey === ""
-          ? null
-          : h("div", { className: "ns_setError", key: "error", role: "alert" }, t(errorKey)),
-      ]);
+            h(
+              "button",
+              {
+                key: "btn",
+                type: "button",
+                className: "ns_setBtn",
+                "data-next-step-pause": "",
+                disabled: busy === "pause",
+                onClick: () => patch({ pauseUntil: paused ? 0 : Date.now() + 3600000 }, "pause"),
+              },
+              paused ? t("settings.resume") : t("settings.pause"),
+            ),
+          ]),
+          h("div", { className: "ns_setRow", key: "budget" }, [
+            h(
+              "span",
+              { className: "ns_setLabel", key: "label" },
+              `${t("settings.budget")} ${t("settings.budgetUnit")}`,
+            ),
+            h("input", {
+              key: "input",
+              type: "number",
+              min: "0",
+              max: "1000",
+              className: "ns_setInput",
+              "data-next-step-budget": "",
+              "aria-label": `${t("settings.budget")} ${t("settings.budgetUnit")}`,
+              value: budgetDraft === "" ? String(settings.maxCardsPerSession) : budgetDraft,
+              onChange: (/** @type {any} */ event) => setBudgetDraft(String(event.target.value)),
+              onBlur: () => {
+                if (budgetDraft === "") return;
+                patch({ maxCardsPerSession: Number(budgetDraft) }, "budget");
+                setBudgetDraft("");
+              },
+            }),
+          ]),
+          h("div", { className: "ns_setRow", key: "diag" }, [
+            h("span", { className: "ns_setLabel", key: "label" }, t("settings.diagnostics")),
+            h(
+              "button",
+              {
+                key: "refresh",
+                type: "button",
+                className: "ns_setBtn",
+                "data-next-step-refresh": "",
+                onClick: () => refresh(),
+              },
+              t("settings.refresh"),
+            ),
+          ]),
+          diagText === ""
+            ? null
+            : h(
+                "div",
+                { className: "ns_diag", key: "diagText", "data-next-step-diag": "" },
+                diagText,
+              ),
+          // 手动补生成：自动门控跳过（或模型判断不需要）时，用户可以用 /next-step 立刻要一张。
+          h(
+            "div",
+            { className: "ns_setHint", key: "hint", "data-next-step-hint": "" },
+            t("settings.generateHint"),
+          ),
+        );
+      }
+      if (errorKey !== "") {
+        rows.push(h("div", { className: "ns_setError", key: "error", role: "alert" }, t(errorKey)));
+      }
+      return h("div", { className: "ns_settings", "data-next-step-settings": "" }, rows);
     }
 
     exports.inject = ["slots", "locale", "connection"];
@@ -1344,6 +1654,8 @@ window.__ModuleLoader__.load({
               : result;
           }),
         sendText: sendText,
+        generate: (/** @type {string} */ sessionId, /** @type {number} */ turn) =>
+          callRemote("generateNow", { sessionId: sessionId, turn: turn }),
         updateSettings: (/** @type {any} */ patch) =>
           callRemote("updateSettings", { patch: patch }).then((result) =>
             result && typeof result === "object" ? result : { ok: false },

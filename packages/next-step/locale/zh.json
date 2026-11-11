@@ -14,7 +14,7 @@
     "error.failed": "操作失败，请重试",
     "error.send": "没能把建议写进输入框",
     "settings.title": "下一步建议",
-    "settings.desc": "每轮回答正常结束后生成一张决策卡（一次额外模型调用）。",
+    "settings.desc": "答完后判断是否值得继续；需要时生成一张含摘要与两个方向建议的决策卡（一次额外模型调用）。",
     "settings.enabled": "启用插件",
     "settings.card": "回答下方的决策卡",
     "settings.ghost": "输入框里的幽灵提示",
@@ -30,6 +30,16 @@
     "settings.noError": "无错误",
     "settings.paused": "已暂停，约 {time} 后恢复",
     "settings.updateFailed": "保存失败",
-    "settings.version": "版本 {version} · 构建 {hash}"
+    "settings.version": "版本 {version} · 构建 {hash}",
+    "sentLabel": "已发出：{label}",
+    "settings.offHint": "关闭后不会发起任何请求；已生成的卡片仍留在对话里。",
+    "settings.lastSkip": "最近跳过：{kind} · {reason}",
+    "settings.generateHint": "没有自动出卡时，最新回答下方会出现「生成下一步建议」，点一下即可补一张。",
+    "error.budget": "本会话的卡片预算已用完",
+    "error.exists": "这一轮已经有卡片了",
+    "error.inflight": "正在生成，请稍候",
+    "error.noTurn": "没有可生成建议的回合",
+    "retry.generate": "生成下一步建议",
+    "retry.generating": "正在生成…"
   }
 }

@@ -11,7 +11,8 @@ export const DECISION_RECORD = "plugin:next-step/decision";
 export const PROJECTION_KEY = "nextStep";
 
 /**
- * 一条 option 是否合法（label 是按钮文案，text 是点击后真正发出去的指令）。
+ * 一条 option 是否合法（label 既是按钮文案，也是点击后原样发出的用户消息；
+ * v0.2 起不再有隐藏的 text 字段——旧记录里残留的 text 会被忽略）。
  * @param {any} option
  * @returns {boolean}
  */
@@ -22,9 +23,7 @@ function isOption(option) {
     typeof option.stance === "string" &&
     option.stance.trim() !== "" &&
     typeof option.label === "string" &&
-    option.label.trim() !== "" &&
-    typeof option.text === "string" &&
-    option.text.trim() !== ""
+    option.label.trim() !== ""
   );
 }
 

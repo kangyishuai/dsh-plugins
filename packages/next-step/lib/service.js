@@ -147,6 +147,29 @@ function scanSession(session) {
   return { cards, decisions };
 }
 
+/**
+ * 最近一个正常结束的回合（手动补生成用）。
+ * @param {any} session
+ * @returns {{ turn: number, seq: number } | undefined}
+ */
+function latestCompletedTurn(session) {
+  let events = [];
+  if (typeof session?.snapshotEvents === "function") events = session.snapshotEvents();
+  else if (Array.isArray(session?.log)) events = session.log;
+  const list = Array.isArray(events) ? events : [];
+  for (let index = list.length - 1; index >= 0; index -= 1) {
+    const event = list[index];
+    if (event?.type !== "turn/end") continue;
+    if (event?.data?.reason?.kind !== "completed") continue;
+    if (!Number.isSafeInteger(event?.data?.turn)) continue;
+    return {
+      turn: event.data.turn,
+      seq: Number.isSafeInteger(event?.seq) ? event.seq : 0,
+    };
+  }
+  return undefined;
+}
+
 /** 目标：一次短补全。 */
 export class NextStepService extends TypertRemoteService {
   /**
@@ -158,10 +181,23 @@ export class NextStepService extends TypertRemoteService {
     this.config = config ?? {};
     this.logger = ctx?.logger ?? console;
     this.dataRoot = resolveDataRoot(this.config);
-    /** @type {{ generated: number, failed: number, skipped: number, acted: number, dismissed: number }} */
-    this.counters = { generated: 0, failed: 0, skipped: 0, acted: 0, dismissed: 0 };
+    /** @type {{ generated: number, failed: number, skipped: number, skippedByModel: number, acted: number, dismissed: number }} */
+    this.counters = {
+      generated: 0,
+      failed: 0,
+      skipped: 0,
+      skippedByModel: 0,
+      acted: 0,
+      dismissed: 0,
+    };
     /** 最近一次失败原因（诊断面板用）。 */
     this.lastError = "";
+    /**
+     * 最近一次「这一轮没出卡」的原因——「我觉得该出卡却没出」时，先看这里。
+     * kind: paused | queued | budget | model | failed
+     * @type {{ kind: string, reason: string, at: number } | null}
+     */
+    this.lastSkip = null;
     /** 每会话在途生成（abort 用）。 @type {Map<string, AbortController>} */
     this.inflight = new Map();
     /** 设置缓存（1s TTL），使「改文件即生效」成立又不必每次读盘。 */
@@ -222,7 +258,8 @@ export class NextStepService extends TypertRemoteService {
   }
 
   /**
-   * 生成一张卡（所有门都在这里；关闭开关 = 到这里直接返回，不发请求）。
+   * 自动出卡：先过便宜的闸，再让模型自评 needed。
+   * 关闭开关 = 到这里直接返回，不发请求。
    * @param {any} session
    * @param {number} turn
    * @param {any} event
@@ -231,19 +268,39 @@ export class NextStepService extends TypertRemoteService {
   async maybeGenerate(session, turn, event) {
     const settings = await this.currentSettings();
     if (!settings.enabled || !settings.card) return;
-    if (settings.pauseUntil > Date.now()) return;
     const sessionId = session.id;
+    if (settings.pauseUntil > Date.now()) {
+      this.markSkip("paused", "generation is paused");
+      return;
+    }
     // 用户已经排了 ≥2 条消息就不再出卡（官方 action-cards 的同一条规则）。
     if (shouldSkipForQueue(queuedCountOf(this.ctx, sessionId))) {
-      this.counters.skipped += 1;
+      this.markSkip("queued", "the user already has queued messages");
       return;
     }
     const { cards } = scanSession(session);
     if (cards.has(turn)) return;
     if (cards.size >= settings.maxCardsPerSession) {
-      this.counters.skipped += 1;
+      this.markSkip("budget", "per-session card budget reached");
       return;
     }
+    await this.writeCardFor(session, settings, {
+      turn,
+      seq: Number.isSafeInteger(event?.seq) ? event.seq : 0,
+      force: false,
+    });
+  }
+
+  /**
+   * 跑一次模型调用并为该轮写卡（自动门控与手动补生成共用）。
+   * @param {any} session
+   * @param {any} settings
+   * @param {{ turn: number, seq: number, force: boolean }} options force=true 时忽略模型的 needed=false
+   * @returns {Promise<{ ok: true, card: any } | { ok: false, reason: string }>}
+   */
+  async writeCardFor(session, settings, options) {
+    const sessionId = session.id;
+    const turn = options.turn;
     if (this.inflight.has(sessionId)) this.abortInflight(sessionId);
     const controller = new AbortController();
     this.inflight.set(sessionId, controller);
@@ -253,16 +310,23 @@ export class NextStepService extends TypertRemoteService {
     );
     try {
       const result = await this.generate(session, settings, controller.signal);
-      if (controller.signal.aborted) return;
-      if (this.inflight.get(sessionId) !== controller) return;
+      if (controller.signal.aborted) return { ok: false, reason: "aborted" };
+      if (this.inflight.get(sessionId) !== controller) return { ok: false, reason: "aborted" };
       if (result === null) {
         this.counters.failed += 1;
         this.lastError = "model output did not match the card schema";
-        return;
+        this.markFailure(this.lastError);
+        return { ok: false, reason: "schema" };
+      }
+      // 模型自评「这一轮不需要继续」：自动门控下不出卡，但把理由留给诊断。
+      if (result.suggestion.needed === false && options.force !== true) {
+        this.counters.skippedByModel += 1;
+        this.markSkip("model", result.suggestion.reason);
+        return { ok: false, reason: "not-needed" };
       }
       const card = {
         turn,
-        seq: Number.isSafeInteger(event?.seq) ? event.seq : 0,
+        seq: options.seq,
         summary: result.suggestion.summary,
         question: result.suggestion.question,
         options: result.suggestion.options,
@@ -275,21 +339,51 @@ export class NextStepService extends TypertRemoteService {
       if (!isCardData(card)) {
         this.counters.failed += 1;
         this.lastError = "generated card failed validation";
-        return;
+        this.markFailure(this.lastError);
+        return { ok: false, reason: "schema" };
       }
       appendPluginRecord(session, CARD_RECORD, card);
       this.counters.generated += 1;
       this.lastError = "";
+      return { ok: true, card };
     } catch (error) {
       if (!controller.signal.aborted) {
         this.counters.failed += 1;
         this.lastError = error instanceof Error ? error.message : String(error);
+        this.markFailure(this.lastError);
         this.warn("card generation failed", error);
       }
+      return { ok: false, reason: "failed" };
     } finally {
       clearTimeout(timer);
       if (this.inflight.get(sessionId) === controller) this.inflight.delete(sessionId);
     }
+  }
+
+  /**
+   * 记录一次「没出卡」及其原因（诊断面板显示最近一次）。
+   * @param {string} kind paused | queued | budget | model | failed
+   * @param {string} reason 用户可读的原因
+   */
+  markSkip(kind, reason) {
+    this.counters.skipped += 1;
+    this.lastSkip = {
+      kind,
+      reason: String(reason).slice(0, 160),
+      at: Date.now(),
+    };
+  }
+
+  /**
+   * 记录一次失败（不算 skip；failed 计数已经加过）。
+   * @param {string} reason
+   */
+  markFailure(reason) {
+    this.lastSkip = {
+      kind: "failed",
+      reason: String(reason).slice(0, 160),
+      at: Date.now(),
+    };
   }
 
   /**
@@ -369,7 +463,11 @@ export class NextStepService extends TypertRemoteService {
       }
     }
     const suggestion = parseSuggestion(raw);
-    if (suggestion === null) return null;
+    if (suggestion === null) {
+      // 解析失败是静默的；把模型输出的开头留在日志里，排障时能分辨「模型跑偏」还是「宿主链路坏」。
+      this.warn(`model output did not match the card schema: ${String(raw ?? "").slice(0, 200)}`);
+      return null;
+    }
     return { suggestion, route: `${route.provider}/${route.model}` };
   }
 
@@ -460,7 +558,8 @@ export class NextStepService extends TypertRemoteService {
   // ---- Remote ------------------------------------------------------------
 
   /**
-   * 用户选中一条建议：只写决策记录并返回文本，发送由客户端走输入框。
+   * 用户选中一条建议：只写决策记录并返回要发送的文本，发送由客户端走输入框。
+   * 返回的文本就是用户点的那粒胶囊上的 `label`（v0.2 起不再有隐藏的完整指令）。
    * @param {any} request
    * @returns {Promise<any>}
    */
@@ -480,6 +579,8 @@ export class NextStepService extends TypertRemoteService {
       if (!Number.isSafeInteger(index) || index < 0 || option === undefined) {
         return { ok: false, reason: "missing" };
       }
+      const label = typeof option.label === "string" ? option.label.trim() : "";
+      if (label === "") return { ok: false, reason: "missing" };
       appendPluginRecord(session, DECISION_RECORD, {
         turn,
         phase: "sent",
@@ -488,7 +589,7 @@ export class NextStepService extends TypertRemoteService {
       });
       this.counters.acted += 1;
       this.abortInflight(sessionId);
-      return { ok: true, text: option.text };
+      return { ok: true, text: label };
     } catch (error) {
       rethrowRemote(error);
     }
@@ -511,6 +612,38 @@ export class NextStepService extends TypertRemoteService {
       }
       this.counters.dismissed += 1;
       return { ok: true };
+    } catch (error) {
+      rethrowRemote(error);
+    }
+  }
+
+  /**
+   * 手动补生成：为最近一个正常结束的回合强制出一张卡（用户点「生成」或 /next-step）。
+   * 自动门控被跳过时用它兜底；模型判断 needed=false 时也照出（用户明确要了）。
+   * @param {any} request
+   * @returns {Promise<any>}
+   */
+  async generateNow(request) {
+    try {
+      const sessionId = typeof request?.sessionId === "string" ? request.sessionId : "";
+      const settings = await this.currentSettings();
+      if (!settings.enabled || !settings.card) return { ok: false, reason: "disabled" };
+      const session = this.sessionOf(sessionId);
+      const latest = latestCompletedTurn(session);
+      if (latest === undefined) return { ok: false, reason: "no-turn" };
+      const requested = Number(request?.turn);
+      const turn = Number.isSafeInteger(requested) ? requested : latest.turn;
+      if (turn !== latest.turn) return { ok: false, reason: "stale" };
+      const { cards } = scanSession(session);
+      if (cards.has(turn)) return { ok: false, reason: "exists" };
+      if (cards.size >= settings.maxCardsPerSession) return { ok: false, reason: "budget" };
+      if (this.inflight.has(sessionId)) return { ok: false, reason: "inflight" };
+      const result = await this.writeCardFor(session, settings, {
+        turn,
+        seq: latest.seq,
+        force: true,
+      });
+      return result.ok === true ? { ok: true } : { ok: false, reason: result.reason };
     } catch (error) {
       rethrowRemote(error);
     }
@@ -560,6 +693,7 @@ export class NextStepService extends TypertRemoteService {
           ...this.counters,
           inflight: this.inflight.size,
           lastError: this.lastError,
+          lastSkip: this.lastSkip,
           dataRoot: this.dataRoot,
           settings: await this.currentSettings(),
           // 运行时自证：与 `dsh plugin list` / npm tarball 对照用。
@@ -577,6 +711,7 @@ export class NextStepService extends TypertRemoteService {
 
 declareRemote(NextStepService, "act");
 declareRemote(NextStepService, "dismiss");
+declareRemote(NextStepService, "generateNow");
 declareRemote(NextStepService, "settings");
 declareRemote(NextStepService, "updateSettings");
 declareRemote(NextStepService, "diagnostics");

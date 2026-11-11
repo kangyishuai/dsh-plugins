@@ -831,21 +831,49 @@ const main = async () => {
         const finished = await waitForTurnEnd(cdp, 240000);
         check("回合结束（模型答完）", finished === true, finished ? "" : "240s 内没等到回合结束");
         // 卡片在 turn/end 之后由一次额外模型调用生成（超时 20s），这里给足余量。
+        // v0.2：模型可能判断这一轮不需要继续 —— 此时不出卡，改由「生成下一步建议」按钮强制出卡。
         /** @type {any[]} */
         let deepCards = [];
-        const cardDeadline = Date.now() + 90000;
+        let deepGenerated = false;
+        const cardDeadline = Date.now() + 30000;
         while (Date.now() < cardDeadline) {
           deepCards = await cardsNow(cdp);
           if (deepCards.some((c) => c.state === "interactive")) break;
           await sleep(1000);
         }
+        if (!deepCards.some((c) => c.state === "interactive")) {
+          const retry = await cdp.evaluate(`(() => {
+            const button = document.querySelector("[data-next-step-generate]");
+            if (!button) return "no-button";
+            if (button.disabled) return "disabled";
+            button.click();
+            return "clicked";
+          })()`);
+          check(
+            "模型判断无需继续时出现「生成下一步建议」按钮（--deep）",
+            retry !== "no-button",
+            JSON.stringify({ retry }),
+          );
+          if (retry === "clicked") {
+            const retryDeadline = Date.now() + 90000;
+            while (Date.now() < retryDeadline) {
+              deepCards = await cardsNow(cdp);
+              if (deepCards.some((c) => c.state === "interactive")) {
+                deepGenerated = true;
+                break;
+              }
+              await sleep(1000);
+            }
+          }
+        }
         const deepCard = deepCards.filter((c) => c.state === "interactive").pop() ?? null;
         check(
-          "答后出现可交互决策卡（--deep）",
+          "答后出现可交互决策卡（--deep，自动或补生成）",
           deepCard !== null,
-          JSON.stringify(
-            deepCards.map((c) => ({ turn: c.turn, state: c.state, pills: c.pills.length })),
-          ),
+          JSON.stringify({
+            generatedByRetry: deepGenerated,
+            cards: deepCards.map((c) => ({ turn: c.turn, state: c.state, pills: c.pills.length })),
+          }),
         );
         if (deepCard !== null) {
           check(
@@ -868,7 +896,7 @@ const main = async () => {
             const pill = card.querySelector("button[data-next-step-pill]");
             if (!pill) return "no-pill";
             if (pill.disabled) return "disabled";
-            const label = (pill.textContent || "").trim();
+            const label = (pill.getAttribute("data-text") || "").trim();
             pill.click();
             return "clicked:" + label;
           })()`);
@@ -895,6 +923,25 @@ const main = async () => {
             "点胶囊发送出一条新的用户消息",
             userRowsAfter >= userRowsBefore + 1,
             JSON.stringify({ before: userRowsBefore, after: userRowsAfter, pillClick }),
+          );
+          const sentEcho = await cdp.evaluate(`(() => {
+            const card = [...document.querySelectorAll("[data-next-step-card]")].find((el) => Number(el.getAttribute("data-next-step-turn")) === ${JSON.stringify(deepCard.turn)});
+            const node = card ? card.querySelector("[data-next-step-sent]") : null;
+            return {
+              label: node ? node.getAttribute("data-next-step-sent-label") || "" : "",
+              text: node ? (node.textContent || "").replace(/\\s+/g, " ").trim() : "",
+            };
+          })()`);
+          const clickedLabel =
+            typeof pillClick === "string" && pillClick.startsWith("clicked:")
+              ? pillClick.slice("clicked:".length)
+              : "";
+          check(
+            "点后回显被点的按钮文本（选中态 + 已发出）",
+            clickedLabel !== "" &&
+              sentEcho.label === clickedLabel &&
+              sentEcho.text.includes(clickedLabel),
+            JSON.stringify({ clickedLabel, sentEcho }),
           );
           await cdp.screenshot(join(SHOTS, "08-deep-sent.png"));
           await waitForTurnEnd(cdp, 240000);

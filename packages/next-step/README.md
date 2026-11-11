@@ -1,6 +1,6 @@
 # @kangyishuai/dsh-next-step
 
-> A next-step decision card for DeepSeek Harness: after every completed answer, a compact card under it shows where the conversation stands, the question you need to settle, and two mutually exclusive proposals. Click one and its full text is sent as your user message. Optionally — off by default — a grey ghost hint in the empty composer offers the next prompt, accepted with `Tab` or `→`.
+> A next-step decision card for DeepSeek Harness: after every completed answer, a compact card under it shows where the conversation stands, the question you need to settle, and two mutually exclusive proposals. Click one and that pill's text — exactly as written on it — is sent as your user message. Optionally — off by default — a grey ghost hint in the empty composer offers the next prompt, accepted with `Tab` or `→`.
 
 [![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-next-step?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-next-step) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.1-4b6bfb)](#compatibility) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
@@ -14,10 +14,10 @@ Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/de
 
 ## What it does
 
-- **A card under every completed answer.** When a turn ends normally, the plugin makes one extra model call and appends a decision card below the answer: a one-to-three sentence **summary** of the conversation state (folded to two lines, with an expand/collapse control when it is longer), one **question** that names the decision you have to make, and **two pills** for two mutually exclusive directions. Each pill has a short label (up to 20 characters); the full instruction behind it is what gets sent.
-- **One click is one user message.** Clicking a pill puts its full text into the composer and submits it through the same path as pressing Enter yourself — not by faking a session event. An idle session sends immediately; if a turn is already running, the text is queued exactly like a typed message.
+- **A card only when there is something to continue.** When a turn ends normally, the plugin makes one extra model call that first asks the model whether the turn is genuinely worth continuing. If not, the model returns a one-line reason and no card is written (the reason shows up in diagnostics). If it is worth continuing, a decision card is appended below the answer: a one-to-three sentence **summary** of the conversation state (folded to two lines, with an expand/collapse control when it is longer), one **question** that names the decision you have to make, and **two pills** for two mutually exclusive directions. Each pill carries the exact sentence that will be sent when you click it (up to 60 characters, verb-first and self-contained).
+- **One click is one user message.** Clicking a pill puts that pill's own text into the composer and submits it through the same path as pressing Enter yourself — not by faking a session event. An idle session sends immediately; if a turn is already running, the text is queued exactly like a typed message.
 - **It stays.** Cards and decisions are appended to the session log as plugin records and folded by a session projection, which is the only source of truth. A page reload, a session switch or an app restart brings them back; the client keeps no separate state.
-- **Resolved, not removed.** After you click, the card stays in the transcript but becomes read-only: summary and question remain, the pills disappear (a sent card may add a grey “sent” line). Cards from earlier turns are always read-only, so at most one card is interactive at a time. The ✕ in a card's corner dismisses it without sending anything.
+- **Resolved, not removed.** After you click, the card stays in the transcript but becomes read-only: summary and question remain, the two pills are replaced by the one you picked in a selected state (✓ plus its text), followed by a grey “sent” line. Cards from earlier turns are always read-only, so at most one card is interactive at a time. The ✕ in a card's corner dismisses it without sending anything.
 - **Ghost hint in the composer (off by default).** The same model call also produces one next prompt. With the ghost face enabled, an empty idle composer shows it as grey, placeholder-style text. `Tab` or `→` accepts it into the draft (undoable with `Ctrl+Z`), `Esc` clears the current suggestion, typing makes it disappear, and it stays hidden while the composer holds a draft, an attachment, an `@` reference or a slash command. The ghost is not draft content, so pressing Enter on an otherwise empty composer sends nothing.
 - **Two faces, one call.** Card and ghost are produced together by a single model call — turning the ghost on costs no additional requests.
 - **Switches that actually stop requests.** `card` (default on) and `ghost` (default off) are separate switches; the global `enabled` switch off means no generation request at all, not just a hidden UI. A pause and a per-session card budget (`maxCardsPerSession`) stop new cards too. Cards already in the log stay readable.
@@ -26,6 +26,7 @@ Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/de
 
 - One extra model call per trigger, on the model the session's agent is currently using (falling back to the default model selection), billed to your own provider quota.
 - The call times out after 20 s. Failures, rate limits and malformed JSON are silent: no card, no dialog — only a counter in the plugin's diagnostics. Malformed output is dropped without writing a record.
+- When the model decides the turn is not worth continuing, no card is written — but **the call still happens**: this saves UI noise, not tokens. The model's reason is kept in the settings row's “Last skipped” line.
 - No other network access, no telemetry.
 
 ## Side effects & risks
@@ -58,7 +59,11 @@ Re-run `pnpm pack` + `add` after changing the code. The plugin has a host half, 
 
 ## Usage
 
-**The card.** It appears under the last answer once that turn has completed, and it never steals focus. Each pill carries its short label; click it to send the full instruction. If the summary is folded, use the small expand button to read it all. ✕ dismisses the card; earlier cards are read-only for reference.
+**The card.** It appears under the last answer once that turn has completed, and it never steals focus. Each pill carries the exact sentence it will send; click it to send that sentence. If the summary is folded, use the small expand button to read it all. ✕ dismisses the card; earlier cards are read-only for reference.
+
+**Keyboard.** While the card is interactive, the composer is empty and the session is idle, `⌘↵` / `Ctrl+↵` sends the primary pill (same path as a click). When the composer holds a draft, an attachment, an open `@`/`/` menu, or a turn is running, the combination keeps its host Queue/Steer meaning — the plugin does not steal it.
+
+**When no card appears.** If a turn gets no card (the model decided it was not needed, generation is paused, messages are queued, or the budget is exhausted), a small “Generate a next-step card” button appears under the latest answer. Clicking it **forces** a card (even if the model judged it unnecessary). So when you think a card should have appeared: check “Last skipped” in the settings diagnostics, and click that button to get one right away.
 
 **The ghost hint.** Turn the ghost face on in the plugin settings. With an empty, idle composer you see the latest card's next prompt in grey, aligned with the host placeholder. `Tab` or `→` accepts it — the text lands in the draft and stays undoable. `Esc` clears it for this suggestion, and the first typed character hides it. It only ever edits the draft: it does not send, and it does not bind Enter.
 
@@ -72,7 +77,9 @@ Settings → **General** → “Next-step suggestions” is one row with everyth
 - **Decision card under the answer** / **Ghost hint in the composer** — one switch per face.
 - **Cadence** — “Pause for 1 hour” / “Resume”.
 - **Per session, at most N cards** — the budget (`maxCardsPerSession`, clamped to 0–1000).
-- **Diagnostics** — generated / failed / skipped / in-flight counters, the last error, the runtime **version + build hash**, and a Refresh button. `nextStep/diagnostics` returns the same `version` / `buildHash` / `buildFiles` / `packagePath`, so a running build can be matched against `dsh plugin list` or the npm tarball without digging through startup logs.
+- **Diagnostics** — generated / failed / skipped / in-flight counters, the **reason the last card was skipped** (model judged unnecessary / queued / paused / budget / failure, with the model's own sentence), the last error, the runtime **version + build hash**, and a Refresh button. `nextStep/diagnostics` returns the same `version` / `buildHash` / `buildFiles` / `packagePath`, so a running build can be matched against `dsh plugin list` or the npm tarball without digging through startup logs.
+
+Turning the global switch off **hides every dependent row** (card / ghost / pause / budget / diagnostics) and leaves just the switch plus one line of explanation — off means off, nothing looks like it still runs, and re-enabling restores the previous switch values.
 
 The row writes the same `$DSH_HOME/next-step.settings.json` that the host re-reads (1 s cache) before every generation, so a change applies on the next turn — no restart. If the row is missing because a host seam moved, editing the file still works.
 
@@ -85,6 +92,7 @@ The row writes the same `$DSH_HOME/next-step.settings.json` that the host re-rea
 | Global switch off                                                                                 | No request is made at all; existing cards remain in the transcript.        |
 | Paused, or the session's card budget (`maxCardsPerSession`) used up                               | No new card; existing cards stay.                                          |
 | A card or a decision already exists for that turn                                                 | One card per turn; no duplicates.                                          |
+| The model judges the turn not worth continuing (`needed=false`)                                   | No card; “Last skipped” in diagnostics shows the model's reason.           |
 | Model call failed, timed out (20 s), was rate-limited, bad JSON                                   | Silent; only a diagnostics counter goes up.                                |
 | The reply is still streaming                                                                      | Nothing is rendered for the turn until it ends.                            |
 | The composer already has a draft                                                                  | The card is visible but the pills are disabled until the draft is cleared. |
@@ -92,22 +100,23 @@ The row writes the same `$DSH_HOME/next-step.settings.json` that the host re-rea
 
 ## Known limitations
 
-- **The card is attached to the composer area**, not to the transcript. It renders in the composer's overlay layer so it is visible without scrolling; the trade-off is that it reads as part of the input box rather than as a block inside the conversation (ADR 0009 §4).
+- **The card sits under the answer** (`conversation.chat.turnTail`), not in the composer area. It is right below the last answer after the turn completes, so it needs no scrolling; cards from earlier turns scroll with the transcript (see ADR 0009 §4).
 - **No card while messages are queued.** If you already have 2+ messages waiting to be sent, the plugin skips generation for that turn (the official action cards use the same limit); nothing is queued or sent by the plugin itself.
 - **Exactly two proposals.** Every card has two options that must point in different (mutually exclusive) directions.
-- **The `⌘↵` / `Ctrl+↵` keycap on the primary pill is decorative.** v1 does not bind the shortcut; it is a visual hint only.
+- **`⌘↵` / `Ctrl+↵` is only taken over when the composer is clean, the session is idle and a card is interactive.** Otherwise the combination keeps its host Queue/Steer complementary-send meaning; the plugin never steals it.
 - **No cross-device sync.** Cards and decisions live in the local session log of the machine that generated them.
 - **No cards in subagent sessions**, and none for interrupted or empty turns.
 - **The ghost only offers the latest card's next prompt**, and only when the composer is empty and idle.
-- **The card text is model output.** The plugin validates the shape (two options, distinct stances, label length) but does not rewrite the wording.
+- **The card text is model output.** The plugin validates the shape (two options, distinct stances, label length 4–60) but does not rewrite the wording.
+- **A click sends exactly the pill's text** — there is no hidden “short label, long instruction behind it” layer. A `text` field left over in card records written by older versions is ignored.
 
 ![After a click: the summary and question stay, the pills disappear](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/next-step/docs/images/after-click.png)
 
 ## Compatibility
 
-| DSH version | Status                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0.2.2-rc.1  | Web composition verified end-to-end on 2026-11-10 (`pnpm smoke:next-step`: 50 passing assertions + 1 skipped settings-page check; real host + real model calls); 67 unit tests; runtime probe 60/60. Desktop real-machine regression verified with `pnpm smoke:next-step-desktop` (`--require`: 9 passing + 1 skip; `--deep`: 19 passing + 2 skips, including a real click that sends a user message). Other DSH versions are not verified. |
+| DSH version | Status                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.2.2-rc.1  | Web composition verified end-to-end on 2026-11-11 (`pnpm smoke:next-step`: 59 assertions passing, 0 skipped; real host + real model calls, covering WYSIWYG sending, the picked-option echo, the `needed` gate and the force-generate button, and the progressive settings); 83 unit tests; runtime probe 60/60. The desktop real-machine regression was not re-run on this machine (it needs the new tarball installed into the running desktop profile and a host restart, which would terminate the current session); re-check with `pnpm smoke:next-step-desktop --require --deep` before releasing. Other DSH versions are not verified. |
 
 The plugin declares no `engines.dsh` and no `@deepseek-ai/*` peer range: DSH is pre-release and semver ranges over prereleases are unreliable (see [ADR 0005](../../docs/adr/0005-dsh-version-compatibility.md)). Treat the table as the compatibility statement. After a DSH upgrade run `pnpm probe:runtime`, `pnpm smoke:next-step` and `pnpm smoke:next-step-desktop`, then check the plugin's diagnostics.
 

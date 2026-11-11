@@ -3,29 +3,33 @@
 //  - buildMessages({transcript}) 的消息结构与纯对象性；
 //  - renderTranscript / buildSystemPrompt 的裁剪与约束（提示词里写死的上限必须真的被实现）；
 //  - parseSuggestion(raw)：合法 JSON、```json 围栏、前后多余文字、1 条/3 条 option、
-//    两条同 stance、超长 label / text / nextPrompt、空字符串、缺字段——**非法一律 null，绝不截断**。
+//    两条同 stance、needed / reason 缺失、超长 label / nextPrompt、空字符串、缺字段——
+//    **非法一律 null，绝不截断**。
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   buildMessages,
   buildSystemPrompt,
   LABEL_MAX,
+  LABEL_MIN,
   NEXT_PROMPT_MAX,
   parseSuggestion,
   QUESTION_MAX,
+  REASON_MAX,
   renderTranscript,
   SUMMARY_MAX,
-  TEXT_MAX,
 } from "../lib/prompt.js";
 
 /** 一个合法的模型输出对象。 */
 function validPayload() {
   return {
+    needed: true,
+    reason: "卡片已经接进 turnTail，但还没有回归测试。",
     summary: "已在 docs/runtime 里记录了 turnTail 槽位，还没写冒烟。",
     question: "下一步先补测试还是先把卡片接进去？",
     options: [
-      { stance: "verify", label: "先补测试", text: "先给 next-step 写 web 冒烟和桌面只读回归。" },
-      { stance: "proceed", label: "先接卡片", text: "先把决策卡接进 conversation.chat.turnTail。" },
+      { stance: "verify", label: "先给 next-step 补 web 冒烟和桌面只读回归" },
+      { stance: "proceed", label: "先把决策卡接进 conversation.chat.turnTail" },
     ],
     nextPrompt: "先把 turnTail 卡片接进去，再加上冒烟。",
   };
@@ -35,7 +39,7 @@ function validPayload() {
  * 断言解析结果非 null 并收窄类型。
  * @param {unknown} result
  * @param {string} label
- * @returns {{ summary: string, question: string, options: { stance: string, label: string, text: string }[], nextPrompt?: string }}
+ * @returns {{ needed: boolean, reason: string, summary: string, question: string, options: { stance: string, label: string }[], nextPrompt?: string }}
  */
 function expectSuggestion(result, label) {
   assert.notEqual(result, null, `${label} 期望解析成功（非 null），实际=null`);
@@ -271,6 +275,17 @@ test("buildSystemPrompt：要求严格 JSON、恰好两条、并写明各字段�
   );
   assert.equal(prompt.includes(String(LABEL_MAX)), true, `期望写明 label 上限 ${LABEL_MAX}`);
   assert.equal(
+    prompt.includes("needed"),
+    true,
+    `期望提示词提到 needed（模型自评是否值得继续），实际=${JSON.stringify(prompt.slice(0, 400))}`,
+  );
+  assert.equal(
+    prompt.includes("reason"),
+    true,
+    `期望提示词提到 reason（判断依据），实际=${JSON.stringify(prompt.slice(0, 400))}`,
+  );
+  assert.equal(prompt.includes(String(REASON_MAX)), true, `期望写明 reason 上限 ${REASON_MAX}`);
+  assert.equal(
     prompt.includes(String(NEXT_PROMPT_MAX)),
     true,
     `期望写明 nextPrompt 上限 ${NEXT_PROMPT_MAX}`,
@@ -299,6 +314,12 @@ test("buildSystemPrompt：locale 缺失时回落 auto，不抛错", () => {
 test("parseSuggestion：合法 JSON 对象被完整解析", () => {
   const payload = validPayload();
   const parsed = expectSuggestion(parseSuggestion(JSON.stringify(payload)), "合法 JSON");
+  assert.equal(parsed.needed, true, `needed 期望=true，实际=${JSON.stringify(parsed.needed)}`);
+  assert.equal(
+    parsed.reason,
+    payload.reason,
+    `reason 期望=${JSON.stringify(payload.reason)} 实际=${JSON.stringify(parsed.reason)}`,
+  );
   assert.equal(
     parsed.summary,
     payload.summary,
@@ -434,7 +455,7 @@ test("parseSuggestion：只有 1 条 option → null（不补第二条）", () =
 
 test("parseSuggestion：3 条 option → null", () => {
   const payload = /** @type {any} */ (validPayload());
-  payload.options.push({ stance: "third", label: "第三条", text: "这是第三条动作的完整指令。" });
+  payload.options.push({ stance: "third", label: "第三条动作的完整指令" });
   assert.equal(
     parseSuggestion(JSON.stringify(payload)),
     null,
@@ -452,7 +473,7 @@ test("parseSuggestion：两条同 stance → null（大小写/空白归一化后
   );
 });
 
-test("parseSuggestion：label 超 20 字 → null（整条丢弃，不截断）", () => {
+test("parseSuggestion：label 超上限 → null（整条丢弃，不截断）", () => {
   const payload = /** @type {any} */ (validPayload());
   payload.options[0].label = "这".repeat(LABEL_MAX + 1);
   const result = parseSuggestion(JSON.stringify(payload));
@@ -463,7 +484,7 @@ test("parseSuggestion：label 超 20 字 → null（整条丢弃，不截断）"
   );
 });
 
-test("parseSuggestion：label 恰好 20 字可接受（边界）", () => {
+test("parseSuggestion：label 恰好上限可接受（边界）", () => {
   const payload = /** @type {any} */ (validPayload());
   payload.options[0].label = "标".repeat(LABEL_MAX);
   const parsed = expectSuggestion(
@@ -501,23 +522,71 @@ test("parseSuggestion：nextPrompt 恰好 120 字可接受（边界）", () => {
   );
 });
 
-test("parseSuggestion：option.text 超 240 字 → null", () => {
+test("parseSuggestion：label 少于下限 → null（「继续」这类悬空指令不可执行）", () => {
   const payload = /** @type {any} */ (validPayload());
-  payload.options[1].text = "t".repeat(TEXT_MAX + 1);
+  payload.options[0].label = "继续".slice(0, LABEL_MIN - 1);
   assert.equal(
     parseSuggestion(JSON.stringify(payload)),
     null,
-    `text=${TEXT_MAX + 1} 字期望=null，实际=${JSON.stringify(parseSuggestion(JSON.stringify(payload)))}`,
+    `label=${LABEL_MIN - 1} 字期望=null，实际=${JSON.stringify(parseSuggestion(JSON.stringify(payload)))}`,
   );
 });
 
-test("parseSuggestion：option.text 少于 4 字 → null（悬空指令不可执行）", () => {
+test("parseSuggestion：只有 text 没有 label → null（v0.2 起按钮文本就是消息）", () => {
   const payload = /** @type {any} */ (validPayload());
-  payload.options[0].text = "继续";
+  payload.options[0] = { stance: "verify", text: "先给 next-step 写冒烟" };
   assert.equal(
     parseSuggestion(JSON.stringify(payload)),
     null,
-    `text="继续" 期望=null，实际=${JSON.stringify(parseSuggestion(JSON.stringify(payload)))}`,
+    `缺 label 期望=null，实际=${JSON.stringify(parseSuggestion(JSON.stringify(payload)))}`,
+  );
+});
+
+test("parseSuggestion：残留的 text 字段被忽略（不进入解析结果）", () => {
+  const payload = /** @type {any} */ (validPayload());
+  payload.options[0].text = "旧版本的隐藏指令";
+  const parsed = expectSuggestion(parseSuggestion(JSON.stringify(payload)), "残留 text");
+  assert.deepEqual(
+    Object.keys(parsed.options[0]).sort(),
+    ["label", "stance"],
+    `期望 option 只含 stance/label，实际=${JSON.stringify(parsed.options[0])}`,
+  );
+});
+
+test("parseSuggestion：needed 缺失或不是布尔 → null", () => {
+  const missing = /** @type {any} */ (validPayload());
+  delete missing.needed;
+  assert.equal(parseSuggestion(JSON.stringify(missing)), null, "缺 needed 期望=null");
+  for (const value of ["true", 1, null]) {
+    const payload = /** @type {any} */ (validPayload());
+    payload.needed = value;
+    assert.equal(
+      parseSuggestion(JSON.stringify(payload)),
+      null,
+      `needed=${JSON.stringify(value)} 期望=null，实际=${JSON.stringify(parseSuggestion(JSON.stringify(payload)))}`,
+    );
+  }
+});
+
+test("parseSuggestion：needed=false 的卡仍然被解析（用户可手动补生成）", () => {
+  const payload = /** @type {any} */ (validPayload());
+  payload.needed = false;
+  payload.reason = "回答已经向用户提出了明确问题，这一轮不需要再出卡。";
+  const parsed = expectSuggestion(parseSuggestion(JSON.stringify(payload)), "needed=false");
+  assert.equal(parsed.needed, false, `needed 期望=false，实际=${JSON.stringify(parsed.needed)}`);
+  assert.equal(parsed.options.length, 2, "needed=false 时 options 仍应完整");
+});
+
+test("parseSuggestion：reason 为空或超长 → null", () => {
+  const empty = /** @type {any} */ (validPayload());
+  empty.reason = "   ";
+  assert.equal(parseSuggestion(JSON.stringify(empty)), null, "reason 为空期望=null");
+  const long = /** @type {any} */ (validPayload());
+  long.reason = "r".repeat(REASON_MAX + 1);
+  assert.equal(
+    parseSuggestion(JSON.stringify(long)),
+    null,
+    `reason=${REASON_MAX + 1} 字期望=null，实际=${JSON.stringify(parseSuggestion(JSON.stringify(long)))}`,
   );
 });
 
@@ -559,16 +628,13 @@ test("parseSuggestion：options 缺失或不是数组 → null", () => {
   assert.equal(parseSuggestion(JSON.stringify(nullItem)), null, "options 含 null 项期望=null");
 });
 
-test("parseSuggestion：stance 为空、label 为空、text 为空 → null", () => {
+test("parseSuggestion：stance 为空、label 为空 → null", () => {
   for (const mutate of [
     (/** @type {any} */ payload) => {
       payload.options[0].stance = "";
     },
     (/** @type {any} */ payload) => {
       payload.options[0].label = "";
-    },
-    (/** @type {any} */ payload) => {
-      payload.options[1].text = "";
     },
   ]) {
     const payload = /** @type {any} */ (validPayload());
