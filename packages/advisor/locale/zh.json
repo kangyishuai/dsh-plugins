@@ -1,0 +1,28 @@
+{
+  "advisor": {
+    "title": "让主模型在关键时刻咨询一个更强的顾问模型",
+    "notReady.label": "顾问尚未就绪 · 打开 /advisor doctor",
+    "notReady.detail": "宿主没有返回候选路由：插件可能未启用，或宿主 RPC 暂不可用",
+    "group.current": "当前",
+    "group.extras": "开关与配置",
+    "current.detail": "本会话正在使用",
+    "toast.current": "已经是当前顾问",
+    "blocked.detail": "该路由当前不可用",
+    "off.label": "不使用顾问（off）",
+    "off.detail": "随时可用 /advisor 重新开启",
+    "settings.label": "+ 添加或配置 provider…",
+    "settings.detail": "打开 设置 → 模型",
+    "settings.hint": "已把 /advisor doctor 放进输入框，回车查看下一步",
+    "toast.settings": "请打开 设置 → 模型 添加或配置 provider",
+    "search.placeholder": "搜索顾问模型…",
+    "search.empty": "还没有可选的顾问模型",
+    "search.noResults": "没有匹配的模型",
+    "effort.auto": "自动",
+    "toast.applied": "顾问已设为 {route}（思考档 {effort}），下一次徵询生效",
+    "toast.off": "顾问已关闭，随时可用 /advisor 重新开启",
+    "toast.stale": "这项选择已过期，请重新打开 /advisor",
+    "error.failed": "设置失败，请重试",
+    "error.unreachable": "连不上宿主，稍后重试或运行 /advisor doctor",
+    "error.malformed": "宿主返回了无法识别的结果，运行 /advisor doctor 查看诊断"
+  }
+}

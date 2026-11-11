@@ -11,6 +11,7 @@ body:
         - "@kangyishuai/dsh-session-delete"
         - "@kangyishuai/dsh-session-rewind"
         - "@kangyishuai/dsh-next-step"
+        - "@kangyishuai/dsh-advisor"
         - other
     validations:
       required: true

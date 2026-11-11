@@ -289,6 +289,51 @@ const SEAM_CHECKS_NEXT_STEP = [
   },
 ];
 
+const SEAM_CHECKS_ADVISOR = [
+  {
+    file: "@deepseek-ai/dsh-llm/lib/index.js",
+    name: "llm.resolveModelInfo(provider, model)（思考档/上下文元数据）",
+    pattern: /resolveModelInfo\s*\(/u,
+    breaks: "选模型时拿不到该模型真实支持的思考档（下拉会退化成只有「自动」）",
+  },
+  {
+    file: "@deepseek-ai/dsh-llm/lib/index.js",
+    name: "prepareCall(config, signal, configure)（按模型元数据选思考档）",
+    pattern: /async prepareCall\(config, signal[\s\S]{0,600}?configure/u,
+    breaks: "无法在发起前按模型能力选定思考档（只能盲传，失败后降级重试）",
+  },
+  {
+    file: "@deepseek-ai/dsh-llm/lib/index.js",
+    name: "UNSUPPORTED_REASONING_EFFORT 错误码（降级重试的判据）",
+    pattern: /UNSUPPORTED_REASONING_EFFORT/u,
+    breaks: "思考档不被支持时无法识别，会直接把失败抛给用户",
+  },
+  {
+    file: "@deepseek-ai/dsh-llm/lib/index.js",
+    name: "StreamChunk 的 usage 分片（自己记账的唯一来源）",
+    pattern: /case\s*"usage":/u,
+    breaks: "额外模型调用的 token 完全无法计量（宿主不写 usage 事件）",
+  },
+  {
+    file: "@deepseek-ai/dsh-commands/lib/index.js",
+    name: "commands.register(definition)（/advisor 命令面）",
+    pattern: /register\(definition\)\s*\{/u,
+    breaks: "/advisor 命令不存在，只能靠工具与设置文件配置顾问",
+  },
+  {
+    file: "@deepseek-ai/dsh-client-ui-commands/lib/client.js",
+    name: "commandUi.decorate(decoration)（给 /advisor 挂选择器）",
+    pattern: /decorate\(decoration\)/u,
+    breaks: "/advisor 无法挂自定义 UI（只能输出纯文本）",
+  },
+  {
+    file: "@deepseek-ai/dsh-client-ui-commands/lib/client.js",
+    name: "popupSelect 选择器类型（模型选择器）",
+    pattern: /popupSelect/u,
+    breaks: "/advisor 弹不出模型选择器（退化为让用户手打 provider/model）",
+  },
+];
+
 /** slot 名字通过扫描 client 包确认（客户端 bundle 里以字符串出现）。 */
 const SLOT_CHECKS = [
   { slot: "sidebar.workspaces.session.menu.item", purpose: "会话「…」菜单" },
@@ -447,6 +492,22 @@ const main = async () => {
 
   // 3.7) next-step 的私有 seam
   for (const check of SEAM_CHECKS_NEXT_STEP) {
+    const path = `/dsh/node_modules/${check.file}`;
+    const buffer = await asar.read(path);
+    if (!buffer) {
+      push("FAIL", `seam ${check.name}`, `文件不存在：${check.file}｜影响：${check.breaks}`);
+      continue;
+    }
+    const ok = check.pattern.test(buffer.toString("utf8"));
+    push(
+      ok ? "PASS" : "FAIL",
+      `seam ${check.name}`,
+      ok ? "" : `源码里没有匹配到特征｜影响：${check.breaks}`,
+    );
+  }
+
+  // 3.8) advisor 的私有 seam
+  for (const check of SEAM_CHECKS_ADVISOR) {
     const path = `/dsh/node_modules/${check.file}`;
     const buffer = await asar.read(path);
     if (!buffer) {

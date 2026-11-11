@@ -1,0 +1,181 @@
+# @kangyishuai/dsh-advisor
+
+> 给主模型配一个单独配置的顾问模型，由**主模型自己决定**什么时候值得问：动手之前、反复失败时、宣告完成之前。顾问只给建议：它读整段对话、返回结构化答复，不批准、不拦截、不执行任何动作。
+
+[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-advisor?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-advisor) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.1-4b6bfb)](#兼容性) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+
+[English](./README.md)
+
+非官方 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 插件，与 DeepSeek 无关。
+
+> **状态：早期。** 已针对当前目标 DSH 版本验证——见[兼容性](#兼容性)表格。工具、选择器和模型元数据查询都依赖半公开的宿主 seam，DSH 升级可能让它们静默失效（请先读[副作用、限制与风险](#副作用限制与风险)）。插件还年轻——建议先用 `shadow` 模式跑几天，盯着账本再决定是否开启。
+
+## 它做什么
+
+这是一个**按需**顾问，不是被动复查器。要不要花这一次调用，由主模型判断；插件不会按轮次自动重读整段对话，所以成本和延迟随**决策次数**增长，而不是随对话长度增长。
+
+- **一个由模型调用的工具。** 插件只注册一个工具 `advisor`（没有必填参数，可选一个 `focus` 字符串说明这次想解决的疑点）。工具描述会告诉主模型：在实质动手前、同一个错误反复出现时、失败后准备换方案前、以及宣告任务完成前徵询；短平快的反应式任务则不要反复调用。
+- **第二个模型读整段对话。** 一次徵询时，插件把会话渲染成一段有长度上限的文本——用户消息、助手消息、**工具调用及其结果**——发给配置的顾问路由。顾问与主模型可以是同一个模型、同一路由下的另一个模型，也可以是另一家 provider。
+- **结构化建议，仍在同一个回合里。** 顾问返回一个 JSON 对象：结论（`reviewed` / `declined`）、严重度（`nit` / `concern` / `blocker`）、不超过 900 字符的建议、最多 5 条风险、最多 5 条验收项，以及证据锚点（工具调用 id、消息 id、路径）。「没什么可说的」是合法回答。结果作为普通工具结果回到主模型，不新起一个回合。
+- **只建议，不裁决。** 顾问不能批准、不能拒绝、不能运行工具，它的输出也从不授权任何动作。做决定的仍然是主模型。
+- **`off` / `shadow` / `advisory` 三种模式。** 默认 `off`。`shadow` 在每个正常完成的回合后徵询一次并记账，但不把建议回灌；`advisory` 是正式模式。
+- **天生可跨厂商。** 顾问路由独立于主模型。不同模型族的盲区不一样，这正是「第二意见」的意义——但指向另一家之前，请先读[成本与隐私](#成本与隐私)。
+- **有预算，有账本。** 每回合、每会话、每小时三个次数上限，外加每日金额上限；token 记在 `<DSH_HOME>/advisor/usage.jsonl`。DSH 不会为这种额外模型调用记 usage，所以插件自己记。
+
+### 它不是什么
+
+| 不是这个                      | 为什么                                                                 |
+| ----------------------------- | ---------------------------------------------------------------------- |
+| 每答一轮就复查一遍的 reviewer | 成本和延迟会随对话叠加，重复的「看起来没问题」只会增加噪音，不是信号。 |
+| 权限 / 审批闸门               | 它只是建议：这里没有任何东西能放行或阻止一次工具调用。                 |
+| 多模型投票面板                | 一个顾问、一个答案，没有聚合规则可吵。                                 |
+| 模型路由器                    | 它从不切换主模型，只负责回答。                                         |
+
+## 安装
+
+```bash
+dsh plugin --profile desktop add @kangyishuai/dsh-advisor
+```
+
+想在本地跑工作区里的源码，先打包再装——`link:` 装法不可用（宿主解析 `@deepseek-ai/*` 时只覆盖真实路径位于 profile 内的包）：
+
+```bash
+cd packages/advisor
+pnpm pack --pack-destination /tmp
+dsh plugin --profile desktop add /tmp/kangyishuai-dsh-advisor-*.tgz
+```
+
+改完代码要重新 `pnpm pack` 再 `add`。插件有 host 半和一层很薄的 client 半：**host 改动重启 DSH 桌面版**，**client 改动刷新页面**。在你配置好顾问路由并正式开启之前，它不会把任何内容发出去。
+
+## 配置
+
+**顾问模型的 baseURL、API key 和线路协议都不归本插件管。** 去 DSH 的*设置 → 模型*里配——也就是 `dsh-llm-pi-ai` 的 `providers` 字典，每个键是一条路由。本插件只保存**路由名**和模型 id，从不读写凭据。
+
+插件设置只有一个 JSON 文件：`<DSH_HOME>/advisor.settings.json`（`DSH_HOME` 默认 `~/.dsh`，插件配置里的 `dataRoot` 可覆盖）。宿主在每次徵询前重读（1 秒缓存），所以改文件对下一次调用立即生效，不用重启。未知键会被丢弃，越界的数字会被夹紧到区间，文件损坏则回落到默认值。**默认是 `off`**——一个会花钱、会把会话内容发出去的插件必须显式开启。
+
+| 键                   | 默认        | 范围 / 取值                            | 说明                                                                |
+| -------------------- | ----------- | -------------------------------------- | ------------------------------------------------------------------- |
+| `mode`               | `"off"`     | `off` / `shadow` / `advisory`          | 是否允许调用顾问。                                                  |
+| `provider`           | `""`        | 设置 → 模型里的路由名，最长 300 字符   | 顾问路由。留空 = 永不调用。                                         |
+| `model`              | `""`        | 该路由下的模型 id，最长 300 字符       | 顾问模型。留空 = 永不调用。                                         |
+| `reasoningEffort`    | `""`        | 模型支持的思考档 id，`""` = 用模型默认 | 顾问的思考档。填了不支持的值会去掉思考档重试一次，`doctor` 会告警。 |
+| `maxTokens`          | `4096`      | 256–32000                              | 单次徵询的输出上限。                                                |
+| `temperature`        | `null`      | 0–2，`null` = 不传                     | `null` 表示交给模型 adapter 决定。                                  |
+| `maxCallsPerTurn`    | `1`         | 0–8，`0` = 不限                        | 每回合徵询次数。                                                    |
+| `maxCallsPerSession` | `32`        | 0–1000，`0` = 不限                     | 每会话徵询次数。                                                    |
+| `maxCallsPerHour`    | `12`        | 0–500，`0` = 不限                      | 滚动一小时内。                                                      |
+| `maxCostPerDayUsd`   | `0`         | 0–10000，`0` = 不限                    | 每日金额上限（美元）。只有下面两个单价填了才有意义。                |
+| `priceInputPerMTok`  | `0`         | 0–1000                                 | 顾问模型的输入单价，美元 / 百万 token。`0` = 不算钱。               |
+| `priceOutputPerMTok` | `0`         | 0–1000                                 | 输出单价，美元 / 百万 token。                                       |
+| `privacyScope`       | `"summary"` | `full` / `summary` / `off`             | 发送多少内容——见[成本与隐私](#成本与隐私)。                         |
+| `redact`             | `true`      | 布尔                                   | 发送前对密钥形态的字符串做尽力而为的脱敏。                          |
+| `immuneTurns`        | `3`         | 0–20                                   | 投递后保持安静的回合数。shadow 投递用；工具路径不据此拦截。         |
+| `dedupe`             | `true`      | 布尔                                   | 抑制重复建议。shadow 投递用；工具路径不据此拦截。                   |
+| `sessionCap`         | `24`        | 0–200                                  | 单会话最多投递多少条建议；到顶后只有 `blocker` 继续投递。           |
+| `tiers`              | `{}`        | `"provider/model"` → 数字的映射        | 配对校验用的能力档位。没有条目时结论是「未校验」，不会假装通过。    |
+| `pairingEnforcement` | `"warn"`    | `warn` / `block`                       | 顾问声明的档位低于主模型时怎么办。                                  |
+| `timeoutMs`          | `90000`     | 5000–600000                            | 单次徵询超时；`/advisor cancel` 可以更早中止。                      |
+| `maxInputChars`      | `60000`     | 4000–400000                            | 会话文本总预算；超出部分折叠中间、保留首尾。                        |
+
+> **关于 `sessionCap`、`dedupe`、`immuneTurns`：** `sessionCap` 会生效——单会话投递到上限后，只有 `blocker` 级建议还会返回。`dedupe` 与 `immuneTurns` 会被保存并用于 shadow 路径，但工具路径不会因为它们跳过徵询（是模型显式要求的）。真正会拦住**调用本身**的是 `maxCallsPerTurn` / `maxCallsPerSession` / `maxCallsPerHour` / `maxCostPerDayUsd`。
+
+示例（路由名和模型名是占位，请用选择器里看到的真实值）：
+
+```json
+{
+  "mode": "shadow",
+  "provider": "my-router",
+  "model": "large-model",
+  "priceInputPerMTok": 3,
+  "priceOutputPerMTok": 15
+}
+```
+
+**选模型。** `/advisor` 会打开选择器，列出 DSH 里已经配好的路由与模型，外加*关闭*和*添加 / 配置 provider*。选中一个模型会把 `mode` 切成 `advisory`。还缺什么，`/advisor doctor` 会逐条告诉你。
+
+## 命令
+
+| 命令                                   | 行为                                                                                                                                                |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/advisor`                             | 打开模型选择器（client 半）。每次打开都重新取路由和模型，不跨次缓存。                                                                               |
+| `/advisor status`                      | 模式、顾问路由、本会话 / 本回合已用与上限、累计 token、最近一次结果，以及最近一次「为什么没徵询」。                                                 |
+| `/advisor on`                          | 切到 `advisory`。还没配置顾问模型时拒绝执行，并指向选择器。                                                                                         |
+| `/advisor off`                         | 切到 `off`：不徵询，不发请求。                                                                                                                      |
+| `/advisor shadow`                      | 切到 `shadow`：每个完成的回合后徵询一次并记账，但不回灌。                                                                                           |
+| `/advisor ask`                         | **立刻**徵询一次，并把建议作为命令输出返回。                                                                                                        |
+| `/advisor cancel`                      | 中止在途徵询——请求会被真正 abort，不只是忽略结果。                                                                                                  |
+| `/advisor doctor`                      | 逐项自检：宿主 `llm` 服务、已注册路由、路由解析与上下文窗口、支持的思考档、模式、会话预算、账本状态、最近一次失败。每行给出结论，必要时给出下一步。 |
+| `/advisor <provider>/<model> [effort]` | 直接指定顾问路由，校验规则与选择器一致（未知路由、缺凭据、不支持的思考档都会给可读原因）。                                                          |
+
+`advisor` **工具**和命令是两回事：工具由模型调用，不是你。它没有必填参数；可选的 `focus` 是一句话，用来说明你想让顾问解决的疑点——不是任务本身，任务永远是整段对话。
+
+## 成本与隐私
+
+这一节请在开启前读完。
+
+- **每次徵询都是一次额外的模型调用**，按顾问路由计费，走那家 provider 的额度。主模型自身的 usage 不受影响。
+- **token 由插件自己记账。** DSH 只为主动环里的 assistant 消息记 usage，所以插件单写一份账本：`<DSH_HOME>/advisor/usage.jsonl`，一次徵询一行 JSON（时间、会话 id、触发方式 `tool` / `shadow` / `manual`、provider、model、思考档、结论、严重度、输入 / 输出 / 缓存 token、估算金额、耗时、错误码）。文件只追加，超过 2 MiB 滚动到 `usage.jsonl.1`，启动时从文件尾部恢复累计数。
+- **算钱需要你填单价。** DSH 的模型元数据没有价格字段。填 `priceInputPerMTok` 和 `priceOutputPerMTok`；都留 0 时账本只记 token，界面不显示金额。插件从不猜价格。
+- **每日预算统计的是已经记下的花费**，所以跨过上限的那一次徵询仍会完成并计费。
+- **顾问路由在外部时，会话内容会离开本机。** 渲染后的会话文本（含工具调用与结果，受 `privacyScope` 和 `maxInputChars` 限制）会发到该路由指向的 baseURL。如果那是另一家厂商，你的对话就离开了这台机器；只有指向本地网关的路由才留在本机。除此之外插件什么都不发：没有遥测，没有统计，除了徵询本身不访问网络。
+- **`privacyScope` 决定发多少。** `summary`（默认）：每个文本块最多 2,000 字符，工具参数最多 300，工具结果最多 700。`off`：只发用户与助手的文本（最多 1,200 字符），完全不发工具往来。`full`：文本最多 4,000，工具参数最多 1,200，工具结果最多 3,500。渲染完再按 `maxInputChars`（默认 60,000）封顶：保留前 30% 和结尾，中间替换成省略标记。
+- **脱敏是尽力而为。** `redact: true`（默认）会在**截断之前**清掉常见的密钥形态字符串、`Authorization` 头、`KEY=` / `TOKEN:` 形式的赋值、URL 里内嵌的凭据，以及 PEM 私钥块。它是启发式过滤，**不是密钥扫描器**：一定会漏，也无法保证密钥绝不外发；更不能替代「这个仓库是否允许发给那家 provider」这个判断。
+- **先开 `shadow`。** 它回答的是「它本来会说什么、本来要花多少」，但不把模型输出塞回你的会话。看几天账本，再切到 `advisory`。
+
+## 兼容性
+
+| 已验证的 DSH 版本 | 状态                                                                                                                                                                          |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.2.2-rc.1        | 已在该版本验证：单测（设置夹紧、选路与配对、预算守卫、会话渲染、脱敏、输出契约）与 `pnpm probe:runtime`；桌面端只读回归为 `pnpm smoke:advisor-desktop`。其他 DSH 版本未验证。 |
+
+插件不声明 `engines.dsh`，也不声明 `@deepseek-ai/*` 的 peer 范围：DSH 还在预发布阶段，semver 对预发布版本不可靠（见 [ADR 0005](../../docs/adr/0005-dsh-version-compatibility.md)）。这张表就是兼容性声明。DSH 升级后请跑 `pnpm probe:runtime`、`pnpm smoke:advisor-desktop` 和单测，再看 `/advisor doctor`。
+
+## 副作用、限制与风险
+
+**它会写什么**
+
+| 路径                                       | 内容                                                   |
+| ------------------------------------------ | ------------------------------------------------------ |
+| `<DSH_HOME>/advisor.settings.json`         | 插件设置；由 `/advisor` 和选择器写入，每次徵询前重读。 |
+| `<DSH_HOME>/advisor/usage.jsonl`（+ `.1`） | 一次徵询一行；只追加，超过 2 MiB 滚动。                |
+
+没有别的：不写工作区文件，不往会话日志里塞自己的记录（一次徵询就是普通的工具调用与工具结果），没有遥测。
+
+- **建议是模型输出。** 它可能错、可能空泛、可能一本正经地错。插件校验的是*形状*——是 JSON 对象、结论与严重度在闭集内、长度封顶、证据锚点格式合法——不是内容。请自己掂量、自己核实；做决定的仍然是主模型。
+- **半公开的宿主 seam。** host 侧的 `llm.prepareCall`、`llm.resolveModelInfo`、`session.deriveMessages`、`tools.register`、`commands.register`、`session/event`，以及 client 侧的 `commandUi.decorate`（选择器），都不是稳定的公开 API。DSH 升级可能静默地让工具、选择器或命令失效。每次升级后跑 `pnpm probe:runtime`；安装失败只写日志不抛错，所以还要看 `/advisor doctor` 和宿主日志。
+- **配对档位需要你自己声明。** DSH 没有跨厂商的能力目录，所以「顾问是不是至少和主模型一样强」只能来自你填的 `tiers`。没有条目时结论是**未校验**，徵询照常进行；它不会假装校验通过。把 `pairingEnforcement` 设成 `"block"` 时，档位更低的顾问会被拒绝。
+- **被中止的调用 token 可能记少。** 徵询被取消或超时时，可能收不到 usage chunk；账本会把这次记成 0 token，金额预算可能落后于真实花费。把账本当可靠估算，别当账单。
+- **顾问路由可能因为插件之外的原因坏掉**（baseURL 写错、缺密钥、限流）。所有失败都会变成结构化的工具结果（`MISSING_CREDENTIAL`、`rate_limited`、`overloaded`、`prompt_too_long`、`timeout`、`aborted`…），不会把回合弄断。
+- **本 MVP 没有设置页卡片。** 配置就是 JSON 文件加选择器，还没有「设置 → 通用」里的卡片。
+- **部分生效的旋钮。** `sessionCap` 会限制单会话投递条数（blocker 豁免）；`dedupe` / `immuneTurns` 只在 shadow 路径上有意义——见[配置](#配置)。
+- **只试一次，没有重试循环。** 顾问输出解析失败会报 unavailable，不重试；不支持的思考档只会去掉思考档重试一次。
+- **`shadow` 模式照样花钱。** 它省掉的是回灌，不是调用。而且 `shadow` 期间，模型主动调用 `advisor` 工具仍会拿到建议：这个模式抑制的是回合结束后的自动复查，不是模型发起的徵询。要彻底停调用请用 `off`。
+- **子代理会话**不会被自动 shadow 复查；只有顶层会话的回合会被复查。
+
+## 测试与验证
+
+```bash
+pnpm verify                        # 仓库级门禁：lint、类型、插件规范、文档一致性、单测
+cd packages/advisor && pnpm test   # 本插件的单测（node --test）
+pnpm smoke:advisor-desktop         # 桌面版（Electron）只读回归，走 CDP
+pnpm smoke:agent-tool              # 仓库级真实模型工具冒烟（需要凭据，没有就 SKIP）
+```
+
+- `pnpm verify` 是发版门禁，提 PR 之前必须通过。
+- `pnpm smoke:advisor-desktop` 是桌面版（Electron）只读回归；插件有 client 半，所以这是硬性要求。它通过 CDP 连上正在运行的应用、确认 client 半真的加载，**不会**触发需要付费的徵询。发版门禁里加 `--require`，这样连不上调试端口会失败而不是静默跳过。它要求应用用 `open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1` 启动。
+- `pnpm smoke:agent-tool` 在一次性 DSH 目录里用真实模型驱动一个已注册工具。需要模型凭据；没有凭据时以 SKIP 退出——SKIP 不等于通过。
+
+真机端到端验证（确认「真的发生过一次顾问调用」只能靠这一步）：
+
+1. `cd packages/advisor && pnpm pack --pack-destination /tmp`，然后 `dsh plugin --profile desktop add /tmp/kangyishuai-dsh-advisor-*.tgz`。
+2. 重启 DSH 桌面版；如果还没配，先在*设置 → 模型*里配好顾问路由。
+3. `/advisor doctor` 每一行都应有解释；`/advisor` 能列出你的模型，选一个。
+4. `/advisor shadow`，然后正常做一轮任务。确认 `<DSH_HOME>/advisor/usage.jsonl` 多了一行，且建议没有被注入会话。
+5. `/advisor on`（或 `/advisor ask` 单次徵询）。确认工具卡 / 命令输出里有建议，且 `/advisor status` 的计数在动。
+6. 用完 `/advisor off`。`dsh plugin --profile desktop remove @kangyishuai/dsh-advisor` 卸载代码；设置文件和账本会保留。
+
+测试分层、断言明细与完整的手工 GUI 清单见 [docs/testing/advisor.md](../../docs/testing/advisor.md)；设计取舍见 [ADR 0010](../../docs/adr/0010-advisor-architecture.md)。
+
+## License
+
+MIT。源码、issue 与发版记录：[kangyishuai/dsh-plugins → packages/advisor](https://github.com/kangyishuai/dsh-plugins/tree/main/packages/advisor)。

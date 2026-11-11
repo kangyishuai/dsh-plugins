@@ -40,3 +40,7 @@ documentation:
 "plugin:next-step":
   - changed-files:
       - any-glob-to-any-file: "packages/next-step/**"
+
+"plugin:advisor":
+  - changed-files:
+      - any-glob-to-any-file: "packages/advisor/**"

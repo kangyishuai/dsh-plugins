@@ -1,0 +1,179 @@
+# advisor 测试清单
+
+> 目的：证明三件事——**只有主模型真的徵询时才产生模型调用**、**账本与四级预算真的记在账上、到顶会停**、
+> **客户端只读面（`/advisor` 选择器、`status`、`doctor`）在真实 Electron 里不崩、不误发、不误记**。
+> 三层：**单测 → 桌面只读回归 → 手工 GUI 验证**。前两层每次提交都跑；第三层发版、DSH 升级、以及改动
+> 客户端私有 seam（`commandUi.decorate`）后必须跑。
+>
+> P1 没有 web 端到端冒烟，原因见 [§2](#2-web-端到端冒烟p2-补)。
+
+## 0. 测试环境
+
+advisor 会**真的调一次模型**（`shadow` 模式也一样会调），并且会把会话内容发送给顾问 provider。
+所以除了单测，所有验证都必须在临时 `DSH_HOME` 里跑，并先确认顾问路由是本地网关或你愿意接收数据的 provider：
+
+```bash
+# 1) 打包（link: 安装不可用，见 docs/runtime 0.2.1-rc.5 §6.9）
+cd packages/advisor && pnpm pack --pack-destination /tmp
+
+# 2) 隔离 home：复制 profile + 会话 + 存储
+H=/tmp/dsh-test-advisor
+rm -rf $H && mkdir -p $H/profiles
+cp -R ~/.dsh/profiles/desktop $H/profiles/ad
+cp -R ~/.dsh/sessions $H/sessions
+cp -R ~/.dsh/storages $H/storages
+DSH_HOME=$H dsh plugin --profile ad install
+DSH_HOME=$H dsh plugin --profile ad add /tmp/kangyishuai-dsh-advisor-*.tgz
+
+# 3) 启动（端口 0 = 随机，--no-open 不弹浏览器）
+DSH_HOME=$H dsh --profile ad --port 0 --no-open
+```
+
+**观测点**（"有没有花钱"、"为什么没问"都以这里为准，而不是只看界面）：
+
+| 位置                                             | 看什么                                                                                       |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| `$H/advisor.settings.json`                       | 插件设置：`mode` / `provider` / `model` / 预算 / 隐私档位（改文件即生效）                    |
+| `$H/advisor/usage.jsonl`                         | 账本，一次徵询一行：`trigger`（`tool`/`shadow`/`manual`）、`verdict`、token、`costUsd`、`ms` |
+| 会话日志 `$H/sessions/<projectKey>/<sessionId>/` | `tool/call` + `tool/result`（工具路线的徵询）；`session/event` 里没有额外 usage              |
+| 工具卡 / `/advisor status`                       | 本次结论（`reviewed`/`declined`/`unavailable`/`skipped`）+ 累计 token + 最近一次跳过原因     |
+
+数据根优先级：`config.dataRoot` > `$DSH_HOME` > `~/.dsh`（所以上面的 `H` 变量就是它）。
+
+## 0.5 本次核查记录（2026-11-11，DSH 0.2.2-rc.1）
+
+| 层                                         | 结果                                                                                                                                                     |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `node --test`（`packages/advisor`）        | **51 pass / 0 fail**（settings / route / guard / prompt / redact / tool-schema / transcript）                                                            |
+| `pnpm probe:runtime`                       | **60/60 PASS**（advisor 的 5 条 seam 尚未加进 `SEAM_CHECKS`，见 [§5](#5-dsh-升级时要重点看的宿主事实)）                                                  |
+| `pnpm smoke:advisor-desktop --require`     | **12/12 PASS（真机，DSH 桌面版 0.2.2-rc.1，Electron 44）**：插件已加载、`/advisor` 弹出选择器（52 个真实候选）、Esc 关闭、`status`、`doctor`、收尾无残留 |
+| 真机徵询（`pnpm pack` → `add` → 手动徵询） | **未做**（P1 收尾的验收项，步骤见 [§4](#4-手工-gui-验证步骤)）                                                                                           |
+
+单测与 seam 数字都会随实现增长，上面只是本次核对时的快照。
+
+## 1. 单测（每次提交）
+
+```bash
+cd packages/advisor && pnpm test   # node --test
+pnpm verify                        # 仓库门禁（含单测、规范、文档一致性）
+```
+
+只测**纯函数**——不启动宿主、不连模型、不写真实数据根。应覆盖的范围：
+
+| 主题        | 要证明的事                                                                                                                                                                                                                                  |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 设置规整    | 默认 `mode: "off"`、未配置顾问；丢弃未知键；数字按区间夹紧（`0` 在预算字段里表示"不限"）；非法 `mode`/`privacyScope` 回落到默认；坏 JSON 不抛错只回落。                                                                                     |
+| 设置合并    | `mergeSettings` 只覆盖 patch 里出现的键；写入是原子写、读回一致。                                                                                                                                                                           |
+| 选路与配对  | 显式配置 > 会话当前模型 > 空路由（空路由 = 调用方放弃本次徵询）；档位比较 `ok` / `warn`（顾问更弱）/ `block` / `unknown`（**未校验**，不阻断也不假装通过）。                                                                                |
+| 预算        | 四级预算按固定顺序返回**第一个**不满足的条件；到顶的 code 可区分是哪一级；`0` = 不限制。                                                                                                                                                    |
+| 金额        | 单价为 0 时不算钱（只显示 token，不编金额）；单价存在时按输入/输出分别乘。                                                                                                                                                                  |
+| 去重指纹    | 指纹忽略大小写、空白与标点差异；窗口内重复被拒、窗口外放行；指纹表有上限不会无界增长；免疫窗口只在窗口内为真。                                                                                                                              |
+| 空洞建议    | "Looks good" 这类空洞结论被识别为 `declined` 而不是 `reviewed`（精确匹配，不做包含匹配）。                                                                                                                                                  |
+| 严重度      | 严重度排序单调（`nit` < `concern` < `blocker`），预算/归因逻辑用它比较。                                                                                                                                                                    |
+| 输出契约    | 严格 JSON 解析（容忍 ```json 围栏与前后散文）；非法 severity 回落；`reviewed` 但建议为空 → invalid；纯散文 → unparsed；超长建议被截断并**留痕**；证据条目被过滤。                                                                           |
+| 脱敏        | 常见 token 形态（`sk-`、`ghp_`、`AKIA`、`Bearer`、`KEY=VALUE`）被替换；普通文本不被改动；递归处理嵌套对象的字符串，且有节点预算不无限递归。                                                                                                 |
+| transcript  | 含工具调用与工具结果；**排除我们自己的工具调用**（`purpose: "advisor"` 那条）；`scope=off` 时不发工具往来；`system`/`developer` 消息不进 transcript；超长工具结果被截断并留痕；**脱敏在截断之前**生效；总预算超限时保留首尾并插入省略标记。 |
+| 工具 schema | 工具名与参数形状对齐参照实现（**零必填**，只有可选 `focus`）；只使用宿主支持的关键字子集（`minimum` 这类会被抓出来）；`renderToolOutput` 覆盖四种状态且不抛。                                                                               |
+
+**没覆盖**：真实宿主槽位、真实 Electron 渲染进程、真实的 `llm.prepareCall/stream` 行为、`commandUi.decorate`
+在宿主里的实际渲染。所以下面两层不能省。
+
+## 1.5 一条命令跑完门禁（发版前）
+
+`scripts/gate.mjs` 是通用的：`pnpm gate advisor` 依次跑 `pnpm verify` → `pnpm probe:runtime` →
+web 冒烟（**本插件没有该脚本，会显式打印"未定义，跳过"**）→ 桌面只读回归（**永远带 `--require`**）。
+任何一步失败立刻停并给出下一步提示；只有显式 `--skip-desktop` 才跳桌面端，且结束时会打印"门禁不完整"。
+
+## 2. web 端到端冒烟（P2 补）
+
+`pnpm smoke:advisor` **目前不存在**（根 `package.json` 里没有这个脚本）。P1 不做的理由：
+
+- 工具路线的徵询**必然消耗真实 provider 额度**，而 web 冒烟跑在临时 `DSH_HOME` 里、默认想做到可重复；
+  要让它不花钱，得先注入一个假 provider/adapter（或在临时 home 里配一个本地回环网关），这属于 P2 的工程量。
+- P1 的客户端面是**只读选择器**，宿主渲染路径（`popupSelect`）与命令输出都在真实 Electron 里更容易断言，
+  所以把"必须有自动化"的那部分放在桌面只读回归（硬性要求，已满足）。
+
+P2 补 `smoke:advisor` 时应覆盖：临时 `DSH_HOME` + 本地假 provider → `/advisor off` 时**不新增账本行** →
+`/advisor <provider>/<model>` 选中后 `status` 反映新值 → `/advisor ask` 触发一次真实调用并在账本里多一行 →
+`shadow` 模式**账本增长但主模型上下文里没有建议** → 预算到顶返回 `budget_exhausted` 且不发起第二次调用。
+
+## 3. 桌面只读回归
+
+```bash
+# 1) 带调试端口启动/重启桌面版（验证完正常重启一次即可关掉端口）
+open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1
+# 2) 跑（--require：连不上端口时失败而不是跳过）
+pnpm smoke:advisor-desktop --require
+# 端口不同时：DSH_CDP_PORT=9333 pnpm smoke:advisor-desktop --require
+```
+
+默认**只读**：只开菜单/对话框、读 DOM/文本、再 Esc 关闭；**不选任何模型、不触发真实徵询、不写账本**，
+因此可以直接跑在真实 profile 上。断言清单（✅ = 脚本已覆盖；⬜ = 仍是待补项）：
+
+1. ✅ 连上桌面 UI（CDP）；
+2. ✅ 插件 client 半已加载：`style[data-plugin="@kangyishuai/dsh-advisor"]`；
+3. ⬜ `/` 菜单里能搜到 `advisor`，且描述非空（证明 `commands.register` 生效、宿主目录已刷新）；
+4. ✅ 输入 `/advisor` 回车 → 打开**宿主选择器**（有搜索框、有行），按 Esc 关闭、焦点回到输入框；
+5. ⬜ 选择器行里至少有一条来自宿主已配置路由（`provider/model` 文本可读），且**没有任何一行**泄露
+   `baseURL`/`apiKey`；
+6. ⬜ 没有可用路由时**不显示空列表**，而是显示引导项（"去 设置 → 模型 配置"）；
+7. ✅ `/advisor status` 输出多行文本：模式、顾问、本会话用量、最近一次结果/跳过原因（主模型与配对结论在 P2 的设置卡里显示）；
+8. ✅ `/advisor doctor` 每行都有结论（`✅`/`⚠️`/`❌`）+ 下一步动作，不允许只回一句 error；
+9. ⬜ 整个只读过程**账本行数不变**（`$DSH_HOME/advisor/usage.jsonl` 前后对比；临时 profile 也可读 DOM 计数）；
+10. ⬜ 仓库 cwd 没有多出文件（脚本自身 cwd 污染是最容易漏的一条）。
+
+**注意**：脚本要求插件已装进**正在运行的那个 profile**。没装时第 2 项会失败，并把页面上全部
+`data-plugin` 打出来——这是最省事的"是不是装错 profile / 没重启"判断依据。
+
+`--deep`（可选，P1 不做）：真要跑徵询链时再补，要求显式传专用工作区、并在临时 profile 里跑。
+
+## 4. 手工 GUI 验证步骤
+
+按顺序做一遍，每步都对照"期望"。`$H` 用 [§0](#0-测试环境) 的临时 `DSH_HOME`：
+
+1. **装包**：`cd packages/advisor && pnpm pack --pack-destination /tmp`，然后
+   `DSH_HOME=$H dsh plugin --profile ad add /tmp/kangyishuai-dsh-advisor-*.tgz`。
+2. **重启桌面版**（host 半）并**刷新页面**（client 半）：侧栏/会话区正常，插件已激活，无报错。
+3. **确认默认关闭**：打开一个会话，直接问一句普通问题 → 模型**不应该**徵询（账本文件不存在或行数不变）；
+   工具卡里不该出现顾问结果。
+4. **选顾问**：输入 `/advisor` 回车 → 宿主选择器弹出，列出宿主已配置的 provider × model；
+   选中一条 → toast 提示"顾问已设为 `provider/model`"；`/advisor status` 里的顾问变了。
+   刻意选一条缺凭据的路由 → 行上标 ⚠ 且选中后给"去配置"提示，而不是静默失败。
+5. **徵询一次**：问一个需要动手的任务（例如"先看这个仓库的测试命令再改一个地方"），让模型在动手前调用
+   `advisor` → 工具卡出现结论（`reviewed` / `declined` / `unavailable`），展开能看到建议文本与 token；
+   账本 `$H/advisor/usage.jsonl` **多一行**，`verdict`/`provider`/`model`/token 与工具卡一致。
+6. **看账本**：`/advisor status` 的累计 token 与账本最后一行对得上；`/advisor doctor` 每行都有结论。
+7. **shadow 模式**：`/advisor off` → 编辑 `$H/advisor.settings.json` 把 `mode` 改成 `shadow`（或按实现提供的
+   命令）→ 再完成一轮 → **账本增长，但主模型上下文里没有建议**（工具结果不注入；表现是模型行为不变，
+   而账本多一行 `trigger: "shadow"`）。
+8. **off 真的不发请求**：`/advisor off` → 完成一轮 → 账本行数不变。**注意**：`off` 时工具仍然注册
+   （缓存安全），`execute` 直接返回 `disabled`——所以你可能看到一条 `skipped`/`disabled` 的工具结果，
+   但那不是一次模型调用。
+9. **预算到顶**：把 `maxCallsPerTurn` 或 `maxCallsPerSession` 临时改成 0/1，再让模型徵询 → 得到
+   `budget_exhausted`（说清是哪一级），账本不再增长；改回后恢复。
+10. **隐私**：把 `privacyScope` 改成 `off` → 徵询应被跳过并说明原因；改回 `summary` 后恢复。
+    检查脱敏：在会话里贴一段形如 `sk-xxxx` 的假 token，徵询后看账本/工具卡里没有原文。
+11. **子代理会话**：在子代理会话里让模型徵询 → 要么按配置拒绝（`no_session` 一类原因），要么行为与主会话
+    一致且账本记录 `sessionId`；不允许出现"子代理里徵询把主会话带崩"。
+12. **递归**：跑一个多步回合并让模型徵询 2–3 次，观察**不出现自我循环**（账本行数应等于模型实际徵询次数，
+    不是指数增长）。这是本插件唯一能把自己跑死的缺陷，手工也要看一眼。
+13. **升级回归**：升级 DSH 后重跑第 4–12 步；选择器打不开、`status` 空白、或账本突然停记，多半是宿主私有
+    seam 变了——先看 `/advisor doctor`，再对照 [§5](#5-dsh-升级时要重点看的宿主事实) 核对。
+
+## 5. DSH 升级时要重点看的宿主事实
+
+逐条都有源码证据（见 [runtime 0.2.2-rc.1 §9.15](../runtime/0.2.2-rc.1.md)）。建议把下面这些
+（§9.15 第 11 条给的 5 条是主干；`settings.general.item` 槽等 P2 用到时再加）补进
+`scripts/probe-runtime.mjs` 的 `SEAM_CHECKS`，让宿主升级时能直接 FAIL 而不是功能静默消失：
+
+1. `llm.prepareCall` / `llm.stream` 仍是 `dsh-llm` 的服务定义成员，且 dispatch 前仍只重核路由字段
+   （`callConfigEquals` 的口径不变）；一次 prepared call 仍只能 dispatch 一次；
+2. `commands.register` 仍在，`commands/list` 仍是 Typert Remote（`/advisor` 出现在 `/` 菜单的唯一来源）；
+3. `commandUi.decorate` 仍接受 `{name, available, ui: {kind: "popupSelect", options, onSelect}}`，
+   且 `available` 仍被宿主直接调用（缺了会"回车没反应"）；
+4. `usage` 仍只由主循环写进 `assistant/message`（**如果哪天宿主给额外调用记 usage，账本要重新设计**）；
+5. `user/message` 的 `source.kind !== "user"` 仍渲染成不可见的 `context` 节点（隐藏注入通道）；
+   `purpose` 仍能自由传值（递归防护的判据）；
+6. `resolveModelInfo` 返回的 `reasoning.efforts` / `context.contextWindow` 形状不变，
+   且 `UNSUPPORTED_REASONING_EFFORT` 仍是**抛错**而不是 clamp（否则 effort 降级逻辑可以简化）；
+7. `LlmModelInfo` 仍然**没有价格字段**（有的话金额就不用用户填单价了）。

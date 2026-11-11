@@ -42,7 +42,8 @@
     "check:docs": "node scripts/check-docs.mjs",
     "smoke:next-step-desktop": "node scripts/smoke-next-step-desktop.mjs",
     "smoke:next-step": "node scripts/smoke-next-step.mjs",
-    "gate:next-step": "node scripts/gate.mjs next-step"
+    "gate:next-step": "node scripts/gate.mjs next-step",
+    "smoke:advisor-desktop": "node scripts/smoke-advisor-desktop.mjs"
   },
   "simple-git-hooks": {
     "pre-commit": "pnpm exec lint-staged && node scripts/check-public.mjs",
