@@ -110,7 +110,7 @@ gh release view '@kangyishuai/dsh-next-step@0.1.2' --json tagName,body --jq '{ta
 真实会话里这条路径已在 0.7 之前的人工验证中确认。
 
 **桌面真机回归（同日 20:0x 补跑）**：把待测 tarball 装进 desktop profile 并重启宿主后，
-`pnpm smoke:next-step-desktop --require --deep` 得到 **32 PASS + 3 SKIP + 0 FAIL**（构建 `1ba08e8b`）。
+`pnpm smoke:next-step-desktop --require --deep` 得到 **32 PASS + 3 SKIP + 0 FAIL**（发版前 tarball，版本 0.1.2 / 构建 `1ba08e8b`）。
 首跑曾因模型对「用一句话解释二分查找」返回 `needed=false` 而不出卡失败——桌面深测已改成和 web 冒烟
 同一条兜底（等「生成下一步建议」按钮 → 点它 → 再断言可交互卡、点胶囊、回显），详见 §0.9。
 `SMOKE_KEEP=1` 的临时目录 / `/tmp/dsh-smoke-next-step-shots` 用完请删掉（可能含真实会话内容，别提交）。
@@ -317,17 +317,18 @@ npm view @kangyishuai/dsh-next-step version
 
 ## 0.9 0.2.0 发布记录（核对时间 2026-11-11）
 
-| 项                     | 值                                                                                                      |
-| ---------------------- | ------------------------------------------------------------------------------------------------------- |
-| npm `dist-tags.latest` | `0.2.0`（发布于 `2026-11-11T12:32:31Z`）                                                                |
-| npm `gitHead`          | `a68a8a6484ce0f8249ef334cc1c9ee5260a477d2`（PR #50 squash）                                             |
-| git tag                | `@kangyishuai/dsh-next-step@0.2.0` → 提交 **`a68a8a6`**（`chore(release): version packages (#50)`）     |
-| provenance             | 有（SLSA；`search.sigstore.dev` logIndex `3809882388`）                                                 |
-| GitHub Release         | 非 Draft / 非 Pre-release；body 1,424 字节                                                              |
-| 可安装性               | 干净目录 `npm i @kangyishuai/dsh-next-step@0.2.0` 成功；装出 8 个 `lib/*.js`，`package.json` 版本 0.2.0 |
-| 合并提交               | 特性 PR #49 → `86e2cea`；版本 PR #50 → `a68a8a6`                                                        |
-| 桌面真机（发布前）     | `pnpm smoke:next-step-desktop --require --deep`：**32 PASS + 3 SKIP + 0 FAIL**（构建 `1ba08e8b`）       |
-| 发版门禁（发布前）     | `pnpm gate next-step`：**4 步全绿，152s**（verify → probe 60/60 → web 冒烟 59/59 → 桌面只读 22/22）     |
+| 项                     | 值                                                                                                                             |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| npm `dist-tags.latest` | `0.2.0`（发布于 `2026-11-11T12:32:31Z`）                                                                                       |
+| npm `gitHead`          | `a68a8a6484ce0f8249ef334cc1c9ee5260a477d2`（PR #50 squash）                                                                    |
+| git tag                | `@kangyishuai/dsh-next-step@0.2.0` → 提交 **`a68a8a6`**（`chore(release): version packages (#50)`）                            |
+| provenance             | 有（SLSA；`search.sigstore.dev` logIndex `3809882388`）                                                                        |
+| GitHub Release         | 非 Draft / 非 Pre-release；body 1,424 字节                                                                                     |
+| 可安装性               | 干净目录 `npm i @kangyishuai/dsh-next-step@0.2.0` 成功；装出 8 个 `lib/*.js`，`package.json` 版本 0.2.0                        |
+| 合并提交               | 特性 PR #49 → `86e2cea`；版本 PR #50 → `a68a8a6`                                                                               |
+| 桌面真机（发布前）     | `pnpm smoke:next-step-desktop --require --deep`：**32 PASS + 3 SKIP + 0 FAIL**（发版前 tarball，版本 0.1.2 / 构建 `1ba08e8b`） |
+| 发布后自证（0.2.0）    | 只读回归 **20 PASS + 2 SKIP + 0 FAIL**；诊断 `版本 0.2.0 · 构建 ce72c9dd`（哈希含 `package.json` 版本，与发版前不同属预期）    |
+| 发版门禁（发布前）     | `pnpm gate next-step`：**4 步全绿，152s**（verify → probe 60/60 → web 冒烟 59/59 → 桌面只读 22/22）                            |
 
 核对命令（可复现）：
 
@@ -339,4 +340,4 @@ gh release view '@kangyishuai/dsh-next-step@0.2.0' --json tagName,isDraft,isPrer
 ```
 
 本轮发布后 desktop profile 已装 `0.2.0`（`dsh plugin --profile desktop add @kangyishuai/dsh-next-step@0.2.0`），
-**需要重启桌面版**才会加载新的 host 半；重启后设置页诊断应显示 `版本 0.2.0 · 构建 1ba08e8b`。
+**需要重启桌面版**才会加载新的 host 半；重启后设置页诊断显示 `版本 0.2.0 · 构建 ce72c9dd`。构建哈希包含 `package.json` 的版本号，所以「发版前 tarball（0.1.2 / `1ba08e8b`）」与「发布包（0.2.0 / `ce72c9dd`）」哈希不同是预期的，代码内容一致。
