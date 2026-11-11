@@ -67,6 +67,29 @@ DSH_HOME=$H dsh --profile ns --port 0 --no-open
 结论：**0.1.2 无回归**。三层覆盖（单测 / web 端到端 / 桌面真机只读）均通过；唯一的 SKIP 是数据相关的正常分支
 （摘要没有超两行自然不出现展开按钮），不是失败。
 
+## 0.7 0.1.2 发布记录（核对时间 2026-11-11）
+
+| 项                     | 值                                                                                                  |
+| ---------------------- | --------------------------------------------------------------------------------------------------- |
+| npm `dist-tags.latest` | `0.1.2`（发布于 `2026-11-11T02:51:16Z`）                                                            |
+| npm `gitHead`          | `f8334abfbd78355141fe8643a7cf9a1c97901253`                                                          |
+| git tag                | `@kangyishuai/dsh-next-step@0.1.2` → 提交 **`f8334ab`**（`chore(release): version packages (#45)`） |
+| tag 内 `package.json`  | `0.1.2`；`lib/` 含 `queue-gate.js`                                                                  |
+| provenance             | 有（SLSA，`npm publish --provenance`）                                                              |
+| GitHub Release         | 非 Draft / 非 Pre-release；**body 已更新为英文版（2,616 字节）**                                    |
+| 可安装性               | 干净目录 `npm i @kangyishuai/dsh-next-step@0.1.2` 成功，装出 8 个 `lib/*.js`                        |
+
+核对命令（可复现）：
+
+```bash
+# npm 侧
+curl -s "https://registry.npmjs.org/%40kangyishuai%2Fdsh-next-step?t=$(date +%s)" \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); v=d["versions"]["0.1.2"]; print(d["dist-tags"]["latest"], v["gitHead"])'
+# git / Release 侧
+git rev-parse --short '@kangyishuai/dsh-next-step@0.1.2^{commit}'
+gh release view '@kangyishuai/dsh-next-step@0.1.2' --json tagName,body --jq '{tag:.tagName, bodyBytes:(.body|length)}'
+```
+
 ## 1. 单测（每次提交）
 
 ```bash
