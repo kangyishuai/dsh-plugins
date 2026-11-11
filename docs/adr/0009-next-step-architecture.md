@@ -46,3 +46,17 @@
 ## 验证
 
 见 [docs/testing/next-step.md](../../docs/testing/next-step.md)：单测（提示词/解析/设置）+ web 冒烟（临时 `DSH_HOME`、真实宿主）+ 桌面 CDP 只读冒烟（硬性要求）。
+
+## 增补（2026-11-11）：v0.2 的四个取舍
+
+**1. 按钮文本 = 发出去的用户消息（WYSIWYG）。** v1 里胶囊显示 20 字短标签、实际发送背后 240 字的 `text`。实现后暴露两个问题：用户点的是 A、transcript 里却是另一段话（不可预期、不可审计），而「点后回显按钮文本」的需求会把这个错位藏起来。v0.2 起：`options[].label` 就是点击后原样发送的消息，限制从 20 放宽到 4–60 字（可说两行），`text` 字段移除；旧记录里残留的 `text` 被忽略。代价是指令自足性下降，用提示词约束（动词开头、单独发出去就能干活）补足。
+
+**2. 判断权交给模型：`needed` + `reason`。** 「是不是该出卡」没有可靠的启发式；Claude Code 的 `AskUserQuestion`（只在被卡住时才调用）与 DSH 原生 `ask_user_question` / 官方 action-cards 都把判断权放在模型侧。v0.2 沿用同一次额外调用，但输出里加 `needed: boolean` 与 `reason`：`needed=false` 时不写卡、把理由记进 `lastSkip` 并在设置诊断里显示。代价：这次调用仍然发生，省的是界面噪音而不是 token；换来的是「没出卡」有字可查，而不是静默。
+
+**3. 「没出卡」必须有出口：手动补生成。** 光有 `reason` 只能解释，不能补救。v0.2 在最新一轮没出卡时于回答下方渲染一行「生成下一步建议」，走新的 `nextStep/generateNow` Remote 强制生成（无视 `needed`，但仍受总开关与预算约束）。这样「我觉得该出卡却没出」可以一键变成可复现的验证，而不是只能猜是 BUG 还是模型判断。
+
+**4. `⌘↵` 只在安全窗口里接管。** 该组合是宿主 composer 的「Queue/Steer 互补发送」（`fixed.complementary`），直接抢占会破坏排队语义。但宿主源码写明空草稿时它是 empty-draft no-op（`dsh-client-ui-conversation`）。因此 v0.2 通过 `shortcuts.observeFixedInput` 旁听，只在「输入框干净（无草稿/附件/引用/声明，菜单未开）+ 会话空闲 + 本会话有可交互卡」时 `consume()` 并触发 primary，其余情况完全透传。键帽不再是装饰，但也不是全局快捷键。
+
+**勘误：卡片一直渲染在 `conversation.chat.turnTail`。** 上面的决策 4 与旧版 README 写的「改为 composer 覆盖层」与代码不符（截图也显示卡片在回答下方、action row 上方）。实际实现（v0.1.0 起）注册在 `conversation.chat.turnTail`；ADR 保留原文以保留决策历史，以此处为准。
+
+**设置渐进披露。** 总开关关闭 = 不发请求，所以卡片/幽灵/暂停/预算/诊断整段不渲染，只留开关与一行说明；重新启用时子开关取值保留。
