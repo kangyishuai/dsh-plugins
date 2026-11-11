@@ -51,6 +51,22 @@ DSH_HOME=$H dsh --profile ns --port 0 --no-open
 1. **投影缺 `stateSchema` / `wire.viewSchema` 会让整条会话历史加载失败**（页面「历史加载失败」、卡片永不渲染，但发消息与日志都正常）。注册表在读取路径上无条件 `parse`，注册时却不校验。修法：给恒等桩 `{ parse: (v) => v }`，详见 [runtime 0.2.2-rc.1 §9.14](../runtime/0.2.2-rc.1.md)。
 2. **macOS `/var` 是 `/private/var` 的软链**：冒烟里把未 realpath 的工作区路径写进 `workspace.json`，宿主校验失败 → 新会话 `session/workspace-attach-failed`，表现为"模型没权限"。脚本必须 `realpath`。
 
+## 0.6 0.1.2 全量回归记录（2026-11-11 14:26，macOS 本机）
+
+在仓库根目录依次跑三套，全部通过：
+
+| 顺序 | 命令                                                                       | 结果                                                                                          | 耗时       |
+| ---- | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | ---------- |
+| 1    | `pnpm verify`（lint + typecheck + 规范 + docs + 公开边界 + 全仓单测）      | **exit 0**；单测 **334 pass / 0 fail**（next-step 79、session-delete 50、session-rewind 205） | **5.6s**   |
+| 2    | `pnpm smoke:next-step`（临时 `DSH_HOME`、真实宿主、真实模型调用）          | **54 PASS + 0 SKIP**                                                                          | **102.8s** |
+| 3    | `pnpm smoke:next-step-desktop --require`（真实 Electron，插件 0.1.2 已装） | **21 PASS + 1 SKIP**（SKIP：该卡摘要未折叠、没有「展开」按钮）                                | **30.1s**  |
+
+环境：desktop profile 已装 `@kangyishuai/dsh-next-step@0.1.2`，app 以 `--remote-debugging-port=9222` 运行，
+设置页诊断行显示 `版本 0.1.2 · 构建 833e886a`。
+
+结论：**0.1.2 无回归**。三层覆盖（单测 / web 端到端 / 桌面真机只读）均通过；唯一的 SKIP 是数据相关的正常分支
+（摘要没有超两行自然不出现展开按钮），不是失败。
+
 ## 1. 单测（每次提交）
 
 ```bash
