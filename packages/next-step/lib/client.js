@@ -657,8 +657,12 @@ window.__ModuleLoader__.load({
       let card = cardOf(view, turnNumber);
       let decision = decisionOf(view, turnNumber);
 
+      // 只有「最新一轮且没有卡」才需要读设置（决定要不要画补生成按钮），
+      // 历史轮次不读，避免一个长会话里每个 turn-tail 都发一次 RPC。
       React.useEffect(() => {
         if (!api || typeof api.settings !== "function") return undefined;
+        if (!isLastTurn) return undefined;
+        if (card !== undefined && card !== null) return undefined;
         let alive = true;
         Promise.resolve(api.settings())
           .then((value) => {
@@ -668,17 +672,17 @@ window.__ModuleLoader__.load({
         return () => {
           alive = false;
         };
-      }, [api]);
+      }, [api, card, isLastTurn]);
 
       // 留 2.5s 给自动生成：期间按钮不出现，避免「按钮闪一下又被卡片顶掉」。
       React.useEffect(() => {
-        if (card !== undefined && card !== null) {
+        if (!isLastTurn || (card !== undefined && card !== null)) {
           setGrace(false);
           return undefined;
         }
         let timer = setTimeout(() => setGrace(true), RETRY_GRACE_MS);
         return () => clearTimeout(timer);
-      }, [turnNumber, card, sessionId]);
+      }, [turnNumber, card, sessionId, isLastTurn]);
 
       // 投影一旦追上，乐观态就退场（投影是唯一事实来源）。
       React.useEffect(() => {
