@@ -122,7 +122,7 @@ const SHOTS = ${JSON.stringify(shots)};
 const HOME = ${JSON.stringify(home)};
 const CAN_MODEL = ${canModel ? "true" : "false"};
 const WORKSPACE_TITLE = ${JSON.stringify(WORKSPACE_TITLE)};
-const { writeFile } = await import("node:fs/promises");
+const { readFile, writeFile } = await import("node:fs/promises");
 const { join } = await import("node:path");
 // 幽灵面默认关：冒烟一开始就在设置文件里打开它，顺带验证 B 面；后面的「关闭开关」段会覆盖成 enabled:false。
 try {
@@ -268,6 +268,32 @@ const waitStableCards = async (timeoutMs, quietMs) => {
 };
 const describeCards = (cards) => JSON.stringify((cards || []).map((c) => ({ turn: c.turn, state: c.state, pills: c.pills.length })));
 
+// ego-browser 的 profile 会跨任务累积每个临时宿主的 dsh-auth cookie；请求头超限会返回 HTTP 431，
+// 而 Chromium 统一报成 net::ERR_HTTP_RESPONSE_CODE_FAILURE（看起来像「页面挂了」）。
+// 绝不能清空整个浏览器（那是用户真实 profile），只删 host 是 loopback 的 cookie。
+const purgeLoopbackCookies = async () => {
+  try {
+    await page.cdp("Network.enable");
+    const all = await page.cdp("Network.getAllCookies");
+    const cookies = Array.isArray(all) ? all : all?.cookies ?? [];
+    const loopback = cookies.filter((c) => {
+      const domain = String(c.domain || "").replace(/^./u, "");
+      return domain === "127.0.0.1" || domain === "localhost" || domain === "[::1]";
+    });
+    for (const cookie of loopback) {
+      await page.cdp("Network.deleteCookies", {
+        name: cookie.name,
+        domain: cookie.domain,
+        path: cookie.path || "/",
+      }).catch(() => {});
+    }
+    return { removed: loopback.length, total: cookies.length };
+  } catch (_error) {
+    return { removed: 0, total: 0 };
+  }
+};
+const cookieScope = await purgeLoopbackCookies();
+console.log("SMOKE_COOKIES " + JSON.stringify(cookieScope));
 await page.goto(${JSON.stringify(url)});
 await page.waitForTimeout(5000);
 await dismissOnboarding();
@@ -748,42 +774,49 @@ check(
 );
 await shot("07-disabled");
 
-// ---------- 6. 设置页：开关 / 暂停 / 预算 / 诊断（UI 写入 = updateSettings RPC） ----------
-const clickLabel = (pattern, exact) =>
+// ---------- 6. 设置页：开关 → updateSettings RPC 写盘（临时 home，安全） ----------
+// 入口是 账号菜单 →「设置」→ 左栏「通用设置」（插件行在 settings.general.item）。
+// 不写死坐标：按选择器找到元素后派发完整指针/鼠标事件序列。
+const fireClick = (selector, text) =>
   page.evaluate(
-    (src, strict) => {
-      const re = new RegExp(src, "i");
-      const label = (el) =>
-        ((el.getAttribute("aria-label") || el.getAttribute("title") || el.textContent || "") + "").trim();
-      const candidates = [...document.querySelectorAll("button, [role=button], a, [role=menuitem], [role=switch]")];
-      const hit = candidates.find((el) => (strict ? re.test(label(el)) && label(el).length <= 12 : re.test(label(el))));
-      if (!hit) return { clicked: false, sample: candidates.map(label).filter((x) => x !== "").slice(0, 14) };
-      hit.click();
-      return { clicked: true, label: label(hit).slice(0, 40) };
-    },
-    pattern,
-    exact,
+    "(() => {" +
+      "const nodes = [...document.querySelectorAll(" + JSON.stringify(selector) + ")];" +
+      "const hit = " + (text ? "nodes.find((el) => (el.textContent || '').includes(" + JSON.stringify(text) + "))" : "nodes[0]") + ";" +
+      "if (!hit) return { ok: false, count: nodes.length, sample: nodes.map((el) => ((el.textContent || '') + '').trim().slice(0, 12)).filter(Boolean).slice(0, 10) };" +
+      "const opts = { bubbles: true, cancelable: true, view: window };" +
+      "hit.dispatchEvent(new PointerEvent('pointerdown', opts));" +
+      "hit.dispatchEvent(new MouseEvent('mousedown', opts));" +
+      "hit.dispatchEvent(new PointerEvent('pointerup', opts));" +
+      "hit.dispatchEvent(new MouseEvent('mouseup', opts));" +
+      "hit.dispatchEvent(new MouseEvent('click', opts));" +
+      "return { ok: true, label: ((hit.getAttribute('aria-label') || hit.textContent || '') + '').trim().slice(0, 24) };" +
+      "})()",
   );
 
-// 设置入口在不同 DSH 版本里可能在侧栏「更多」菜单或账户菜单后面：按顺序试。
-let settingsEntry = await clickLabel("^(设置|settings|preferences)$", true);
-if (!settingsEntry.clicked) {
-  const more = await clickLabel("^(更多|more)$", true);
-  if (more.clicked) {
-    await page.waitForTimeout(800);
-    settingsEntry = await clickLabel("^(设置|settings|preferences)$", false);
-  }
-}
-if (!settingsEntry.clicked) {
-  const account = await clickLabel("账户|account|profile|avatar", false);
-  if (account.clicked) {
-    await page.waitForTimeout(800);
-    settingsEntry = await clickLabel("^(设置|settings|preferences)$", false);
-  }
-}
+const menuHit = await fireClick('button[aria-label="账号菜单"]');
 await page.waitForTimeout(1200);
+const settingsHit = await fireClick('button[role="menuitem"]', "设置");
+await page.waitForTimeout(1600);
+const generalHit = await fireClick('[data-shortcut-modal="settings"] button', "通用设置");
+await page.waitForTimeout(1200);
+
+const readSettingsFile = async () => {
+  try {
+    return JSON.parse(await readFile(join(HOME, "next-step.settings.json"), "utf8"));
+  } catch (_error) {
+    return null;
+  }
+};
+const switchState = (selector) =>
+  page.evaluate(
+    "(() => { const el = document.querySelector(" +
+      JSON.stringify(selector) +
+      "); return el ? el.getAttribute('aria-checked') : null; })()",
+  );
+const CARD_SWITCH = '[data-next-step-switch="card"]';
+
 let settingsRow = null;
-for (let attempt = 0; attempt < 25; attempt += 1) {
+for (let attempt = 0; attempt < 30; attempt += 1) {
   settingsRow = await page.evaluate(() => {
     const row = document.querySelector("[data-next-step-settings]");
     if (!row) return null;
@@ -800,47 +833,77 @@ for (let attempt = 0; attempt < 25; attempt += 1) {
   if (settingsRow !== null) break;
   await page.waitForTimeout(300);
 }
-if (settingsRow === null) {
-  skip(
-    "设置页那一行（开关 / 暂停 / 预算 / 诊断）",
-    settingsEntry.clicked
-      ? "点到了「设置」但页面上没有 data-next-step-settings（设置页未渲染或槽位变了）"
-      : "页面上找不到「设置 / Settings」入口；候选按钮=" + JSON.stringify(settingsEntry.sample),
-  );
-} else {
-  check(
-    "设置页出现「下一步建议」行（3 个开关 + 暂停 + 预算）",
-    settingsRow.switches.length === 3 && settingsRow.budget === true && settingsRow.pause === true,
-    JSON.stringify(settingsRow),
-  );
-  check(
-    "设置行显示诊断信息",
-    typeof settingsRow.diag === "string" && settingsRow.diag.length > 0,
-    "diag=" + String(settingsRow.diag).slice(0, 60),
-  );
-  const enabledBefore = (settingsRow.switches.find((s) => s.key === "enabled") || {}).on || "";
-  const toggledOn = await page.evaluate(() => {
-    const el = document.querySelector('[data-next-step-switch="enabled"]');
-    if (!el) return false;
-    el.click();
-    return true;
-  });
-  let enabledAfter = "";
-  for (let attempt = 0; attempt < 24; attempt += 1) {
-    enabledAfter = await page.evaluate(() => {
-      const el = document.querySelector('[data-next-step-switch="enabled"]');
-      return el ? el.getAttribute("aria-checked") || "" : "";
-    });
-    if (enabledAfter === "true") break;
-    await page.waitForTimeout(250);
-  }
-  check(
-    "点开关走 updateSettings RPC 并回读成功",
-    enabledBefore === "false" && toggledOn === true && enabledAfter === "true",
-    JSON.stringify({ enabledBefore: enabledBefore, toggledOn: toggledOn, enabledAfter: enabledAfter }),
-  );
-  await shot("08-settings");
+const navDetail = JSON.stringify({ menuHit, settingsHit, generalHit });
+check(
+  "设置页出现「下一步建议」行（3 开关 + 预算 + 暂停 + 诊断含版本）",
+  settingsRow !== null &&
+    Array.isArray(settingsRow.switches) &&
+    settingsRow.switches.length === 3 &&
+    settingsRow.budget === true &&
+    settingsRow.pause === true &&
+    settingsRow !== null &&
+    settingsRow.diag.includes("版本 ") &&
+    settingsRow.diag.includes("构建 ") &&
+    /[0-9]+.[0-9]+.[0-9]+/u.test(settingsRow.diag) &&
+    /[0-9a-f]{8}/u.test(settingsRow.diag),
+  settingsRow === null ? "导航=" + navDetail : JSON.stringify({ switches: settingsRow.switches, budget: settingsRow.budget, pause: settingsRow.pause, diag: settingsRow.diag }),
+);
+await shot("08-settings");
+
+// 断言 2：点 card 开关 → aria-checked 立即翻转
+const cardBefore = await switchState(CARD_SWITCH);
+const cardSwitchClicked = await fireClick('[data-next-step-switch="card"]');
+let cardAfter = cardBefore;
+for (let attempt = 0; attempt < 24; attempt += 1) {
+  cardAfter = await switchState(CARD_SWITCH);
+  if (cardAfter === "false") break;
+  await page.waitForTimeout(250);
 }
+check(
+  "点 card 开关后 aria-checked 翻转为 false",
+  cardBefore === "true" && cardSwitchClicked.ok === true && cardAfter === "false",
+  JSON.stringify({ cardBefore, clicked: cardSwitchClicked.ok, cardAfter }),
+);
+
+// 断言 3：读临时 home 的设置文件 → card=false（证明走的是 updateSettings RPC 写盘）
+let fileAfterOff = null;
+for (let attempt = 0; attempt < 20; attempt += 1) {
+  fileAfterOff = await readSettingsFile();
+  if (fileAfterOff !== null && fileAfterOff.card === false) break;
+  await page.waitForTimeout(250);
+}
+check(
+  "updateSettings RPC 真的写进了设置文件（card:false）",
+  fileAfterOff !== null && fileAfterOff.card === false,
+  JSON.stringify({ card: fileAfterOff === null ? null : fileAfterOff.card, ghost: fileAfterOff === null ? null : fileAfterOff.ghost, enabled: fileAfterOff === null ? null : fileAfterOff.enabled }),
+);
+
+// 断言 4：点回 → aria-checked=true 且文件 card=true（双向 + 恢复现场）
+await fireClick('[data-next-step-switch="card"]');
+let cardRestored = "false";
+for (let attempt = 0; attempt < 24; attempt += 1) {
+  cardRestored = await switchState(CARD_SWITCH);
+  if (cardRestored === "true") break;
+  await page.waitForTimeout(250);
+}
+let fileAfterOn = null;
+for (let attempt = 0; attempt < 20; attempt += 1) {
+  fileAfterOn = await readSettingsFile();
+  if (fileAfterOn !== null && fileAfterOn.card === true) break;
+  await page.waitForTimeout(250);
+}
+check(
+  "点回开关后设置文件恢复 card:true（UI ↔ RPC ↔ 磁盘闭环）",
+  cardRestored === "true" && fileAfterOn !== null && fileAfterOn.card === true,
+  JSON.stringify({ cardRestored, card: fileAfterOn === null ? null : fileAfterOn.card }),
+);
+
+// 关掉设置面板，别把界面留在设置里。
+for (let i = 0; i < 2; i += 1) {
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(300);
+}
+await shot("09-settings-closed");
 
 await task.finish({ keep: false }).catch(() => {});
 console.log("SMOKE_STATE " + JSON.stringify({
@@ -1221,6 +1284,27 @@ const main = async () => {
     const profileJson = JSON.parse(await readFile(join(profile, "package.json"), "utf8"));
     profileJson.name = `dsh-profile-${PROFILE}-smoke`;
     await writeFile(join(profile, "package.json"), JSON.stringify(profileJson, null, 2));
+    // 用户的 desktop profile 里可能已经装了正式版 next-step（例如 0.1.1）：
+    // 复制过来后必须**彻底摘掉**再装待测 tgz，否则同一个包会以两种来源同时存在于组合里，
+    // 宿主启动时组合失败、页面直接返回 HTTP 错误（表现为 page.goto ERR_HTTP_RESPONSE_CODE_FAILURE）。
+    {
+      const pkgPath = join(profile, "package.json");
+      const pkg = JSON.parse(await readFile(pkgPath, "utf8"));
+      if (pkg.dependencies && Object.hasOwn(pkg.dependencies, PACKAGE)) {
+        delete pkg.dependencies[PACKAGE];
+      }
+      const bundles = pkg.dsh?.profile?.bundles;
+      if (Array.isArray(bundles)) {
+        pkg.dsh.profile.bundles = bundles.filter((entry) => entry !== PACKAGE);
+      }
+      await writeFile(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+      await rm(join(profile, "node_modules", "@kangyishuai", "dsh-next-step"), {
+        recursive: true,
+        force: true,
+      });
+      // 让 pnpm 下次 add 时重新解析，不复用旧 lockfile 里那条 file: 依赖。
+      await rm(join(profile, "pnpm-lock.yaml"), { force: true });
+    }
 
     // 只放**一个**工作区，指向临时目录：脚本绝不碰用户真实项目。
     await mkdir(join(home, "storages"), { recursive: true });

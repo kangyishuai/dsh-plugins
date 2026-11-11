@@ -20,6 +20,7 @@ import {
   nextStepProjection,
 } from "./projection.js";
 import { buildMessages, buildSystemPrompt, parseSuggestion, renderTranscript } from "./prompt.js";
+import { shouldSkipForQueue } from "./queue-gate.js";
 import { DEFAULT_SETTINGS, loadSettings, saveSettings } from "./settings.js";
 
 /**
@@ -97,6 +98,28 @@ function isSubagentSession(session) {
     header.origin === "subagent" ||
     (typeof header.delegationDepth === "number" && header.delegationDepth > 0)
   );
+}
+
+/**
+ * 读「用户已排队」的消息条数：next-turn + next-step。
+ * 读不到就返回 0（宁可不拦，也不因为宿主形状变化误杀）。
+ * @param {any} ctx
+ * @param {string} sessionId
+ * @returns {number}
+ */
+function queuedCountOf(ctx, sessionId) {
+  const inbox = serviceOf(ctx, "agents")?.get?.(sessionId)?.inbox;
+  if (inbox === undefined || inbox === null) return 0;
+  let count = 0;
+  try {
+    const nextStep = inbox.nextStep;
+    const nextTurn = inbox.nextTurn;
+    if (Array.isArray(nextStep)) count += nextStep.length;
+    if (Array.isArray(nextTurn)) count += nextTurn.length;
+  } catch (_error) {
+    return 0;
+  }
+  return count;
 }
 
 /**
@@ -210,6 +233,11 @@ export class NextStepService extends TypertRemoteService {
     if (!settings.enabled || !settings.card) return;
     if (settings.pauseUntil > Date.now()) return;
     const sessionId = session.id;
+    // 用户已经排了 ≥2 条消息就不再出卡（官方 action-cards 的同一条规则）。
+    if (shouldSkipForQueue(queuedCountOf(this.ctx, sessionId))) {
+      this.counters.skipped += 1;
+      return;
+    }
     const { cards } = scanSession(session);
     if (cards.has(turn)) return;
     if (cards.size >= settings.maxCardsPerSession) {

@@ -940,7 +940,7 @@ window.__ModuleLoader__.load({
         else if (clearedKey === promptKey) reason = "cleared";
         else if (suppressed) reason = "suppressed";
         else if (draft !== "") reason = "draft";
-        else if (phase !== "plain") reason = "phase:" + phase;
+        else if (phase !== "plain") reason = `phase:${phase}`;
         else if (hasClaim) reason = "claim";
         else if (menuOpen) reason = "menu";
         else if (attachmentCount !== 0) reason = "attachments";
@@ -1101,7 +1101,7 @@ window.__ModuleLoader__.load({
             : t("settings.lastError", { message: lastError }));
         if (typeof stats.version === "string" && stats.version !== "") {
           let buildHash = typeof stats.buildHash === "string" ? stats.buildHash.slice(0, 8) : "";
-          diagText += "\n" + t("settings.version", { version: stats.version, hash: buildHash });
+          diagText += `\n${t("settings.version", { version: stats.version, hash: buildHash })}`;
         }
       }
 
