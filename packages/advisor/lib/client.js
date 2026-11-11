@@ -330,6 +330,9 @@ window.__ModuleLoader__.load({
       ".dsh-advisor-summary{display:flex;flex-direction:column;gap:2px;font-size:12px;color:var(--dsw-alias-label-secondary,GrayText);word-break:break-word;}",
       ".dsh-advisor-checklist{display:flex;flex-direction:column;gap:3px;font-size:12px;white-space:pre-wrap;word-break:break-word;}",
       ".dsh-advisor-check[data-status=fail]{color:var(--dsw-alias-state-error-primary,#d9534f);}",
+      ".dsh-advisor-readout{font-size:12px;color:var(--dsw-alias-label-secondary,GrayText);word-break:break-word;}",
+      ".dsh-advisor-preview{display:flex;flex-direction:column;gap:6px;}",
+      ".dsh-advisor-pre{margin:0;padding:8px 10px;max-height:320px;overflow:auto;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.28));border-radius:8px;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base,Canvas));font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word;}",
       ".dsh-advisor-turn{display:flex;flex-direction:column;gap:4px;margin-top:2px;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary,GrayText);}",
       ".dsh-advisor-turn-head{display:inline-flex;align-items:baseline;gap:6px;max-width:100%;padding:2px 6px;border:0;border-radius:6px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer;}",
       ".dsh-advisor-turn-head:hover{background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.12));}",
@@ -548,6 +551,8 @@ window.__ModuleLoader__.load({
       maxCostPerDayUsd: 0,
       priceInputPerMTok: 0,
       priceOutputPerMTok: 0,
+      workspaceMaxCallsPerDay: 200,
+      workspaceMaxCostPerDayUsd: 0,
       sessionCap: 24,
       maxInputChars: 60000,
     };
@@ -561,6 +566,8 @@ window.__ModuleLoader__.load({
       maxCostPerDayUsd: [0, 10000],
       priceInputPerMTok: [0, 1000],
       priceOutputPerMTok: [0, 1000],
+      workspaceMaxCallsPerDay: [0, 100000],
+      workspaceMaxCostPerDayUsd: [0, 10000],
       sessionCap: [0, 200],
       maxInputChars: [4000, 400000],
     };
@@ -574,11 +581,16 @@ window.__ModuleLoader__.load({
       "maxCallsPerSession",
       "maxCallsPerHour",
       "maxCostPerDayUsd",
+      "workspaceMaxCallsPerDay",
+      "workspaceMaxCostPerDayUsd",
     ];
 
     /** 模式与发送范围的白名单，与 settings.js 一致。 */
     let SETTINGS_MODES = ["off", "shadow", "advisory"];
     let SETTINGS_SCOPES = ["off", "summary", "full"];
+
+    /** 回合结束后的自动徵询方式，与 settings.js 一致。 */
+    let SETTINGS_POST_ANSWER = ["off", "card"];
 
     /** 卡片读写的字段：保存时只 diff 这些键，绝不把整个设置对象发回去。 */
     let SETTINGS_EDITABLE_FIELDS = [
@@ -594,11 +606,16 @@ window.__ModuleLoader__.load({
       "maxCostPerDayUsd",
       "priceInputPerMTok",
       "priceOutputPerMTok",
+      "workspaceMaxCallsPerDay",
+      "workspaceMaxCostPerDayUsd",
       "privacyScope",
       "redact",
       "dedupe",
       "sessionCap",
       "maxInputChars",
+      "postAnswer",
+      "advisorTools",
+      "allowedModels",
     ];
 
     /**
@@ -631,6 +648,25 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 规整字符串数组（allowedModels / confirmedHosts）：去空、去重、截断条数。
+     * 与 settings.js 的 normalizeStringList 同语义，前端只用它来显示。
+     * @param {any} raw
+     * @returns {string[]}
+     */
+    function normalizeStringList(raw) {
+      if (!Array.isArray(raw)) return [];
+      /** @type {string[]} */
+      let out = [];
+      for (let index = 0; index < raw.length; index += 1) {
+        let value = asString(raw[index]).trim();
+        if (value === "" || out.indexOf(value) >= 0) continue;
+        out.push(value);
+        if (out.length >= 50) break;
+      }
+      return out;
+    }
+
+    /**
      * 只保留卡片关心的字段，并把畸形值夹回默认区间。
      * @param {any} raw
      * @returns {any}
@@ -648,6 +684,10 @@ window.__ModuleLoader__.load({
         redact: input.redact !== false,
         dedupe: input.dedupe !== false,
         temperature: null,
+        postAnswer: input.postAnswer === "card" ? "card" : "off",
+        advisorTools: input.advisorTools === true,
+        allowedModels: normalizeStringList(input.allowedModels),
+        confirmedHosts: normalizeStringList(input.confirmedHosts),
       };
       for (let index = 0; index < SETTINGS_INT_FIELDS.length; index += 1) {
         let key = SETTINGS_INT_FIELDS[index];
@@ -721,6 +761,8 @@ window.__ModuleLoader__.load({
       let totalsRaw = raw.totals !== null && typeof raw.totals === "object" ? raw.totals : {};
       let countersRaw =
         raw.counters !== null && typeof raw.counters === "object" ? raw.counters : {};
+      let poolRaw = raw.pool !== null && typeof raw.pool === "object" ? raw.pool : {};
+      let priceRaw = raw.price !== null && typeof raw.price === "object" ? raw.price : {};
       let lastRaw = raw.last;
       return {
         settings: normalizeSettingsView(settingsRaw),
@@ -730,6 +772,18 @@ window.__ModuleLoader__.load({
           inputTokens: countOf(totalsRaw.inputTokens),
           outputTokens: countOf(totalsRaw.outputTokens),
           costUsd: moneyOf(totalsRaw.costUsd),
+        },
+        pool: {
+          calls: countOf(poolRaw.calls),
+          costUsd: moneyOf(poolRaw.costUsd),
+        },
+        price: {
+          source:
+            priceRaw.source === "builtin" || priceRaw.source === "settings"
+              ? priceRaw.source
+              : "none",
+          input: moneyOf(priceRaw.input),
+          output: moneyOf(priceRaw.output),
         },
         counters: {
           calls: countOf(countersRaw.calls),
@@ -821,6 +875,18 @@ window.__ModuleLoader__.load({
         out.push({ status: status, message: message });
       }
       return out;
+    }
+
+    /**
+     * 校验 `advisor/preview`：只接受带 text 的成功结果，畸形 / `ok:false` 一律 null。
+     * @param {any} raw
+     * @returns {string | null}
+     */
+    function normalizePreview(raw) {
+      if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
+      if (raw.ok === false) return null;
+      if (typeof raw.text !== "string") return null;
+      return raw.text;
     }
 
     /**

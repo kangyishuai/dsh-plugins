@@ -12,3 +12,6 @@ Add `@kangyishuai/dsh-advisor`: the main model can consult a separately configur
 - Breaks nothing by default: the plugin starts in `off` mode.
 - A settings card in **Settings → General**: mode, provider/model picker, thinking effort from the model's real metadata, four budget ceilings with unit prices, privacy scope, ledger summary and `doctor` output.
 - Evidence-anchor verification (a cited tool-call id / message id / path that does not exist downgrades the advice) and a conservative adoption report (`/advisor report`), plus a compact advisor line under each turn.
+- Built-in model catalog (capability ranks + reference prices) as a fallback when the user has not declared `tiers` or unit prices; an `allowedModels` allowlist; a shared workspace budget pool with `/advisor report all`.
+- `/advisor preview` (shows exactly what would be sent, sends nothing) and `/advisor confirm` for the first cross-provider consultation.
+- Opt-in two-pass evidence: the advisor may request files from the session working directory (≤5 files, ≤64 KiB, read-only, escape-proof) and revise its advice with the quoted evidence.

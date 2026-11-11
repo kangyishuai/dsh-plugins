@@ -164,6 +164,22 @@ pnpm smoke:advisor-desktop --require
 2. 若建议里引用的 tool-call id / 路径在对话里找不到，展开内容应带「证据锚点未对上（N 条）」且严重度已降档。
 3. `/advisor report` 输出投递/采纳/锚点三行统计 + 最近 5 条；采纳判定必须给出依据（命中的信号），否则显示「未判定」。
 
+## 3.7 P3 补齐项（内置目录 / 预算池 / 白名单 / 预览 / 两阶段取证）
+
+**单测覆盖**：
+
+- `catalog.test.js`：内置档位「最长匹配优先」、认不出返回 `undefined`；用户声明覆盖内置；单价三档来源（settings/builtin/none）；白名单（空=不限、`provider/model` 或裸 id 命中）。
+- `catalog.test.js`（预算池部分）：跨日清零、调用数与金额双闸、边界按「已达上限」处理。
+- `verifier.test.js`：`../`、绝对路径、符号链接逃逸被拒；缺失文件报 ENOENT；单文件截断留痕；一次最多 5 个；第二轮提示必须包含证据与不可读清单。
+
+**手工/真机检查**：
+
+1. `/advisor preview` 不触发任何模型调用，但输出里的「将发送 N 字符」「省略 M 字符」「脱敏命中」「单价来源」「工作区今日」要与实际相符。
+2. 主模型与顾问 provider 不同时，首次徵询应返回 `needs_confirmation`；`/advisor confirm` 之后正常。
+3. `advisorTools: true` 时，顾问若返回 `needs`，工具结果里应带 `verification.read`；读不到的文件出现在 `verification.refused`，且首轮结论保留。
+4. `/advisor report all` 读跨会话账本，按严重度/模型/日期汇总。
+5. `workspaceMaxCallsPerDay` 到顶后，任何会话的徵询都返回 `workspace_calls`（跨会话共享）。
+
 ## 4. 手工 GUI 验证步骤
 
 按顺序做一遍，每步都对照"期望"。`$H` 用 [§0](#0-测试环境) 的临时 `DSH_HOME`：

@@ -24,6 +24,7 @@ import {
   checkBudget,
   estimateCostUsd,
   fingerprint,
+  immuneActive,
   isHollowAdvice,
   rememberFingerprint,
 } from "./guard.js";
@@ -144,8 +145,10 @@ export class AdvisorService extends TypertRemoteService {
     this.turnOf = new Map();
     /** 在途徵询（cancel 用）。 @type {Map<string, AbortController>} */
     this.inflight = new Map();
-    /** 去重表（shadow 投递用）。 @type {Map<string, number>} */
+    /** 去重表（被动投递用：shadow / post-answer）。 @type {Map<string, number>} */
     this.seen = new Map();
+    /** 每会话最近一次被动投递所在的回合（免疫窗口用）。 @type {Map<string, number>} */
+    this.lastDeliveryTurn = new Map();
     /** 最近一次结果（status / 工具卡 / 诊断）。 @type {any} */
     this.lastResult = null;
     /** 每会话已投递的建议条数（sessionCap 用）。 @type {Map<string, number>} */
@@ -637,6 +640,44 @@ export class AdvisorService extends TypertRemoteService {
     advice.severity = verdict.severity;
     advice.advice = verdict.advice;
 
+    // 被动投递（shadow / post-answer）才需要「别重复、别连着烦」；模型主动徵询永远放行。
+    const passive = trigger === "shadow" || trigger === "post-answer";
+    if (passive && advice.verdict === "reviewed" && !hollow) {
+      const fingerprintId = fingerprint(advice.advice);
+      const lastTurn = this.lastDeliveryTurn.get(sessionId);
+      if (
+        lastTurn !== undefined &&
+        immuneActive({
+          lastDeliveryTurn: lastTurn,
+          currentTurn: turn,
+          immuneTurns: settings.immuneTurns,
+        })
+      ) {
+        this.counters.skipped += 1;
+        if (sessionId !== "") this.lastSkip.set(sessionId, "免疫窗口内（上一条建议刚投递过）");
+        return {
+          ...baseResult,
+          status: "skipped",
+          code: "immune",
+          reason: `免疫窗口：上一条建议在第 ${lastTurn} 轮投递，${settings.immuneTurns} 轮内不再打扰`,
+        };
+      }
+      if (settings.dedupe === true) {
+        const remembered = rememberFingerprint(this.seen, fingerprintId, Date.now());
+        this.seen = remembered.table;
+        if (remembered.duplicate) {
+          this.counters.skipped += 1;
+          if (sessionId !== "") this.lastSkip.set(sessionId, "重复建议（24h 内说过）");
+          return {
+            ...baseResult,
+            status: "skipped",
+            code: "duplicate",
+            reason: "同一建议 24h 内已投递过",
+          };
+        }
+      }
+    }
+
     // 会话级投递上限：到顶后只放 blocker（长任务真出大事时仍然能说话）。
     const delivered = this.delivered.get(sessionId) ?? 0;
     if (
@@ -743,6 +784,9 @@ export class AdvisorService extends TypertRemoteService {
     });
     if (result.status === "reviewed" && settings.sessionCap > 0 && sessionId !== "") {
       this.delivered.set(sessionId, (this.delivered.get(sessionId) ?? 0) + 1);
+    }
+    if (result.status === "reviewed" && passive && sessionId !== "") {
+      this.lastDeliveryTurn.set(sessionId, turn);
     }
     if (trigger === "shadow") this.counters.shadow += 1;
     void estimatedCost;
@@ -1478,6 +1522,26 @@ export class AdvisorService extends TypertRemoteService {
   }
 
   /**
+   * 预览这一次会发出去什么（不发送）。设置卡用。
+   * @param {any} request
+   * @returns {Promise<any>}
+   */
+  async preview(request) {
+    try {
+      const sessionId = typeof request?.sessionId === "string" ? request.sessionId : "";
+      const sessions = serviceOf(this.ctx, "sessions");
+      const session =
+        serviceOf(this.ctx, "agents")?.get?.(sessionId)?.session ||
+        sessions?.get?.(sessionId) ||
+        sessions?.store?.get?.(sessionId);
+      const settings = await this.currentSettings();
+      return { ok: true, text: await this.previewText(session, settings), settings };
+    } catch (error) {
+      rethrowRemote(error);
+    }
+  }
+
+  /**
    * 采纳报告（Remote 版，供客户端以后直接渲染）。
    * @param {any} request
    * @returns {Promise<any>}
@@ -1674,4 +1738,5 @@ declareRemote(AdvisorService, "models");
 declareRemote(AdvisorService, "modelInfo");
 declareRemote(AdvisorService, "doctor");
 declareRemote(AdvisorService, "report");
+declareRemote(AdvisorService, "preview");
 declareRemote(AdvisorService, "advice");
