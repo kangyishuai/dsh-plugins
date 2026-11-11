@@ -91,6 +91,10 @@ Example (placeholder route and model names — use the ones the picker shows you
 }
 ```
 
+**Evidence anchors.** Each advice item may cite `{kind, ref}` anchors (a tool-call id, a message id, a file path). The plugin checks every ref against the session and marks the item unverified when nothing matches; if **none** of the cited anchors exist, the severity is downgraded one step and the advice says so. This is how a hallucinated "that failing command" gets caught.
+
+**Advice line and report.** Each consultation is recorded as a session plugin record (not part of the model-visible surface), so the turn gets a compact advisor line in the chat and `/advisor report` can attribute adoption over time. Attribution is deliberately conservative: no signal, no credit.
+
 **Picking a model.** `/advisor` opens a picker listing the routes and models already configured in DSH, plus _off_ and _add / configure provider_. Choosing a model switches `mode` to `advisory`. `/advisor doctor` tells you line by line what is still missing.
 
 ## Commands
@@ -104,6 +108,7 @@ Example (placeholder route and model names — use the ones the picker shows you
 | `/advisor shadow`                      | Sets `shadow`: consult after each completed turn and record it, without feeding it back.                                                                                                                                         |
 | `/advisor ask`                         | Runs one consultation **now** and returns the advice as command output.                                                                                                                                                          |
 | `/advisor cancel`                      | Aborts the in-flight consultation — the request is aborted, not merely ignored.                                                                                                                                                  |
+| `/advisor report`                      | Per-session advice report: how many were delivered, how many were **adopted** (heuristic: a path / backticked command / anchored ref from the advice shows up in later events), and how many evidence anchors verified.          |
 | `/advisor doctor`                      | Self-check: host `llm` service, registered routes, route resolution and context window, supported efforts, mode, session budget, ledger state, last failure. Each line states its conclusion and, where relevant, the next step. |
 | `/advisor <provider>/<model> [effort]` | Sets the advisor route directly, with the same validation as the picker (unknown route, missing credentials and unsupported effort are rejected with a readable reason).                                                         |
 

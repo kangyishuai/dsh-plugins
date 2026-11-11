@@ -11,7 +11,12 @@
 //   - 额外模型调用**不产生 usage 事件**，成本必须自己记（ledger.js）；
 //   - `llm/stream` 会看见我们自己的调用 ⇒ 一律按 `purpose:"advisor"` 过滤（递归防护）；
 //   - `session/event` 监听器里**同步** append 会撞重入保护 ⇒ 一律异步一拍再写。
+
+import { randomBytes } from "node:crypto";
+import { appendPluginRecord, pluginRecordOf } from "@deepseek-ai/dsh-session";
 import { Remote, RemoteError, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
+import { summarizeAdoption } from "./adoption.js";
+import { applyAnchorVerdict, buildIndex, verifyAnchors } from "./anchors.js";
 import { callAdvisor } from "./call.js";
 import {
   checkBudget,
@@ -26,6 +31,9 @@ import { pairingCheck, resolveRoute } from "./route.js";
 import { isConfigured, loadSettings, mergeSettings, saveSettings } from "./settings.js";
 import { renderToolOutput, TOOL_NAME, TOOL_OUTPUT_SCHEMA, TOOL_PARAMETERS } from "./tool-schema.js";
 import { buildTranscript } from "./transcript.js";
+
+/** plugin record 类型（必须匹配 ^plugin:[a-z0-9][a-z0-9._-]*(/[...])*$）。 */
+export const ADVICE_RECORD = "plugin:advisor/advice";
 
 /** 命令名：`/advisor`。 */
 export const COMMAND_NAME = "advisor";
@@ -503,6 +511,16 @@ export class AdvisorService extends TypertRemoteService {
     const advice = parsed.advice;
     const hollow = advice.verdict === "reviewed" && isHollowAdvice(advice.advice);
 
+    // 证据锚点校验：顾问说「刚才那次失败/这个文件」时，回头核对它引用的东西是否真的存在。
+    const index = buildIndex(messages);
+    const anchors = verifyAnchors(advice.evidence, index, transcript.text);
+    const verdict = applyAnchorVerdict(
+      { severity: advice.severity, advice: advice.advice },
+      anchors,
+    );
+    advice.severity = verdict.severity;
+    advice.advice = verdict.advice;
+
     // 会话级投递上限：到顶后只放 blocker（长任务真出大事时仍然能说话）。
     const delivered = this.delivered.get(sessionId) ?? 0;
     if (
@@ -539,8 +557,10 @@ export class AdvisorService extends TypertRemoteService {
       this.counters.skipped += 1;
       return capped;
     }
+    const adviceId = `adv_${randomBytes(4).toString("hex")}`;
     const result = {
       ...baseResult,
+      adviceId,
       status: advice.verdict === "declined" || hollow ? "declined" : "reviewed",
       code: "ok",
       advice: advice.advice,
@@ -548,9 +568,34 @@ export class AdvisorService extends TypertRemoteService {
       risks: advice.risks,
       acceptance: advice.acceptance,
       evidence: advice.evidence,
+      anchors: {
+        checked: anchors.checks.length,
+        verified: anchors.verified,
+        unverified: anchors.unverified,
+        downgraded: verdict.downgraded,
+      },
       summary: summarizeAdvice(advice),
     };
     this.lastResult = result;
+
+    // 落一条 plugin record：turnTail 的「顾问线」与 /advisor report 都读它（不占模型可见 surface）。
+    try {
+      appendPluginRecord(session, ADVICE_RECORD, {
+        adviceId,
+        turn,
+        at: Date.now(),
+        status: result.status,
+        severity: result.severity,
+        advice: result.advice,
+        summary: result.summary ?? "",
+        model: result.model,
+        usage: result.usage,
+        trigger,
+        anchors: result.anchors,
+      });
+    } catch (error) {
+      this.warn("cannot append advice record", error);
+    }
 
     await this.ledger.record({
       at: new Date().toISOString(),
@@ -641,7 +686,7 @@ export class AdvisorService extends TypertRemoteService {
           const dispose = scope.commands.register({
             name: COMMAND_NAME,
             description: "Consult the advisor: status, choose a model, ask now, or turn it off",
-            input: { hint: "[status|on|off|ask|cancel|doctor|<provider>/<model>]" },
+            input: { hint: "[status|on|off|shadow|ask|cancel|report|doctor|<provider>/<model>]" },
             /** @param {{ agent: any, rawInput: string }} invocation */
             handler: (invocation) => this.handleCommand(invocation),
           });
@@ -713,6 +758,9 @@ export class AdvisorService extends TypertRemoteService {
       }
       return { kind: "success", text: "已取消本次顾问徵询。" };
     }
+    if (raw === "report") {
+      return { kind: "success", text: await this.reportText(session) };
+    }
     if (raw === "doctor") {
       const checks = await this.doctorChecks(sessionId);
       return {
@@ -728,7 +776,7 @@ export class AdvisorService extends TypertRemoteService {
     if (slash <= 0) {
       return {
         kind: "error",
-        text: `无法识别的参数：${raw}。可用：status / on / off / shadow / ask / cancel / doctor / <provider>/<model>`,
+        text: `无法识别的参数：${raw}。可用：status / on / off / shadow / ask / cancel / report / doctor / <provider>/<model>`,
       };
     }
     const provider = routePart.slice(0, slash);
@@ -781,6 +829,58 @@ export class AdvisorService extends TypertRemoteService {
     if (result.status === "declined") return `顾问认为无需建议。\n${result.usage ?? ""}`.trim();
     if (result.status === "skipped") return `未徵询：${result.reason}`;
     return `顾问不可用（${result.code}）：${result.reason}`;
+  }
+
+  /**
+   * 会话里的顾问记录（读全量事件，按时间正序）。
+   * @param {any} session
+   * @returns {{ events: any[], records: Array<{ index: number, data: any }> }}
+   */
+  adviceRecords(session) {
+    /** @type {any[]} */
+    let events = [];
+    if (typeof session?.snapshotEvents === "function") events = session.snapshotEvents();
+    else if (Array.isArray(session?.log)) events = session.log;
+    /** @type {Array<{ index: number, data: any }>} */
+    const records = [];
+    const list = Array.isArray(events) ? events : [];
+    for (let index = 0; index < list.length; index += 1) {
+      const record = pluginRecordOf(list[index]);
+      if (record === undefined || record.type !== ADVICE_RECORD) continue;
+      if (record.data === null || typeof record.data !== "object") continue;
+      records.push({ index, data: record.data });
+    }
+    return { events: list, records };
+  }
+
+  /**
+   * `/advisor report` 的正文：投递/采纳/锚点统计 + 最近几条。
+   * @param {any} session
+   * @returns {Promise<string>}
+   */
+  async reportText(session) {
+    if (session === undefined || session === null) return "当前没有会话。";
+    const { events, records } = this.adviceRecords(session);
+    if (records.length === 0) {
+      return "本会话还没有顾问记录。用 /advisor on 打开，或让模型在关键节点徵询。";
+    }
+    const summary = summarizeAdoption(events, records);
+    const recent = summary.items
+      .slice(-5)
+      .reverse()
+      .map(
+        (item) =>
+          `  · [${item.severity}] ${item.summary} → ${item.verdict === "adopted" ? "采纳" : "未判定"}（${item.why}）`,
+      );
+    const totals = this.ledger.totals();
+    return [
+      "顾问报告（本会话）",
+      `投递 ${summary.total} 条 · 采纳 ${summary.adopted} · 未判定 ${summary.unknown}`,
+      `证据锚点：校验 ${summary.anchorsChecked} 条 / 对上 ${summary.anchorsVerified} 条`,
+      `累计 token：${totals.inputTokens} in / ${totals.outputTokens} out（${totals.calls} 次调用，含其他会话）`,
+      "最近：",
+      ...recent,
+    ].join("\n");
   }
 
   // ---- 装配：shadow 监听 ------------------------------------------------
@@ -991,6 +1091,40 @@ export class AdvisorService extends TypertRemoteService {
   }
 
   /**
+   * 设置页一次取齐：当前设置、可选路由、账本摘要、最近结果与跳过原因。
+   * 卡片只在切换 provider/model 时再单独调 `models` / `modelInfo`（44 条路由不可能一次全取）。
+   * @param {any} request
+   * @returns {Promise<any>}
+   */
+  async options(request) {
+    try {
+      const settings = await this.currentSettings();
+      const sessionId = typeof request?.sessionId === "string" ? request.sessionId : "";
+      const routes = await this.listRoutes();
+      const totals = this.ledger.totals();
+      return {
+        ok: true,
+        settings,
+        routes,
+        totals,
+        counters: this.counters,
+        last: this.lastResult,
+        lastSkip: sessionId === "" ? null : (this.lastSkip.get(sessionId) ?? null),
+        ledgerPath: this.ledger.path,
+        dataRoot: this.dataRoot,
+        commands: {
+          on: "/advisor on",
+          off: "/advisor off",
+          shadow: "/advisor shadow",
+          doctor: "/advisor doctor",
+        },
+      };
+    } catch (error) {
+      rethrowRemote(error);
+    }
+  }
+
+  /**
    * 读设置（只读）。
    * @returns {Promise<any>}
    */
@@ -1055,6 +1189,60 @@ export class AdvisorService extends TypertRemoteService {
       const model = typeof request?.model === "string" ? request.model : "";
       const info = await this.resolveModel(provider, model);
       return { ok: info !== null, info };
+    } catch (error) {
+      rethrowRemote(error);
+    }
+  }
+
+  /**
+   * 本会话的顾问记录（turnTail 的「顾问线」用）：一条建议一行，按 turn 归位。
+   * @param {any} request
+   * @returns {Promise<any>}
+   */
+  async advice(request) {
+    try {
+      const sessionId = typeof request?.sessionId === "string" ? request.sessionId : "";
+      const sessions = serviceOf(this.ctx, "sessions");
+      const session =
+        serviceOf(this.ctx, "agents")?.get?.(sessionId)?.session ||
+        sessions?.get?.(sessionId) ||
+        sessions?.store?.get?.(sessionId);
+      if (session === undefined || session === null) return { ok: true, items: [] };
+      const { records } = this.adviceRecords(session);
+      return {
+        ok: true,
+        items: records.map(({ data }) => ({
+          turn: Number(data?.turn ?? 0) || 0,
+          adviceId: String(data?.adviceId ?? ""),
+          severity: String(data?.severity ?? "nit"),
+          status: String(data?.status ?? "reviewed"),
+          advice: String(data?.advice ?? ""),
+          summary: String(data?.summary ?? ""),
+          model: String(data?.model ?? ""),
+          usage: String(data?.usage ?? ""),
+          at: Number(data?.at ?? 0) || 0,
+          anchors: data?.anchors ?? null,
+        })),
+      };
+    } catch (error) {
+      rethrowRemote(error);
+    }
+  }
+
+  /**
+   * 采纳报告（Remote 版，供客户端以后直接渲染）。
+   * @param {any} request
+   * @returns {Promise<any>}
+   */
+  async report(request) {
+    try {
+      const sessionId = typeof request?.sessionId === "string" ? request.sessionId : "";
+      const sessions = serviceOf(this.ctx, "sessions");
+      const session =
+        serviceOf(this.ctx, "agents")?.get?.(sessionId)?.session ??
+        sessions?.get?.(sessionId) ??
+        sessions?.store?.get?.(sessionId);
+      return { ok: true, text: await this.reportText(session) };
     } catch (error) {
       rethrowRemote(error);
     }
@@ -1230,9 +1418,12 @@ function formatMs(ms) {
 declareRemote(AdvisorService, "candidates");
 declareRemote(AdvisorService, "setModel");
 declareRemote(AdvisorService, "state");
+declareRemote(AdvisorService, "options");
 declareRemote(AdvisorService, "settings");
 declareRemote(AdvisorService, "updateSettings");
 declareRemote(AdvisorService, "routes");
 declareRemote(AdvisorService, "models");
 declareRemote(AdvisorService, "modelInfo");
 declareRemote(AdvisorService, "doctor");
+declareRemote(AdvisorService, "report");
+declareRemote(AdvisorService, "advice");
