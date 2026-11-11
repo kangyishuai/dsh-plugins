@@ -4,6 +4,8 @@
 // DSH 没有厂商那种「模型能力目录」，所以档位只能来自用户声明（settings.tiers）。
 // 拿不到档位时**不阻断**、也不假装通过：返回 kind:"unknown"，由 UI 明示「未校验」。
 
+import { effectiveRank } from "./catalog.js";
+
 /**
  * @typedef {{ provider: string, model: string, reasoningEffort?: string }} Route
  */
@@ -74,8 +76,9 @@ export function pairingCheck(input) {
   const { tiers, main, advisor } = input;
   const enforcement = input.enforcement === "block" ? "block" : "warn";
 
-  const mainRank = tierOf(tiers, main);
-  const advisorRank = tierOf(tiers, advisor);
+  // 用户声明的档位优先；没有声明时回落内置目录（catalog.js）；都没有才算「未校验」。
+  const mainRank = effectiveRank(tiers, main);
+  const advisorRank = effectiveRank(tiers, advisor);
 
   if (mainRank === undefined || advisorRank === undefined) {
     return {
