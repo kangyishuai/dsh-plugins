@@ -21,8 +21,8 @@
 | [**session-delete**](packages/session-delete/README.zh-CN.md)<br><sub>[截图](packages/session-delete/README.zh-CN.md#截图)</sub> | 真正删除会话，而不只是归档。删掉的会话先进可恢复的回收站；确认框会先列出删除计划：体积、子会话、将要清理的引用。每次操作都写进审计日志，删完还会给一份残留回执。                                                                                                                                                         | [![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-delete?label=)](https://www.npmjs.com/package/@kangyishuai/dsh-session-delete) |
 | [**session-rewind**](packages/session-rewind/README.zh-CN.md)                                                                    | 就地回溯对话：`Esc` `Esc` 或用户消息旁的 ↶ 按钮，可选「仅回退对话」或「对话+文件」。目标及其后的内容从模型上下文和对话里撤回；改过的文件用写前快照+救援点+回收站还原；消息文本/图片回到输入框。回溯面板可见已撤回消息、审计记录、救援点与诊断。日志只追加；输入框里裸 `↑` / `↓` 可召回已发送的提示词，且不回溯任何东西。 | [![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-rewind?label=)](https://www.npmjs.com/package/@kangyishuai/dsh-session-rewind) |
 | [**next-step**](packages/next-step/README.zh-CN.md)                                                                              | 需要继续时在回答下方给一张决策卡：现状摘要、需要你拍板的问题、两条互斥的下一步建议，点哪句就把哪句原样作为用户消息发出；模型判断不需要就不出卡，可在回答下方一键补生成。可选（默认关）在空输入框里给一条灰色幽灵提示，`Tab` / `→` 接受。                                                                                 | [![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-next-step?label=)](https://www.npmjs.com/package/@kangyishuai/dsh-next-step)           |
-
-更多插件开发中。
+| [**advisor**](packages/advisor/README.zh-CN.md)                                                                                  | 按需的第二意见：由主模型自己决定何时徵询一个单独配置的顾问模型；顾问读整段对话（含工具调用与结果），返回结构化建议。顾问只给建议，不批准、不执行任何动作。默认关闭；shadow 模式、四级预算与 token 账本让这笔额外调用看得见。                                                                                             | [![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-advisor?label=)](https://www.npmjs.com/package/@kangyishuai/dsh-advisor)               |
+| 更多插件开发中。                                                                                                                 |
 
 ## 安装
 
@@ -38,7 +38,7 @@ dsh plugin --profile desktop add @kangyishuai/dsh-session-rewind
 - **破坏性操作一定留后路。** 删除先进回收站。确认框会写明影响：数量、大小、会话是否正在运行、能否恢复。见 [ADR 0002](docs/adr/0002-destructive-operations.md)。
 - **不写死内部实现。** DSH 还在预发布阶段，磁盘格式会变。插件按已知模式扫描和匹配，不认识的东西一律不动。
 - **在真实宿主上验证。** 除了单元测试，还会在一次性的 DSH 目录里跑端到端 GUI 冒烟测试。兼容性表格写明验证过的 DSH 版本。
-- **不联网，不上报。** 插件只读写本地的 DSH 数据目录，读写范围都写在文档里。
+- **不上报，没有偷偷的请求。** 插件不向任何服务上报，也只按文档读写本地的 DSH 数据目录。唯一的例外是显式选择加入的 `advisor`：它会多花一次模型调用，而且只走宿主自己的 LLM 服务、只发给你已经配置好的 provider —— 默认关闭。
 - **纯 JavaScript，没有构建步骤。** 你装上的代码就是仓库里的代码（[ADR 0001](docs/adr/0001-plain-js-with-jsdoc.md)）。
 
 > **声明：** 这是个人维护的社区项目，与 DeepSeek 没有关联，也未获其认可。插件还比较新，重要数据请自行备份。

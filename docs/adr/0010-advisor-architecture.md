@@ -1,0 +1,126 @@
+# ADR 0010：advisor —— 模型自主时机的按需顾问，成本与原因必须可见
+
+- 状态：已接受
+- 日期：2026-11-11
+- 涉及：`packages/advisor`（`@kangyishuai/dsh-advisor`，命令 `/advisor`）
+
+## 背景
+
+目标是给主模型配一个**通常更强的顾问**：在定方案前、同一个错误反复出现时、宣告完成前，主模型自己决定
+徵询一次，顾问拿到完整对话并回一句简短点评，主模型接着干。
+
+参照实现（Claude Code 的 `/advisor`）是 Anthropic Messages API 的**服务端工具**：在同一个
+`/v1/messages` 请求内跑第二次推理，结果以内容块回到同一条 assistant 消息。DSH 是本地宿主，任何
+provider 都不会替我们跑第二次推理，所以语义等价物只能是**本地第二次模型调用**。
+
+宿主侧的基础已经够用（逐条源码证据见 [runtime 0.2.2-rc.1 §9.15](../runtime/0.2.2-rc.1.md)）：
+
+- `tools.register` 是半公开但有官方插件在用的注册入口，工具结果由宿主自动落成 `tool/call` + `tool/result`、
+  渲染成工具卡、回填主模型——与 Claude 的 `tool_result` 同形；
+- `ctx.llm.prepareCall` / `call.stream` 是 typert 服务定义里的成员，官方 `auto-review`、`session-title-llm`
+  与仓库里的 `next-step` 都在用同一条链路；
+- `commands.register` 是**公开**插件 API，`/advisor` 命令面零 client 代码就能出现在 `/` 菜单里。
+
+缺口同样明确，而且都不是"再努力一点"就能绕开的：
+
+1. 额外模型调用**不产生 `usage`**：只有主循环写 `assistant/message` 的 usage，宿主的 token 账本也只折它；
+2. 没有"同一轮里追加一条点评"的官方通道：一回合的 surface 只能由主循环 append；
+3. 没有递归保护：`llm/stream`、`session/event` 的监听者会看到顾问自己发起的那次调用；
+4. 没有公开的 system prompt 扩展契约；
+5. `LlmModelInfo` **没有价格字段**，金额级成本只能靠用户填单价。
+
+产品侧还有两条硬约束：顾问会把**整段会话发给另一家 provider**（隐私不是可选项），以及生态里已经有多个
+advisor 类插件（多为"每轮被动复查"）——空位不是"advisor"这个词，而是 Claude 规格里的那半个语义：
+**由主模型自己决定何时徵询** + 配对校验 + 会话内可见的结果三态。
+
+## 决策
+
+1. **采用「advisor as tool」路线（本地第二次模型调用）。** 注册一个 `advisor` 工具，`execute` 里用
+   `ctx.get("llm").prepareCall()` 定路由、`call.stream()` 起一次独立补全，把结论当工具结果返回。
+   工具结果本身就是 `tool/result`：持久化、可见性、回填主模型全部白送，失败还能降级成一条错误工具结果
+   而不让回合崩。**否决「子 agent critique」**：它能做更强的事（真去读文件跑命令），但每个 critique 会
+   留下一个**持久子会话**（污染侧栏与 catalog）、受 `maxDepth` 约束、而且插件直接调 `subagents` 服务会
+   **静默绕过**用户的模型选择白名单（§9.15 第 10 条）。**否决「每轮被动 review」作为默认形态**：延迟与
+   成本线性叠加，用户先感到"变慢"，且与"模型自主时机"的定位直接冲突；它保留为 P2/P3 的**补充**
+   （答后复查卡，形态是 `conversation.chat.turnTail` 的只读卡片）。
+
+2. **配置分三层，密钥与线路归宿主。**
+   - 第一层（插件的设置文件）：只放**这一次调用怎么发**——`provider` / `model` / `reasoningEffort` /
+     `temperature` / `maxTokens`。
+   - 第二层（宿主「设置 → 模型」）：`baseURL` / `apiKey` / 线路协议 / 模型目录，全部归宿主。
+   - 第三层（引用）：插件只拿宿主的**路由键与模型 id**（`listProviders` / `listConfigurableProviders` /
+     `listModels` / `resolveModelInfo`），不复制宿主的连接信息。
+
+   **插件绝不自己存密钥、不自己拼 endpoint。** 这样密钥只有一处，宿主的鉴权/代理/协议升级都不需要插件
+   跟进；「选项全部来自宿主已配置的东西」也是"不让人配错"的前提。
+
+3. **工具零必填参数，把「何时徵询」写进 description。** 参数 schema 里只有可选 `focus`，对齐参照实现的
+   `input: {}`；何时该问、问了要怎么对待建议，全部写在工具描述里——宿主会把工具 schema 自动送进系统提示
+   （§9.15 第 4 条）。不碰 `ctx.systemPrompt.section/context`：那类注册按 calling scope 生效，全局注册会
+   同时污染子 agent 的提示，而工具描述的作用域天然就是"这个工具存在的时候"。
+
+4. **三档模式 `off | shadow | advisory`，默认 `off`，新用户先跑 `shadow`。** `shadow` 照常调用、照常记账，
+   但**不注入**主模型——建议只进账本与工具卡，用户可以"先看一周再决定开不开"。参照实现没有这个能力
+   （服务端一调就是真的），这是把信任建立成本从"赌一把"降到"看数据"的关键。另有一条缓存纪律：`off` 时
+   **工具仍然注册**，`execute` 立刻返回 `disabled` 不发起调用——切开关不动 `tools[]` 这个提示前缀。
+
+5. **递归防护写死在第一版：所有监听器按 `purpose: "advisor"` + sessionId 过滤。** `llm/stream` 是
+   waterfall（§9.15 第 9 条），监听者能看到我们自己发出的请求；`session/event` 也会被顾问侧写入触发。
+   没有这层过滤就是无限递归——这是本插件**唯一能把自己跑死**的缺陷，所以单测必须覆盖。
+
+6. **账本与四级预算由插件自记。** 宿主不给额外调用记账（§9.15 第 3 条），所以每次徵询自己累计
+   input/output tokens 并落盘；四级预算（每回合 / 每会话 / 每小时 / 每日）到顶返回 `budget_exhausted`
+   并说清是哪一级、什么时候重置。**金额只在用户填了单价时显示**，一律标"估算"——`LlmModelInfo` 没有价格
+   字段（§9.15 第 12 条），拿不到单价就算不出来的事不能编。
+
+7. **交互面 = `/advisor` 选择器 + `/advisor doctor`，选项全部来自宿主的已配置路由/模型。**
+   命令用公开 API `commands.register`（§9.15 第 5 条）注册；空参数回车用 `commandUi.decorate` 的
+   `popupSelect`（§9.15 第 13 条）打开宿主自己的选择器，分组列出「已配置且可用」的
+   provider × model × effort，选中即写设置、**下一次徵询生效**。不展示 `baseURL`（敏感），凭据缺失的路由
+   **仍列出但标 ⚠ 不可选**并给"去配置"动作（比直接隐藏更容易理解）；`/advisor doctor` 逐项自检，每条给
+   结论 + 下一步动作，任何失败都不许只回一句 `error`。
+
+8. **借鉴来源写进根 `NOTICE`，只借行为、不复制代码。** 参照实现的工具语义、配对规则、三态命名属**行为
+   事实**；我们从它学的是"克制"（零参数、沉默合法、失败软侧、默认折叠），提示词自己写并跟随会话语言，
+   不逐字照抄英文原文。参考过的社区插件在 `NOTICE` 里列明"只借鉴行为与阈值，未复制代码"。
+
+## 备选方案
+
+- **子 agent critique（`subagents.startActivation` + `agentOptions` 换模型）**：拿到的是完整 agent，
+  能自己读文件、跑命令，还能用 `outputSchema` 强制结构化输出；缺点见决策 1（持久子会话、`maxDepth`、
+  绕过白名单、分钟级延迟）。适合"派活给强模型"这另一个产品，不适合"顾问点评"。
+- **每轮被动复查（`turn/end` → 调模型 → 卡片）**：不需要模型配合，`next-step` 已经把这条链跑通；但它是
+  "每轮必看"，成本与延迟随轮数线性增长。保留为可选的"答后复查"，不做默认。
+- **用隐藏 `user/message` 注入代替工具**（`source.kind !== "user"` → 客户端 `context` 节点，§9.15 第 6 条）：
+  模型一定看得见，但**界面不可见**，用户无法审计"顾问到底说了什么"，与"成本可见、建议可读"直接冲突。
+  只在需要额外硬约束时配合使用。
+- **自己做设置表单**：宿主 `dsh-settings` 的自动表单只服务带 `.volatile()` 的 Cordis Config，第三方用不上。
+  P1 用命令 + JSON 设置文件（`$DSH_HOME/advisor.settings.json`，改文件即生效），P2 再补
+  `settings.general.item` 卡片。
+- **多模型投票 / 给顾问写权限 / 权限裁决**：均不做。N 倍成本换"看起来全面"；顾问必须只读、无副作用；
+  allow/deny 语义属于 `auto-review` 的地盘，混在一起会让用户分不清"不建议"和"不允许"。
+
+## 后果
+
+- 好：主链路压在**半公开服务成员**上（`tools.register` / `llm.prepareCall` + `stream` / `commands.register`），
+  失效面能被 `pnpm probe:runtime` 盯住；工具结果自动落库、可审计、随会话 fork 继承；成本与"为什么没问"
+  对用户可见（参照实现做不到）；跨厂商顾问是 DSH 多 provider 独有的能力。
+- 代价：
+  - **多一次模型往返**。用户可见顺序不变（建议在前、继续在后），但首版拿不到"同请求内联"的机制保真度。
+  - **依赖一条客户端私有 seam**：`commandUi.decorate` 的 `popupSelect`（外加 toast 用的 `shell.overlay` 槽）。
+    它没有契约，宿主升级可能静默失效——所以本插件带 client 半，**必须交付 `pnpm smoke:advisor-desktop`
+    （只读）**，这是仓库硬性要求（[plugin-conventions §6.1](../plugin-conventions.md#61-桌面端自动化测试是硬性要求)）。
+  - **账本文件随使用增长**（`$DSH_HOME/advisor/usage.jsonl`，超过上限滚动一次），P1 不做清理 UI。
+  - **配对档位表是自建的**，不是官方目录：拿不到档位时只告警、不阻断，UI 必须标"未校验"，绝不假装通过。
+  - **隐私**：徵询会把会话内容发给顾问 provider。默认只发摘要 + 脱敏开关默认开，但启发式脱敏必然漏检，
+    用户文档里要写"尽力而为，不是密钥扫描器"。
+  - 若将来宿主开始给额外调用记 `usage`、或提供同轮追加通道，决策 1 与 6 要重新审视（可以少写一个账本、
+    少一次往返）。
+
+## 验证
+
+- 宿主事实与逐条行号：[runtime 0.2.2-rc.1 §9.15](../runtime/0.2.2-rc.1.md)（13 条，全部对着 `app.asar`
+  原文核实过；同时纠正了 §9.14 关于 `prepareCall` 返回值的一处措辞）。
+- 测试分层与清单：[docs/testing/advisor.md](../testing/advisor.md)（单测 → `pnpm smoke:advisor-desktop`
+  只读回归 → 真机 `pnpm pack` → `dsh plugin add` → 手动徵询一次 → 看账本）。
+- 借鉴来源与许可证边界：根 [NOTICE](../../NOTICE)。

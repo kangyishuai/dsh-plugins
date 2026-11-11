@@ -1,0 +1,62 @@
+{
+  "name": "@kangyishuai/dsh-advisor",
+  "version": "0.0.0",
+  "description": "Pair the main model with a stronger advisor model it consults at key moments: autonomous second opinion, cost ledger, and model picker",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "advisor",
+    "second-opinion",
+    "consult",
+    "review"
+  ],
+  "license": "MIT",
+  "author": "nano (https://github.com/kangyishuai)",
+  "homepage": "https://github.com/kangyishuai/dsh-plugins/tree/main/packages/advisor#readme",
+  "bugs": "https://github.com/kangyishuai/dsh-plugins/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kangyishuai/dsh-plugins.git",
+    "directory": "packages/advisor"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "cordis.patch.yml",
+    "lib",
+    "locale",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-commands",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-chat",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ]
+    }
+  }
+}

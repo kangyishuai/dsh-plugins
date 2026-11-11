@@ -1,0 +1,3 @@
+- insert:
+    - id: advisor
+      name: "@kangyishuai/dsh-advisor"

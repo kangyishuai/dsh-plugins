@@ -1,0 +1,28 @@
+{
+  "advisor": {
+    "title": "Pair the main model with a stronger advisor model it can consult at key moments",
+    "notReady.label": "Advisor is not ready · run /advisor doctor",
+    "notReady.detail": "The host returned no candidate routes: the plugin may be disabled, or host RPC is unavailable",
+    "group.current": "Current",
+    "group.extras": "Toggle & configure",
+    "current.detail": "In use in this session",
+    "toast.current": "This is already the current advisor",
+    "blocked.detail": "This route is unavailable right now",
+    "off.label": "Turn the advisor off",
+    "off.detail": "Reopen with /advisor at any time",
+    "settings.label": "+ Add or configure a provider…",
+    "settings.detail": "Open Settings → Models",
+    "settings.hint": "Put /advisor doctor in the composer — press Enter to see the next step",
+    "toast.settings": "Open Settings → Models to add or configure a provider",
+    "search.placeholder": "Search advisor models…",
+    "search.empty": "No advisor models are available yet",
+    "search.noResults": "No matching models",
+    "effort.auto": "auto",
+    "toast.applied": "Advisor set to {route} (reasoning effort {effort}); effective on the next consultation",
+    "toast.off": "Advisor turned off — reopen with /advisor at any time",
+    "toast.stale": "This choice is stale — reopen /advisor",
+    "error.failed": "Could not save the advisor; try again",
+    "error.unreachable": "Cannot reach the host — try again later or run /advisor doctor",
+    "error.malformed": "The host returned an unrecognized result — run /advisor doctor"
+  }
+}
