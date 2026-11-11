@@ -1,5 +1,11 @@
 # @kangyishuai/dsh-next-step
 
+## 0.1.2
+
+### Patch Changes
+
+- [#44](https://github.com/kangyishuai/dsh-plugins/pull/44) [`dc99025`](https://github.com/kangyishuai/dsh-plugins/commit/dc99025564f43ef6a0d160652e01db1eca768e22) Thanks [@kangyishuai](https://github.com/kangyishuai)! - Skip card generation while the user already has queued messages (2 or more, same rule as the official action cards), so a card never competes with input the user has already sent.
+
 ## 0.1.1
 
 ### Patch Changes
