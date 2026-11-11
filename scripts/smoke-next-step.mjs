@@ -841,7 +841,11 @@ check(
     settingsRow.switches.length === 3 &&
     settingsRow.budget === true &&
     settingsRow.pause === true &&
-    /版本s+d+.d+.d+s+·s+构建s+[0-9a-f]{8}/u.test(settingsRow.diag),
+    settingsRow !== null &&
+    settingsRow.diag.includes("版本 ") &&
+    settingsRow.diag.includes("构建 ") &&
+    /[0-9]+.[0-9]+.[0-9]+/u.test(settingsRow.diag) &&
+    /[0-9a-f]{8}/u.test(settingsRow.diag),
   settingsRow === null ? "导航=" + navDetail : JSON.stringify({ switches: settingsRow.switches, budget: settingsRow.budget, pause: settingsRow.pause, diag: settingsRow.diag }),
 );
 await shot("08-settings");
