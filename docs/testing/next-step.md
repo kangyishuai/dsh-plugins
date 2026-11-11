@@ -313,3 +313,27 @@ npm view @kangyishuai/dsh-next-step version
    `appendPluginRecord` 的记录格式；
 6. `ctx.get("llm")` 的 `prepareCall` / `call.stream` 形状，以及
    `ctx.get("agents").get(sessionId)?.model?.current?.()` 的读取方式。
+
+## 0.9 0.2.0 发布记录（核对时间 2026-11-11）
+
+| 项                     | 值                                                                                                      |
+| ---------------------- | ------------------------------------------------------------------------------------------------------- |
+| npm `dist-tags.latest` | `0.2.0`（发布于 `2026-11-11T12:32:31Z`）                                                                |
+| npm `gitHead`          | `a68a8a6484ce0f8249ef334cc1c9ee5260a477d2`（PR #50 squash）                                             |
+| git tag                | `@kangyishuai/dsh-next-step@0.2.0` → 提交 **`a68a8a6`**（`chore(release): version packages (#50)`）     |
+| provenance             | 有（SLSA；`search.sigstore.dev` logIndex `3809882388`）                                                 |
+| GitHub Release         | 非 Draft / 非 Pre-release；body 1,424 字节                                                              |
+| 可安装性               | 干净目录 `npm i @kangyishuai/dsh-next-step@0.2.0` 成功；装出 8 个 `lib/*.js`，`package.json` 版本 0.2.0 |
+| 合并提交               | 特性 PR #49 → `86e2cea`；版本 PR #50 → `a68a8a6`                                                        |
+
+核对命令（可复现）：
+
+```bash
+curl -s "https://registry.npmjs.org/%40kangyishuai%2Fdsh-next-step?t=$(date +%s)" \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); v=d["versions"]["0.2.0"]; print(d["dist-tags"]["latest"], v["gitHead"], list(v["dist"]["attestations"]))'
+git rev-list -n1 '@kangyishuai/dsh-next-step@0.2.0'
+gh release view '@kangyishuai/dsh-next-step@0.2.0' --json tagName,isDraft,isPrerelease,body --jq '{tagName,isDraft,isPrerelease,bodyBytes:(.body|length)}'
+```
+
+本轮发布后 desktop profile 已装 `0.2.0`（`dsh plugin --profile desktop add @kangyishuai/dsh-next-step@0.2.0`），
+**需要重启桌面版**才会加载新的 host 半；重启后设置页诊断应显示 `版本 0.2.0 · 构建 1ba08e8b`。
