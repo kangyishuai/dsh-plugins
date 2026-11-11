@@ -109,9 +109,10 @@ gh release view '@kangyishuai/dsh-next-step@0.1.2' --json tagName,body --jq '{ta
 冒烟因此改成「自动出卡 **或** 点补生成按钮出卡」两条合法路径，并额外断言按钮存在、可点、点后出卡；
 真实会话里这条路径已在 0.7 之前的人工验证中确认。
 
-**桌面真机回归本轮没有重跑**：桌面冒烟要求把待测 tarball 装进**正在运行的** desktop profile 并重启宿主，
-而当前 agent 就跑在该宿主里（重启会终止会话）。发版前在非当前会话环境跑
-`pnpm smoke:next-step-desktop --require --deep`；本轮已更新的桌面断言（点后回显被点按钮文本）待那次覆盖。
+**桌面真机回归（同日 20:0x 补跑）**：把待测 tarball 装进 desktop profile 并重启宿主后，
+`pnpm smoke:next-step-desktop --require --deep` 得到 **32 PASS + 3 SKIP + 0 FAIL**（构建 `1ba08e8b`）。
+首跑曾因模型对「用一句话解释二分查找」返回 `needed=false` 而不出卡失败——桌面深测已改成和 web 冒烟
+同一条兜底（等「生成下一步建议」按钮 → 点它 → 再断言可交互卡、点胶囊、回显），详见 §0.9。
 `SMOKE_KEEP=1` 的临时目录 / `/tmp/dsh-smoke-next-step-shots` 用完请删掉（可能含真实会话内容，别提交）。
 
 ## 1. 单测（每次提交）
@@ -325,6 +326,8 @@ npm view @kangyishuai/dsh-next-step version
 | GitHub Release         | 非 Draft / 非 Pre-release；body 1,424 字节                                                              |
 | 可安装性               | 干净目录 `npm i @kangyishuai/dsh-next-step@0.2.0` 成功；装出 8 个 `lib/*.js`，`package.json` 版本 0.2.0 |
 | 合并提交               | 特性 PR #49 → `86e2cea`；版本 PR #50 → `a68a8a6`                                                        |
+| 桌面真机（发布前）     | `pnpm smoke:next-step-desktop --require --deep`：**32 PASS + 3 SKIP + 0 FAIL**（构建 `1ba08e8b`）       |
+| 发版门禁（发布前）     | `pnpm gate next-step`：**4 步全绿，152s**（verify → probe 60/60 → web 冒烟 59/59 → 桌面只读 22/22）     |
 
 核对命令（可复现）：
 
