@@ -44,6 +44,17 @@ export const TOOL_OUTPUT_SCHEMA = Object.freeze({
         required: Object.freeze(["kind", "ref"]),
       }),
     }),
+    adviceId: Object.freeze({ type: "string" }),
+    anchors: Object.freeze({
+      type: "object",
+      properties: Object.freeze({
+        checked: Object.freeze({ type: "number" }),
+        verified: Object.freeze({ type: "number" }),
+        unverified: Object.freeze({ type: "number" }),
+        downgraded: Object.freeze({ type: "boolean" }),
+      }),
+      additionalProperties: true,
+    }),
     reason: Object.freeze({ type: "string" }),
     model: Object.freeze({ type: "string" }),
     usage: Object.freeze({ type: "string" }),
