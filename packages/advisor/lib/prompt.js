@@ -93,10 +93,12 @@ export function advisorSystemPrompt(options = {}) {
   return [
     ADVISOR_SYSTEM_PROMPT,
     "",
-    "You may request workspace evidence before finalizing, by adding:",
-    `'needs': [{"kind":"file","ref":"relative/path"}]`,
+    "You can and SHOULD request workspace evidence before finalizing whenever your advice depends on",
+    "what a file actually contains (a version, a config value, an implementation detail). Add a top-level field:",
+    `"needs": [{"kind":"file","ref":"relative/path"}]`,
     "Only relative paths inside the session working directory are readable; at most 5 files, 64 KiB each.",
-    "When you include needs, you will be called once more with those files quoted, and may then revise your advice.",
+    "You will then be called once more with those files quoted verbatim, and may revise your advice.",
+    "If you already have the text in the transcript, do not request it again.",
   ].join("\n");
 }
 

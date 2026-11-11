@@ -34,7 +34,7 @@ import { pairingCheck, resolveRoute } from "./route.js";
 import { isConfigured, loadSettings, mergeSettings, saveSettings } from "./settings.js";
 import { renderToolOutput, TOOL_NAME, TOOL_OUTPUT_SCHEMA, TOOL_PARAMETERS } from "./tool-schema.js";
 import { buildTranscript } from "./transcript.js";
-import { buildVerificationBlock, collectEvidence } from "./verifier.js";
+import { runEvidencePass } from "./twopass.js";
 
 /** plugin record 类型（必须匹配 ^plugin:[a-z0-9][a-z0-9._-]*(/[...])*$）。 */
 export const ADVICE_RECORD = "plugin:advisor/advice";
@@ -590,47 +590,39 @@ export class AdvisorService extends TypertRemoteService {
 
     let advice = parsed.advice;
     let verification = null;
-    if (settings.advisorTools === true && advice.needs.length > 0) {
-      const root = this.sessionCwd(session);
-      const evidence = await collectEvidence({ root, needs: advice.needs, maxFiles: 5 });
-      const block = buildVerificationBlock(evidence);
-      verification = {
-        requested: advice.needs.length,
-        read: evidence.sections.map((section) => section.ref),
-        refused: evidence.refused,
-        pass2: false,
-      };
-      if (block !== "") {
-        const second = await callAdvisor({
-          llm: this.llm(),
-          route: resolved.route,
-          settings,
-          transcript: transcript.text,
-          extra: block,
-          canRequestEvidence: false,
-          locale: this.localeName(),
-          sessionId,
-          signal,
-          logger: this.logger,
-        });
-        if (second.ok) {
-          const reparsed = parseAdvice(second.text ?? "");
-          if (reparsed.ok) {
-            advice = reparsed.advice;
-            verification.pass2 = true;
-            if (call.usage !== undefined && second.usage !== undefined) {
-              call.usage = {
-                inputTokens: call.usage.inputTokens + second.usage.inputTokens,
-                outputTokens: call.usage.outputTokens + second.usage.outputTokens,
-                cacheReadTokens: call.usage.cacheReadTokens + second.usage.cacheReadTokens,
-                cacheWriteTokens: call.usage.cacheWriteTokens + second.usage.cacheWriteTokens,
-                reasoningTokens: call.usage.reasoningTokens + second.usage.reasoningTokens,
-              };
-            }
-          }
-        }
+    if (settings.advisorTools === true) {
+      const pass = await runEvidencePass({
+        advice,
+        root: this.sessionCwd(session),
+        settings: { advisorTools: true },
+        parseAdvice,
+        callSecond: async (block) =>
+          callAdvisor({
+            llm: this.llm(),
+            route: resolved.route,
+            settings,
+            transcript: transcript.text,
+            extra: block,
+            canRequestEvidence: false,
+            locale: this.localeName(),
+            sessionId,
+            signal,
+            logger: this.logger,
+          }),
+      });
+      advice = pass.advice;
+      verification = pass.verification;
+      if (pass.extraUsage !== null && call.usage !== undefined) {
+        call.usage = {
+          inputTokens: call.usage.inputTokens + pass.extraUsage.inputTokens,
+          outputTokens: call.usage.outputTokens + pass.extraUsage.outputTokens,
+          cacheReadTokens: call.usage.cacheReadTokens + pass.extraUsage.cacheReadTokens,
+          cacheWriteTokens: call.usage.cacheWriteTokens + pass.extraUsage.cacheWriteTokens,
+          reasoningTokens: call.usage.reasoningTokens + pass.extraUsage.reasoningTokens,
+        };
       }
     }
+
     const hollow = advice.verdict === "reviewed" && isHollowAdvice(advice.advice);
 
     // 证据锚点校验：顾问说「刚才那次失败/这个文件」时，回头核对它引用的东西是否真的存在。
