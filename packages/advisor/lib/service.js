@@ -228,10 +228,13 @@ export class AdvisorService extends TypertRemoteService {
     } catch (_error) {
       /* 退化到 header */
     }
+    // 会话头里的 cwd 是权威的（日志第一行就有）；再看 session 自身。
     const header = session?.header ?? {};
-    for (const key of ["workingDirectory", "cwd", "projectPath"]) {
-      const value = header[key];
-      if (typeof value === "string" && value !== "") return value;
+    for (const source of [header, session]) {
+      for (const key of ["cwd", "workingDirectory", "projectPath"]) {
+        const value = source?.[key];
+        if (typeof value === "string" && value !== "") return value;
+      }
     }
     return process.cwd();
   }
@@ -1163,12 +1166,22 @@ export class AdvisorService extends TypertRemoteService {
   handleSessionEvent(session, event) {
     const sessionId = typeof session?.id === "string" ? session.id : "";
     if (sessionId !== "" && event?.type === "turn/start") {
-      const next = (this.turnOf.get(sessionId) ?? 0) + 1;
+      // 用事件里的**绝对回合号**，不要自己累计：会话可能早于插件加载就已有多个回合，
+      // 累计值会和 turnTail 的 props.turn 对不上，顾问线就永远不显示（真机踩过）。
+      const fromEvent = Number(event?.data?.turn);
+      const next =
+        Number.isSafeInteger(fromEvent) && fromEvent > 0
+          ? fromEvent
+          : (this.turnOf.get(sessionId) ?? 0) + 1;
       this.turnOf.set(sessionId, next);
       this.ledger.resetTurn(sessionId, next);
       return;
     }
     if (event?.type !== "turn/end") return;
+    const endTurn = Number(event?.data?.turn);
+    if (sessionId !== "" && Number.isSafeInteger(endTurn) && endTurn > 0) {
+      this.turnOf.set(sessionId, endTurn);
+    }
     if (event?.data?.reason?.kind !== "completed") return;
     if (isSubagentSession(session)) return;
     // 重要：不能在事件分发里同步写会话（重入保护），必须异步一拍。
