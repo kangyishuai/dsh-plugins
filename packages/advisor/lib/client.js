@@ -27,11 +27,14 @@ window.__ModuleLoader__.load({
     /** 轻量提示停留时间；到点后把自己清掉。 */
     let TOAST_MS = 4000;
     /**
-     * 顾问线缓存：同一个 sessionId 只拉一次（成功结果与 in-flight Promise 都留在这里）。
+     * 顾问线缓存：同一个 sessionId 的 in-flight Promise 与结果（带时间戳）。
      * 失败不进缓存（下一次挂载可以重试），页面刷新时整体失效；切会话是新的 key。
-     * @type {Map<string, Promise<any[]>>}
+     * **必须带 TTL**：影子/答后建议在回合结束后才落盘，永久缓存会让顾问线永不出现。
+     * @type {Map<string, { at: number, promise: Promise<any[]> }>}
      */
     let adviceCache = new Map();
+    /** 缓存 TTL（毫秒）。 */
+    let ADVICE_CACHE_TTL_MS = 3000;
 
     /** 简体中文字典（键集的事实来源）。 */
     /** @type {Record<string, string>} */
@@ -1210,10 +1213,46 @@ window.__ModuleLoader__.load({
           } catch (_error) {
             return undefined;
           }
+          // 本回合还没有记录时（影子建议稍后才落盘），延迟强制重取两次。
+          /** @type {any[]} */
+          let timers = [];
+          /** @param {number} delay */
+          let schedule = function scheduleRetry(delay) {
+            timers.push(
+              setTimeout(function retry() {
+                if (!alive) return;
+                let again;
+                try {
+                  again = Promise.resolve(api.advice(sessionId, true));
+                } catch (_error) {
+                  return;
+                }
+                again.then(
+                  function onRetry(value) {
+                    if (!alive) return;
+                    let items = Array.isArray(value) ? value : [];
+                    setRecords(items);
+                    let hit = items.some(function matches(item) {
+                      return item && item.turn === slotTurnNumber(turn);
+                    });
+                    if (!hit) schedule(4000);
+                  },
+                  function onRetryFailed() {
+                    /* 静默 */
+                  },
+                );
+              }, delay),
+            );
+          };
           pending.then(
             function onItems(value) {
               if (!alive) return;
-              setRecords(Array.isArray(value) ? value : []);
+              let items = Array.isArray(value) ? value : [];
+              setRecords(items);
+              let hit = items.some(function matches(item) {
+                return item && item.turn === slotTurnNumber(turn);
+              });
+              if (!hit) schedule(2500);
             },
             function onFailure() {
               if (alive) setRecords([]);
@@ -1221,6 +1260,7 @@ window.__ModuleLoader__.load({
           );
           return function cleanup() {
             alive = false;
+            for (let index = 0; index < timers.length; index += 1) clearTimeout(timers[index]);
           };
         },
         [api, sessionId],
@@ -3249,10 +3289,17 @@ window.__ModuleLoader__.load({
        * @param {string} sessionId
        * @returns {Promise<any[]>}
        */
-      function loadAdvice(sessionId) {
+      /** @param {string} sessionId @param {boolean} [force] */
+      function loadAdvice(sessionId, force) {
         if (typeof sessionId !== "string" || sessionId === "") return Promise.resolve([]);
+        if (force === true) adviceCache.delete(sessionId);
         let cached = adviceCache.get(sessionId);
-        if (cached !== undefined) return cached;
+        // 缓存带 TTL：影子/答后建议是在回合**结束之后**才落盘的，
+        // 永远命中旧 Promise 会让顾问线永远不出现（真机踩过）。
+        if (cached !== undefined) {
+          if (Date.now() - cached.at < ADVICE_CACHE_TTL_MS) return cached.promise;
+          adviceCache.delete(sessionId);
+        }
         let pending = callRemote("advice", { sessionId: sessionId }).then(
           function onAdvice(raw) {
             let items = normalizeAdviceItems(raw);
@@ -3267,13 +3314,14 @@ window.__ModuleLoader__.load({
             return [];
           },
         );
-        adviceCache.set(sessionId, pending);
+        adviceCache.set(sessionId, { at: Date.now(), promise: pending });
         return pending;
       }
 
       /** 顾问线的 api：只有一个方法，失败已在 loadAdvice 里降级。 */
       let tailApi = {
-        advice: (/** @type {string} */ sessionId) => loadAdvice(sessionId),
+        advice: (/** @type {string} */ sessionId, /** @type {boolean} [force] */ force) =>
+          loadAdvice(sessionId, force === true),
       };
 
       // 顾问线：每轮答案尾部一行（与 next-step 的决策卡并存，order 排在其后）。
