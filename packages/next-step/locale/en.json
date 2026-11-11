@@ -14,7 +14,7 @@
     "error.failed": "Something went wrong. Try again.",
     "error.send": "Could not fill the composer",
     "settings.title": "Next-step suggestions",
-    "settings.desc": "After each completed answer, generate one decision card (one extra model call).",
+    "settings.desc": "Judges whether a turn is worth continuing; when it is, adds a status summary and two directions (one extra model call).",
     "settings.enabled": "Enable the plugin",
     "settings.card": "Decision card under the answer",
     "settings.ghost": "Ghost hint in the composer",
@@ -30,6 +30,16 @@
     "settings.noError": "No errors",
     "settings.paused": "Paused; resumes in about {time}",
     "settings.updateFailed": "Could not save",
-    "settings.version": "Version {version} · build {hash}"
+    "settings.version": "Version {version} · build {hash}",
+    "sentLabel": "Sent: {label}",
+    "settings.offHint": "While off, no request is made; cards already in the conversation stay.",
+    "settings.lastSkip": "Last skipped: {kind} · {reason}",
+    "settings.generateHint": "When no card appears, a “Generate a next-step card” button shows under the latest answer.",
+    "error.budget": "This session has used up its card budget",
+    "error.exists": "This turn already has a card",
+    "error.inflight": "Already generating; try again in a moment",
+    "error.noTurn": "No completed turn to generate a card for",
+    "retry.generate": "Generate a next-step card",
+    "retry.generating": "Generating…"
   }
 }
