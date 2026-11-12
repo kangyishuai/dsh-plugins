@@ -28,6 +28,7 @@ export const LEDGER_MAX_BYTES = 2 * 1024 * 1024;
  * @property {number} inputTokens
  * @property {number} outputTokens
  * @property {number} cacheReadTokens
+ * @property {number} [cacheWriteTokens]
  * @property {number} costUsd
  * @property {number} ms
  * @property {string} [code]
@@ -62,7 +63,7 @@ export function dayKey(date = new Date()) {
  *   counters: (sessionId: string, now?: number) => SessionCounters,
  *   noteCall: (sessionId: string, input: { turn: number, costUsd: number, at: number }) => void,
  *   resetTurn: (sessionId: string, turn: number) => void,
- *   totals: () => { calls: number, inputTokens: number, outputTokens: number, costUsd: number, byTrigger: Record<string, number> },
+ *   totals: () => { calls: number, inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, costUsd: number, byTrigger: Record<string, number> },
  *   recent: (limit?: number) => LedgerEntry[],
  *   ready: () => Promise<void>,
  *   recordAdvice: (entry: any) => Promise<void>,
@@ -78,8 +79,16 @@ export function createLedger(options) {
   const countersBySession = new Map();
   /** @type {LedgerEntry[]} */
   const recent = [];
-  /** @type {{ calls: number, inputTokens: number, outputTokens: number, costUsd: number, byTrigger: Record<string, number> }} */
-  const totals = { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0, byTrigger: {} };
+  /** @type {{ calls: number, inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, costUsd: number, byTrigger: Record<string, number> }} */
+  const totals = {
+    calls: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    costUsd: 0,
+    byTrigger: {},
+  };
   let loaded = false;
 
   /** 读历史账本，恢复「今日花费」与累计数（只读尾部 2MB，避免大文件拖慢启动）。 */
@@ -104,9 +113,13 @@ export function createLedger(options) {
         const cost = Number(entry.costUsd ?? 0) || 0;
         const inputTokens = Number(entry.inputTokens ?? 0) || 0;
         const outputTokens = Number(entry.outputTokens ?? 0) || 0;
+        const cacheReadTokens = Number(entry.cacheReadTokens ?? 0) || 0;
+        const cacheWriteTokens = Number(entry.cacheWriteTokens ?? 0) || 0;
         totals.calls += 1;
         totals.inputTokens += inputTokens;
         totals.outputTokens += outputTokens;
+        totals.cacheReadTokens += cacheReadTokens;
+        totals.cacheWriteTokens += cacheWriteTokens;
         totals.costUsd += cost;
         const trigger = typeof entry.trigger === "string" ? entry.trigger : "tool";
         totals.byTrigger[trigger] = (totals.byTrigger[trigger] ?? 0) + 1;
@@ -178,6 +191,8 @@ export function createLedger(options) {
       totals.calls += 1;
       totals.inputTokens += entry.inputTokens;
       totals.outputTokens += entry.outputTokens;
+      totals.cacheReadTokens += entry.cacheReadTokens ?? 0;
+      totals.cacheWriteTokens += entry.cacheWriteTokens ?? 0;
       totals.costUsd += entry.costUsd;
       totals.byTrigger[entry.trigger] = (totals.byTrigger[entry.trigger] ?? 0) + 1;
 
@@ -232,7 +247,7 @@ export function createLedger(options) {
       }
     },
 
-    /** @returns {{ calls: number, inputTokens: number, outputTokens: number, costUsd: number, byTrigger: Record<string, number> }} */
+    /** @returns {{ calls: number, inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, costUsd: number, byTrigger: Record<string, number> }} */
     totals() {
       return { ...totals, byTrigger: { ...totals.byTrigger } };
     },

@@ -36,6 +36,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   maxCostPerDay: 0,
   priceInputPerMTok: 0,
   priceOutputPerMTok: 0,
+  priceCacheReadPerMTok: 0,
+  priceCacheWritePerMTok: 0,
   privacyScope: "summary",
   redact: true,
   immuneTurns: 3,
@@ -76,6 +78,8 @@ const MONEY_LIMITS = Object.freeze({
   workspaceMaxCostPerDay: { min: 0, max: 10000, digits: 2 },
   priceInputPerMTok: { min: 0, max: 1000, digits: 4 },
   priceOutputPerMTok: { min: 0, max: 1000, digits: 4 },
+  priceCacheReadPerMTok: { min: 0, max: 1000, digits: 4 },
+  priceCacheWritePerMTok: { min: 0, max: 1000, digits: 4 },
 });
 
 /** 汇率区间：1 USD = 0.1–100 CNY，保留 4 位小数。 */

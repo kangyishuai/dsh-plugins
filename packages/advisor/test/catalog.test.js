@@ -34,20 +34,26 @@ test("effectiveRank：用户声明覆盖内置，缺省回落内置", () => {
 test("effectivePrice：设置优先 > 内置 > 不算钱", () => {
   assert.deepEqual(
     effectivePrice({ priceInputPerMTok: 2, priceOutputPerMTok: 8 }, "deepseek-v4.1-flash"),
-    { input: 2, output: 8, source: "settings" },
+    { input: 2, output: 8, cacheRead: 0, cacheWrite: 0, source: "settings", cacheSource: "none" },
   );
   assert.deepEqual(
     effectivePrice({ priceInputPerMTok: 0, priceOutputPerMTok: 0 }, "deepseek-v4.1-flash"),
     {
       input: 0.1,
       output: 0.3,
+      cacheRead: 0,
+      cacheWrite: 0,
       source: "builtin",
+      cacheSource: "none",
     },
   );
   assert.deepEqual(effectivePrice({ priceInputPerMTok: 0, priceOutputPerMTok: 0 }, "mystery"), {
     input: 0,
     output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
     source: "none",
+    cacheSource: "none",
   });
 });
 
@@ -62,7 +68,50 @@ test("effectivePrice：人民币单价按汇率折算成 USD", () => {
       },
       "mystery",
     ),
-    { input: 1, output: 2, source: "settings" },
+    {
+      input: 1,
+      output: 2,
+      cacheRead: 0,
+      cacheWrite: 0,
+      source: "settings",
+      cacheSource: "none",
+    },
+  );
+});
+
+test("effectivePrice：缓存单价只有用户设置，内置价不猜缓存", () => {
+  assert.deepEqual(
+    effectivePrice(
+      { priceCacheReadPerMTok: 0.5, priceCacheWritePerMTok: 1 },
+      "deepseek-v4.1-flash",
+    ),
+    {
+      input: 0.1,
+      output: 0.3,
+      cacheRead: 0.5,
+      cacheWrite: 1,
+      source: "builtin",
+      cacheSource: "settings",
+    },
+  );
+  assert.deepEqual(
+    effectivePrice(
+      {
+        currency: "CNY",
+        usdToCny: 7.2,
+        priceCacheReadPerMTok: 7.2,
+        priceCacheWritePerMTok: 14.4,
+      },
+      "mystery",
+    ),
+    {
+      input: 0,
+      output: 0,
+      cacheRead: 1,
+      cacheWrite: 2,
+      source: "none",
+      cacheSource: "settings",
+    },
   );
 });
 

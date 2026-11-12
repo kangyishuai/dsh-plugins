@@ -153,6 +153,31 @@ test("estimateCostUsd：单价为 0 时不算钱", () => {
     }),
     4,
   );
+  assert.equal(
+    estimateCostUsd({
+      inputTokens: 1_000_000,
+      outputTokens: 1_000_000,
+      cacheReadTokens: 1_000_000,
+      cacheWriteTokens: 1_000_000,
+      priceInputPerMTok: 2,
+      priceOutputPerMTok: 8,
+      priceCacheReadPerMTok: 0.5,
+      priceCacheWritePerMTok: 1,
+    }),
+    11.5,
+    "缓存读/写是额外输入侧 token，分别乘缓存单价",
+  );
+  assert.equal(
+    estimateCostUsd({
+      inputTokens: 1_000_000,
+      outputTokens: 0,
+      cacheReadTokens: 1_000_000,
+      priceInputPerMTok: 2,
+      priceCacheReadPerMTok: 0,
+    }),
+    2,
+    "缓存单价 0 = 不计缓存部分",
+  );
 });
 
 test("isHollowAdvice 精确匹配空洞建议，不做包含匹配", () => {

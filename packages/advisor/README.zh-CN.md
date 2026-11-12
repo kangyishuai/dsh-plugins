@@ -56,7 +56,7 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-advisor-*.tgz
 **设置页。** 设置 → 通用 → 顾问。默认 `off` 时卡片只显示模式、一句状态和「配置顾问」；展开或启用后才显示：
 
 - **基础**：模式、币种、服务商、模型、思考档、每日预算、发送范围、发送前脱敏。
-- **高级**（默认折叠）：调用限额、工作区限额、人民币汇率、单价、输出/输入上限、建议条数、白名单、答后复查、读文件核实、影子去重、记录发送内容；折叠标题会标出「默认值」或「N 项已修改」。
+- **高级**（默认折叠）：调用限额、工作区限额、人民币汇率、单价（含缓存读取/写入）、输出/输入上限、建议条数、白名单、答后复查、读文件核实、影子去重、记录发送内容；折叠标题会标出「默认值」或「N 项已修改」。
 - **状态与诊断**（默认折叠）：累计调用/token/金额、最近结果/跳过原因、发送预览、诊断、设置文件与账本路径。
 
 高级字段旁的「?」点开或用键盘激活会显示说明、默认值与范围、技术名；悬停只是补充。改完点「保存」才对下一次徵询生效。
@@ -79,6 +79,8 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-advisor-*.tgz
 | `maxCostPerDay`           | 每日预算（按币种）            | `0`         | 0–10000，0 = 不限；最多 2 位小数     | 每天最多花多少（按 `currency`）；只有填了单价才计算金额。                     |
 | `priceInputPerMTok`       | 输入单价                      | `0`         | 0–1000；最多 4 位小数                | 顾问模型输入价，按 `currency` / 百万 token；0 = 不算钱。                      |
 | `priceOutputPerMTok`      | 输出单价                      | `0`         | 0–1000；最多 4 位小数                | 输出价，按 `currency` / 百万 token。                                          |
+| `priceCacheReadPerMTok`   | 缓存读取单价                  | `0`         | 0–1000；最多 4 位小数                | 缓存读取/命中的输入 token 单价，按 `currency`；0 = 不计缓存部分。             |
+| `priceCacheWritePerMTok`  | 缓存写入单价                  | `0`         | 0–1000；最多 4 位小数                | 缓存写入/创建的输入 token 单价，按 `currency`；0 = 不计缓存部分。             |
 | `privacyScope`            | 发送范围                      | `"summary"` | off / summary / full                 | 发多少会话内容，见「成本与隐私」。                                            |
 | `redact`                  | 发送前脱敏                    | `true`      | 布尔                                 | 尽量遮掉常见密钥格式；不能保证全部遮住。                                      |
 | `immuneTurns`             | 仅 JSON：免疫回合             | `3`         | 0–20                                 | 投递后保持安静的回合数；只用于 shadow 投递。                                  |
@@ -95,6 +97,8 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-advisor-*.tgz
 | `tracePrompt`             | 记录发送内容                  | `"preview"` | `preview` / `off`                    | 在会话记录里保留实际发送文本的首尾各 2,000 字符（脱敏后）；`off` 只记元数据。 |
 | `timeoutMs`               | 仅 JSON：超时                 | `90000`     | 5000–600000                          | 单次徵询超时；`/advisor cancel` 可以更早中止。                                |
 | `maxInputChars`           | 输入上限                      | `60000`     | 4000–400000                          | 会话文本总预算；超出保留首尾、省略中间。                                      |
+
+**缓存单价。** 宿主 usage 里只有 `cacheReadTokens` / `cacheWriteTokens`（都是输入侧），没有缓存输出 token；缓存 token 是额外的输入 token，不从 `inputTokens` 扣。`priceCacheReadPerMTok` / `priceCacheWritePerMTok` 为 0 时不计缓存部分；如果账本里有缓存 token 而缓存单价为 0，状态区会提示「缓存 token 未计价」。内置参考价没有缓存价，不做猜测。
 
 **币种与账本。** 设置里的金额和单价按 `currency` 填写（USD/CNY），`usdToCny` 是手动汇率。账本与工作区预算池内部始终记 USD：调用时把设置金额换算成 USD，展示时再换回当前币种。切换币种会按汇率折算当前表单金额，保存前不会落盘；旧版 `maxCostPerDayUsd` / `workspaceMaxCostPerDayUsd` 键会按 USD 自动迁移到新键。汇率变化只影响之后的换算和展示，不会重写历史账本。
 
@@ -137,8 +141,8 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-advisor-*.tgz
 这一节请在开启前读完。
 
 - **每次徵询都是一次额外的模型调用**，按顾问路由计费，走那家 provider 的额度。主模型自身的 usage 不受影响。
-- **token 由插件自己记账。** DSH 只为主动环里的 assistant 消息记 usage，所以插件单写一份账本：`<DSH_HOME>/advisor/usage.jsonl`，一次徵询一行 JSON（时间、会话 id、触发方式 `tool` / `shadow` / `manual`、provider、model、思考档、结论、严重度、输入 / 输出 / 缓存 token、估算金额、耗时、错误码）。文件只追加，超过 2 MiB 滚动到 `usage.jsonl.1`，启动时从文件尾部恢复累计数。
-- **算钱需要你填单价。** DSH 的模型元数据没有价格字段。按 `currency` 填 `priceInputPerMTok` 和 `priceOutputPerMTok`；都留 0 时账本只记 token，界面不显示金额。账本内部记 USD 等价，内置参考价是 USD，人民币展示时折算。插件从不猜价格。
+- **token 由插件自己记账。** DSH 只为主动环里的 assistant 消息记 usage，所以插件单写一份账本：`<DSH_HOME>/advisor/usage.jsonl`，一次徵询一行 JSON（时间、会话 id、触发方式 `tool` / `shadow` / `manual`、provider、model、思考档、结论、严重度、输入 / 输出 / 缓存读/写 token、估算金额、耗时、错误码）。文件只追加，超过 2 MiB 滚动到 `usage.jsonl.1`，启动时从文件尾部恢复累计数。
+- **算钱需要你填单价。** DSH 的模型元数据没有价格字段。按 `currency` 填 `priceInputPerMTok`、`priceOutputPerMTok`、`priceCacheReadPerMTok`、`priceCacheWritePerMTok`；都留 0 时账本只记 token，界面不显示金额。账本内部记 USD 等价，内置参考价是 USD，人民币展示时折算；内置参考价没有缓存价。插件从不猜价格。
 - **每日预算统计的是已经记下的花费**，所以跨过上限的那一次徵询仍会完成并计费。
 - **顾问路由在外部时，会话内容会离开本机。** 渲染后的会话文本（含工具调用与结果，受 `privacyScope` 和 `maxInputChars` 限制）会发到该路由指向的 baseURL。如果那是另一家厂商，你的对话就离开了这台机器；只有指向本地网关的路由才留在本机。除此之外插件什么都不发：没有遥测，没有统计，除了徵询本身不访问网络。
 - **`privacyScope` 决定发多少。** `summary`（默认）：每个文本块最多 2,000 字符，工具参数最多 300，工具结果最多 700。`off`：只发用户与助手的文本（最多 1,200 字符），完全不发工具往来。`full`：文本最多 4,000，工具参数最多 1,200，工具结果最多 3,500。渲染完再按 `maxInputChars`（默认 60,000）封顶：保留前 30% 和结尾，中间替换成省略标记。

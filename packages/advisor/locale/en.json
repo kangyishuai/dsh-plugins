@@ -225,6 +225,14 @@
     "settings.unit.cnyPerMTok": "CNY / 1M tokens",
     "settings.budget.maxCostPerDay": "Daily budget",
     "settings.budget.workspaceMaxCostPerDay": "Workspace daily budget",
-    "settings.unit.cnyPerUsd": "CNY / USD"
+    "settings.unit.cnyPerUsd": "CNY / USD",
+    "settings.budget.priceCacheReadPerMTok": "Cache-read price",
+    "settings.budget.priceCacheWritePerMTok": "Cache-write price",
+    "settings.budget.cachePriceHint": "Input-token price for cache reads/writes (selected currency per 1M tokens); 0 = cache tokens are not priced. The host exposes cache-read/write tokens only; there is no cache-output token.",
+    "settings.budget.cachePriceSource": "Cache prices",
+    "settings.budget.cachePriceSource.settings": "user settings",
+    "settings.budget.cachePriceSource.none": "unset (cache tokens not priced)",
+    "settings.status.cache": "Cache tokens: {read} read / {write} write",
+    "settings.status.cacheUnpriced": "The ledger has cache tokens, but cache prices are 0: that part is not priced."
   }
 }

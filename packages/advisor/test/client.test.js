@@ -115,6 +115,8 @@ describe("currency conversion", () => {
       workspaceMaxCostPerDay: 20,
       priceInputPerMTok: 0.15,
       priceOutputPerMTok: 0.3,
+      priceCacheReadPerMTok: 0.25,
+      priceCacheWritePerMTok: 0.5,
     };
     const cny = api.convertCurrency(usd, "CNY");
     assert.equal(cny.currency, "CNY");
@@ -122,11 +124,14 @@ describe("currency conversion", () => {
     assert.equal(cny.workspaceMaxCostPerDay, 144);
     assert.equal(cny.priceInputPerMTok, 1.08);
     assert.equal(cny.priceOutputPerMTok, 2.16);
+    assert.equal(cny.priceCacheReadPerMTok, 1.8);
+    assert.equal(cny.priceCacheWritePerMTok, 3.6);
 
     const back = api.convertCurrency(cny, "USD");
     assert.equal(back.currency, "USD");
     assert.equal(back.maxCostPerDay, 10);
     assert.equal(back.priceInputPerMTok, 0.15);
+    assert.equal(back.priceCacheReadPerMTok, 0.25);
   });
 
   it("is a no-op when the currency does not change", () => {
@@ -144,12 +149,16 @@ describe("settings view", () => {
         workspaceMaxCostPerDay: 1.25,
         priceInputPerMTok: 0.15,
         priceOutputPerMTok: 0.075,
+        priceCacheReadPerMTok: 0.25,
+        priceCacheWritePerMTok: 0.5,
       },
     });
     assert.equal(out.settings.maxCostPerDay, 0.5);
     assert.equal(out.settings.workspaceMaxCostPerDay, 1.25);
     assert.equal(out.settings.priceInputPerMTok, 0.15);
     assert.equal(out.settings.priceOutputPerMTok, 0.075);
+    assert.equal(out.settings.priceCacheReadPerMTok, 0.25);
+    assert.equal(out.settings.priceCacheWritePerMTok, 0.5);
     assert.equal(out.settings.maxTokens, 4096);
     assert.equal(out.settings.currency, "USD");
     assert.equal(out.settings.usdToCny, 7.2);
@@ -162,12 +171,16 @@ describe("settings view", () => {
       maxCostPerDay: 7.3,
       workspaceMaxCostPerDay: 0,
       priceInputPerMTok: 1.5,
+      priceCacheReadPerMTok: 0.5,
+      priceCacheWritePerMTok: 0.75,
     });
     assert.equal(out.currency, "CNY");
     assert.equal(out.usdToCny, 7.3);
     assert.equal(out.maxCostPerDay, 7.3);
     assert.equal(out.workspaceMaxCostPerDay, 0);
     assert.equal(out.priceInputPerMTok, 1.5);
+    assert.equal(out.priceCacheReadPerMTok, 0.5);
+    assert.equal(out.priceCacheWritePerMTok, 0.75);
   });
 
   it("does not report equal floats as a change", () => {
