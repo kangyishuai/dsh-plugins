@@ -274,6 +274,8 @@ window.__ModuleLoader__.load({
             alignItems: "center",
             justifyContent: "center",
           },
+          // macOS 上覆盖页头的浮层必须显式声明窗口拖动排除，否则拖动会变成拖窗口。
+          "data-window-drag-exclude": "",
           onClick: props.onClose,
         },
         h(

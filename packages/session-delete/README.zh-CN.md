@@ -89,6 +89,7 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-session-delete-*.tgz
 | `~/.dsh/session-trash/`              | 创建 + 写入              | 每条被删会话一个条目（带 `meta.json`），另有 `audit.log`（JSONL，一次操作一行）和 `journal/`（两阶段提交记录，用于下次启动时把中断的操作补完或回滚）。      |
 
 - **不联网、不上报。**
+- **macOS 窗口拖动。** 自绘确认框 fallback 的遮罩声明了 `data-window-drag-exclude`，覆盖页头时拖动不会拖走窗口。
 - **默认可恢复。** 删除是把文件移走，不是抹掉。
 - **彻底删除不可恢复。** 「彻底删除」以及清空回收站是真的删字节，没有撤销 toast，也找不回来。
 - **恢复不等于完整撤销。** 日志和工作区归属会回来，置顶与归档标记不会：DSH 归档时会顺手清掉 pin，取消归档时不会恢复。
