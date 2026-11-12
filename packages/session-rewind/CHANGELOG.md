@@ -1,5 +1,11 @@
 # @kangyishuai/dsh-session-rewind
 
+## 0.6.1
+
+### Patch Changes
+
+- [#68](https://github.com/kangyishuai/dsh-plugins/pull/68) [`0fd4faa`](https://github.com/kangyishuai/dsh-plugins/commit/0fd4faa2c8ed893961d9b4bffac29ba0efd5ba5d) Thanks [@kangyishuai](https://github.com/kangyishuai)! - macOS：回溯抽屉与确认框声明 `data-window-drag-exclude`。此前浮层覆盖页头时，拖动浮层会变成拖动整个 DSH 窗口（0.2.2-rc.2 上用真实鼠标拖动复现并复验修复）。
+
 ## 0.6.0
 
 ### Minor Changes
