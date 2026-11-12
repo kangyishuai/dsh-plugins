@@ -1,0 +1,90 @@
+name: token probe
+
+# 一次性探针（不合并）：验证 RELEASE_TOKEN 是否具备
+#   1. Contents: write —— 用 PAT 真实 git push 一个分支
+#   2. Pull requests: write —— 用 PAT 开一个 PR，并读回它的检查状态
+#   3. PAT 创建的 PR 是否会触发 pull_request 工作流（本次运行本身就是证据）
+# 验证完自动关闭并删除它自己开的 PR、分支。
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Probe RELEASE_TOKEN
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          REPO: ${{ github.repository }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -uo pipefail
+          PROBE_BRANCH="probe/pat-pr"
+          fail=0
+          note() { echo "::notice::$*"; }
+          warn() { echo "::warning::$*"; }
+
+          echo "=== 1. 权限读取 ==="
+          if perms=$(gh api "repos/${REPO}" --jq '.permissions|tojson' 2>&1); then
+            echo "permissions = ${perms}"
+            echo "$perms" | grep -q '"push":true' || { warn "缺少 Contents: write"; fail=1; }
+          else
+            warn "读取权限失败：${perms}"; fail=1
+          fi
+
+          echo "=== 2. 用 PAT 真实 push 一个分支 ==="
+          git config user.name "release-token-probe"
+          git config user.email "probe@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+          git checkout -q -b "$PROBE_BRANCH"
+          git commit -q --allow-empty -m "chore(repo): PAT 探针（自动清理，请勿合并）"
+          if git push -q origin "$PROBE_BRANCH" 2>/tmp/push.err; then
+            echo "git push 成功"
+          else
+            warn "git push 失败：$(cat /tmp/push.err | tail -3)"; fail=1; echo "PROBE_FAILED=1" >> "$GITHUB_ENV"
+          fi
+
+          if [ "$fail" = "0" ]; then
+            echo "=== 3. 用 PAT 开 PR ==="
+            if url=$(gh pr create --head "$PROBE_BRANCH" --base "$BASE" \
+                       --title "chore(repo): PAT 探针 PR（会自动关闭）" \
+                       --body "验证 RELEASE_TOKEN 能开 PR，以及它开的 PR 会触发 CI。验证完自动关闭。" 2>&1); then
+              echo "已创建：$url"
+              num=$(basename "$url")
+              echo "$num" > /tmp/probe-pr
+              echo "PROBE_PR=$num" >> "$GITHUB_ENV"
+              sleep 75
+              echo "=== 4. 读那个 PR 的检查 ==="
+              gh pr checks "$num" || true
+              total=$(gh pr checks "$num" --json name --jq 'length' 2>/dev/null || echo 0)
+              echo "检查数量 = ${total}"
+              if [ "${total:-0}" -gt 0 ]; then
+                note "PAT 创建的 PR 触发了 ${total} 个检查 → 机制成立"
+              else
+                warn "PAT 创建的 PR 没有检查 → 机制不成立"
+              fi
+            else
+              warn "gh pr create 失败：${url}"
+            fi
+          fi
+      - name: Cleanup probe PR and branch
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          num="$(cat /tmp/probe-pr 2>/dev/null || true)"
+          if [ -n "$num" ]; then
+            gh pr close "$num" --delete-branch --comment "探针结束，自动清理。" || \
+              { gh pr close "$num" || true; }
+          fi
+          gh api -X DELETE "repos/${REPO}/git/refs/heads/probe/pat-pr" 2>/dev/null || true
+          echo "清理完成"
