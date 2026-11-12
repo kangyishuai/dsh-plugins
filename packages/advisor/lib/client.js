@@ -345,7 +345,7 @@ window.__ModuleLoader__.load({
       ".dsh-advisor-unit{flex:0 0 auto;font-size:11.5px;color:var(--dsw-alias-label-secondary,GrayText);white-space:nowrap;}",
       ".dsh-advisor-off{display:flex;flex-direction:column;gap:4px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.28));border-radius:8px;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base,Canvas));}",
       ".dsh-advisor-off-title{font-weight:600;}",
-      ".dsh-advisor-dirty{font-size:12px;color:var(--dsw-alias-state-warning-primary,#b7791f);}",
+      ".dsh-advisor-dirty{font-size:12px;color:var(--dsw-alias-state-warn-label,var(--dsw-alias-state-warn-primary));}",
       ".dsh-advisor-disclosure{display:flex;flex-direction:column;gap:4px;}",
       ".dsh-advisor-disclosure-toggle{display:flex;align-items:center;gap:6px;width:100%;padding:4px 0;border:0;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer;}",
       ".dsh-advisor-disclosure-toggle:hover{color:var(--dsw-alias-label-primary,CanvasText);}",
@@ -389,7 +389,7 @@ window.__ModuleLoader__.load({
       ".dsh-advisor-turn-preview{display:flex;flex-direction:column;gap:4px;}",
       ".dsh-advisor-turn-preview-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;}",
       ".dsh-advisor-turn-pre{margin:0;padding:8px 10px;max-height:260px;overflow:auto;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.28));border-radius:6px;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base,Canvas));font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-word;}",
-      ".dsh-advisor-turn-warn{font-size:11.5px;color:var(--dsw-alias-state-warning-primary,#b7791f);word-break:break-word;}",
+      ".dsh-advisor-turn-warn{font-size:11.5px;color:var(--dsw-alias-state-warn-label,var(--dsw-alias-state-warn-primary));word-break:break-word;}",
     ].join("\n");
 
     // ------------------------------------------------------------------
@@ -4571,6 +4571,8 @@ window.__ModuleLoader__.load({
         turnNumberOf: turnNumberOf,
         slotTurnNumber: slotTurnNumber,
         isAdviceTurnReady: isAdviceTurnReady,
+        // 注入的样式表文本：给「只用宿主真实存在的主题 token」这条回归用例读。
+        clientCss: () => CSS,
       }),
     });
 
