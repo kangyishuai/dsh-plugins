@@ -89,6 +89,27 @@ SMOKE_DEMO=1 pnpm smoke:session-delete   # 截图在系统临时目录的 dsh-sm
 - 描述里写 `Closes #<issue>`，按 PR 模板勾选自查清单。
 - 标签由 `actions/labeler` 按改动路径自动打（`plugin:<name>`、`area:repo`、`area:ci`、`documentation`），不用手动打。
 
+### 分支保护（main）
+
+`main` 的规则集 `protect-main` 除了禁止删除和非快进之外，还要求这 4 个检查通过才能合并：
+
+| 必需检查                      | 来自 `ci.yml` 的 job |
+| ----------------------------- | -------------------- |
+| `verify (node 22.19)`         | `verify`（矩阵）     |
+| `verify (node 24)`            | `verify`（矩阵）     |
+| `runtime probe (DSH surface)` | `probe`              |
+| `gitleaks (full history)`     | `secrets`            |
+
+`commitlint` 不在必需列表里：`ci.yml` 的 job 和 `pr-title.yml` 的 job 同名，两个工作流都产出叫 `commitlint` 的检查，按名字要求会不稳定。PR 标题仍由 `PR title` 工作流校验。
+
+仓库所有者（admin）可以 bypass，只用于「检查根本不可能产生」的场景，例如 GitHub 侧故障。正常情况**不要**用 bypass 合并。
+
+**例外：Version Packages PR 上不会有 `pull_request` 触发的 CI。** 它由 `changesets/action` 用仓库的 `GITHUB_TOKEN` 创建，而 GitHub 会抑制 `GITHUB_TOKEN` 产生的 `pull_request` 事件——那个 PR 上要么没有任何检查，要么只有一个 0 job 的失败 run。应对方式：`release.yml` 在该 PR 存在时用 `workflow_dispatch` 给 `changeset-release/main` 补跑一次 `ci.yml`，检查结果会挂到 PR 的 head commit 上，满足门禁。手动补跑同一入口：
+
+```bash
+gh workflow run ci.yml --ref changeset-release/main
+```
+
 ### Issue 与标签
 
 | 标签                                      | 含义                                                              |
@@ -139,6 +160,12 @@ pnpm wt rm feat/session-delete-batch --delete-branch   # PR 合并后清理
    - **本地出版本（维护者日常做法）**：`GITHUB_TOKEN=$(gh auth token) pnpm version-packages`，检查 `CHANGELOG.md` 和版本号，提交为 `chore(release): <plugin> <version>` 后推到 `main`
    - **走 PR**：直接把带 changeset 的提交推到 `main`，CI 会开一个「Version Packages」PR，合并它即可
 3. `main` 上出现尚未发布的版本号时，Release 工作流会发布到 npm 并打 tag `@kangyishuai/dsh-<name>@<version>`，同时创建 GitHub Release
+
+走 PR 这条路时记得：Version Packages PR 上的 CI 是 `release.yml` 用 `workflow_dispatch` 补跑的（原因见[分支保护](#分支保护main)），等它绿了再合并。若补跑失败或没出现，手动补一次：
+
+```bash
+gh workflow run ci.yml --ref changeset-release/main
+```
 
 发布由 [`scripts/publish.mjs`](scripts/publish.mjs) 完成。它用 `npm publish --provenance` 发布，npm 页面会显示「Built and signed on GitHub Actions」，用户能确认包来自本仓库的 CI。之所以不用 `changeset publish`，是因为它在 pnpm 仓库里调用 `pnpm publish`，而 pnpm 不支持 provenance。发布成功后脚本会运行 `changeset git-tag`，由工作流推送 tag、创建 GitHub Release。
 
