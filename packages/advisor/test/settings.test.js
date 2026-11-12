@@ -20,6 +20,8 @@ test("默认设置：默认关闭、没有配置顾问", () => {
   assert.equal(isConfigured(DEFAULT_SETTINGS), false);
   assert.equal(DEFAULT_SETTINGS.privacyScope, "summary");
   assert.equal(DEFAULT_SETTINGS.redact, true);
+  assert.equal(DEFAULT_SETTINGS.priceCacheReadPerMTok, 0);
+  assert.equal(DEFAULT_SETTINGS.priceCacheWritePerMTok, 0);
 });
 
 test("normalizeSettings 丢弃未知键、夹紧数字、过滤非法模式", () => {
@@ -87,6 +89,16 @@ test("默认币种 USD、汇率 7.2，旧 *Usd 键按 USD 迁移", () => {
   const cny = normalizeSettings({ currency: "CNY", usdToCny: 7.2, maxCostPerDayUsd: 10 });
   assert.equal(cny.currency, "CNY");
   assert.equal(cny.maxCostPerDay, 72, "10 USD 按 7.2 迁成 72 CNY");
+});
+
+test("缓存单价按金额字段归一化，0 = 不计", () => {
+  const out = normalizeSettings({
+    priceCacheReadPerMTok: 0.123456,
+    priceCacheWritePerMTok: 99999,
+  });
+  assert.equal(out.priceCacheReadPerMTok, 0.1235);
+  assert.equal(out.priceCacheWritePerMTok, 1000);
+  assert.equal(normalizeSettings({}).priceCacheReadPerMTok, 0);
 });
 
 test("currency / usdToCny 归一化", () => {

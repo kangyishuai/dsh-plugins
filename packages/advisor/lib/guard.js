@@ -128,14 +128,27 @@ export function checkBudget(input) {
 
 /**
  * 估算一次调用的美元成本。单价为 0 时返回 0（= 不算钱，只记 token）。
- * @param {{ inputTokens: number, outputTokens: number, priceInputPerMTok: number, priceOutputPerMTok: number }} input
+ * @param {{ inputTokens: number, outputTokens: number, cacheReadTokens?: number, cacheWriteTokens?: number, priceInputPerMTok?: number, priceOutputPerMTok?: number, priceCacheReadPerMTok?: number, priceCacheWritePerMTok?: number }} input
  * @returns {number}
  */
 export function estimateCostUsd(input) {
-  const { inputTokens, outputTokens, priceInputPerMTok, priceOutputPerMTok } = input;
+  const {
+    inputTokens,
+    outputTokens,
+    cacheReadTokens = 0,
+    cacheWriteTokens = 0,
+    priceInputPerMTok = 0,
+    priceOutputPerMTok = 0,
+    priceCacheReadPerMTok = 0,
+    priceCacheWritePerMTok = 0,
+  } = input;
   const inCost = (Math.max(0, inputTokens) / 1_000_000) * Math.max(0, priceInputPerMTok);
   const outCost = (Math.max(0, outputTokens) / 1_000_000) * Math.max(0, priceOutputPerMTok);
-  return inCost + outCost;
+  const cacheReadCost =
+    (Math.max(0, cacheReadTokens) / 1_000_000) * Math.max(0, priceCacheReadPerMTok);
+  const cacheWriteCost =
+    (Math.max(0, cacheWriteTokens) / 1_000_000) * Math.max(0, priceCacheWritePerMTok);
+  return inCost + outCost + cacheReadCost + cacheWriteCost;
 }
 
 /**

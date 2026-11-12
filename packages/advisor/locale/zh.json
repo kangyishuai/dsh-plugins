@@ -225,6 +225,14 @@
     "settings.unit.cnyPerMTok": "元 / 百万 token",
     "settings.budget.maxCostPerDay": "每日预算",
     "settings.budget.workspaceMaxCostPerDay": "工作区每日预算",
-    "settings.unit.cnyPerUsd": "元 / USD"
+    "settings.unit.cnyPerUsd": "元 / USD",
+    "settings.budget.priceCacheReadPerMTok": "缓存读取单价",
+    "settings.budget.priceCacheWritePerMTok": "缓存写入单价",
+    "settings.budget.cachePriceHint": "缓存读取/写入的输入 token 单价（按当前币种 / 百万 token）；0 = 不计缓存部分。宿主只提供缓存读/写 token，没有缓存输出 token。",
+    "settings.budget.cachePriceSource": "缓存单价",
+    "settings.budget.cachePriceSource.settings": "用户设置",
+    "settings.budget.cachePriceSource.none": "未配置（缓存 token 不计）",
+    "settings.status.cache": "缓存 token：{read} read / {write} write",
+    "settings.status.cacheUnpriced": "账本里有缓存 token，但缓存单价为 0：缓存部分没有计价。"
   }
 }

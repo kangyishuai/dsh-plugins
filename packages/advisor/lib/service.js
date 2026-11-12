@@ -512,6 +512,8 @@ export class AdvisorService extends TypertRemoteService {
       outputTokens: settings.maxTokens / 2,
       priceInputPerMTok: price.input,
       priceOutputPerMTok: price.output,
+      priceCacheReadPerMTok: price.cacheRead,
+      priceCacheWritePerMTok: price.cacheWrite,
     });
 
     const started = Date.now();
@@ -534,26 +536,56 @@ export class AdvisorService extends TypertRemoteService {
         this.inflight.delete(sessionId);
     }
 
-    const costUsd =
-      call.ok && call.usage !== undefined
+    /** @param {any} usage @returns {number} */
+    const costOf = (usage) =>
+      call.ok && usage !== undefined
         ? estimateCostUsd({
-            inputTokens: call.usage.inputTokens,
-            outputTokens: call.usage.outputTokens,
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            cacheReadTokens: usage.cacheReadTokens,
+            cacheWriteTokens: usage.cacheWriteTokens,
             priceInputPerMTok: price.input,
             priceOutputPerMTok: price.output,
+            priceCacheReadPerMTok: price.cacheRead,
+            priceCacheWritePerMTok: price.cacheWrite,
           })
         : 0;
 
-    const usageLine = call.ok
-      ? `${formatTokens(call.usage?.inputTokens ?? 0)} in / ${formatTokens(call.usage?.outputTokens ?? 0)} out / ${formatMs(call.ms)}${
-          costUsd > 0
-            ? ` / ≈${formatMoney(
-                fromUsd(costUsd, settings.currency, settings.usdToCny),
-                settings.currency,
-                4,
-              )}`
-            : ""
-        }`
+    /**
+     * @param {any} usage
+     * @param {number} cost
+     * @param {number} ms
+     * @returns {string}
+     */
+    const usageLineOf = (usage, cost, ms) => {
+      const parts = [
+        `${formatTokens(usage?.inputTokens ?? 0)} in`,
+        `${formatTokens(usage?.outputTokens ?? 0)} out`,
+      ];
+      if ((usage?.cacheReadTokens ?? 0) > 0) {
+        parts.push(`${formatTokens(usage.cacheReadTokens)} cache read`);
+      }
+      if ((usage?.cacheWriteTokens ?? 0) > 0) {
+        parts.push(`${formatTokens(usage.cacheWriteTokens)} cache write`);
+      }
+      parts.push(formatMs(ms));
+      if (cost > 0) {
+        parts.push(
+          `≈${formatMoney(fromUsd(cost, settings.currency, settings.usdToCny), settings.currency, 4)}`,
+        );
+      }
+      if (
+        ((usage?.cacheReadTokens ?? 0) > 0 || (usage?.cacheWriteTokens ?? 0) > 0) &&
+        price.cacheSource === "none"
+      ) {
+        parts.push("缓存未计价");
+      }
+      return parts.join(" / ");
+    };
+
+    let costUsd = costOf(call.usage);
+    let usageLine = call.ok
+      ? usageLineOf(call.usage, costUsd, call.ms)
       : `${formatMs(Date.now() - started)}`;
 
     const baseResult = {
@@ -588,6 +620,7 @@ export class AdvisorService extends TypertRemoteService {
         inputTokens: 0,
         outputTokens: 0,
         cacheReadTokens: 0,
+        cacheWriteTokens: 0,
         costUsd: 0,
         ms: Date.now() - started,
         code: baseResult.code,
@@ -596,12 +629,17 @@ export class AdvisorService extends TypertRemoteService {
     }
 
     const parsed = parseAdvice(call.text ?? "");
-    const usage = call.usage;
-    this.ledger.noteCall(sessionId, { turn, costUsd, at: Date.now() });
-    void this.pool.add({ calls: 1, costUsd });
-    this.counters.calls += 1;
+    let usage = call.usage;
+
+    // 记一次调用（调用数与最终成本）：两阶段取证的额外 usage 合并后再记，避免只记第一轮。
+    const charge = () => {
+      this.ledger.noteCall(sessionId, { turn, costUsd, at: Date.now() });
+      void this.pool.add({ calls: 1, costUsd });
+      this.counters.calls += 1;
+    };
 
     if (!parsed.ok) {
+      charge();
       const result = { ...baseResult, status: "unavailable", code: `advice_${parsed.reason}` };
       this.counters.failures += 1;
       this.lastResult = result;
@@ -616,6 +654,7 @@ export class AdvisorService extends TypertRemoteService {
         inputTokens: usage?.inputTokens ?? 0,
         outputTokens: usage?.outputTokens ?? 0,
         cacheReadTokens: usage?.cacheReadTokens ?? 0,
+        cacheWriteTokens: usage?.cacheWriteTokens ?? 0,
         costUsd,
         ms: Date.now() - started,
         code: result.code,
@@ -657,6 +696,13 @@ export class AdvisorService extends TypertRemoteService {
         };
       }
     }
+
+    // 两阶段可能追加了 usage：用合并后的 token 重算成本/展示，再记这一次调用。
+    usage = call.usage;
+    costUsd = costOf(usage);
+    usageLine = usageLineOf(usage, costUsd, call.ms);
+    baseResult.usage = usageLine;
+    charge();
 
     const hollow = advice.verdict === "reviewed" && isHollowAdvice(advice.advice);
 
@@ -729,6 +775,7 @@ export class AdvisorService extends TypertRemoteService {
         inputTokens: usage?.inputTokens ?? 0,
         outputTokens: usage?.outputTokens ?? 0,
         cacheReadTokens: usage?.cacheReadTokens ?? 0,
+        cacheWriteTokens: usage?.cacheWriteTokens ?? 0,
         costUsd,
         ms: Date.now() - started,
         code: "session_cap",
@@ -816,6 +863,7 @@ export class AdvisorService extends TypertRemoteService {
       inputTokens: usage?.inputTokens ?? 0,
       outputTokens: usage?.outputTokens ?? 0,
       cacheReadTokens: usage?.cacheReadTokens ?? 0,
+      cacheWriteTokens: usage?.cacheWriteTokens ?? 0,
       costUsd,
       ms: Date.now() - started,
     });
@@ -1141,7 +1189,7 @@ export class AdvisorService extends TypertRemoteService {
       `币种：${settings.currency}${settings.currency === "CNY" ? `（1 USD = ${settings.usdToCny} CNY）` : ""}`,
       `单价：${
         price.source === "none"
-          ? "未配置（只记 token）"
+          ? "输入/输出未配置（只记 token）"
           : `输入 ${formatMoney(
               fromUsd(price.input, settings.currency, settings.usdToCny),
               settings.currency,
@@ -1151,6 +1199,18 @@ export class AdvisorService extends TypertRemoteService {
               settings.currency,
               2,
             )}/M（${price.source === "builtin" ? "内置参考价（USD 折算）" : "用户设置"}）`
+      }；${
+        price.cacheSource === "none"
+          ? "缓存读取/写入未配置（缓存 token 不计）"
+          : `缓存读取 ${formatMoney(
+              fromUsd(price.cacheRead, settings.currency, settings.usdToCny),
+              settings.currency,
+              2,
+            )}/M · 缓存写入 ${formatMoney(
+              fromUsd(price.cacheWrite, settings.currency, settings.usdToCny),
+              settings.currency,
+              2,
+            )}/M`
       }`,
       `工作区今日：${pool.calls} 次（上限 ${settings.workspaceMaxCallsPerDay || "∞"}）`,
       ``,

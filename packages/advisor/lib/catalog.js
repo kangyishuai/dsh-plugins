@@ -113,27 +113,43 @@ export function effectiveRank(tiers, route) {
 }
 
 /**
- * 有效单价：用户声明 > 内置；都没有返回 `{ input: 0, output: 0 }`（= 不算钱）。
- * @param {{ priceInputPerMTok: number, priceOutputPerMTok: number, currency?: string, usdToCny?: number }} settings
+ * 有效单价：输入/输出用「用户声明 > 内置」；缓存读取/写入只有用户声明（内置表没有缓存价）。
+ * 0 表示该项不算钱。缓存 token 是额外的输入侧 token，不从 inputTokens 里扣。
+ * @param {{ priceInputPerMTok?: number, priceOutputPerMTok?: number, priceCacheReadPerMTok?: number, priceCacheWritePerMTok?: number, currency?: string, usdToCny?: number }} settings
  * @param {string} modelId
- * @returns {{ input: number, output: number, source: "settings"|"builtin"|"none" }}
+ * @returns {{ input: number, output: number, cacheRead: number, cacheWrite: number, source: "settings"|"builtin"|"none", cacheSource: "settings"|"none" }}
  */
 export function effectivePrice(settings, modelId) {
   // 设置里的单价按 settings.currency 填写；内部估算统一换算成 USD。
-  const input = toUsd(
-    Number(settings?.priceInputPerMTok ?? 0) || 0,
-    settings?.currency,
-    settings?.usdToCny,
-  );
-  const output = toUsd(
-    Number(settings?.priceOutputPerMTok ?? 0) || 0,
-    settings?.currency,
-    settings?.usdToCny,
-  );
-  if (input > 0 || output > 0) return { input, output, source: "settings" };
+  /** @param {unknown} value @returns {number} */
+  const toPrice = (value) => toUsd(Number(value ?? 0) || 0, settings?.currency, settings?.usdToCny);
+  const input = toPrice(settings?.priceInputPerMTok);
+  const output = toPrice(settings?.priceOutputPerMTok);
+  const cacheRead = toPrice(settings?.priceCacheReadPerMTok);
+  const cacheWrite = toPrice(settings?.priceCacheWritePerMTok);
+  const cacheSource = cacheRead > 0 || cacheWrite > 0 ? "settings" : "none";
   const builtin = builtinPrice(modelId);
-  if (builtin !== undefined) return { ...builtin, source: "builtin" };
-  return { input: 0, output: 0, source: "none" };
+  if (input > 0 || output > 0) {
+    return { input, output, cacheRead, cacheWrite, source: "settings", cacheSource };
+  }
+  if (builtin !== undefined) {
+    return {
+      input: builtin.input,
+      output: builtin.output,
+      cacheRead,
+      cacheWrite,
+      source: "builtin",
+      cacheSource,
+    };
+  }
+  return {
+    input: 0,
+    output: 0,
+    cacheRead,
+    cacheWrite,
+    source: "none",
+    cacheSource,
+  };
 }
 
 /**

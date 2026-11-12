@@ -606,6 +606,8 @@ window.__ModuleLoader__.load({
       maxCostPerDay: 0,
       priceInputPerMTok: 0,
       priceOutputPerMTok: 0,
+      priceCacheReadPerMTok: 0,
+      priceCacheWritePerMTok: 0,
       privacyScope: "summary",
       redact: true,
       dedupe: true,
@@ -628,6 +630,8 @@ window.__ModuleLoader__.load({
       maxCostPerDay: [0, 10000],
       priceInputPerMTok: [0, 1000],
       priceOutputPerMTok: [0, 1000],
+      priceCacheReadPerMTok: [0, 1000],
+      priceCacheWritePerMTok: [0, 1000],
       workspaceMaxCallsPerDay: [0, 100000],
       workspaceMaxCostPerDay: [0, 10000],
       usdToCny: [0.1, 100],
@@ -641,6 +645,8 @@ window.__ModuleLoader__.load({
       workspaceMaxCostPerDay: 2,
       priceInputPerMTok: 4,
       priceOutputPerMTok: 4,
+      priceCacheReadPerMTok: 4,
+      priceCacheWritePerMTok: 4,
       usdToCny: 4,
     };
 
@@ -658,6 +664,8 @@ window.__ModuleLoader__.load({
       "workspaceMaxCostPerDay",
       "priceInputPerMTok",
       "priceOutputPerMTok",
+      "priceCacheReadPerMTok",
+      "priceCacheWritePerMTok",
       "usdToCny",
       "maxTokens",
       "temperature",
@@ -706,6 +714,8 @@ window.__ModuleLoader__.load({
       "maxCostPerDay",
       "priceInputPerMTok",
       "priceOutputPerMTok",
+      "priceCacheReadPerMTok",
+      "priceCacheWritePerMTok",
       "workspaceMaxCallsPerDay",
       "workspaceMaxCostPerDay",
       "privacyScope",
@@ -940,6 +950,8 @@ window.__ModuleLoader__.load({
         workspaceMaxCostPerDay: 2,
         priceInputPerMTok: 4,
         priceOutputPerMTok: 4,
+        priceCacheReadPerMTok: 4,
+        priceCacheWritePerMTok: 4,
       };
       for (let key of Object.keys(fields)) {
         let n = Number(source[key]);
@@ -995,6 +1007,8 @@ window.__ModuleLoader__.load({
           calls: countOf(totalsRaw.calls),
           inputTokens: countOf(totalsRaw.inputTokens),
           outputTokens: countOf(totalsRaw.outputTokens),
+          cacheReadTokens: countOf(totalsRaw.cacheReadTokens),
+          cacheWriteTokens: countOf(totalsRaw.cacheWriteTokens),
           costUsd: moneyOf(totalsRaw.costUsd),
         },
         pool: {
@@ -1006,8 +1020,11 @@ window.__ModuleLoader__.load({
             priceRaw.source === "builtin" || priceRaw.source === "settings"
               ? priceRaw.source
               : "none",
+          cacheSource: priceRaw.cacheSource === "settings" ? "settings" : "none",
           input: moneyOf(priceRaw.input),
           output: moneyOf(priceRaw.output),
+          cacheRead: moneyOf(priceRaw.cacheRead),
+          cacheWrite: moneyOf(priceRaw.cacheWrite),
         },
         counters: {
           calls: countOf(countersRaw.calls),
@@ -2165,7 +2182,17 @@ window.__ModuleLoader__.load({
             let settings = normalizeSettingsView(
               outcome.settings === null ? committed : outcome.settings,
             );
-            setSnap(Object.assign({}, snap, { settings: settings }));
+            // 价格来源/缓存未计价提示要跟着刚保存的设置走，不必等下一次手动重新加载。
+            let cacheSource =
+              settings.priceCacheReadPerMTok > 0 || settings.priceCacheWritePerMTok > 0
+                ? "settings"
+                : "none";
+            setSnap(
+              Object.assign({}, snap, {
+                settings: settings,
+                price: Object.assign({}, snap.price, { cacheSource: cacheSource }),
+              }),
+            );
             setDraft(settings);
             setTexts(textsOf(settings));
             setNotice(t("settings.saved"));
@@ -3169,7 +3196,10 @@ window.__ModuleLoader__.load({
 
       let sep = t("settings.status.sep");
       let totals = snap.totals;
-      let priced = snap.price.source !== "none";
+      let priced = snap.price.source !== "none" || snap.price.cacheSource !== "none";
+      let cacheTotal =
+        (Number(totals.cacheReadTokens) || 0) + (Number(totals.cacheWriteTokens) || 0);
+      let cacheUnpriced = cacheTotal > 0 && snap.price.cacheSource === "none";
       let lastText =
         snap.last === null
           ? t("settings.status.none")
@@ -3179,6 +3209,14 @@ window.__ModuleLoader__.load({
         t("settings.status.tokens")
           .replace("{input}", formatCount(totals.inputTokens))
           .replace("{output}", formatCount(totals.outputTokens)),
+        ...(cacheTotal > 0
+          ? [
+              t("settings.status.cache")
+                .replace("{read}", formatCount(totals.cacheReadTokens))
+                .replace("{write}", formatCount(totals.cacheWriteTokens)),
+            ]
+          : []),
+        ...(cacheUnpriced ? [t("settings.status.cacheUnpriced")] : []),
         t("settings.status.cost") +
           sep +
           (priced
@@ -3223,6 +3261,10 @@ window.__ModuleLoader__.load({
       }
 
       let priceSourceText = t(`settings.budget.priceSource.${snap.price.source}`);
+      let cachePriceSourceText =
+        t("settings.budget.cachePriceSource") +
+        sep +
+        t(`settings.budget.cachePriceSource.${snap.price.cacheSource}`);
       let poolLine = t("settings.budget.poolLine")
         .replace("{calls}", formatCount(snap.pool.calls))
         .replace(
@@ -3322,7 +3364,20 @@ window.__ModuleLoader__.load({
               help: t("settings.budget.priceHint"),
               unit: priceUnit(),
             }),
+            numberField("priceCacheReadPerMTok", "settings.budget.priceCacheReadPerMTok", {
+              help: t("settings.budget.cachePriceHint"),
+              unit: priceUnit(),
+            }),
+            numberField("priceCacheWritePerMTok", "settings.budget.priceCacheWritePerMTok", {
+              help: t("settings.budget.cachePriceHint"),
+              unit: priceUnit(),
+            }),
             h("div", { className: "dsh-advisor-readout", key: "priceSource" }, priceSourceText),
+            h(
+              "div",
+              { className: "dsh-advisor-readout", key: "cachePriceSource" },
+              cachePriceSourceText,
+            ),
           ],
           "money",
         ),
@@ -3687,6 +3742,15 @@ window.__ModuleLoader__.load({
           "settings.unit.cnyPerUsd": "元 / USD",
           "settings.budget.maxCostPerDay": "每日预算",
           "settings.budget.workspaceMaxCostPerDay": "工作区每日预算",
+          "settings.budget.priceCacheReadPerMTok": "缓存读取单价",
+          "settings.budget.priceCacheWritePerMTok": "缓存写入单价",
+          "settings.budget.cachePriceHint":
+            "缓存读取/写入的输入 token 单价（按当前币种 / 百万 token）；0 = 不计缓存部分。宿主只提供缓存读/写 token，没有缓存输出 token。",
+          "settings.budget.cachePriceSource": "缓存单价",
+          "settings.budget.cachePriceSource.settings": "用户设置",
+          "settings.budget.cachePriceSource.none": "未配置（缓存 token 不计）",
+          "settings.status.cache": "缓存 token：{read} read / {write} write",
+          "settings.status.cacheUnpriced": "账本里有缓存 token，但缓存单价为 0：缓存部分没有计价。",
           "tail.trace.preview": "查看发送内容",
           "tail.trace.previewHide": "收起发送内容",
           "tail.trace.previewTruncated": "实际发送（脱敏后，首尾各 2,000 字符；共 {chars} 字符）",
@@ -3830,6 +3894,16 @@ window.__ModuleLoader__.load({
           "settings.unit.cnyPerUsd": "CNY / USD",
           "settings.budget.maxCostPerDay": "Daily budget",
           "settings.budget.workspaceMaxCostPerDay": "Workspace daily budget",
+          "settings.budget.priceCacheReadPerMTok": "Cache-read price",
+          "settings.budget.priceCacheWritePerMTok": "Cache-write price",
+          "settings.budget.cachePriceHint":
+            "Input-token price for cache reads/writes (selected currency per 1M tokens); 0 = cache tokens are not priced. The host exposes cache-read/write tokens only; there is no cache-output token.",
+          "settings.budget.cachePriceSource": "Cache prices",
+          "settings.budget.cachePriceSource.settings": "user settings",
+          "settings.budget.cachePriceSource.none": "unset (cache tokens not priced)",
+          "settings.status.cache": "Cache tokens: {read} read / {write} write",
+          "settings.status.cacheUnpriced":
+            "The ledger has cache tokens, but cache prices are 0: that part is not priced.",
           "tail.trace.preview": "View sent content",
           "tail.trace.previewHide": "Hide sent content",
           "tail.trace.previewTruncated": "Sent (redacted; first/last 2,000 of {chars} chars)",
