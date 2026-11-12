@@ -541,10 +541,20 @@ const GENERAL_TAB = `(() => {
   };
 })()`;
 
+/**
+ * 设置页里 [data-advisor-settings] 可能有多个节点：rc.2 实测同时存在两个，
+ * 第一个是残留/紧凑的旧节点（高级区没展开、字段不全），真正渲染完整的是**最后一个**。
+ * 所有针对卡片的操作与断言都必须用同一个取法，否则「点的」和「读的」不是同一个节点——
+ * 这正是 2 条字段断言长期失败的原因。
+ */
+const CARD_ROOT = `(document.querySelectorAll("[data-advisor-settings]")[
+  document.querySelectorAll("[data-advisor-settings]").length - 1
+] ?? null)`;
+
 /** 设置卡：provider/model 下拉、错误横幅，以及文案断言要用的整段文本。 */
 const ADVISOR_CARD = `(() => {
   const roots = [...document.querySelectorAll("[data-advisor-settings]")];
-  const root = roots[roots.length - 1] ?? null;
+  const root = ${CARD_ROOT};
   if (root === null) return { found: false };
   const optionCount = (select) =>
     select === null ? null : [...select.options].filter((option) => (option.value || "") !== "").length;
@@ -587,7 +597,7 @@ const ADVISOR_CARD = `(() => {
 
 /** off 紧凑态点「配置顾问」；已启用时无按钮，直接 no-op。 */
 const CONFIGURE_CARD = `(() => {
-  const root = document.querySelector("[data-advisor-settings]");
+  const root = ${CARD_ROOT};
   if (root === null) return { found: false };
   const configure = root.querySelector("[data-advisor-configure]");
   if (configure !== null) configure.click();
@@ -596,7 +606,7 @@ const CONFIGURE_CARD = `(() => {
 
 /** 展开高级与状态两个折叠区；只点 toggle，不改任何值。点击后等 React 真正落 DOM。 */
 const EXPAND_DISCLOSURES = `(async () => {
-  const root = document.querySelector("[data-advisor-settings]");
+  const root = ${CARD_ROOT};
   if (root === null) return { found: false };
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const toggleOf = (key) => root.querySelector('[data-advisor-disclosure-toggle="' + key + '"]');
@@ -1121,8 +1131,17 @@ const main = async () => {
           await sleep(300);
           await cdp.evaluate(EXPAND_DISCLOSURES).catch(() => false);
           await sleep(300);
-          const expandedCard = await cdp.evaluate(ADVISOR_CARD).catch(() => null);
-          const value = expandedCard?.value ?? card.value ?? null;
+          // 展开后必须**重新读一次卡**，而且要等到高级区真的展开：
+          // `cdp.evaluate()` 返回的是脚本里那个原始对象，不是 `waitFor()` 的 `{ ok, value }`——
+          // 之前这里写成 `expandedCard?.value ?? card.value`，前者恒为 undefined，于是断言
+          // 永远拿的是**展开前**那张紧凑卡片的快照，字段自然一个都找不到（2 条断言长期失败的真因）。
+          const expandedCard = await waitFor(
+            cdp,
+            ADVISOR_CARD,
+            (value) => value?.found === true && value?.advancedExpanded === "true",
+            5_000,
+          );
+          const value = expandedCard.ok ? expandedCard.value : (card.value ?? null);
           check(
             settingsNames.card,
             card.ok && value?.found === true && value?.error === null,
@@ -1211,7 +1230,7 @@ const main = async () => {
           // 卡片在设置页里通常要往下滚才看得见；截图前滚到它，留一份能看懂的证据（不改值）。
           await cdp
             .evaluate(
-              `(() => { const root = document.querySelector("[data-advisor-settings]"); if (root !== null) root.scrollIntoView({ block: "center" }); return true; })()`,
+              `(() => { const root = ${CARD_ROOT}; if (root !== null) root.scrollIntoView({ block: "center" }); return true; })()`,
             )
             .catch(() => false);
           await sleep(400);

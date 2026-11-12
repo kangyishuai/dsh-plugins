@@ -51,6 +51,17 @@ DSH_HOME=$H dsh --profile ad --port 0 --no-open
 
 单测与 seam 数字都会随实现增长，上面只是本次核对时的快照。
 
+> **桌面脚本的坑（2026-11-12 修）**：那 2 条「设置卡新增字段 / 确认跨 provider 发送」断言曾长期失败，
+> 根因不在插件而在脚本读错了快照。`cdp.evaluate()` 返回的是脚本里那个**原始对象**，不是 `waitFor()` 的
+> `{ ok, value }` 包装；脚本却写成 `expandedCard?.value ?? card.value`，前者恒为 `undefined`，于是断言
+> 永远拿的是**展开高级区之前**那张紧凑卡片的文本（`helpButtons: 0`、字段全缺）。
+> 它偶尔「自己好了」是因为折叠状态存在模块级缓存 `settingsUiState` 里，上一次跑展开过就一直是展开的。
+> 修法：展开后改用 `waitFor(cdp, ADVISOR_CARD, (v) => v?.advancedExpanded === "true")` 重新读。
+> 顺带把 `CONFIGURE_CARD` / `EXPAND_DISCLOSURES` / 截图前的 `scrollIntoView` 统一到同一个取节点方式
+> （`[data-advisor-settings]` 出现多个时取**最后一个**），避免「点的」和「读的」不是同一个节点。
+> 复验方式：**刷新页面清掉内存里的折叠状态**再跑，否则缓存会掩盖问题。
+
+
 ## 1. 单测（每次提交）
 
 ```bash
