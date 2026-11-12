@@ -117,6 +117,7 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-session-rewind-*.tgz
 - **客户端私有 seam**：隐藏行和注入 ↶ 按钮依赖 DSH 内部 view/slot 注册表；安装时做形状检查，失效时降级为「上下文已回溯、界面不隐藏」或「按钮消失」，不破坏会话。
 - **召回只是改草稿**：它通过宿主输入框 facade 整篇替换草稿，所以 `Ctrl+Z` 会像普通编辑一样一步步退回；它不会向会话或模型上下文追加任何东西。
 - **本版只验证 POSIX/macOS 路径**；Windows 分隔符与权限位未验证。
+- **macOS 浮层不会拖走窗口。** 抽屉、遮罩与确认框都声明了 `data-window-drag-exclude`，覆盖页头时拖动行为正常（在 DSH 0.2.2-rc.2 上用真实鼠标拖动验证；更早的构建会把整个窗口拖走）。
 
 ## 兼容性
 

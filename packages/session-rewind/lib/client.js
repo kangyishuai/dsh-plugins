@@ -2416,7 +2416,7 @@ window.__ModuleLoader__.load({
 
       return h(
         "div",
-        { className: "dsh-srw-mask", onClick: () => api.close() },
+        { className: "dsh-srw-mask", "data-window-drag-exclude": "", onClick: () => api.close() },
         h(
           "div",
           {
@@ -2994,11 +2994,16 @@ window.__ModuleLoader__.load({
 
       return h(
         "div",
-        { className: "dsh-srw-drawer-mask", onClick: () => api.closeDrawer() },
+        {
+          className: "dsh-srw-drawer-mask",
+          "data-window-drag-exclude": "",
+          onClick: () => api.closeDrawer(),
+        },
         h(
           "aside",
           {
             className: "dsh-srw-drawer",
+            "data-window-drag-exclude": "",
             role: "dialog",
             "aria-modal": "true",
             "aria-label": t("drawer.title"),

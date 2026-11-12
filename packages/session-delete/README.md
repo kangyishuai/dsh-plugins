@@ -89,6 +89,7 @@ Files and directories it touches:
 | `~/.dsh/session-trash/`                  | create + write                  | One entry per deleted session (with a `meta.json`), `audit.log` (JSONL, one line per operation) and `journal/` (two-phase-commit records so an interrupted operation can be finished or rolled back on the next start).                                                                   |
 
 - **No network access, no telemetry.**
+- **macOS window drag.** The self-drawn confirmation fallback declares `data-window-drag-exclude`, so the mask cannot drag the window when it covers the title bar.
 - **Restorable by default.** Delete moves files; it does not erase them.
 - **Purge is irreversible.** "Purge" (and emptying the trash) really deletes the bytes. There is no undo toast and no recovery.
 - **Restore is not a full undo.** The log and workspace membership come back; the pin and archive flags do not. DSH clears a pin when it archives a session and doesn't restore it when it unarchives.
