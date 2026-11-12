@@ -86,7 +86,7 @@ const API_CHECKS = [
   {
     file: "@deepseek-ai/dsh-client-ui-renderer/lib/client.js",
     name: "client slots 服务（SlotRegistry）",
-    pattern: /super\(ctx, "slots"\)/u,
+    pattern: /super\(\s*ctx,\s*[`"']slots[`"']\)/u,
   },
   {
     file: "@deepseek-ai/dsh-client-ui-commands/lib/client.js",
@@ -103,6 +103,10 @@ const API_CHECKS = [
 /**
  * 本仓库插件实际依赖的**私有 seam**（不是公开 API，随时可能变）。
  * 每条都写清「如果它没了，哪个功能会坏」——升级时先看这里。
+ *
+ * 匹配 client 源码时注意：0.2.2-rc.2 起 `lib/client.js` 是压缩产物，字符串可能改用
+ * 反引号、逗号后不留空格；0.2.2-rc.1 及更早则是未压缩、双引号。所以字符串一律写成
+ * [`"'] 字符类 + `\s*`，不要写死双引号或空格，否则升级会误报 FAIL。
  */
 const SEAM_CHECKS = [
   {
@@ -132,7 +136,7 @@ const SEAM_CHECKS = [
   {
     file: "@deepseek-ai/dsh-client-ui-chat/lib/client.js",
     name: 'conversation.chat.node 以 key: "user" 注册（按 user 行接管）',
-    pattern: /conversation\.chat\.node[\s\S]{0,200}key:\s*"user"/u,
+    pattern: /conversation\.chat\.node[\s\S]{0,300}key:\s*[`"']user[`"']/u,
     breaks: "↶ 按钮注入（接管不到 user 行构造）",
   },
   {
@@ -284,7 +288,7 @@ const SEAM_CHECKS_NEXT_STEP = [
   {
     file: "@deepseek-ai/dsh-client-ui-conversation/lib/client.js",
     name: '输入框 submit(mode = "queue")（点击即发送的通道）',
-    pattern: /submit\(mode = "queue", source\)/u,
+    pattern: /submit\(\s*mode\s*=\s*[`"']queue[`"']/u,
     breaks: "点击胶囊无法把文本作为用户消息发出",
   },
 ];
