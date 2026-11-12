@@ -45,7 +45,9 @@
     "gate:next-step": "node scripts/gate.mjs next-step",
     "smoke:advisor-desktop": "node scripts/smoke-advisor-desktop.mjs",
     "smoke:advisor": "node scripts/smoke-advisor.mjs",
-    "gate:advisor": "node scripts/gate.mjs advisor"
+    "gate:advisor": "node scripts/gate.mjs advisor",
+    "tokens:host": "node scripts/host-tokens.mjs",
+    "tokens:host:check": "node scripts/host-tokens.mjs --check"
   },
   "simple-git-hooks": {
     "pre-commit": "pnpm exec lint-staged && node scripts/check-public.mjs",

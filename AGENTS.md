@@ -17,6 +17,7 @@
 | `pnpm new <name> [描述]`    | 从 `templates/plugin` 生成新插件（**不要手抄文件**）   |
 | `pnpm verify`               | lint + typecheck + 规范检查 + 测试，**交付前必须通过** |
 | `pnpm check`                | 只跑插件规范检查（`scripts/check-plugins.mjs`）        |
+| `pnpm tokens:host`          | DSH 升级后重抽宿主主题 token 快照（`--check` 只比对）  |
 | `pnpm check:public`         | 公开边界检查（见「公开边界」一节）                     |
 | `pnpm wt <branch>`          | 新建分支 + worktree（并行开发用，见下文）              |
 | `pnpm format`               | Biome 格式化并自动修复                                 |
