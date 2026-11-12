@@ -1,5 +1,11 @@
 # @kangyishuai/dsh-advisor
 
+## 0.5.0
+
+### Minor Changes
+
+- [#64](https://github.com/kangyishuai/dsh-plugins/pull/64) [`cf76f4d`](https://github.com/kangyishuai/dsh-plugins/commit/cf76f4d2cccb2c5968d4ebaf671c5bf25f6e4041) Thanks [@kangyishuai](https://github.com/kangyishuai)! - Add cache-token pricing: `priceCacheReadPerMTok` / `priceCacheWritePerMTok` (0 = unpriced, with a status warning), include cache read/write tokens in cost and budget accounting, record cache-write tokens in the ledger, and recompute/charge the two-pass evidence call after its usage is merged.
+
 ## 0.4.0
 
 ### Minor Changes
