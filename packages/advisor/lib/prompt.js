@@ -84,6 +84,25 @@ export const ADVISOR_SYSTEM_PROMPT = [
 ].join("\n");
 
 /**
+ * 按配置返回系统提示：开启「证据复核」时允许顾问请求读文件。
+ * @param {{ canRequestEvidence?: boolean }} [options]
+ * @returns {string}
+ */
+export function advisorSystemPrompt(options = {}) {
+  if (options.canRequestEvidence !== true) return ADVISOR_SYSTEM_PROMPT;
+  return [
+    ADVISOR_SYSTEM_PROMPT,
+    "",
+    "You can and SHOULD request workspace evidence before finalizing whenever your advice depends on",
+    "what a file actually contains (a version, a config value, an implementation detail). Add a top-level field:",
+    `"needs": [{"kind":"file","ref":"relative/path"}]`,
+    "Only relative paths inside the session working directory are readable; at most 5 files, 64 KiB each.",
+    "You will then be called once more with those files quoted verbatim, and may revise your advice.",
+    "If you already have the text in the transcript, do not request it again.",
+  ].join("\n");
+}
+
+/**
  * 每次调用新 mint 一个边界 nonce：让证据里引用的句子无法冒充分隔符。
  * @returns {string}
  */
@@ -207,6 +226,7 @@ function normalizeEvidence(raw) {
  * @property {string[]} risks
  * @property {string[]} acceptance
  * @property {Array<{ kind: string, ref: string }>} evidence
+ * @property {Array<{ kind: string, ref: string }>} needs
  */
 
 /**
@@ -244,6 +264,7 @@ export function parseAdvice(raw) {
       risks: normalizeList(parsed.risks),
       acceptance: normalizeList(parsed.acceptance),
       evidence: normalizeEvidence(parsed.evidence),
+      needs: normalizeEvidence(parsed.needs),
     },
   };
 }

@@ -10,6 +10,8 @@ import { join } from "node:path";
 export const LEDGER_DIR = "advisor";
 /** 账本文件名。 */
 export const LEDGER_FILE = "usage.jsonl";
+/** 建议账本（跨会话汇总用，一行一条建议）。 */
+export const ADVICE_FILE = "advice.jsonl";
 /** 滚动阈值：超过这个字节数就把旧文件改名（保留一份历史，不做无界增长）。 */
 export const LEDGER_MAX_BYTES = 2 * 1024 * 1024;
 
@@ -17,7 +19,7 @@ export const LEDGER_MAX_BYTES = 2 * 1024 * 1024;
  * @typedef {object} LedgerEntry
  * @property {string} at ISO 时间
  * @property {string} sessionId
- * @property {"tool"|"shadow"|"manual"} trigger
+ * @property {"tool"|"shadow"|"manual"|"post-answer"} trigger
  * @property {string} provider
  * @property {string} model
  * @property {string} effort
@@ -63,7 +65,10 @@ export function dayKey(date = new Date()) {
  *   totals: () => { calls: number, inputTokens: number, outputTokens: number, costUsd: number, byTrigger: Record<string, number> },
  *   recent: (limit?: number) => LedgerEntry[],
  *   ready: () => Promise<void>,
+ *   recordAdvice: (entry: any) => Promise<void>,
+ *   adviceTotals: () => Promise<{ total: number, bySeverity: Record<string, number>, byModel: Record<string, number>, byDay: Record<string, number>, byConfidence: Record<string, number> }>,
  *   path: string,
+ *   advicePath: string,
  * }}
  */
 export function createLedger(options) {
@@ -156,8 +161,11 @@ export function createLedger(options) {
     return current;
   };
 
+  const advicePath = join(dir, ADVICE_FILE);
+
   return {
     path,
+    advicePath,
 
     /**
      * 记录一次徵询（先落盘再更新内存；落盘失败不让调用失败）。
@@ -236,6 +244,63 @@ export function createLedger(options) {
      */
     recent(limit = 10) {
       return recent.slice(0, Math.max(0, limit));
+    },
+
+    /**
+     * 追加一条建议到跨会话账本（失败只告警，不影响徵询）。
+     * @param {any} entry
+     * @returns {Promise<void>}
+     */
+    async recordAdvice(entry) {
+      try {
+        await mkdir(dir, { recursive: true });
+        const line = `${JSON.stringify(entry)}\n`;
+        const existing = await readFile(advicePath, "utf8").catch(() => "");
+        await writeFile(advicePath, `${existing}${line}`, "utf8");
+      } catch (error) {
+        options.logger?.warn?.(`[advisor] 写建议账本失败：${String(error)}`);
+      }
+    },
+
+    /**
+     * 跨会话建议汇总（读整个 advice.jsonl；文件很小，一行一条）。
+     * @returns {Promise<{ total: number, bySeverity: Record<string, number>, byModel: Record<string, number>, byDay: Record<string, number>, byConfidence: Record<string, number> }>}
+     */
+    async adviceTotals() {
+      /** @type {Record<string, number>} */
+      const bySeverity = {};
+      /** @type {Record<string, number>} */
+      const byModel = {};
+      /** @type {Record<string, number>} */
+      const byDay = {};
+      /** @type {Record<string, number>} */
+      const byConfidence = {};
+      let total = 0;
+      try {
+        const text = await readFile(advicePath, "utf8");
+        for (const line of text.split("\n")) {
+          if (line.trim() === "") continue;
+          let entry;
+          try {
+            entry = JSON.parse(line);
+          } catch {
+            continue;
+          }
+          total += 1;
+          const severity = String(entry?.severity ?? "nit");
+          const model = String(entry?.model ?? "unknown");
+          const day = typeof entry?.at === "string" ? entry.at.slice(0, 10) : "unknown";
+          const confidence = String(entry?.confidence ?? "low");
+          bySeverity[severity] = (bySeverity[severity] ?? 0) + 1;
+          byModel[model] = (byModel[model] ?? 0) + 1;
+          byDay[day] = (byDay[day] ?? 0) + 1;
+          byConfidence[confidence] = (byConfidence[confidence] ?? 0) + 1;
+        }
+      } catch (error) {
+        const code = /** @type {any} */ (error)?.code;
+        if (code !== "ENOENT") options.logger?.warn?.(`[advisor] 读建议账本失败：${String(error)}`);
+      }
+      return { total, bySeverity, byModel, byDay, byConfidence };
     },
 
     /** 首次读取时恢复「今日花费」与累计数（调用方不必 await，失败静默）。 */

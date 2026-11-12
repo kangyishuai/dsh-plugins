@@ -27,11 +27,14 @@ window.__ModuleLoader__.load({
     /** 轻量提示停留时间；到点后把自己清掉。 */
     let TOAST_MS = 4000;
     /**
-     * 顾问线缓存：同一个 sessionId 只拉一次（成功结果与 in-flight Promise 都留在这里）。
+     * 顾问线缓存：同一个 sessionId 的 in-flight Promise 与结果（带时间戳）。
      * 失败不进缓存（下一次挂载可以重试），页面刷新时整体失效；切会话是新的 key。
-     * @type {Map<string, Promise<any[]>>}
+     * **必须带 TTL**：影子/答后建议在回合结束后才落盘，永久缓存会让顾问线永不出现。
+     * @type {Map<string, { at: number, promise: Promise<any[]> }>}
      */
     let adviceCache = new Map();
+    /** 缓存 TTL（毫秒）。 */
+    let ADVICE_CACHE_TTL_MS = 3000;
 
     /** 简体中文字典（键集的事实来源）。 */
     /** @type {Record<string, string>} */
@@ -330,6 +333,9 @@ window.__ModuleLoader__.load({
       ".dsh-advisor-summary{display:flex;flex-direction:column;gap:2px;font-size:12px;color:var(--dsw-alias-label-secondary,GrayText);word-break:break-word;}",
       ".dsh-advisor-checklist{display:flex;flex-direction:column;gap:3px;font-size:12px;white-space:pre-wrap;word-break:break-word;}",
       ".dsh-advisor-check[data-status=fail]{color:var(--dsw-alias-state-error-primary,#d9534f);}",
+      ".dsh-advisor-readout{font-size:12px;color:var(--dsw-alias-label-secondary,GrayText);word-break:break-word;}",
+      ".dsh-advisor-preview{display:flex;flex-direction:column;gap:6px;}",
+      ".dsh-advisor-pre{margin:0;padding:8px 10px;max-height:320px;overflow:auto;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.28));border-radius:8px;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base,Canvas));font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word;}",
       ".dsh-advisor-turn{display:flex;flex-direction:column;gap:4px;margin-top:2px;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary,GrayText);}",
       ".dsh-advisor-turn-head{display:inline-flex;align-items:baseline;gap:6px;max-width:100%;padding:2px 6px;border:0;border-radius:6px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer;}",
       ".dsh-advisor-turn-head:hover{background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.12));}",
@@ -548,6 +554,8 @@ window.__ModuleLoader__.load({
       maxCostPerDayUsd: 0,
       priceInputPerMTok: 0,
       priceOutputPerMTok: 0,
+      workspaceMaxCallsPerDay: 200,
+      workspaceMaxCostPerDayUsd: 0,
       sessionCap: 24,
       maxInputChars: 60000,
     };
@@ -561,6 +569,8 @@ window.__ModuleLoader__.load({
       maxCostPerDayUsd: [0, 10000],
       priceInputPerMTok: [0, 1000],
       priceOutputPerMTok: [0, 1000],
+      workspaceMaxCallsPerDay: [0, 100000],
+      workspaceMaxCostPerDayUsd: [0, 10000],
       sessionCap: [0, 200],
       maxInputChars: [4000, 400000],
     };
@@ -574,11 +584,16 @@ window.__ModuleLoader__.load({
       "maxCallsPerSession",
       "maxCallsPerHour",
       "maxCostPerDayUsd",
+      "workspaceMaxCallsPerDay",
+      "workspaceMaxCostPerDayUsd",
     ];
 
     /** 模式与发送范围的白名单，与 settings.js 一致。 */
     let SETTINGS_MODES = ["off", "shadow", "advisory"];
     let SETTINGS_SCOPES = ["off", "summary", "full"];
+
+    /** 回合结束后的自动徵询方式，与 settings.js 一致。 */
+    let SETTINGS_POST_ANSWER = ["off", "card"];
 
     /** 卡片读写的字段：保存时只 diff 这些键，绝不把整个设置对象发回去。 */
     let SETTINGS_EDITABLE_FIELDS = [
@@ -594,11 +609,16 @@ window.__ModuleLoader__.load({
       "maxCostPerDayUsd",
       "priceInputPerMTok",
       "priceOutputPerMTok",
+      "workspaceMaxCallsPerDay",
+      "workspaceMaxCostPerDayUsd",
       "privacyScope",
       "redact",
       "dedupe",
       "sessionCap",
       "maxInputChars",
+      "postAnswer",
+      "advisorTools",
+      "allowedModels",
     ];
 
     /**
@@ -631,6 +651,25 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 规整字符串数组（allowedModels / confirmedHosts）：去空、去重、截断条数。
+     * 与 settings.js 的 normalizeStringList 同语义，前端只用它来显示。
+     * @param {any} raw
+     * @returns {string[]}
+     */
+    function normalizeStringList(raw) {
+      if (!Array.isArray(raw)) return [];
+      /** @type {string[]} */
+      let out = [];
+      for (let index = 0; index < raw.length; index += 1) {
+        let value = asString(raw[index]).trim();
+        if (value === "" || out.indexOf(value) >= 0) continue;
+        out.push(value);
+        if (out.length >= 50) break;
+      }
+      return out;
+    }
+
+    /**
      * 只保留卡片关心的字段，并把畸形值夹回默认区间。
      * @param {any} raw
      * @returns {any}
@@ -648,6 +687,10 @@ window.__ModuleLoader__.load({
         redact: input.redact !== false,
         dedupe: input.dedupe !== false,
         temperature: null,
+        postAnswer: input.postAnswer === "card" ? "card" : "off",
+        advisorTools: input.advisorTools === true,
+        allowedModels: normalizeStringList(input.allowedModels),
+        confirmedHosts: normalizeStringList(input.confirmedHosts),
       };
       for (let index = 0; index < SETTINGS_INT_FIELDS.length; index += 1) {
         let key = SETTINGS_INT_FIELDS[index];
@@ -721,6 +764,8 @@ window.__ModuleLoader__.load({
       let totalsRaw = raw.totals !== null && typeof raw.totals === "object" ? raw.totals : {};
       let countersRaw =
         raw.counters !== null && typeof raw.counters === "object" ? raw.counters : {};
+      let poolRaw = raw.pool !== null && typeof raw.pool === "object" ? raw.pool : {};
+      let priceRaw = raw.price !== null && typeof raw.price === "object" ? raw.price : {};
       let lastRaw = raw.last;
       return {
         settings: normalizeSettingsView(settingsRaw),
@@ -730,6 +775,18 @@ window.__ModuleLoader__.load({
           inputTokens: countOf(totalsRaw.inputTokens),
           outputTokens: countOf(totalsRaw.outputTokens),
           costUsd: moneyOf(totalsRaw.costUsd),
+        },
+        pool: {
+          calls: countOf(poolRaw.calls),
+          costUsd: moneyOf(poolRaw.costUsd),
+        },
+        price: {
+          source:
+            priceRaw.source === "builtin" || priceRaw.source === "settings"
+              ? priceRaw.source
+              : "none",
+          input: moneyOf(priceRaw.input),
+          output: moneyOf(priceRaw.output),
         },
         counters: {
           calls: countOf(countersRaw.calls),
@@ -824,6 +881,18 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 校验 `advisor/preview`：只接受带 text 的成功结果，畸形 / `ok:false` 一律 null。
+     * @param {any} raw
+     * @returns {string | null}
+     */
+    function normalizePreview(raw) {
+      if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
+      if (raw.ok === false) return null;
+      if (typeof raw.text !== "string") return null;
+      return raw.text;
+    }
+
+    /**
      * 保存时只发改过的字段（temperature 的 null 与数字分开比较）。
      * @param {any} base
      * @param {any} draft
@@ -843,6 +912,13 @@ window.__ModuleLoader__.load({
               ? after === null || after === undefined
               : after !== null && after !== undefined && Number(before) === Number(after);
           if (!same) patch[key] = after === undefined ? null : after;
+          continue;
+        }
+        // 数组字段每次解析都是新实例：按内容比较，避免「没改也发一次」。
+        if (key === "allowedModels") {
+          let beforeList = normalizeStringList(before);
+          let afterList = normalizeStringList(after);
+          if (beforeList.join("\u0000") !== afterList.join("\u0000")) patch[key] = afterList;
           continue;
         }
         if (!Object.is(before, after)) patch[key] = after;
@@ -1137,10 +1213,46 @@ window.__ModuleLoader__.load({
           } catch (_error) {
             return undefined;
           }
+          // 本回合还没有记录时（影子建议稍后才落盘），延迟强制重取两次。
+          /** @type {any[]} */
+          let timers = [];
+          /** @param {number} delay */
+          let schedule = function scheduleRetry(delay) {
+            timers.push(
+              setTimeout(function retry() {
+                if (!alive) return;
+                let again;
+                try {
+                  again = Promise.resolve(api.advice(sessionId, true));
+                } catch (_error) {
+                  return;
+                }
+                again.then(
+                  function onRetry(value) {
+                    if (!alive) return;
+                    let items = Array.isArray(value) ? value : [];
+                    setRecords(items);
+                    let hit = items.some(function matches(item) {
+                      return item && item.turn === slotTurnNumber(turn);
+                    });
+                    if (!hit) schedule(4000);
+                  },
+                  function onRetryFailed() {
+                    /* 静默 */
+                  },
+                );
+              }, delay),
+            );
+          };
           pending.then(
             function onItems(value) {
               if (!alive) return;
-              setRecords(Array.isArray(value) ? value : []);
+              let items = Array.isArray(value) ? value : [];
+              setRecords(items);
+              let hit = items.some(function matches(item) {
+                return item && item.turn === slotTurnNumber(turn);
+              });
+              if (!hit) schedule(2500);
             },
             function onFailure() {
               if (alive) setRecords([]);
@@ -1148,6 +1260,7 @@ window.__ModuleLoader__.load({
           );
           return function cleanup() {
             alive = false;
+            for (let index = 0; index < timers.length; index += 1) clearTimeout(timers[index]);
           };
         },
         [api, sessionId],
@@ -1331,6 +1444,13 @@ window.__ModuleLoader__.load({
       let busyState = React.useState("");
       let busy = busyState[0];
       let setBusy = busyState[1];
+      /** 「预览会发什么」的返回正文；空串表示还没预览。 */
+      let previewState = React.useState("");
+      let previewText = previewState[0];
+      let setPreviewText = previewState[1];
+      let previewOpenState = React.useState(false);
+      let previewOpen = previewOpenState[0];
+      let setPreviewOpen = previewOpenState[1];
       /** provider/model 切换可能并发：只接受最后一次请求的返回。 */
       let modelsSeq = React.useRef(0);
       let infoSeq = React.useRef(0);
@@ -1373,6 +1493,27 @@ window.__ModuleLoader__.load({
           out[key] = String(settings[key]);
         }
         out.temperature = settings.temperature === null ? "" : String(settings.temperature);
+        out.allowedModels = normalizeStringList(settings.allowedModels).join(", ");
+        return out;
+      }
+
+      /**
+       * 「逗号分隔」的白名单文本 → 数组：trim、去重、去空（半角/全角逗号都认）。
+       * @param {string} text
+       * @param {string[]} fallback 文本不可用时的当前值
+       * @returns {string[]}
+       */
+      function parseAllowedModels(text, fallback) {
+        if (typeof text !== "string") return normalizeStringList(fallback);
+        let parts = text.split(/[,，]/);
+        /** @type {string[]} */
+        let out = [];
+        for (let index = 0; index < parts.length; index += 1) {
+          let value = parts[index].trim();
+          if (value === "" || out.indexOf(value) >= 0) continue;
+          out.push(value);
+          if (out.length >= 50) break;
+        }
         return out;
       }
 
@@ -1487,6 +1628,8 @@ window.__ModuleLoader__.load({
               setModels(null);
               setInfo({ state: "idle", efforts: [], defaultEffort: "" });
               setDoctor(null);
+              setPreviewText("");
+              setPreviewOpen(false);
               setLoad("ready");
               if (data.settings.provider !== "") {
                 loadModelsFor(data.settings.provider);
@@ -1567,6 +1710,7 @@ window.__ModuleLoader__.load({
       function save() {
         if (!draft || !snap) return;
         let committed = commitNumbers(draft);
+        committed.allowedModels = parseAllowedModels(texts.allowedModels, committed.allowedModels);
         setDraft(committed);
         setTexts(textsOf(committed));
         let patch = diffSettings(snap.settings, committed);
@@ -1645,6 +1789,106 @@ window.__ModuleLoader__.load({
         );
       }
 
+      /** 预览：把「这一次会发出去什么」拉回来（不发送）；失败只显示内联错误。 */
+      function runPreview() {
+        if (!api || typeof api.preview !== "function") {
+          setError({ text: t("settings.error.unreachable"), retry: "preview" });
+          return;
+        }
+        setBusy("preview");
+        setError(null);
+        invoke(api.preview, sessionId).then(
+          function onPreview(raw) {
+            setBusy("");
+            let text = normalizePreview(raw);
+            if (text === null) {
+              setError({
+                text:
+                  raw === undefined ? t("settings.error.unreachable") : t("settings.error.preview"),
+                retry: "preview",
+              });
+              return;
+            }
+            setPreviewText(text);
+            setPreviewOpen(true);
+            clearErrorFor("preview");
+          },
+          function onPreviewFailed() {
+            setBusy("");
+            setError({ text: t("settings.error.unreachable"), retry: "preview" });
+          },
+        );
+      }
+
+      /** 折叠 / 展开已拉回来的预览正文。 */
+      function togglePreview() {
+        setPreviewOpen(function flip(/** @type {boolean} */ prev) {
+          return !prev;
+        });
+      }
+
+      /**
+       * 把当前 provider 加进 confirmedHosts（去重后整表写回）。
+       * 成功后用返回值刷新本地 settings，既有草稿改动保留。
+       */
+      function confirmHost() {
+        if (!draft || !snap) return;
+        let provider = asString(draft.provider).trim();
+        if (provider === "") return;
+        let next = normalizeStringList(
+          normalizeStringList(snap.settings.confirmedHosts).concat([provider]),
+        );
+        if (!api || typeof api.updateSettings !== "function") {
+          setError({ text: t("settings.error.unreachable"), retry: "confirm" });
+          return;
+        }
+        setBusy("confirm");
+        setError(null);
+        setNotice("");
+        invoke(api.updateSettings, { confirmedHosts: next }).then(
+          function onConfirmed(raw) {
+            setBusy("");
+            let outcome = interpretUpdate(raw);
+            if (!outcome.ok) {
+              let message;
+              if (outcome.message !== "") {
+                message = t("settings.error.saveHost").replace("{message}", outcome.message);
+              } else {
+                message =
+                  raw === undefined ? t("settings.error.unreachable") : t("settings.error.confirm");
+              }
+              setError({ text: message, retry: "confirm" });
+              return;
+            }
+            let settings = normalizeSettingsView(
+              outcome.settings === null
+                ? Object.assign({}, snap.settings, { confirmedHosts: next })
+                : outcome.settings,
+            );
+            setSnap(Object.assign({}, snap, { settings: settings }));
+            setDraft(Object.assign({}, draft, { confirmedHosts: settings.confirmedHosts }));
+            let done = t("settings.confirm.done").replace("{provider}", provider);
+            setNotice(done);
+            clearErrorFor("confirm");
+            if (api && typeof api.notify === "function") api.notify(done, "ok");
+          },
+          function onConfirmFailed() {
+            setBusy("");
+            setError({ text: t("settings.error.unreachable"), retry: "confirm" });
+          },
+        );
+      }
+
+      /** 白名单输入失焦：回写规范化文本（去重、逗号统一成「, 」）。 */
+      function commitAllowedModels() {
+        if (!draft) return;
+        let list = parseAllowedModels(texts.allowedModels, draft.allowedModels);
+        setDraft(Object.assign({}, draft, { allowedModels: list }));
+        setTexts(function mergeAllowed(/** @type {any} */ prev) {
+          return Object.assign({}, prev, { allowedModels: list.join(", ") });
+        });
+      }
+
       /** 重新拉 options（含当前设置、路由与账本摘要）。 */
       function reload() {
         setDoctor(null);
@@ -1670,6 +1914,14 @@ window.__ModuleLoader__.load({
         }
         if (action === "doctor") {
           runDoctor();
+          return;
+        }
+        if (action === "preview") {
+          runPreview();
+          return;
+        }
+        if (action === "confirm") {
+          confirmHost();
           return;
         }
         refresh();
@@ -1710,6 +1962,16 @@ window.__ModuleLoader__.load({
       function chooseScope(scope) {
         if (!draft) return;
         setDraft(Object.assign({}, draft, { privacyScope: scope }));
+      }
+
+      /** @param {string} value */
+      function choosePostAnswer(value) {
+        if (!draft) return;
+        setDraft(
+          Object.assign({}, draft, {
+            postAnswer: SETTINGS_POST_ANSWER.indexOf(value) >= 0 ? value : "off",
+          }),
+        );
       }
 
       /**
@@ -1930,6 +2192,84 @@ window.__ModuleLoader__.load({
             type: "checkbox",
           }),
           h("span", { className: "dsh-advisor-hint", key: "hint" }, t(hintKey)),
+        ]);
+      }
+
+      /**
+       * 下拉一行（枚举字段，如 postAnswer）。
+       * @param {string} key
+       * @param {string} labelKey
+       * @param {string[]} values 合法取值；选项文案拼成 `${prefix}${value}`
+       * @param {string} prefix
+       * @param {string} current
+       * @param {(value: string) => void} onPick
+       * @param {string} hintKey
+       * @returns {any}
+       */
+      function selectField(key, labelKey, values, prefix, current, onPick, hintKey) {
+        let options = values.map(function renderOption(/** @type {string} */ value) {
+          return h("option", { key: value, value: value }, t(prefix + value));
+        });
+        return h("div", { className: "dsh-advisor-row", key: key, "data-advisor-row": key }, [
+          h(
+            "label",
+            { className: "dsh-advisor-label", htmlFor: `dsh-advisor-${key}`, key: "label" },
+            t(labelKey),
+          ),
+          h(
+            "select",
+            {
+              className: "dsh-advisor-select",
+              "data-advisor-select": key,
+              id: `dsh-advisor-${key}`,
+              key: "select",
+              onChange: function onSelectChange(/** @type {any} */ event) {
+                onPick(String(event.target.value));
+              },
+              value: current,
+            },
+            options,
+          ),
+          h("span", { className: "dsh-advisor-hint", key: "hint" }, t(hintKey)),
+        ]);
+      }
+
+      /**
+       * 白名单一行：逗号分隔文本；保存时才转成数组。
+       * @returns {any}
+       */
+      function allowedModelsField() {
+        return h("div", { className: "dsh-advisor-row", key: "allowedModels" }, [
+          h(
+            "label",
+            {
+              className: "dsh-advisor-label",
+              htmlFor: "dsh-advisor-allowedModels",
+              key: "label",
+            },
+            t("settings.advanced.allowedModels"),
+          ),
+          h("input", {
+            className: "dsh-advisor-input",
+            "data-advisor-field": "allowedModels",
+            id: "dsh-advisor-allowedModels",
+            key: "input",
+            onBlur: commitAllowedModels,
+            onChange: function onAllowedModelsChange(/** @type {any} */ event) {
+              let value = String(event.target.value);
+              setTexts(function mergeAllowed(/** @type {any} */ prev) {
+                return Object.assign({}, prev, { allowedModels: value });
+              });
+            },
+            placeholder: t("settings.advanced.allowedModelsPlaceholder"),
+            type: "text",
+            value: typeof texts.allowedModels === "string" ? texts.allowedModels : "",
+          }),
+          h(
+            "span",
+            { className: "dsh-advisor-hint", key: "hint" },
+            t("settings.advanced.allowedModelsHint"),
+          ),
         ]);
       }
 
@@ -2188,28 +2528,124 @@ window.__ModuleLoader__.load({
         }
       }
 
+      let priceSourceText = t(`settings.budget.priceSource.${snap.price.source}`);
+      let poolLine = t("settings.budget.poolLine")
+        .replace("{calls}", formatCount(snap.pool.calls))
+        .replace("{cost}", `$${Number(snap.pool.costUsd).toFixed(4)}`);
+
       let budgetGroup = [
         numberField("maxCallsPerTurn", "settings.budget.maxCallsPerTurn", ""),
         numberField("maxCallsPerSession", "settings.budget.maxCallsPerSession", ""),
         numberField("maxCallsPerHour", "settings.budget.maxCallsPerHour", ""),
         numberField("maxCostPerDayUsd", "settings.budget.maxCostPerDayUsd", ""),
         numberField(
+          "workspaceMaxCallsPerDay",
+          "settings.budget.workspaceMaxCallsPerDay",
+          t("settings.budget.workspaceHint"),
+        ),
+        numberField(
+          "workspaceMaxCostPerDayUsd",
+          "settings.budget.workspaceMaxCostPerDayUsd",
+          t("settings.budget.workspaceHint"),
+        ),
+        h(
+          "div",
+          {
+            className: "dsh-advisor-readout",
+            "data-advisor-pool": "",
+            key: "pool",
+          },
+          poolLine,
+        ),
+        numberField(
           "priceInputPerMTok",
           "settings.budget.priceInputPerMTok",
-          t("settings.budget.priceHint"),
+          `${t("settings.budget.priceHint")} · ${priceSourceText}`,
         ),
         numberField(
           "priceOutputPerMTok",
           "settings.budget.priceOutputPerMTok",
-          t("settings.budget.priceHint"),
+          `${t("settings.budget.priceHint")} · ${priceSourceText}`,
         ),
       ];
+
+      // 「预览会发什么」的返回：可折叠 <pre>，空正文时整块不渲染。
+      let previewNode = null;
+      if (previewText !== "") {
+        previewNode = h("div", { className: "dsh-advisor-preview", key: "previewBody" }, [
+          h("div", { className: "dsh-advisor-row", key: "toggleRow" }, [
+            h(
+              "span",
+              { className: "dsh-advisor-label", key: "label" },
+              t("settings.preview.title"),
+            ),
+            h(
+              "button",
+              {
+                "aria-expanded": previewOpen ? "true" : "false",
+                className: "dsh-advisor-btn",
+                "data-advisor-preview-toggle": "",
+                key: "toggle",
+                onClick: togglePreview,
+                type: "button",
+              },
+              previewOpen ? t("settings.preview.collapse") : t("settings.preview.expand"),
+            ),
+          ]),
+          previewOpen
+            ? h(
+                "pre",
+                { className: "dsh-advisor-pre", "data-advisor-preview": "", key: "pre" },
+                previewText,
+              )
+            : null,
+        ]);
+      }
+
+      // 跨 provider 确认：没选 provider 就不显示（没有可确认的对象）。
+      let confirmRow = null;
+      if (draft.provider !== "") {
+        confirmRow = h("div", { className: "dsh-advisor-row", key: "confirmRow" }, [
+          h("span", { className: "dsh-advisor-label", key: "label" }, t("settings.confirm")),
+          h(
+            "button",
+            {
+              className: "dsh-advisor-btn",
+              "data-advisor-confirm": "",
+              disabled: busy === "confirm",
+              key: "run",
+              onClick: confirmHost,
+              type: "button",
+            },
+            busy === "confirm" ? t("settings.confirm.running") : t("settings.confirm.run"),
+          ),
+          h("span", { className: "dsh-advisor-hint", key: "hint" }, t("settings.confirm.hint")),
+        ]);
+      }
 
       let advancedGroup = [
         numberField("maxTokens", "settings.advanced.maxTokens", ""),
         temperatureField(),
         numberField("maxInputChars", "settings.advanced.maxInputChars", ""),
         numberField("sessionCap", "settings.advanced.sessionCap", ""),
+        allowedModelsField(),
+        h("div", { className: "dsh-advisor-row", key: "previewRow" }, [
+          h("span", { className: "dsh-advisor-label", key: "label" }, t("settings.preview")),
+          h(
+            "button",
+            {
+              className: "dsh-advisor-btn",
+              "data-advisor-preview-run": "",
+              disabled: busy === "preview",
+              key: "run",
+              onClick: runPreview,
+              type: "button",
+            },
+            busy === "preview" ? t("settings.preview.running") : t("settings.preview.run"),
+          ),
+        ]),
+        previewNode,
+        confirmRow,
         h("div", { className: "dsh-advisor-divider", key: "divider" }),
         h(
           "div",
@@ -2280,6 +2716,16 @@ window.__ModuleLoader__.load({
               providerField(),
               modelField(),
               effortField(),
+              selectField(
+                "postAnswer",
+                "settings.postAnswer",
+                SETTINGS_POST_ANSWER,
+                "settings.postAnswer.",
+                draft.postAnswer,
+                choosePostAnswer,
+                "settings.postAnswer.hint",
+              ),
+              switchField("advisorTools", "settings.advisorTools", "settings.advisorToolsHint"),
             ],
             "basic",
           ),
@@ -2337,7 +2783,89 @@ window.__ModuleLoader__.load({
 
     /** @param {any} ctx */
     exports.apply = function apply(ctx) {
-      ctx.effect(() => ctx.locale.register(NS, { zh: zh, en: en }), "advisor: dictionaries");
+      // 新增文案集中在这里合并进内嵌字典：locale/*.json 是「给人看的清单 + 宿主侧文案」，
+      // 而 slot 的 t() 只认这里注册的字典。两处必须同步（`test/locale-parity.test.js` 会守住）。
+      const LOCALE_EXTRA = {
+        zh: {
+          title: "让主模型在关键时刻咨询一个更强的顾问模型",
+          "settings.postAnswer": "回合结束后",
+          "settings.postAnswer.off": "off（不跑）",
+          "settings.postAnswer.card": "card（只记录一行）",
+          "settings.postAnswer.hint": "advisory 模式下，回合结束后自动跑一次顾问；只记录不回灌。",
+          "settings.advisorTools": "允许顾问读文件核实",
+          "settings.advisorToolsHint":
+            "允许顾问请求读取工作目录内的文件（≤5 个、≤64 KiB、只读）来核实它的结论；会多一次模型调用。",
+          "settings.budget.workspaceMaxCallsPerDay": "工作区每日最多调用",
+          "settings.budget.workspaceMaxCostPerDayUsd": "工作区每日预算（USD）",
+          "settings.budget.workspaceHint": "工作区级，跨会话累计、按本地日重置",
+          "settings.budget.poolLine": "工作区今日：{calls} 次 · ≈{cost}",
+          "settings.budget.priceSource.builtin": "单价来源：内置参考价",
+          "settings.budget.priceSource.settings": "单价来源：你设置的",
+          "settings.budget.priceSource.none": "单价来源：未配置（只记 token）",
+          "settings.advanced.allowedModels": "模型白名单 allowedModels",
+          "settings.advanced.allowedModelsHint": "留空=不限制；可写 provider/model 或裸 model id",
+          "settings.advanced.allowedModelsPlaceholder": "例如 deepseek/deepseek-chat, gpt-4o",
+          "settings.preview": "发送预览",
+          "settings.preview.run": "预览会发什么",
+          "settings.preview.running": "预览中…",
+          "settings.preview.title": "预览内容",
+          "settings.preview.expand": "展开",
+          "settings.preview.collapse": "收起",
+          "settings.confirm": "跨 provider 发送",
+          "settings.confirm.run": "确认跨 provider 发送",
+          "settings.confirm.running": "确认中…",
+          "settings.confirm.hint": "把当前 provider 加进确认名单；跨 provider 徵询不再中断。",
+          "settings.confirm.done": "已确认 {provider}",
+          "settings.error.preview": "预览失败，稍后重试",
+          "settings.error.confirm": "确认失败，稍后重试",
+        },
+        en: {
+          title: "Pair the main model with a stronger advisor model it can consult at key moments",
+          "settings.postAnswer": "After each turn",
+          "settings.postAnswer.off": "off (do not run)",
+          "settings.postAnswer.card": "card (record one line)",
+          "settings.postAnswer.hint":
+            "In advisory mode, run the advisor once after each turn; record only, never feed back.",
+          "settings.advisorTools": "Let the advisor read files",
+          "settings.advisorToolsHint":
+            "Let the advisor request files inside the working directory (≤5 files, ≤64 KiB, read-only) to verify its conclusions; costs one extra model call.",
+          "settings.budget.workspaceMaxCallsPerDay": "Workspace max calls per day",
+          "settings.budget.workspaceMaxCostPerDayUsd": "Workspace daily budget (USD)",
+          "settings.budget.workspaceHint":
+            "Workspace-wide: shared across sessions, resets on the local day",
+          "settings.budget.poolLine": "Workspace today: {calls} calls · ≈{cost}",
+          "settings.budget.priceSource.builtin": "Price source: built-in reference",
+          "settings.budget.priceSource.settings": "Price source: yours",
+          "settings.budget.priceSource.none": "Price source: not set (tokens only)",
+          "settings.advanced.allowedModels": "Model allowlist allowedModels",
+          "settings.advanced.allowedModelsHint":
+            "Empty = no limit; accepts provider/model or a bare model id",
+          "settings.advanced.allowedModelsPlaceholder": "e.g. deepseek/deepseek-chat, gpt-4o",
+          "settings.preview": "Send preview",
+          "settings.preview.run": "Preview what will be sent",
+          "settings.preview.running": "Previewing…",
+          "settings.preview.title": "Preview",
+          "settings.preview.expand": "Expand",
+          "settings.preview.collapse": "Collapse",
+          "settings.confirm": "Cross-provider send",
+          "settings.confirm.run": "Confirm cross-provider send",
+          "settings.confirm.running": "Confirming…",
+          "settings.confirm.hint":
+            "Add the current provider to the confirmed list so cross-provider consultations stop being interrupted.",
+          "settings.confirm.done": "Confirmed {provider}",
+          "settings.error.preview": "Preview failed — try again later",
+          "settings.error.confirm": "Confirmation failed — try again later",
+        },
+      };
+
+      ctx.effect(
+        () =>
+          ctx.locale.register(NS, {
+            zh: Object.assign({}, zh, LOCALE_EXTRA.zh),
+            en: Object.assign({}, en, LOCALE_EXTRA.en),
+          }),
+        "advisor: dictionaries",
+      );
 
       /** @type {any} */
       let t;
@@ -2730,6 +3258,8 @@ window.__ModuleLoader__.load({
         updateSettings: (/** @type {any} */ patch) =>
           callRemote("updateSettings", { patch: patch }),
         doctor: (/** @type {string} */ sessionId) => callRemote("doctor", { sessionId: sessionId }),
+        preview: (/** @type {string} */ sessionId) =>
+          callRemote("preview", { sessionId: sessionId }),
         notify: (/** @type {string} */ message, /** @type {string} */ tone) =>
           showToast(message, tone === "error" || tone === "ok" ? tone : "info"),
       };
@@ -2759,10 +3289,17 @@ window.__ModuleLoader__.load({
        * @param {string} sessionId
        * @returns {Promise<any[]>}
        */
-      function loadAdvice(sessionId) {
+      /** @param {string} sessionId @param {boolean} [force] */
+      function loadAdvice(sessionId, force) {
         if (typeof sessionId !== "string" || sessionId === "") return Promise.resolve([]);
+        if (force === true) adviceCache.delete(sessionId);
         let cached = adviceCache.get(sessionId);
-        if (cached !== undefined) return cached;
+        // 缓存带 TTL：影子/答后建议是在回合**结束之后**才落盘的，
+        // 永远命中旧 Promise 会让顾问线永远不出现（真机踩过）。
+        if (cached !== undefined) {
+          if (Date.now() - cached.at < ADVICE_CACHE_TTL_MS) return cached.promise;
+          adviceCache.delete(sessionId);
+        }
         let pending = callRemote("advice", { sessionId: sessionId }).then(
           function onAdvice(raw) {
             let items = normalizeAdviceItems(raw);
@@ -2777,13 +3314,14 @@ window.__ModuleLoader__.load({
             return [];
           },
         );
-        adviceCache.set(sessionId, pending);
+        adviceCache.set(sessionId, { at: Date.now(), promise: pending });
         return pending;
       }
 
       /** 顾问线的 api：只有一个方法，失败已在 loadAdvice 里降级。 */
       let tailApi = {
-        advice: (/** @type {string} */ sessionId) => loadAdvice(sessionId),
+        advice: (/** @type {string} */ sessionId, /** @type {boolean} [force] */ force) =>
+          loadAdvice(sessionId, force === true),
       };
 
       // 顾问线：每轮答案尾部一行（与 next-step 的决策卡并存，order 排在其后）。
@@ -2869,6 +3407,8 @@ window.__ModuleLoader__.load({
         normalizeModels: normalizeModels,
         normalizeModelInfo: normalizeModelInfo,
         normalizeDoctor: normalizeDoctor,
+        normalizePreview: normalizePreview,
+        normalizeStringList: normalizeStringList,
         diffSettings: diffSettings,
         interpretUpdate: interpretUpdate,
         normalizeAdviceItems: normalizeAdviceItems,

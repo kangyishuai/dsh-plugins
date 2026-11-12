@@ -35,7 +35,13 @@ export const DEFAULT_SETTINGS = Object.freeze({
   dedupe: true,
   sessionCap: 24,
   tiers: Object.freeze({}),
+  allowedModels: Object.freeze([]),
+  confirmedHosts: Object.freeze([]),
   pairingEnforcement: "warn",
+  workspaceMaxCallsPerDay: 200,
+  workspaceMaxCostPerDayUsd: 0,
+  postAnswer: "off",
+  advisorTools: false,
   timeoutMs: 90000,
   maxInputChars: 60000,
 });
@@ -51,6 +57,8 @@ const LIMITS = Object.freeze({
   priceOutputPerMTok: [0, 1000],
   immuneTurns: [0, 20],
   sessionCap: [0, 200],
+  workspaceMaxCallsPerDay: [0, 100000],
+  workspaceMaxCostPerDayUsd: [0, 10000],
   timeoutMs: [5000, 600000],
   maxInputChars: [4000, 400000],
 });
@@ -115,6 +123,26 @@ export function normalizeTiers(raw) {
 }
 
 /**
+ * 规整字符串数组：去空、去重、截断、限制条数。
+ * @param {unknown} raw
+ * @param {number} [max]
+ * @returns {string[]}
+ */
+export function normalizeStringList(raw, max = 50) {
+  if (!Array.isArray(raw)) return [];
+  /** @type {string[]} */
+  const out = [];
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    const value = item.trim().slice(0, MAX_STRING);
+    if (value === "" || out.includes(value)) continue;
+    out.push(value);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+/**
  * 把任意输入规整成合法设置：未知键丢弃、类型不符回落默认、数字夹紧、字符串截断。
  * @param {unknown} raw 文件内容或 RPC patch 合并后的值
  * @returns {typeof DEFAULT_SETTINGS}
@@ -152,6 +180,12 @@ export function normalizeSettings(raw) {
   }
   out.temperature = nullableNumber(input.temperature, 0, 2);
   out.tiers = normalizeTiers(input.tiers);
+  out.allowedModels = normalizeStringList(input.allowedModels);
+  out.confirmedHosts = normalizeStringList(input.confirmedHosts);
+  if (typeof input.postAnswer === "string" && ["off", "card"].includes(input.postAnswer)) {
+    out.postAnswer = input.postAnswer;
+  }
+  if (typeof input.advisorTools === "boolean") out.advisorTools = input.advisorTools;
 
   return out;
 }

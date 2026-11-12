@@ -17,11 +17,14 @@ import { appendPluginRecord, pluginRecordOf } from "@deepseek-ai/dsh-session";
 import { Remote, RemoteError, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 import { summarizeAdoption } from "./adoption.js";
 import { applyAnchorVerdict, buildIndex, verifyAnchors } from "./anchors.js";
+import { checkPool, createBudgetPool } from "./budget.js";
 import { callAdvisor } from "./call.js";
+import { checkAllowlist, effectivePrice } from "./catalog.js";
 import {
   checkBudget,
   estimateCostUsd,
   fingerprint,
+  immuneActive,
   isHollowAdvice,
   rememberFingerprint,
 } from "./guard.js";
@@ -31,6 +34,7 @@ import { pairingCheck, resolveRoute } from "./route.js";
 import { isConfigured, loadSettings, mergeSettings, saveSettings } from "./settings.js";
 import { renderToolOutput, TOOL_NAME, TOOL_OUTPUT_SCHEMA, TOOL_PARAMETERS } from "./tool-schema.js";
 import { buildTranscript } from "./transcript.js";
+import { runEvidencePass } from "./twopass.js";
 
 /** plugin record 类型（必须匹配 ^plugin:[a-z0-9][a-z0-9._-]*(/[...])*$）。 */
 export const ADVICE_RECORD = "plugin:advisor/advice";
@@ -133,6 +137,7 @@ export class AdvisorService extends TypertRemoteService {
     this.logger = ctx?.logger ?? console;
     this.dataRoot = resolveDataRoot(this.config);
     this.ledger = createLedger({ home: this.dataRoot, logger: this.logger });
+    this.pool = createBudgetPool({ home: this.dataRoot, logger: this.logger });
     void this.ledger.ready();
     /** @type {{ at: number, value: any }} */
     this.settingsCache = { at: 0, value: null };
@@ -140,8 +145,10 @@ export class AdvisorService extends TypertRemoteService {
     this.turnOf = new Map();
     /** 在途徵询（cancel 用）。 @type {Map<string, AbortController>} */
     this.inflight = new Map();
-    /** 去重表（shadow 投递用）。 @type {Map<string, number>} */
+    /** 去重表（被动投递用：shadow / post-answer）。 @type {Map<string, number>} */
     this.seen = new Map();
+    /** 每会话最近一次被动投递所在的回合（免疫窗口用）。 @type {Map<string, number>} */
+    this.lastDeliveryTurn = new Map();
     /** 最近一次结果（status / 工具卡 / 诊断）。 @type {any} */
     this.lastResult = null;
     /** 每会话已投递的建议条数（sessionCap 用）。 @type {Map<string, number>} */
@@ -205,6 +212,31 @@ export class AdvisorService extends TypertRemoteService {
       return { provider: current.provider, model: current.model };
     }
     return undefined;
+  }
+
+  /**
+   * 会话工作目录（取证阶段的读取根）。宿主服务优先，其次 header，最后进程 cwd。
+   * @param {any} session
+   * @returns {string}
+   */
+  sessionCwd(session) {
+    const sessionId = typeof session?.id === "string" ? session.id : "";
+    try {
+      const wd = serviceOf(this.ctx, "workingDirectory");
+      const value = wd?.get?.(sessionId) ?? wd?.current?.(sessionId) ?? wd?.path?.(sessionId);
+      if (typeof value === "string" && value !== "") return value;
+    } catch (_error) {
+      /* 退化到 header */
+    }
+    // 会话头里的 cwd 是权威的（日志第一行就有）；再看 session 自身。
+    const header = session?.header ?? {};
+    for (const source of [header, session]) {
+      for (const key of ["cwd", "workingDirectory", "projectPath"]) {
+        const value = source?.[key];
+        if (typeof value === "string" && value !== "") return value;
+      }
+    }
+    return process.cwd();
   }
 
   /**
@@ -308,7 +340,7 @@ export class AdvisorService extends TypertRemoteService {
 
   /**
    * 跑一次顾问徵询。所有失败都返回结构化结果，绝不抛。
-   * @param {{ session: any, trigger: "tool"|"shadow"|"manual", focus?: string, signal?: AbortSignal }} input
+   * @param {{ session: any, trigger: "tool"|"shadow"|"manual"|"post-answer", focus?: string, signal?: AbortSignal }} input
    * @returns {Promise<any>}
    */
   async runAdvisor(input) {
@@ -357,6 +389,29 @@ export class AdvisorService extends TypertRemoteService {
     });
     if (!pairing.allowed) return skip(`配对校验未通过：${pairing.message}`, "pairing_rejected");
 
+    const allow = checkAllowlist(settings.allowedModels, resolved.route);
+    if (!allow.allowed) return skip(`白名单拦截：${allow.reason}`, "not_allowed");
+
+    // 跨 provider 首次徵询需要显式确认（数据会离开本机去另一家）。
+    const mainProvider = typeof mainModel?.provider === "string" ? mainModel.provider : "";
+    if (mainProvider !== "" && mainProvider !== resolved.route.provider) {
+      const confirmed =
+        Array.isArray(settings.confirmedHosts) &&
+        settings.confirmedHosts.includes(resolved.route.provider);
+      if (!confirmed) {
+        return {
+          status: "skipped",
+          code: "needs_confirmation",
+          reason: `跨 provider 首次徵询需要确认：会话内容会发送到「${resolved.route.provider}」。运行 /advisor confirm 允许，或 /advisor preview 先看会发什么`,
+          advice: "",
+          severity: "nit",
+          risks: [],
+          acceptance: [],
+          evidence: [],
+        };
+      }
+    }
+
     const turn = this.turnOf.get(sessionId) ?? 0;
     const now = Date.now();
     const counters = this.ledger.counters(sessionId, now);
@@ -375,6 +430,29 @@ export class AdvisorService extends TypertRemoteService {
       return {
         status: "skipped",
         code: "budget_exhausted",
+        reason,
+        advice: "",
+        severity: "nit",
+        risks: [],
+        acceptance: [],
+        evidence: [],
+      };
+    }
+
+    // 工作区级共享预算池（跨会话累计，按本地日滚动）与有效单价（用户声明 > 内置表 > 不算钱）。
+    const price = effectivePrice(settings, resolved.route.model);
+    const pool = await this.pool.read();
+    const poolCheck = checkPool(pool, settings);
+    if (!poolCheck.ok) {
+      const reason =
+        poolCheck.code === "workspace_calls"
+          ? `工作区今日调用已达上限（${poolCheck.used}/${poolCheck.limit}）`
+          : `工作区今日预算已用完（$${poolCheck.used.toFixed(4)}/$${poolCheck.limit}）`;
+      if (sessionId !== "") this.lastSkip.set(sessionId, reason);
+      this.counters.skipped += 1;
+      return {
+        status: "skipped",
+        code: poolCheck.code,
         reason,
         advice: "",
         severity: "nit",
@@ -405,8 +483,8 @@ export class AdvisorService extends TypertRemoteService {
     const estimatedCost = estimateCostUsd({
       inputTokens: Math.ceil(transcript.text.length / 3),
       outputTokens: settings.maxTokens / 2,
-      priceInputPerMTok: settings.priceInputPerMTok,
-      priceOutputPerMTok: settings.priceOutputPerMTok,
+      priceInputPerMTok: price.input,
+      priceOutputPerMTok: price.output,
     });
 
     const started = Date.now();
@@ -417,6 +495,7 @@ export class AdvisorService extends TypertRemoteService {
         route: resolved.route,
         settings,
         transcript: transcript.text,
+        canRequestEvidence: settings.advisorTools === true,
         focus: input.focus,
         locale: this.localeName(),
         sessionId,
@@ -433,8 +512,8 @@ export class AdvisorService extends TypertRemoteService {
         ? estimateCostUsd({
             inputTokens: call.usage.inputTokens,
             outputTokens: call.usage.outputTokens,
-            priceInputPerMTok: settings.priceInputPerMTok,
-            priceOutputPerMTok: settings.priceOutputPerMTok,
+            priceInputPerMTok: price.input,
+            priceOutputPerMTok: price.output,
           })
         : 0;
 
@@ -484,6 +563,7 @@ export class AdvisorService extends TypertRemoteService {
     const parsed = parseAdvice(call.text ?? "");
     const usage = call.usage;
     this.ledger.noteCall(sessionId, { turn, costUsd, at: Date.now() });
+    void this.pool.add({ calls: 1, costUsd });
     this.counters.calls += 1;
 
     if (!parsed.ok) {
@@ -508,7 +588,41 @@ export class AdvisorService extends TypertRemoteService {
       return result;
     }
 
-    const advice = parsed.advice;
+    let advice = parsed.advice;
+    let verification = null;
+    if (settings.advisorTools === true) {
+      const pass = await runEvidencePass({
+        advice,
+        root: this.sessionCwd(session),
+        settings: { advisorTools: true },
+        parseAdvice,
+        callSecond: async (block) =>
+          callAdvisor({
+            llm: this.llm(),
+            route: resolved.route,
+            settings,
+            transcript: transcript.text,
+            extra: block,
+            canRequestEvidence: false,
+            locale: this.localeName(),
+            sessionId,
+            signal,
+            logger: this.logger,
+          }),
+      });
+      advice = pass.advice;
+      verification = pass.verification;
+      if (pass.extraUsage !== null && call.usage !== undefined) {
+        call.usage = {
+          inputTokens: call.usage.inputTokens + pass.extraUsage.inputTokens,
+          outputTokens: call.usage.outputTokens + pass.extraUsage.outputTokens,
+          cacheReadTokens: call.usage.cacheReadTokens + pass.extraUsage.cacheReadTokens,
+          cacheWriteTokens: call.usage.cacheWriteTokens + pass.extraUsage.cacheWriteTokens,
+          reasoningTokens: call.usage.reasoningTokens + pass.extraUsage.reasoningTokens,
+        };
+      }
+    }
+
     const hollow = advice.verdict === "reviewed" && isHollowAdvice(advice.advice);
 
     // 证据锚点校验：顾问说「刚才那次失败/这个文件」时，回头核对它引用的东西是否真的存在。
@@ -520,6 +634,44 @@ export class AdvisorService extends TypertRemoteService {
     );
     advice.severity = verdict.severity;
     advice.advice = verdict.advice;
+
+    // 被动投递（shadow / post-answer）才需要「别重复、别连着烦」；模型主动徵询永远放行。
+    const passive = trigger === "shadow" || trigger === "post-answer";
+    if (passive && advice.verdict === "reviewed" && !hollow) {
+      const fingerprintId = fingerprint(advice.advice);
+      const lastTurn = this.lastDeliveryTurn.get(sessionId);
+      if (
+        lastTurn !== undefined &&
+        immuneActive({
+          lastDeliveryTurn: lastTurn,
+          currentTurn: turn,
+          immuneTurns: settings.immuneTurns,
+        })
+      ) {
+        this.counters.skipped += 1;
+        if (sessionId !== "") this.lastSkip.set(sessionId, "免疫窗口内（上一条建议刚投递过）");
+        return {
+          ...baseResult,
+          status: "skipped",
+          code: "immune",
+          reason: `免疫窗口：上一条建议在第 ${lastTurn} 轮投递，${settings.immuneTurns} 轮内不再打扰`,
+        };
+      }
+      if (settings.dedupe === true) {
+        const remembered = rememberFingerprint(this.seen, fingerprintId, Date.now());
+        this.seen = remembered.table;
+        if (remembered.duplicate) {
+          this.counters.skipped += 1;
+          if (sessionId !== "") this.lastSkip.set(sessionId, "重复建议（24h 内说过）");
+          return {
+            ...baseResult,
+            status: "skipped",
+            code: "duplicate",
+            reason: "同一建议 24h 内已投递过",
+          };
+        }
+      }
+    }
 
     // 会话级投递上限：到顶后只放 blocker（长任务真出大事时仍然能说话）。
     const delivered = this.delivered.get(sessionId) ?? 0;
@@ -568,6 +720,7 @@ export class AdvisorService extends TypertRemoteService {
       risks: advice.risks,
       acceptance: advice.acceptance,
       evidence: advice.evidence,
+      ...(verification === null ? {} : { verification }),
       anchors: {
         checked: anchors.checks.length,
         verified: anchors.verified,
@@ -592,10 +745,22 @@ export class AdvisorService extends TypertRemoteService {
         usage: result.usage,
         trigger,
         anchors: result.anchors,
+        ...(verification === null ? {} : { verification }),
       });
     } catch (error) {
       this.warn("cannot append advice record", error);
     }
+    void this.ledger.recordAdvice({
+      at: new Date().toISOString(),
+      sessionId,
+      adviceId,
+      turn,
+      severity: result.severity,
+      status: result.status,
+      model: result.model,
+      trigger,
+      anchors: result.anchors,
+    });
 
     await this.ledger.record({
       at: new Date().toISOString(),
@@ -614,6 +779,9 @@ export class AdvisorService extends TypertRemoteService {
     });
     if (result.status === "reviewed" && settings.sessionCap > 0 && sessionId !== "") {
       this.delivered.set(sessionId, (this.delivered.get(sessionId) ?? 0) + 1);
+    }
+    if (result.status === "reviewed" && passive && sessionId !== "") {
+      this.lastDeliveryTurn.set(sessionId, turn);
     }
     if (trigger === "shadow") this.counters.shadow += 1;
     void estimatedCost;
@@ -686,7 +854,9 @@ export class AdvisorService extends TypertRemoteService {
           const dispose = scope.commands.register({
             name: COMMAND_NAME,
             description: "Consult the advisor: status, choose a model, ask now, or turn it off",
-            input: { hint: "[status|on|off|shadow|ask|cancel|report|doctor|<provider>/<model>]" },
+            input: {
+              hint: "[status|on|off|shadow|ask|cancel|report|doctor|confirm|preview|<provider>/<model>]",
+            },
             /** @param {{ agent: any, rawInput: string }} invocation */
             handler: (invocation) => this.handleCommand(invocation),
           });
@@ -758,6 +928,43 @@ export class AdvisorService extends TypertRemoteService {
       }
       return { kind: "success", text: "已取消本次顾问徵询。" };
     }
+    if (raw === "confirm") {
+      if (!isConfigured(settings)) return { kind: "error", text: "还没选顾问模型。" };
+      const list = Array.isArray(settings.confirmedHosts) ? settings.confirmedHosts : [];
+      const next = list.includes(settings.provider) ? list : [...list, settings.provider];
+      await this.writeSettings({ confirmedHosts: next });
+      return {
+        kind: "success",
+        text: `已允许把会话内容发送到「${settings.provider}」（可随时在设置里清空 confirmedHosts）。`,
+      };
+    }
+    if (raw === "preview") {
+      const preview = await this.previewText(session, settings);
+      return { kind: "success", text: preview };
+    }
+    if (raw === "report all") {
+      const totals = await this.ledger.adviceTotals();
+      if (totals.total === 0) return { kind: "success", text: "还没有任何建议记录。" };
+      /** @param {Record<string, number>} map */
+      const fmt = (map) =>
+        Object.entries(map)
+          .map(([key, value]) => `${key} ${value}`)
+          .join(" · ");
+      const days = Object.entries(totals.byDay)
+        .sort((a, b) => (a[0] < b[0] ? 1 : -1))
+        .slice(0, 7);
+      return {
+        kind: "success",
+        text: [
+          "顾问报告（跨会话）",
+          `累计 ${totals.total} 条建议`,
+          `严重度：${fmt(totals.bySeverity)}`,
+          `模型：${fmt(totals.byModel)}`,
+          `最近 7 天：${days.map(([day, count]) => `${day} ${count}`).join(" · ")}`,
+          `账本：${this.ledger.advicePath}`,
+        ].join("\n"),
+      };
+    }
     if (raw === "report") {
       return { kind: "success", text: await this.reportText(session) };
     }
@@ -776,7 +983,7 @@ export class AdvisorService extends TypertRemoteService {
     if (slash <= 0) {
       return {
         kind: "error",
-        text: `无法识别的参数：${raw}。可用：status / on / off / shadow / ask / cancel / report / doctor / <provider>/<model>`,
+        text: `无法识别的参数：${raw}。可用：status / on / off / shadow / ask / cancel / report / doctor / confirm / preview / <provider>/<model>`,
       };
     }
     const provider = routePart.slice(0, slash);
@@ -854,6 +1061,50 @@ export class AdvisorService extends TypertRemoteService {
   }
 
   /**
+   * `/advisor preview`：**不发送**任何东西，只把「这一次会发出去什么」摊开。
+   * @param {any} session
+   * @param {any} settings
+   * @returns {Promise<string>}
+   */
+  async previewText(session, settings) {
+    if (session === undefined || session === null) return "当前没有会话。";
+    const mainModel = this.mainModelOf(session);
+    const resolved = resolveRoute({ settings, mainModel });
+    if (resolved.route.provider === "" || resolved.route.model === "") return "还没配置顾问模型。";
+    const messages = typeof session.deriveMessages === "function" ? session.deriveMessages() : [];
+    const transcript = buildTranscript(messages, {
+      scope: settings.privacyScope,
+      redactSecrets: settings.redact,
+      maxChars: settings.maxInputChars,
+    });
+    const price = effectivePrice(settings, resolved.route.model);
+    const allow = checkAllowlist(settings.allowedModels, resolved.route);
+    const pool = await this.pool.read();
+    const crossProvider =
+      typeof mainModel?.provider === "string" &&
+      mainModel.provider !== "" &&
+      mainModel.provider !== resolved.route.provider;
+    const confirmed =
+      Array.isArray(settings.confirmedHosts) &&
+      settings.confirmedHosts.includes(resolved.route.provider);
+    return [
+      `目标：${resolved.route.provider}/${resolved.route.model}${resolved.route.reasoningEffort ? ` · 思考档 ${resolved.route.reasoningEffort}` : ""}`,
+      `发送范围：${settings.privacyScope} · 脱敏 ${settings.redact ? "开" : "关"} · 上限 ${settings.maxInputChars} 字符`,
+      `将发送：${transcript.text.length} 字符（约 ${Math.ceil(transcript.text.length / 3)} tokens）`,
+      `上下文省略：${transcript.stats.contextOmitted} 字符（技能目录 / AGENTS.md 等宿主注入内容）`,
+      `工具往来：${transcript.stats.toolCalls} 次调用 / ${transcript.stats.toolResults} 条结果 · 截断 ${transcript.stats.truncated} 处`,
+      `脱敏命中：${transcript.stats.redactions.length === 0 ? "无" : transcript.stats.redactions.join(" / ")}`,
+      `白名单：${allow.reason}`,
+      `跨 provider：${crossProvider ? `是（需确认${confirmed ? "，已确认" : "，尚未确认 → /advisor confirm"}）` : "否"}`,
+      `单价：${price.source === "none" ? "未配置（只记 token）" : `输入 $${price.input}/M · 输出 $${price.output}/M（${price.source === "builtin" ? "内置参考价" : "用户设置"}）`}`,
+      `工作区今日：${pool.calls} 次（上限 ${settings.workspaceMaxCallsPerDay || "∞"}）`,
+      ``,
+      `—— 正文前 400 字符 ——`,
+      transcript.text.slice(0, 400),
+    ].join("\n");
+  }
+
+  /**
    * `/advisor report` 的正文：投递/采纳/锚点统计 + 最近几条。
    * @param {any} session
    * @returns {Promise<string>}
@@ -907,21 +1158,36 @@ export class AdvisorService extends TypertRemoteService {
   handleSessionEvent(session, event) {
     const sessionId = typeof session?.id === "string" ? session.id : "";
     if (sessionId !== "" && event?.type === "turn/start") {
-      const next = (this.turnOf.get(sessionId) ?? 0) + 1;
+      // 用事件里的**绝对回合号**，不要自己累计：会话可能早于插件加载就已有多个回合，
+      // 累计值会和 turnTail 的 props.turn 对不上，顾问线就永远不显示（真机踩过）。
+      const fromEvent = Number(event?.data?.turn);
+      const next =
+        Number.isSafeInteger(fromEvent) && fromEvent > 0
+          ? fromEvent
+          : (this.turnOf.get(sessionId) ?? 0) + 1;
       this.turnOf.set(sessionId, next);
       this.ledger.resetTurn(sessionId, next);
       return;
     }
     if (event?.type !== "turn/end") return;
+    const endTurn = Number(event?.data?.turn);
+    if (sessionId !== "" && Number.isSafeInteger(endTurn) && endTurn > 0) {
+      this.turnOf.set(sessionId, endTurn);
+    }
     if (event?.data?.reason?.kind !== "completed") return;
     if (isSubagentSession(session)) return;
     // 重要：不能在事件分发里同步写会话（重入保护），必须异步一拍。
     void (async () => {
       try {
         const settings = await this.currentSettings();
-        if (settings.mode !== "shadow") return;
-        const result = await this.runAdvisor({ session, trigger: "shadow" });
-        if (result.status === "reviewed") {
+        const shadow = settings.mode === "shadow";
+        const postAnswer = settings.mode === "advisory" && settings.postAnswer === "card";
+        if (!shadow && !postAnswer) return;
+        const result = await this.runAdvisor({
+          session,
+          trigger: shadow ? "shadow" : "post-answer",
+        });
+        if (shadow && result.status === "reviewed") {
           const id = fingerprint(result.advice);
           const remembered = rememberFingerprint(this.seen, id, Date.now());
           this.seen = remembered.table;
@@ -1111,6 +1377,8 @@ export class AdvisorService extends TypertRemoteService {
         last: this.lastResult,
         lastSkip: sessionId === "" ? null : (this.lastSkip.get(sessionId) ?? null),
         ledgerPath: this.ledger.path,
+        pool: await this.pool.read(),
+        price: effectivePrice(settings, settings.model),
         dataRoot: this.dataRoot,
         commands: {
           on: "/advisor on",
@@ -1145,6 +1413,35 @@ export class AdvisorService extends TypertRemoteService {
   async updateSettings(request) {
     try {
       const patch = request?.patch ?? request ?? {};
+      const current = await this.currentSettings();
+      const nextEffort =
+        typeof patch?.reasoningEffort === "string" ? patch.reasoningEffort.trim() : undefined;
+      const nextProvider =
+        typeof patch?.provider === "string" ? patch.provider.trim() : current.provider;
+      const nextModel = typeof patch?.model === "string" ? patch.model.trim() : current.model;
+      // 设置卡的 patch 也要复核思考档，否则会存下一个永远无法生效的组合。
+      if (
+        nextEffort !== undefined &&
+        nextEffort !== "" &&
+        nextProvider !== "" &&
+        nextModel !== "" &&
+        (nextProvider !== current.provider ||
+          nextModel !== current.model ||
+          nextEffort !== current.reasoningEffort)
+      ) {
+        const info = await this.resolveModel(nextProvider, nextModel);
+        if (
+          info !== null &&
+          info.efforts.length > 0 &&
+          !info.efforts.some((item) => item.id === nextEffort)
+        ) {
+          return {
+            ok: false,
+            code: "UNSUPPORTED_REASONING_EFFORT",
+            message: `${nextProvider}/${nextModel} 不支持思考档「${nextEffort}」。可选：${info.efforts.map((item) => item.id).join(" / ")}`,
+          };
+        }
+      }
       const saved = await this.writeSettings(patch);
       return { ok: true, settings: saved };
     } catch (error) {
@@ -1224,6 +1521,26 @@ export class AdvisorService extends TypertRemoteService {
           anchors: data?.anchors ?? null,
         })),
       };
+    } catch (error) {
+      rethrowRemote(error);
+    }
+  }
+
+  /**
+   * 预览这一次会发出去什么（不发送）。设置卡用。
+   * @param {any} request
+   * @returns {Promise<any>}
+   */
+  async preview(request) {
+    try {
+      const sessionId = typeof request?.sessionId === "string" ? request.sessionId : "";
+      const sessions = serviceOf(this.ctx, "sessions");
+      const session =
+        serviceOf(this.ctx, "agents")?.get?.(sessionId)?.session ||
+        sessions?.get?.(sessionId) ||
+        sessions?.store?.get?.(sessionId);
+      const settings = await this.currentSettings();
+      return { ok: true, text: await this.previewText(session, settings), settings };
     } catch (error) {
       rethrowRemote(error);
     }
@@ -1426,4 +1743,5 @@ declareRemote(AdvisorService, "models");
 declareRemote(AdvisorService, "modelInfo");
 declareRemote(AdvisorService, "doctor");
 declareRemote(AdvisorService, "report");
+declareRemote(AdvisorService, "preview");
 declareRemote(AdvisorService, "advice");

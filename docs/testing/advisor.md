@@ -42,12 +42,12 @@ DSH_HOME=$H dsh --profile ad --port 0 --no-open
 
 ## 0.5 本次核查记录（2026-11-11，DSH 0.2.2-rc.1）
 
-| 层                                         | 结果                                                                                                                                                     |
-| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `node --test`（`packages/advisor`）        | **51 pass / 0 fail**（settings / route / guard / prompt / redact / tool-schema / transcript）                                                            |
-| `pnpm probe:runtime`                       | **60/60 PASS**（advisor 的 5 条 seam 尚未加进 `SEAM_CHECKS`，见 [§5](#5-dsh-升级时要重点看的宿主事实)）                                                  |
-| `pnpm smoke:advisor-desktop --require`     | **12/12 PASS（真机，DSH 桌面版 0.2.2-rc.1，Electron 44）**：插件已加载、`/advisor` 弹出选择器（52 个真实候选）、Esc 关闭、`status`、`doctor`、收尾无残留 |
-| 真机徵询（`pnpm pack` → `add` → 手动徵询） | **未做**（P1 收尾的验收项，步骤见 [§4](#4-手工-gui-验证步骤)）                                                                                           |
+| 层                                         | 结果                                                                                                                                                                                                                                                     |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `node --test`（`packages/advisor`）        | **74 pass / 0 fail**（settings / route / guard / prompt / redact / tool-schema / transcript / anchors / adoption / catalog / budget / verifier）                                                                                                         |
+| `pnpm probe:runtime`                       | **67/67 PASS**（含 advisor 的 7 条 seam：`resolveModelInfo` / `prepareCall+configure` / `UNSUPPORTED_REASONING_EFFORT` / usage 分片 / `commands.register` / `commandUi.decorate` / `popupSelect`）                                                       |
+| `pnpm smoke:advisor-desktop --require`     | **12/12 PASS（P1 时，真机 DSH 桌面版 0.2.2-rc.1，Electron 44）**：插件已加载、`/advisor` 弹出选择器（52 个真实候选）、Esc 关闭、`status`、`doctor`、收尾无残留。P3 起脚本扩到默认 19 项 / `--advice` 23 项（含设置卡与顾问线，见 [§3](#3-桌面只读回归)） |
+| 真机徵询（`pnpm pack` → `add` → 手动徵询） | **未做**（P1 收尾的验收项，步骤见 [§4](#4-手工-gui-验证步骤)）                                                                                                                                                                                           |
 
 单测与 seam 数字都会随实现增长，上面只是本次核对时的快照。
 
@@ -105,31 +105,48 @@ open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debuggin
 # 2) 跑（--require：连不上端口时失败而不是跳过）
 pnpm smoke:advisor-desktop --require
 # 端口不同时：DSH_CDP_PORT=9333 pnpm smoke:advisor-desktop --require
+# 连真实徵询记录一起看（opt-in；只读，脚本不发起徵询）：
+pnpm smoke:advisor-desktop --require --advice
 ```
 
-默认**只读**：只开菜单/对话框、读 DOM/文本、再 Esc 关闭；**不选任何模型、不触发真实徵询、不写账本**，
-因此可以直接跑在真实 profile 上。断言清单（✅ = 脚本已覆盖；⬜ = 仍是待补项）：
+默认**只读**：只开菜单/对话框、读 DOM/文本、再 Esc 关闭；**不选任何模型、不改任何设置值、不点保存、
+不触发真实徵询、不写账本**，因此可以直接跑在真实 profile 上。默认 19 项、加 `--advice` 后 23 项
+（没有顾问记录 / 没有选中 provider 的项记 SKIP，不算失败）。断言清单（✅ = 脚本已覆盖；⬜ = 仍是待补项）：
 
 1. ✅ 连上桌面 UI（CDP）；
 2. ✅ 插件 client 半已加载：`style[data-plugin="@kangyishuai/dsh-advisor"]`；
 3. ⬜ `/` 菜单里能搜到 `advisor`，且描述非空（证明 `commands.register` 生效、宿主目录已刷新）；
-4. ✅ 输入 `/advisor` 回车 → 打开**宿主选择器**（有搜索框、有行），按 Esc 关闭、焦点回到输入框；
-5. ⬜ 选择器行里至少有一条来自宿主已配置路由（`provider/model` 文本可读），且**没有任何一行**泄露
+4. ✅ 设置页卡片（只读）：账号菜单 →「设置」→「通用设置」；卡片有 provider 下拉（≥1 个候选）与 model 下拉，
+   没有 `[data-advisor-error]`（宿主 RPC 正常），并出现新增字段「工作区」预算、「预览会发什么」、模型白名单、
+   「确认跨 provider 发送」（没选 provider 时这项记 SKIP）；**不点保存、不改任何值**；关掉后对话框消失。
+   文案从 `packages/advisor/locale/{zh,en}.json` 读，英文界面同样能过；
+5. ✅ 回合尾部顾问线（只读）：页面上有 `.dsh-advisor-turn` 时 headline 为「顾问 · 严重度」
+   （`declined` 时是「顾问认为无需建议」）；**没有记录就记 SKIP**——脚本不制造徵询；
+6. ✅ 输入 `/advisor` 回车 → 打开**宿主选择器**（有搜索框、有行），按 Esc 关闭、焦点回到输入框；
+7. ⬜ 选择器行里至少有一条来自宿主已配置路由（`provider/model` 文本可读），且**没有任何一行**泄露
    `baseURL`/`apiKey`；
-6. ⬜ 没有可用路由时**不显示空列表**，而是显示引导项（"去 设置 → 模型 配置"）；
-7. ✅ `/advisor status` 输出多行文本：模式、顾问、本会话用量、最近一次结果/跳过原因（主模型与配对结论在 P2 的设置卡里显示）；
-8. ✅ `/advisor doctor` 每行都有结论（`✅`/`⚠️`/`❌`）+ 下一步动作，不允许只回一句 error；
-9. ⬜ 整个只读过程**账本行数不变**（`$DSH_HOME/advisor/usage.jsonl` 前后对比；临时 profile 也可读 DOM 计数）；
-10. ⬜ 仓库 cwd 没有多出文件（脚本自身 cwd 污染是最容易漏的一条）。
+8. ⬜ 没有可用路由时**不显示空列表**，而是显示引导项（"去 设置 → 模型 配置"）；
+9. ✅ `/advisor status` 输出多行文本：模式、顾问、本会话用量、最近一次结果/跳过原因（主模型与配对结论在 P2 的设置卡里显示）；
+10. ✅ `/advisor doctor` 每行都有结论（`✅`/`⚠️`/`❌`）+ 下一步动作，不允许只回一句 error；
+11. ⬜ 整个只读过程**账本行数不变**（`$DSH_HOME/advisor/usage.jsonl` 前后对比；临时 profile 也可读 DOM 计数）；
+12. ⬜ 仓库 cwd 没有多出文件（脚本自身 cwd 污染是最容易漏的一条）。
+
+`--advice`（opt-in，只读已有记录，**脚本本身不发起徵询**；会被打印一行 `COST:` 提醒）再加 4 项：
+
+- ✅ `/advisor report` 输出含「顾问报告」或「还没有顾问记录」；
+- ✅ 有 `.dsh-advisor-turn` 时点开 headline，展开体含 `model · usage`（`910 in / 354 out`，上万会缩成 `9.1k`），
+  再点一次收起；没有记录时两项都记 SKIP。
 
 **注意**：脚本要求插件已装进**正在运行的那个 profile**。没装时第 2 项会失败，并把页面上全部
-`data-plugin` 打出来——这是最省事的"是不是装错 profile / 没重启"判断依据。
+`data-plugin` 打出来——这是最省事的"是不是装错 profile / 没重启"判断依据。第 4 项的新字段是 P3 才有的：
+桌面装的是旧构建（如 0.1.0）时会失败，先 `pnpm pack` + `dsh plugin add` 再重跑，失败 detail 里也写了这句提示。
 
 `--deep`（可选，P1 不做）：真要跑徵询链时再补，要求显式传专用工作区、并在临时 profile 里跑。
 
-## 3.5 设置页卡片（真机 5 步，CDP 脚本）
+## 3.5 设置页卡片（写操作 5 步，CDP 脚本）
 
-设置页卡片不在只读 desktop 冒烟里（那段脚本刻意不碰设置）。卡片用一次性 CDP 脚本验证，**它会改 `maxTokens` 再改回**，所以只跑在确认过基线的机器上：
+只读冒烟（§3 第 4 项）只**打开**设置读文本、不点保存。下面这段会**改 `maxTokens` 再改回**，
+所以只跑在确认过基线的机器上：
 
 1. 新 client bundle 已加载（`style[data-plugin]` 里含 `dsh-advisor-settings`）；
 2. 设置 → 通用设置：卡片加载出 provider/model（**不是**「宿主未响应」），有预算与隐私分组；
@@ -163,6 +180,43 @@ pnpm smoke:advisor-desktop --require
 1. `对话里发生过一次徵询` 后，回合尾部应出现「顾问 · <severity> <摘要>」一行；点开能看到完整建议与 `model · usage`；没有顾问记录的回合**不出现空壳**。
 2. 若建议里引用的 tool-call id / 路径在对话里找不到，展开内容应带「证据锚点未对上（N 条）」且严重度已降档。
 3. `/advisor report` 输出投递/采纳/锚点三行统计 + 最近 5 条；采纳判定必须给出依据（命中的信号），否则显示「未判定」。
+
+## 3.7 P3 补齐项（内置目录 / 预算池 / 白名单 / 预览 / 两阶段取证）
+
+**单测覆盖**：
+
+- `catalog.test.js`：内置档位「最长匹配优先」、认不出返回 `undefined`；用户声明覆盖内置；单价三档来源（settings/builtin/none）；白名单（空=不限、`provider/model` 或裸 id 命中）。
+- `catalog.test.js`（预算池部分）：跨日清零、调用数与金额双闸、边界按「已达上限」处理。
+- `verifier.test.js`：`../`、绝对路径、符号链接逃逸被拒；缺失文件报 ENOENT；单文件截断留痕；一次最多 5 个；第二轮提示必须包含证据与不可读清单。
+
+**手工/真机检查**：
+
+1. `/advisor preview` 不触发任何模型调用，但输出里的「将发送 N 字符」「省略 M 字符」「脱敏命中」「单价来源」「工作区今日」要与实际相符。
+2. 主模型与顾问 provider 不同时，首次徵询应返回 `needs_confirmation`；`/advisor confirm` 之后正常。
+3. `advisorTools: true` 时，顾问若返回 `needs`，工具结果里应带 `verification.read`；读不到的文件出现在 `verification.refused`，且首轮结论保留。
+4. `/advisor report all` 读跨会话账本，按严重度/模型/日期汇总。
+5. `workspaceMaxCallsPerDay` 到顶后，任何会话的徵询都返回 `workspace_calls`（跨会话共享）。
+
+## 3.8 P3 真机结果（2026-11-12）
+
+| 项                    | 结果                                                                                                                                                                                                                       | 证据                                            |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| 设置卡 P3 字段        | **PASS**：`工作区每日最多调用` / `工作区每日预算（USD）` / `预览会发什么` / `模型白名单` / `确认跨 provider 发送` 全部渲染，`data-advisor-error` 不存在                                                                    | DOM（`[data-advisor-settings]` 的 `innerText`） |
+| `/advisor preview`    | **PASS**：输出「目标 / 发送范围 / 将发送 60022 字符（约 20008 tokens）/ 上下文省略 20947 字符 / 工具往来 376 调用 376 结果 / 脱敏命中 kv-assignment / 白名单 未设置 / 跨 provider 否 / 单价 内置参考价 / 工作区今日 0 次」 | 会话日志 `command/done`（seq 2736）             |
+| `/advisor confirm`    | **PASS**：「已允许把会话内容发送到「zhinao」」                                                                                                                                                                             | 会话日志（seq 2720）                            |
+| `/advisor report all` | **PASS（空态）**：「还没有任何建议记录。」——P3 之前的 3 次徵询发生在建议账本上线前，所以文件为空                                                                                                                           | 会话日志（cmd-…-14 / -18）                      |
+
+**一个 UI 观测**：命令结果卡片在聊天流里是**折叠**的，且展开后 `innerText` 仍为空（宿主命令卡片的渲染方式）；命令**执行结果本身**可从会话日志的 `command/done.data.text` 读到。因此自动化断言命令输出时，优先读会话日志而不是 DOM。
+
+**补充（2026-11-12 02:00 真机，重启后）**：
+
+| 项                   | 结果                                                                                                                                                                                                                                                                                    |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shadow`             | **PASS**：`/advisor shadow` + 一轮「回复两个字」→ 账本新增 `trigger=shadow`、`turn=16`（绝对回合号）；回合尾部渲染出「顾问认为无需建议」                                                                                                                                                |
+| 顾问线渲染           | **PASS**，但修了两个真 bug：①`turn` 曾用插件自己累计的计数，与 `props.turn` 对不上；②client 把 `advice` 结果按 sessionId 永久缓存，而影子建议在 `turn/end` 之后才落盘 → 永不刷新。现在缓存带 3s TTL 且未命中本回合时 2.5s/4s 各强制重取                                                 |
+| 锚点校验（advisory） | **PASS**：真机一次徵询 `anchors: {checked:2, verified:0, downgraded:true}`，即顾问引用的 2 个锚点在会话里都对不上，严重度被降档                                                                                                                                                         |
+| 两阶段取证           | **未端到端触发**：连续三次徵询（含显式 focus）顾问都没有返回 `needs`。编排已抽成 `runEvidencePass` 纯函数并用 4 条单测固定语义（无 needs 不动 / 读到文件则第二轮生效 / 越界记为 refused / 第二轮失败保留首轮）；提示词已把 `needs` 写进契约。模型是否请求证据属于模型行为，不是代码路径 |
+| `/advisor cancel`    | **无法自动化**：命令面串行执行，`/advisor ask` 在 handler 内同步等待，第二个命令进不来；真机没有可并发的在途请求可取消                                                                                                                                                                  |
 
 ## 4. 手工 GUI 验证步骤
 

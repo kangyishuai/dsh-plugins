@@ -2,7 +2,7 @@
 // 一次顾问调用：prepareCall → stream → 聚合文本 / usage / 错误分类。
 // 这是整个插件唯一会花钱的地方，所有失败都必须变成**结构化结果**，绝不向上抛。
 import { BlockAssembler } from "@deepseek-ai/dsh-llm";
-import { ADVISOR_SYSTEM_PROMPT, buildAdvisorInput, mintNonce } from "./prompt.js";
+import { advisorSystemPrompt, buildAdvisorInput, mintNonce } from "./prompt.js";
 
 /** 额外调用统一打这个 purpose：也是递归防护的判据（监听器按它跳过自己）。 */
 export const PURPOSE = "advisor";
@@ -37,6 +37,8 @@ export function classifyError(error) {
  * @property {string} [focus]
  * @property {string} [locale]
  * @property {string} sessionId
+ * @property {string} [extra] 第二轮取证时追加的上下文
+ * @property {boolean} [canRequestEvidence]
  * @property {AbortSignal} [signal]
  * @property {DSH.Logger} [logger]
  */
@@ -76,12 +78,15 @@ export async function callAdvisor(input) {
   }
 
   const nonce = mintNonce();
-  const userText = buildAdvisorInput({
+  const baseText = buildAdvisorInput({
     transcript,
     nonce,
     focus: input.focus,
     locale: input.locale,
   });
+  const userText =
+    input.extra === undefined || input.extra === "" ? baseText : `${baseText}\n\n${input.extra}`;
+  const system = advisorSystemPrompt({ canRequestEvidence: input.canRequestEvidence === true });
   const messages = /** @type {any} */ ([
     { role: "user", content: [{ type: "text", text: userText }] },
   ]);
@@ -134,7 +139,7 @@ export async function callAdvisor(input) {
     for await (const chunk of prepared.stream({
       ...prepared.config,
       messages,
-      system: ADVISOR_SYSTEM_PROMPT,
+      system,
       sessionId,
       purpose: PURPOSE,
       ...(signal === undefined ? {} : { signal }),

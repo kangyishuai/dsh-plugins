@@ -28,32 +28,37 @@ export function signalsOf(data) {
  * @param {any[]} events 会话全量事件
  * @param {number} fromIndex 建议记录所在的事件下标
  * @param {any} data 建议记录的数据
- * @returns {{ verdict: "adopted"|"unknown", why: string }}
+ * @returns {{ verdict: "adopted"|"unknown", why: string, confidence: "high"|"medium"|"low" }}
  */
 export function attributeAdoption(events, fromIndex, data) {
   const signals = signalsOf(data);
-  if (signals.length === 0) return { verdict: "unknown", why: "建议里没有可追踪的信号" };
+  if (signals.length === 0)
+    return { verdict: "unknown", why: "建议里没有可追踪的信号", confidence: "low" };
   const list = Array.isArray(events) ? events : [];
   for (let index = fromIndex + 1; index < list.length; index += 1) {
     const haystack = JSON.stringify(list[index]?.data ?? "");
     for (const signal of signals) {
-      if (haystack.includes(signal)) return { verdict: "adopted", why: signal };
+      if (haystack.includes(signal)) {
+        // 路径/证据 ref 比反引号命令更有区分度（命令常被复述）。
+        const specific = signal.includes("/") || signal.includes("_");
+        return { verdict: "adopted", why: signal, confidence: specific ? "high" : "medium" };
+      }
     }
   }
-  return { verdict: "unknown", why: "后续没有出现建议里的信号" };
+  return { verdict: "unknown", why: "后续没有出现建议里的信号", confidence: "low" };
 }
 
 /**
  * 汇总一批建议记录（供 `/advisor report` 与未来的设置页使用）。
  * @param {any[]} events
  * @param {Array<{ index: number, data: any }>} records
- * @returns {{ total: number, adopted: number, unknown: number, anchorsChecked: number, anchorsVerified: number, items: Array<{ severity: string, summary: string, verdict: string, why: string, adviceId: string }> }}
+ * @returns {{ total: number, adopted: number, unknown: number, anchorsChecked: number, anchorsVerified: number, items: Array<{ severity: string, summary: string, verdict: string, why: string, confidence: string, adviceId: string }> }}
  */
 export function summarizeAdoption(events, records) {
   let adopted = 0;
   let anchorsChecked = 0;
   let anchorsVerified = 0;
-  /** @type {Array<{ severity: string, summary: string, verdict: string, why: string, adviceId: string }>} */
+  /** @type {Array<{ severity: string, summary: string, verdict: string, why: string, confidence: string, adviceId: string }>} */
   const items = [];
   for (const { index, data } of Array.isArray(records) ? records : []) {
     const outcome = attributeAdoption(events, index, data);
@@ -67,6 +72,7 @@ export function summarizeAdoption(events, records) {
         .slice(0, 80),
       verdict: outcome.verdict,
       why: outcome.why,
+      confidence: outcome.confidence,
       adviceId: String(data?.adviceId ?? ""),
     });
   }
