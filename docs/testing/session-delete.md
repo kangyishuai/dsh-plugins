@@ -39,7 +39,7 @@ DSH_HOME=$H dsh --profile sdel --port 0 --no-open
 ## 1. 自动化（每次提交）
 
 ```bash
-pnpm verify   # lint + typecheck + 规范检查 + 33 个单测
+pnpm verify   # lint + typecheck + 规范检查 + 53 个单测
 ```
 
 已覆盖：
@@ -53,8 +53,9 @@ pnpm verify   # lint + typecheck + 规范检查 + 33 个单测
 | `test/audit.test.js`      | 20 并发追加无交错、超长截断、读取顺序                                                                                                  |
 | `test/capability.test.js` | 三档能力判定（api/internal/unknown）                                                                                                   |
 | `test/operations.test.js` | 完整 trash 流程（归档→停止→摘引用→审计→对账）、digest 漂移拒绝、无目录 blocked 且零副作用、restore 还原工作区记账、purge、并发双击拒绝 |
+| `test/client.test.js`     | client 半的设计 token：只用宿主真实存在的 `--dsw-*`、计数徽章的底色/前景必须是配对 token（不是写死的 `#fff`）                          |
 
-**没覆盖**：client 渲染与交互、RPC 线缆、真实宿主内部契约（`detachEntered`/`storageDomain`/`session-stop`）。所以下面两层不能省。
+**没覆盖**：client 的渲染与交互（`test/client.test.js` 只校验 token 与配色配对，不渲染组件）、RPC 线缆、真实宿主内部契约（`detachEntered`/`storageDomain`/`session-stop`）。所以下面两层不能省。
 
 ## 2. 启动冒烟（1 分钟）与 GUI 冒烟脚本（约 3 分钟）
 

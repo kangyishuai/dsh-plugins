@@ -40,11 +40,11 @@ DSH_HOME=$H dsh --profile ad --port 0 --no-open
 
 数据根优先级：`config.dataRoot` > `$DSH_HOME` > `~/.dsh`（所以上面的 `H` 变量就是它）。
 
-## 0.5 本次核查记录（2026-11-11，DSH 0.2.2-rc.1）
+## 0.5 当前核查记录（2026-11-12，DSH 0.2.2-rc.2）
 
 | 层                                         | 结果                                                                                                                                                                                                                  |
 | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `node --test`（`packages/advisor`）        | **81 pass / 0 fail**（settings / route / guard / prompt / redact / tool-schema / transcript / anchors / adoption / catalog / budget / verifier / twopass / locale-parity）                                            |
+| `node --test`（`packages/advisor`）        | **115 pass / 0 fail**（adoption / anchors / catalog / client / guard / locale-parity / money / prompt / redact / route / settings / tool-schema / trace / transcript / twopass / verifier）                           |
 | `pnpm probe:runtime`                       | **67/67 PASS**（含 advisor 的 7 条 seam：`resolveModelInfo` / `prepareCall+configure` / `UNSUPPORTED_REASONING_EFFORT` / usage 分片 / `commands.register` / `commandUi.decorate` / `popupSelect`）                    |
 | `pnpm smoke:advisor-desktop --require`     | **19 PASS + 1 SKIP（20 项；真机 DSH 桌面版 0.2.2-rc.2，冷启动实测）**：插件加载、选择器、设置卡（含「读到的是展开后快照」这条回归断言）、分页 `status`/`doctor`（读会话日志）、收尾清理。`--advice` 再加 4 项共 24 项 |
 | 真机徵询（`pnpm pack` → `add` → 手动徵询） | **未做**（P1 收尾的验收项，步骤见 [§4](#4-手工-gui-验证步骤)）                                                                                                                                                        |
