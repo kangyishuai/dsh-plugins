@@ -126,7 +126,7 @@ packages/<name>/
 
 参考实现：
 
-- `scripts/smoke-session-rewind-desktop.mjs`（24 项只读；`--recall` 再加 7 项输入框召回；`--deep` 再加文件模式 e2e 16 项，合计 40 项。前两段 2026-11-12 实测，`--deep` 段上次实测在 23 只读版本上为 39 项）
+- `scripts/smoke-session-rewind-desktop.mjs`（24 项只读；`--recall` 再加 7 项输入框召回；`--deep` 再加文件模式 e2e 16 项，合计 40 项。只读与召回 2026-11-12 实测，只读 + `--deep` 2026-11-13 实测 40/40 全绿）
 - `scripts/smoke-session-delete-desktop.mjs`（14 项只读；`--workspace` 时 15 项）
 
 发版前用 `pnpm gate <plugin>` 一次跑完（桌面步骤永远带 `--require`）：

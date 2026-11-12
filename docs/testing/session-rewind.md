@@ -59,7 +59,7 @@ pnpm gate session-rewind --deep --workspace ~/Workspace/dsh-rewind-ui-smoke
 2. `pnpm probe:runtime`（宿主包/API/slot/私有 seam，50 项）
 3. `pnpm smoke:session-rewind`（临时 DSH_HOME 的 web 端到端，49 项）
 4. 桌面只读回归（24 项，**永远带 `--require`**：没开调试端口就是失败，不是跳过）
-5. 桌面 `--deep` 文件模式 e2e（24 只读 + 16 深链 = 40 项，需 `--workspace`）。**注意**：24 只读那部分 2026-11-12 在 0.6.2 上实测全绿；`--deep` 段上次实测是 2026-11-09（23 只读版本，合计 39 项），24 只读版本上尚未重跑，40 是按「24 + 16」推算的
+5. 桌面 `--deep` 文件模式 e2e（24 只读 + 16 深链 = 40 项，需 `--workspace`；2026-11-13 实测 **40/40 全绿、0 SKIP**）
 
 只有显式 `--skip-desktop` 才跳过桌面端，且结束时会明确打印「门禁不完整」。
 
@@ -197,7 +197,7 @@ pnpm smoke:session-rewind-desktop --require --recall
 ```bash
 pnpm smoke:session-rewind-desktop -- --require                       # 发版前必须 PASS（只读 24 项）
 pnpm smoke:session-rewind-desktop -- --require --deep \
-  --workspace ~/Workspace/dsh-rewind-ui-smoke                        # 加上文件模式 e2e（24 + 16 = 40 项，推算；上次实测为 23 + 16 = 39）
+  --workspace ~/Workspace/dsh-rewind-ui-smoke                        # 加上文件模式 e2e（24 + 16 = 40 项，2026-11-13 实测）
 pnpm smoke:session-rewind-desktop -- --require --recall --deep \
   --workspace ~/Workspace/dsh-rewind-ui-smoke                        # 全量组合（24 + 7 + 16 = 47 项）
 ```
@@ -241,7 +241,7 @@ pnpm smoke:session-rewind-desktop -- --require --recall --deep \
 | 23  | 诊断报告孤儿数据检查存在                                        |
 | 24  | 面板可关闭                                                      |
 
-门禁建议直接跑**全量组合** `--recall --deep`（47 项 = 24 只读 + 7 召回 + 16 深链；只读与召回 2026-11-12 实测全绿，深链段沿用 2026-11-09 的 16 项）：召回段会切会话、`--deep`
+门禁建议直接跑**全量组合** `--recall --deep`（47 项 = 24 只读 + 7 召回 + 16 深链）：只读与召回 2026-11-12 实测全绿，只读 + 深链 2026-11-13 实测 40/40 全绿；**47 项的整串组合本身还没一次跑完过**（分两段验的）：召回段会切会话、`--deep`
 段自己新建会话，互不干扰；召回段结束会把草稿清空，`--deep` 的输入才不会被旧草稿污染。
 
 `--recall` 追加的 7 项（合计 31 项）：找到可召回的会话 → 输入框已聚焦且草稿为空 → 空草稿按 `↑`
