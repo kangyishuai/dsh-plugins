@@ -81,21 +81,30 @@ pnpm verify                        # 仓库门禁（含单测、规范、文档�
 ## 1.5 一条命令跑完门禁（发版前）
 
 `scripts/gate.mjs` 是通用的：`pnpm gate advisor` 依次跑 `pnpm verify` → `pnpm probe:runtime` →
-web 冒烟（**本插件没有该脚本，会显式打印"未定义，跳过"**）→ 桌面只读回归（**永远带 `--require`**）。
+web 冒烟（`pnpm smoke:advisor`）→ 桌面只读回归（**永远带 `--require`**）。
 任何一步失败立刻停并给出下一步提示；只有显式 `--skip-desktop` 才跳桌面端，且结束时会打印"门禁不完整"。
 
-## 2. web 端到端冒烟（P2 补）
+## 2. web 端到端冒烟（`pnpm smoke:advisor`）
 
-`pnpm smoke:advisor` **目前不存在**（根 `package.json` 里没有这个脚本）。P1 不做的理由：
+临时 `DSH_HOME`（复制 desktop profile、剥掉第三方插件、只放一个临时工作区）里启动**真实宿主**，
+装当前源码打出的包，再用 ego-browser 跑一遍「装得上、命令注册了、设置卡渲染了、且**什么都没花**」。
 
-- 工具路线的徵询**必然消耗真实 provider 额度**，而 web 冒烟跑在临时 `DSH_HOME` 里、默认想做到可重复；
-  要让它不花钱，得先注入一个假 provider/adapter（或在临时 home 里配一个本地回环网关），这属于 P2 的工程量。
-- P1 的客户端面是**只读选择器**，宿主渲染路径（`popupSelect`）与命令输出都在真实 Electron 里更容易断言，
-  所以把"必须有自动化"的那部分放在桌面只读回归（硬性要求，已满足）。
+**11 项断言（2026-11-12 实测全 PASS）**：
 
-P2 补 `smoke:advisor` 时应覆盖：临时 `DSH_HOME` + 本地假 provider → `/advisor off` 时**不新增账本行** →
-`/advisor <provider>/<model>` 选中后 `status` 反映新值 → `/advisor ask` 触发一次真实调用并在账本里多一行 →
-`shadow` 模式**账本增长但主模型上下文里没有建议** → 预算到顶返回 `budget_exhausted` 且不发起第二次调用。
+1. 页面可交互（`contenteditable` 输入框存在）；
+2. 插件 client 半已加载（`style[data-plugin]` 含 `@kangyishuai/dsh-advisor`）；
+3. `/` 菜单里出现 `advisor`（证明 `commands.register` 生效）；
+4. 能新建会话并拿到空输入框；
+5. 设置卡渲染且无 `[data-advisor-error]`、provider 下拉有候选（实测 45 条）、预算/隐私/预览分组都在；
+6. 关闭设置卡（宿主随后弹出的「首次配置凭据」对话框不算失败）；
+   7–10. 会话日志里 `command/done` 依次有 `/advisor doctor`（含 ✅/⚠️ 结论）、`/advisor preview`（目标/将发送）、`/advisor confirm`（已允许或未配置）、`/advisor report all`（顾问报告或空态）；
+7. **整段冒烟没有生成 `advisor/usage.jsonl` 或 `advice.jsonl`** —— 证明它没有发起任何模型调用、没有花钱。
+
+设计边界：命令输出以**会话日志**为准（宿主的命令卡片在 DOM 里是折叠的，`innerText` 为空）；
+不点保存、不发消息、不徵询；`SMOKE_KEEP=1` 保留临时目录与 `host.log` 排障。
+
+> 不做「假 provider + 真实徵询」的原因：那需要把 provider 额度或回环网关写进冒烟，成本与可重复性都差；
+> 真实徵询链路由桌面冒烟（只读）与真机手工验证覆盖。
 
 ## 3. 桌面只读回归
 

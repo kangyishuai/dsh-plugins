@@ -41,10 +41,11 @@
 //   - 设置卡（advisor client 半）：`[data-advisor-settings]`、`[data-advisor-provider]`、
 //     `[data-advisor-model]`、`[data-advisor-error]`；文案断言从仓库 locale 读，不在这里抄中文。
 //   - 顾问线（advisor client 半）：`.dsh-advisor-turn` > `.dsh-advisor-turn-head` + `.dsh-advisor-turn-body`。
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { zstdDecompressSync } from "node:zlib";
 
 const SHOTS = join(tmpdir(), "dsh-advisor-desktop-shots");
 const PLUGIN = "@kangyishuai/dsh-advisor";
@@ -299,6 +300,112 @@ const COMMAND_STATE = `(() => {
     last: nodes.length === 0 ? "" : (nodes[nodes.length - 1].textContent || "").slice(0, 2000),
   };
 })()`;
+
+// ---------------------------------------------------------------------------
+// 命令输出以**会话日志**为准：宿主的命令卡片在 DOM 里是折叠的，展开后 innerText 仍为空
+// （真机确认过）。所以 /advisor status 与 /advisor doctor 的断言读 `command/done.data.text`。
+// ---------------------------------------------------------------------------
+
+/** 当前会话 id（宿主的会话根元素带 data-conversation-session）。 */
+const SESSION_ID = `(() => {
+  const el = document.querySelector('[data-conversation-session]');
+  return el === null ? "" : String(el.getAttribute('data-conversation-session') || '');
+})()`;
+
+/** @param {string} sessionId */
+async function commandTexts(sessionId) {
+  if (sessionId === "") return [];
+  const home = process.env.DSH_HOME ?? join(process.env.HOME ?? "", ".dsh");
+  const roots = join(home, "sessions");
+  /** @type {string[]} */
+  const files = [];
+  const walk = async (/** @type {string} */ dir, /** @type {number} */ depth) => {
+    if (depth > 3) return;
+    /** @type {import("node:fs").Dirent[]} */
+    let entries = [];
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (entry.name === sessionId) {
+          try {
+            for (const inner of await readdir(join(dir, entry.name))) {
+              if (inner.startsWith("session.v4.jsonl")) files.push(join(dir, entry.name, inner));
+            }
+          } catch {
+            /* 跳过 */
+          }
+        } else {
+          await walk(join(dir, entry.name), depth + 1);
+        }
+      }
+    }
+  };
+  await walk(roots, 0);
+  /** @type {string[]} */
+  const texts = [];
+  for (const file of files) {
+    let text = "";
+    try {
+      const buffer = await readFile(file);
+      if (file.endsWith(".zstd")) {
+        const magic = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
+        let start = buffer.indexOf(magic);
+        while (start >= 0) {
+          const next = buffer.indexOf(magic, start + 4);
+          const frame = buffer.subarray(start, next < 0 ? buffer.length : next);
+          try {
+            text += zstdDecompressSync(frame).toString("utf8");
+          } catch {
+            /* 跳过坏帧 */
+          }
+          if (next < 0) break;
+          start = next;
+        }
+      } else {
+        text = buffer.toString("utf8");
+      }
+    } catch {
+      continue;
+    }
+    for (const line of text.split("\n")) {
+      if (line.trim() === "") continue;
+      /** @type {any} */
+      let event;
+      try {
+        event = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (event?.type !== "command/done") continue;
+      const value = event?.data?.text;
+      if (typeof value === "string" && value !== "") texts.push(value);
+    }
+  }
+  return texts;
+}
+
+/**
+ * 等会话日志里出现满足 predicate 的新命令输出。
+ * @param {string} sessionId @param {(text: string) => boolean} predicate @param {number} timeoutMs
+ */
+async function waitForCommandText(sessionId, predicate, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  /** @type {string} */
+  let last = "";
+  while (Date.now() < deadline) {
+    const texts = await commandTexts(sessionId);
+    for (const text of texts) {
+      if (predicate(text)) return { ok: true, text };
+    }
+    last = texts.length === 0 ? "" : texts[texts.length - 1];
+    await sleep(400);
+  }
+  return { ok: false, text: last };
+}
 
 // ---------------------------------------------------------------------------
 // 设置对话框 / 设置卡 / 顾问线的探针
@@ -1164,7 +1271,7 @@ const main = async () => {
       await sleep(300);
 
       // ---------- F. `/advisor status` ----------
-      const statusBaseline = toCount((await cdp.evaluate(COMMAND_STATE))?.count);
+      const desktopSessionId = String((await cdp.evaluate(SESSION_ID).catch(() => "")) ?? "");
       const typedStatus = await typeIntoComposer(cdp, "/advisor status");
       const statusEntered = await waitForComposerText(cdp, "/advisor status", 5000);
       check(
@@ -1174,32 +1281,24 @@ const main = async () => {
       );
       await pressEnter(cdp);
 
-      const status = await waitFor(
-        cdp,
-        COMMAND_STATE,
-        (value) =>
-          toCount(value?.count) > statusBaseline &&
-          /模式[:：]|Mode:/u.test(String(value?.last ?? "")) &&
-          /顾问[:：]|Advisor:/u.test(String(value?.last ?? "")),
+      const status = await waitForCommandText(
+        desktopSessionId,
+        (text) => /模式[:：]|Mode:/u.test(text) && /顾问[:：]|Advisor:/u.test(text),
         12_000,
       );
-      const statusText = String(status.value?.last ?? "");
       check(
-        "/advisor status 输出「模式：」「顾问：」",
+        "/advisor status 输出「模式：」「顾问：」（会话日志）",
         status.ok,
-        `count=${toCount(status.value?.count)}（之前 ${statusBaseline}） text=${JSON.stringify(
-          statusText.replace(/\s+/gu, " ").slice(0, 300),
-        )} error=${status.error}`,
+        `session=${desktopSessionId} text=${JSON.stringify(String(status.text).replace(/\s+/gu, " ").slice(0, 300))}`,
       );
       if (status.ok) {
-        console.log(`      status: ${statusText.replace(/\s+/gu, " ").slice(0, 240)}`);
+        console.log(`      status: ${String(status.text).replace(/\s+/gu, " ").slice(0, 240)}`);
       }
       await cdp.screenshot(join(SHOTS, "04-status.png"));
 
       // ---------- G. `/advisor doctor` ----------
       await clearComposer(cdp);
       await sleep(300);
-      const doctorBaseline = toCount((await cdp.evaluate(COMMAND_STATE))?.count);
       const typedDoctor = await typeIntoComposer(cdp, "/advisor doctor");
       const doctorEntered = await waitForComposerText(cdp, "/advisor doctor", 5000);
       check(
@@ -1209,21 +1308,18 @@ const main = async () => {
       );
       await pressEnter(cdp);
 
-      const doctor = await waitFor(
-        cdp,
-        COMMAND_STATE,
-        (value) =>
-          toCount(value?.count) > doctorBaseline &&
-          /(?:✅|⚠️|❌)\s/u.test(String(value?.last ?? "")),
+      const doctor = await waitForCommandText(
+        desktopSessionId,
+        (text) => /(?:✅|⚠️|❌)\s/u.test(text),
         12_000,
       );
-      const doctorText = String(doctor.value?.last ?? "");
+      const doctorText = String(doctor.text ?? "");
       check(
-        "/advisor doctor 输出至少一条 ✅/⚠️/❌ 检查行",
+        "/advisor doctor 输出至少一条 ✅/⚠️/❌ 检查行（会话日志）",
         doctor.ok,
-        `count=${toCount(doctor.value?.count)}（之前 ${doctorBaseline}） text=${JSON.stringify(
+        `session=${desktopSessionId} text=${JSON.stringify(
           doctorText.replace(/\s+/gu, " ").slice(0, 300),
-        )} error=${doctor.error}`,
+        )}`,
       );
       if (doctor.ok) {
         const lines = doctorText

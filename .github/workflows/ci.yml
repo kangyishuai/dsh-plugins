@@ -51,6 +51,7 @@ jobs:
       # 门禁结构检查：每个插件都必须有 verify/probe/web 冒烟三个必需步骤。
       - run: pnpm gate session-rewind --dry-run
       - run: pnpm gate session-delete --dry-run
+      - run: pnpm gate advisor --dry-run
 
   secrets:
     name: gitleaks (full history)

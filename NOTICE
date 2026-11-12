@@ -45,3 +45,21 @@ from one of them, the corresponding notice and license text will be added to thi
 - 用血缘判定子会话 / fork 的思路 —— Lzcdebear。
 
 因为没有复制代码，本文件不附它们的版权声明与许可全文；一旦真的复制，会在此处逐字补上对应的版权与许可条款。
+
+## Design credits — advisor
+
+Before implementing `packages/advisor`, we read a number of community DSH plugins that give a second
+model a voice in the loop. What we took is **behaviour, thresholds and sequencing, not code**. No
+source code from the projects below has been copied into this repository, so their copyright notices
+and license texts are not reproduced here: no such obligation has been triggered yet. If code is ever
+adopted from one of them, the corresponding notice and license text will be added to this file verbatim.
+
+| Project | License | Design we borrowed |
+| ------- | ------- | ------------------ |
+| [omdsh-dev/dsh-advisor](https://github.com/omdsh-dev/dsh-advisor) | MIT | Advisory output contract: one note per delivery, a closed severity set (`nit` / `concern` / `blocker`), a bounded note length, and "silence is a valid answer". Also the ordering of delivery guards (normalise → hollow-phrase suppression → dedupe → immune window). |
+| [dsh-cc/dsh-cc](https://github.com/dsh-cc/dsh-cc) (`advisor-watchdog`) | Apache-2.0 | Fail-soft discipline: never block the main loop, never throw into a waterfall, `skip` when a route is not configured. Also the cursor/window view of a session, self-observation exclusion, and concrete guard numbers (dedupe LRU 4096, immune window 3 turns, per-session cap 24). |
+| [ccll/dsh-advisor-flow](https://github.com/ccll/dsh-advisor-flow) | MIT | Tripwire vocabulary (before-plan / after-failure / before-completion) that shaped our "when to consult" guidance; **redact before truncate** ordering; a usage ledger broken down by trigger; privacy tiers for repository context. |
+| [kvmem/dsh-super-advisor](https://github.com/kvmem/dsh-super-advisor) | MIT | The consent cost of sending a conversation elsewhere: preview before the first cross-provider send and an explicit allow-list. Also the `budget_exhausted` status code and a bounded input size. |
+| [ninetyhe-90/dsh-decision-review](https://github.com/ninetyhe-90/dsh-decision-review) | MIT | The `off` / `shadow` / `advisory` three-mode model, where `shadow` records without feeding anything back — our recommended first-run mode. |
+| [wweir/dsh-advisor](https://github.com/wweir/dsh-advisor) | MPL-2.0 | "Normal result vs suppressed vs failed vs cancelled" as distinct, reportable outcomes (our `skipped` reasons and `/advisor report` wording), nonce-delimited evidence boundaries, and refusing to fall back to the executor model silently. |
+| [Anthropic Claude Code `advisor`](https://code.claude.com/docs/en/advisor) | — (documentation) | The behavioural model we target: the model decides when to consult, the advisor reads the whole transcript, capability pairing (`advisor model >= main model`), and the `Advising` / `Reviewed` / `Declined` / `Unavailable` vocabulary. Prompt wording in `lib/prompt.js` is an adaptation, not a copy. |
