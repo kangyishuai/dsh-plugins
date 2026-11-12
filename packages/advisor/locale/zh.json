@@ -197,6 +197,14 @@
     "settings.unit.calls": "次",
     "settings.unit.items": "条",
     "settings.paths.settings": "设置文件：{path}",
-    "settings.paths.ledger": "账本：{path}"
+    "settings.paths.ledger": "账本：{path}",
+    "tail.trace.label": "本次徵询",
+    "tail.trace.sep": "：",
+    "tail.trace.chars": "{chars} 字符",
+    "tail.trigger.tool": "模型发起",
+    "tail.trigger.shadow": "影子",
+    "tail.trigger.manual": "手动",
+    "tail.trigger.other": "其他",
+    "tail.trigger.postAnswer": "答后复查"
   }
 }

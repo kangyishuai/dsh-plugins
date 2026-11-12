@@ -137,3 +137,68 @@ describe("settings view", () => {
     assert.deepEqual(patch, { maxCostPerDayUsd: 0.51 });
   });
 });
+
+describe("advisor trace line", () => {
+  const t = (/** @type {string} */ key) => {
+    /** @type {Record<string, string>} */
+    const dictionary = {
+      "tail.trigger.shadow": "影子",
+      "tail.trigger.other": "其他",
+      "tail.trace.chars": "{chars} 字符",
+    };
+    return dictionary[key] ?? key;
+  };
+
+  it("formats local time as HH:mm", () => {
+    const at = new Date(2026, 0, 2, 9, 5).getTime();
+    assert.equal(api.formatClock(at), "09:05");
+    assert.equal(api.formatClock(0), "");
+  });
+
+  it("maps known triggers and falls back to other", () => {
+    assert.equal(api.triggerLabel(t, "shadow"), "影子");
+    assert.equal(api.triggerLabel(t, "nope"), "其他");
+  });
+
+  it("builds trigger · time · model · chars · usage", () => {
+    const at = new Date(2026, 0, 2, 9, 5).getTime();
+    const text = api.traceTextOf(
+      {
+        trigger: "shadow",
+        at,
+        model: "zhinao/kimi",
+        requestChars: 12438,
+        usage: "1.2k in / 300 out / 1.2s / ≈$0.004",
+      },
+      t,
+    );
+    assert.match(text, /影子/);
+    assert.match(text, /09:05/);
+    assert.match(text, /zhinao\/kimi/);
+    assert.match(text, /12,438 字符/);
+    assert.match(text, /≈\$0\.004/);
+  });
+
+  it("normalizes at / trigger / requestChars from the host record", () => {
+    const at = new Date(2026, 0, 2, 9, 5).getTime();
+    const out = api.normalizeAdviceItems({
+      ok: true,
+      items: [
+        {
+          turn: 2,
+          at,
+          trigger: "shadow",
+          requestChars: 12438,
+          model: "zhinao/kimi",
+          usage: "1.2k in / 300 out / 1.2s",
+          status: "reviewed",
+          advice: "x",
+          summary: "y",
+        },
+      ],
+    });
+    assert.equal(out[0].at, at);
+    assert.equal(out[0].trigger, "shadow");
+    assert.equal(out[0].requestChars, 12438);
+  });
+});

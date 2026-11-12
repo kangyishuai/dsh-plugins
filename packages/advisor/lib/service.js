@@ -750,6 +750,7 @@ export class AdvisorService extends TypertRemoteService {
         model: result.model,
         usage: result.usage,
         trigger,
+        requestChars: transcript.text.length,
         anchors: result.anchors,
         ...(verification === null ? {} : { verification }),
       });
