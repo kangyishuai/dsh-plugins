@@ -170,11 +170,13 @@ Nothing else: no workspace files, no session-log records of its own (a consultat
 ```bash
 pnpm verify                  # repo-wide gates: lint, typecheck, plugin conventions, docs, unit tests
 cd packages/advisor && pnpm test   # unit tests for this plugin (node --test)
+pnpm smoke:advisor           # web end-to-end smoke in a throwaway DSH home (spends nothing)
 pnpm smoke:advisor-desktop   # desktop (Electron) read-only regression over CDP
 pnpm smoke:agent-tool        # repo-wide real-model tool smoke (needs credentials; SKIPs without them)
 ```
 
 - `pnpm verify` is the release gate and must pass before a PR.
+- `pnpm smoke:advisor` starts a real host in a throwaway `DSH_HOME` (one temporary workspace, no credentials needed), installs the packed plugin and asserts: the client half loads, `/` lists `advisor`, the settings card renders, and `/advisor doctor` / `preview` / `confirm` / `report all` produce output — then checks that **no ledger file was created**, i.e. it spent nothing. Command output is read from the session log because the host renders command cards collapsed.
 - `pnpm smoke:advisor-desktop` is the desktop (Electron) read-only regression, required because the plugin has a client half. It attaches to the running app over CDP, confirms the plugin's client half actually loaded, and never triggers a paid consultation. Pass `--require` in release gates so an unreachable debug port fails instead of silently skipping. It expects the app started with `open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1`.
 - `pnpm smoke:agent-tool` exercises a registered tool with a real model in a throwaway DSH home. It needs model credentials and exits as SKIP without them — a SKIP is not a pass.
 

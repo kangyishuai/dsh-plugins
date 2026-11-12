@@ -124,9 +124,9 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-advisor-*.tgz
 
 ## 兼容性
 
-| 已验证的 DSH 版本 | 状态                                                                                                                                                                          |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0.2.2-rc.1        | 已在该版本验证：单测（设置夹紧、选路与配对、预算守卫、会话渲染、脱敏、输出契约）与 `pnpm probe:runtime`；桌面端只读回归为 `pnpm smoke:advisor-desktop`。其他 DSH 版本未验证。 |
+| 已验证的 DSH 版本 | 状态                                                                                                                                                          |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.2.2-rc.1        | 已在该版本验证：单测（81 条）与 `pnpm probe:runtime`；web 端到端冒烟 `pnpm smoke:advisor`、桌面端只读回归 `pnpm smoke:advisor-desktop`。其他 DSH 版本未验证。 |
 
 插件不声明 `engines.dsh`，也不声明 `@deepseek-ai/*` 的 peer 范围：DSH 还在预发布阶段，semver 对预发布版本不可靠（见 [ADR 0005](../../docs/adr/0005-dsh-version-compatibility.md)）。这张表就是兼容性声明。DSH 升级后请跑 `pnpm probe:runtime`、`pnpm smoke:advisor-desktop` 和单测，再看 `/advisor doctor`。
 
@@ -157,11 +157,13 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-advisor-*.tgz
 ```bash
 pnpm verify                        # 仓库级门禁：lint、类型、插件规范、文档一致性、单测
 cd packages/advisor && pnpm test   # 本插件的单测（node --test）
+pnpm smoke:advisor                 # web 端到端冒烟（一次性 DSH_HOME，不花钱）
 pnpm smoke:advisor-desktop         # 桌面版（Electron）只读回归，走 CDP
 pnpm smoke:agent-tool              # 仓库级真实模型工具冒烟（需要凭据，没有就 SKIP）
 ```
 
 - `pnpm verify` 是发版门禁，提 PR 之前必须通过。
+- `pnpm smoke:advisor` 在一次性 `DSH_HOME` 里起真实宿主（只放一个临时工作区、不需要凭据），装包后验证：client 半加载、`/` 菜单出现 `advisor`、设置卡渲染、`/advisor doctor`/`preview`/`confirm`/`report all` 都有输出，并断言**没有生成账本文件**（即没有花钱）。命令输出读会话日志，因为宿主的命令卡片在 DOM 里是折叠的。
 - `pnpm smoke:advisor-desktop` 是桌面版（Electron）只读回归；插件有 client 半，所以这是硬性要求。它通过 CDP 连上正在运行的应用、确认 client 半真的加载，**不会**触发需要付费的徵询。发版门禁里加 `--require`，这样连不上调试端口会失败而不是静默跳过。它要求应用用 `open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1` 启动。
 - `pnpm smoke:agent-tool` 在一次性 DSH 目录里用真实模型驱动一个已注册工具。需要模型凭据；没有凭据时以 SKIP 退出——SKIP 不等于通过。
 
