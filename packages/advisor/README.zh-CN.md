@@ -2,7 +2,7 @@
 
 > 给主模型配一个单独配置的顾问模型，由**主模型自己决定**什么时候值得问：动手之前、反复失败时、宣告完成之前。顾问只给建议：它读整段对话、返回结构化答复，不批准、不拦截、不执行任何动作。
 
-[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-advisor?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-advisor) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.1-4b6bfb)](#兼容性) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-advisor?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-advisor) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.2-4b6bfb)](#兼容性) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
 [English](./README.md)
 
@@ -154,6 +154,7 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-advisor-*.tgz
 
 | 已验证的 DSH 版本 | 状态                                                                                                                                                          |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.2.2-rc.2        | 2026-11-12 已验证：单测 + `pnpm probe:runtime` 67/67 + Web `pnpm smoke:advisor` 13/13（临时 DSH home，不发起模型调用，账本 0）。本版本未复跑桌面只读回归。    |
 | 0.2.2-rc.1        | 已在该版本验证：单测（81 条）与 `pnpm probe:runtime`；web 端到端冒烟 `pnpm smoke:advisor`、桌面端只读回归 `pnpm smoke:advisor-desktop`。其他 DSH 版本未验证。 |
 
 插件不声明 `engines.dsh`，也不声明 `@deepseek-ai/*` 的 peer 范围：DSH 还在预发布阶段，semver 对预发布版本不可靠（见 [ADR 0005](../../docs/adr/0005-dsh-version-compatibility.md)）。这张表就是兼容性声明。DSH 升级后请跑 `pnpm probe:runtime`、`pnpm smoke:advisor-desktop` 和单测，再看 `/advisor doctor`。

@@ -2,7 +2,7 @@
 
 > A separately configured advisor model the main model can consult when _it_ decides to — before committing to an approach, when an error keeps recurring, before declaring a task done. Advisory only: it reads the conversation, returns structured advice, and never approves, blocks or runs anything.
 
-[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-advisor?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-advisor) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.1-4b6bfb)](#compatibility) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-advisor?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-advisor) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.2-4b6bfb)](#compatibility) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
 [中文](./README.zh-CN.md)
 
@@ -164,6 +164,7 @@ This is the section to read before turning it on.
 
 | DSH version | Status                                                                                                                                                                                                                                                                                 |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.2.2-rc.2  | Verified 2026-11-12: unit tests + `pnpm probe:runtime` 67/67 + web `pnpm smoke:advisor` 13/13 on a throwaway DSH home (no model calls, ledger 0). The desktop read-only regression was not re-run on this version.                                                                     |
 | 0.2.2-rc.1  | Verified on this version: unit tests (settings clamping, route selection and pairing, budget guard, transcript rendering, redaction, output contract) and `pnpm probe:runtime`; the desktop read-only regression is `pnpm smoke:advisor-desktop`. Other DSH versions are not verified. |
 
 The plugin declares no `engines.dsh` and no `@deepseek-ai/*` peer range: DSH is pre-release and semver ranges over prereleases are unreliable (see [ADR 0005](../../docs/adr/0005-dsh-version-compatibility.md)). Treat this table as the compatibility statement. After a DSH upgrade run `pnpm probe:runtime`, `pnpm smoke:advisor-desktop` and the unit tests, then check `/advisor doctor`.
