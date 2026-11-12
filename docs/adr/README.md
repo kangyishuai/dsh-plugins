@@ -14,5 +14,6 @@
 | [0008](0008-session-rewind-non-destructive-recall.md) | session-rewind：非破坏性召回（召回 vs 回溯分工）      | 已接受 |
 | [0009](0009-next-step-architecture.md)                | next-step：一个包两个面，状态属于会话数据             | 已接受 |
 | [0010](0010-advisor-architecture.md)                  | advisor：模型自主时机的按需顾问，成本与原因必须可见   | 已接受 |
+| [0011](0011-advisor-currency.md)                      | advisor：人民币设置与 USD 内部账本口径                | 已接受 |
 
 新建：复制 [0000-template.md](0000-template.md)。
