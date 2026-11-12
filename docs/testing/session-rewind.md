@@ -55,11 +55,11 @@ pnpm gate session-rewind --deep --workspace ~/Workspace/dsh-rewind-ui-smoke
 
 按「便宜的先跑」排序，任何一步失败立刻停并给出下一步提示：
 
-1. `pnpm verify`（lint + 类型 + 规范 + 公开边界 + 205 单测）
+1. `pnpm verify`（lint + 类型 + 规范 + 公开边界 + 208 单测）
 2. `pnpm probe:runtime`（宿主包/API/slot/私有 seam，50 项）
 3. `pnpm smoke:session-rewind`（临时 DSH_HOME 的 web 端到端，49 项）
-4. 桌面只读回归（23 项，**永远带 `--require`**：没开调试端口就是失败，不是跳过）
-5. 桌面 `--deep` 文件模式 e2e（23 只读 + 16 深链 = 39 项，需 `--workspace`；2026-11-09 实测全绿）
+4. 桌面只读回归（24 项，**永远带 `--require`**：没开调试端口就是失败，不是跳过）
+5. 桌面 `--deep` 文件模式 e2e（24 只读 + 16 深链 = 40 项，需 `--workspace`；2026-11-09 实测全绿）
 
 只有显式 `--skip-desktop` 才跳过桌面端，且结束时会明确打印「门禁不完整」。
 
@@ -178,9 +178,9 @@ open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debuggin
 pnpm smoke:session-rewind-desktop
 ```
 
-桌面只读回归实测 **23 项**（2026-11-09，DSH 0.2.2-rc.1 / Electron 44）。
+桌面只读回归实测 **24 项**（2026-11-12，DSH 0.2.2-rc.2 / Electron 44）。
 
-加 `--recall` 会在同一个 Electron 渲染进程里额外验证**输入框 ↑/↓ 历史召回**（7 条断言，合计 30 项）：
+加 `--recall` 会在同一个 Electron 渲染进程里额外验证**输入框 ↑/↓ 历史召回**（7 条断言，合计 31 项）：
 空草稿按 ↑ 召回最新一条用户消息（并核对它确实出现在对话行里）、再按 ↑ 往前翻、↓↓ 走回并恢复空草稿、
 全程对话行数不变且不弹回溯框。它**只写草稿**，结束时清空；不发送、不回溯、不写会话日志。
 随机按键通过 CDP `Input.dispatchKeyEvent` 派发，走的是真实 DOM keydown 路径（也就是
@@ -195,11 +195,11 @@ pnpm smoke:session-rewind-desktop --require --recall
 `--require` 则判为 FAIL（exit 1）——避免「没跑也说通过」。
 
 ```bash
-pnpm smoke:session-rewind-desktop -- --require                       # 发版前必须 PASS（只读 23 项）
+pnpm smoke:session-rewind-desktop -- --require                       # 发版前必须 PASS（只读 24 项）
 pnpm smoke:session-rewind-desktop -- --require --deep \
-  --workspace ~/Workspace/dsh-rewind-ui-smoke                        # 加上文件模式 e2e（23 + 16 = 39 项）
+  --workspace ~/Workspace/dsh-rewind-ui-smoke                        # 加上文件模式 e2e（24 + 16 = 40 项）
 pnpm smoke:session-rewind-desktop -- --require --recall --deep \
-  --workspace ~/Workspace/dsh-rewind-ui-smoke                        # 全量组合（23 + 7 + 16 = 46 项）
+  --workspace ~/Workspace/dsh-rewind-ui-smoke                        # 全量组合（24 + 7 + 16 = 47 项）
 ```
 
 **`--deep`：文件模式端到端（真机、真模型）。** 它**自己**会在给定测试工作区点「新建会话」
@@ -212,7 +212,7 @@ pnpm smoke:session-rewind-desktop -- --require --recall --deep \
 后续步骤。它只读写该目录里的那一个测试文件名，但会消耗一次模型额度，并在侧栏留下一个测试会话
 （需要时手动删掉）。
 
-23 项只读断言（2026-11-09 实测输出，顺序即脚本顺序）：
+24 项只读断言（2026-11-12 实测输出，顺序即脚本顺序）：
 
 | #   | 断言                                                            |
 | --- | --------------------------------------------------------------- |
@@ -230,20 +230,21 @@ pnpm smoke:session-rewind-desktop -- --require --recall --deep \
 | 12  | 确认框写明影响面与预览                                          |
 | 13  | 确认框有「仅对话 / 对话+文件」两个范围                          |
 | 14  | 确认框有「回退后立即重发」且默认不勾选                          |
-| 15  | 确认框取消后退回候选列表（不执行回退）                          |
-| 16  | 再取消后对话框关闭且未回溯                                      |
-| 17  | 回溯面板打开且四页签齐全                                        |
-| 18  | 回溯记录渲染为时间线（节点数 === 圆点数）                       |
-| 19  | 救援点页签可渲染                                                |
-| 20  | 设置页诊断可加载                                                |
-| 21  | 诊断报告只读工具已注册                                          |
-| 22  | 诊断报告孤儿数据检查存在                                        |
-| 23  | 面板可关闭                                                      |
+| 15  | 确认按钮文字与底色对比度 ≥ 4.5:1（真实渲染进程按 WCAG 计算）    |
+| 16  | 确认框取消后退回候选列表（不执行回退）                          |
+| 17  | 再取消后对话框关闭且未回溯                                      |
+| 18  | 回溯面板打开且四页签齐全                                        |
+| 19  | 回溯记录渲染为时间线（节点数 === 圆点数）                       |
+| 20  | 救援点页签可渲染                                                |
+| 21  | 设置页诊断可加载                                                |
+| 22  | 诊断报告只读工具已注册                                          |
+| 23  | 诊断报告孤儿数据检查存在                                        |
+| 24  | 面板可关闭                                                      |
 
-门禁建议直接跑**全量组合** `--recall --deep`（46 项，2026-11-09 实测全绿）：召回段会切会话、`--deep`
+门禁建议直接跑**全量组合** `--recall --deep`（47 项 = 24 只读 + 7 召回 + 16 深链；24 只读部分 2026-11-12 实测全绿）：召回段会切会话、`--deep`
 段自己新建会话，互不干扰；召回段结束会把草稿清空，`--deep` 的输入才不会被旧草稿污染。
 
-`--recall` 追加的 7 项（合计 30 项）：找到可召回的会话 → 输入框已聚焦且草稿为空 → 空草稿按 `↑`
+`--recall` 追加的 7 项（合计 31 项）：找到可召回的会话 → 输入框已聚焦且草稿为空 → 空草稿按 `↑`
 召回最新一条 → 召回的文本确实来自会话里的某条用户消息 → 再按 `↑` 换一条（只有 1 条历史时
 退化断言为「停在最旧一条、不环绕」）→ `↓` `↓` 回到 live line 且草稿为空 → 全程对话行数不变、
 不弹回溯框。
