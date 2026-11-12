@@ -89,16 +89,18 @@ web 冒烟（`pnpm smoke:advisor`）→ 桌面只读回归（**永远带 `--requ
 临时 `DSH_HOME`（复制 desktop profile、剥掉第三方插件、只放一个临时工作区）里启动**真实宿主**，
 装当前源码打出的包，再用 ego-browser 跑一遍「装得上、命令注册了、设置卡渲染了、且**什么都没花**」。
 
-**11 项断言（2026-11-12 实测全 PASS）**：
+**13 项断言（2026-11-12 实测全 PASS）**：
 
 1. 页面可交互（`contenteditable` 输入框存在）；
 2. 插件 client 半已加载（`style[data-plugin]` 含 `@kangyishuai/dsh-advisor`）；
 3. `/` 菜单里出现 `advisor`（证明 `commands.register` 生效）；
 4. 能新建会话并拿到空输入框；
-5. 设置卡渲染且无 `[data-advisor-error]`、provider 下拉有候选（实测 45 条）、预算/隐私/预览分组都在；
-6. 关闭设置卡（宿主随后弹出的「首次配置凭据」对话框不算失败）；
-   7–10. 会话日志里 `command/done` 依次有 `/advisor doctor`（含 ✅/⚠️ 结论）、`/advisor preview`（目标/将发送）、`/advisor confirm`（已允许或未配置）、`/advisor report all`（顾问报告或空态）；
-7. **整段冒烟没有生成 `advisor/usage.jsonl` 或 `advice.jsonl`** —— 证明它没有发起任何模型调用、没有花钱。
+5. 设置卡默认是 `off` 紧凑态：只有模式、一句状态和「配置顾问」，不渲染 provider / 预算 / 隐私；
+6. 点「配置顾问」并展开高级与状态后：provider 下拉有候选（实测 45 条）、每日预算/发送范围/工作区限额/模型白名单/预览都在，且有 15 个「?」按需帮助按钮、无 `[data-advisor-error]`；
+7. 点开第一个「?」能展开内联说明（不是只靠 `title` 悬停）；
+8. 关闭设置卡（宿主随后弹出的「首次配置凭据」对话框不算失败）；
+   9–12. 会话日志里 `command/done` 依次有 `/advisor doctor`（含 ✅/⚠️ 结论）、`/advisor preview`（目标/将发送）、`/advisor confirm`（已允许或未配置）、`/advisor report all`（顾问报告或空态）；
+9. **整段冒烟没有生成 `advisor/usage.jsonl` 或 `advice.jsonl`** —— 证明它没有发起任何模型调用、没有花钱。
 
 设计边界：命令输出以**会话日志**为准（宿主的命令卡片在 DOM 里是折叠的，`innerText` 为空）；
 不点保存、不发消息、不徵询；`SMOKE_KEEP=1` 保留临时目录与 `host.log` 排障。
@@ -210,7 +212,7 @@ pnpm smoke:advisor-desktop --require --advice
 
 | 项                    | 结果                                                                                                                                                                                                                       | 证据                                            |
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
-| 设置卡 P3 字段        | **PASS**：`工作区每日最多调用` / `工作区每日预算（USD）` / `预览会发什么` / `模型白名单` / `确认跨 provider 发送` 全部渲染，`data-advisor-error` 不存在                                                                    | DOM（`[data-advisor-settings]` 的 `innerText`） |
+| 设置卡 P3 字段        | **PASS**：`工作区每日调用上限` / `工作区每日预算` / `预览会发什么` / `模型白名单` / `确认跨 provider 发送` 全部渲染（默认折叠，桌面冒烟会先展开），`data-advisor-error` 不存在                                             | DOM（`[data-advisor-settings]` 的 `innerText`） |
 | `/advisor preview`    | **PASS**：输出「目标 / 发送范围 / 将发送 60022 字符（约 20008 tokens）/ 上下文省略 20947 字符 / 工具往来 376 调用 376 结果 / 脱敏命中 kv-assignment / 白名单 未设置 / 跨 provider 否 / 单价 内置参考价 / 工作区今日 0 次」 | 会话日志 `command/done`（seq 2736）             |
 | `/advisor confirm`    | **PASS**：「已允许把会话内容发送到「zhinao」」                                                                                                                                                                             | 会话日志（seq 2720）                            |
 | `/advisor report all` | **PASS（空态）**：「还没有任何建议记录。」——P3 之前的 3 次徵询发生在建议账本上线前，所以文件为空                                                                                                                           | 会话日志（cmd-…-14 / -18）                      |

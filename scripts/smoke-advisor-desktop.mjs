@@ -573,7 +573,46 @@ const ADVISOR_CARD = `(() => {
     confirmText: confirm === null ? "" : (confirm.textContent || "").trim(),
     previewButton: root.querySelector("[data-advisor-preview-run]") !== null,
     poolLine: root.querySelector("[data-advisor-pool]") !== null,
+    helpButtons: root.querySelectorAll(".dsh-advisor-help-btn").length,
+    advancedExpanded:
+      root.querySelector('[data-advisor-disclosure-toggle="advanced"]')?.getAttribute("aria-expanded") ??
+      null,
+    statusExpanded:
+      root.querySelector('[data-advisor-disclosure-toggle="status"]')?.getAttribute("aria-expanded") ??
+      null,
   };
+})()`;
+
+/** off 紧凑态点「配置顾问」；已启用时无按钮，直接 no-op。 */
+const CONFIGURE_CARD = `(() => {
+  const root = document.querySelector("[data-advisor-settings]");
+  if (root === null) return { found: false };
+  const configure = root.querySelector("[data-advisor-configure]");
+  if (configure !== null) configure.click();
+  return { found: true, clicked: configure !== null };
+})()`;
+
+/** 展开高级与状态两个折叠区；只点 toggle，不改任何值。点击后等 React 真正落 DOM。 */
+const EXPAND_DISCLOSURES = `(async () => {
+  const root = document.querySelector("[data-advisor-settings]");
+  if (root === null) return { found: false };
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const toggleOf = (key) => root.querySelector('[data-advisor-disclosure-toggle="' + key + '"]');
+  const opened = [];
+  for (const key of ["advanced", "status"]) {
+    let toggle = toggleOf(key);
+    if (toggle !== null && toggle.getAttribute("aria-expanded") !== "true") toggle.click();
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      await sleep(100);
+      toggle = toggleOf(key);
+      if (toggle !== null && toggle.getAttribute("aria-expanded") === "true") break;
+    }
+    opened.push({
+      key,
+      expanded: toggle === null ? null : toggle.getAttribute("aria-expanded"),
+    });
+  }
+  return { found: true, opened };
 })()`;
 
 /**
@@ -1065,14 +1104,20 @@ const main = async () => {
           const card = await waitFor(
             cdp,
             ADVISOR_CARD,
-            (value) =>
-              value?.found === true && value?.error === null && value?.providerOptions !== null,
+            (value) => value?.found === true && value?.error === null,
             12_000,
           );
-          const value = card.value ?? null;
+          // 默认 off 只显示紧凑态；点「配置顾问」并展开高级/状态后再断言。
+          // 只点展开按钮，不改任何值，保存按钮的语义不受影响。
+          await cdp.evaluate(CONFIGURE_CARD).catch(() => false);
+          await sleep(300);
+          await cdp.evaluate(EXPAND_DISCLOSURES).catch(() => false);
+          await sleep(300);
+          const expandedCard = await cdp.evaluate(ADVISOR_CARD).catch(() => null);
+          const value = expandedCard?.value ?? card.value ?? null;
           check(
             settingsNames.card,
-            card.ok,
+            card.ok && value?.found === true && value?.error === null,
             JSON.stringify({
               error: value?.error ?? null,
               found: value?.found ?? false,
@@ -1118,10 +1163,13 @@ const main = async () => {
             JSON.stringify({
               seen: seenFields,
               missing: missingFields,
+              helpButtons: value?.helpButtons ?? null,
+              advancedExpanded: value?.advancedExpanded ?? null,
+              statusExpanded: value?.statusExpanded ?? null,
               hint:
                 missingFields.length === 0
                   ? undefined
-                  : "卡片里没有这些字段：若桌面装的是旧构建，先 pnpm pack + dsh plugin add 再重跑",
+                  : "卡片里没有这些字段：先确认高级/状态折叠区已展开；若桌面装的是旧构建，先 pnpm pack + dsh plugin add 再重跑",
             }),
           );
 

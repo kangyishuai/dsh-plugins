@@ -306,16 +306,43 @@ window.__ModuleLoader__.load({
       ".dsh-advisor-head{display:flex;flex-direction:column;gap:2px;}",
       ".dsh-advisor-title{font-size:14px;font-weight:600;}",
       ".dsh-advisor-desc{font-size:12px;color:var(--dsw-alias-label-secondary,GrayText);}",
-      ".dsh-advisor-group{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.28));border-radius:10px;}",
+      ".dsh-advisor-group{display:flex;flex-direction:column;gap:8px;}",
+      ".dsh-advisor-group + .dsh-advisor-group{margin-top:2px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.28));}",
       ".dsh-advisor-group-title{font-size:12px;font-weight:600;letter-spacing:.04em;color:var(--dsw-alias-label-secondary,GrayText);}",
+      ".dsh-advisor-subgroup{display:flex;flex-direction:column;gap:6px;}",
+      ".dsh-advisor-subgroup-title{font-size:11.5px;font-weight:600;color:var(--dsw-alias-label-secondary,GrayText);}",
       ".dsh-advisor-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;}",
       ".dsh-advisor-row--stack{flex-direction:column;align-items:flex-start;gap:4px;}",
+      ".dsh-advisor-field{display:flex;flex-direction:column;gap:2px;}",
+      ".dsh-advisor-label-wrap{display:flex;align-items:center;gap:6px;flex:0 0 auto;}",
       ".dsh-advisor-label{flex:0 0 auto;min-width:120px;color:var(--dsw-alias-label-primary,CanvasText);}",
+      ".dsh-advisor-help-btn{flex:0 0 auto;width:16px;height:16px;padding:0;border-radius:50%;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.45));background:transparent;color:var(--dsw-alias-label-secondary,GrayText);font-size:11px;line-height:14px;text-align:center;cursor:pointer;}",
+      ".dsh-advisor-help-btn:hover{background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.12));color:var(--dsw-alias-label-primary,CanvasText);}",
+      ".dsh-advisor-help-btn:focus-visible{outline:2px solid var(--dsw-alias-label-primary,CanvasText);outline-offset:1px;}",
+      ".dsh-advisor-help-body{padding:6px 10px;border-left:2px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));font-size:11.5px;line-height:1.55;color:var(--dsw-alias-label-secondary,GrayText);}",
+      ".dsh-advisor-help-body p{margin:0;}",
+      ".dsh-advisor-help-body .dsh-advisor-help-meta{margin-top:2px;color:var(--dsw-alias-label-secondary,GrayText);}",
+      ".dsh-advisor-help-body .dsh-advisor-help-tech{margin-top:2px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px;opacity:.85;}",
       ".dsh-advisor-controls{display:flex;flex:1 1 220px;flex-wrap:wrap;gap:6px;min-width:0;}",
       ".dsh-advisor-input,.dsh-advisor-select{flex:1 1 140px;min-width:0;padding:4px 8px;border-radius:6px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.4));background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base,Canvas));color:inherit;font:inherit;}",
       ".dsh-advisor-input[type=number]{flex:0 0 120px;}",
       ".dsh-advisor-input[type=checkbox]{flex:0 0 auto;width:16px;height:16px;}",
       ".dsh-advisor-hint{flex:1 1 100%;font-size:11.5px;color:var(--dsw-alias-label-secondary,GrayText);word-break:break-word;}",
+      ".dsh-advisor-unit{flex:0 0 auto;font-size:11.5px;color:var(--dsw-alias-label-secondary,GrayText);white-space:nowrap;}",
+      ".dsh-advisor-off{display:flex;flex-direction:column;gap:4px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.28));border-radius:8px;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base,Canvas));}",
+      ".dsh-advisor-off-title{font-weight:600;}",
+      ".dsh-advisor-dirty{font-size:12px;color:var(--dsw-alias-state-warning-primary,#b7791f);}",
+      ".dsh-advisor-disclosure{display:flex;flex-direction:column;gap:4px;}",
+      ".dsh-advisor-disclosure-toggle{display:flex;align-items:center;gap:6px;width:100%;padding:4px 0;border:0;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer;}",
+      ".dsh-advisor-disclosure-toggle:hover{color:var(--dsw-alias-label-primary,CanvasText);}",
+      ".dsh-advisor-caret{flex:0 0 auto;width:12px;font-size:11px;color:var(--dsw-alias-label-secondary,GrayText);}",
+      ".dsh-advisor-disclosure-title{font-size:12px;font-weight:600;letter-spacing:.04em;color:var(--dsw-alias-label-secondary,GrayText);}",
+      ".dsh-advisor-badge{flex:0 0 auto;padding:0 6px;border-radius:999px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.14));color:var(--dsw-alias-label-secondary,GrayText);font-size:10.5px;line-height:16px;font-weight:400;}",
+      ".dsh-advisor-disclosure-body{display:flex;flex-direction:column;gap:10px;padding:4px 0 2px 16px;border-left:2px solid var(--dsw-alias-border-l2,rgba(128,128,128,.22));}",
+      ".dsh-advisor-paths{display:flex;flex-direction:column;gap:2px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px;color:var(--dsw-alias-label-secondary,GrayText);word-break:break-all;}",
+      ".dsh-advisor-more{display:flex;flex-direction:column;gap:4px;font-size:11.5px;color:var(--dsw-alias-label-secondary,GrayText);}",
+      ".dsh-advisor-more p{margin:0;}",
+      ".dsh-advisor-path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px;word-break:break-all;}",
       ".dsh-advisor-choices{display:flex;flex:1 1 100%;flex-direction:column;gap:6px;}",
       ".dsh-advisor-choice{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;cursor:pointer;}",
       ".dsh-advisor-choice-label{font-weight:500;}",
@@ -545,22 +572,33 @@ window.__ModuleLoader__.load({
     // 真正的校验仍在宿主（不复制宿主写入逻辑）。
     // ------------------------------------------------------------------
 
-    /** @type {Record<string, number>} */
+    /** 与 host 的 DEFAULT_SETTINGS 对齐；数值字段缺失时用它回落。 @type {Record<string, any>} */
     let SETTINGS_DEFAULTS = {
+      mode: "off",
+      provider: "",
+      model: "",
+      reasoningEffort: "",
       maxTokens: 4096,
+      temperature: null,
       maxCallsPerTurn: 1,
       maxCallsPerSession: 32,
       maxCallsPerHour: 12,
       maxCostPerDayUsd: 0,
       priceInputPerMTok: 0,
       priceOutputPerMTok: 0,
+      privacyScope: "summary",
+      redact: true,
+      dedupe: true,
+      sessionCap: 24,
+      allowedModels: [],
       workspaceMaxCallsPerDay: 200,
       workspaceMaxCostPerDayUsd: 0,
-      sessionCap: 24,
+      postAnswer: "off",
+      advisorTools: false,
       maxInputChars: 60000,
     };
 
-    /** 与 settings.js 的 LIMITS 逐项一致；越界在前端先夹一次。 @type {Record<string, number[]>} */
+    /** 与 settings.js 的 INT_LIMITS / MONEY_LIMITS 逐项一致；越界在前端先夹一次。 @type {Record<string, number[]>} */
     let SETTINGS_LIMITS = {
       maxTokens: [256, 32000],
       maxCallsPerTurn: [0, 8],
@@ -575,8 +613,37 @@ window.__ModuleLoader__.load({
       maxInputChars: [4000, 400000],
     };
 
+    /** 金额字段的小数位；与 settings.js 的 MONEY_LIMITS 一致。 @type {Record<string, number>} */
+    let SETTINGS_MONEY_FIELDS = {
+      maxCostPerDayUsd: 2,
+      workspaceMaxCostPerDayUsd: 2,
+      priceInputPerMTok: 4,
+      priceOutputPerMTok: 4,
+    };
+
     /** 所有整数输入字段（temperature 单独处理：可为空、可小数）。 */
-    let SETTINGS_INT_FIELDS = Object.keys(SETTINGS_LIMITS);
+    let SETTINGS_INT_FIELDS = Object.keys(SETTINGS_LIMITS).filter(function isIntField(key) {
+      return Object.hasOwn(SETTINGS_MONEY_FIELDS, key) === false;
+    });
+
+    /** 高级区字段：用于「N 项已修改」徽标与「恢复默认」。 */
+    let SETTINGS_ADVANCED_FIELDS = [
+      "maxCallsPerTurn",
+      "maxCallsPerSession",
+      "maxCallsPerHour",
+      "workspaceMaxCallsPerDay",
+      "workspaceMaxCostPerDayUsd",
+      "priceInputPerMTok",
+      "priceOutputPerMTok",
+      "maxTokens",
+      "temperature",
+      "maxInputChars",
+      "sessionCap",
+      "allowedModels",
+      "postAnswer",
+      "advisorTools",
+      "dedupe",
+    ];
 
     /** 0 表示「不限」的预算字段；只影响提示文案。 */
     let SETTINGS_UNLIMITED_FIELDS = [
@@ -622,7 +689,7 @@ window.__ModuleLoader__.load({
     ];
 
     /**
-     * 整数夹紧：与 settings.js 的 clampNumber 同语义（取整、非有限值回落）。
+     * 整数夹紧：与 settings.js 的 clampInt 同语义（取整、非有限值回落）。
      * @param {any} value
      * @param {number} fallback
      * @param {number} min
@@ -633,6 +700,23 @@ window.__ModuleLoader__.load({
       let n = typeof value === "number" ? value : Number(value);
       if (!Number.isFinite(n)) return fallback;
       return Math.min(max, Math.max(min, Math.round(n)));
+    }
+
+    /**
+     * 金额夹紧：与 settings.js 的 clampMoney 同语义（按固定小数位收口）。
+     * @param {any} value
+     * @param {number} fallback
+     * @param {number} min
+     * @param {number} max
+     * @param {number} digits
+     * @returns {number}
+     */
+    function clampMoney(value, fallback, min, max, digits) {
+      let n = typeof value === "number" ? value : Number(value);
+      if (!Number.isFinite(n)) return fallback;
+      let bounded = Math.min(max, Math.max(min, n));
+      let factor = 10 ** digits;
+      return Math.round(bounded * factor) / factor;
     }
 
     /**
@@ -648,6 +732,20 @@ window.__ModuleLoader__.load({
       let n = typeof value === "number" ? value : Number(value);
       if (!Number.isFinite(n)) return fallback;
       return Math.min(max, Math.max(min, n));
+    }
+
+    /**
+     * 金额输入框的规范文本：去掉多余的尾零，0 显示成 "0"。
+     * @param {any} value
+     * @param {number} digits
+     * @returns {string}
+     */
+    function formatMoneyInput(value, digits) {
+      let n = Number(value);
+      if (!Number.isFinite(n)) return "0";
+      let text = n.toFixed(digits);
+      if (text.indexOf(".") >= 0) text = text.replace(/0+$/, "").replace(/\.$/, "");
+      return text === "" || text === "-0" ? "0" : text;
     }
 
     /**
@@ -699,6 +797,15 @@ window.__ModuleLoader__.load({
           SETTINGS_DEFAULTS[key],
           SETTINGS_LIMITS[key][0],
           SETTINGS_LIMITS[key][1],
+        );
+      }
+      for (let key of Object.keys(SETTINGS_MONEY_FIELDS)) {
+        out[key] = clampMoney(
+          input[key],
+          SETTINGS_DEFAULTS[key],
+          SETTINGS_LIMITS[key][0],
+          SETTINGS_LIMITS[key][1],
+          SETTINGS_MONEY_FIELDS[key],
         );
       }
       out.temperature =
@@ -804,6 +911,7 @@ window.__ModuleLoader__.load({
             : null,
         lastSkip: asString(raw.lastSkip).trim(),
         ledgerPath: asString(raw.ledgerPath).trim(),
+        settingsPath: asString(raw.settingsPath).trim(),
       };
     }
 
@@ -1390,6 +1498,13 @@ window.__ModuleLoader__.load({
     // ------------------------------------------------------------------
 
     /**
+     * 设置卡折叠/帮助的 UI 状态。放在组件外：宿主重渲染设置槽位时组件可能重挂，
+     * 但用户已经展开的高级区不应该被悄悄收起；页面刷新才复位。
+     */
+    /** @type {Record<string, any>} */
+    let settingsUiState = { advanced: false, status: false, off: false, help: "" };
+
+    /**
      * 设置页 → 通用 的「顾问」卡片。`settings.general.item` 是无 owner props 的 list 槽，
      * sessionId 拿不到时传空串（宿主只跳过按会话的字段）；数据全部经 props.api 现取。
      * 任何 RPC 失败/畸形都只落成一行内联错误 + 重试，绝不抛错。
@@ -1451,6 +1566,46 @@ window.__ModuleLoader__.load({
       let previewOpenState = React.useState(false);
       let previewOpen = previewOpenState[0];
       let setPreviewOpen = previewOpenState[1];
+      /** 高级设置默认折叠；状态与诊断再单独一层。 */
+      /**
+       * 折叠/帮助状态用模块级缓存做初值，组件重挂载时不会把已展开的高级区收起。
+       * @param {string} key
+       * @param {any} initial
+       * @returns {[any, (next: any) => void]}
+       */
+      function useUiState(key, initial) {
+        let state = React.useState(
+          settingsUiState[key] === undefined ? initial : settingsUiState[key],
+        );
+        let value = state[0];
+        let setValue = state[1];
+        let set = React.useCallback(
+          function update(/** @type {any} */ next) {
+            setValue(function apply(/** @type {any} */ prev) {
+              let resolved = typeof next === "function" ? next(prev) : next;
+              settingsUiState[key] = resolved;
+              return resolved;
+            });
+          },
+          [key],
+        );
+        return [value, set];
+      }
+
+      let advancedState = useUiState("advanced", false);
+      let advancedOpen = advancedState[0];
+      let setAdvancedOpen = advancedState[1];
+      let statusState = useUiState("status", false);
+      let statusOpen = statusState[0];
+      let setStatusOpen = statusState[1];
+      /** off 时也可以显式展开配置；默认收起。 */
+      let offExpandState = useUiState("off", false);
+      let offExpanded = offExpandState[0];
+      let setOffExpanded = offExpandState[1];
+      /** 同一时间只展开一个字段的说明。 */
+      let helpState = useUiState("help", "");
+      let openHelp = helpState[0];
+      let setOpenHelp = helpState[1];
       /** provider/model 切换可能并发：只接受最后一次请求的返回。 */
       let modelsSeq = React.useRef(0);
       let infoSeq = React.useRef(0);
@@ -1491,6 +1646,9 @@ window.__ModuleLoader__.load({
         for (let index = 0; index < SETTINGS_INT_FIELDS.length; index += 1) {
           let key = SETTINGS_INT_FIELDS[index];
           out[key] = String(settings[key]);
+        }
+        for (let key of Object.keys(SETTINGS_MONEY_FIELDS)) {
+          out[key] = formatMoneyInput(settings[key], SETTINGS_MONEY_FIELDS[key]);
         }
         out.temperature = settings.temperature === null ? "" : String(settings.temperature);
         out.allowedModels = normalizeStringList(settings.allowedModels).join(", ");
@@ -1670,6 +1828,19 @@ window.__ModuleLoader__.load({
           if (text === "") continue;
           next[key] = clampInt(text, next[key], SETTINGS_LIMITS[key][0], SETTINGS_LIMITS[key][1]);
         }
+        for (let key of Object.keys(SETTINGS_MONEY_FIELDS)) {
+          let raw = texts[key];
+          if (typeof raw !== "string") continue;
+          let text = raw.trim();
+          if (text === "") continue;
+          next[key] = clampMoney(
+            text,
+            next[key],
+            SETTINGS_LIMITS[key][0],
+            SETTINGS_LIMITS[key][1],
+            SETTINGS_MONEY_FIELDS[key],
+          );
+        }
         if (typeof texts.temperature === "string") {
           let tempText = texts.temperature.trim();
           next.temperature = tempText === "" ? null : clampFloat(tempText, null, 0, 2);
@@ -1696,14 +1867,24 @@ window.__ModuleLoader__.load({
           );
           return;
         }
+        let limit = SETTINGS_LIMITS[key];
+        let digits = SETTINGS_MONEY_FIELDS[key];
         if (text === "") {
-          setTexts(Object.assign({}, texts, { [key]: String(draft[key]) }));
+          let restored =
+            digits === undefined ? String(draft[key]) : formatMoneyInput(draft[key], digits);
+          setTexts(Object.assign({}, texts, { [key]: restored }));
           return;
         }
-        let limit = SETTINGS_LIMITS[key];
-        let value = clampInt(text, draft[key], limit[0], limit[1]);
+        let value =
+          digits === undefined
+            ? clampInt(text, draft[key], limit[0], limit[1])
+            : clampMoney(text, draft[key], limit[0], limit[1], digits);
         setDraft(Object.assign({}, draft, { [key]: value }));
-        setTexts(Object.assign({}, texts, { [key]: String(value) }));
+        setTexts(
+          Object.assign({}, texts, {
+            [key]: digits === undefined ? String(value) : formatMoneyInput(value, digits),
+          }),
+        );
       }
 
       /** 保存：只发改过的字段，成功后用返回值刷新本地状态。 */
@@ -1956,6 +2137,8 @@ window.__ModuleLoader__.load({
       function chooseMode(mode) {
         if (!draft) return;
         setDraft(Object.assign({}, draft, { mode: mode }));
+        // 切回 off 时回到紧凑态；切到其它模式时保持/展开基础设置。
+        if (mode === "off") setOffExpanded(false);
       }
 
       /** @param {string} scope */
@@ -2024,214 +2207,267 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * 单选项一行：label + 说明（模式、发送范围共用）。
-       * @param {string} name
-       * @param {string} labelKey
-       * @param {string[]} values
-       * @param {string} prefix
-       * @param {string} current
-       * @param {(value: string) => void} onPick
+       * 高级区里的小分组标题。
+       * @param {string} titleKey
+       * @param {any[]} children
        * @param {string} key
        * @returns {any}
        */
-      function radioField(name, labelKey, values, prefix, current, onPick, key) {
-        let choices = values.map(function renderChoice(/** @type {string} */ value) {
-          return h("label", { className: "dsh-advisor-choice", key: value }, [
-            h("input", {
-              checked: current === value,
-              key: "input",
-              name: `advisor-${name}`,
-              onChange: function onChoice() {
-                onPick(value);
-              },
-              type: "radio",
-              value: value,
-            }),
-            h("span", { className: "dsh-advisor-choice-label", key: "label" }, t(prefix + value)),
-            h(
-              "span",
-              { className: "dsh-advisor-choice-hint", key: "hint" },
-              t(`${prefix}${value}Hint`),
-            ),
-          ]);
-        });
+      function subgroup(titleKey, children, key) {
         return h(
           "div",
-          {
-            className: "dsh-advisor-row dsh-advisor-row--stack",
-            key: key,
-            "data-advisor-field": name,
-          },
-          [
-            h("span", { className: "dsh-advisor-label", key: "label" }, t(labelKey)),
-            h(
-              "div",
-              {
-                "aria-label": t(labelKey),
-                className: "dsh-advisor-choices",
-                key: "choices",
-                role: "radiogroup",
-              },
-              choices,
-            ),
-          ],
+          { className: "dsh-advisor-subgroup", key: key },
+          [h("div", { className: "dsh-advisor-subgroup-title", key: "title" }, t(titleKey))].concat(
+            children,
+          ),
         );
       }
 
       /**
-       * 数字输入 + 默认值/范围提示。
+       * 字段外壳：label + 可选「?」帮助按钮 + 控件 + 可选内联提示。
+       * 帮助说明只在点开时渲染，避免每个字段常驻两三行说明把页面撑长。
        * @param {string} key
        * @param {string} labelKey
-       * @param {string} extraHint 已翻译的前缀说明，可为空串
+       * @param {any[]} controlNodes
+       * @param {{ controlId?: string, hint?: string, helpText?: string, metaText?: string }} [options]
        * @returns {any}
        */
-      function numberField(key, labelKey, extraHint) {
+      function fieldShell(key, labelKey, controlNodes, options) {
+        let opts = options === undefined ? {} : options;
+        let controlId = typeof opts.controlId === "string" ? opts.controlId : `dsh-advisor-${key}`;
+        let helpText = typeof opts.helpText === "string" ? opts.helpText : "";
+        let metaText = typeof opts.metaText === "string" ? opts.metaText : "";
+        let hint = typeof opts.hint === "string" ? opts.hint : "";
+        let helpId = `dsh-advisor-help-${key}`;
+        let isHelpOpen = openHelp === key;
+        let labelChildren = [
+          h(
+            "label",
+            { className: "dsh-advisor-label", htmlFor: controlId, key: "label" },
+            t(labelKey),
+          ),
+        ];
+        if (helpText !== "") {
+          labelChildren.push(
+            h(
+              "button",
+              {
+                "aria-controls": isHelpOpen ? helpId : undefined,
+                "aria-expanded": isHelpOpen ? "true" : "false",
+                "aria-label": t("settings.help.open").replace("{field}", t(labelKey)),
+                className: "dsh-advisor-help-btn",
+                key: "help",
+                onClick: function toggleHelp() {
+                  setOpenHelp(isHelpOpen ? "" : key);
+                },
+                onKeyDown: function closeHelp(/** @type {any} */ event) {
+                  if (event && event.key === "Escape") setOpenHelp("");
+                },
+                title: t("settings.help.open").replace("{field}", t(labelKey)),
+                type: "button",
+              },
+              "?",
+            ),
+          );
+        }
+        let rowChildren = [
+          h("div", { className: "dsh-advisor-label-wrap", key: "labelWrap" }, labelChildren),
+        ].concat(controlNodes);
+        if (hint !== "") {
+          rowChildren.push(h("span", { className: "dsh-advisor-hint", key: "hint" }, hint));
+        }
+        let children = [
+          h(
+            "div",
+            { className: "dsh-advisor-row", "data-advisor-row": key, key: "row" },
+            rowChildren,
+          ),
+        ];
+        if (helpText !== "" && isHelpOpen) {
+          let helpChildren = [h("p", { key: "text" }, helpText)];
+          if (metaText !== "") {
+            helpChildren.push(
+              h("p", { className: "dsh-advisor-help-meta", key: "meta" }, metaText),
+            );
+          }
+          helpChildren.push(
+            h(
+              "p",
+              { className: "dsh-advisor-help-tech", key: "tech" },
+              t("settings.help.tech").replace("{key}", key),
+            ),
+          );
+          children.push(
+            h(
+              "div",
+              { className: "dsh-advisor-help-body", id: helpId, key: "helpBody", role: "note" },
+              helpChildren,
+            ),
+          );
+        }
+        return h(
+          "div",
+          { className: "dsh-advisor-field", "data-advisor-field": key, key: key },
+          children,
+        );
+      }
+
+      /**
+       * 默认值 + 范围提示；数值字段共用。
+       * @param {string} key
+       * @returns {string}
+       */
+      function rangeText(key) {
         let limit = SETTINGS_LIMITS[key];
         let rangeKey =
           SETTINGS_UNLIMITED_FIELDS.indexOf(key) >= 0
             ? "settings.budget.rangeUnlimited"
             : "settings.budget.range";
-        let hint = t(rangeKey)
+        return t(rangeKey)
           .replace("{default}", String(SETTINGS_DEFAULTS[key]))
           .replace("{min}", String(limit[0]))
           .replace("{max}", String(limit[1]));
-        if (extraHint !== "") hint = `${extraHint} · ${hint}`;
-        return h("div", { className: "dsh-advisor-row", key: key, "data-advisor-row": key }, [
-          h(
-            "label",
-            { className: "dsh-advisor-label", htmlFor: `dsh-advisor-${key}`, key: "label" },
-            t(labelKey),
-          ),
-          h("input", {
-            className: "dsh-advisor-input",
-            "data-advisor-field": key,
-            id: `dsh-advisor-${key}`,
-            key: "input",
-            max: String(limit[1]),
-            min: String(limit[0]),
-            onBlur: function onNumberBlur() {
-              commitOne(key);
-            },
-            onChange: function onNumberChange(/** @type {any} */ event) {
-              let value = String(event.target.value);
-              setTexts(function mergeNumber(/** @type {any} */ prev) {
-                return Object.assign({}, prev, { [key]: value });
-              });
-            },
-            step: "1",
-            type: "number",
-            value: typeof texts[key] === "string" ? texts[key] : "",
-          }),
-          h("span", { className: "dsh-advisor-hint", key: "hint" }, hint),
-        ]);
+      }
+
+      /**
+       * 数字输入 + 可选单位 + 可选帮助说明。
+       * @param {string} key
+       * @param {string} labelKey
+       * @param {{ hint?: string, help?: string, unit?: string }} [options]
+       * @returns {any}
+       */
+      function numberField(key, labelKey, options) {
+        let opts = options === undefined ? {} : options;
+        let limit = SETTINGS_LIMITS[key];
+        let digits = SETTINGS_MONEY_FIELDS[key];
+        let step = digits === 2 ? "0.01" : digits === 4 ? "0.001" : "1";
+        let helpText = typeof opts.help === "string" ? opts.help : "";
+        let hint = typeof opts.hint === "string" ? opts.hint : "";
+        if (helpText === "" && hint === "") hint = rangeText(key);
+        let control = h("input", {
+          className: "dsh-advisor-input",
+          id: `dsh-advisor-${key}`,
+          key: "input",
+          max: String(limit[1]),
+          min: String(limit[0]),
+          onBlur: function onNumberBlur() {
+            commitOne(key);
+          },
+          onChange: function onNumberChange(/** @type {any} */ event) {
+            let value = String(event.target.value);
+            setTexts(function mergeNumber(/** @type {any} */ prev) {
+              return Object.assign({}, prev, { [key]: value });
+            });
+          },
+          inputMode: digits === undefined ? "numeric" : "decimal",
+          step: step,
+          type: "number",
+          value: typeof texts[key] === "string" ? texts[key] : "",
+        });
+        let controls = [control];
+        if (typeof opts.unit === "string" && opts.unit !== "") {
+          controls.push(h("span", { className: "dsh-advisor-unit", key: "unit" }, opts.unit));
+        }
+        return fieldShell(key, labelKey, controls, {
+          controlId: `dsh-advisor-${key}`,
+          helpText: helpText,
+          hint: hint,
+          metaText: helpText === "" ? "" : rangeText(key),
+        });
       }
 
       /** temperature：留空表示不传，可为小数。 @returns {any} */
       function temperatureField() {
-        return h("div", { className: "dsh-advisor-row", key: "temperature" }, [
-          h(
-            "label",
-            {
-              className: "dsh-advisor-label",
-              htmlFor: "dsh-advisor-temperature",
-              key: "label",
-            },
-            t("settings.advanced.temperature"),
-          ),
-          h("input", {
-            className: "dsh-advisor-input",
-            "data-advisor-field": "temperature",
-            id: "dsh-advisor-temperature",
-            key: "input",
-            max: "2",
-            min: "0",
-            onBlur: function onTemperatureBlur() {
-              commitOne("temperature");
-            },
-            onChange: function onTemperatureChange(/** @type {any} */ event) {
-              let value = String(event.target.value);
-              setTexts(function mergeTemperature(/** @type {any} */ prev) {
-                return Object.assign({}, prev, { temperature: value });
-              });
-            },
-            placeholder: t("settings.advanced.temperatureEmpty"),
-            step: "0.1",
-            type: "number",
-            value: typeof texts.temperature === "string" ? texts.temperature : "",
-          }),
-          h(
-            "span",
-            { className: "dsh-advisor-hint", key: "hint" },
-            t("settings.advanced.temperatureHint"),
-          ),
-        ]);
+        let control = h("input", {
+          className: "dsh-advisor-input",
+          id: "dsh-advisor-temperature",
+          key: "input",
+          max: "2",
+          min: "0",
+          onBlur: function onTemperatureBlur() {
+            commitOne("temperature");
+          },
+          onChange: function onTemperatureChange(/** @type {any} */ event) {
+            let value = String(event.target.value);
+            setTexts(function mergeTemperature(/** @type {any} */ prev) {
+              return Object.assign({}, prev, { temperature: value });
+            });
+          },
+          placeholder: t("settings.advanced.temperatureEmpty"),
+          step: "0.1",
+          type: "number",
+          value: typeof texts.temperature === "string" ? texts.temperature : "",
+        });
+        return fieldShell("temperature", "settings.advanced.temperature", [control], {
+          controlId: "dsh-advisor-temperature",
+          helpText: t("settings.advanced.temperatureHint"),
+          metaText: t("settings.help.defaultNotSent"),
+        });
       }
 
       /**
        * 开关一行。
        * @param {string} key
        * @param {string} labelKey
-       * @param {string} hintKey
+       * @param {{ hint?: string, help?: string, meta?: string }} [options]
        * @returns {any}
        */
-      function switchField(key, labelKey, hintKey) {
-        return h("div", { className: "dsh-advisor-row", key: key }, [
-          h(
-            "label",
-            { className: "dsh-advisor-label", htmlFor: `dsh-advisor-${key}`, key: "label" },
-            t(labelKey),
-          ),
-          h("input", {
-            checked: draft[key] === true,
-            "data-advisor-switch": key,
-            id: `dsh-advisor-${key}`,
-            key: "input",
-            onChange: function onSwitch(/** @type {any} */ event) {
-              toggleFlag(key, event.target.checked === true);
-            },
-            type: "checkbox",
-          }),
-          h("span", { className: "dsh-advisor-hint", key: "hint" }, t(hintKey)),
-        ]);
+      function switchField(key, labelKey, options) {
+        let opts = options === undefined ? {} : options;
+        let control = h("input", {
+          checked: draft[key] === true,
+          "data-advisor-switch": key,
+          id: `dsh-advisor-${key}`,
+          key: "input",
+          onChange: function onSwitch(/** @type {any} */ event) {
+            toggleFlag(key, event.target.checked === true);
+          },
+          type: "checkbox",
+        });
+        return fieldShell(key, labelKey, [control], {
+          controlId: `dsh-advisor-${key}`,
+          helpText: typeof opts.help === "string" ? opts.help : "",
+          hint: typeof opts.hint === "string" ? opts.hint : "",
+          metaText: typeof opts.meta === "string" ? opts.meta : "",
+        });
       }
 
       /**
-       * 下拉一行（枚举字段，如 postAnswer）。
+       * 下拉一行（枚举字段，如 mode / scope / postAnswer）。
        * @param {string} key
        * @param {string} labelKey
        * @param {string[]} values 合法取值；选项文案拼成 `${prefix}${value}`
        * @param {string} prefix
        * @param {string} current
        * @param {(value: string) => void} onPick
-       * @param {string} hintKey
+       * @param {{ hint?: string, help?: string, meta?: string }} [options]
        * @returns {any}
        */
-      function selectField(key, labelKey, values, prefix, current, onPick, hintKey) {
-        let options = values.map(function renderOption(/** @type {string} */ value) {
+      function selectField(key, labelKey, values, prefix, current, onPick, options) {
+        let opts = options === undefined ? {} : options;
+        let optionNodes = values.map(function renderOption(/** @type {string} */ value) {
           return h("option", { key: value, value: value }, t(prefix + value));
         });
-        return h("div", { className: "dsh-advisor-row", key: key, "data-advisor-row": key }, [
-          h(
-            "label",
-            { className: "dsh-advisor-label", htmlFor: `dsh-advisor-${key}`, key: "label" },
-            t(labelKey),
-          ),
-          h(
-            "select",
-            {
-              className: "dsh-advisor-select",
-              "data-advisor-select": key,
-              id: `dsh-advisor-${key}`,
-              key: "select",
-              onChange: function onSelectChange(/** @type {any} */ event) {
-                onPick(String(event.target.value));
-              },
-              value: current,
+        let control = h(
+          "select",
+          {
+            className: "dsh-advisor-select",
+            "data-advisor-select": key,
+            id: `dsh-advisor-${key}`,
+            key: "select",
+            onChange: function onSelectChange(/** @type {any} */ event) {
+              onPick(String(event.target.value));
             },
-            options,
-          ),
-          h("span", { className: "dsh-advisor-hint", key: "hint" }, t(hintKey)),
-        ]);
+            value: current,
+          },
+          optionNodes,
+        );
+        return fieldShell(key, labelKey, [control], {
+          controlId: `dsh-advisor-${key}`,
+          helpText: typeof opts.help === "string" ? opts.help : "",
+          hint: typeof opts.hint === "string" ? opts.hint : "",
+          metaText: typeof opts.meta === "string" ? opts.meta : "",
+        });
       }
 
       /**
@@ -2239,38 +2475,26 @@ window.__ModuleLoader__.load({
        * @returns {any}
        */
       function allowedModelsField() {
-        return h("div", { className: "dsh-advisor-row", key: "allowedModels" }, [
-          h(
-            "label",
-            {
-              className: "dsh-advisor-label",
-              htmlFor: "dsh-advisor-allowedModels",
-              key: "label",
-            },
-            t("settings.advanced.allowedModels"),
-          ),
-          h("input", {
-            className: "dsh-advisor-input",
-            "data-advisor-field": "allowedModels",
-            id: "dsh-advisor-allowedModels",
-            key: "input",
-            onBlur: commitAllowedModels,
-            onChange: function onAllowedModelsChange(/** @type {any} */ event) {
-              let value = String(event.target.value);
-              setTexts(function mergeAllowed(/** @type {any} */ prev) {
-                return Object.assign({}, prev, { allowedModels: value });
-              });
-            },
-            placeholder: t("settings.advanced.allowedModelsPlaceholder"),
-            type: "text",
-            value: typeof texts.allowedModels === "string" ? texts.allowedModels : "",
-          }),
-          h(
-            "span",
-            { className: "dsh-advisor-hint", key: "hint" },
-            t("settings.advanced.allowedModelsHint"),
-          ),
-        ]);
+        let control = h("input", {
+          className: "dsh-advisor-input",
+          id: "dsh-advisor-allowedModels",
+          key: "input",
+          onBlur: commitAllowedModels,
+          onChange: function onAllowedModelsChange(/** @type {any} */ event) {
+            let value = String(event.target.value);
+            setTexts(function mergeAllowed(/** @type {any} */ prev) {
+              return Object.assign({}, prev, { allowedModels: value });
+            });
+          },
+          placeholder: t("settings.advanced.allowedModelsPlaceholder"),
+          type: "text",
+          value: typeof texts.allowedModels === "string" ? texts.allowedModels : "",
+        });
+        return fieldShell("allowedModels", "settings.advanced.allowedModels", [control], {
+          controlId: "dsh-advisor-allowedModels",
+          helpText: t("settings.advanced.allowedModelsHint"),
+          metaText: t("settings.help.defaultEmpty"),
+        });
       }
 
       /** provider 下拉：来自 options.routes，declared 标「自定义」。 @returns {any} */
@@ -2296,30 +2520,24 @@ window.__ModuleLoader__.load({
             ),
           );
         }
-        return h("div", { className: "dsh-advisor-row", key: "provider" }, [
-          h(
-            "label",
-            { className: "dsh-advisor-label", htmlFor: "dsh-advisor-provider", key: "label" },
-            t("settings.provider"),
-          ),
-          h(
-            "select",
-            {
-              className: "dsh-advisor-select",
-              "data-advisor-provider": "",
-              id: "dsh-advisor-provider",
-              key: "select",
-              onChange: function onProviderChange(/** @type {any} */ event) {
-                chooseProvider(String(event.target.value));
-              },
-              value: draft.provider,
+        let control = h(
+          "select",
+          {
+            className: "dsh-advisor-select",
+            "data-advisor-provider": "",
+            id: "dsh-advisor-provider",
+            key: "select",
+            onChange: function onProviderChange(/** @type {any} */ event) {
+              chooseProvider(String(event.target.value));
             },
-            options,
-          ),
-          routes.length === 0
-            ? h("span", { className: "dsh-advisor-hint", key: "hint" }, t("settings.provider.none"))
-            : null,
-        ]);
+            value: draft.provider,
+          },
+          options,
+        );
+        return fieldShell("provider", "settings.provider", [control], {
+          controlId: "dsh-advisor-provider",
+          hint: routes.length === 0 ? t("settings.provider.none") : "",
+        });
       }
 
       /** 模型下拉 + 手填输入。 @returns {any} */
@@ -2349,52 +2567,44 @@ window.__ModuleLoader__.load({
         else if (list === null) hint = t("settings.model.loading");
         else if (list.length === 0) hint = t("settings.model.none");
         if (hint !== "") hint = `${hint} · ${t("settings.model.manualHint")}`;
-        return h("div", { className: "dsh-advisor-row", key: "model" }, [
+        let controls = h("div", { className: "dsh-advisor-controls", key: "controls" }, [
           h(
-            "label",
-            { className: "dsh-advisor-label", htmlFor: "dsh-advisor-model", key: "label" },
-            t("settings.model"),
-          ),
-          h("div", { className: "dsh-advisor-controls", key: "controls" }, [
-            h(
-              "select",
-              {
-                className: "dsh-advisor-select",
-                "data-advisor-model": "",
-                disabled: list === null,
-                id: "dsh-advisor-model",
-                key: "select",
-                onChange: function onModelChange(/** @type {any} */ event) {
-                  chooseModel(String(event.target.value));
-                },
-                value: draft.model,
+            "select",
+            {
+              className: "dsh-advisor-select",
+              "data-advisor-model": "",
+              disabled: list === null,
+              id: "dsh-advisor-model",
+              key: "select",
+              onChange: function onModelChange(/** @type {any} */ event) {
+                chooseModel(String(event.target.value));
               },
-              options,
-            ),
-            h("input", {
-              "aria-label": t("settings.model.manual"),
-              className: "dsh-advisor-input",
-              "data-advisor-model-text": "",
-              key: "manual",
-              onBlur: function onModelTextBlur() {
-                if (draft.model !== "" && draft.provider !== "") {
-                  loadInfoFor(draft.provider, draft.model);
-                }
-              },
-              onChange: function onModelTextChange(/** @type {any} */ event) {
-                onModelText(String(event.target.value));
-              },
-              placeholder: t("settings.model.manual"),
-              type: "text",
               value: draft.model,
-            }),
-          ]),
-          h(
-            "span",
-            { className: "dsh-advisor-hint", key: "hint" },
-            hint === "" ? t("settings.model.manualHint") : hint,
+            },
+            options,
           ),
+          h("input", {
+            "aria-label": t("settings.model.manual"),
+            className: "dsh-advisor-input",
+            "data-advisor-model-text": "",
+            key: "manual",
+            onBlur: function onModelTextBlur() {
+              if (draft.model !== "" && draft.provider !== "") {
+                loadInfoFor(draft.provider, draft.model);
+              }
+            },
+            onChange: function onModelTextChange(/** @type {any} */ event) {
+              onModelText(String(event.target.value));
+            },
+            placeholder: t("settings.model.manual"),
+            type: "text",
+            value: draft.model,
+          }),
         ]);
+        return fieldShell("model", "settings.model", [controls], {
+          controlId: "dsh-advisor-model",
+          hint: hint === "" ? t("settings.model.manualHint") : hint,
+        });
       }
 
       /** 思考档下拉：auto + modelInfo.efforts；拿不到只留 auto。 @returns {any} */
@@ -2427,29 +2637,25 @@ window.__ModuleLoader__.load({
         else if (info.state === "error") hint = t("settings.error.modelInfo");
         else if (info.state === "empty" || efforts.length === 0) hint = t("settings.effort.none");
         else hint = t("settings.effort.count").replace("{count}", String(efforts.length));
-        return h("div", { className: "dsh-advisor-row", key: "effort" }, [
-          h(
-            "label",
-            { className: "dsh-advisor-label", htmlFor: "dsh-advisor-effort", key: "label" },
-            t("settings.effort"),
-          ),
-          h(
-            "select",
-            {
-              className: "dsh-advisor-select",
-              "data-advisor-effort": "",
-              disabled: draft.model === "" || info.state === "loading",
-              id: "dsh-advisor-effort",
-              key: "select",
-              onChange: function onEffortChange(/** @type {any} */ event) {
-                chooseEffort(String(event.target.value));
-              },
-              value: draft.reasoningEffort,
+        let control = h(
+          "select",
+          {
+            className: "dsh-advisor-select",
+            "data-advisor-effort": "",
+            disabled: draft.model === "" || info.state === "loading",
+            id: "dsh-advisor-effort",
+            key: "select",
+            onChange: function onEffortChange(/** @type {any} */ event) {
+              chooseEffort(String(event.target.value));
             },
-            options,
-          ),
-          h("span", { className: "dsh-advisor-hint", key: "hint" }, hint),
-        ]);
+            value: draft.reasoningEffort,
+          },
+          options,
+        );
+        return fieldShell("effort", "settings.effort", [control], {
+          controlId: "dsh-advisor-effort",
+          hint: hint,
+        });
       }
 
       // 初次加载 / 重载：还没有可用快照时只渲染标题与加载态，避免半张卡片。
@@ -2476,6 +2682,198 @@ window.__ModuleLoader__.load({
         );
       }
 
+      /**
+       * 当前草稿是否有未保存改动。
+       * @returns {boolean}
+       */
+      function isDirty() {
+        if (snap === null || draft === null) return false;
+        return Object.keys(diffSettings(snap.settings, draft)).length > 0;
+      }
+
+      /**
+       * 数组按内容比较、浮点按 epsilon 比较；其余用严格相等。
+       * @param {any} a
+       * @param {any} b
+       * @returns {boolean}
+       */
+      function valuesEqual(a, b) {
+        if (Array.isArray(a) || Array.isArray(b)) {
+          return normalizeStringList(a).join("\u0000") === normalizeStringList(b).join("\u0000");
+        }
+        if (a === null || a === undefined) return b === null || b === undefined;
+        if (typeof a === "number" && typeof b === "number") return Math.abs(a - b) < 1e-9;
+        return a === b;
+      }
+
+      /** 高级区里与默认值不同的项数；用于折叠标题徽标。 @returns {number} */
+      function advancedChangedCount() {
+        if (draft === null) return 0;
+        let count = 0;
+        for (let index = 0; index < SETTINGS_ADVANCED_FIELDS.length; index += 1) {
+          let key = SETTINGS_ADVANCED_FIELDS[index];
+          if (valuesEqual(draft[key], SETTINGS_DEFAULTS[key]) === false) count += 1;
+        }
+        return count;
+      }
+
+      /** 恢复高级字段默认值；不动模式、路由、隐私这些基础字段。 */
+      function resetAdvanced() {
+        if (draft === null) return;
+        let next = Object.assign({}, draft);
+        for (let index = 0; index < SETTINGS_ADVANCED_FIELDS.length; index += 1) {
+          let key = SETTINGS_ADVANCED_FIELDS[index];
+          let fallback = SETTINGS_DEFAULTS[key];
+          next[key] = Array.isArray(fallback) ? fallback.slice() : fallback;
+        }
+        setDraft(next);
+        setTexts(textsOf(next));
+        setError(null);
+        setNotice(t("settings.advanced.resetDone"));
+      }
+
+      /** 复制设置文件路径；剪贴板不可用时只提示手动复制。 */
+      function copySettingsPath() {
+        let path = snap !== null && typeof snap.settingsPath === "string" ? snap.settingsPath : "";
+        if (path === "") {
+          setNotice(t("settings.advanced.pathUnknown"));
+          return;
+        }
+        try {
+          if (
+            typeof navigator !== "undefined" &&
+            navigator.clipboard &&
+            typeof navigator.clipboard.writeText === "function"
+          ) {
+            navigator.clipboard.writeText(path).then(
+              function onCopied() {
+                setNotice(t("settings.advanced.copied"));
+              },
+              function onCopyFailed() {
+                setNotice(t("settings.advanced.copyFailed"));
+              },
+            );
+            return;
+          }
+        } catch (_error) {
+          /* 落回手动复制提示 */
+        }
+        setNotice(t("settings.advanced.copyFailed"));
+      }
+
+      /**
+       * 一个可折叠区块：高级设置、状态与诊断共用。
+       * @param {string} key
+       * @param {string} title
+       * @param {string} badge
+       * @param {any[]} children
+       * @param {boolean} isOpen
+       * @param {() => void} onToggle
+       * @returns {any}
+       */
+      function disclosure(key, title, badge, children, isOpen, onToggle) {
+        return h(
+          "section",
+          { className: "dsh-advisor-disclosure", "data-advisor-disclosure": key, key: key },
+          [
+            h(
+              "button",
+              {
+                "aria-expanded": isOpen ? "true" : "false",
+                className: "dsh-advisor-disclosure-toggle",
+                "data-advisor-disclosure-toggle": key,
+                key: "toggle",
+                onClick: onToggle,
+                type: "button",
+              },
+              [
+                h("span", { className: "dsh-advisor-caret", key: "caret" }, isOpen ? "▾" : "▸"),
+                h("span", { className: "dsh-advisor-disclosure-title", key: "title" }, title),
+                badge === ""
+                  ? null
+                  : h("span", { className: "dsh-advisor-badge", key: "badge" }, badge),
+              ],
+            ),
+            isOpen
+              ? h("div", { className: "dsh-advisor-disclosure-body", key: "body" }, children)
+              : null,
+          ],
+        );
+      }
+
+      /** off 时的紧凑卡片：只解释状态、给配置入口，不铺开任何设置。 @returns {any} */
+      function offNotice() {
+        let configured = draft.provider !== "" && draft.model !== "";
+        let dirty = isDirty();
+        return h("div", { className: "dsh-advisor-off", "data-advisor-off": "", key: "off" }, [
+          h("div", { className: "dsh-advisor-off-title", key: "title" }, t("settings.off.title")),
+          h(
+            "div",
+            { className: "dsh-advisor-note", key: "state" },
+            configured
+              ? t("settings.off.configured")
+                  .replace("{provider}", draft.provider)
+                  .replace("{model}", draft.model)
+              : t("settings.off.unconfigured"),
+          ),
+          dirty
+            ? h("div", { className: "dsh-advisor-dirty", key: "dirty" }, t("settings.dirty"))
+            : null,
+          h("div", { className: "dsh-advisor-actions", key: "actions" }, [
+            h(
+              "button",
+              {
+                className: "dsh-advisor-btn",
+                "data-advisor-configure": "",
+                key: "configure",
+                onClick: function toggleOffForm() {
+                  setOffExpanded(!offExpanded);
+                },
+                type: "button",
+              },
+              offExpanded ? t("settings.off.collapse") : t("settings.off.configure"),
+            ),
+          ]),
+        ]);
+      }
+
+      /** 保存 / 重新加载 / 未保存提示。 @param {boolean} dirty @returns {any} */
+      function actionBar(dirty) {
+        return h("div", { className: "dsh-advisor-actions", key: "actions" }, [
+          h(
+            "button",
+            {
+              className: "dsh-advisor-btn dsh-advisor-btn--primary",
+              "data-advisor-save": "",
+              disabled: busy === "save" || busy === "load",
+              key: "save",
+              onClick: save,
+              type: "button",
+            },
+            busy === "save" ? t("settings.saving") : t("settings.save"),
+          ),
+          h(
+            "button",
+            {
+              className: "dsh-advisor-btn",
+              "data-advisor-reload": "",
+              disabled: busy === "load",
+              key: "reload",
+              onClick: reload,
+              type: "button",
+            },
+            t("settings.reload"),
+          ),
+          dirty
+            ? h(
+                "span",
+                { className: "dsh-advisor-dirty", "data-advisor-dirty": "", key: "dirty" },
+                t("settings.dirty"),
+              )
+            : null,
+        ]);
+      }
+
       let sep = t("settings.status.sep");
       let totals = snap.totals;
       let priced = snap.settings.priceInputPerMTok > 0 || snap.settings.priceOutputPerMTok > 0;
@@ -2495,9 +2893,6 @@ window.__ModuleLoader__.load({
         t("settings.status.skip") +
           sep +
           (snap.lastSkip === "" ? t("settings.status.none") : snap.lastSkip),
-        t("settings.status.ledger") +
-          sep +
-          (snap.ledgerPath === "" ? t("settings.status.none") : snap.ledgerPath),
       ];
 
       let doctorNode = null;
@@ -2533,39 +2928,187 @@ window.__ModuleLoader__.load({
         .replace("{calls}", formatCount(snap.pool.calls))
         .replace("{cost}", `$${Number(snap.pool.costUsd).toFixed(4)}`);
 
-      let budgetGroup = [
-        numberField("maxCallsPerTurn", "settings.budget.maxCallsPerTurn", ""),
-        numberField("maxCallsPerSession", "settings.budget.maxCallsPerSession", ""),
-        numberField("maxCallsPerHour", "settings.budget.maxCallsPerHour", ""),
-        numberField("maxCostPerDayUsd", "settings.budget.maxCostPerDayUsd", ""),
-        numberField(
-          "workspaceMaxCallsPerDay",
-          "settings.budget.workspaceMaxCallsPerDay",
-          t("settings.budget.workspaceHint"),
+      // 基础设置：只放开启前必须做的决定，以及每日预算与发送范围。
+      let basicBody = [
+        subgroup("settings.group.model", [providerField(), modelField(), effortField()], "model"),
+        subgroup(
+          "settings.group.spend",
+          [
+            numberField("maxCostPerDayUsd", "settings.budget.maxCostPerDayUsd", {
+              hint: t("settings.basic.budgetHint"),
+              unit: t("settings.unit.usd"),
+            }),
+          ],
+          "spend",
         ),
-        numberField(
-          "workspaceMaxCostPerDayUsd",
-          "settings.budget.workspaceMaxCostPerDayUsd",
-          t("settings.budget.workspaceHint"),
+        subgroup(
+          "settings.group.privacy",
+          [
+            selectField(
+              "scope",
+              "settings.scope",
+              SETTINGS_SCOPES,
+              "settings.scope.",
+              draft.privacyScope,
+              chooseScope,
+              { hint: t(`settings.scope.${draft.privacyScope}Hint`) },
+            ),
+            switchField("redact", "settings.privacy.redact", {
+              hint: t("settings.privacy.redactHint"),
+            }),
+          ],
+          "privacy",
         ),
+      ];
+
+      // 高级设置：调用限额、单价、生成参数、投递行为；默认折叠。
+      let advancedBody = [
+        h("div", { className: "dsh-advisor-note", key: "intro" }, t("settings.advanced.intro")),
+        subgroup(
+          "settings.group.limits",
+          [
+            h(
+              "div",
+              { className: "dsh-advisor-note", key: "dailyBudgetNote" },
+              t("settings.advanced.dailyBudgetNote"),
+            ),
+            numberField("maxCallsPerTurn", "settings.budget.maxCallsPerTurn", {
+              help: t("settings.help.calls"),
+              unit: t("settings.unit.calls"),
+            }),
+            numberField("maxCallsPerSession", "settings.budget.maxCallsPerSession", {
+              help: t("settings.help.calls"),
+              unit: t("settings.unit.calls"),
+            }),
+            numberField("maxCallsPerHour", "settings.budget.maxCallsPerHour", {
+              help: t("settings.help.calls"),
+              unit: t("settings.unit.calls"),
+            }),
+            numberField("workspaceMaxCallsPerDay", "settings.budget.workspaceMaxCallsPerDay", {
+              help: t("settings.budget.workspaceHint"),
+              unit: t("settings.unit.calls"),
+            }),
+            numberField("workspaceMaxCostPerDayUsd", "settings.budget.workspaceMaxCostPerDayUsd", {
+              help: t("settings.budget.workspaceHint"),
+              unit: t("settings.unit.usd"),
+            }),
+            h(
+              "div",
+              { className: "dsh-advisor-readout", "data-advisor-pool": "", key: "pool" },
+              poolLine,
+            ),
+          ],
+          "limits",
+        ),
+        subgroup(
+          "settings.group.money",
+          [
+            numberField("priceInputPerMTok", "settings.budget.priceInputPerMTok", {
+              help: t("settings.budget.priceHint"),
+              unit: t("settings.unit.usdPerMTok"),
+            }),
+            numberField("priceOutputPerMTok", "settings.budget.priceOutputPerMTok", {
+              help: t("settings.budget.priceHint"),
+              unit: t("settings.unit.usdPerMTok"),
+            }),
+            h("div", { className: "dsh-advisor-readout", key: "priceSource" }, priceSourceText),
+          ],
+          "money",
+        ),
+        subgroup(
+          "settings.group.generation",
+          [
+            numberField("maxTokens", "settings.advanced.maxTokens", {
+              help: t("settings.advanced.maxTokensHint"),
+              unit: t("settings.unit.tokens"),
+            }),
+            temperatureField(),
+            numberField("maxInputChars", "settings.advanced.maxInputChars", {
+              help: t("settings.advanced.maxInputCharsHint"),
+              unit: t("settings.unit.chars"),
+            }),
+          ],
+          "generation",
+        ),
+        subgroup(
+          "settings.group.delivery",
+          [
+            numberField("sessionCap", "settings.advanced.sessionCap", {
+              help: t("settings.advanced.sessionCapHint"),
+              unit: t("settings.unit.items"),
+            }),
+            allowedModelsField(),
+            selectField(
+              "postAnswer",
+              "settings.postAnswer",
+              SETTINGS_POST_ANSWER,
+              "settings.postAnswer.",
+              draft.postAnswer,
+              choosePostAnswer,
+              { help: t("settings.postAnswer.hint"), meta: t("settings.help.defaultOffOption") },
+            ),
+            switchField("advisorTools", "settings.advisorTools", {
+              help: t("settings.advisorToolsHint"),
+              meta: t("settings.help.defaultOff"),
+            }),
+            switchField("dedupe", "settings.privacy.dedupe", {
+              help: t("settings.privacy.dedupeHint"),
+              meta: t("settings.help.defaultOn"),
+            }),
+          ],
+          "delivery",
+        ),
+        subgroup(
+          "settings.group.more",
+          [
+            h("div", { className: "dsh-advisor-more", key: "more" }, [
+              h(
+                "p",
+                { key: "text" },
+                t("settings.advanced.more").replace("{fields}", t("settings.advanced.moreFields")),
+              ),
+              h(
+                "p",
+                { className: "dsh-advisor-path", key: "path" },
+                snap.settingsPath === ""
+                  ? t("settings.advanced.pathUnknown")
+                  : t("settings.paths.settings").replace("{path}", snap.settingsPath),
+              ),
+              snap.settingsPath === ""
+                ? null
+                : h(
+                    "button",
+                    {
+                      className: "dsh-advisor-btn",
+                      "data-advisor-copy-path": "",
+                      key: "copy",
+                      onClick: copySettingsPath,
+                      type: "button",
+                    },
+                    t("settings.advanced.copyPath"),
+                  ),
+            ]),
+          ],
+          "more",
+        ),
+        h("div", { className: "dsh-advisor-divider", key: "resetDivider" }),
+        h("div", { className: "dsh-advisor-actions", key: "resetActions" }, [
+          h(
+            "button",
+            {
+              className: "dsh-advisor-btn",
+              "data-advisor-reset": "",
+              key: "reset",
+              onClick: resetAdvanced,
+              type: "button",
+            },
+            t("settings.advanced.reset"),
+          ),
+        ]),
         h(
           "div",
-          {
-            className: "dsh-advisor-readout",
-            "data-advisor-pool": "",
-            key: "pool",
-          },
-          poolLine,
-        ),
-        numberField(
-          "priceInputPerMTok",
-          "settings.budget.priceInputPerMTok",
-          `${t("settings.budget.priceHint")} · ${priceSourceText}`,
-        ),
-        numberField(
-          "priceOutputPerMTok",
-          "settings.budget.priceOutputPerMTok",
-          `${t("settings.budget.priceHint")} · ${priceSourceText}`,
+          { className: "dsh-advisor-note", key: "resetHint" },
+          t("settings.advanced.resetHint"),
         ),
       ];
 
@@ -2623,12 +3166,20 @@ window.__ModuleLoader__.load({
         ]);
       }
 
-      let advancedGroup = [
-        numberField("maxTokens", "settings.advanced.maxTokens", ""),
-        temperatureField(),
-        numberField("maxInputChars", "settings.advanced.maxInputChars", ""),
-        numberField("sessionCap", "settings.advanced.sessionCap", ""),
-        allowedModelsField(),
+      let statusBody = [
+        h(
+          "div",
+          { className: "dsh-advisor-summary", "data-advisor-summary": "", key: "summary" },
+          summaryLines.map(
+            function renderSummaryLine(/** @type {string} */ line, /** @type {number} */ index) {
+              return h(
+                "div",
+                { className: "dsh-advisor-summary-line", key: `line-${index}` },
+                line,
+              );
+            },
+          ),
+        ),
         h("div", { className: "dsh-advisor-row", key: "previewRow" }, [
           h("span", { className: "dsh-advisor-label", key: "label" }, t("settings.preview")),
           h(
@@ -2646,31 +3197,13 @@ window.__ModuleLoader__.load({
         ]),
         previewNode,
         confirmRow,
-        h("div", { className: "dsh-advisor-divider", key: "divider" }),
-        h(
-          "div",
-          { className: "dsh-advisor-subtitle", key: "statusTitle" },
-          t("settings.status.title"),
-        ),
-        h(
-          "div",
-          { className: "dsh-advisor-summary", "data-advisor-summary": "", key: "summary" },
-          summaryLines.map(
-            function renderSummaryLine(/** @type {string} */ line, /** @type {number} */ index) {
-              return h(
-                "div",
-                { className: "dsh-advisor-summary-line", key: `line-${index}` },
-                line,
-              );
-            },
-          ),
-        ),
         h("div", { className: "dsh-advisor-row", key: "doctorRow" }, [
           h("span", { className: "dsh-advisor-label", key: "label" }, t("settings.doctor")),
           h(
             "button",
             {
               className: "dsh-advisor-btn",
+              "data-advisor-doctor-run": "",
               disabled: busy === "doctor",
               key: "run",
               onClick: runDoctor,
@@ -2680,12 +3213,86 @@ window.__ModuleLoader__.load({
           ),
         ]),
         doctorNode,
+        h("div", { className: "dsh-advisor-paths", key: "paths" }, [
+          snap.settingsPath === ""
+            ? null
+            : h(
+                "div",
+                { key: "settingsPath" },
+                t("settings.paths.settings").replace("{path}", snap.settingsPath),
+              ),
+          snap.ledgerPath === ""
+            ? null
+            : h(
+                "div",
+                { key: "ledgerPath" },
+                t("settings.paths.ledger").replace("{path}", snap.ledgerPath),
+              ),
+        ]),
       ];
 
       let noticeNode =
         notice === ""
           ? null
           : h("div", { className: "dsh-advisor-saved", key: "notice", role: "status" }, notice);
+
+      let advancedChanged = advancedChangedCount();
+      let advancedBadge =
+        advancedChanged === 0
+          ? t("settings.advanced.defaults")
+          : t("settings.advanced.changed").replace("{count}", String(advancedChanged));
+      let modeRow = selectField(
+        "mode",
+        "settings.mode",
+        SETTINGS_MODES,
+        "settings.mode.",
+        draft.mode,
+        chooseMode,
+        { hint: t(`settings.mode.${draft.mode}Hint`) },
+      );
+      let showForm = draft.mode !== "off" || offExpanded;
+      let dirty = isDirty();
+
+      let children = [
+        h("div", { className: "dsh-advisor-head", key: "head" }, [
+          h("div", { className: "dsh-advisor-title", key: "title" }, t("settings.title")),
+          h("div", { className: "dsh-advisor-desc", key: "desc" }, t("settings.desc")),
+        ]),
+        errorBanner(),
+        modeRow,
+      ];
+      if (!showForm) {
+        children.push(offNotice());
+      } else {
+        if (draft.mode === "off") children.push(offNotice());
+        children.push(group("settings.group.basic", basicBody, "basic"));
+        children.push(
+          disclosure(
+            "advanced",
+            t("settings.group.advanced"),
+            advancedBadge,
+            advancedBody,
+            advancedOpen,
+            function toggleAdvanced() {
+              setAdvancedOpen(!advancedOpen);
+            },
+          ),
+        );
+        children.push(
+          disclosure(
+            "status",
+            t("settings.group.status"),
+            t("settings.status.calls").replace("{count}", formatCount(totals.calls)),
+            statusBody,
+            statusOpen,
+            function toggleStatus() {
+              setStatusOpen(!statusOpen);
+            },
+          ),
+        );
+      }
+      children.push(noticeNode);
+      children.push(actionBar(dirty));
 
       return h(
         "div",
@@ -2695,87 +3302,7 @@ window.__ModuleLoader__.load({
           "data-advisor-settings": "",
           role: "group",
         },
-        [
-          h("div", { className: "dsh-advisor-head", key: "head" }, [
-            h("div", { className: "dsh-advisor-title", key: "title" }, t("settings.title")),
-            h("div", { className: "dsh-advisor-desc", key: "desc" }, t("settings.desc")),
-          ]),
-          errorBanner(),
-          group(
-            "settings.group.basic",
-            [
-              radioField(
-                "mode",
-                "settings.mode",
-                SETTINGS_MODES,
-                "settings.mode.",
-                draft.mode,
-                chooseMode,
-                "mode",
-              ),
-              providerField(),
-              modelField(),
-              effortField(),
-              selectField(
-                "postAnswer",
-                "settings.postAnswer",
-                SETTINGS_POST_ANSWER,
-                "settings.postAnswer.",
-                draft.postAnswer,
-                choosePostAnswer,
-                "settings.postAnswer.hint",
-              ),
-              switchField("advisorTools", "settings.advisorTools", "settings.advisorToolsHint"),
-            ],
-            "basic",
-          ),
-          group("settings.group.budget", budgetGroup, "budget"),
-          group(
-            "settings.group.privacy",
-            [
-              radioField(
-                "scope",
-                "settings.scope",
-                SETTINGS_SCOPES,
-                "settings.scope.",
-                draft.privacyScope,
-                chooseScope,
-                "scope",
-              ),
-              switchField("redact", "settings.privacy.redact", "settings.privacy.redactHint"),
-              switchField("dedupe", "settings.privacy.dedupe", "settings.privacy.dedupeHint"),
-            ],
-            "privacy",
-          ),
-          group("settings.group.advanced", advancedGroup, "advanced"),
-          noticeNode,
-          h("div", { className: "dsh-advisor-actions", key: "actions" }, [
-            h(
-              "button",
-              {
-                className: "dsh-advisor-btn dsh-advisor-btn--primary",
-                "data-advisor-save": "",
-                disabled: busy === "save" || busy === "load",
-                key: "save",
-                onClick: save,
-                type: "button",
-              },
-              busy === "save" ? t("settings.saving") : t("settings.save"),
-            ),
-            h(
-              "button",
-              {
-                className: "dsh-advisor-btn",
-                "data-advisor-reload": "",
-                disabled: busy === "load",
-                key: "reload",
-                onClick: reload,
-                type: "button",
-              },
-              t("settings.reload"),
-            ),
-          ]),
-        ],
+        children,
       );
     }
 
@@ -2787,22 +3314,22 @@ window.__ModuleLoader__.load({
       // 而 slot 的 t() 只认这里注册的字典。两处必须同步（`test/locale-parity.test.js` 会守住）。
       const LOCALE_EXTRA = {
         zh: {
-          title: "让主模型在关键时刻咨询一个更强的顾问模型",
-          "settings.postAnswer": "回合结束后",
-          "settings.postAnswer.off": "off（不跑）",
-          "settings.postAnswer.card": "card（只记录一行）",
-          "settings.postAnswer.hint": "advisory 模式下，回合结束后自动跑一次顾问；只记录不回灌。",
+          "settings.postAnswer": "回合结束后自动复查",
+          "settings.postAnswer.off": "不跑",
+          "settings.postAnswer.card": "只记录一行",
+          "settings.postAnswer.hint":
+            "每轮回答后自动复查一次；只记录建议，不插回对话。会产生额外调用和费用。",
           "settings.advisorTools": "允许顾问读文件核实",
           "settings.advisorToolsHint":
-            "允许顾问请求读取工作目录内的文件（≤5 个、≤64 KiB、只读）来核实它的结论；会多一次模型调用。",
-          "settings.budget.workspaceMaxCallsPerDay": "工作区每日最多调用",
-          "settings.budget.workspaceMaxCostPerDayUsd": "工作区每日预算（USD）",
+            "允许顾问读取工作目录里的文件来核实结论（最多 5 个、只读）；会多一次模型调用。",
+          "settings.budget.workspaceMaxCallsPerDay": "工作区每日调用上限",
+          "settings.budget.workspaceMaxCostPerDayUsd": "工作区每日预算",
           "settings.budget.workspaceHint": "工作区级，跨会话累计、按本地日重置",
           "settings.budget.poolLine": "工作区今日：{calls} 次 · ≈{cost}",
           "settings.budget.priceSource.builtin": "单价来源：内置参考价",
           "settings.budget.priceSource.settings": "单价来源：你设置的",
           "settings.budget.priceSource.none": "单价来源：未配置（只记 token）",
-          "settings.advanced.allowedModels": "模型白名单 allowedModels",
+          "settings.advanced.allowedModels": "模型白名单",
           "settings.advanced.allowedModelsHint": "留空=不限制；可写 provider/model 或裸 model id",
           "settings.advanced.allowedModelsPlaceholder": "例如 deepseek/deepseek-chat, gpt-4o",
           "settings.preview": "发送预览",
@@ -2818,26 +3345,107 @@ window.__ModuleLoader__.load({
           "settings.confirm.done": "已确认 {provider}",
           "settings.error.preview": "预览失败，稍后重试",
           "settings.error.confirm": "确认失败，稍后重试",
+          "settings.desc": "基础设置开箱即用；高级项默认折叠。保存后的改动对下一次徵询生效。",
+          "settings.group.basic": "基础设置",
+          "settings.group.budget": "预算与限额",
+          "settings.group.advanced": "高级设置",
+          "settings.mode.off": "关闭",
+          "settings.mode.shadow": "影子",
+          "settings.mode.advisory": "顾问",
+          "settings.mode.shadowHint": "会调用顾问并记账，但不会把建议放进对话；适合先观察。",
+          "settings.mode.advisoryHint": "会徵询顾问，并把建议交给模型；模型可以采纳或忽略。",
+          "settings.provider": "服务商",
+          "settings.model": "模型",
+          "settings.budget.maxCallsPerTurn": "每回合调用上限",
+          "settings.budget.maxCallsPerSession": "每会话调用上限",
+          "settings.budget.maxCallsPerHour": "每小时调用上限",
+          "settings.budget.maxCostPerDayUsd": "每日预算",
+          "settings.budget.priceInputPerMTok": "输入单价",
+          "settings.budget.priceOutputPerMTok": "输出单价",
+          "settings.scope.off": "不发送",
+          "settings.scope.summary": "摘要",
+          "settings.scope.full": "完整",
+          "settings.scope.summaryHint": "只发一段约 300 字的会话摘要，不发文件全文。",
+          "settings.scope.fullHint": "发送完整上下文，按输入上限截断。",
+          "settings.privacy.redact": "发送前脱敏",
+          "settings.privacy.redactHint": "自动遮掉常见的密钥格式；不能保证全部遮住。",
+          "settings.privacy.dedupe": "影子模式去重",
+          "settings.privacy.dedupeHint": "影子模式下，相同的建议只记一次。",
+          "settings.advanced.maxTokens": "输出上限",
+          "settings.advanced.temperature": "随机性",
+          "settings.advanced.temperatureHint": "留空 = 由模型决定；范围 0–2。",
+          "settings.advanced.maxInputChars": "输入上限",
+          "settings.advanced.sessionCap": "建议条数上限",
+          "settings.off.title": "顾问已关闭",
+          "settings.off.desc": "不会调用顾问，也不产生费用。",
+          "settings.off.unconfigured": "还没有选择顾问模型。点「配置顾问」选择服务商和模型。",
+          "settings.off.configured": "已配置：{provider} / {model}。启用后生效。",
+          "settings.off.configure": "配置顾问",
+          "settings.off.collapse": "收起配置",
+          "settings.dirty": "有未保存的改动",
+          "settings.advanced.intro": "以下都有合理默认值，通常不用改；改过的项会显示在标题上。",
+          "settings.advanced.defaults": "默认值",
+          "settings.advanced.changed": "{count} 项已修改",
+          "settings.advanced.reset": "恢复默认",
+          "settings.advanced.resetHint": "只重置高级字段，不影响模式、服务商、模型和隐私。",
+          "settings.advanced.resetDone": "高级设置已恢复默认（尚未保存）。",
+          "settings.advanced.more": "还有 {fields} 等冷门项；需要时可直接编辑设置文件。",
+          "settings.advanced.moreFields": "tiers、pairingEnforcement、timeoutMs、immuneTurns",
+          "settings.advanced.copyPath": "复制路径",
+          "settings.advanced.copied": "已复制",
+          "settings.advanced.copyFailed": "复制失败，请手动复制。",
+          "settings.advanced.pathUnknown": "宿主没有返回设置文件路径。",
+          "settings.advanced.dailyBudgetNote":
+            "每日预算在基础设置里；这里是调用次数和工作区级限额。",
+          "settings.group.model": "顾问模型",
+          "settings.group.spend": "预算",
+          "settings.group.limits": "调用限额",
+          "settings.group.money": "单价",
+          "settings.group.generation": "生成参数",
+          "settings.group.delivery": "投递与行为",
+          "settings.group.more": "更多",
+          "settings.group.status": "状态与诊断",
+          "settings.basic.budgetHint": "0 = 不限；默认 0，范围 0–10000。更细的限额在高级设置里。",
+          "settings.budget.maxCostHint": "每天最多花多少钱；0 = 不限。只有填了单价才会计算金额。",
+          "settings.advanced.maxTokensHint": "单次回答最多生成多少 token；越大越贵。",
+          "settings.advanced.maxInputCharsHint":
+            "一次最多发送多少字符的会话内容；超出会保留首尾、省略中间。",
+          "settings.advanced.sessionCapHint": "一个会话最多展示几条建议；到顶后只保留 blocker 级。",
+          "settings.help.calls": "超过上限就跳过本次徵询；0 = 不限。",
+          "settings.help.tech": "技术名：{key}",
+          "settings.help.open": "查看 {field} 的说明",
+          "settings.help.defaultOn": "默认：开",
+          "settings.help.defaultOff": "默认：关",
+          "settings.help.defaultOffOption": "默认：不跑",
+          "settings.help.defaultEmpty": "默认：不限制",
+          "settings.help.defaultNotSent": "默认：不传（由模型决定）",
+          "settings.unit.usd": "USD",
+          "settings.unit.usdPerMTok": "USD / 百万 token",
+          "settings.unit.tokens": "token",
+          "settings.unit.chars": "字符",
+          "settings.unit.calls": "次",
+          "settings.unit.items": "条",
+          "settings.paths.settings": "设置文件：{path}",
+          "settings.paths.ledger": "账本：{path}",
         },
         en: {
-          title: "Pair the main model with a stronger advisor model it can consult at key moments",
-          "settings.postAnswer": "After each turn",
-          "settings.postAnswer.off": "off (do not run)",
-          "settings.postAnswer.card": "card (record one line)",
+          "settings.postAnswer": "Auto-review after each turn",
+          "settings.postAnswer.off": "Do not run",
+          "settings.postAnswer.card": "Record one line",
           "settings.postAnswer.hint":
-            "In advisory mode, run the advisor once after each turn; record only, never feed back.",
+            "Runs the advisor once after each answer; records advice only, never inserts it into the conversation. Costs an extra call.",
           "settings.advisorTools": "Let the advisor read files",
           "settings.advisorToolsHint":
-            "Let the advisor request files inside the working directory (≤5 files, ≤64 KiB, read-only) to verify its conclusions; costs one extra model call.",
-          "settings.budget.workspaceMaxCallsPerDay": "Workspace max calls per day",
-          "settings.budget.workspaceMaxCostPerDayUsd": "Workspace daily budget (USD)",
+            "Lets the advisor read files in the working directory to verify conclusions (up to 5 files, read-only); costs one extra model call.",
+          "settings.budget.workspaceMaxCallsPerDay": "Workspace calls per day",
+          "settings.budget.workspaceMaxCostPerDayUsd": "Workspace daily budget",
           "settings.budget.workspaceHint":
             "Workspace-wide: shared across sessions, resets on the local day",
           "settings.budget.poolLine": "Workspace today: {calls} calls · ≈{cost}",
           "settings.budget.priceSource.builtin": "Price source: built-in reference",
           "settings.budget.priceSource.settings": "Price source: yours",
           "settings.budget.priceSource.none": "Price source: not set (tokens only)",
-          "settings.advanced.allowedModels": "Model allowlist allowedModels",
+          "settings.advanced.allowedModels": "Model allowlist",
           "settings.advanced.allowedModelsHint":
             "Empty = no limit; accepts provider/model or a bare model id",
           "settings.advanced.allowedModelsPlaceholder": "e.g. deepseek/deepseek-chat, gpt-4o",
@@ -2855,6 +3463,100 @@ window.__ModuleLoader__.load({
           "settings.confirm.done": "Confirmed {provider}",
           "settings.error.preview": "Preview failed — try again later",
           "settings.error.confirm": "Confirmation failed — try again later",
+          "settings.desc":
+            "The basics work out of the box; advanced knobs stay folded. Saved changes apply to the next consultation.",
+          "settings.group.basic": "Basics",
+          "settings.group.budget": "Budgets & limits",
+          "settings.group.advanced": "Advanced",
+          "settings.mode.off": "Off",
+          "settings.mode.shadow": "Shadow",
+          "settings.mode.advisory": "Advisory",
+          "settings.mode.shadowHint":
+            "Calls the advisor and records it, but never puts advice into the conversation — useful for observing first.",
+          "settings.mode.advisoryHint":
+            "Calls the advisor and hands the advice to the model; the model may take it or ignore it.",
+          "settings.provider": "Provider",
+          "settings.model": "Model",
+          "settings.budget.maxCallsPerTurn": "Calls per turn",
+          "settings.budget.maxCallsPerSession": "Calls per session",
+          "settings.budget.maxCallsPerHour": "Calls per hour",
+          "settings.budget.maxCostPerDayUsd": "Daily budget",
+          "settings.budget.priceInputPerMTok": "Input price",
+          "settings.budget.priceOutputPerMTok": "Output price",
+          "settings.scope.off": "None",
+          "settings.scope.summary": "Summary",
+          "settings.scope.full": "Full",
+          "settings.scope.summaryHint":
+            "Sends a ~300-character conversation summary; no file contents.",
+          "settings.scope.fullHint": "Sends the full context, truncated to the input limit.",
+          "settings.privacy.redact": "Redact before sending",
+          "settings.privacy.redactHint":
+            "Masks common key formats; it cannot guarantee every secret is caught.",
+          "settings.privacy.dedupe": "Dedupe in shadow mode",
+          "settings.privacy.dedupeHint": "In shadow mode, the same advice is recorded only once.",
+          "settings.advanced.maxTokens": "Output limit",
+          "settings.advanced.temperature": "Randomness",
+          "settings.advanced.temperatureHint": "Empty = let the model decide; range 0–2.",
+          "settings.advanced.maxInputChars": "Input limit",
+          "settings.advanced.sessionCap": "Advice items per session",
+          "settings.off.title": "Advisor is off",
+          "settings.off.desc": "It never calls the advisor and never spends.",
+          "settings.off.unconfigured":
+            "No advisor model selected yet. Choose “Configure advisor” to pick a provider and model.",
+          "settings.off.configured": "Configured: {provider} / {model}. Takes effect when enabled.",
+          "settings.off.configure": "Configure advisor",
+          "settings.off.collapse": "Hide configuration",
+          "settings.dirty": "Unsaved changes",
+          "settings.advanced.intro":
+            "Sensible defaults; you normally do not need to change these. Modified items show on the heading.",
+          "settings.advanced.defaults": "Defaults",
+          "settings.advanced.changed": "{count} changed",
+          "settings.advanced.reset": "Reset to defaults",
+          "settings.advanced.resetHint":
+            "Only resets advanced fields; mode, provider, model and privacy stay.",
+          "settings.advanced.resetDone": "Advanced settings restored to defaults (not saved yet).",
+          "settings.advanced.more":
+            "Rarely changed keys such as {fields} can be edited directly in the settings file.",
+          "settings.advanced.moreFields": "tiers, pairingEnforcement, timeoutMs, immuneTurns",
+          "settings.advanced.copyPath": "Copy path",
+          "settings.advanced.copied": "Copied",
+          "settings.advanced.copyFailed": "Copy failed — copy it manually.",
+          "settings.advanced.pathUnknown": "The host did not return the settings file path.",
+          "settings.advanced.dailyBudgetNote":
+            "The daily budget is under Basics; this section has call and workspace-level limits.",
+          "settings.group.model": "Advisor model",
+          "settings.group.spend": "Budget",
+          "settings.group.limits": "Call limits",
+          "settings.group.money": "Prices",
+          "settings.group.generation": "Generation",
+          "settings.group.delivery": "Delivery & behavior",
+          "settings.group.more": "More",
+          "settings.group.status": "Status & diagnostics",
+          "settings.basic.budgetHint":
+            "0 = unlimited; default 0, range 0–10000. Finer limits are under Advanced.",
+          "settings.budget.maxCostHint":
+            "Maximum spend per day; 0 = unlimited. Only counted when prices are set.",
+          "settings.advanced.maxTokensHint": "Maximum output tokens per answer; higher costs more.",
+          "settings.advanced.maxInputCharsHint":
+            "Maximum characters of conversation sent per call; excess in the middle is elided, head and tail kept.",
+          "settings.advanced.sessionCapHint":
+            "Maximum advice items shown per session; once reached only blocker items get through.",
+          "settings.help.calls": "Above the limit, the consultation is skipped; 0 = unlimited.",
+          "settings.help.tech": "Key: {key}",
+          "settings.help.open": "Show help for {field}",
+          "settings.help.defaultOn": "Default: on",
+          "settings.help.defaultOff": "Default: off",
+          "settings.help.defaultOffOption": "Default: off",
+          "settings.help.defaultEmpty": "Default: no limit",
+          "settings.help.defaultNotSent": "Default: not sent (model default)",
+          "settings.unit.usd": "USD",
+          "settings.unit.usdPerMTok": "USD / 1M tokens",
+          "settings.unit.tokens": "tokens",
+          "settings.unit.chars": "chars",
+          "settings.unit.calls": "calls",
+          "settings.unit.items": "items",
+          "settings.paths.settings": "Settings file: {path}",
+          "settings.paths.ledger": "Ledger: {path}",
         },
       };
 
@@ -3403,6 +4105,9 @@ window.__ModuleLoader__.load({
         interpretSetModel: interpretSetModel,
         clampInt: clampInt,
         clampFloat: clampFloat,
+        clampMoney: clampMoney,
+        formatMoneyInput: formatMoneyInput,
+        normalizeSettingsView: normalizeSettingsView,
         normalizeOptions: normalizeOptions,
         normalizeModels: normalizeModels,
         normalizeModelInfo: normalizeModelInfo,

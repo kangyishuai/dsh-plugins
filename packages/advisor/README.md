@@ -53,29 +53,45 @@ Re-run `pnpm pack` + `add` after changing the code. The plugin has a host half a
 
 Settings live in one JSON file, `<DSH_HOME>/advisor.settings.json` (`DSH_HOME` defaults to `~/.dsh`; the plugin's `dataRoot` config overrides it). The host re-reads the file before each consultation (1 s cache), so editing it applies to the next call without a restart. Unknown keys are dropped, out-of-range numbers are clamped, and a corrupt file falls back to the defaults. **The default is `off`** — a plugin that spends money and sends conversation content stays opt-in.
 
-| Key                  | Default     | Range / values                                     | Meaning                                                                                                           |
-| -------------------- | ----------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `mode`               | `"off"`     | `off` / `shadow` / `advisory`                      | Whether the plugin may call the advisor at all.                                                                   |
-| `provider`           | `""`        | route name from Settings → Models, up to 300 chars | Advisor route. Empty means never call.                                                                            |
-| `model`              | `""`        | model id under that route, up to 300 chars         | Advisor model. Empty means never call.                                                                            |
-| `reasoningEffort`    | `""`        | an effort id from the model, `""` = model default  | Thinking effort for the advisor. An unsupported value is retried once without an effort; `doctor` warns about it. |
-| `maxTokens`          | `4096`      | 256–32000                                          | Output cap per consultation.                                                                                      |
-| `temperature`        | `null`      | 0–2, `null` = not sent                             | `null` lets the model adapter decide.                                                                             |
-| `maxCallsPerTurn`    | `1`         | 0–8, `0` = unlimited                               | Consultations per turn.                                                                                           |
-| `maxCallsPerSession` | `32`        | 0–1000, `0` = unlimited                            | Consultations per session.                                                                                        |
-| `maxCallsPerHour`    | `12`        | 0–500, `0` = unlimited                             | Sliding one-hour window.                                                                                          |
-| `maxCostPerDayUsd`   | `0`         | 0–10000, `0` = unlimited                           | Daily spend ceiling in USD. Only meaningful once the two prices below are set.                                    |
-| `priceInputPerMTok`  | `0`         | 0–1000                                             | Your advisor model's input price, USD per million tokens. `0` = do not estimate money.                            |
-| `priceOutputPerMTok` | `0`         | 0–1000                                             | Output price, USD per million tokens.                                                                             |
-| `privacyScope`       | `"summary"` | `full` / `summary` / `off`                         | How much of the conversation is sent — see [Cost & privacy](#cost--privacy).                                      |
-| `redact`             | `true`      | boolean                                            | Best-effort scrubbing of token-shaped strings before anything is sent.                                            |
-| `immuneTurns`        | `3`         | 0–20                                               | Turns to stay quiet after a delivery. Used by shadow delivery; reserved in this MVP — see the note below.         |
-| `dedupe`             | `true`      | boolean                                            | Suppress repeated suggestions. Used by shadow delivery; reserved for the tool path — see the note below.          |
-| `sessionCap`         | `24`        | 0–200                                              | Max advice items delivered per session; once reached only `blocker` still gets through.                           |
-| `tiers`              | `{}`        | map of `"provider/model"` → number                 | Capability ranks for the pairing check. Without an entry the pairing is reported as unverified, never as passed.  |
-| `pairingEnforcement` | `"warn"`    | `warn` / `block`                                   | What to do when the advisor's declared tier is lower than the main model's.                                       |
-| `timeoutMs`          | `90000`     | 5000–600000                                        | Per-consultation timeout; `/advisor cancel` aborts sooner.                                                        |
-| `maxInputChars`      | `60000`     | 4000–400000                                        | Total transcript budget; excess in the middle is elided and head/tail are kept.                                   |
+**Settings UI.** Settings → General → Advisor. With the default `off`, the card shows only the mode, a one-line status and “Configure advisor”. Expanding or enabling it reveals:
+
+- **Basics**: mode, provider, model, reasoning effort, daily budget, send scope, redaction.
+- **Advanced** (folded by default): call limits, workspace limits, prices, output/input caps, advice-item cap, allowlist, auto-review, file reading, shadow dedupe. The heading shows “Defaults” or “N changed”.
+- **Status & diagnostics** (folded by default): calls/tokens/cost, last result/skip reason, send preview, diagnostics, settings and ledger paths.
+
+The “?” next to an advanced field expands an inline help block (click or activate with the keyboard) with the description, default/range and technical key; hover is only a supplement. Click **Save** to apply changes to the next consultation.
+
+Money fields accept decimals: budgets up to 2, unit prices up to 4.
+
+| Key                         | UI label                       | Default     | Range / values                                | Meaning                                                                               |
+| --------------------------- | ------------------------------ | ----------- | --------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `mode`                      | Mode                           | `"off"`     | off / shadow / advisory                       | Whether the plugin may consult at all. Off by default; opt in explicitly.             |
+| `provider`                  | Provider                       | `""`        | route name from Settings → Models, ≤300 chars | Advisor route. Empty means never call.                                                |
+| `model`                     | Model                          | `""`        | model id under that route, ≤300 chars         | Advisor model. Empty means never call.                                                |
+| `reasoningEffort`           | Reasoning effort               | `""`        | a supported effort id, `""` = model default   | An unsupported value is retried once without an effort.                               |
+| `maxTokens`                 | Output limit                   | `4096`      | 256–32000                                     | Maximum output tokens per consultation.                                               |
+| `temperature`               | Randomness                     | `null`      | 0–2, `null` = not sent                        | Empty lets the model decide.                                                          |
+| `maxCallsPerTurn`           | Calls per turn                 | `1`         | 0–8, 0 = unlimited                            | Maximum consultations per turn.                                                       |
+| `maxCallsPerSession`        | Calls per session              | `32`        | 0–1000, 0 = unlimited                         | Maximum consultations per session.                                                    |
+| `maxCallsPerHour`           | Calls per hour                 | `12`        | 0–500, 0 = unlimited                          | Sliding one-hour window.                                                              |
+| `maxCostPerDayUsd`          | Daily budget                   | `0`         | 0–10000, 0 = unlimited; up to 2 decimals      | Daily spend ceiling in USD; only counted when prices are set.                         |
+| `priceInputPerMTok`         | Input price                    | `0`         | 0–1000; up to 4 decimals                      | Advisor input price, USD per 1M tokens; 0 = do not price.                             |
+| `priceOutputPerMTok`        | Output price                   | `0`         | 0–1000; up to 4 decimals                      | Output price, USD per 1M tokens.                                                      |
+| `privacyScope`              | Send scope                     | `"summary"` | off / summary / full                          | How much conversation content is sent — see Cost & privacy.                           |
+| `redact`                    | Redact before sending          | `true`      | boolean                                       | Best-effort masking of common key formats; not a guarantee.                           |
+| `immuneTurns`               | JSON only: Immune turns        | `3`         | 0–20                                          | Turns to stay quiet after a delivery; used by shadow delivery.                        |
+| `dedupe`                    | Dedupe in shadow mode          | `true`      | boolean                                       | In shadow mode, the same advice is recorded once; the tool path does not block on it. |
+| `sessionCap`                | Advice items per session       | `24`        | 0–200                                         | Max advice items shown per session; once reached only blockers get through.           |
+| `tiers`                     | JSON only: Tiers               | `{}`        | `"provider/model"` → number                   | Capability ranks for the pairing check; without an entry the pairing is unverified.   |
+| `allowedModels`             | Model allowlist                | `[]`        | string array                                  | Empty = no limit; accepts provider/model or a bare model id.                          |
+| `confirmedHosts`            | JSON/button: Confirmed hosts   | `[]`        | string array                                  | Cross-provider confirmation list; the settings-card button writes it.                 |
+| `pairingEnforcement`        | JSON only: Pairing enforcement | `"warn"`    | warn / block                                  | When the advisor tier is lower: warn allows and warns; block refuses.                 |
+| `workspaceMaxCallsPerDay`   | Workspace calls per day        | `200`       | 0–100000, 0 = unlimited                       | Workspace-wide, shared across sessions, resets on the local day.                      |
+| `workspaceMaxCostPerDayUsd` | Workspace daily budget         | `0`         | 0–10000, 0 = unlimited; up to 2 decimals      | Workspace-wide daily spend ceiling.                                                   |
+| `postAnswer`                | Auto-review after each turn    | `"off"`     | off / card                                    | In advisory mode, runs once after each answer; records only, never inserts.           |
+| `advisorTools`              | Let the advisor read files     | `false`     | boolean                                       | Lets it read working-directory files (up to 5, read-only); costs one extra call.      |
+| `timeoutMs`                 | JSON only: Timeout             | `90000`     | 5000–600000                                   | Per-consultation timeout; `/advisor cancel` aborts sooner.                            |
+| `maxInputChars`             | Input limit                    | `60000`     | 4000–400000                                   | Total transcript budget; excess in the middle is elided, head/tail kept.              |
 
 > **Note on `sessionCap`, `dedupe`, `immuneTurns`:** `sessionCap` is enforced — after that many delivered items in one session only `blocker` advice is still returned. `dedupe` and `immuneTurns` are persisted and used by the shadow path, but the tool path does not suppress a consultation because of them (you asked for it explicitly). The ceilings that stop _calls_ altogether are `maxCallsPerTurn` / `maxCallsPerSession` / `maxCallsPerHour` / `maxCostPerDayUsd`.
 
@@ -159,7 +175,7 @@ Nothing else: no workspace files, no session-log records of its own (a consultat
 - **Pairing needs your declaration.** DSH has no cross-vendor capability catalog, so "is the advisor at least as strong as the main model" can only come from your `tiers`. Without an entry the result says **unverified** and the consultation proceeds; it never pretends the check passed. With `pairingEnforcement: "block"` a lower declared tier rejects the consultation.
 - **Token counts can be low on an aborted call.** If a consultation is cancelled or times out, no usage chunk may arrive; the ledger then records the call with zero tokens and a cost budget can lag real spend. Treat the ledger as a good estimate, not an invoice.
 - **The advisor route can be broken from outside this plugin** (wrong base URL, missing key, rate limit). Every failure becomes a structured tool result (`MISSING_CREDENTIAL`, `rate_limited`, `overloaded`, `prompt_too_long`, `timeout`, `aborted`, …) and never breaks the turn.
-- **No settings card in this MVP.** Configuration is the JSON file plus the picker; there is no Settings → General page yet.
+- **The settings card lives at the bottom of Settings → General.** It may need scrolling; keys marked JSON-only still need the settings file, and the `/advisor` picker remains available.
 - **Partially enforced knobs.** `sessionCap` caps delivered advice per session (blockers exempt); `dedupe` / `immuneTurns` only matter on the shadow path — see [Configure](#configure).
 - **One attempt, not a retry loop.** A malformed advisor answer is reported as unavailable rather than retried; an unsupported thinking effort is retried exactly once without an effort.
 - **`shadow` mode still spends quota.** It skips the injection, not the call. And while `shadow` is on, an explicit `advisor` tool call still returns its advice: the mode suppresses the automatic end-of-turn review, not a model-initiated consultation. Use `off` to stop all calls.
