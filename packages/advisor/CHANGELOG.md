@@ -1,5 +1,11 @@
 # @kangyishuai/dsh-advisor
 
+## 0.4.0
+
+### Minor Changes
+
+- [#62](https://github.com/kangyishuai/dsh-plugins/pull/62) [`ebd331e`](https://github.com/kangyishuai/dsh-plugins/commit/ebd331e0dd4b93ce74f90691ba39720f4b9ecce8) Thanks [@kangyishuai](https://github.com/kangyishuai)! - Add first-class CNY support: `currency` (USD/CNY) plus a manual `usdToCny` rate; budget and unit-price settings are stored in the selected currency while the ledger, workspace pool and guards stay in USD. Old `maxCostPerDayUsd` / `workspaceMaxCostPerDayUsd` keys migrate as USD, switching currency converts the form amounts at the rate, and status/preview/doctor/advisor-line output uses the selected currency.
+
 ## 0.3.0
 
 ### Minor Changes
