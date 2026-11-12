@@ -265,3 +265,61 @@ describe("advisor trace line", () => {
     assert.equal(out[0].requestPreviewTruncated, true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 注入样式的主题正确性
+//
+// 背景：0.5.x 的「未保存」提示与逐轮警告用的是 `--dsw-alias-state-warning-primary`，
+// 而宿主主题里并没有这个 token（真名是 state-warn-*）。写错名字不会报错，只会静默落到
+// CSS 里的硬编码 fallback，于是那些文字永远不跟随深浅色主题。这条用例守住：
+//   1. 样式表只用宿主真实存在的 token（白名单只收已验证的）；
+//   2. 警告文字用宿主自己的 warning 文本 token。
+// ---------------------------------------------------------------------------
+describe("injected styles: theme tokens", () => {
+  /** 宿主 0.2.2-rc.2 主题里真实存在的 token（只收本插件用到的）。 */
+  const HOST_THEME_TOKENS = new Set([
+    "--dsw-alias-bg-base",
+    "--dsw-alias-bg-layer-2",
+    "--dsw-alias-border-l2",
+    "--dsw-alias-label-primary",
+    "--dsw-alias-label-secondary",
+    "--dsw-alias-state-error-primary",
+    "--dsw-alias-state-success-primary",
+    "--dsw-alias-state-warn-label",
+    "--dsw-alias-state-warn-primary",
+  ]);
+
+  const css = () => client.__test.clientCss();
+
+  it("exposes the injected stylesheet for inspection", () => {
+    assert.equal(typeof client.__test.clientCss, "function");
+    assert.ok(css().length > 1000, "stylesheet looks empty");
+  });
+
+  it("only references theme tokens the host actually defines", () => {
+    const used = new Set(
+      [...css().matchAll(/var\((--(?:dsw|ds)-[a-z0-9-]+)/g)].map((match) => match[1]),
+    );
+    assert.ok(used.size > 0, "no theme tokens found in the stylesheet");
+    const unknown = [...used].filter((token) => !HOST_THEME_TOKENS.has(token)).sort();
+    assert.deepEqual(
+      unknown,
+      [],
+      `unknown host tokens (would silently fall back to a hardcoded colour): ${unknown.join(", ")}`,
+    );
+  });
+
+  it("uses the host warning text token for warning copy", () => {
+    for (const selector of [".dsh-advisor-dirty", ".dsh-advisor-turn-warn"]) {
+      const rule = css()
+        .split("}")
+        .find((/** @type {string} */ chunk) => chunk.trim().startsWith(selector));
+      assert.ok(rule, `${selector} rule is missing`);
+      assert.match(
+        rule,
+        /color:var\(--dsw-alias-state-warn-(?:label|primary)/,
+        `${selector} must use the host warning tokens`,
+      );
+    }
+  });
+});
