@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  # 由 release.yml 调用：Version Packages PR 是 github-actions[bot] 用 GITHUB_TOKEN 开的，
+  # 它产生的 pull_request 事件不会触发新工作流，所以那个 PR 上永远没有 CI 结果。
+  # 分支保护要求 CI 绿才能合并，于是 release.yml 用 workflow_dispatch 在这个分支上补跑一次，
+  # 让检查结果落到同一个 head commit 上。手动补跑也用这个入口：
+  #   gh workflow run ci.yml --ref changeset-release/main
+  workflow_dispatch:
 
 permissions:
   contents: read

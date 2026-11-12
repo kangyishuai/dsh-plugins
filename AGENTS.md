@@ -97,6 +97,8 @@ git clone https://github.com/kangyishuai/dsh-plugins-notes.git notes
 - **改插件代码不能直推 `main`**，开分支、提 PR；PR 标题符合 Conventional Commits（squash 后就是提交信息）
 - 并行任务（多个插件、多个 agent）**各用一个 worktree**：`pnpm wt <branch>`。不在别人的 worktree 里改文件；同一个插件同一时间只在一个分支上开发
 - 并行时的 GUI 验证用 `pnpm smoke:<plugin>`（临时 DSH 目录），不要往共用的 `desktop` profile 里装开发版
+- `main` 受分支保护：`verify (node 22.19)`、`verify (node 24)`、`runtime probe (DSH surface)`、`gitleaks (full history)` 四个检查绿了才能合并。检查没跑完不要催合并，也不要用 admin bypass 绕过
+- Version Packages PR（`changeset-release/main`）上不会有常规 CI——它由 `GITHUB_TOKEN` 创建，事件被 GitHub 抑制；`release.yml` 会用 `workflow_dispatch` 补跑。手工补跑：`gh workflow run ci.yml --ref changeset-release/main`
 - 收尾：PR 合并后 `pnpm wt rm <branch> --delete-branch`
 
 ## 提交约定
