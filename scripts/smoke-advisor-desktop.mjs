@@ -543,7 +543,8 @@ const GENERAL_TAB = `(() => {
 
 /** 设置卡：provider/model 下拉、错误横幅，以及文案断言要用的整段文本。 */
 const ADVISOR_CARD = `(() => {
-  const root = document.querySelector("[data-advisor-settings]");
+  const roots = [...document.querySelectorAll("[data-advisor-settings]")];
+  const root = roots[roots.length - 1] ?? null;
   if (root === null) return { found: false };
   const optionCount = (select) =>
     select === null ? null : [...select.options].filter((option) => (option.value || "") !== "").length;
@@ -553,6 +554,7 @@ const ADVISOR_CARD = `(() => {
   const confirm = root.querySelector("[data-advisor-confirm]");
   return {
     found: true,
+    count: roots.length,
     error: error === null ? null : (error.innerText || error.textContent || "").trim().slice(0, 240),
     text: (root.innerText || "").replace(/\\s+/gu, " ").trim().slice(0, 12000),
     providerOptions: optionCount(provider),
@@ -1171,6 +1173,7 @@ const main = async () => {
             settingsNames.fields,
             value?.found === true && missingFields.length === 0,
             JSON.stringify({
+              count: value?.count ?? null,
               seen: seenFields,
               missing: missingFields,
               helpButtons: value?.helpButtons ?? null,
