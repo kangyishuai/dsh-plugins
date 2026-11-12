@@ -39,6 +39,7 @@ import {
   settingsPath,
 } from "./settings.js";
 import { renderToolOutput, TOOL_NAME, TOOL_OUTPUT_SCHEMA, TOOL_PARAMETERS } from "./tool-schema.js";
+import { buildTracePreview } from "./trace.js";
 import { buildTranscript } from "./transcript.js";
 import { runEvidencePass } from "./twopass.js";
 
@@ -477,6 +478,9 @@ export class AdvisorService extends TypertRemoteService {
     });
     if (transcript.text.trim() === "") return skip("会话里还没有可发送的内容", "empty_transcript");
 
+    // 只存首尾预览；tracePrompt=off 时连预览都不落盘（requestChars 仍记）。
+    const trace = settings.tracePrompt === "preview" ? buildTracePreview(transcript.text) : null;
+
     const controller = new AbortController();
     if (sessionId !== "") this.inflight.set(sessionId, controller);
     const signal =
@@ -751,6 +755,12 @@ export class AdvisorService extends TypertRemoteService {
         usage: result.usage,
         trigger,
         requestChars: transcript.text.length,
+        ...(trace === null
+          ? {}
+          : {
+              requestPreview: trace.preview,
+              requestPreviewTruncated: trace.truncated,
+            }),
         anchors: result.anchors,
         ...(verification === null ? {} : { verification }),
       });
@@ -1528,6 +1538,8 @@ export class AdvisorService extends TypertRemoteService {
           at: Number(data?.at ?? 0) || 0,
           trigger: String(data?.trigger ?? ""),
           requestChars: Number(data?.requestChars ?? 0) || 0,
+          requestPreview: String(data?.requestPreview ?? ""),
+          requestPreviewTruncated: data?.requestPreviewTruncated === true,
           anchors: data?.anchors ?? null,
         })),
       };

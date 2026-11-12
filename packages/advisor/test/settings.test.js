@@ -77,6 +77,13 @@ test("计数字段仍然取整", () => {
   assert.equal(out.sessionCap, 3);
 });
 
+test("tracePrompt 默认首尾预览，非法值回落，off 保留", () => {
+  assert.equal(DEFAULT_SETTINGS.tracePrompt, "preview");
+  assert.equal(normalizeSettings({ tracePrompt: "off" }).tracePrompt, "off");
+  assert.equal(normalizeSettings({ tracePrompt: "preview" }).tracePrompt, "preview");
+  assert.equal(normalizeSettings({ tracePrompt: "whatever" }).tracePrompt, "preview");
+});
+
 test("mergeSettings 只覆盖 patch 里出现的键", () => {
   const base = normalizeSettings({ mode: "advisory", provider: "p", model: "m", maxTokens: 1024 });
   const next = mergeSettings(base, { maxTokens: 2048 });

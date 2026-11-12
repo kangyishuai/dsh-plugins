@@ -205,6 +205,16 @@
     "tail.trigger.shadow": "影子",
     "tail.trigger.manual": "手动",
     "tail.trigger.other": "其他",
-    "tail.trigger.postAnswer": "答后复查"
+    "tail.trigger.postAnswer": "答后复查",
+    "settings.tracePrompt": "记录发送内容",
+    "settings.tracePrompt.preview": "首尾预览",
+    "settings.tracePrompt.off": "不记录",
+    "settings.tracePrompt.hint": "在会话记录里保留本次实际发送文本的首尾各 2,000 字符（脱敏后）；关掉后只记元数据。发送前脱敏关闭时，预览也会包含原文。",
+    "settings.help.defaultPreview": "默认：首尾预览",
+    "tail.trace.preview": "查看发送内容",
+    "tail.trace.previewHide": "收起发送内容",
+    "tail.trace.previewTruncated": "实际发送（脱敏后，首尾各 2,000 字符；共 {chars} 字符）",
+    "tail.trace.previewFull": "实际发送（脱敏后，共 {chars} 字符）",
+    "tail.trace.previewNone": "这条记录没有保存发送内容（可能是旧记录，或已在高级设置里关闭记录）。"
   }
 }

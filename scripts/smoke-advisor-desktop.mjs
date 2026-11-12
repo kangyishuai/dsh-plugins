@@ -600,12 +600,18 @@ const EXPAND_DISCLOSURES = `(async () => {
   const toggleOf = (key) => root.querySelector('[data-advisor-disclosure-toggle="' + key + '"]');
   const opened = [];
   for (const key of ["advanced", "status"]) {
-    let toggle = toggleOf(key);
-    if (toggle !== null && toggle.getAttribute("aria-expanded") !== "true") toggle.click();
-    for (let attempt = 0; attempt < 12; attempt += 1) {
-      await sleep(100);
+    let toggle = null;
+    // 首次打开设置卡时宿主可能重挂组件：点一次没落住就等一拍再点，最多 4 轮。
+    for (let round = 0; round < 4; round += 1) {
       toggle = toggleOf(key);
+      if (toggle !== null && toggle.getAttribute("aria-expanded") !== "true") toggle.click();
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        await sleep(100);
+        toggle = toggleOf(key);
+        if (toggle !== null && toggle.getAttribute("aria-expanded") === "true") break;
+      }
       if (toggle !== null && toggle.getAttribute("aria-expanded") === "true") break;
+      await sleep(200);
     }
     opened.push({
       key,

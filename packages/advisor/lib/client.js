@@ -388,6 +388,9 @@ window.__ModuleLoader__.load({
       ".dsh-advisor-turn-body{display:flex;flex-direction:column;gap:3px;padding:4px 8px;border-left:2px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));}",
       ".dsh-advisor-turn-advice{white-space:pre-wrap;word-break:break-word;color:var(--dsw-alias-label-primary,CanvasText);}",
       ".dsh-advisor-turn-meta{font-size:11.5px;color:var(--dsw-alias-label-secondary,GrayText);word-break:break-word;}",
+      ".dsh-advisor-turn-preview{display:flex;flex-direction:column;gap:4px;}",
+      ".dsh-advisor-turn-preview-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;}",
+      ".dsh-advisor-turn-pre{margin:0;padding:8px 10px;max-height:260px;overflow:auto;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.28));border-radius:6px;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base,Canvas));font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-word;}",
       ".dsh-advisor-turn-warn{font-size:11.5px;color:var(--dsw-alias-state-warning-primary,#b7791f);word-break:break-word;}",
     ].join("\n");
 
@@ -612,6 +615,7 @@ window.__ModuleLoader__.load({
       workspaceMaxCostPerDayUsd: 0,
       postAnswer: "off",
       advisorTools: false,
+      tracePrompt: "preview",
       maxInputChars: 60000,
     };
 
@@ -659,6 +663,7 @@ window.__ModuleLoader__.load({
       "allowedModels",
       "postAnswer",
       "advisorTools",
+      "tracePrompt",
       "dedupe",
     ];
 
@@ -678,6 +683,9 @@ window.__ModuleLoader__.load({
 
     /** 回合结束后的自动徵询方式，与 settings.js 一致。 */
     let SETTINGS_POST_ANSWER = ["off", "card"];
+
+    /** 「记录发送内容」的取值，与 settings.js 一致。 */
+    let SETTINGS_TRACE_PROMPT = ["preview", "off"];
 
     /** 卡片读写的字段：保存时只 diff 这些键，绝不把整个设置对象发回去。 */
     let SETTINGS_EDITABLE_FIELDS = [
@@ -702,6 +710,7 @@ window.__ModuleLoader__.load({
       "maxInputChars",
       "postAnswer",
       "advisorTools",
+      "tracePrompt",
       "allowedModels",
     ];
 
@@ -804,6 +813,7 @@ window.__ModuleLoader__.load({
         temperature: null,
         postAnswer: input.postAnswer === "card" ? "card" : "off",
         advisorTools: input.advisorTools === true,
+        tracePrompt: input.tracePrompt === "off" ? "off" : "preview",
         allowedModels: normalizeStringList(input.allowedModels),
         confirmedHosts: normalizeStringList(input.confirmedHosts),
       };
@@ -1171,6 +1181,8 @@ window.__ModuleLoader__.load({
           at: countOf(item.at),
           trigger: asString(item.trigger).trim(),
           requestChars: countOf(item.requestChars),
+          requestPreview: asString(item.requestPreview),
+          requestPreviewTruncated: item.requestPreviewTruncated === true,
           anchors:
             anchorsRaw === null
               ? null
@@ -1382,6 +1394,9 @@ window.__ModuleLoader__.load({
       let expandedState = React.useState(false);
       let expanded = expandedState[0];
       let setExpanded = expandedState[1];
+      let previewState = React.useState(false);
+      let previewOpen = previewState[0];
+      let setPreviewOpen = previewState[1];
 
       // 一次拉全量并按 sessionId 缓存；props.turn 变化不重拉。失败静默（不 toast、不弹错）。
       React.useEffect(
@@ -1519,6 +1534,51 @@ window.__ModuleLoader__.load({
             "div",
             { className: "dsh-advisor-turn-meta", "data-advisor-trace": "", key: "trace" },
             `${t("tail.trace.label")}${t("tail.trace.sep")}${traceText}`,
+          ),
+        );
+      }
+      let requestPreview = asString(record.requestPreview);
+      if (requestPreview !== "") {
+        let previewChars = countOf(record.requestChars);
+        let previewNote =
+          record.requestPreviewTruncated === true
+            ? t("tail.trace.previewTruncated").replace("{chars}", formatCount(previewChars))
+            : t("tail.trace.previewFull").replace("{chars}", formatCount(previewChars));
+        bodyChildren.push(
+          h("div", { className: "dsh-advisor-turn-preview", key: "preview" }, [
+            h("div", { className: "dsh-advisor-turn-preview-row", key: "row" }, [
+              h("span", { className: "dsh-advisor-turn-meta", key: "note" }, previewNote),
+              h(
+                "button",
+                {
+                  className: "dsh-advisor-btn",
+                  "data-advisor-preview-toggle": "",
+                  key: "toggle",
+                  onClick: function togglePreview() {
+                    setPreviewOpen(function flip(/** @type {boolean} */ prev) {
+                      return !prev;
+                    });
+                  },
+                  type: "button",
+                },
+                previewOpen ? t("tail.trace.previewHide") : t("tail.trace.preview"),
+              ),
+            ]),
+            previewOpen
+              ? h(
+                  "pre",
+                  { className: "dsh-advisor-turn-pre", "data-advisor-preview": "", key: "pre" },
+                  requestPreview,
+                )
+              : null,
+          ]),
+        );
+      } else if (countOf(record.requestChars) > 0) {
+        bodyChildren.push(
+          h(
+            "div",
+            { className: "dsh-advisor-turn-meta", key: "previewNone" },
+            t("tail.trace.previewNone"),
           ),
         );
       }
@@ -2246,6 +2306,16 @@ window.__ModuleLoader__.load({
         setDraft(
           Object.assign({}, draft, {
             postAnswer: SETTINGS_POST_ANSWER.indexOf(value) >= 0 ? value : "off",
+          }),
+        );
+      }
+
+      /** @param {string} value */
+      function chooseTracePrompt(value) {
+        if (!draft) return;
+        setDraft(
+          Object.assign({}, draft, {
+            tracePrompt: SETTINGS_TRACE_PROMPT.indexOf(value) >= 0 ? value : "preview",
           }),
         );
       }
@@ -3148,6 +3218,18 @@ window.__ModuleLoader__.load({
               help: t("settings.privacy.dedupeHint"),
               meta: t("settings.help.defaultOn"),
             }),
+            selectField(
+              "tracePrompt",
+              "settings.tracePrompt",
+              SETTINGS_TRACE_PROMPT,
+              "settings.tracePrompt.",
+              draft.tracePrompt,
+              chooseTracePrompt,
+              {
+                help: t("settings.tracePrompt.hint"),
+                meta: t("settings.help.defaultPreview"),
+              },
+            ),
           ],
           "delivery",
         ),
@@ -3438,6 +3520,18 @@ window.__ModuleLoader__.load({
           "settings.confirm.done": "已确认 {provider}",
           "settings.error.preview": "预览失败，稍后重试",
           "settings.error.confirm": "确认失败，稍后重试",
+          "settings.tracePrompt": "记录发送内容",
+          "settings.tracePrompt.preview": "首尾预览",
+          "settings.tracePrompt.off": "不记录",
+          "settings.tracePrompt.hint":
+            "在会话记录里保留本次实际发送文本的首尾各 2,000 字符（脱敏后）；关掉后只记元数据。发送前脱敏关闭时，预览也会包含原文。",
+          "settings.help.defaultPreview": "默认：首尾预览",
+          "tail.trace.preview": "查看发送内容",
+          "tail.trace.previewHide": "收起发送内容",
+          "tail.trace.previewTruncated": "实际发送（脱敏后，首尾各 2,000 字符；共 {chars} 字符）",
+          "tail.trace.previewFull": "实际发送（脱敏后，共 {chars} 字符）",
+          "tail.trace.previewNone":
+            "这条记录没有保存发送内容（可能是旧记录，或已在高级设置里关闭记录）。",
           "settings.desc": "基础设置开箱即用；高级项默认折叠。保存后的改动对下一次徵询生效。",
           "settings.group.basic": "基础设置",
           "settings.group.budget": "预算与限额",
@@ -3556,6 +3650,18 @@ window.__ModuleLoader__.load({
           "settings.confirm.done": "Confirmed {provider}",
           "settings.error.preview": "Preview failed — try again later",
           "settings.error.confirm": "Confirmation failed — try again later",
+          "settings.tracePrompt": "Keep sent content",
+          "settings.tracePrompt.preview": "Head/tail preview",
+          "settings.tracePrompt.off": "Do not record",
+          "settings.tracePrompt.hint":
+            "Stores the first and last 2,000 characters of the text actually sent (after redaction) in the session record; off stores metadata only. If redaction is off, the preview contains raw text.",
+          "settings.help.defaultPreview": "Default: head/tail preview",
+          "tail.trace.preview": "View sent content",
+          "tail.trace.previewHide": "Hide sent content",
+          "tail.trace.previewTruncated": "Sent (redacted; first/last 2,000 of {chars} chars)",
+          "tail.trace.previewFull": "Sent (redacted; {chars} chars)",
+          "tail.trace.previewNone":
+            "No sent content saved for this record (older record, or disabled in Advanced).",
           "settings.desc":
             "The basics work out of the box; advanced knobs stay folded. Saved changes apply to the next consultation.",
           "settings.group.basic": "Basics",

@@ -205,6 +205,16 @@
     "tail.trigger.shadow": "shadow",
     "tail.trigger.manual": "manual",
     "tail.trigger.other": "other",
-    "tail.trigger.postAnswer": "post-answer"
+    "tail.trigger.postAnswer": "post-answer",
+    "settings.tracePrompt": "Keep sent content",
+    "settings.tracePrompt.preview": "Head/tail preview",
+    "settings.tracePrompt.off": "Do not record",
+    "settings.tracePrompt.hint": "Stores the first and last 2,000 characters of the text actually sent (after redaction) in the session record; off stores metadata only. If redaction is off, the preview contains raw text.",
+    "settings.help.defaultPreview": "Default: head/tail preview",
+    "tail.trace.preview": "View sent content",
+    "tail.trace.previewHide": "Hide sent content",
+    "tail.trace.previewTruncated": "Sent (redacted; first/last 2,000 of {chars} chars)",
+    "tail.trace.previewFull": "Sent (redacted; {chars} chars)",
+    "tail.trace.previewNone": "No sent content saved for this record (older record, or disabled in Advanced)."
   }
 }
