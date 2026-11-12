@@ -6,6 +6,8 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { toUsd } from "./money.js";
+
 /** 预算池文件名（位于数据根下的 advisor/ 目录）。 */
 export const BUDGET_FILE = "budget.json";
 
@@ -40,7 +42,7 @@ export function normalizePool(raw, today) {
 /**
  * 池子是否还能容纳一次调用。
  * @param {{ calls: number, costUsd: number }} pool
- * @param {{ workspaceMaxCallsPerDay: number, workspaceMaxCostPerDayUsd: number }} settings
+ * @param {{ workspaceMaxCallsPerDay: number, workspaceMaxCostPerDay: number, currency?: string, usdToCny?: number }} settings
  * @param {number} [estimatedCostUsd]
  * @returns {{ ok: true } | { ok: false, code: "workspace_calls"|"workspace_budget", used: number, limit: number }}
  */
@@ -49,9 +51,13 @@ export function checkPool(pool, settings, estimatedCostUsd = 0) {
   if (maxCalls > 0 && pool.calls >= maxCalls) {
     return { ok: false, code: "workspace_calls", used: pool.calls, limit: maxCalls };
   }
-  const maxCost = Number(settings?.workspaceMaxCostPerDayUsd ?? 0) || 0;
-  if (maxCost > 0 && pool.costUsd + estimatedCostUsd >= maxCost) {
-    return { ok: false, code: "workspace_budget", used: pool.costUsd, limit: maxCost };
+  const maxCostUsd = toUsd(
+    settings?.workspaceMaxCostPerDay,
+    settings?.currency,
+    settings?.usdToCny,
+  );
+  if (maxCostUsd > 0 && pool.costUsd + estimatedCostUsd >= maxCostUsd) {
+    return { ok: false, code: "workspace_budget", used: pool.costUsd, limit: maxCostUsd };
   }
   return { ok: true };
 }

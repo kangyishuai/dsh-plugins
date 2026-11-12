@@ -46,26 +46,26 @@ test("normalizeSettings 丢弃未知键、夹紧数字、过滤非法模式", ()
 
 test("金额字段保留小数，不再按整数取整", () => {
   const out = normalizeSettings({
-    maxCostPerDayUsd: 0.5,
-    workspaceMaxCostPerDayUsd: 1.25,
+    maxCostPerDay: 0.5,
+    workspaceMaxCostPerDay: 1.25,
     priceInputPerMTok: 0.15,
     priceOutputPerMTok: 0.075,
   });
-  assert.equal(out.maxCostPerDayUsd, 0.5);
-  assert.equal(out.workspaceMaxCostPerDayUsd, 1.25);
+  assert.equal(out.maxCostPerDay, 0.5);
+  assert.equal(out.workspaceMaxCostPerDay, 1.25);
   assert.equal(out.priceInputPerMTok, 0.15);
   assert.equal(out.priceOutputPerMTok, 0.075);
 });
 
 test("金额字段按精度收口并夹紧区间", () => {
   const out = normalizeSettings({
-    maxCostPerDayUsd: 1.239,
-    workspaceMaxCostPerDayUsd: -1,
+    maxCostPerDay: 1.239,
+    workspaceMaxCostPerDay: -1,
     priceInputPerMTok: 0.123456,
     priceOutputPerMTok: 99999,
   });
-  assert.equal(out.maxCostPerDayUsd, 1.24, "预算保留 2 位小数");
-  assert.equal(out.workspaceMaxCostPerDayUsd, 0, "负数夹到 0");
+  assert.equal(out.maxCostPerDay, 1.24, "预算保留 2 位小数");
+  assert.equal(out.workspaceMaxCostPerDay, 0, "负数夹到 0");
   assert.equal(out.priceInputPerMTok, 0.1235, "单价保留 4 位小数");
   assert.equal(out.priceOutputPerMTok, 1000, "超出上限夹到 1000");
 });
@@ -75,6 +75,26 @@ test("计数字段仍然取整", () => {
   assert.equal(out.maxCallsPerTurn, 2);
   assert.equal(out.maxTokens, 4097);
   assert.equal(out.sessionCap, 3);
+});
+
+test("默认币种 USD、汇率 7.2，旧 *Usd 键按 USD 迁移", () => {
+  assert.equal(DEFAULT_SETTINGS.currency, "USD");
+  assert.equal(DEFAULT_SETTINGS.usdToCny, 7.2);
+  const usd = normalizeSettings({ maxCostPerDayUsd: 10, workspaceMaxCostPerDayUsd: 20 });
+  assert.equal(usd.currency, "USD");
+  assert.equal(usd.maxCostPerDay, 10);
+  assert.equal(usd.workspaceMaxCostPerDay, 20);
+  const cny = normalizeSettings({ currency: "CNY", usdToCny: 7.2, maxCostPerDayUsd: 10 });
+  assert.equal(cny.currency, "CNY");
+  assert.equal(cny.maxCostPerDay, 72, "10 USD 按 7.2 迁成 72 CNY");
+});
+
+test("currency / usdToCny 归一化", () => {
+  assert.equal(normalizeSettings({ currency: "CNY" }).currency, "CNY");
+  assert.equal(normalizeSettings({ currency: "EUR" }).currency, "USD");
+  assert.equal(normalizeSettings({ usdToCny: 0 }).usdToCny, 7.2);
+  assert.equal(normalizeSettings({ usdToCny: 20 }).usdToCny, 20);
+  assert.equal(normalizeSettings({ usdToCny: 1000 }).usdToCny, 100);
 });
 
 test("tracePrompt 默认首尾预览，非法值回落，off 保留", () => {

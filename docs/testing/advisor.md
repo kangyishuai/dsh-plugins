@@ -209,6 +209,7 @@ pnpm smoke:advisor-desktop --require --advice
 5. `workspaceMaxCallsPerDay` 到顶后，任何会话的徵询都返回 `workspace_calls`（跨会话共享）。
 6. 有顾问记录的回合，展开回合尾部顾问线应看到 `本次徵询：<触发方式> · <HH:mm> · <model> · <字符数> · <in/out/耗时/≈$>`；旧记录没有 `requestChars` 时缺字符数，但其余已有字段仍应显示。
 7. `tracePrompt: preview` 时，展开顾问线点「查看发送内容」应看到本次实际发送文本的首尾片段（中间有省略标记）；`tracePrompt: off` 时同一位置显示「这条记录没有保存发送内容」。预览是脱敏后的文本，关闭 `redact` 时则是原文片段。
+8. 币种：切到人民币、汇率 7.2，保存后每日预算填 7.2 元；`/advisor preview` 的单价/预算显示 `¥`，预算闸按 7.2 CNY = 1 USD 比较；切回 USD 时金额按汇率折回，真实价值不变。旧 `maxCostPerDayUsd` 文件应自动迁移成 `maxCostPerDay`（USD）。
 
 ## 3.8 P3 真机结果（2026-11-12）
 

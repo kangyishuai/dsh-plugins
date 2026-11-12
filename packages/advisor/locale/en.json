@@ -73,9 +73,7 @@
     "settings.budget.maxCallsPerTurn": "Calls per turn",
     "settings.budget.maxCallsPerSession": "Calls per session",
     "settings.budget.maxCallsPerHour": "Calls per hour",
-    "settings.budget.maxCostPerDayUsd": "Daily budget",
     "settings.budget.workspaceMaxCallsPerDay": "Workspace calls per day",
-    "settings.budget.workspaceMaxCostPerDayUsd": "Workspace daily budget",
     "settings.budget.priceInputPerMTok": "Input price",
     "settings.budget.priceOutputPerMTok": "Output price",
     "settings.budget.range": "default {default} · range {min}–{max}",
@@ -177,7 +175,7 @@
     "settings.group.delivery": "Delivery & behavior",
     "settings.group.more": "More",
     "settings.group.status": "Status & diagnostics",
-    "settings.basic.budgetHint": "0 = unlimited; default 0, range 0–10000. Finer limits are under Advanced.",
+    "settings.basic.budgetHint": "0 = unlimited; default 0, range 0–10000 in the selected currency. Switching currency converts at the rate; finer limits are under Advanced.",
     "settings.budget.maxCostHint": "Maximum spend per day; 0 = unlimited. Only counted when prices are set.",
     "settings.advanced.maxTokensHint": "Maximum output tokens per answer; higher costs more.",
     "settings.advanced.maxInputCharsHint": "Maximum characters of conversation sent per call; excess in the middle is elided, head and tail kept.",
@@ -215,6 +213,18 @@
     "tail.trace.previewHide": "Hide sent content",
     "tail.trace.previewTruncated": "Sent (redacted; first/last 2,000 of {chars} chars)",
     "tail.trace.previewFull": "Sent (redacted; {chars} chars)",
-    "tail.trace.previewNone": "No sent content saved for this record (older record, or disabled in Advanced)."
+    "tail.trace.previewNone": "No sent content saved for this record (older record, or disabled in Advanced).",
+    "settings.currency": "Currency",
+    "settings.currency.USD": "US dollars (USD)",
+    "settings.currency.CNY": "Chinese yuan (CNY)",
+    "settings.currencyHint": "Amounts and prices are entered in this currency; switching converts them at the configured rate so the real value stays the same.",
+    "settings.currency.converted": "Converted amounts at 1 USD = {rate} CNY (not saved yet).",
+    "settings.usdToCny": "CNY per USD",
+    "settings.usdToCnyHint": "1 USD = ? CNY; only used when the currency is CNY. The plugin never fetches rates; maintain it manually.",
+    "settings.unit.cny": "CNY",
+    "settings.unit.cnyPerMTok": "CNY / 1M tokens",
+    "settings.budget.maxCostPerDay": "Daily budget",
+    "settings.budget.workspaceMaxCostPerDay": "Workspace daily budget",
+    "settings.unit.cnyPerUsd": "CNY / USD"
   }
 }

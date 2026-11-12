@@ -1148,9 +1148,11 @@ const main = async () => {
           // 新增字段的文案从仓库 locale 读（中文 + 英文都认），避免脚本与文案漂移。
           const fieldLabels = await readLocaleText([
             "settings.budget.workspaceMaxCallsPerDay",
-            "settings.budget.workspaceMaxCostPerDayUsd",
+            "settings.budget.workspaceMaxCostPerDay",
+            "settings.currency",
             "settings.preview.run",
             "settings.advanced.allowedModels",
+            "settings.tracePrompt",
           ]);
           const cardText = typeof value?.text === "string" ? value.text : "";
           /** @type {{key: string, candidates: string[]}[]} */

@@ -29,6 +29,7 @@ import {
   rememberFingerprint,
 } from "./guard.js";
 import { createLedger } from "./ledger.js";
+import { formatMoney, fromUsd } from "./money.js";
 import { parseAdvice, summarizeAdvice, TOOL_DESCRIPTION } from "./prompt.js";
 import { pairingCheck, resolveRoute } from "./route.js";
 import {
@@ -430,7 +431,15 @@ export class AdvisorService extends TypertRemoteService {
         turn_limit: `本回合已达上限（${budget.used}/${budget.limit}）`,
         session_limit: `本会话已达上限（${budget.used}/${budget.limit}）`,
         hour_limit: `本小时已达上限（${budget.used}/${budget.limit}）`,
-        day_budget: `今日预算已用完（$${budget.used.toFixed(4)}/$${budget.limit}）`,
+        day_budget: `今日预算已用完（${formatMoney(
+          fromUsd(budget.used, settings.currency, settings.usdToCny),
+          settings.currency,
+          4,
+        )}/${formatMoney(
+          fromUsd(budget.limit, settings.currency, settings.usdToCny),
+          settings.currency,
+          2,
+        )}）`,
       };
       const reason = reasons[budget.code] ?? "预算不足";
       if (sessionId !== "") this.lastSkip.set(sessionId, reason);
@@ -454,7 +463,15 @@ export class AdvisorService extends TypertRemoteService {
       const reason =
         poolCheck.code === "workspace_calls"
           ? `工作区今日调用已达上限（${poolCheck.used}/${poolCheck.limit}）`
-          : `工作区今日预算已用完（$${poolCheck.used.toFixed(4)}/$${poolCheck.limit}）`;
+          : `工作区今日预算已用完（${formatMoney(
+              fromUsd(poolCheck.used, settings.currency, settings.usdToCny),
+              settings.currency,
+              4,
+            )}/${formatMoney(
+              fromUsd(poolCheck.limit, settings.currency, settings.usdToCny),
+              settings.currency,
+              2,
+            )}）`;
       if (sessionId !== "") this.lastSkip.set(sessionId, reason);
       this.counters.skipped += 1;
       return {
@@ -528,7 +545,15 @@ export class AdvisorService extends TypertRemoteService {
         : 0;
 
     const usageLine = call.ok
-      ? `${formatTokens(call.usage?.inputTokens ?? 0)} in / ${formatTokens(call.usage?.outputTokens ?? 0)} out / ${formatMs(call.ms)}${costUsd > 0 ? ` / ≈$${costUsd.toFixed(4)}` : ""}`
+      ? `${formatTokens(call.usage?.inputTokens ?? 0)} in / ${formatTokens(call.usage?.outputTokens ?? 0)} out / ${formatMs(call.ms)}${
+          costUsd > 0
+            ? ` / ≈${formatMoney(
+                fromUsd(costUsd, settings.currency, settings.usdToCny),
+                settings.currency,
+                4,
+              )}`
+            : ""
+        }`
       : `${formatMs(Date.now() - started)}`;
 
     const baseResult = {
@@ -1113,7 +1138,20 @@ export class AdvisorService extends TypertRemoteService {
       `脱敏命中：${transcript.stats.redactions.length === 0 ? "无" : transcript.stats.redactions.join(" / ")}`,
       `白名单：${allow.reason}`,
       `跨 provider：${crossProvider ? `是（需确认${confirmed ? "，已确认" : "，尚未确认 → /advisor confirm"}）` : "否"}`,
-      `单价：${price.source === "none" ? "未配置（只记 token）" : `输入 $${price.input}/M · 输出 $${price.output}/M（${price.source === "builtin" ? "内置参考价" : "用户设置"}）`}`,
+      `币种：${settings.currency}${settings.currency === "CNY" ? `（1 USD = ${settings.usdToCny} CNY）` : ""}`,
+      `单价：${
+        price.source === "none"
+          ? "未配置（只记 token）"
+          : `输入 ${formatMoney(
+              fromUsd(price.input, settings.currency, settings.usdToCny),
+              settings.currency,
+              2,
+            )}/M · 输出 ${formatMoney(
+              fromUsd(price.output, settings.currency, settings.usdToCny),
+              settings.currency,
+              2,
+            )}/M（${price.source === "builtin" ? "内置参考价（USD 折算）" : "用户设置"}）`
+      }`,
       `工作区今日：${pool.calls} 次（上限 ${settings.workspaceMaxCallsPerDay || "∞"}）`,
       ``,
       `—— 正文前 400 字符 ——`,
@@ -1362,7 +1400,9 @@ export class AdvisorService extends TypertRemoteService {
           maxCallsPerTurn: settings.maxCallsPerTurn,
           maxCallsPerSession: settings.maxCallsPerSession,
           maxCallsPerHour: settings.maxCallsPerHour,
-          maxCostPerDayUsd: settings.maxCostPerDayUsd,
+          maxCostPerDay: settings.maxCostPerDay,
+          currency: settings.currency,
+          usdToCny: settings.usdToCny,
         },
         totals,
         last: this.lastResult,
@@ -1695,7 +1735,19 @@ export class AdvisorService extends TypertRemoteService {
           : {
               id: "budget",
               status: "warn",
-              message: `预算受限：${budget.code}（${budget.used}/${budget.limit}）`,
+              message: `预算受限：${budget.code}（${
+                budget.code === "day_budget"
+                  ? `${formatMoney(
+                      fromUsd(budget.used, settings.currency, settings.usdToCny),
+                      settings.currency,
+                      4,
+                    )}/${formatMoney(
+                      fromUsd(budget.limit, settings.currency, settings.usdToCny),
+                      settings.currency,
+                      2,
+                    )}`
+                  : `${budget.used}/${budget.limit}`
+              }）`,
             },
       );
     }
