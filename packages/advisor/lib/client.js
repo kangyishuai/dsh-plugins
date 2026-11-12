@@ -1756,10 +1756,6 @@ window.__ModuleLoader__.load({
               setDoctor(null);
               setPreviewText("");
               setPreviewOpen(false);
-              setAdvancedOpen(false);
-              setStatusOpen(false);
-              setOffExpanded(false);
-              setOpenHelp("");
               setLoad("ready");
               if (data.settings.provider !== "") {
                 loadModelsFor(data.settings.provider);
