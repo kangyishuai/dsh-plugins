@@ -673,6 +673,52 @@ const main = async () => {
       confirm?.resend?.present === true && confirm.resend.checked === false,
       JSON.stringify(confirm?.resend ?? null),
     );
+    // 主按钮的底色与文字必须成对翻转：--dsw-alias-brand-primary 是「反色表面色」
+    // （浅色 #0f1115、深色 #f9fafb），0.6.1 把它和死白 #fff 配在一起，深色主题下确认按钮
+    // 变成白底白字（1.05:1），肉眼看不到文字。这里在**真实渲染进程**里按 WCAG 算一次对比度。
+    const primaryContrast = await cdp.evaluate(`(() => {
+      const dlg = ${DIALOG};
+      const btn = dlg && dlg.querySelector(".dsh-srw-btn-primary");
+      if (!btn) return null;
+      const parse = (value) => {
+        const nums = String(value || "").match(/[\\d.]+/g);
+        return nums ? nums.slice(0, 4).map(Number) : null;
+      };
+      const style = getComputedStyle(btn);
+      const background = parse(style.backgroundColor);
+      const foreground = parse(style.color);
+      if (!background || !foreground || background.length < 3 || foreground.length < 3) return null;
+      const panel = parse(getComputedStyle(dlg).backgroundColor);
+      const opaque = (rgb) => {
+        const alpha = rgb.length === 4 ? rgb[3] : 1;
+        if (alpha >= 1 || !panel) return rgb.slice(0, 3);
+        return [0, 1, 2].map((i) => Math.round(rgb[i] * alpha + panel[i] * (1 - alpha)));
+      };
+      const luminance = (rgb) => {
+        const [r, g, b] = rgb.map((raw) => {
+          const c = raw / 255;
+          return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+        });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const fill = luminance(opaque(background));
+      const text = luminance(foreground.slice(0, 3));
+      const ratio = (Math.max(fill, text) + 0.05) / (Math.min(fill, text) + 0.05);
+      return {
+        ratio: Math.round(ratio * 100) / 100,
+        color: style.color,
+        background: style.backgroundColor,
+        label: (btn.textContent || "").trim(),
+      };
+    })()`);
+    check(
+      "确认按钮文字与底色对比度 ≥ 4.5:1（深色主题曾为 1.05:1）",
+      typeof primaryContrast?.ratio === "number" && primaryContrast.ratio >= 4.5,
+      primaryContrast
+        ? `${primaryContrast.ratio}:1 — "${primaryContrast.label}" ${primaryContrast.color} on ${primaryContrast.background}`
+        : "确认框里没有 .dsh-srw-btn-primary",
+    );
+    await cdp.screenshot(join(SHOTS, "02b-confirm.png"));
     // 从候选列表进的确认框，取消会**退回候选列表**（方便换一条），不是直接关闭——
     // 这是设计而非 bug，所以先断言这一步，再关掉列表。
     const cancelled = await clickDialogButton(cdp, ["取消", "Cancel"]);
