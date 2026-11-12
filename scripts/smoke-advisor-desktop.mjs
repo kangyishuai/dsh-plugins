@@ -1149,6 +1149,8 @@ const main = async () => {
           const fieldLabels = await readLocaleText([
             "settings.budget.workspaceMaxCallsPerDay",
             "settings.budget.workspaceMaxCostPerDay",
+            "settings.budget.priceCacheReadPerMTok",
+            "settings.budget.priceCacheWritePerMTok",
             "settings.currency",
             "settings.preview.run",
             "settings.advanced.allowedModels",
