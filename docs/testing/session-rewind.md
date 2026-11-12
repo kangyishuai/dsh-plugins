@@ -55,7 +55,7 @@ pnpm gate session-rewind --deep --workspace ~/Workspace/dsh-rewind-ui-smoke
 
 按「便宜的先跑」排序，任何一步失败立刻停并给出下一步提示：
 
-1. `pnpm verify`（lint + 类型 + 规范 + 公开边界 + 205 单测）
+1. `pnpm verify`（lint + 类型 + 规范 + 公开边界 + 208 单测）
 2. `pnpm probe:runtime`（宿主包/API/slot/私有 seam，50 项）
 3. `pnpm smoke:session-rewind`（临时 DSH_HOME 的 web 端到端，49 项）
 4. 桌面只读回归（24 项，**永远带 `--require`**：没开调试端口就是失败，不是跳过）
