@@ -1,5 +1,11 @@
 # @kangyishuai/dsh-session-delete
 
+## 0.4.8
+
+### Patch Changes
+
+- [#68](https://github.com/kangyishuai/dsh-plugins/pull/68) [`0fd4faa`](https://github.com/kangyishuai/dsh-plugins/commit/0fd4faa2c8ed893961d9b4bffac29ba0efd5ba5d) Thanks [@kangyishuai](https://github.com/kangyishuai)! - macOS：自绘确认框 fallback 的遮罩声明 `data-window-drag-exclude`，覆盖页头时拖动不会再拖走整个 DSH 窗口。
+
 ## 0.4.7
 
 ### Patch Changes
