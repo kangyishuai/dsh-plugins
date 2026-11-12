@@ -64,6 +64,7 @@ packages/<name>/
 - **client 半**是 classic script，**不能用 `import`**，宿主模块通过 factory 的 `require()` 获取。所有副作用都写在 factory 里面。
 - 所有文件头加 `// @ts-check`，用 JSDoc 写类型。宿主的类型在 [`types/`](../types/) 里手写维护，只声明已经验证过的成员。
 - **路径必须可注入**：不要在模块顶层写死 `~/.dsh`。从 `ctx`、配置或参数里拿到数据根目录，这样测试可以在临时目录里跑。
+- **样式只用宿主真实存在的主题 token**，且前景色要与底色成对取自 token，不能写死颜色。写错 token 名 CSS 不会报错，只会静默落到 `var()` 的兜底参数、永远不跟随主题；把 `#fff` 写死当前景，遇上随主题翻转的底色就会糊。`pnpm check` 会用 [`scripts/lib/host-theme-tokens.json`](../scripts/lib/host-theme-tokens.json) 拦截这两种情况（token 清单与配对表见 [runtime §6.1](runtime/0.2.2-rc.2.md#61-主题-token-清单)，DSH 升级后用 `pnpm tokens:host` 更新）。
 - 破坏性操作遵循 [ADR 0002](adr/0002-destructive-operations.md)：默认移入回收站、必须有确认框、支持 dry-run、写审计日志。
 
 ---
