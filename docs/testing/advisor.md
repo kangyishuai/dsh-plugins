@@ -42,24 +42,70 @@ DSH_HOME=$H dsh --profile ad --port 0 --no-open
 
 ## 0.5 本次核查记录（2026-11-11，DSH 0.2.2-rc.1）
 
-| 层                                         | 结果                                                                                                                                                                                                      |
-| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `node --test`（`packages/advisor`）        | **81 pass / 0 fail**（settings / route / guard / prompt / redact / tool-schema / transcript / anchors / adoption / catalog / budget / verifier / twopass / locale-parity）                                |
-| `pnpm probe:runtime`                       | **67/67 PASS**（含 advisor 的 7 条 seam：`resolveModelInfo` / `prepareCall+configure` / `UNSUPPORTED_REASONING_EFFORT` / usage 分片 / `commands.register` / `commandUi.decorate` / `popupSelect`）        |
-| `pnpm smoke:advisor-desktop --require`     | **18 PASS + 1 SKIP（19 项；P3 版脚本，真机 DSH 桌面版 0.2.2-rc.1）**：插件加载、选择器、设置卡（含 P3 字段）、分页 `status`/`doctor`（读会话日志）、收尾清理。`--advice` 再加 4 项共 23 项。P1 时为 12/12 |
-| 真机徵询（`pnpm pack` → `add` → 手动徵询） | **未做**（P1 收尾的验收项，步骤见 [§4](#4-手工-gui-验证步骤)）                                                                                                                                            |
+| 层                                         | 结果                                                                                                                                                                                                                  |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `node --test`（`packages/advisor`）        | **81 pass / 0 fail**（settings / route / guard / prompt / redact / tool-schema / transcript / anchors / adoption / catalog / budget / verifier / twopass / locale-parity）                                            |
+| `pnpm probe:runtime`                       | **67/67 PASS**（含 advisor 的 7 条 seam：`resolveModelInfo` / `prepareCall+configure` / `UNSUPPORTED_REASONING_EFFORT` / usage 分片 / `commands.register` / `commandUi.decorate` / `popupSelect`）                    |
+| `pnpm smoke:advisor-desktop --require`     | **19 PASS + 1 SKIP（20 项；真机 DSH 桌面版 0.2.2-rc.2，冷启动实测）**：插件加载、选择器、设置卡（含「读到的是展开后快照」这条回归断言）、分页 `status`/`doctor`（读会话日志）、收尾清理。`--advice` 再加 4 项共 24 项 |
+| 真机徵询（`pnpm pack` → `add` → 手动徵询） | **未做**（P1 收尾的验收项，步骤见 [§4](#4-手工-gui-验证步骤)）                                                                                                                                                        |
 
 单测与 seam 数字都会随实现增长，上面只是本次核对时的快照。
 
-> **桌面脚本的坑（2026-11-12 修）**：那 2 条「设置卡新增字段 / 确认跨 provider 发送」断言曾长期失败，
-> 根因不在插件而在脚本读错了快照。`cdp.evaluate()` 返回的是脚本里那个**原始对象**，不是 `waitFor()` 的
-> `{ ok, value }` 包装；脚本却写成 `expandedCard?.value ?? card.value`，前者恒为 `undefined`，于是断言
-> 永远拿的是**展开高级区之前**那张紧凑卡片的文本（`helpButtons: 0`、字段全缺）。
-> 它偶尔「自己好了」是因为折叠状态存在模块级缓存 `settingsUiState` 里，上一次跑展开过就一直是展开的。
-> 修法：展开后改用 `waitFor(cdp, ADVISOR_CARD, (v) => v?.advancedExpanded === "true")` 重新读。
-> 顺带把 `CONFIGURE_CARD` / `EXPAND_DISCLOSURES` / 截图前的 `scrollIntoView` 统一到同一个取节点方式
-> （`[data-advisor-settings]` 出现多个时取**最后一个**），避免「点的」和「读的」不是同一个节点。
-> 复验方式：**刷新页面清掉内存里的折叠状态**再跑，否则缓存会掩盖问题。
+### 过期快照陷阱（桌面脚本，2026-11-12 定位并修复）
+
+「设置卡新增字段」「确认跨 provider 发送」这 2 条断言曾**长期失败**，但**不是插件的 bug**，而是脚本
+读到的是一份**过期快照**。这段记下来，因为它的表现（稳定失败 / 偶尔自愈）非常容易让人误判为被测代码有问题。
+
+**根因**：`cdp.evaluate(expr)` 返回的是 `expr` 的求值结果本身；只有 `waitFor(cdp, expr, ...)` 才返回
+`{ ok, value, error }` 包装。脚本把两者混用了：
+
+```js
+const card = await waitFor(cdp, ADVISOR_CARD, ...);      // card.value = 展开**前**的紧凑卡
+await cdp.evaluate(CONFIGURE_CARD);
+await cdp.evaluate(EXPAND_DISCLOSURES);
+const expandedCard = await cdp.evaluate(ADVISOR_CARD);   // 裸对象，没有 .value
+const value = expandedCard?.value ?? card.value ?? null; // 前者恒为 undefined → 永远用旧快照
+```
+
+于是判断「设置卡里有没有这些字段」时，拿到的是**展开高级区之前**那张紧凑卡的文本：
+`helpButtons: 0`、只有「币种」一条命中、其余 7 个字段全报缺失。
+
+**为什么它看起来像 flaky**：折叠状态存在插件模块级缓存 `settingsUiState` 里。只要此前任何一次跑把
+高级区展开过，之后同一次页面会话里的每次运行都是展开的，问题就被缓存盖住；只有**冷启动**（刷新页面）
+才会稳定复现。
+
+**修法**（脚本侧，两处）：
+
+1. 展开后用 `waitFor` 重新读，并且等到真的展开：
+   `waitFor(cdp, ADVISOR_CARD, (v) => v?.advancedExpanded === "true")`，取 `expandedCard.value`；
+2. 取节点方式统一：`CONFIGURE_CARD` / `EXPAND_DISCLOSURES` / 截图前的 `scrollIntoView` 原来用
+   `querySelector`（第一个），`ADVISOR_CARD` 用最后一个；`[data-advisor-settings]` 出现多个时统一取
+   **最后一个**（`CARD_ROOT`），避免「点的」和「读的」不是同一个节点。
+
+**回归断言**：脚本里新增一条
+`设置卡高级区已展开（断言读到的是展开后的快照，不是紧凑卡）`，同时要求
+`expandedCard.ok === true`、`advancedExpanded === "true"`、`helpButtons > 0`。
+它守的就是上面那个坑——谁把读法改回 `expandedCard?.value` 的裸对象，这条会**直接红**，
+而不是让后面两条字段断言莫名其妙地失败。
+
+**排查这类问题的顺序**（这次走过的弯路，两个假说都被证伪）：
+
+| 假说                                                           | 结论                                                      |
+| -------------------------------------------------------------- | --------------------------------------------------------- |
+| 设置页里有多个 `[data-advisor-settings]`，点的和读的不是同一个 | 当前实测 `cardCount: 1`，不是主因（仍做了统一，属防御）   |
+| 桌面装的是旧构建，字段还没发布                                 | 已装构建与分支文件 md5 一致、字段文案 grep 得到，排除     |
+| **脚本读的是过期快照**                                         | ✅ 往脚本注入一次 DEBUG，把断言实际拿到的对象打出来即定位 |
+
+**复验方式（关键）**：改这个脚本后必须**刷新页面再跑**，清掉 `settingsUiState` 缓存，否则缓存会掩盖问题：
+
+```bash
+# 1) 刷新渲染进程（清缓存）。用 CDP 的 Page.reload，或直接在桌面版里按 Cmd+R
+# 2) 切到一个空闲会话（脚本不在正在跑回合的会话上敲键盘）
+# 3) 再跑
+pnpm smoke:advisor-desktop --require
+```
+
+改完实测：冷启动后 **19 PASS + 1 SKIP**（原 18 PASS + 1 SKIP，新增的正是这条回归断言）。
 
 
 ## 1. 单测（每次提交）
@@ -132,7 +178,7 @@ pnpm smoke:advisor-desktop --require --advice
 ```
 
 默认**只读**：只开菜单/对话框、读 DOM/文本、再 Esc 关闭；**不选任何模型、不改任何设置值、不点保存、
-不触发真实徵询、不写账本**，因此可以直接跑在真实 profile 上。默认 19 项、加 `--advice` 后 23 项
+不触发真实徵询、不写账本**，因此可以直接跑在真实 profile 上。默认 20 项、加 `--advice` 后 24 项
 （没有顾问记录 / 没有选中 provider 的项记 SKIP，不算失败）。断言清单（✅ = 脚本已覆盖；⬜ = 仍是待补项）：
 
 1. ✅ 连上桌面 UI（CDP）；
