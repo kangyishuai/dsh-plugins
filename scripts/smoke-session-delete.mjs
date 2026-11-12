@@ -158,8 +158,15 @@ const dismiss = async () => {
   }
   for (let i = 0; i < 3; i++) { await page.keyboard.press("Escape"); await page.waitForTimeout(200); }
 };
+// 侧栏第一行可能是「新会话」：它尚未落盘，data-row-key 也是 session:，
+// 但删不掉、也不该参与行数断言。只统计有标题的真实会话行。
 const rows = () => page.evaluate(() =>
-  [...document.querySelectorAll("[data-row-key^='session:']")].map((el) => el.getAttribute("data-row-key")));
+  [...document.querySelectorAll("[data-row-key^='session:']")]
+    .filter((el) => {
+      const text = (el.innerText || "").trim();
+      return text !== "" && text !== "新会话" && text !== "New chat" && text !== "未命名";
+    })
+    .map((el) => el.getAttribute("data-row-key")));
 const openPanel = () => page.evaluate(async () => {
   const btn = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("回收站"));
   if (!btn) return "no-footer";
@@ -169,10 +176,18 @@ const openPanel = () => page.evaluate(async () => {
   return dlg ? (dlg.textContent || "").replace(/\\s+/g, " ") : "missing";
 });
 const openConfirm = () => page.evaluate(async () => {
-  const row = document.querySelector("[data-row-key^='session:']");
+  const row = [...document.querySelectorAll("[data-row-key^='session:']")].find((el) => {
+    const text = (el.innerText || "").trim();
+    return text !== "" && text !== "新会话" && text !== "New chat" && text !== "未命名";
+  });
   if (!row) return "no-session-row";
+  // 行未激活时「…」菜单按钮不在 DOM 里（只在悬停/激活时渲染）。先点开这一行再悬停，
+  // 否则下面按 aria-label 找到的会是别的行的按钮，菜单里没有删除项。
+  row.click();
+  await new Promise((r) => setTimeout(r, 900));
   row.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 400));
+  row.dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 500));
   const menuBtn = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").startsWith("会话“"));
   if (!menuBtn) return "no-menu-button";
   menuBtn.click();
@@ -302,12 +317,15 @@ check("Esc 可关闭确认框", !(await dialogOpen("移入回收站")));
 
 // 5) 执行删除 → 行消失 + toast
 const beforeRows = await rows();
+const deletedRowKey = beforeRows[0];
 await openConfirm();
 const confirmed = await clickDialogButton("移入回收站");
 await page.waitForTimeout(2600);
 const afterRows = await rows();
-check("确认后会话行消失", confirmed && afterRows.length === beforeRows.length - 1,
-  beforeRows.length + " -> " + afterRows.length);
+// 按 ID 断言：侧栏只渲染固定条数，删掉一行后可能从折叠组补一行进来，
+// 所以「总数减一」并不成立；真正要保证的是被删的那一行不在列表里。
+check("确认后会话行消失", confirmed && deletedRowKey !== undefined && !afterRows.includes(deletedRowKey),
+  "deleted=" + deletedRowKey + " before=" + beforeRows.length + " after=" + afterRows.length);
 const toastVisible = await page.evaluate(() => document.body.innerText.includes("已移入回收站"));
 check("删除后出现回执 toast", toastVisible);
 await shot("04-after-delete");
@@ -380,8 +398,8 @@ const panelAfterRestore = await page.evaluate(() => {
   const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent || "").includes("会话回收站"));
   return dlg ? (dlg.textContent || "") : "";
 });
-check("恢复后会话回到列表", restored && rowsAfterRestore.length === beforeRows.length,
-  rowsAfterRestore.length + "/" + beforeRows.length);
+check("恢复后会话回到列表", restored && deletedRowKey !== undefined && rowsAfterRestore.includes(deletedRowKey),
+  "restored=" + deletedRowKey + " rows=" + rowsAfterRestore.length + "/" + beforeRows.length);
 check("恢复后回收站清空", panelAfterRestore.includes("回收站是空的"));
 await shot("06-after-restore");
 await page.keyboard.press("Escape");

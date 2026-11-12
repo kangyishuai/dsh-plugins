@@ -2,7 +2,7 @@
 
 > DeepSeek Harness 的「就地回溯」：把会话退回到任意一条用户消息之前，目标消息及其后的内容同时从模型上下文和渲染对话中撤回；可选择一并还原这些轮次改过的工作区文件；目标消息文本（和图片）自动回填输入框。
 
-[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-rewind?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-session-rewind) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.1-4b6bfb)](#兼容性) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-rewind?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-session-rewind) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.2-4b6bfb)](#兼容性) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
 [English](./README.md)
 
@@ -122,6 +122,7 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-session-rewind-*.tgz
 
 | DSH 版本   | 状态                                                                                                                                                                                                                                                          |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.2.2-rc.2 | 2026-11-12 已验证：205 个单测 + `pnpm probe:runtime` 67/67 + Web `smoke:session-rewind` 49/49（临时 DSH home，真实宿主）。桌面只读回归（live 桌面版，CDP）23/23；`--recall` 与 `--deep` 套件未复跑。                                                          |
 | 0.2.2-rc.1 | 2026-11-09 已验证：205 个单测 + Web `smoke:session-rewind` 49/49（临时 DSH home）+ 桌面 `smoke:session-rewind-desktop` 只读 23/23、加 `--recall` 30/30、加 `--deep` 39/39（文件模式端到端，真实 Electron 渲染进程走 CDP）；全量组合 `--recall --deep` 46/46。 |
 
 插件不声明 `engines.dsh`，也不声明 `@deepseek-ai/*` 的 peer 范围：DSH 还在预发布阶段，预发布版本的 semver 范围不可靠（见 [ADR 0005](../../docs/adr/0005-dsh-version-compatibility.md)）。以这张表为准。DSH 升级后跑 `pnpm probe:runtime`、`pnpm smoke:session-rewind`，并看插件诊断页签；私有 seam 变了会降级而不是让会话出错。

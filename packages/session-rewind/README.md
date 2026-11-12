@@ -2,7 +2,7 @@
 
 > In-place conversation rewind for DeepSeek Harness: send the conversation back to before any user message, withdraw everything after it from the model context and the transcript, optionally restore the workspace files those turns changed, and put the message back into the composer.
 
-[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-rewind?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-session-rewind) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.1-4b6bfb)](#compatibility) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-rewind?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-session-rewind) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.2-4b6bfb)](#compatibility) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
 [中文](./README.zh-CN.md)
 
@@ -122,6 +122,7 @@ On startup the plugin also removes data for sessions that no longer exist (they 
 
 | DSH version | Status                                                                                                                                                                                                                                                                                                    |
 | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.2.2-rc.2  | Verified 2026-11-12: 205 unit tests + `pnpm probe:runtime` 67/67 + web `smoke:session-rewind` 49/49 (throwaway DSH home, real host). Desktop read-only regression (live app over CDP): 23/23; the `--recall` and `--deep` suites were not re-run on this version.                                         |
 | 0.2.2-rc.1  | Verified 2026-11-09: 205 unit tests + web `smoke:session-rewind` 49/49 (temp DSH home) + desktop `smoke:session-rewind-desktop` 23/23 read-only, 30/30 with `--recall`, and 39/39 with `--deep` (file mode end to end, real Electron renderer over CDP); the full `--recall --deep` combination is 46/46. |
 
 The plugin declares no `engines.dsh` and no `@deepseek-ai/*` peer range: DSH is pre-release and semver ranges over prereleases are unreliable (see [ADR 0005](../../docs/adr/0005-dsh-version-compatibility.md)). Treat the table as the compatibility statement. After a DSH upgrade run `pnpm probe:runtime`, `pnpm smoke:session-rewind`, and check the plugin's diagnostics tab; if a private seam changed, the plugin degrades instead of breaking the session.
