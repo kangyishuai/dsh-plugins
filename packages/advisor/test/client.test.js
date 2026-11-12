@@ -189,6 +189,8 @@ describe("advisor trace line", () => {
           at,
           trigger: "shadow",
           requestChars: 12438,
+          requestPreview: "head…tail",
+          requestPreviewTruncated: true,
           model: "zhinao/kimi",
           usage: "1.2k in / 300 out / 1.2s",
           status: "reviewed",
@@ -200,5 +202,7 @@ describe("advisor trace line", () => {
     assert.equal(out[0].at, at);
     assert.equal(out[0].trigger, "shadow");
     assert.equal(out[0].requestChars, 12438);
+    assert.equal(out[0].requestPreview, "head…tail");
+    assert.equal(out[0].requestPreviewTruncated, true);
   });
 });

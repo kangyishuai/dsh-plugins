@@ -11,6 +11,9 @@ export const SETTINGS_FILE = "advisor.settings.json";
 /** 三种模式：关闭 / 影子（只记账不回灌）/ 顾问（正常徵询）。 */
 export const MODES = Object.freeze(/** @type {const} */ (["off", "shadow", "advisory"]));
 
+/** 「记录发送内容」的取值：首尾预览 / 不记录。 */
+export const TRACE_PROMPT_MODES = Object.freeze(/** @type {const} */ (["preview", "off"]));
+
 /**
  * 默认设置：**默认关闭**。一个会花钱、会把会话内容发出去的插件必须显式 opt-in。
  * - provider/model 为空时永不发起调用（对齐 Claude「配置 advisor 才生效」）。
@@ -42,6 +45,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   workspaceMaxCostPerDayUsd: 0,
   postAnswer: "off",
   advisorTools: false,
+  tracePrompt: "preview",
   timeoutMs: 90000,
   maxInputChars: 60000,
 });
@@ -214,6 +218,9 @@ export function normalizeSettings(raw) {
     out.postAnswer = input.postAnswer;
   }
   if (typeof input.advisorTools === "boolean") out.advisorTools = input.advisorTools;
+  if (typeof input.tracePrompt === "string" && TRACE_PROMPT_MODES.includes(input.tracePrompt)) {
+    out.tracePrompt = input.tracePrompt;
+  }
 
   return out;
 }
