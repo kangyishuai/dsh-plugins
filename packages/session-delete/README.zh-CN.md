@@ -2,13 +2,13 @@
 
 > 真正的删除会话：默认进回收站、删前先预演、留审计日志，删完给你一份残留回执。
 
-[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-delete?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-session-delete) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.1-4b6bfb)](#兼容性与降级) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-delete?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-session-delete) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.2-4b6bfb)](#兼容性与降级) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
 [English](./README.md)
 
 非官方 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 插件，与 DeepSeek 无关。
 
-> **状态：早期可用。** 已在 DSH 0.2.2-rc.1 上用 `pnpm smoke:session-delete`（24 项端到端断言 + 一次只读桌面回归）和 `pnpm probe:runtime` 验证。`pnpm gate session-delete` 一条命令跑完发版门禁。仍是年轻软件，重要数据请自行备份。
+> **状态：早期可用。** 已在当前目标 DSH 版本上用 `pnpm smoke:session-delete`（临时 DSH home，24 项端到端断言）和 `pnpm probe:runtime` 验证；桌面只读回归是在更早的版本上做的。具体范围见[兼容性与降级](#兼容性与降级)表格。`pnpm gate session-delete` 一条命令跑完发版门禁。仍是年轻软件，重要数据请自行备份。
 
 
 ![删除确认框：展示体积、子会话和将要清理的引用](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/overview.png)
@@ -92,6 +92,7 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-session-delete-*.tgz
 - **默认可恢复。** 删除是把文件移走，不是抹掉。
 - **彻底删除不可恢复。** 「彻底删除」以及清空回收站是真的删字节，没有撤销 toast，也找不回来。
 - **恢复不等于完整撤销。** 日志和工作区归属会回来，置顶与归档标记不会：DSH 归档时会顺手清掉 pin，取消归档时不会恢复。
+- **归档可能清理干净的工作树（DSH 0.2.2-rc.2 起）。** 「移入回收站」本质是归档会话：新版本 DSH 会记录会话创建的工作树，并在归档时对满足条件（没有未归档会话引用、Git 干净、不是分离 HEAD 等）的目录执行 `git worktree remove`。分支和提交保留，被忽略的文件（如 `node_modules`）不会保留。要保住检出目录，删除前用 `git worktree lock <path>`，或在 Forge 套件的 worktree 行打开 `retainOnArchive`。
 - **卸载插件不会清空回收站。** `~/.dsh/session-trash/` 是你的恢复通道，会一直留着，除非你自己删。
 - **数据根目录。** 按「插件配置 `dataRoot` → 环境变量 `DSH_HOME` → `~/.dsh`」的顺序解析。如果你的 DSH 把数据放在别处，要把插件指过去；根目录不像 DSH 数据目录时，插件会拒绝执行而不是瞎猜。
 - **这是 alpha 软件，而且会动你的数据。** 它已在下方表格的版本上通过 GUI 验收，但仍属早期软件：重要会话请自行备份。
@@ -116,10 +117,11 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-session-delete-*.tgz
 - `minimal` —— 宿主没有 `workspaceRegistry`（例如 headless 组合）。删除照常进行；归档闸门、置顶/工作区记账、投影缓存这些步骤被跳过并写进回执。
 - `unknown` —— 持久化本体缺失：**只读模式**。plan、审计、回收站列表还能用；删除、恢复、彻底删除被禁用。
 
-| 插件版本 | 已验证的 DSH 版本        | 说明                                                                                              |
-| -------- | ------------------------ | ------------------------------------------------------------------------------------------------- |
-| 0.4.2    | **0.2.2-rc.1**（桌面版） | `pnpm smoke:session-delete` 24 项断言全绿，并确认同一版本桌面版里插件正常激活、没有 bundle 错误。 |
-| 0.4.2    | 0.2.1-rc.5（桌面版）     | `pnpm smoke:session-delete` 24 项断言全绿，并在同一版本桌面版做过人工 GUI 验收。                  |
+| 插件版本 | 已验证的 DSH 版本               | 说明                                                                                                                                                                                                               |
+| -------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0.4.7    | **0.2.2-rc.2**（临时 DSH home） | `pnpm smoke:session-delete` 23/24：功能断言全部通过（toast、回收站、刷新不复活、恢复、彻底删除、审计），唯一失败是侧栏行数断言——该宿主上不再成立（见 [runtime 0.2.2-rc.2 §7](../../docs/runtime/0.2.2-rc.2.md)）。 |
+| 0.4.2    | **0.2.2-rc.1**（桌面版）        | `pnpm smoke:session-delete` 24 项断言全绿，并确认同一版本桌面版里插件正常激活、没有 bundle 错误。                                                                                                                  |
+| 0.4.2    | 0.2.1-rc.5（桌面版）            | `pnpm smoke:session-delete` 24 项断言全绿，并在同一版本桌面版做过人工 GUI 验收。                                                                                                                                   |
 
 目前只在 **macOS** 上验证过。Windows 相关路径（`session.lock` 的 EBUSY/EPERM 重试、宿主在那儿用的命名信号量）代码里有，但**还没实测**。
 

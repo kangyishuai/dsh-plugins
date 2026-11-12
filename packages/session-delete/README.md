@@ -2,13 +2,13 @@
 
 > Real session deletion for DeepSeek Harness: trash by default, a plan before you delete, an audit log, and a receipt for whatever is left behind.
 
-[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-delete?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-session-delete) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.1-4b6bfb)](#compatibility--degradation) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-delete?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-session-delete) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.2-4b6bfb)](#compatibility--degradation) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
 [中文](./README.zh-CN.md)
 
 Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). Not affiliated with DeepSeek.
 
-> **Status: early.** Verified on DSH 0.2.2-rc.1 with `pnpm smoke:session-delete` (24 end-to-end assertions plus a read-only desktop pass) and `pnpm probe:runtime`. `pnpm gate session-delete` runs the whole release gate in one command. Treat it as young software and keep backups of anything you cannot lose.
+> **Status: early.** Verified on the current target DSH version with `pnpm smoke:session-delete` (24 end-to-end assertions on a throwaway DSH home) and `pnpm probe:runtime`; the desktop read-only pass was done on an earlier version. The [Compatibility](#compatibility--degradation) table records exactly what was run. `pnpm gate session-delete` runs the whole release gate in one command. Treat it as young software and keep backups of anything you cannot lose.
 
 
 ![Delete confirmation with the plan: size, sub-sessions, references to clean](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/overview.png)
@@ -92,6 +92,7 @@ Files and directories it touches:
 - **Restorable by default.** Delete moves files; it does not erase them.
 - **Purge is irreversible.** "Purge" (and emptying the trash) really deletes the bytes. There is no undo toast and no recovery.
 - **Restore is not a full undo.** The log and workspace membership come back; the pin and archive flags do not. DSH clears a pin when it archives a session and doesn't restore it when it unarchives.
+- **Archiving can remove a clean git worktree (DSH 0.2.2-rc.2 and later).** Moving a session to the trash archives it. Newer DSH releases record the worktrees a session created and may run `git worktree remove` on a clean one when its owning session is archived: branches and commits stay, ignored files do not. If a checkout must survive, `git worktree lock <path>` it or turn on the worktree row's `retainOnArchive` setting before deleting the session.
 - **Uninstalling the plugin does not empty the trash.** `~/.dsh/session-trash/` is your recovery path and stays until you delete it yourself.
 - **Data root.** Resolved as plugin config `dataRoot` → `DSH_HOME` → `~/.dsh`. If your DSH keeps its data somewhere else, point the plugin at it. If the root doesn't look like a DSH data directory, the plugin refuses instead of guessing.
 - **Alpha software operating on your data.** It has passed GUI acceptance on the version in the table below, but it is still early software: back up anything you cannot lose.
@@ -116,10 +117,11 @@ Capability grades:
 - `minimal` — the host has no `workspaceRegistry` (for example the headless composition). Deletion works; the archive gate, pin/workspace bookkeeping and projection-cache steps are skipped and listed in the receipt.
 - `unknown` — the persistence seam itself is missing: **read-only mode**. Plan, audit and trash listing keep working; delete/restore/purge are disabled.
 
-| Plugin | Verified on DSH          | Notes                                                                                                          |
-| ------ | ------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| 0.4.2  | **0.2.2-rc.1** (desktop) | `pnpm smoke:session-delete`: 24 assertions green; plugin active with no bundle error on the same host version. |
-| 0.4.2  | 0.2.1-rc.5 (desktop)     | `pnpm smoke:session-delete`: 24 assertions green; manual GUI pass on the same host version.                    |
+| Plugin | Verified on DSH                 | Notes                                                                                                                                                                                                                                                                  |
+| ------ | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.4.7  | **0.2.2-rc.2** (throwaway home) | `pnpm smoke:session-delete`: 23/24 — every functional assertion passes (toast, trash, refresh, restore, purge, audit); the one failure is a sidebar row-count assertion that no longer holds on this host ([runtime 0.2.2-rc.2 §7](../../docs/runtime/0.2.2-rc.2.md)). |
+| 0.4.2  | **0.2.2-rc.1** (desktop)        | `pnpm smoke:session-delete`: 24 assertions green; plugin active with no bundle error on the same host version.                                                                                                                                                         |
+| 0.4.2  | 0.2.1-rc.5 (desktop)            | `pnpm smoke:session-delete`: 24 assertions green; manual GUI pass on the same host version.                                                                                                                                                                            |
 
 After a DSH upgrade: restart, then open the plugin status (settings → plugins). If it reports read-only mode, the host API changed — upgrade the plugin or report the version pair; don't force it.
 
