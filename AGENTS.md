@@ -25,6 +25,7 @@
 | `pnpm gate <plugin>`        | 一键发版门禁（verify→体检→web→桌面，通用）             |
 | `pnpm gate:<plugin>`        | 同上，固定插件名的等价写法                             |
 | `pnpm smoke:session-delete` | 端到端 GUI 冒烟（临时 DSH_HOME，24 项断言）            |
+| `pnpm smoke:advisor`        | web 端到端冒烟（临时 DSH_HOME，11 项断言，不花 token） |
 | `pnpm smoke:<name>-desktop` | **桌面版只读回归（有 client 半的插件必须有）**         |
 | `pnpm smoke:agent-tool`     | agent 工具真机冒烟（需要模型凭据，否则 SKIP）          |
 
