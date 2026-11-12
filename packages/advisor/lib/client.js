@@ -1498,6 +1498,13 @@ window.__ModuleLoader__.load({
     // ------------------------------------------------------------------
 
     /**
+     * 设置卡折叠/帮助的 UI 状态。放在组件外：宿主重渲染设置槽位时组件可能重挂，
+     * 但用户已经展开的高级区不应该被悄悄收起；页面刷新才复位。
+     */
+    /** @type {Record<string, any>} */
+    let settingsUiState = { advanced: false, status: false, off: false, help: "" };
+
+    /**
      * 设置页 → 通用 的「顾问」卡片。`settings.general.item` 是无 owner props 的 list 槽，
      * sessionId 拿不到时传空串（宿主只跳过按会话的字段）；数据全部经 props.api 现取。
      * 任何 RPC 失败/畸形都只落成一行内联错误 + 重试，绝不抛错。
@@ -1560,18 +1567,43 @@ window.__ModuleLoader__.load({
       let previewOpen = previewOpenState[0];
       let setPreviewOpen = previewOpenState[1];
       /** 高级设置默认折叠；状态与诊断再单独一层。 */
-      let advancedState = React.useState(false);
+      /**
+       * 折叠/帮助状态用模块级缓存做初值，组件重挂载时不会把已展开的高级区收起。
+       * @param {string} key
+       * @param {any} initial
+       * @returns {[any, (next: any) => void]}
+       */
+      function useUiState(key, initial) {
+        let state = React.useState(
+          settingsUiState[key] === undefined ? initial : settingsUiState[key],
+        );
+        let value = state[0];
+        let setValue = state[1];
+        let set = React.useCallback(
+          function update(/** @type {any} */ next) {
+            setValue(function apply(/** @type {any} */ prev) {
+              let resolved = typeof next === "function" ? next(prev) : next;
+              settingsUiState[key] = resolved;
+              return resolved;
+            });
+          },
+          [key],
+        );
+        return [value, set];
+      }
+
+      let advancedState = useUiState("advanced", false);
       let advancedOpen = advancedState[0];
       let setAdvancedOpen = advancedState[1];
-      let statusState = React.useState(false);
+      let statusState = useUiState("status", false);
       let statusOpen = statusState[0];
       let setStatusOpen = statusState[1];
       /** off 时也可以显式展开配置；默认收起。 */
-      let offExpandState = React.useState(false);
+      let offExpandState = useUiState("off", false);
       let offExpanded = offExpandState[0];
       let setOffExpanded = offExpandState[1];
       /** 同一时间只展开一个字段的说明。 */
-      let helpState = React.useState("");
+      let helpState = useUiState("help", "");
       let openHelp = helpState[0];
       let setOpenHelp = helpState[1];
       /** provider/model 切换可能并发：只接受最后一次请求的返回。 */
