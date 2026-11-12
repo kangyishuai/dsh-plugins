@@ -576,6 +576,30 @@ const ADVISOR_CARD = `(() => {
   };
 })()`;
 
+/** off 紧凑态点「配置顾问」；已启用时无按钮，直接 no-op。 */
+const CONFIGURE_CARD = `(() => {
+  const root = document.querySelector("[data-advisor-settings]");
+  if (root === null) return { found: false };
+  const configure = root.querySelector("[data-advisor-configure]");
+  if (configure !== null) configure.click();
+  return { found: true, clicked: configure !== null };
+})()`;
+
+/** 展开高级与状态两个折叠区；只点 toggle，不改任何值。 */
+const EXPAND_DISCLOSURES = `(() => {
+  const root = document.querySelector("[data-advisor-settings]");
+  if (root === null) return { found: false };
+  const opened = [];
+  for (const key of ["advanced", "status"]) {
+    const toggle = root.querySelector('[data-advisor-disclosure-toggle="' + key + '"]');
+    if (toggle !== null && toggle.getAttribute("aria-expanded") !== "true") {
+      toggle.click();
+      opened.push(key);
+    }
+  }
+  return { found: true, opened };
+})()`;
+
 /**
  * 回合尾部顾问线：取最后一条 `.dsh-advisor-turn`。
  * headline 文本形如「顾问 · 轻微 <摘要>」（declined 时是「顾问认为无需建议」）。
@@ -1065,14 +1089,20 @@ const main = async () => {
           const card = await waitFor(
             cdp,
             ADVISOR_CARD,
-            (value) =>
-              value?.found === true && value?.error === null && value?.providerOptions !== null,
+            (value) => value?.found === true && value?.error === null,
             12_000,
           );
-          const value = card.value ?? null;
+          // 默认 off 只显示紧凑态；点「配置顾问」并展开高级/状态后再断言。
+          // 只点展开按钮，不改任何值，保存按钮的语义不受影响。
+          await cdp.evaluate(CONFIGURE_CARD).catch(() => false);
+          await sleep(300);
+          await cdp.evaluate(EXPAND_DISCLOSURES).catch(() => false);
+          await sleep(300);
+          const expandedCard = await cdp.evaluate(ADVISOR_CARD).catch(() => null);
+          const value = expandedCard?.value ?? card.value ?? null;
           check(
             settingsNames.card,
-            card.ok,
+            card.ok && value?.found === true && value?.error === null,
             JSON.stringify({
               error: value?.error ?? null,
               found: value?.found ?? false,

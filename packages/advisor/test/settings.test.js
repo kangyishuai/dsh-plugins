@@ -44,6 +44,39 @@ test("normalizeSettings 丢弃未知键、夹紧数字、过滤非法模式", ()
   assert.equal(Object.hasOwn(out, "bogus"), false);
 });
 
+test("金额字段保留小数，不再按整数取整", () => {
+  const out = normalizeSettings({
+    maxCostPerDayUsd: 0.5,
+    workspaceMaxCostPerDayUsd: 1.25,
+    priceInputPerMTok: 0.15,
+    priceOutputPerMTok: 0.075,
+  });
+  assert.equal(out.maxCostPerDayUsd, 0.5);
+  assert.equal(out.workspaceMaxCostPerDayUsd, 1.25);
+  assert.equal(out.priceInputPerMTok, 0.15);
+  assert.equal(out.priceOutputPerMTok, 0.075);
+});
+
+test("金额字段按精度收口并夹紧区间", () => {
+  const out = normalizeSettings({
+    maxCostPerDayUsd: 1.239,
+    workspaceMaxCostPerDayUsd: -1,
+    priceInputPerMTok: 0.123456,
+    priceOutputPerMTok: 99999,
+  });
+  assert.equal(out.maxCostPerDayUsd, 1.24, "预算保留 2 位小数");
+  assert.equal(out.workspaceMaxCostPerDayUsd, 0, "负数夹到 0");
+  assert.equal(out.priceInputPerMTok, 0.1235, "单价保留 4 位小数");
+  assert.equal(out.priceOutputPerMTok, 1000, "超出上限夹到 1000");
+});
+
+test("计数字段仍然取整", () => {
+  const out = normalizeSettings({ maxCallsPerTurn: 1.6, maxTokens: 4096.7, sessionCap: 3.4 });
+  assert.equal(out.maxCallsPerTurn, 2);
+  assert.equal(out.maxTokens, 4097);
+  assert.equal(out.sessionCap, 3);
+});
+
 test("mergeSettings 只覆盖 patch 里出现的键", () => {
   const base = normalizeSettings({ mode: "advisory", provider: "p", model: "m", maxTokens: 1024 });
   const next = mergeSettings(base, { maxTokens: 2048 });

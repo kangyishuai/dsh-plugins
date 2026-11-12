@@ -214,18 +214,97 @@ if (settingsState !== "ok") {
   const card = await page.evaluate(() => {
     const root = document.querySelector("[data-advisor-settings]");
     if (!root) return { found: false };
+    return {
+      found: true,
+      error: !!root.querySelector("[data-advisor-error]"),
+      compact: root.querySelector("[data-advisor-off]") !== null,
+      configure: root.querySelector("[data-advisor-configure]") !== null,
+      providerVisible: root.querySelector("[data-advisor-provider]") !== null,
+      advancedClosed: root.querySelector('[data-advisor-disclosure="advanced"]') === null,
+    };
+  });
+  check(
+    "设置卡默认是 off 紧凑态（不铺开 provider / 预算 / 隐私）",
+    card.found &&
+      card.error === false &&
+      card.compact === true &&
+      card.configure === true &&
+      card.providerVisible === false &&
+      card.advancedClosed === true,
+    JSON.stringify(card),
+  );
+  await page.evaluate(() => {
+    const root = document.querySelector("[data-advisor-settings]");
+    if (root) root.scrollIntoView({ block: "center" });
+  });
+  await page.waitForTimeout(300);
+  await shot("04-settings-compact");
+
+  // 只展开，不改任何值：点「配置顾问」显示表单，再点开高级与状态两个折叠区。
+  await page.evaluate(() => {
+    const configure = document.querySelector("[data-advisor-configure]");
+    if (configure) configure.click();
+  });
+  await page.waitForTimeout(400);
+  await page.evaluate(() => {
+    for (const key of ["advanced", "status"]) {
+      const toggle = document.querySelector('[data-advisor-disclosure-toggle="' + key + '"]');
+      if (toggle) toggle.click();
+    }
+  });
+  await page.waitForTimeout(500);
+
+  const expanded = await page.evaluate(() => {
+    const root = document.querySelector("[data-advisor-settings]");
+    if (!root) return { found: false };
     const text = root.innerText || "";
     return {
       found: true,
-      error: !!document.querySelector("[data-advisor-error]"),
-      providers: document.querySelectorAll("[data-advisor-provider] option").length,
-      hasBudget: text.indexOf("预算") >= 0,
-      hasPrivacy: text.indexOf("隐私") >= 0,
+      error: !!root.querySelector("[data-advisor-error]"),
+      providers: root.querySelectorAll("[data-advisor-provider] option").length,
+      hasBudget: text.indexOf("每日预算") >= 0,
+      hasPrivacy: text.indexOf("发送范围") >= 0,
       hasPreview: text.indexOf("预览") >= 0,
+      hasWorkspace: text.indexOf("工作区每日调用上限") >= 0,
+      hasAllowlist: text.indexOf("模型白名单") >= 0,
+      helpButtons: root.querySelectorAll(".dsh-advisor-help-btn").length,
     };
   });
-  check("设置卡渲染且无错误", card.found && card.error === false && card.providers > 0, JSON.stringify(card));
-  await shot("04-settings-card");
+  check(
+    "设置卡展开后有 provider 候选、基础/高级/状态字段与按需帮助",
+    expanded.found &&
+      expanded.error === false &&
+      expanded.providers > 0 &&
+      expanded.hasBudget &&
+      expanded.hasPrivacy &&
+      expanded.hasPreview &&
+      expanded.hasWorkspace &&
+      expanded.hasAllowlist &&
+      expanded.helpButtons > 0,
+    JSON.stringify(expanded),
+  );
+  await page.evaluate(() => {
+    const root = document.querySelector("[data-advisor-settings]");
+    if (root) root.scrollIntoView({ block: "center" });
+  });
+  await page.waitForTimeout(300);
+  await shot("05-settings-expanded");
+
+  // 点开第一个「?」：说明必须真的展开，且是内联块，不是只靠 title 悬停。
+  await page.evaluate(() => {
+    const button = document.querySelector("[data-advisor-settings] .dsh-advisor-help-btn");
+    if (button) button.click();
+  });
+  await page.waitForTimeout(300);
+  const help = await page.evaluate(() => {
+    const body = document.querySelector("[data-advisor-settings] .dsh-advisor-help-body");
+    return {
+      open: body !== null,
+      text: body === null ? "" : (body.innerText || "").replace(/\\s+/gu, " ").trim().slice(0, 160),
+    };
+  });
+  check("高级字段的「?」能展开内联说明", help.open === true && help.text.length > 0, JSON.stringify(help));
+  await shot("06-settings-help");
   await page.evaluate(() => {
     const d = document.querySelector("[role=dialog]");
     const close = d ? [...d.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === "关闭") : null;

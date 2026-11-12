@@ -46,21 +46,28 @@ export const DEFAULT_SETTINGS = Object.freeze({
   maxInputChars: 60000,
 });
 
-/** 数值字段的夹紧区间。`0` 在预算类字段里表示「不限」。 */
-const LIMITS = Object.freeze({
+/** 整数类数值字段的夹紧区间。`0` 在预算类字段里表示「不限」。 */
+const INT_LIMITS = Object.freeze({
   maxTokens: [256, 32000],
   maxCallsPerTurn: [0, 8],
   maxCallsPerSession: [0, 1000],
   maxCallsPerHour: [0, 500],
-  maxCostPerDayUsd: [0, 10000],
-  priceInputPerMTok: [0, 1000],
-  priceOutputPerMTok: [0, 1000],
   immuneTurns: [0, 20],
   sessionCap: [0, 200],
   workspaceMaxCallsPerDay: [0, 100000],
-  workspaceMaxCostPerDayUsd: [0, 10000],
   timeoutMs: [5000, 600000],
   maxInputChars: [4000, 400000],
+});
+
+/**
+ * 金额类字段：区间 + 小数位。预算按分（2 位），单价按万分之一（4 位）。
+ * 金额不能走整数夹紧——0.5 会被取整成 1，0.15 会变成 0。
+ */
+const MONEY_LIMITS = Object.freeze({
+  maxCostPerDayUsd: { min: 0, max: 10000, digits: 2 },
+  workspaceMaxCostPerDayUsd: { min: 0, max: 10000, digits: 2 },
+  priceInputPerMTok: { min: 0, max: 1000, digits: 4 },
+  priceOutputPerMTok: { min: 0, max: 1000, digits: 4 },
 });
 
 /** 字符串字段的最大长度，防止有人在设置里塞进一整段提示词。 */
@@ -76,17 +83,34 @@ export function settingsPath(home) {
 }
 
 /**
- * 把数字夹紧到区间并取整。
+ * 把数字夹紧到区间并取整（计数字段用）。
  * @param {unknown} value
  * @param {number} fallback
  * @param {number} min
  * @param {number} max
  * @returns {number}
  */
-function clampNumber(value, fallback, min, max) {
+function clampInt(value, fallback, min, max) {
   const n = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(n)) return fallback;
   return Math.min(max, Math.max(min, Math.round(n)));
+}
+
+/**
+ * 把金额夹紧到区间并按固定小数位收口（金额字段用）。
+ * @param {unknown} value
+ * @param {number} fallback
+ * @param {number} min
+ * @param {number} max
+ * @param {number} digits
+ * @returns {number}
+ */
+function clampMoney(value, fallback, min, max, digits) {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  const bounded = Math.min(max, Math.max(min, n));
+  const factor = 10 ** digits;
+  return Math.round(bounded * factor) / factor;
 }
 
 /**
@@ -174,9 +198,13 @@ export function normalizeSettings(raw) {
     if (typeof input[key] === "boolean") out[key] = input[key];
   }
 
-  for (const key of /** @type {(keyof typeof LIMITS)[]} */ (Object.keys(LIMITS))) {
-    const [min, max] = LIMITS[key];
-    out[key] = clampNumber(input[key], DEFAULT_SETTINGS[key], min, max);
+  for (const key of /** @type {(keyof typeof INT_LIMITS)[]} */ (Object.keys(INT_LIMITS))) {
+    const [min, max] = INT_LIMITS[key];
+    out[key] = clampInt(input[key], DEFAULT_SETTINGS[key], min, max);
+  }
+  for (const key of /** @type {(keyof typeof MONEY_LIMITS)[]} */ (Object.keys(MONEY_LIMITS))) {
+    const spec = MONEY_LIMITS[key];
+    out[key] = clampMoney(input[key], DEFAULT_SETTINGS[key], spec.min, spec.max, spec.digits);
   }
   out.temperature = nullableNumber(input.temperature, 0, 2);
   out.tiers = normalizeTiers(input.tiers);

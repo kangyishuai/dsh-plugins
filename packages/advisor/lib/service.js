@@ -31,7 +31,13 @@ import {
 import { createLedger } from "./ledger.js";
 import { parseAdvice, summarizeAdvice, TOOL_DESCRIPTION } from "./prompt.js";
 import { pairingCheck, resolveRoute } from "./route.js";
-import { isConfigured, loadSettings, mergeSettings, saveSettings } from "./settings.js";
+import {
+  isConfigured,
+  loadSettings,
+  mergeSettings,
+  saveSettings,
+  settingsPath,
+} from "./settings.js";
 import { renderToolOutput, TOOL_NAME, TOOL_OUTPUT_SCHEMA, TOOL_PARAMETERS } from "./tool-schema.js";
 import { buildTranscript } from "./transcript.js";
 import { runEvidencePass } from "./twopass.js";
@@ -1377,6 +1383,7 @@ export class AdvisorService extends TypertRemoteService {
         last: this.lastResult,
         lastSkip: sessionId === "" ? null : (this.lastSkip.get(sessionId) ?? null),
         ledgerPath: this.ledger.path,
+        settingsPath: settingsPath(this.dataRoot),
         pool: await this.pool.read(),
         price: effectivePrice(settings, settings.model),
         dataRoot: this.dataRoot,
