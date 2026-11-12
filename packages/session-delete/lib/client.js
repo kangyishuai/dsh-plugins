@@ -35,6 +35,9 @@ window.__ModuleLoader__.load({
       border: "var(--dsw-alias-border-l2, rgba(128,128,128,0.35))",
       hover: "var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,0.12))",
       danger: "var(--dsw-alias-state-error-primary, #d9534f)",
+      // 与 danger 成对：反色实心填充必须配宿主的前景色 token，不能写死白。
+      // 深色主题下宿主 error 是浅红 #f25a5a，白字只有 3.29:1；配 label-primary-foreground 是 5.75:1。
+      dangerText: "var(--dsw-alias-label-primary-foreground, #fff)",
       mask: "var(--dsw-alias-bg-mask-1, rgba(0,0,0,0.45))",
       toastBg: "var(--dsw-alias-toast-bg, Canvas)",
       toastText: "var(--dsw-alias-toast-label, CanvasText)",
@@ -467,7 +470,7 @@ window.__ModuleLoader__.load({
                   padding: "0 4px",
                   borderRadius: "8px",
                   background: T.danger,
-                  color: "#fff",
+                  color: T.dangerText,
                   fontSize: "10px",
                   lineHeight: "16px",
                   textAlign: "center",
@@ -1642,6 +1645,13 @@ window.__ModuleLoader__.load({
         "session-delete: overlay (confirm + panel + toast)",
       );
     };
+
+    // 供 node:vm 单测读取的内部出口（非枚举，不影响运行时）。
+    Object.defineProperty(exports, "__test", {
+      value: Object.freeze({
+        tokens: T,
+      }),
+    });
 
     return module.exports;
   },
