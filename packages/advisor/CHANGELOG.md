@@ -1,5 +1,15 @@
 # @kangyishuai/dsh-advisor
 
+## 0.3.0
+
+### Minor Changes
+
+- [#58](https://github.com/kangyishuai/dsh-plugins/pull/58) [`f2ac925`](https://github.com/kangyishuai/dsh-plugins/commit/f2ac925dc633ee90fa41320a308921998d0a0def) Thanks [@kangyishuai](https://github.com/kangyishuai)! - Rework the settings card: `off` shows a compact state, basics and advanced settings are separated with advanced folded by default, field help moved behind an inline `?` button, and money fields now accept decimals (budgets 2, unit prices 4).
+
+- [#61](https://github.com/kangyishuai/dsh-plugins/pull/61) [`962a735`](https://github.com/kangyishuai/dsh-plugins/commit/962a735ce7b02da6a8de61606c45d2379bdaea36) Thanks [@kangyishuai](https://github.com/kangyishuai)! - The advisor line can show a bounded preview of what was actually sent: `tracePrompt` (default `preview`) stores the first and last 2,000 characters of the redacted transcript in the session record, with a “View sent content” toggle in the expanded line; `off` stores metadata only.
+
+- [#60](https://github.com/kangyishuai/dsh-plugins/pull/60) [`9e58651`](https://github.com/kangyishuai/dsh-plugins/commit/9e586511e9fffe804a2753c4a03879f6c732ab82) Thanks [@kangyishuai](https://github.com/kangyishuai)! - The advisor turn line now shows the trigger, local time, advisor model, characters sent and the usage/cost summary for each consultation; new advice records store `requestChars` so the line can show the sent size.
+
 ## 0.2.0
 
 ### Minor Changes
