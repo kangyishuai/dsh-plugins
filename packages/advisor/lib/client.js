@@ -108,7 +108,6 @@ window.__ModuleLoader__.load({
       "settings.budget.maxCallsPerTurn": "每回合最多调用",
       "settings.budget.maxCallsPerSession": "每会话最多调用",
       "settings.budget.maxCallsPerHour": "每小时最多调用",
-      "settings.budget.maxCostPerDayUsd": "每日预算（USD）",
       "settings.budget.priceInputPerMTok": "输入单价（USD / 百万 token）",
       "settings.budget.priceOutputPerMTok": "输出单价（USD / 百万 token）",
       "settings.budget.range": "默认 {default} · 范围 {min}–{max}",
@@ -247,7 +246,6 @@ window.__ModuleLoader__.load({
       "settings.budget.maxCallsPerTurn": "Max calls per turn",
       "settings.budget.maxCallsPerSession": "Max calls per session",
       "settings.budget.maxCallsPerHour": "Max calls per hour",
-      "settings.budget.maxCostPerDayUsd": "Daily budget (USD)",
       "settings.budget.priceInputPerMTok": "Input price (USD / 1M tokens)",
       "settings.budget.priceOutputPerMTok": "Output price (USD / 1M tokens)",
       "settings.budget.range": "default {default} · range {min}–{max}",
@@ -603,7 +601,9 @@ window.__ModuleLoader__.load({
       maxCallsPerTurn: 1,
       maxCallsPerSession: 32,
       maxCallsPerHour: 12,
-      maxCostPerDayUsd: 0,
+      currency: "USD",
+      usdToCny: 7.2,
+      maxCostPerDay: 0,
       priceInputPerMTok: 0,
       priceOutputPerMTok: 0,
       privacyScope: "summary",
@@ -612,7 +612,7 @@ window.__ModuleLoader__.load({
       sessionCap: 24,
       allowedModels: [],
       workspaceMaxCallsPerDay: 200,
-      workspaceMaxCostPerDayUsd: 0,
+      workspaceMaxCostPerDay: 0,
       postAnswer: "off",
       advisorTools: false,
       tracePrompt: "preview",
@@ -625,21 +625,23 @@ window.__ModuleLoader__.load({
       maxCallsPerTurn: [0, 8],
       maxCallsPerSession: [0, 1000],
       maxCallsPerHour: [0, 500],
-      maxCostPerDayUsd: [0, 10000],
+      maxCostPerDay: [0, 10000],
       priceInputPerMTok: [0, 1000],
       priceOutputPerMTok: [0, 1000],
       workspaceMaxCallsPerDay: [0, 100000],
-      workspaceMaxCostPerDayUsd: [0, 10000],
+      workspaceMaxCostPerDay: [0, 10000],
+      usdToCny: [0.1, 100],
       sessionCap: [0, 200],
       maxInputChars: [4000, 400000],
     };
 
     /** 金额字段的小数位；与 settings.js 的 MONEY_LIMITS 一致。 @type {Record<string, number>} */
     let SETTINGS_MONEY_FIELDS = {
-      maxCostPerDayUsd: 2,
-      workspaceMaxCostPerDayUsd: 2,
+      maxCostPerDay: 2,
+      workspaceMaxCostPerDay: 2,
       priceInputPerMTok: 4,
       priceOutputPerMTok: 4,
+      usdToCny: 4,
     };
 
     /** 所有整数输入字段（temperature 单独处理：可为空、可小数）。 */
@@ -653,9 +655,10 @@ window.__ModuleLoader__.load({
       "maxCallsPerSession",
       "maxCallsPerHour",
       "workspaceMaxCallsPerDay",
-      "workspaceMaxCostPerDayUsd",
+      "workspaceMaxCostPerDay",
       "priceInputPerMTok",
       "priceOutputPerMTok",
+      "usdToCny",
       "maxTokens",
       "temperature",
       "maxInputChars",
@@ -672,9 +675,9 @@ window.__ModuleLoader__.load({
       "maxCallsPerTurn",
       "maxCallsPerSession",
       "maxCallsPerHour",
-      "maxCostPerDayUsd",
+      "maxCostPerDay",
       "workspaceMaxCallsPerDay",
-      "workspaceMaxCostPerDayUsd",
+      "workspaceMaxCostPerDay",
     ];
 
     /** 模式与发送范围的白名单，与 settings.js 一致。 */
@@ -698,11 +701,13 @@ window.__ModuleLoader__.load({
       "maxCallsPerTurn",
       "maxCallsPerSession",
       "maxCallsPerHour",
-      "maxCostPerDayUsd",
+      "currency",
+      "usdToCny",
+      "maxCostPerDay",
       "priceInputPerMTok",
       "priceOutputPerMTok",
       "workspaceMaxCallsPerDay",
-      "workspaceMaxCostPerDayUsd",
+      "workspaceMaxCostPerDay",
       "privacyScope",
       "redact",
       "dedupe",
@@ -814,9 +819,16 @@ window.__ModuleLoader__.load({
         postAnswer: input.postAnswer === "card" ? "card" : "off",
         advisorTools: input.advisorTools === true,
         tracePrompt: input.tracePrompt === "off" ? "off" : "preview",
+        currency: input.currency === "CNY" ? "CNY" : "USD",
+        usdToCny: 7.2,
         allowedModels: normalizeStringList(input.allowedModels),
         confirmedHosts: normalizeStringList(input.confirmedHosts),
       };
+      let rawRate = Number(input.usdToCny);
+      out.usdToCny =
+        Number.isFinite(rawRate) && rawRate > 0
+          ? clampMoney(rawRate, SETTINGS_DEFAULTS.usdToCny, 0.1, 100, 4)
+          : SETTINGS_DEFAULTS.usdToCny;
       for (let index = 0; index < SETTINGS_INT_FIELDS.length; index += 1) {
         let key = SETTINGS_INT_FIELDS[index];
         out[key] = clampInt(
@@ -827,6 +839,7 @@ window.__ModuleLoader__.load({
         );
       }
       for (let key of Object.keys(SETTINGS_MONEY_FIELDS)) {
+        if (key === "usdToCny") continue;
         out[key] = clampMoney(
           input[key],
           SETTINGS_DEFAULTS[key],
@@ -862,6 +875,80 @@ window.__ModuleLoader__.load({
       let n = Number(value);
       if (!Number.isFinite(n) || n < 0) return 0;
       return n;
+    }
+
+    /**
+     * 币种规整：未知值按 USD。
+     * @param {any} value
+     * @returns {"USD"|"CNY"}
+     */
+    function currencyOf(value) {
+      return value === "CNY" ? "CNY" : "USD";
+    }
+
+    /**
+     * USD → 设置币种金额；汇率非法时回落 7.2。
+     * @param {any} amountUsd
+     * @param {any} currency
+     * @param {any} rate
+     * @returns {number}
+     */
+    function fromUsd(amountUsd, currency, rate) {
+      let n = Number(amountUsd);
+      if (!Number.isFinite(n)) return 0;
+      if (currencyOf(currency) === "USD") return n;
+      let r = Number(rate);
+      if (!Number.isFinite(r) || r <= 0) r = 7.2;
+      return n * r;
+    }
+
+    /**
+     * 金额显示：USD 用 $，CNY 用 ¥。
+     * @param {any} amount
+     * @param {any} currency
+     * @param {number} [digits]
+     * @returns {string}
+     */
+    function formatMoney(amount, currency, digits) {
+      let n = Number(amount);
+      let value = Number.isFinite(n) ? n : 0;
+      let places =
+        typeof digits === "number" && Number.isFinite(digits)
+          ? Math.max(0, Math.min(8, Math.round(digits)))
+          : 4;
+      return `${currencyOf(currency) === "CNY" ? "¥" : "$"}${value.toFixed(places)}`;
+    }
+
+    /**
+     * 把草稿里的金额字段从当前币种换到目标币种，保持真实价值不变。
+     * 汇率是 1 USD = ? CNY；切换时用当前草稿里的汇率。
+     * @param {any} source
+     * @param {any} nextCurrency
+     * @returns {any}
+     */
+    function convertCurrency(source, nextCurrency) {
+      let from = currencyOf(source.currency);
+      let to = currencyOf(nextCurrency);
+      let next = Object.assign({}, source, { currency: to });
+      if (from === to) return next;
+      let rate = Number(source.usdToCny);
+      if (!Number.isFinite(rate) || rate <= 0) rate = 7.2;
+      let factor = to === "CNY" ? rate : 1 / rate;
+      /** @type {Record<string, number>} */
+      let fields = {
+        maxCostPerDay: 2,
+        workspaceMaxCostPerDay: 2,
+        priceInputPerMTok: 4,
+        priceOutputPerMTok: 4,
+      };
+      for (let key of Object.keys(fields)) {
+        let n = Number(source[key]);
+        if (!Number.isFinite(n)) n = 0;
+        let digits = fields[key];
+        let scale = 10 ** digits;
+        next[key] = Math.round(n * factor * scale) / scale;
+      }
+      return next;
     }
 
     /**
@@ -2320,6 +2407,49 @@ window.__ModuleLoader__.load({
         );
       }
 
+      /** 切换币种：按当前汇率折算金额，保持真实价值不变。 @param {string} value */
+      function chooseCurrency(value) {
+        if (!draft) return;
+        let nextCurrency = currencyOf(value);
+        if (nextCurrency === draft.currency) return;
+        let next = convertCurrency(draft, nextCurrency);
+        setDraft(next);
+        setTexts(textsOf(next));
+        setError(null);
+        setNotice(
+          t("settings.currency.converted")
+            .replace("{currency}", nextCurrency)
+            .replace("{rate}", String(next.usdToCny)),
+        );
+      }
+
+      /** 金额字段的币种单位。 @returns {string} */
+      function currencyLabel() {
+        return draft !== null && draft.currency === "CNY"
+          ? t("settings.unit.cny")
+          : t("settings.unit.usd");
+      }
+
+      /** 单价的币种单位。 @returns {string} */
+      function priceUnit() {
+        return draft !== null && draft.currency === "CNY"
+          ? t("settings.unit.cnyPerMTok")
+          : t("settings.unit.usdPerMTok");
+      }
+
+      /** 币种一行。 @returns {any} */
+      function currencyField() {
+        return selectField(
+          "currency",
+          "settings.currency",
+          ["USD", "CNY"],
+          "settings.currency.",
+          draft.currency,
+          chooseCurrency,
+          { hint: t("settings.currencyHint") },
+        );
+      }
+
       /**
        * @param {string} key
        * @param {boolean} on
@@ -3039,7 +3169,7 @@ window.__ModuleLoader__.load({
 
       let sep = t("settings.status.sep");
       let totals = snap.totals;
-      let priced = snap.settings.priceInputPerMTok > 0 || snap.settings.priceOutputPerMTok > 0;
+      let priced = snap.price.source !== "none";
       let lastText =
         snap.last === null
           ? t("settings.status.none")
@@ -3051,7 +3181,13 @@ window.__ModuleLoader__.load({
           .replace("{output}", formatCount(totals.outputTokens)),
         t("settings.status.cost") +
           sep +
-          (priced ? `≈ $${Number(totals.costUsd).toFixed(4)}` : t("settings.status.costUnset")),
+          (priced
+            ? `≈${formatMoney(
+                fromUsd(totals.costUsd, snap.settings.currency, snap.settings.usdToCny),
+                snap.settings.currency,
+                4,
+              )}`
+            : t("settings.status.costUnset")),
         t("settings.status.last") + sep + lastText,
         t("settings.status.skip") +
           sep +
@@ -3089,7 +3225,14 @@ window.__ModuleLoader__.load({
       let priceSourceText = t(`settings.budget.priceSource.${snap.price.source}`);
       let poolLine = t("settings.budget.poolLine")
         .replace("{calls}", formatCount(snap.pool.calls))
-        .replace("{cost}", `$${Number(snap.pool.costUsd).toFixed(4)}`);
+        .replace(
+          "{cost}",
+          formatMoney(
+            fromUsd(snap.pool.costUsd, snap.settings.currency, snap.settings.usdToCny),
+            snap.settings.currency,
+            4,
+          ),
+        );
 
       // 基础设置：只放开启前必须做的决定，以及每日预算与发送范围。
       let basicBody = [
@@ -3097,9 +3240,10 @@ window.__ModuleLoader__.load({
         subgroup(
           "settings.group.spend",
           [
-            numberField("maxCostPerDayUsd", "settings.budget.maxCostPerDayUsd", {
+            currencyField(),
+            numberField("maxCostPerDay", "settings.budget.maxCostPerDay", {
               hint: t("settings.basic.budgetHint"),
-              unit: t("settings.unit.usd"),
+              unit: currencyLabel(),
             }),
           ],
           "spend",
@@ -3151,9 +3295,9 @@ window.__ModuleLoader__.load({
               help: t("settings.budget.workspaceHint"),
               unit: t("settings.unit.calls"),
             }),
-            numberField("workspaceMaxCostPerDayUsd", "settings.budget.workspaceMaxCostPerDayUsd", {
+            numberField("workspaceMaxCostPerDay", "settings.budget.workspaceMaxCostPerDay", {
               help: t("settings.budget.workspaceHint"),
-              unit: t("settings.unit.usd"),
+              unit: currencyLabel(),
             }),
             h(
               "div",
@@ -3166,13 +3310,17 @@ window.__ModuleLoader__.load({
         subgroup(
           "settings.group.money",
           [
+            numberField("usdToCny", "settings.usdToCny", {
+              help: t("settings.usdToCnyHint"),
+              unit: t("settings.unit.cnyPerUsd"),
+            }),
             numberField("priceInputPerMTok", "settings.budget.priceInputPerMTok", {
               help: t("settings.budget.priceHint"),
-              unit: t("settings.unit.usdPerMTok"),
+              unit: priceUnit(),
             }),
             numberField("priceOutputPerMTok", "settings.budget.priceOutputPerMTok", {
               help: t("settings.budget.priceHint"),
-              unit: t("settings.unit.usdPerMTok"),
+              unit: priceUnit(),
             }),
             h("div", { className: "dsh-advisor-readout", key: "priceSource" }, priceSourceText),
           ],
@@ -3498,7 +3646,6 @@ window.__ModuleLoader__.load({
           "settings.advisorToolsHint":
             "允许顾问读取工作目录里的文件来核实结论（最多 5 个、只读）；会多一次模型调用。",
           "settings.budget.workspaceMaxCallsPerDay": "工作区每日调用上限",
-          "settings.budget.workspaceMaxCostPerDayUsd": "工作区每日预算",
           "settings.budget.workspaceHint": "工作区级，跨会话累计、按本地日重置",
           "settings.budget.poolLine": "工作区今日：{calls} 次 · ≈{cost}",
           "settings.budget.priceSource.builtin": "单价来源：内置参考价",
@@ -3526,6 +3673,20 @@ window.__ModuleLoader__.load({
           "settings.tracePrompt.hint":
             "在会话记录里保留本次实际发送文本的首尾各 2,000 字符（脱敏后）；关掉后只记元数据。发送前脱敏关闭时，预览也会包含原文。",
           "settings.help.defaultPreview": "默认：首尾预览",
+          "settings.currency": "币种",
+          "settings.currency.USD": "美元（USD）",
+          "settings.currency.CNY": "人民币（CNY）",
+          "settings.currencyHint":
+            "金额和单价按此币种填写；切换时会按汇率折算金额，保持真实价值不变。",
+          "settings.currency.converted": "已按 1 USD = {rate} CNY 折算金额（尚未保存）。",
+          "settings.usdToCny": "人民币汇率",
+          "settings.usdToCnyHint":
+            "1 USD = ? CNY；只在币种为人民币时用于换算。插件不联网取汇率，请手动维护。",
+          "settings.unit.cny": "元",
+          "settings.unit.cnyPerMTok": "元 / 百万 token",
+          "settings.unit.cnyPerUsd": "元 / USD",
+          "settings.budget.maxCostPerDay": "每日预算",
+          "settings.budget.workspaceMaxCostPerDay": "工作区每日预算",
           "tail.trace.preview": "查看发送内容",
           "tail.trace.previewHide": "收起发送内容",
           "tail.trace.previewTruncated": "实际发送（脱敏后，首尾各 2,000 字符；共 {chars} 字符）",
@@ -3546,7 +3707,6 @@ window.__ModuleLoader__.load({
           "settings.budget.maxCallsPerTurn": "每回合调用上限",
           "settings.budget.maxCallsPerSession": "每会话调用上限",
           "settings.budget.maxCallsPerHour": "每小时调用上限",
-          "settings.budget.maxCostPerDayUsd": "每日预算",
           "settings.budget.priceInputPerMTok": "输入单价",
           "settings.budget.priceOutputPerMTok": "输出单价",
           "settings.scope.off": "不发送",
@@ -3592,7 +3752,8 @@ window.__ModuleLoader__.load({
           "settings.group.delivery": "投递与行为",
           "settings.group.more": "更多",
           "settings.group.status": "状态与诊断",
-          "settings.basic.budgetHint": "0 = 不限；默认 0，范围 0–10000。更细的限额在高级设置里。",
+          "settings.basic.budgetHint":
+            "0 = 不限；默认 0，范围 0–10000（按当前币种）。切换币种会按汇率折算；更细的限额在高级设置里。",
           "settings.budget.maxCostHint": "每天最多花多少钱；0 = 不限。只有填了单价才会计算金额。",
           "settings.advanced.maxTokensHint": "单次回答最多生成多少 token；越大越贵。",
           "settings.advanced.maxInputCharsHint":
@@ -3625,7 +3786,6 @@ window.__ModuleLoader__.load({
           "settings.advisorToolsHint":
             "Lets the advisor read files in the working directory to verify conclusions (up to 5 files, read-only); costs one extra model call.",
           "settings.budget.workspaceMaxCallsPerDay": "Workspace calls per day",
-          "settings.budget.workspaceMaxCostPerDayUsd": "Workspace daily budget",
           "settings.budget.workspaceHint":
             "Workspace-wide: shared across sessions, resets on the local day",
           "settings.budget.poolLine": "Workspace today: {calls} calls · ≈{cost}",
@@ -3656,6 +3816,20 @@ window.__ModuleLoader__.load({
           "settings.tracePrompt.hint":
             "Stores the first and last 2,000 characters of the text actually sent (after redaction) in the session record; off stores metadata only. If redaction is off, the preview contains raw text.",
           "settings.help.defaultPreview": "Default: head/tail preview",
+          "settings.currency": "Currency",
+          "settings.currency.USD": "US dollars (USD)",
+          "settings.currency.CNY": "Chinese yuan (CNY)",
+          "settings.currencyHint":
+            "Amounts and prices are entered in this currency; switching converts them at the configured rate so the real value stays the same.",
+          "settings.currency.converted": "Converted amounts at 1 USD = {rate} CNY (not saved yet).",
+          "settings.usdToCny": "CNY per USD",
+          "settings.usdToCnyHint":
+            "1 USD = ? CNY; only used when the currency is CNY. The plugin never fetches rates; maintain it manually.",
+          "settings.unit.cny": "CNY",
+          "settings.unit.cnyPerMTok": "CNY / 1M tokens",
+          "settings.unit.cnyPerUsd": "CNY / USD",
+          "settings.budget.maxCostPerDay": "Daily budget",
+          "settings.budget.workspaceMaxCostPerDay": "Workspace daily budget",
           "tail.trace.preview": "View sent content",
           "tail.trace.previewHide": "Hide sent content",
           "tail.trace.previewTruncated": "Sent (redacted; first/last 2,000 of {chars} chars)",
@@ -3679,7 +3853,6 @@ window.__ModuleLoader__.load({
           "settings.budget.maxCallsPerTurn": "Calls per turn",
           "settings.budget.maxCallsPerSession": "Calls per session",
           "settings.budget.maxCallsPerHour": "Calls per hour",
-          "settings.budget.maxCostPerDayUsd": "Daily budget",
           "settings.budget.priceInputPerMTok": "Input price",
           "settings.budget.priceOutputPerMTok": "Output price",
           "settings.scope.off": "None",
@@ -4306,6 +4479,7 @@ window.__ModuleLoader__.load({
         clampFloat: clampFloat,
         clampMoney: clampMoney,
         formatMoneyInput: formatMoneyInput,
+        convertCurrency: convertCurrency,
         normalizeSettingsView: normalizeSettingsView,
         normalizeOptions: normalizeOptions,
         normalizeModels: normalizeModels,

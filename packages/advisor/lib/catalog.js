@@ -9,6 +9,8 @@
 //
 // 纯数据 + 纯函数，不 import 宿主包。
 
+import { toUsd } from "./money.js";
+
 /**
  * 能力档位（越大越强）。同一族按代际与规格排序；跨族只保证「明显更强/更弱」的关系。
  * 键是模型 id 的小写匹配片段，按**从长到短**匹配，避免 `deepseek-v4` 抢走 `deepseek-v4.1-flash`。
@@ -112,13 +114,22 @@ export function effectiveRank(tiers, route) {
 
 /**
  * 有效单价：用户声明 > 内置；都没有返回 `{ input: 0, output: 0 }`（= 不算钱）。
- * @param {{ priceInputPerMTok: number, priceOutputPerMTok: number }} settings
+ * @param {{ priceInputPerMTok: number, priceOutputPerMTok: number, currency?: string, usdToCny?: number }} settings
  * @param {string} modelId
  * @returns {{ input: number, output: number, source: "settings"|"builtin"|"none" }}
  */
 export function effectivePrice(settings, modelId) {
-  const input = Number(settings?.priceInputPerMTok ?? 0) || 0;
-  const output = Number(settings?.priceOutputPerMTok ?? 0) || 0;
+  // 设置里的单价按 settings.currency 填写；内部估算统一换算成 USD。
+  const input = toUsd(
+    Number(settings?.priceInputPerMTok ?? 0) || 0,
+    settings?.currency,
+    settings?.usdToCny,
+  );
+  const output = toUsd(
+    Number(settings?.priceOutputPerMTok ?? 0) || 0,
+    settings?.currency,
+    settings?.usdToCny,
+  );
   if (input > 0 || output > 0) return { input, output, source: "settings" };
   const builtin = builtinPrice(modelId);
   if (builtin !== undefined) return { ...builtin, source: "builtin" };

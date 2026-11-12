@@ -51,6 +51,21 @@ test("effectivePrice：设置优先 > 内置 > 不算钱", () => {
   });
 });
 
+test("effectivePrice：人民币单价按汇率折算成 USD", () => {
+  assert.deepEqual(
+    effectivePrice(
+      {
+        currency: "CNY",
+        usdToCny: 7.2,
+        priceInputPerMTok: 7.2,
+        priceOutputPerMTok: 14.4,
+      },
+      "mystery",
+    ),
+    { input: 1, output: 2, source: "settings" },
+  );
+});
+
 test("checkAllowlist：空名单不限制；命中 provider/model 或裸 id 放行", () => {
   assert.equal(checkAllowlist([], { provider: "a", model: "b" }).allowed, true);
   assert.equal(checkAllowlist(["a/b"], { provider: "a", model: "b" }).allowed, true);
@@ -62,12 +77,24 @@ test("预算池：跨日清零，按调用数与金额双闸", () => {
   const pool = normalizePool({ day: "2000-01-01", calls: 9, costUsd: 9 }, "2026-11-11");
   assert.deepEqual(pool, { day: "2026-11-11", calls: 0, costUsd: 0 });
 
-  const settings = { workspaceMaxCallsPerDay: 10, workspaceMaxCostPerDayUsd: 1 };
+  const settings = {
+    workspaceMaxCallsPerDay: 10,
+    workspaceMaxCostPerDay: 1,
+    currency: "USD",
+    usdToCny: 7.2,
+  };
   assert.equal(checkPool({ calls: 9, costUsd: 0 }, settings).ok, true);
   /** @param {any} result */
   const codeOf = (result) => (result.ok ? "ok" : result.code);
   assert.equal(codeOf(checkPool({ calls: 10, costUsd: 0 }, settings)), "workspace_calls");
   assert.equal(codeOf(checkPool({ calls: 0, costUsd: 1 }, settings)), "workspace_budget");
   assert.equal(codeOf(checkPool({ calls: 0, costUsd: 0.9 }, settings, 0.2)), "workspace_budget");
+  const cny = {
+    workspaceMaxCallsPerDay: 10,
+    workspaceMaxCostPerDay: 7.2,
+    currency: "CNY",
+    usdToCny: 7.2,
+  };
+  assert.equal(codeOf(checkPool({ calls: 0, costUsd: 1 }, cny)), "workspace_budget");
   assert.equal(dayKey(new Date("2026-11-11T12:00:00Z")).length, 10);
 });

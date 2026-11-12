@@ -50,7 +50,7 @@ test("checkBudget 按固定顺序返回第一个不满足的条件", () => {
     maxCallsPerTurn: 1,
     maxCallsPerSession: 5,
     maxCallsPerHour: 2,
-    maxCostPerDayUsd: 1,
+    maxCostPerDay: 1,
   });
   const now = Date.now();
   /** @param {any} counters */
@@ -78,12 +78,39 @@ test("checkBudget 按固定顺序返回第一个不满足的条件", () => {
   );
 });
 
+test("checkBudget：人民币限额按汇率换算成 USD 再比较", () => {
+  const settings = normalizeSettings({
+    maxCallsPerTurn: 0,
+    maxCallsPerSession: 0,
+    maxCallsPerHour: 0,
+    maxCostPerDay: 7.2,
+    currency: "CNY",
+    usdToCny: 7.2,
+  });
+  const now = Date.now();
+  const result = checkBudget({
+    settings,
+    counters: {
+      turnCalls: 0,
+      sessionCalls: 0,
+      hourStamps: [],
+      dayCostUsd: 0.9,
+    },
+    estimatedCostUsd: 0.2,
+    now,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "day_budget");
+  assert.equal(result.limit, 1, "7.2 CNY / 7.2 = 1 USD");
+  assert.equal(result.used, 0.9);
+});
+
 test("checkBudget：0 表示不限制", () => {
   const settings = normalizeSettings({
     maxCallsPerTurn: 0,
     maxCallsPerSession: 0,
     maxCallsPerHour: 0,
-    maxCostPerDayUsd: 0,
+    maxCostPerDay: 0,
   });
   const result = checkBudget({
     settings,

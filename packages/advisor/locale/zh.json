@@ -73,9 +73,7 @@
     "settings.budget.maxCallsPerTurn": "每回合调用上限",
     "settings.budget.maxCallsPerSession": "每会话调用上限",
     "settings.budget.maxCallsPerHour": "每小时调用上限",
-    "settings.budget.maxCostPerDayUsd": "每日预算",
     "settings.budget.workspaceMaxCallsPerDay": "工作区每日调用上限",
-    "settings.budget.workspaceMaxCostPerDayUsd": "工作区每日预算",
     "settings.budget.priceInputPerMTok": "输入单价",
     "settings.budget.priceOutputPerMTok": "输出单价",
     "settings.budget.range": "默认 {default} · 范围 {min}–{max}",
@@ -177,7 +175,7 @@
     "settings.group.delivery": "投递与行为",
     "settings.group.more": "更多",
     "settings.group.status": "状态与诊断",
-    "settings.basic.budgetHint": "0 = 不限；默认 0，范围 0–10000。更细的限额在高级设置里。",
+    "settings.basic.budgetHint": "0 = 不限；默认 0，范围 0–10000（按当前币种）。切换币种会按汇率折算；更细的限额在高级设置里。",
     "settings.budget.maxCostHint": "每天最多花多少钱；0 = 不限。只有填了单价才会计算金额。",
     "settings.advanced.maxTokensHint": "单次回答最多生成多少 token；越大越贵。",
     "settings.advanced.maxInputCharsHint": "一次最多发送多少字符的会话内容；超出会保留首尾、省略中间。",
@@ -215,6 +213,18 @@
     "tail.trace.previewHide": "收起发送内容",
     "tail.trace.previewTruncated": "实际发送（脱敏后，首尾各 2,000 字符；共 {chars} 字符）",
     "tail.trace.previewFull": "实际发送（脱敏后，共 {chars} 字符）",
-    "tail.trace.previewNone": "这条记录没有保存发送内容（可能是旧记录，或已在高级设置里关闭记录）。"
+    "tail.trace.previewNone": "这条记录没有保存发送内容（可能是旧记录，或已在高级设置里关闭记录）。",
+    "settings.currency": "币种",
+    "settings.currency.USD": "美元（USD）",
+    "settings.currency.CNY": "人民币（CNY）",
+    "settings.currencyHint": "金额和单价按此币种填写；切换时会按汇率折算金额，保持真实价值不变。",
+    "settings.currency.converted": "已按 1 USD = {rate} CNY 折算金额（尚未保存）。",
+    "settings.usdToCny": "人民币汇率",
+    "settings.usdToCnyHint": "1 USD = ? CNY；只在币种为人民币时用于换算。插件不联网取汇率，请手动维护。",
+    "settings.unit.cny": "元",
+    "settings.unit.cnyPerMTok": "元 / 百万 token",
+    "settings.budget.maxCostPerDay": "每日预算",
+    "settings.budget.workspaceMaxCostPerDay": "工作区每日预算",
+    "settings.unit.cnyPerUsd": "元 / USD"
   }
 }

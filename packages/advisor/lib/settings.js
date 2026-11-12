@@ -5,6 +5,8 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { fromUsd, normalizeCurrency } from "./money.js";
+
 /** 设置文件名（位于数据根下）。 */
 export const SETTINGS_FILE = "advisor.settings.json";
 
@@ -29,7 +31,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
   maxCallsPerTurn: 1,
   maxCallsPerSession: 32,
   maxCallsPerHour: 12,
-  maxCostPerDayUsd: 0,
+  currency: "USD",
+  usdToCny: 7.2,
+  maxCostPerDay: 0,
   priceInputPerMTok: 0,
   priceOutputPerMTok: 0,
   privacyScope: "summary",
@@ -42,7 +46,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   confirmedHosts: Object.freeze([]),
   pairingEnforcement: "warn",
   workspaceMaxCallsPerDay: 200,
-  workspaceMaxCostPerDayUsd: 0,
+  workspaceMaxCostPerDay: 0,
   postAnswer: "off",
   advisorTools: false,
   tracePrompt: "preview",
@@ -68,11 +72,14 @@ const INT_LIMITS = Object.freeze({
  * 金额不能走整数夹紧——0.5 会被取整成 1，0.15 会变成 0。
  */
 const MONEY_LIMITS = Object.freeze({
-  maxCostPerDayUsd: { min: 0, max: 10000, digits: 2 },
-  workspaceMaxCostPerDayUsd: { min: 0, max: 10000, digits: 2 },
+  maxCostPerDay: { min: 0, max: 10000, digits: 2 },
+  workspaceMaxCostPerDay: { min: 0, max: 10000, digits: 2 },
   priceInputPerMTok: { min: 0, max: 1000, digits: 4 },
   priceOutputPerMTok: { min: 0, max: 1000, digits: 4 },
 });
+
+/** 汇率区间：1 USD = 0.1–100 CNY，保留 4 位小数。 */
+const RATE_LIMIT = Object.freeze({ min: 0.1, max: 100, digits: 4 });
 
 /** 字符串字段的最大长度，防止有人在设置里塞进一整段提示词。 */
 const MAX_STRING = 300;
@@ -180,6 +187,19 @@ export function normalizeSettings(raw) {
   /** @type {any} */
   const out = { ...DEFAULT_SETTINGS };
 
+  out.currency = normalizeCurrency(input.currency);
+  const rawRate = Number(input.usdToCny);
+  out.usdToCny =
+    Number.isFinite(rawRate) && rawRate > 0
+      ? clampMoney(
+          rawRate,
+          DEFAULT_SETTINGS.usdToCny,
+          RATE_LIMIT.min,
+          RATE_LIMIT.max,
+          RATE_LIMIT.digits,
+        )
+      : DEFAULT_SETTINGS.usdToCny;
+
   if (typeof input.mode === "string" && MODES.includes(input.mode)) out.mode = input.mode;
 
   for (const key of ["provider", "model", "reasoningEffort"]) {
@@ -207,8 +227,25 @@ export function normalizeSettings(raw) {
     out[key] = clampInt(input[key], DEFAULT_SETTINGS[key], min, max);
   }
   for (const key of /** @type {(keyof typeof MONEY_LIMITS)[]} */ (Object.keys(MONEY_LIMITS))) {
+    if (key === "maxCostPerDay" || key === "workspaceMaxCostPerDay") continue;
     const spec = MONEY_LIMITS[key];
     out[key] = clampMoney(input[key], DEFAULT_SETTINGS[key], spec.min, spec.max, spec.digits);
+  }
+  // 旧版 *Usd 键按 USD 迁移到当前币种；新键存在时优先。
+  /** @type {Array<[keyof typeof MONEY_LIMITS, string]>} */
+  const MIGRATE_MONEY = [
+    ["maxCostPerDay", "maxCostPerDayUsd"],
+    ["workspaceMaxCostPerDay", "workspaceMaxCostPerDayUsd"],
+  ];
+  for (const [key, oldKey] of MIGRATE_MONEY) {
+    const spec = MONEY_LIMITS[key];
+    const raw =
+      input[key] !== undefined
+        ? input[key]
+        : input[oldKey] === undefined
+          ? undefined
+          : fromUsd(Number(input[oldKey]) || 0, out.currency, out.usdToCny);
+    out[key] = clampMoney(raw, DEFAULT_SETTINGS[key], spec.min, spec.max, spec.digits);
   }
   out.temperature = nullableNumber(input.temperature, 0, 2);
   out.tiers = normalizeTiers(input.tiers);

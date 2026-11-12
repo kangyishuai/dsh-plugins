@@ -2,6 +2,8 @@
 // 纯函数守卫：预算、去重、免疫窗口、配对。不 import 宿主包，单测可直接跑。
 // 设计原则：所有判断都可以用「整数 + 时间戳」表达，不依赖会话对象的形状。
 
+import { toUsd } from "./money.js";
+
 /** 去重指纹的默认窗口：24 小时。 */
 export const DEDUPE_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** 去重表上限（有界 FIFO）。 */
@@ -111,14 +113,13 @@ export function checkBudget(input) {
       return { ok: false, code: "hour_limit", limit: settings.maxCallsPerHour, used };
     }
   }
-  if (
-    settings.maxCostPerDayUsd > 0 &&
-    counters.dayCostUsd + estimatedCostUsd > settings.maxCostPerDayUsd
-  ) {
+  // 设置里的限额按 settings.currency 填写；比较前先换算成 USD。
+  const maxCostUsd = toUsd(settings.maxCostPerDay, settings.currency, settings.usdToCny);
+  if (maxCostUsd > 0 && counters.dayCostUsd + estimatedCostUsd > maxCostUsd) {
     return {
       ok: false,
       code: "day_budget",
-      limit: settings.maxCostPerDayUsd,
+      limit: maxCostUsd,
       used: counters.dayCostUsd,
     };
   }

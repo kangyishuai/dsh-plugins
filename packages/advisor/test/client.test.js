@@ -106,35 +106,81 @@ describe("money input formatting", () => {
   });
 });
 
+describe("currency conversion", () => {
+  it("keeps the real value when switching USD <-> CNY", () => {
+    const usd = {
+      currency: "USD",
+      usdToCny: 7.2,
+      maxCostPerDay: 10,
+      workspaceMaxCostPerDay: 20,
+      priceInputPerMTok: 0.15,
+      priceOutputPerMTok: 0.3,
+    };
+    const cny = api.convertCurrency(usd, "CNY");
+    assert.equal(cny.currency, "CNY");
+    assert.equal(cny.maxCostPerDay, 72);
+    assert.equal(cny.workspaceMaxCostPerDay, 144);
+    assert.equal(cny.priceInputPerMTok, 1.08);
+    assert.equal(cny.priceOutputPerMTok, 2.16);
+
+    const back = api.convertCurrency(cny, "USD");
+    assert.equal(back.currency, "USD");
+    assert.equal(back.maxCostPerDay, 10);
+    assert.equal(back.priceInputPerMTok, 0.15);
+  });
+
+  it("is a no-op when the currency does not change", () => {
+    const settings = { currency: "CNY", usdToCny: 7.2, maxCostPerDay: 72 };
+    assert.deepEqual(api.convertCurrency(settings, "CNY"), settings);
+  });
+});
+
 describe("settings view", () => {
   it("normalizes decimal money fields from the host payload", () => {
     const out = api.normalizeOptions({
       ok: true,
       settings: {
-        maxCostPerDayUsd: 0.5,
-        workspaceMaxCostPerDayUsd: 1.25,
+        maxCostPerDay: 0.5,
+        workspaceMaxCostPerDay: 1.25,
         priceInputPerMTok: 0.15,
         priceOutputPerMTok: 0.075,
       },
     });
-    assert.equal(out.settings.maxCostPerDayUsd, 0.5);
-    assert.equal(out.settings.workspaceMaxCostPerDayUsd, 1.25);
+    assert.equal(out.settings.maxCostPerDay, 0.5);
+    assert.equal(out.settings.workspaceMaxCostPerDay, 1.25);
     assert.equal(out.settings.priceInputPerMTok, 0.15);
     assert.equal(out.settings.priceOutputPerMTok, 0.075);
     assert.equal(out.settings.maxTokens, 4096);
+    assert.equal(out.settings.currency, "USD");
+    assert.equal(out.settings.usdToCny, 7.2);
+  });
+
+  it("normalizes currency and the new money keys", () => {
+    const out = api.normalizeSettingsView({
+      currency: "CNY",
+      usdToCny: 7.3,
+      maxCostPerDay: 7.3,
+      workspaceMaxCostPerDay: 0,
+      priceInputPerMTok: 1.5,
+    });
+    assert.equal(out.currency, "CNY");
+    assert.equal(out.usdToCny, 7.3);
+    assert.equal(out.maxCostPerDay, 7.3);
+    assert.equal(out.workspaceMaxCostPerDay, 0);
+    assert.equal(out.priceInputPerMTok, 1.5);
   });
 
   it("does not report equal floats as a change", () => {
     const patch = api.diffSettings(
-      { maxCostPerDayUsd: 0.5, priceInputPerMTok: 0.15 },
-      { maxCostPerDayUsd: 0.5, priceInputPerMTok: 0.15 },
+      { maxCostPerDay: 0.5, priceInputPerMTok: 0.15 },
+      { maxCostPerDay: 0.5, priceInputPerMTok: 0.15 },
     );
     assert.deepEqual(patch, {});
   });
 
   it("reports a changed decimal", () => {
-    const patch = api.diffSettings({ maxCostPerDayUsd: 0.5 }, { maxCostPerDayUsd: 0.51 });
-    assert.deepEqual(patch, { maxCostPerDayUsd: 0.51 });
+    const patch = api.diffSettings({ maxCostPerDay: 0.5 }, { maxCostPerDay: 0.51 });
+    assert.deepEqual(patch, { maxCostPerDay: 0.51 });
   });
 });
 
