@@ -197,6 +197,14 @@
     "settings.unit.calls": "calls",
     "settings.unit.items": "items",
     "settings.paths.settings": "Settings file: {path}",
-    "settings.paths.ledger": "Ledger: {path}"
+    "settings.paths.ledger": "Ledger: {path}",
+    "tail.trace.label": "Consultation",
+    "tail.trace.sep": ": ",
+    "tail.trace.chars": "{chars} chars",
+    "tail.trigger.tool": "model",
+    "tail.trigger.shadow": "shadow",
+    "tail.trigger.manual": "manual",
+    "tail.trigger.other": "other",
+    "tail.trigger.postAnswer": "post-answer"
   }
 }

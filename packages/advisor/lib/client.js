@@ -161,6 +161,14 @@ window.__ModuleLoader__.load({
       "tail.anchors": "证据锚点未对上（{checked} 条）",
       "tail.downgraded": "严重度已降级",
       "tail.aria": "顾问建议（点击展开或收起）",
+      "tail.trace.label": "本次徵询",
+      "tail.trace.sep": "：",
+      "tail.trace.chars": "{chars} 字符",
+      "tail.trigger.tool": "模型发起",
+      "tail.trigger.shadow": "影子",
+      "tail.trigger.manual": "手动",
+      "tail.trigger.postAnswer": "答后复查",
+      "tail.trigger.other": "其他",
     };
 
     /** 英文字典（键集必须与 zh 完全一致，locale/*.json 同步）。 */
@@ -295,6 +303,14 @@ window.__ModuleLoader__.load({
       "tail.anchors": "Evidence anchors did not match ({checked} checked)",
       "tail.downgraded": "Severity downgraded",
       "tail.aria": "Advisor advice (click to expand or collapse)",
+      "tail.trace.label": "Consultation",
+      "tail.trace.sep": ": ",
+      "tail.trace.chars": "{chars} chars",
+      "tail.trigger.tool": "model",
+      "tail.trigger.shadow": "shadow",
+      "tail.trigger.manual": "manual",
+      "tail.trigger.postAnswer": "post-answer",
+      "tail.trigger.other": "other",
     };
 
     /** 提示条样式：只用宿主 CSS 变量，深浅色自动跟随；同时充当「client 半已加载」的标记。 */
@@ -368,6 +384,7 @@ window.__ModuleLoader__.load({
       ".dsh-advisor-turn-head:hover{background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.12));}",
       ".dsh-advisor-turn-sev{flex:0 0 auto;font-weight:600;color:var(--dsw-alias-label-primary,CanvasText);}",
       ".dsh-advisor-turn-sum{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
+      ".dsh-advisor-turn-time{flex:0 0 auto;font-size:11px;color:var(--dsw-alias-label-secondary,GrayText);opacity:.75;}",
       ".dsh-advisor-turn-body{display:flex;flex-direction:column;gap:3px;padding:4px 8px;border-left:2px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));}",
       ".dsh-advisor-turn-advice{white-space:pre-wrap;word-break:break-word;color:var(--dsw-alias-label-primary,CanvasText);}",
       ".dsh-advisor-turn-meta{font-size:11.5px;color:var(--dsw-alias-label-secondary,GrayText);word-break:break-word;}",
@@ -1151,6 +1168,9 @@ window.__ModuleLoader__.load({
           summary: asString(item.summary),
           model: asString(item.model).trim(),
           usage: asString(item.usage).trim(),
+          at: countOf(item.at),
+          trigger: asString(item.trigger).trim(),
+          requestChars: countOf(item.requestChars),
           anchors:
             anchorsRaw === null
               ? null
@@ -1180,6 +1200,60 @@ window.__ModuleLoader__.load({
       let n = Number(value);
       if (!Number.isFinite(n)) return "0";
       return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    }
+
+    /** 触发方式白名单；未知值归到 other。 */
+    let ADVICE_TRIGGERS = ["tool", "shadow", "manual", "post-answer"];
+
+    /**
+     * 触发方式的本地化标签。
+     * @param {(key: string) => string} t
+     * @param {string} trigger
+     * @returns {string}
+     */
+    function triggerLabel(t, trigger) {
+      let key =
+        trigger === "post-answer"
+          ? "postAnswer"
+          : ADVICE_TRIGGERS.indexOf(trigger) >= 0
+            ? trigger
+            : "other";
+      return t(`tail.trigger.${key}`);
+    }
+
+    /**
+     * 本地时间 HH:mm；无效/缺失返回空串。
+     * @param {any} epochMs
+     * @returns {string}
+     */
+    function formatClock(epochMs) {
+      let n = Number(epochMs);
+      if (!Number.isFinite(n) || n <= 0) return "";
+      let date = new Date(n);
+      let hours = String(date.getHours()).padStart(2, "0");
+      let minutes = String(date.getMinutes()).padStart(2, "0");
+      return `${hours}:${minutes}`;
+    }
+
+    /**
+     * 顾问线展开后的「本次徵询」摘要：触发方式 · 时间 · 模型 · 字符数 · 用量/成本。
+     * @param {any} record
+     * @param {(key: string) => string} t
+     * @returns {string}
+     */
+    function traceTextOf(record, t) {
+      let parts = [];
+      let trigger = asString(record.trigger).trim();
+      if (trigger !== "") parts.push(triggerLabel(t, trigger));
+      let clock = formatClock(record.at);
+      if (clock !== "") parts.push(clock);
+      let model = asString(record.model).trim();
+      if (model !== "") parts.push(model);
+      let chars = countOf(record.requestChars);
+      if (chars > 0) parts.push(t("tail.trace.chars").replace("{chars}", formatCount(chars)));
+      let usage = asString(record.usage).trim();
+      if (usage !== "") parts.push(usage);
+      return parts.join(" · ");
     }
 
     /**
@@ -1394,6 +1468,7 @@ window.__ModuleLoader__.load({
         60,
       );
       let severityLabel = t(`tail.severity.${severity}`);
+      let clock = formatClock(record.at);
 
       /** @type {any[]} */
       let headChildren = [];
@@ -1415,6 +1490,19 @@ window.__ModuleLoader__.load({
           );
         }
       }
+      if (clock !== "") {
+        headChildren.push(
+          h(
+            "span",
+            {
+              className: "dsh-advisor-turn-time",
+              key: "time",
+              title: new Date(record.at).toLocaleString(),
+            },
+            clock,
+          ),
+        );
+      }
 
       /** @type {any[]} */
       let bodyChildren = [
@@ -1424,11 +1512,15 @@ window.__ModuleLoader__.load({
           asString(record.advice) === "" ? t("tail.empty") : record.advice,
         ),
       ];
-      let metaText = [asString(record.model), asString(record.usage)]
-        .filter((part) => part !== "")
-        .join(" · ");
-      if (metaText !== "") {
-        bodyChildren.push(h("div", { className: "dsh-advisor-turn-meta", key: "meta" }, metaText));
+      let traceText = traceTextOf(record, t);
+      if (traceText !== "") {
+        bodyChildren.push(
+          h(
+            "div",
+            { className: "dsh-advisor-turn-meta", "data-advisor-trace": "", key: "trace" },
+            `${t("tail.trace.label")}${t("tail.trace.sep")}${traceText}`,
+          ),
+        );
       }
       let anchors = record.anchors;
       if (anchors && typeof anchors === "object") {
@@ -1458,6 +1550,7 @@ window.__ModuleLoader__.load({
           className: "dsh-advisor-turn",
           "data-advisor-turn": String(turnNumber),
           "data-advisor-status": declined ? "declined" : "reviewed",
+          "data-advisor-trigger": asString(record.trigger).trim(),
         },
         [
           h(
@@ -4117,6 +4210,9 @@ window.__ModuleLoader__.load({
         diffSettings: diffSettings,
         interpretUpdate: interpretUpdate,
         normalizeAdviceItems: normalizeAdviceItems,
+        formatClock: formatClock,
+        traceTextOf: traceTextOf,
+        triggerLabel: triggerLabel,
         truncateText: truncateText,
         turnNumberOf: turnNumberOf,
         slotTurnNumber: slotTurnNumber,

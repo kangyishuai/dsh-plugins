@@ -207,6 +207,7 @@ pnpm smoke:advisor-desktop --require --advice
 3. `advisorTools: true` 时，顾问若返回 `needs`，工具结果里应带 `verification.read`；读不到的文件出现在 `verification.refused`，且首轮结论保留。
 4. `/advisor report all` 读跨会话账本，按严重度/模型/日期汇总。
 5. `workspaceMaxCallsPerDay` 到顶后，任何会话的徵询都返回 `workspace_calls`（跨会话共享）。
+6. 有顾问记录的回合，展开回合尾部顾问线应看到 `本次徵询：<触发方式> · <HH:mm> · <model> · <字符数> · <in/out/耗时/≈$>`；旧记录没有 `requestChars` 时缺字符数，但其余已有字段仍应显示。
 
 ## 3.8 P3 真机结果（2026-11-12）
 

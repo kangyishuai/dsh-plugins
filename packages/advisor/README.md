@@ -113,7 +113,7 @@ Example (placeholder route and model names — use the ones the picker shows you
 
 **Evidence anchors.** Each advice item may cite `{kind, ref}` anchors (a tool-call id, a message id, a file path). The plugin checks every ref against the session and marks the item unverified when nothing matches; if **none** of the cited anchors exist, the severity is downgraded one step and the advice says so. This is how a hallucinated "that failing command" gets caught.
 
-**Advice line and report.** Each consultation is recorded as a session plugin record (not part of the model-visible surface), so the turn gets a compact advisor line in the chat and `/advisor report` can attribute adoption over time. Attribution is deliberately conservative: no signal, no credit.
+**Advice line and report.** Each consultation is recorded as a session plugin record (not part of the model-visible surface), so the turn gets a compact advisor line in the chat and `/advisor report` can attribute adoption over time. Attribution is deliberately conservative: no signal, no credit. Expanding the line shows the trigger, local time, advisor model, characters sent and the usage/cost summary for that consultation.
 
 **Picking a model.** `/advisor` opens a picker listing the routes and models already configured in DSH, plus _off_ and _add / configure provider_. Choosing a model switches `mode` to `advisory`. `/advisor doctor` tells you line by line what is still missing.
 
