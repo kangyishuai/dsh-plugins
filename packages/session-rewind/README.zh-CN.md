@@ -134,7 +134,7 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-session-rewind-*.tgz
 pnpm test                     # 单测（宿主文件引擎、宿主 RPC、客户端 helper）
 pnpm verify                   # 仓库统一门禁
 pnpm smoke:session-rewind           # 临时 DSH 目录 + 真实 GUI 端到端（需要 dsh 与 ego-browser）
-pnpm smoke:session-rewind-desktop   # 桌面（Electron）只读回归（23 项）；--recall 再加 7 条召回断言；--deep --workspace <dir> 再跑文件模式（合计 39 项）
+pnpm smoke:session-rewind-desktop   # 桌面（Electron）只读回归（24 项）；--recall 再加 7 条召回断言；--deep --workspace <dir> 再跑文件模式（合计 40 项）
 ```
 
 设计记录：[ADR 0006](../../docs/adr/0006-session-rewind-architecture.md)、[ADR 0007](../../docs/adr/0007-session-rewind-file-restore.md)。

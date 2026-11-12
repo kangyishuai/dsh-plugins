@@ -134,7 +134,7 @@ The plugin declares no `engines.dsh` and no `@deepseek-ai/*` peer range: DSH is 
 pnpm test                     # unit tests (host engine, host RPC, client helpers)
 pnpm verify                   # repo-wide gates
 pnpm smoke:session-rewind           # temp DSH home + real GUI end-to-end (needs dsh & ego-browser)
-pnpm smoke:session-rewind-desktop   # desktop (Electron) read-only check (23); --recall adds 7 composer-recall checks; --deep --workspace <dir> adds the file-mode run (39 total)
+pnpm smoke:session-rewind-desktop   # desktop (Electron) read-only check (24); --recall adds 7 composer-recall checks; --deep --workspace <dir> adds the file-mode run (40 total)
 ```
 
 Design notes: [ADR 0006](../../docs/adr/0006-session-rewind-architecture.md) and [ADR 0007](../../docs/adr/0007-session-rewind-file-restore.md) (Chinese; the repository docs are written in Chinese).

@@ -852,6 +852,8 @@ function applyHarness(fixtures, options = {}) {
   let decorated = null;
   /** @type {Map<string, any[]>} */
   const listeners = new Map();
+  /** 注入到宿主的样式表文本（apply() 里 ctx.effect 注册的那份）。 @type {string[]} */
+  const styles = [];
 
   /**
    * @param {any} key
@@ -895,7 +897,18 @@ function applyHarness(fixtures, options = {}) {
       navigator: { clipboard: { writeText: async () => {} } },
     },
     document: {
-      createElement: () => ({ dataset: {}, style: {}, remove: () => {} }),
+      createElement: () => ({
+        dataset: {},
+        style: {},
+        remove: () => {},
+        /** 记下注入的样式文本，供「主题 token 配对」用例断言。 @param {string} value */
+        set textContent(value) {
+          styles.push(value);
+        },
+        get textContent() {
+          return "";
+        },
+      }),
       head: { appendChild: () => {} },
       querySelector: () => null,
       getSelection: () => null,
@@ -1019,6 +1032,7 @@ function applyHarness(fixtures, options = {}) {
     storage,
     fireStorage,
     listeners,
+    styles,
   };
 }
 
@@ -1380,6 +1394,127 @@ describe("apply() runtime wiring", () => {
       true,
       "rewind runs; the host cancels the running turn and waits for idle",
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // 注入样式的主题正确性（0.6.1 -> 0.6.2 的回归用例）
+  //
+  // 背景：0.6.1 的主按钮写成 `background: var(--dsw-alias-brand-primary); color: #fff`。
+  // --dsw-alias-brand-primary 是「与背景反色的实心表面色」——浅色 #0f1115、深色 #f9fafb，
+  // 于是深色主题下变成白底白字（1.05:1），确认按钮的文字肉眼不可见。
+  // 两个子用例分别守住两条不变量：
+  //   1. 只用宿主真实存在的 token（写错名字会静默落到 CSS fallback，颜色永远不跟随主题）；
+  //   2. 反色实心填充不得配死白前景（前景必须用 --dsw-alias-label-primary-foreground）。
+  // -------------------------------------------------------------------------
+  describe("injected styles: theme token pairing", () => {
+    /** 宿主 0.2.2-rc.2 主题里真实存在的 token（只收本插件用到的）。 */
+    const HOST_THEME_TOKENS = new Set([
+      "--dsw-alias-bg-base",
+      "--dsw-alias-bg-layer-1",
+      "--dsw-alias-bg-layer-2",
+      "--dsw-alias-bg-mask-1",
+      "--dsw-alias-border-l2",
+      "--dsw-alias-border-l3",
+      "--dsw-alias-brand-primary",
+      "--dsw-alias-button-primary-fill",
+      "--dsw-alias-button-primary-hover",
+      "--dsw-alias-interactive-bg-hover",
+      "--dsw-alias-label-primary",
+      "--dsw-alias-label-primary-foreground",
+      "--dsw-alias-label-secondary",
+      "--dsw-alias-label-tertiary",
+      "--dsw-alias-link",
+      "--dsw-alias-state-error-primary",
+      "--dsw-alias-state-success-primary",
+      "--dsw-alias-state-warn-label",
+      "--dsw-alias-state-warn-primary",
+      "--dsw-alias-toast-bg",
+      "--dsw-alias-toast-label",
+      "--dsw-radius-sm",
+      "--ds-font-family-code",
+    ]);
+
+    /** 反色实心表面色：填充它会翻转底色，前景必须跟着翻转。 */
+    const INVERTED_FILL_RE = /var\(--dsw-alias-(?:brand-primary|button-primary-fill)\b/;
+    /** 死白前景。 */
+    const HARDCODED_WHITE_RE = /^(?:#fff(?:fff)?|white|rgb\(\s*255\s*,\s*255\s*,\s*255\s*\))$/i;
+
+    /** @returns {string} 本次 apply() 注入的样式文本 */
+    const injectedCss = () => {
+      /** @type {string[]} */
+      const styles = applyHarness(fixtures()).styles;
+      assert.equal(styles.length > 0, true, "apply() injected no stylesheet");
+      return styles.join("\n");
+    };
+
+    /**
+     * 把 CSS 文本拆成 [{ selector, declarations: Map<string,string> }]。
+     * 本插件的样式表没有嵌套规则（无 @media），按 `}` 切分即可。
+     * @param {string} css
+     * @returns {Array<{ selector: string, declarations: Map<string, string> }>}
+     */
+    const parseRules = (css) =>
+      css
+        .split("}")
+        .map((chunk) => chunk.trim())
+        .filter((chunk) => chunk.includes("{"))
+        .map((chunk) => {
+          const at = chunk.indexOf("{");
+          const declarations = new Map();
+          for (const declaration of chunk.slice(at + 1).split(";")) {
+            const colon = declaration.indexOf(":");
+            if (colon === -1) continue;
+            declarations.set(
+              declaration.slice(0, colon).trim().toLowerCase(),
+              declaration.slice(colon + 1).trim(),
+            );
+          }
+          return { selector: chunk.slice(0, at).trim(), declarations };
+        });
+
+    it("only references theme tokens the host actually defines", () => {
+      const used = new Set(
+        [...injectedCss().matchAll(/var\((--(?:dsw|ds)-[a-z0-9-]+)/g)].map((match) => match[1]),
+      );
+      assert.equal(used.size > 0, true, "no theme tokens found in the injected CSS");
+      const unknown = [...used].filter((token) => !HOST_THEME_TOKENS.has(token)).sort();
+      assert.deepEqual(
+        unknown,
+        [],
+        `unknown host tokens (would silently fall back to a hardcoded colour): ${unknown.join(", ")}`,
+      );
+    });
+
+    it("never pairs an inverted fill with a hardcoded white foreground", () => {
+      /** @type {string[]} */
+      const offenders = [];
+      for (const rule of parseRules(injectedCss())) {
+        const background =
+          rule.declarations.get("background") || rule.declarations.get("background-color");
+        const foreground = rule.declarations.get("color");
+        if (!background || !foreground) continue;
+        if (!INVERTED_FILL_RE.test(background)) continue;
+        if (HARDCODED_WHITE_RE.test(foreground)) offenders.push(rule.selector);
+      }
+      assert.deepEqual(offenders, [], `inverted fill + #fff foreground: ${offenders.join(", ")}`);
+    });
+
+    it("pairs the primary button fill with the host foreground token", () => {
+      const primary = parseRules(injectedCss()).find(
+        (rule) => rule.selector === ".dsh-srw-btn-primary",
+      );
+      assert.ok(primary, ".dsh-srw-btn-primary rule is missing");
+      assert.match(
+        String(primary.declarations.get("color")),
+        /var\(--dsw-alias-label-primary-foreground/,
+        "primary button text must use --dsw-alias-label-primary-foreground",
+      );
+      assert.match(
+        String(primary.declarations.get("background")),
+        /var\(--dsw-alias-button-primary-fill/,
+        "primary button fill must use --dsw-alias-button-primary-fill",
+      );
+    });
   });
 });
 
