@@ -1088,6 +1088,7 @@ const main = async () => {
     const settingsNames = {
       open: "打开 设置 →「通用设置」",
       card: "设置卡加载（[data-advisor-settings] 存在且没有 [data-advisor-error]）",
+      expanded: "设置卡高级区已展开（断言读到的是展开后的快照，不是紧凑卡）",
       selects: "设置卡有 provider / model 下拉，且 provider 至少 1 个候选",
       fields: "设置卡出现新增字段（工作区预算 / 预览会发什么 / 模型白名单）",
       confirm: "设置卡出现「确认跨 provider 发送」按钮",
@@ -1111,6 +1112,7 @@ const main = async () => {
         if (!opened.ok) {
           for (const name of [
             settingsNames.card,
+            settingsNames.expanded,
             settingsNames.selects,
             settingsNames.fields,
             settingsNames.confirm,
@@ -1142,6 +1144,25 @@ const main = async () => {
             5_000,
           );
           const value = expandedCard.ok ? expandedCard.value : (card.value ?? null);
+          // 回归断言：确认后面这些断言读到的**就是展开后的快照**，而不是展开前的紧凑卡。
+          // 这条守的是「不再把 cdp.evaluate 的裸对象当成 waitFor 的 { ok, value } 用」这个坑——
+          // 一旦有人把上面的读法改回去，这里会直接红，而不是让字段断言莫名其妙地失败。
+          check(
+            settingsNames.expanded,
+            expandedCard.ok === true &&
+              value?.advancedExpanded === "true" &&
+              toCount(value?.helpButtons) > 0,
+            JSON.stringify({
+              fromExpandedWait: expandedCard.ok === true,
+              advancedExpanded: value?.advancedExpanded ?? null,
+              statusExpanded: value?.statusExpanded ?? null,
+              helpButtons: value?.helpButtons ?? null,
+              hint:
+                expandedCard.ok === true
+                  ? undefined
+                  : "读到的是展开前的紧凑快照：cdp.evaluate() 返回裸对象，没有 .value；请用 waitFor() 取 { ok, value }",
+            }),
+          );
           check(
             settingsNames.card,
             card.ok && value?.found === true && value?.error === null,
