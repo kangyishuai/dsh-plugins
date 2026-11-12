@@ -117,6 +117,7 @@ On startup the plugin also removes data for sessions that no longer exist (they 
 - **Private client seams.** Hiding rows and injecting the ↶ button rely on DSH's internal view/slot registries. They are shape-checked at install and degrade to “context rewound, transcript not hidden” or “button missing” rather than breaking a session.
 - **Recall is a draft edit.** It fills the composer through the host facade, so `Ctrl+Z` steps back through recalls like any other draft change; it never appends to the session or the model context.
 - **POSIX/macOS paths only** in this version; Windows separators and permission bits are not verified.
+- **macOS overlays don't drag the window.** The drawer, its mask and the confirm dialog declare `data-window-drag-exclude`, so dragging over them while they cover the title bar behaves normally (verified with a real mouse drag on DSH 0.2.2-rc.2; earlier builds could drag the whole window).
 
 ## Compatibility
 
