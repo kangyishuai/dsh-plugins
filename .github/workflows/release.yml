@@ -31,28 +31,54 @@ jobs:
       - id: changesets
         uses: changesets/action@v2
         with:
+          # 必须用 PAT，不能用仓库自带的 GITHUB_TOKEN：GitHub 会抑制 GITHUB_TOKEN 产生的
+          # pull_request 事件，用它开的 Version Packages PR 上永远不会有 CI（见 CONTRIBUTING
+          # 「分支保护（main）」）。没配 RELEASE_TOKEN 时退回 GITHUB_TOKEN，下面的补跑步骤兜底。
+          #
+          # 注意：action 从 `github-token` 这个 input 取 token，且当环境变量 GITHUB_TOKEN
+          # 与它不一致时会直接抛错（dist 里显式校验）。而 version-script 里的
+          # @changesets/changelog-github 又要读环境变量 GITHUB_TOKEN，所以两处必须同值。
+          github-token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
           version-script: pnpm version-packages
           publish-script: pnpm release
           commit-message: "chore(release): version packages"
           pr-title: "chore(release): version packages"
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      # Version Packages PR 是 github-actions[bot] 用 GITHUB_TOKEN 创建的：GitHub 会抑制
-      # GITHUB_TOKEN 产生的 pull_request 事件，所以这个 PR 上**永远不会**出现 CI 结果
-      # （run 会以 failure/0 job 的形态存在，或干脆没有）。而 main 的规则集要求 CI 绿，
-      # 于是这里显式 dispatch 一次，让检查结果落到该 PR 的 head commit 上。
-      # 没有 release PR 时（本次是发布而非开 PR）直接跳过。
-      - name: Run CI on the Version Packages PR
+      # 正常路径：配了 RELEASE_TOKEN → release PR 由 PAT 创建，会像普通 PR 一样触发 CI，
+      # 这一步只做一次权限自检（顺带把凭据是否还有效写进日志），不补跑。
+      # 兜底路径：没配 PAT（或被撤/过期）→ release PR 仍是 bot 用 GITHUB_TOKEN 开的，不会触发 CI，
+      # 用 workflow_dispatch 在 changeset-release/main 上补跑一次，检查名会挂到 PR 的 head commit 上。
+      # 没有打开的 release PR 时直接跳过。
+      - name: Check CI on the Version Packages PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           set -euo pipefail
-          number=$(gh pr list --head changeset-release/main --state open --json number --jq 'length')
-          if [ "${number:-0}" = "0" ]; then
-            echo "没有打开的 Version Packages PR，跳过"
-            exit 0
+
+          run_dispatch() {
+            number=$(gh pr list --head changeset-release/main --state open --json number --jq 'length')
+            if [ "${number:-0}" = "0" ]; then
+              echo "没有打开的 Version Packages PR，跳过"
+              return 0
+            fi
+            echo "给 changeset-release/main 补跑 CI（检查名会挂到 PR head commit 上）"
+            gh workflow run ci.yml --ref changeset-release/main
+          }
+
+          if [ -n "${RELEASE_TOKEN:-}" ]; then
+            if push=$(GH_TOKEN="$RELEASE_TOKEN" gh api "repos/${GITHUB_REPOSITORY}" --jq '.permissions.push' 2>/dev/null); then
+              if [ "$push" = "true" ]; then
+                echo "RELEASE_TOKEN 校验通过（contents write）；release PR 会自带常规 CI，跳过补跑"
+                exit 0
+              fi
+              echo "::warning::RELEASE_TOKEN 缺少 Contents: write，本次退回补跑模式"
+            else
+              echo "::warning::RELEASE_TOKEN 校验失败（可能已过期或被撤权），本次退回补跑模式"
+            fi
           fi
-          echo "给 changeset-release/main 补跑 CI（检查名会挂到 PR head commit 上）"
-          gh workflow run ci.yml --ref changeset-release/main
+
+          run_dispatch

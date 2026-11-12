@@ -104,7 +104,11 @@ SMOKE_DEMO=1 pnpm smoke:session-delete   # 截图在系统临时目录的 dsh-sm
 
 仓库所有者（admin）可以 bypass，只用于「检查根本不可能产生」的场景，例如 GitHub 侧故障。正常情况**不要**用 bypass 合并。
 
-**例外：Version Packages PR 上不会有 `pull_request` 触发的 CI。** 它由 `changesets/action` 用仓库的 `GITHUB_TOKEN` 创建，而 GitHub 会抑制 `GITHUB_TOKEN` 产生的 `pull_request` 事件——那个 PR 上要么没有任何检查，要么只有一个 0 job 的失败 run。应对方式：`release.yml` 在该 PR 存在时用 `workflow_dispatch` 给 `changeset-release/main` 补跑一次 `ci.yml`，检查结果会挂到 PR 的 head commit 上，满足门禁。手动补跑同一入口：
+**Version Packages PR 的 CI 靠 `RELEASE_TOKEN`。** 这类 PR 由 `changesets/action` 创建，如果用仓库自带的 `GITHUB_TOKEN`，GitHub 会抑制它产生的 `pull_request` 事件——那个 PR 上要么没有任何检查，要么只有一个 0 job 的失败 run。所以 `release.yml` 用仓库 secret `RELEASE_TOKEN`（fine-grained PAT，只需 `Contents: write` + `Pull requests: write`）来开 PR，这样它和普通 PR 一样自带 `CI` 与 `PR title` 检查。
+
+- **没配这个 secret 也能发版**：`release.yml` 会退回 `GITHUB_TOKEN`，并用 `workflow_dispatch` 给 `changeset-release/main` 补跑一次 `ci.yml`，检查结果同样挂在 PR 的 head commit 上。补跑有一处差别：`commitlint`/`PR title` 属于 `pull_request` 触发的工作流，补跑不会覆盖它们（release PR 标题固定为 `chore(release): version packages`，本身合规）。
+- **PAT 到期/被撤权时不要慌**：`release.yml` 的 `Check CI on the Version Packages PR` 步骤会用 PAT 查一次仓库权限，权限不对就打印 warning 并自动退回补跑模式。到期表现是 Release 日志里出现该 warning，不是发布失败。换 token 只需覆盖同名 secret，不用改代码。
+- 手工补跑（兜底路径或怀疑 CI 没触发时）：
 
 ```bash
 gh workflow run ci.yml --ref changeset-release/main
@@ -161,7 +165,7 @@ pnpm wt rm feat/session-delete-batch --delete-branch   # PR 合并后清理
    - **走 PR**：直接把带 changeset 的提交推到 `main`，CI 会开一个「Version Packages」PR，合并它即可
 3. `main` 上出现尚未发布的版本号时，Release 工作流会发布到 npm 并打 tag `@kangyishuai/dsh-<name>@<version>`，同时创建 GitHub Release
 
-走 PR 这条路时记得：Version Packages PR 上的 CI 是 `release.yml` 用 `workflow_dispatch` 补跑的（原因见[分支保护](#分支保护main)），等它绿了再合并。若补跑失败或没出现，手动补一次：
+走 PR 这条路时记得：Version Packages PR 由 `RELEASE_TOKEN` 创建，因此和普通 PR 一样自带 CI 与 `PR title` 检查，等必需检查绿了再合并（细节见[分支保护](#分支保护main)）。若那个 PR 上没出现检查，多半是 secret 缺失或 PAT 过期，用兜底入口手工补一次：
 
 ```bash
 gh workflow run ci.yml --ref changeset-release/main
