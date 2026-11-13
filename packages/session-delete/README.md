@@ -31,7 +31,7 @@ DSH's built-in _archive_ only hides a session: the id goes into the workspace's 
 | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | ![Delete confirmation](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/confirm-dialog.png) | ![Workspace batch](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/workspace-batch.png) | ![Trash](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/trash-panel.png) | ![Settings section](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/settings-section.png) |
 
-<sub>Screenshots come from <code>SMOKE_DEMO=1 pnpm smoke:session-delete</code>: workspace names, session titles and IDs are replaced with demo data. The UI language follows DSH (Chinese here).</sub>
+<sub>Screenshots are captured from a live DSH desktop session with the demo data substituted in the DOM (workspace names, session titles, UUIDs and the local user path), so no real content is published. The UI language follows DSH (Chinese here).</sub>
 
 ## Install
 

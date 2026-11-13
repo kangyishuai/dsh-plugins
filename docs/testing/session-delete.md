@@ -73,7 +73,7 @@ pnpm gate session-delete --skip-desktop         # 明确跳过桌面端（会提
 1. `pnpm verify`（lint + 类型 + 规范 + 公开边界 + 全部单测）
 2. `pnpm probe:runtime`（含本插件依赖的私有 seam：`archiveSession`/`unarchiveSession`、
    后端 `locate()`、`sessions.detachEntered`、会话「…」菜单槽、页脚 action 槽）
-3. `pnpm smoke:session-delete`（临时 DSH_HOME 的 web 端到端，32 项）
+3. `pnpm smoke:session-delete`（临时 DSH_HOME 的 web 端到端，33 项）
 4. 桌面只读回归（`pnpm smoke:session-delete-desktop`，**永远带 `--require`**：没开调试端口就是失败）
 
 > 桌面端要先用 `open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1`
@@ -105,7 +105,7 @@ pnpm smoke:session-delete
 ````
 
 它会自动：复制 desktop profile 到临时 `DSH_HOME` → 打包安装当前源码 → 起真实
-宿主（随机端口）→ 用 ego-browser 点一遍主链路 → 断言 32 项，并把关键状态截图存到
+宿主（随机端口）→ 用 ego-browser 点一遍主链路 → 断言 33 项，并把关键状态截图存到
 系统临时目录 `dsh-smoke-shots/`（脚本结束会打印路径）：
 
 1. 无 `[data-slot-error]`（锁住 slot 漏注入类回归）

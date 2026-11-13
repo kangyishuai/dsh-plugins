@@ -8,7 +8,7 @@
 
 非官方 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 插件，与 DeepSeek 无关。
 
-> **状态：早期可用。** 已在当前目标 DSH 版本上用 `pnpm smoke:session-delete`（临时 DSH home，32 项端到端断言）和 `pnpm probe:runtime` 验证；桌面只读回归是在更早的版本上做的。具体范围见[兼容性与降级](#兼容性与降级)表格。`pnpm gate session-delete` 一条命令跑完发版门禁。仍是年轻软件，重要数据请自行备份。
+> **状态：早期可用。** 已在当前目标 DSH 版本上用 `pnpm smoke:session-delete`（临时 DSH home，33 项端到端断言）和 `pnpm probe:runtime` 验证；桌面只读回归是在更早的版本上做的。具体范围见[兼容性与降级](#兼容性与降级)表格。`pnpm gate session-delete` 一条命令跑完发版门禁。仍是年轻软件，重要数据请自行备份。
 
 
 ![删除确认框：一行影响面、可选的级联勾选、以及「详情」折叠](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/overview.png)
@@ -31,7 +31,7 @@ DSH 自带的「归档」只是把会话藏起来：id 记进工作区的归档�
 | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | ![删除确认](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/confirm-dialog.png) | ![工作区批量](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/workspace-batch.png) | ![回收站](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/trash-panel.png) | ![设置页分节](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/settings-section.png) |
 
-<sub>截图由 <code>SMOKE_DEMO=1 pnpm smoke:session-delete</code> 生成，工作区名、会话标题和 ID 都已替换为演示数据。</sub>
+<sub>截图从真实 DSH 桌面版现场截取，并在 DOM 层把工作区名、会话标题、UUID 与本机用户路径替换为演示数据，不含真实内容。</sub>
 
 ## 安装
 
