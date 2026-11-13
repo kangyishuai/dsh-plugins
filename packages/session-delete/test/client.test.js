@@ -234,3 +234,233 @@ describe("dialog presentation helpers", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// 批量执行与面板加载
+//
+// 用户实测的原始症状是「回收站 80 条，全选彻底删除没反应」：宿主单次上限 50，
+// 整单被拒之后界面只留一行灰字。这两条不变量必须在没有浏览器的地方也守住：
+//   1. 一次选择无论多大，都不能出现「单次请求超上限」；
+//   2. 面板加载失败只能影响面板自己，不许把确认框/ toast 一起拖死。
+// ---------------------------------------------------------------------------
+describe("batch driver", () => {
+  /** @param {Record<string, (request?: any) => any>} handlers */
+  const fakeCall = (handlers) => {
+    /** @type {{ method: string, request: any, count: number }[]} */
+    const calls = [];
+    const call = async (/** @type {string} */ method, /** @type {any} */ request) => {
+      calls.push({ method, request, count: (request?.entryIds || []).length });
+      const handler = handlers[method];
+      if (!handler) throw new Error(`unexpected call ${method}`);
+      return handler(request);
+    };
+    return { call, calls };
+  };
+
+  it("splits 80 selected entries into chunks that never exceed the host bound", async () => {
+    const { runBatch } = client.__test;
+    const ids = Array.from({ length: 80 }, (_, index) => `e${index}`);
+    const { call, calls } = fakeCall({
+      purgeMany: (/** @type {any} */ request) => ({
+        ok: true,
+        total: request.entryIds.length,
+        succeeded: request.entryIds.length,
+        results: request.entryIds.map((/** @type {string} */ entryId) => ({ entryId, ok: true })),
+      }),
+    });
+    /** @type {any[]} */
+    const progress = [];
+    const summary = await runBatch({
+      ids,
+      kind: "purge",
+      call,
+      chunkSize: 20,
+      onProgress: (/** @type {any} */ state) => progress.push(state.done),
+    });
+    assert.equal(calls.length, 4, "80 entries must take four requests, not one rejected call");
+    assert.deepEqual(
+      calls.map((row) => row.count),
+      [20, 20, 20, 20],
+    );
+    assert.equal(summary.total, 80);
+    assert.equal(summary.ok, 80);
+    assert.deepEqual(summary.failures, []);
+    assert.equal(progress[progress.length - 1], 80, "progress must reach the total");
+    assert.ok(
+      progress.every((value, index) => index === 0 || value >= progress[index - 1]),
+      `progress must be monotonic: ${progress.join(",")}`,
+    );
+  });
+
+  it("summarises partial failures instead of aborting the rest", async () => {
+    const { runBatch } = client.__test;
+    const ids = ["a", "b", "c"];
+    const { call } = fakeCall({
+      purgeMany: (/** @type {any} */ request) => ({
+        ok: false,
+        total: request.entryIds.length,
+        succeeded: 2,
+        results: request.entryIds.map((/** @type {string} */ entryId) => ({
+          entryId,
+          ok: entryId !== "b",
+          error: entryId === "b" ? "entry vanished" : undefined,
+        })),
+      }),
+    });
+    const summary = await runBatch({ ids, kind: "purge", call, chunkSize: 20 });
+    assert.equal(summary.ok, 2);
+    assert.equal(summary.failures.length, 1);
+    assert.equal(summary.failures[0].entryId, "b");
+  });
+
+  it("records a thrown request as per-entry failures and keeps going", async () => {
+    const { runBatch } = client.__test;
+    const ids = ["a", "b", "c"];
+    let attempt = 0;
+    const { call } = /** @type {any} */ (
+      (() => {
+        /** @type {any[]} */
+        const calls = [];
+        return {
+          calls,
+          call: async (/** @type {string} */ method, /** @type {any} */ request) => {
+            calls.push({ method, request });
+            attempt += 1;
+            if (attempt === 1) throw new Error("host went away");
+            return {
+              ok: true,
+              results: request.entryIds.map((/** @type {string} */ entryId) => ({
+                entryId,
+                ok: true,
+              })),
+            };
+          },
+        };
+      })()
+    );
+    const summary = await runBatch({ ids, kind: "restore", call, chunkSize: 2 });
+    assert.equal(summary.total, 3);
+    // 第一批整块失败 → 2 条失败；第二批成功 → 1 条成功。
+    assert.equal(summary.failures.length, 2);
+    assert.equal(summary.ok, 1);
+  });
+
+  it("honours the stop request between chunks", async () => {
+    const { runBatch } = client.__test;
+    const ids = Array.from({ length: 10 }, (_, index) => `e${index}`);
+    let done = 0;
+    const { call, calls } = fakeCall({
+      purgeMany: (/** @type {any} */ request) => {
+        done += request.entryIds.length;
+        return {
+          ok: true,
+          results: request.entryIds.map((/** @type {string} */ entryId) => ({ entryId, ok: true })),
+        };
+      },
+    });
+    /** @type {number[]} */
+    const seen = [];
+    const summary = await runBatch({
+      ids,
+      kind: "purge",
+      call,
+      chunkSize: 2,
+      onProgress: (/** @type {any} */ state) => seen.push(state.done),
+      // 处理完第一批之后用户点了「停止」。
+      shouldStop: () => seen.length >= 1,
+    });
+    assert.equal(calls.length, 1, "no further chunk may start after the stop request");
+    assert.equal(summary.stopped, true);
+    assert.equal(summary.done, 2);
+    assert.ok(done < ids.length);
+  });
+
+  it("passes the restore result session id back to the caller", async () => {
+    const { runBatch } = client.__test;
+    /** @type {string[]} */
+    const restored = [];
+    const { call } = fakeCall({
+      restoreMany: (/** @type {any} */ request) => ({
+        ok: true,
+        results: request.entryIds.map((/** @type {string} */ entryId) => ({
+          entryId,
+          ok: true,
+          sessionId: `session-${entryId}`,
+        })),
+      }),
+    });
+    await runBatch({
+      ids: ["a", "b"],
+      kind: "restore",
+      call,
+      chunkSize: 20,
+      onRestored: (/** @type {string} */ sessionId) => restored.push(sessionId),
+    });
+    assert.deepEqual(restored, ["session-a", "session-b"]);
+  });
+});
+
+describe("panel loader", () => {
+  it("reports a failed list instead of throwing into the overlay", async () => {
+    const { createPanelLoader } = client.__test;
+    /** @type {any} */
+    const sinks = { data: undefined, error: undefined, readOnly: false };
+    const loader = createPanelLoader(
+      async () => {
+        throw new Error("boom");
+      },
+      {
+        setData: (/** @type {any} */ value) => {
+          sinks.data = value;
+        },
+        setError: (/** @type {any} */ value) => {
+          sinks.error = value;
+        },
+      },
+    );
+    const value = await loader.load();
+    assert.equal(value, null, "a failed load must resolve, not reject");
+    assert.match(String(sinks.error), /boom/u);
+  });
+
+  it("keeps the read-only banner off when the health call fails", async () => {
+    const { createPanelLoader } = client.__test;
+    /** @type {any} */
+    const sinks = { readOnly: false };
+    const loader = createPanelLoader(
+      async () => {
+        throw new Error("no health");
+      },
+      {
+        setReadOnly: (/** @type {boolean} */ value) => {
+          sinks.readOnly = value;
+        },
+      },
+    );
+    await assert.doesNotReject(() => loader.loadHealth());
+    assert.equal(sinks.readOnly, false, "a failed probe must not switch the panel to read-only");
+  });
+
+  it("publishes both the entry list and the read-only flag on success", async () => {
+    const { createPanelLoader } = client.__test;
+    const entries = [{ entryId: "e1" }];
+    /** @type {any} */
+    const sinks = {};
+    const loader = createPanelLoader(
+      async (/** @type {string} */ method) =>
+        method === "list" ? { entries } : { readOnly: true },
+      {
+        setData: (/** @type {any} */ value) => {
+          sinks.data = value;
+        },
+        setReadOnly: (/** @type {boolean} */ value) => {
+          sinks.readOnly = value;
+        },
+      },
+    );
+    await loader.load();
+    await loader.loadHealth();
+    assert.deepEqual(sinks.data, { entries });
+    assert.equal(sinks.readOnly, true);
+  });
+});

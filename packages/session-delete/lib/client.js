@@ -612,7 +612,10 @@ window.__ModuleLoader__.load({
           .then((/** @type {any} */ value) => {
             setCount(value?.entries ? value.entries.length : 0);
           })
-          .catch(() => setCount(null));
+          .catch(() => {
+            // 计数拿不到就退回不带数字的入口，但别让 rejection 无声无息。
+            setCount(null);
+          });
       };
       React.useEffect(() => {
         fetchCount();
@@ -897,30 +900,27 @@ window.__ModuleLoader__.load({
       var setReadOnly = readOnlyState[1];
       var batchControl = React.useRef({ stop: false });
 
+      var loader = React.useMemo(
+        () =>
+          createPanelLoader(props.call, {
+            setData: setData,
+            setReadOnly: setReadOnly,
+            setError: setError,
+          }),
+        [],
+      );
       var refresh = React.useCallback(() => {
-        props
-          .call("list")
-          .then((/** @type {any} */ value) => {
-            setData(value);
-          })
-          .catch((/** @type {any} */ reason) => {
-            setError(errorText(reason));
-          });
-      }, []);
+        void loader.load();
+      }, [loader]);
 
       React.useEffect(() => {
         if (!open) return undefined;
-        refresh();
-        props
-          .call("health")
-          .then((/** @type {any} */ value) => {
-            setReadOnly(value?.readOnly === true);
-          })
-          .catch(() => {});
+        void loader.load();
+        void loader.loadHealth();
         // 面板打开期间自动同步：agent 工具、另一个窗口都可能改动回收站。
         const timer = setInterval(() => {
           if (document.visibilityState === "visible") refresh();
-        }, 5000);
+        }, PANEL_POLL_MS);
         const onVisible = () => {
           if (document.visibilityState === "visible") refresh();
         };
@@ -978,63 +978,36 @@ window.__ModuleLoader__.load({
        * @param {string[]} ids
        * @param {"purge" | "restore"} kind
        */
-      var runBatch = (ids, kind) => {
+      var startBatch = (ids, kind) => {
         if (ids.length === 0 || batchRunning) return;
         batchControl.current = { stop: false };
-        /** @type {any[]} */
-        var failures = [];
-        var done = 0;
         setBatch({ kind: kind, running: true, done: 0, total: ids.length, failures: [] });
-        var groups = chunk(ids, BATCH_CHUNK);
-        (async () => {
-          for (let index = 0; index < groups.length; index += 1) {
-            if (batchControl.current.stop) break;
-            const group = groups[index];
-            try {
-              const result = await props.call(kind === "purge" ? "purgeMany" : "restoreMany", {
-                entryIds: group,
-              });
-              for (let itemIndex = 0; itemIndex < (result?.results || []).length; itemIndex += 1) {
-                const item = result.results[itemIndex];
-                if (!item.ok) failures.push(item);
-                else if (kind === "restore" && item.sessionId) props.onRestored?.(item.sessionId);
-              }
-            } catch (reason) {
-              for (let groupIndex = 0; groupIndex < group.length; groupIndex += 1) {
-                failures.push({ entryId: group[groupIndex], ok: false, error: errorText(reason) });
-              }
-            }
-            done += group.length;
-            setBatch({
-              kind: kind,
-              running: done < ids.length,
-              done: done,
-              total: ids.length,
-              failures: failures.slice(),
-            });
-            // 让出一帧：让「处理中 n/total」和「停止」真的可见、可点。
-            await new Promise((resolve) => setTimeout(resolve, 0));
-          }
+        void runBatch({
+          ids: ids,
+          kind: kind,
+          call: props.call,
+          chunkSize: BATCH_CHUNK,
+          onProgress: (/** @type {any} */ state) => {
+            setBatch(state);
+          },
+          shouldStop: () => batchControl.current.stop === true,
+          onRestored: (/** @type {any} */ sessionId) => props.onRestored?.(sessionId),
+        }).then((/** @type {any} */ summary) => {
           setSelected((/** @type {any} */ current) => {
             /** @type {Record<string, boolean>} */
             var keep = {};
-            for (let index2 = 0; index2 < failures.length; index2 += 1) {
-              if (current[failures[index2].entryId]) keep[failures[index2].entryId] = true;
+            for (let index = 0; index < summary.failures.length; index += 1) {
+              if (current[summary.failures[index].entryId]) {
+                keep[summary.failures[index].entryId] = true;
+              }
             }
             return keep;
           });
           setConfirmPurge(null);
-          setBatch({
-            kind: kind,
-            running: false,
-            done: done,
-            total: ids.length,
-            failures: failures.slice(),
-          });
           refresh();
           props.bump?.();
           if (kind === "purge") props.onPurged?.(undefined);
-        })();
+        });
       };
 
       var toolbar = h(
@@ -1063,7 +1036,7 @@ window.__ModuleLoader__.load({
           Btn,
           {
             disabled: batchRunning || selectedIds.length === 0,
-            onClick: () => runBatch(selectedIds, "restore"),
+            onClick: () => startBatch(selectedIds, "restore"),
           },
           props.t("trash.restoreMany", { n: selectedIds.length }),
         ),
@@ -1125,7 +1098,7 @@ window.__ModuleLoader__.load({
                 {
                   tight: true,
                   variant: "danger",
-                  onClick: () => runBatch(selectedIds, "purge"),
+                  onClick: () => startBatch(selectedIds, "purge"),
                 },
                 props.t("panel.purge"),
               ),
@@ -1327,13 +1300,18 @@ window.__ModuleLoader__.load({
           .then((/** @type {any} */ value) => {
             if (alive) setReceipts(value?.entries || []);
           })
-          .catch(() => {});
+          .catch((/** @type {any} */ reason) => {
+            // 空白 + 一声不响是最差的失败姿态：把原因写进页面里。
+            if (alive) setMessage(errorText(reason));
+          });
         props
           .call("audit", { limit: 100 })
           .then((/** @type {any} */ value) => {
             if (alive) setAudit(value?.entries || []);
           })
-          .catch(() => {});
+          .catch((/** @type {any} */ reason) => {
+            if (alive) setMessage(errorText(reason));
+          });
         return () => {
           alive = false;
         };
@@ -1608,6 +1586,123 @@ window.__ModuleLoader__.load({
           props.t("confirm.undo"),
         ),
       );
+    }
+
+    /** 面板打开后的轮询间隔：外部（agent 工具 / 另一个窗口）改了回收站也要跟上。 */
+    var PANEL_POLL_MS = 5000;
+
+    /**
+     * 加载回收站面板的数据。抽出来是为了单测能直接驱动它 —— 面板的加载失败
+     * 不许把整个浮层（确认框、toast）一起拖死，这个行为必须在没有浏览器的地方也能验证。
+     * @param {(method: string, request?: any) => Promise<any>} call
+     * @param {{ setData?: (value: any) => void, setReadOnly?: (value: boolean) => void,
+     *   setError?: (value: string | null) => void }} sinks
+     * @returns {{ load: () => Promise<any>, loadHealth: () => Promise<void> }}
+     */
+    function createPanelLoader(call, sinks) {
+      var report = (/** @type {any} */ reason) => {
+        try {
+          sinks.setError?.(errorText(reason));
+        } catch (_error) {
+          /* 渲染层挂了也不该让 RPC 的 rejection 逃逸成未捕获异常 */
+        }
+      };
+      var load = () =>
+        Promise.resolve()
+          .then(() => call("list"))
+          .then(
+            (/** @type {any} */ value) => {
+              try {
+                sinks.setData?.(value);
+              } catch (_error) {}
+              return value;
+            },
+            (/** @type {any} */ reason) => {
+              report(reason);
+              return null;
+            },
+          );
+      var loadHealth = () =>
+        Promise.resolve()
+          .then(() => call("health"))
+          .then(
+            (/** @type {any} */ value) => {
+              try {
+                sinks.setReadOnly?.(value?.readOnly === true);
+              } catch (_error) {}
+            },
+            () => {
+              /* 能力快照拿不到只影响只读横幅，不报错 */
+            },
+          );
+      return { load: load, loadHealth: loadHealth };
+    }
+
+    /**
+     * 分批执行批量动作。宿主单次上限是防御性硬上限，界面按 chunkSize 切块；
+     * 每块之间让出一帧：进度可见、可中途停止、部分失败不中断其余批次。
+     * 抽成纯函数是为了在单测里用假 call 直接验证「>50 条不会被整单拒绝」与
+     * 「部分失败被汇总、成功的也不再算失败」。
+     * @param {{ ids: string[], kind: "purge" | "restore", call: (method: string, request?: any) => Promise<any>,
+     *   chunkSize?: number, onProgress?: (state: any) => void, shouldStop?: () => boolean,
+     *   onRestored?: (sessionId: string) => void }} options
+     * @returns {Promise<{ kind: string, total: number, done: number, ok: number, failures: any[], stopped: boolean }>}
+     */
+    async function runBatch(options) {
+      var ids = options.ids || [];
+      var kind = options.kind === "restore" ? "restore" : "purge";
+      var chunkSize = options.chunkSize || BATCH_CHUNK;
+      var groups = chunk(ids, chunkSize);
+      /** @type {any[]} */
+      var failures = [];
+      var done = 0;
+      var stopped = false;
+      const emit = (/** @type {boolean} */ running) => {
+        try {
+          options.onProgress?.({
+            kind: kind,
+            running: running,
+            done: done,
+            total: ids.length,
+            failures: failures.slice(),
+          });
+        } catch (_error) {}
+      };
+      for (let index = 0; index < groups.length; index += 1) {
+        if (options.shouldStop?.()) {
+          stopped = true;
+          break;
+        }
+        const group = groups[index];
+        try {
+          const result = await options.call(kind === "purge" ? "purgeMany" : "restoreMany", {
+            entryIds: group,
+          });
+          const results = result?.results || [];
+          for (let itemIndex = 0; itemIndex < results.length; itemIndex += 1) {
+            const item = results[itemIndex];
+            if (!item.ok) failures.push(item);
+            else if (kind === "restore" && item.sessionId) options.onRestored?.(item.sessionId);
+          }
+        } catch (reason) {
+          for (let groupIndex = 0; groupIndex < group.length; groupIndex += 1) {
+            failures.push({ entryId: group[groupIndex], ok: false, error: errorText(reason) });
+          }
+        }
+        done += group.length;
+        emit(true);
+        // 让出一帧：让「处理中 n/total」和「停止」真的可见、可点。
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      emit(false);
+      return {
+        kind: kind,
+        total: ids.length,
+        done: done,
+        ok: done - failures.length,
+        failures: failures,
+        stopped: stopped,
+      };
     }
 
     /** 一个浮层里渲染确认框 + 面板 + toast，因为 shell.overlay 是单实例 slot。 */
@@ -1933,6 +2028,9 @@ window.__ModuleLoader__.load({
         joinList: joinList,
         impactLine: impactLine,
         batchChunk: BATCH_CHUNK,
+        createPanelLoader: createPanelLoader,
+        runBatch: runBatch,
+        panelPollMs: PANEL_POLL_MS,
         // 词典也暴露出来：单测要比对「内联词典 / locale/*.json」的键集，防止两处漂移。
         zh: zh,
         en: en,
