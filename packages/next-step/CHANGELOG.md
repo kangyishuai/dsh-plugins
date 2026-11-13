@@ -1,5 +1,24 @@
 # @kangyishuai/dsh-next-step
 
+## 0.3.0
+
+### Minor Changes
+
+- [#100](https://github.com/kangyishuai/dsh-plugins/pull/100) [`c3e06fd`](https://github.com/kangyishuai/dsh-plugins/commit/c3e06fd13b0fff4d68f8e8aeddfb632cd51c8a74) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 提升建议卡的内容质量（不改形态）：
+  
+  - **按钮收紧**：`label` 从 4–60 字收到 **2–20 字**，必须是「动词 + 具体对象」；
+    找不到对话里具体对象的泛化按钮（「检查定义是否准确」）会被直接丢弃，一条都不剩就整卡不出。
+  - **选项 1–2 条**：下一步很明确时只给一条，不再强行凑两个方向；两件事都做可以合并成一条。
+  - **摘要写事实**：提示词明确禁止「用户要求……助手已经……」这种旁白，要求写文件名/命令/数值/测试结果。
+  - **多两道便宜闸**：上一轮报错/中断不出卡；回答短于 80 字不出卡（没有上下文，生成出来必然是套话）。
+  - **幽灵提示**：上限放宽到 150 字（关键信息前 60 字），并要求与推荐按钮共享具体对象，
+    不一致时退化成该按钮文案——同一个建议的两种入口，不会互相打脸。
+
+- [#101](https://github.com/kangyishuai/dsh-plugins/pull/101) [`d2fd5e3`](https://github.com/kangyishuai/dsh-plugins/commit/d2fd5e3205964cd70ab5c332f0dd3b3f9edd6216) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 把设置从「通用设置里的一行」搬到**独立设置分节 设置 → 下一步建议**：
+  
+  - 卡片 / 幽灵提示两个面、全局开关、暂停、每会话预算和诊断都在这一页；
+  - 和「会话回收站」「顾问」「会话回溯」的形式保持一致，通用设置不再被插件设置撑长。
+
 ## 0.2.0
 
 ### Minor Changes
