@@ -42,9 +42,11 @@ export function isCardData(data) {
     typeof data.question === "string" &&
     data.question.trim() !== "" &&
     Array.isArray(data.options) &&
-    data.options.length === 2 &&
+    // 1–2 条：只给 1 条表示「下一步很明确」，不是残缺；3 条以上徒增选择成本。
+    data.options.length >= 1 &&
+    data.options.length <= 2 &&
     data.options.every(isOption) &&
-    data.options[0].stance !== data.options[1].stance &&
+    (data.options.length === 1 || data.options[0].stance !== data.options[1].stance) &&
     (data.nextPrompt === undefined || typeof data.nextPrompt === "string")
   );
 }

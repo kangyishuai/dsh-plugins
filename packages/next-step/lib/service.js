@@ -12,6 +12,7 @@ import { BlockAssembler, createUserMessage } from "@deepseek-ai/dsh-llm";
 import { appendPluginRecord, pluginRecordOf } from "@deepseek-ai/dsh-session";
 import { Remote, RemoteError, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 import { buildIdentity } from "./build-info.js";
+import { cheapSkipReason } from "./gates.js";
 import {
   CARD_RECORD,
   DECISION_RECORD,
@@ -19,7 +20,13 @@ import {
   isDecisionData,
   nextStepProjection,
 } from "./projection.js";
-import { buildMessages, buildSystemPrompt, parseSuggestion, renderTranscript } from "./prompt.js";
+import {
+  buildMessages,
+  buildSystemPrompt,
+  parseSuggestion,
+  renderTranscript,
+  textOf,
+} from "./prompt.js";
 import { shouldSkipForQueue } from "./queue-gate.js";
 import { DEFAULT_SETTINGS, loadSettings, saveSettings } from "./settings.js";
 
@@ -269,19 +276,33 @@ export class NextStepService extends TypertRemoteService {
     const settings = await this.currentSettings();
     if (!settings.enabled || !settings.card) return;
     const sessionId = session.id;
-    if (settings.pauseUntil > Date.now()) {
-      this.markSkip("paused", "generation is paused");
-      return;
-    }
-    // 用户已经排了 ≥2 条消息就不再出卡（官方 action-cards 的同一条规则）。
-    if (shouldSkipForQueue(queuedCountOf(this.ctx, sessionId))) {
-      this.markSkip("queued", "the user already has queued messages");
-      return;
-    }
     const { cards } = scanSession(session);
-    if (cards.has(turn)) return;
-    if (cards.size >= settings.maxCardsPerSession) {
-      this.markSkip("budget", "per-session card budget reached");
+
+    // 便宜闸统一在 gates.js：不通过就不发那次模型调用。
+    // 「上一轮报错/被中断」和「回答太短」是新加的两条——前者不该在旁边推销下一步，
+    // 后者没有足够上下文，生成出来必然是套话。
+    const messages = typeof session.deriveMessages === "function" ? session.deriveMessages() : [];
+    let lastAnswerChars = 0;
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index]?.role === "assistant") {
+        lastAnswerChars = textOf(messages[index]).length;
+        break;
+      }
+    }
+    const skip = cheapSkipReason({
+      enabled: settings.enabled,
+      cardEnabled: settings.card,
+      pauseUntil: settings.pauseUntil,
+      now: Date.now(),
+      queued: shouldSkipForQueue(queuedCountOf(this.ctx, sessionId)) ? 2 : 0,
+      cardsForTurn: cards.has(turn),
+      cardsInSession: cards.size,
+      maxCards: settings.maxCardsPerSession,
+      endKind: event?.data?.reason?.kind,
+      answerChars: lastAnswerChars,
+    });
+    if (skip !== null) {
+      if (skip.reason !== "disabled") this.markSkip(skip.reason, skip.detail);
       return;
     }
     await this.writeCardFor(session, settings, {
