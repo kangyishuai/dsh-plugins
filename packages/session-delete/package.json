@@ -1,6 +1,6 @@
 {
   "name": "@kangyishuai/dsh-session-delete",
-  "version": "0.4.9",
+  "version": "0.5.0",
   "description": "Real session deletion for DSH: trash by default, plan before delete, audit log, residue receipt",
   "keywords": [
     "dsh",
