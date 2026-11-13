@@ -741,7 +741,7 @@ const main = async () => {
     const closed = await dialogInfo(cdp);
     check("再取消后对话框关闭且未回溯", closed === null, closed ? "对话框仍在" : "");
 
-    // ---------- E. 回溯面板四页签 ----------
+    // ---------- E. 回溯面板三页签（设置已迁到独立设置分节） ----------
     await cdp.evaluate(`(() => {
       const btn = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("回溯面板"));
       if (btn) btn.click();
@@ -749,9 +749,10 @@ const main = async () => {
     await sleep(1000);
     const drawer = await drawerInfo(cdp);
     check(
-      "回溯面板打开且四页签齐全",
+      "回溯面板打开且三页签齐全",
       drawer !== null &&
-        ["已撤回", "回溯记录", "救援点", "设置"].every((tab) => drawer.tabs.includes(tab)),
+        ["已撤回", "回溯记录", "救援点"].every((tab) => drawer.tabs.includes(tab)) &&
+        !drawer.tabs.includes("设置"),
       JSON.stringify(drawer?.tabs ?? null),
     );
     await cdp.screenshot(join(SHOTS, "03-panel.png"));
@@ -780,29 +781,87 @@ const main = async () => {
     })()`);
     check("救援点页签可渲染", /救援点|rescue/iu.test(rescuesText), rescuesText.slice(0, 120));
 
-    // ---------- F. 设置 → 诊断（含只读工具与孤儿数据） ----------
-    await openDrawerTab(cdp, "设置");
-    await sleep(1400);
-    const health = await cdp.evaluate(`(async () => {
-      const root = document.querySelector(".dsh-srw-drawer");
-      if (!root) return "";
-      const refresh = [...root.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === "刷新");
+    // ---------- F. 设置 → 会话回溯 分节（偏好 + 诊断） ----------
+    // 设置原来在抽屉里，现在独立成设置分节；这里只读地打开它并读诊断文本。
+    const settings = await cdp.evaluate(`(async () => {
+      const sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const opener = '[data-shortcut-modal="settings"]';
+      const isOpen = () => Boolean(document.querySelector(opener));
+      // 装了账号插件时，侧栏底部的设置入口会换成「账号菜单」按钮，菜单里才有「设置」。
+      for (const needle of ["设置", "Settings"]) {
+        if (isOpen()) break;
+        const btn = [...document.querySelectorAll("button")].find(
+          (b) => (b.getAttribute("aria-label") || "") === needle,
+        );
+        if (!btn) continue;
+        btn.click();
+        await sleepMs(800);
+      }
+      if (!isOpen()) {
+        const account = [...document.querySelectorAll("button")].find(
+          (b) => (b.getAttribute("aria-label") || "") === "账号菜单",
+        );
+        if (account) {
+          account.click();
+          await sleepMs(600);
+          const item = [...document.querySelectorAll('[role="menu"] button, [role="menuitem"]')].find(
+            (el) => (el.textContent || "").trim().startsWith("设置"),
+          );
+          if (item) {
+            item.click();
+            await sleepMs(900);
+          }
+        }
+      }
+      if (!isOpen()) return { status: "no-settings-panel" };
+      const shell = document.querySelector(opener);
+      const nav = [...shell.querySelectorAll("button")].find(
+        (b) => (b.textContent || "").trim() === "会话回溯",
+      );
+      if (!nav) return { status: "no-section-nav" };
+      nav.click();
+      await sleepMs(1600);
+      const section = document.querySelector("[data-srw-settings]");
+      if (!section) return { status: "no-section-body" };
+      const refresh = [...section.querySelectorAll("button")].find(
+        (b) => (b.textContent || "").trim() === "刷新",
+      );
       if (refresh) refresh.click();
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-      return (root.textContent || "").replace(/\\s+/g, " ");
+      await sleepMs(1500);
+      return { status: "ok", text: (section.textContent || "").replace(/\\s+/g, " ") };
     })()`);
     check(
-      "设置页诊断可加载",
-      /诊断/u.test(health) && /正常|异常|OK|Problem/u.test(health),
-      health.slice(0, 200),
+      "设置页出现「会话回溯」分节",
+      settings?.status === "ok",
+      JSON.stringify(settings ?? null).slice(0, 300),
+    );
+    check(
+      "设置分节包含偏好与诊断",
+      settings?.status === "ok" &&
+        settings.text.includes("默认回退范围") &&
+        settings.text.includes("诊断"),
+      (settings?.text ?? "").slice(0, 220),
     );
     check(
       "诊断报告只读工具已注册",
-      /只读工具/u.test(health) && /enabled|disabled by config/u.test(health),
-      health.slice(0, 400),
+      settings?.status === "ok" &&
+        /只读工具/u.test(settings.text) &&
+        /enabled|disabled by config/u.test(settings.text),
+      (settings?.text ?? "").slice(0, 400),
     );
-    check("诊断报告孤儿数据检查", /孤儿数据/u.test(health), health.slice(0, 400));
+    check(
+      "诊断报告孤儿数据检查",
+      /孤儿数据/u.test(settings?.text ?? ""),
+      (settings?.text ?? "").slice(0, 400),
+    );
     await cdp.screenshot(join(SHOTS, "04-settings.png"));
+    // 关掉设置面板，后面的收尾断言依赖抽屉/会话视图。
+    await cdp.evaluate(`(() => {
+      const panel = document.querySelector('[data-shortcut-modal="settings"]');
+      const close = panel ? [...panel.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === "关闭") : null;
+      if (close) close.click();
+    })()`);
+    await sleep(600);
 
     // ---------- G. 收尾：关闭面板，切回原会话 ----------
     await cdp.evaluate(`(() => {
