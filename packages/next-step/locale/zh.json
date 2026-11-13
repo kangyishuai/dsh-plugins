@@ -14,7 +14,7 @@
     "error.failed": "操作失败，请重试",
     "error.send": "没能把建议写进输入框",
     "settings.title": "下一步建议",
-    "settings.desc": "答完后判断是否值得继续；需要时生成一张含摘要与两个方向建议的决策卡（一次额外模型调用）。",
+    "settings.desc": "答完后判断是否值得继续；需要时生成一张含摘要、提问与 1–2 条具体建议的决策卡（一次额外模型调用）。",
     "settings.enabled": "启用插件",
     "settings.card": "回答下方的决策卡",
     "settings.ghost": "输入框里的幽灵提示",

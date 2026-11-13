@@ -14,7 +14,7 @@
     "error.failed": "Something went wrong. Try again.",
     "error.send": "Could not fill the composer",
     "settings.title": "Next-step suggestions",
-    "settings.desc": "Judges whether a turn is worth continuing; when it is, adds a status summary and two directions (one extra model call).",
+    "settings.desc": "Judges whether a turn is worth continuing; when it is, adds a status summary, a question and 1–2 concrete next steps (one extra model call).",
     "settings.enabled": "Enable the plugin",
     "settings.card": "Decision card under the answer",
     "settings.ghost": "Ghost hint in the composer",
