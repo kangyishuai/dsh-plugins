@@ -682,10 +682,12 @@ describe("drawer tabs and mode labels", () => {
   it("normalizes tab names", () => {
     assert.equal(testApi.normalizeTab("audit"), "audit");
     assert.equal(testApi.normalizeTab("rescues"), "rescues");
-    assert.equal(testApi.normalizeTab("settings"), "settings");
+    // 设置已迁到独立设置分节：旧值 "settings" 必须安全回落到 ghost，
+    // 否则用旧版持久化状态的用户打开抽屉会看到空白页。
+    assert.equal(testApi.normalizeTab("settings"), "ghost");
     assert.equal(testApi.normalizeTab("ghost"), "ghost");
     assert.equal(testApi.normalizeTab("nope"), "ghost");
-    assert.deepEqual(testApi.DRAWER_TABS, ["ghost", "audit", "rescues", "settings"]);
+    assert.deepEqual(testApi.DRAWER_TABS, ["ghost", "audit", "rescues"]);
   });
 
   it("labels modes", () => {
@@ -1183,12 +1185,14 @@ describe("apply() runtime wiring", () => {
     assert.equal(drawer.rescues.pendingId, null);
     assert.ok(harness.calls.some((/** @type {any} */ call) => call.name === "restoreRescue"));
 
-    harness.api.setDrawerTab("settings");
+    // 设置不再是抽屉页签：偏好改走 prefsStore，诊断走 settingsHealthStore。
+    harness.api.loadSettingsHealth();
     await flush();
-    drawer = harness.store.getSnapshot().drawer;
-    assert.equal(drawer.settings.health.data.ok, true);
+    const sectionHealth = harness.api.settingsHealthStore.getSnapshot();
+    assert.equal(sectionHealth.loading, false);
+    assert.equal(sectionHealth.data.ok, true);
     harness.api.updatePrefs({ defaultMode: "both", pageSize: 50 });
-    assert.equal(harness.store.getSnapshot().drawer.settings.prefs.defaultMode, "both");
+    assert.equal(harness.api.prefsStore.getSnapshot().defaultMode, "both");
     assert.ok(harness.storage.get("dsh-session-rewind.prefs.v1").includes('"both"'));
 
     harness.api.closeDrawer();

@@ -87,7 +87,13 @@ async function waitForBoot(logPath, timeoutMs) {
 function browserScript(url, shots, home) {
   return `(async () => {
 const task = await taskSpace("dsh smoke: session-rewind");
-const page = task.page("p1");
+// ego 的 TaskSpace 有页面额度（8）。历史失败运行可能留下没关的页面，
+// 攒满后所有断言都会以 "Page budget reached" 失败 —— 开跑前先清场。
+for (const stale of await task.pages().catch(() => [])) {
+  await stale.close().catch(() => {});
+}
+// task.page() 只能引用已存在的页面；本次运行自己新建一个，跑完关掉。
+const page = await task.newPage();
 const SHOTS = ${JSON.stringify(shots)};
 const HOME = ${JSON.stringify(home)};
 // 期望文本从会话日志读：ego-browser 的 nodejs 运行时是完整 Node，可以直接 fs。
@@ -561,33 +567,68 @@ if (recallPickRow !== null) {
     }),
   );
   // A6：关掉设置里的召回开关后，↑ 既不吞键也不填草稿（降级为纯光标移动）
+// 打开 设置 → 会话回溯 分节（偏好与诊断都在这里；抽屉里已不再有「设置」页签）。
+const openRewindSettings = () =>
+  page.evaluate(async () => {
+    const sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const opener = '[data-shortcut-modal="settings"]';
+    const isOpen = () => Boolean(document.querySelector(opener));
+    if (!isOpen()) {
+      const account = [...document.querySelectorAll("button")].find(
+        (b) => (b.getAttribute("aria-label") || "") === "账号菜单",
+      );
+      if (account) {
+        account.click();
+        await sleepMs(700);
+        const item = [...document.querySelectorAll('[role="menu"] button, [role="menuitem"]')].find(
+          (el) => (el.textContent || "").trim().startsWith("设置"),
+        );
+        if (item) {
+          item.click();
+          await sleepMs(900);
+        }
+      }
+    }
+    if (!isOpen()) return "no-settings-panel";
+    const shell = document.querySelector(opener);
+    const nav = [...shell.querySelectorAll("button")].find(
+      (b) => (b.textContent || "").trim() === "会话回溯",
+    );
+    if (!nav) return "no-section-nav";
+    nav.click();
+    await sleepMs(1200);
+    return "ok";
+  });
+
+const closeRewindSettings = () =>
+  page.evaluate(async () => {
+    const panel = document.querySelector('[data-shortcut-modal="settings"]');
+    if (!panel) return;
+    const close = [...panel.querySelectorAll("button")].find(
+      (b) => (b.textContent || "").trim() === "关闭",
+    );
+    if (close) close.click();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  });
+
   const drawerOpenedForRecall = await page.evaluate(() => {
     const btn = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("回溯面板"));
     if (!btn) return false;
     btn.click();
     return true;
   });
-  await page.waitForTimeout(800);
-  await page.evaluate(() => {
-    const tab = [...document.querySelectorAll(".dsh-srw-tab")].find((t) => (t.textContent || "").trim() === "设置");
-    if (tab) tab.click();
-  });
-  await page.waitForTimeout(1200);
+  const settingsOpenedForRecall = await openRewindSettings();
   const recallToggleOff = await page.evaluate(() => {
-    const drawer = document.querySelector(".dsh-srw-drawer");
-    if (!drawer) return "no-drawer";
-    const label = [...drawer.querySelectorAll("label")].find((el) => /召回|recalls earlier/iu.test(el.textContent || ""));
+    const panel = document.querySelector("[data-srw-settings]");
+    if (!panel) return "no-section";
+    const label = [...panel.querySelectorAll("label")].find((el) => /召回|recalls earlier/iu.test(el.textContent || ""));
     const box = label ? label.querySelector('input[type="checkbox"]') : null;
     if (!box) return "no-checkbox";
     if (box.checked) box.click();
     return box.checked ? "still-checked" : "unchecked";
   });
   await page.waitForTimeout(500);
-  await page.evaluate(() => {
-    const btn = [...document.querySelectorAll(".dsh-srw-drawer button")].find((b) => (b.textContent || "").trim() === "关闭");
-    if (btn) btn.click();
-  });
-  await page.waitForTimeout(500);
+  await closeRewindSettings();
   const recallPrefsOff = await page.evaluate(() => localStorage.getItem("dsh-session-rewind.prefs.v1"));
   const clearedForA6 = await clearRecallDraft();
   await focusRecallComposer();
@@ -619,16 +660,11 @@ if (recallPickRow !== null) {
     const btn = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("回溯面板"));
     if (btn) btn.click();
   });
-  await page.waitForTimeout(800);
-  await page.evaluate(() => {
-    const tab = [...document.querySelectorAll(".dsh-srw-tab")].find((t) => (t.textContent || "").trim() === "设置");
-    if (tab) tab.click();
-  });
-  await page.waitForTimeout(1000);
+  await openRewindSettings();
   const recallToggleOn = await page.evaluate(() => {
-    const drawer = document.querySelector(".dsh-srw-drawer");
-    if (!drawer) return "no-drawer";
-    const label = [...drawer.querySelectorAll("label")].find((el) => /召回|recalls earlier/iu.test(el.textContent || ""));
+    const panel = document.querySelector("[data-srw-settings]");
+    if (!panel) return "no-section";
+    const label = [...panel.querySelectorAll("label")].find((el) => /召回|recalls earlier/iu.test(el.textContent || ""));
     const box = label ? label.querySelector('input[type="checkbox"]') : null;
     if (!box) return "no-checkbox";
     if (!box.checked) box.click();
@@ -641,12 +677,10 @@ if (recallPickRow !== null) {
     recallToggleOn === "checked" && /"recallEnabled":true/u.test(recallPrefsOn || ""),
     JSON.stringify({ toggle: recallToggleOn, prefs: (recallPrefsOn || "").slice(0, 120) }),
   );
-  await page.evaluate(() => {
-    const btn = [...document.querySelectorAll(".dsh-srw-drawer button")].find((b) => (b.textContent || "").trim() === "关闭");
-    if (btn) btn.click();
-  });
-  await page.waitForTimeout(400);
+  await closeRewindSettings();
   await clearRecallDraft();
+  // 关掉设置面板后焦点不一定回到输入框（原来关的是抽屉，焦点会还回去）。
+  await focusRecallComposer();
   const leftoverRecallDraft = await composerDetail();
   check(
     "召回测试后草稿清空（不残留影响后续回溯回填）",
@@ -685,7 +719,7 @@ try {
   }, picked.rowKey);
   await page2.waitForTimeout(1500);
   tab2Before = await page2.evaluate(() => document.querySelectorAll('[data-chat-flow-kind="user"]').length);
-} catch (error) {
+} catch (_error) {
   page2 = null;
 }
 check("第二个标签页打开了同一个会话", tab2Before > 0, String(tab2Before));
@@ -782,6 +816,12 @@ check(
   JSON.stringify({ tab2Before, tab2After, tab1After }),
 );
 await shot("04-after-button-rewind");
+// 关掉第二个标签页：ego 的 TaskSpace 有页面额度（8），不关会随每轮冒烟累积，
+// 最终 "Page budget reached" 让后面的断言全部失败（本次排查就是这样踩到的）。
+if (page2) {
+  await page2.close().catch(() => {});
+  page2 = null;
+}
 
 // 1b) 回溯面板：已撤回 / 回溯记录 / 救援点 / 设置
 const drawerOpened = await page.evaluate(() => {
@@ -800,7 +840,7 @@ const drawer = await page.evaluate(() => {
   };
 });
 check("会话头部图标打开回溯面板", drawerOpened && drawer !== null, JSON.stringify(drawer && drawer.tabs));
-check("回溯面板包含四个页签", drawer !== null && ["已撤回", "回溯记录", "救援点", "设置"].every((tab) => drawer.tabs.includes(tab)), JSON.stringify(drawer && drawer.tabs));
+check("回溯面板包含三个页签（设置已迁出）", drawer !== null && ["已撤回", "回溯记录", "救援点"].every((tab) => drawer.tabs.includes(tab)) && !drawer.tabs.includes("设置"), JSON.stringify(drawer && drawer.tabs));
 const auditTab = await page.evaluate(() => {
   const tab = [...document.querySelectorAll(".dsh-srw-tab")].find((t) => (t.textContent || "").trim() === "回溯记录");
   if (!tab) return false;
@@ -999,73 +1039,122 @@ if (commandSession === null) {
   }
 }
 
-// 设置偏好：改 → 持久化 → 恢复
-const drawerOpen2 = await page.evaluate(() => {
-  const btn = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("回溯面板"));
-  if (!btn) return false;
-  btn.click();
-  return true;
-});
-await page.waitForTimeout(700);
+// 抽屉页签：设置已迁到独立设置分节，抽屉里应当只剩 3 个会话级页签
 await page.evaluate(() => {
-  const tab = [...document.querySelectorAll(".dsh-srw-tab")].find((t) => (t.textContent || "").trim() === "设置");
-  if (tab) tab.click();
+  const btn = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("回溯面板"));
+  if (btn) btn.click();
 });
-await page.waitForTimeout(1400);
-const healthText = await page.evaluate(async () => {
-  const drawer = document.querySelector(".dsh-srw-drawer");
-  if (!drawer) return "";
-  const refresh = [...drawer.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === "刷新");
+await page.waitForTimeout(900);
+const drawerTabs = await page.evaluate(() =>
+  [...document.querySelectorAll(".dsh-srw-tab")].map((t) => (t.textContent || "").trim()),
+);
+check(
+  "回溯抽屉只剩 3 个会话级页签（设置已迁出）",
+  drawerTabs.length === 3 && drawerTabs.includes("已撤回") && drawerTabs.includes("回溯记录") && drawerTabs.includes("救援点"),
+  JSON.stringify(drawerTabs),
+);
+check("抽屉里不再有「设置」页签", !drawerTabs.includes("设置"), JSON.stringify(drawerTabs));
+
+// 关抽屉，改到 设置 → 会话回溯 里验证偏好与诊断
+await page.evaluate(() => {
+  const btn = [...document.querySelectorAll(".dsh-srw-drawer button")].find((b) => (b.textContent || "").trim() === "关闭");
+  if (btn) btn.click();
+});
+await page.waitForTimeout(400);
+
+const openRewindSettings = () =>
+  page.evaluate(async () => {
+    const sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const opener = '[data-shortcut-modal="settings"]';
+    const isOpen = () => Boolean(document.querySelector(opener));
+    if (!isOpen()) {
+      const account = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "") === "账号菜单");
+      if (account) {
+        account.click();
+        await sleepMs(700);
+        const item = [...document.querySelectorAll('[role="menu"] button, [role="menuitem"]')].find((el) => (el.textContent || "").trim().startsWith("设置"));
+        if (item) {
+          item.click();
+          await sleepMs(900);
+        }
+      }
+    }
+    if (!isOpen()) return "no-settings-panel";
+    const shell = document.querySelector(opener);
+    const nav = [...shell.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === "会话回溯");
+    if (!nav) return "no-section-nav";
+    nav.click();
+    await sleepMs(1500);
+    return "ok";
+  });
+
+const settingsOpened = await openRewindSettings();
+check("设置里出现「会话回溯」分节", settingsOpened === "ok", String(settingsOpened));
+
+const sectionHealth = await page.evaluate(async () => {
+  const panel = document.querySelector('[data-srw-settings]');
+  if (!panel) return { ok: false, reason: "no-section" };
+  const refresh = [...panel.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === "刷新");
   if (refresh) refresh.click();
   await new Promise((resolve) => setTimeout(resolve, 1200));
-  return (drawer.textContent || "").replace(/s+/g, " ");
+  return { ok: true, text: (panel.textContent || "").replace(/s+/g, " ") };
 });
 check(
-  "诊断页报告只读工具已注册",
-  /只读工具/u.test(healthText) && /enabled|disabled by config/u.test(healthText),
-  healthText.slice(0, 400),
+  "设置分节的诊断报告只读工具已注册",
+  sectionHealth.ok === true && /只读工具/u.test(sectionHealth.text || "") && /enabled|disabled by config/u.test(sectionHealth.text || ""),
+  String(sectionHealth.text || "").slice(0, 400),
 );
+
 const changed = await page.evaluate(() => {
-  const drawer = document.querySelector(".dsh-srw-drawer");
-  if (!drawer) return "no-drawer";
-  const radios = [...drawer.querySelectorAll('input[type="radio"]')];
+  const panel = document.querySelector('[data-srw-settings]');
+  if (!panel) return "no-section";
+  const radios = [...panel.querySelectorAll('input[type="radio"]')];
   const both = radios.find((r) => (r.parentElement && (r.parentElement.textContent || "").includes("回退对话和文件"))) || radios[radios.length - 1];
+  if (!both) return "no-radio";
   both.click();
-  const number = drawer.querySelector('input[type="number"]');
+  const number = panel.querySelector('input[type="number"]');
   const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
   setValue.call(number, "20");
   number.dispatchEvent(new Event("input", { bubbles: true }));
-  const checkbox = drawer.querySelector('input[type="checkbox"]');
+  const checkbox = panel.querySelector('input[type="checkbox"]');
   if (checkbox && checkbox.checked) checkbox.click();
   return "changed";
 });
 await page.waitForTimeout(500);
 const savedPrefs = await page.evaluate(() => localStorage.getItem("dsh-session-rewind.prefs.v1"));
 check(
-  "设置页修改默认范围/每页数量/列表确认并持久化",
-  drawerOpen2 && changed === "changed" && /"defaultMode":"both"/u.test(savedPrefs || "") && /"pageSize":20/u.test(savedPrefs || "") && /"confirmOnList":false/u.test(savedPrefs || ""),
+  "设置分节修改默认范围/每页数量/列表确认并持久化",
+  changed === "changed" && /"defaultMode":"both"/u.test(savedPrefs || "") && /"pageSize":20/u.test(savedPrefs || "") && /"confirmOnList":false/u.test(savedPrefs || ""),
   savedPrefs || "",
 );
+
 await page.evaluate(() => {
-  const drawer = document.querySelector(".dsh-srw-drawer");
-  const radios = [...drawer.querySelectorAll('input[type="radio"]')];
+  const panel = document.querySelector('[data-srw-settings]');
+  if (!panel) return;
+  const radios = [...panel.querySelectorAll('input[type="radio"]')];
   const chat = radios.find((r) => (r.parentElement && (r.parentElement.textContent || "").includes("仅回退对话"))) || radios[0];
-  chat.click();
-  const number = drawer.querySelector('input[type="number"]');
+  if (chat) chat.click();
+  const number = panel.querySelector('input[type="number"]');
   const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
   setValue.call(number, "100");
   number.dispatchEvent(new Event("input", { bubbles: true }));
-  const checkbox = drawer.querySelector('input[type="checkbox"]');
+  const checkbox = panel.querySelector('input[type="checkbox"]');
   if (checkbox && !checkbox.checked) checkbox.click();
 });
 await page.waitForTimeout(400);
 const restoredPrefs = await page.evaluate(() => localStorage.getItem("dsh-session-rewind.prefs.v1"));
-check("设置页可以恢复默认偏好", /"defaultMode":"chat"/u.test(restoredPrefs || "") && /"pageSize":100/u.test(restoredPrefs || ""), restoredPrefs || "");
+check(
+  "设置分节可以恢复默认偏好",
+  /"defaultMode":"chat"/u.test(restoredPrefs || "") && /"pageSize":100/u.test(restoredPrefs || ""),
+  restoredPrefs || "",
+);
+
 await page.evaluate(() => {
   const btn = [...document.querySelectorAll(".dsh-srw-drawer button")].find((b) => (b.textContent || "").trim() === "关闭");
   if (btn) btn.click();
 });
 
+await page.close().catch(() => {});
 await task.finish({ keep: false }).catch(() => {});
 console.log("SMOKE_STATE " + JSON.stringify({ sessionId: picked.rowKey.replace("session:", ""), userCountBefore: picked.bubbles.length }));
 console.log("SMOKE_RESULT " + JSON.stringify({ checks }));

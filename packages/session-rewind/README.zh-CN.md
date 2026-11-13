@@ -21,9 +21,10 @@
 - **状态变更提示**：如果要撤回的区间里改过会话状态（plan 模式、goal、待办、模型选择、权限/沙箱预设、智能体预设、定时任务、工作目录），确认框会列出来并明确说明——回溯只撤回对话，**不会**回滚这些状态。
 - **运行中也能回退**：确认回退时如果这一轮正在跑，会先取消它（保留队列）、等它空闲，再对新历史重新求值。
 - **输入框**：目标消息文本（以及图片）放回输入框，改完可直接重发；已有草稿绝不覆盖。勾选「回退后立即重发」可一键重试这一轮（仅对话模式）。
-- **不回溯也能召回历史输入**：输入框为空时（或光标在第一行时）按 `↑`，上一条已发送的提示词回到草稿；再按 `↑` 继续往前翻，`↓` 往回走、到底时恢复你浏览前正在写的草稿。它只替换草稿文本，不从上下文撤回、不发送、不改写任何东西。可在**设置**里关闭。
+- **不回溯也能召回历史输入**：输入框为空时（或光标在第一行时）按 `↑`，上一条已发送的提示词回到草稿；再按 `↑` 继续往前翻，`↓` 往回走、到底时恢复你浏览前正在写的草稿。它只替换草稿文本，不从上下文撤回、不发送、不改写任何东西。可在**设置 → 会话回溯**里关闭。
 - **多视图自动同步**：在一个标签页/窗口里回溯后，其它已打开的同会话视图会立刻隐藏被撤回的行，无需刷新（通知走 `localStorage`，渲染只认宿主 cuts）。
-- **回溯面板**：会话头部新增一个入口，四个页签：**已撤回**（每次回溯撤回的全部消息，可搜索、复制、放回输入框）、**回溯记录**（时间线：每次回溯与每次救援点恢复，新在上；范围、条数、token、文件结果）、**救援点**（手动恢复文件）、**设置**（默认范围、每页数量、列表确认、诊断）。
+- **回溯面板**：会话头部新增一个入口，三个页签：**已撤回**（每次回溯撤回的全部消息，可搜索、复制、放回输入框）、**回溯记录**（时间线：每次回溯与每次救援点恢复，新在上；范围、条数、token、文件结果）、**救援点**（手动恢复文件）。
+- **设置 → 会话回溯**：默认范围、每页数量、列表确认、输入框召回开关，以及诊断（只读工具是否注册、数据目录与占用）。
 
 ## 只读 agent 工具
 
@@ -40,7 +41,7 @@
 
 ![回溯确认框：目标消息、将撤回多少条消息与 token、仅对话 vs 对话+文件、以及重发选项](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-rewind/assets/session-rewind-confirm.png)
 
-![回溯面板：已撤回、回溯记录、救援点、设置](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-rewind/assets/session-rewind-panel.png)
+![回溯面板：已撤回、回溯记录、救援点](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-rewind/assets/session-rewind-panel.png)
 
 两张图都来自一个只含**合成工作区与合成会话**的临时 DSH 目录（`pnpm shots:session-rewind` 可重新生成），并且按 DOM 矩形裁剪到对话框/面板本身。
 
@@ -126,7 +127,7 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-session-rewind-*.tgz
 | 0.2.2-rc.2 | 2026-11-12 已验证：208 个单测 + `pnpm probe:runtime` 67/67 + Web `smoke:session-rewind` 49/49（临时 DSH home，真实宿主）。桌面（live 桌面版，CDP）：只读 24/24 + `--recall` 31/31 + `--deep --workspace` 40/40（均为 0.6.2 构建实测；文件模式段是真实模型调用：写文件 → 回溯 → 回收站 → 救援点还原）。0.6.1 加了 macOS 窗口拖动排除；0.6.2 修掉深色主题下确认按钮「白底白字」，并禁止「反色填充 + 死白前景」这种配法。 |
 | 0.2.2-rc.1 | 2026-11-09 已验证：205 个单测 + Web `smoke:session-rewind` 49/49（临时 DSH home）+ 桌面 `smoke:session-rewind-desktop` 只读 23/23、加 `--recall` 30/30、加 `--deep` 39/39（文件模式端到端，真实 Electron 渲染进程走 CDP）；全量组合 `--recall --deep` 46/46。                                                                                                                                                          |
 
-插件不声明 `engines.dsh`，也不声明 `@deepseek-ai/*` 的 peer 范围：DSH 还在预发布阶段，预发布版本的 semver 范围不可靠（见 [ADR 0005](../../docs/adr/0005-dsh-version-compatibility.md)）。以这张表为准。DSH 升级后跑 `pnpm probe:runtime`、`pnpm smoke:session-rewind`，并看插件诊断页签；私有 seam 变了会降级而不是让会话出错。
+插件不声明 `engines.dsh`，也不声明 `@deepseek-ai/*` 的 peer 范围：DSH 还在预发布阶段，预发布版本的 semver 范围不可靠（见 [ADR 0005](../../docs/adr/0005-dsh-version-compatibility.md)）。以这张表为准。DSH 升级后跑 `pnpm probe:runtime`、`pnpm smoke:session-rewind`，并看 设置 → 会话回溯 里的诊断；私有 seam 变了会降级而不是让会话出错。
 
 ## 开发
 

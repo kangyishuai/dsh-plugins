@@ -138,6 +138,7 @@
     "state.workingDirectory": "工作目录",
     "state.separator": "、",
     "timeline.kindRescue": "文件恢复",
-    "timeline.rescueMeta": "从救援点恢复 {restored} 个文件 · {id}"
+    "timeline.rescueMeta": "从救援点恢复 {restored} 个文件 · {id}",
+    "settings.nav": "会话回溯"
   }
 }
