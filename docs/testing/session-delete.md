@@ -78,6 +78,16 @@ pnpm gate session-delete --skip-desktop         # 明确跳过桌面端（会提
 > 桌面端要先用 `open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1`
 > 重启；它只打开菜单/确认框/面板再 Esc 关闭，**从不确认删除**。
 
+> **实测踩到的三个坑**（2026-11-13 想在不打扰正在运行的桌面版的情况下复测 0.5.0 时）：
+>
+> 1. `open --env DSH_HOME=...` 在 app 已经运行时会被拒绝（`Application ... was already running and so the additional environment variables could not be set`）——
+>    要换 DSH_HOME 就必须先退出 app。
+> 2. 直接 `exec` 那个 Mach-O 会当成 node（本机 shell 里有 `ELECTRON_RUN_AS_NODE=1`），
+>    报 `bad option: --remote-debugging-port`；确实要直连二进制就先 `env -u ELECTRON_RUN_AS_NODE`。
+> 3. 用「临时 DSH_HOME + `--user-data-dir=<tmp>`」起第二个实例**能起来、CDP 也通**（单实例锁按 userData 分），
+>    但全新的 Electron userData 没有登录态，页面停在 welcome/登录页，主界面根本不挂载（插件的样式/入口都看不到）。
+>    所以这条「隔离复测」路线走不通——桌面回归**必须**在真 profile 上、把新版装好并重启后跑。
+
 pnpm smoke:session-delete
 ````
 
