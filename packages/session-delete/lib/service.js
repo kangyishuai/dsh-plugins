@@ -184,6 +184,34 @@ export class SessionDeleteService extends TypertRemoteService {
   }
 
   /**
+   * 界面偏好：确认框里「同时删除子会话」的初值。
+   * 存宿主侧而不是 localStorage —— Web 的 origin 带随机端口，换端口就丢。
+   */
+  async getPrefs() {
+    try {
+      return await this.ops.getPrefs();
+    } catch (error) {
+      rethrow(error);
+    }
+  }
+
+  /**
+   * 合并写入界面偏好。
+   * @param {{ cascadeChildren?: boolean }} [request]
+   */
+  async setPrefs(request) {
+    try {
+      return await this.ops.setPrefs({
+        ...(typeof request?.cascadeChildren === "boolean"
+          ? { cascadeChildren: request.cascadeChildren }
+          : {}),
+      });
+    } catch (error) {
+      rethrow(error);
+    }
+  }
+
+  /**
    * 只读：返回完整影响面（plan/dry-run 的数据源）。
    * @param {{ sessionId: string }} request
    */
@@ -326,6 +354,8 @@ export class SessionDeleteService extends TypertRemoteService {
 }
 
 declareRemote(SessionDeleteService, "health");
+declareRemote(SessionDeleteService, "getPrefs");
+declareRemote(SessionDeleteService, "setPrefs");
 declareRemote(SessionDeleteService, "plan");
 declareRemote(SessionDeleteService, "trash");
 declareRemote(SessionDeleteService, "list");

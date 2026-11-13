@@ -8,10 +8,10 @@
 
 Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). Not affiliated with DeepSeek.
 
-> **Status: early.** Verified on the current target DSH version with `pnpm smoke:session-delete` (24 end-to-end assertions on a throwaway DSH home) and `pnpm probe:runtime`; the desktop read-only pass was done on an earlier version. The [Compatibility](#compatibility--degradation) table records exactly what was run. `pnpm gate session-delete` runs the whole release gate in one command. Treat it as young software and keep backups of anything you cannot lose.
+> **Status: early.** Verified on the current target DSH version with `pnpm smoke:session-delete` (27 end-to-end assertions on a throwaway DSH home) and `pnpm probe:runtime`; the desktop read-only pass was done on an earlier version. The [Compatibility](#compatibility--degradation) table records exactly what was run. `pnpm gate session-delete` runs the whole release gate in one command. Treat it as young software and keep backups of anything you cannot lose.
 
 
-![Delete confirmation with the plan: size, sub-sessions, references to clean](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/overview.png)
+![Delete confirmation: one line of impact, an opt-in cascade checkbox, and a Details disclosure](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/overview.png)
 
 ## What it does
 
@@ -20,14 +20,15 @@ DSH's built-in _archive_ only hides a session: the id goes into the workspace's 
 - **Real deletion.** The session directory is moved out of `~/.dsh/sessions/`, and the bookkeeping that still points at it (archived set, pinned set, workspace membership, projection cache) is cleaned up — so the session doesn't come back and doesn't leave a ghost entry behind.
 - **Trash by default.** The first click erases nothing: the session goes to `~/.dsh/session-trash/` and can be restored. Permanent deletion is a separate, explicit action.
 - **Plan before you delete (dry-run).** The confirmation dialog is generated from a plan: on-disk size, whether the session is live, how many sub-sessions it has, and which references will be cleaned. Right before execution the plan is recomputed and compared with what you confirmed; a mismatch aborts the operation instead of deleting something you didn't see.
-- **Audit log.** Every delete / restore / purge appends one JSON line to `~/.dsh/session-trash/audit.log`, readable from the trash panel.
-- **Receipt after delete.** After the move, the plugin checks the places a session can be referenced and reports anything left behind (deletion is one session at a time; the trash tab supports batch restore / batch permanent delete).
+- **Audit log.** Every delete / restore / purge appends one JSON line to `~/.dsh/session-trash/audit.log`, readable from **Settings → Session trash**.
+- **Receipt after delete.** After the move, the plugin checks the places a session can be referenced and reports anything left behind (deletion is one session at a time; the trash list supports batch restore / batch permanent delete).
+- **Quiet UI.** One dialog line tells you what will happen (size · sub-sessions · live), the technical detail hides under **Details**, the trash panel is a single page, and maintenance (health check, audit log, receipts) moved to its own settings section. Child-session handling remembers your last choice, stored host-side in `~/.dsh/session-trash/preferences.json`.
 
 ## Screenshots
 
-| Plan before delete                                                                                                                           | Trash                                                                                                                        | Audit log                                                                                                                      | Receipts                                                                                                                         |
-| -------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| ![Plan before delete](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/confirm-dialog.png) | ![Trash](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/trash-panel.png) | ![Audit log](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/audit-tab.png) | ![Receipts](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/receipts-tab.png) |
+| Delete confirmation                                                                                                                           | Trash                                                                                                                        | Settings → Session trash                                                                                                                     |
+| --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| ![Delete confirmation](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/confirm-dialog.png) | ![Trash](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/trash-panel.png) | ![Settings section](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/settings-section.png) |
 
 <sub>Screenshots come from <code>SMOKE_DEMO=1 pnpm smoke:session-delete</code>: workspace names, session titles and IDs are replaced with demo data. The UI language follows DSH (Chinese here).</sub>
 
@@ -51,11 +52,13 @@ Restart the DSH desktop app afterwards. A fresh install adds a host half, so rel
 
 ## Usage
 
-**Batch (in trash)**: the trash tab supports select-all / clear / batch restore / batch permanent delete; each entry is handled independently and failures are reported inline.
+**Batch (in trash)**: the trash list has a sticky toolbar with select-all, batch restore and batch permanent delete. Batches run 20 entries at a time with a live `n/total` progress line and a Stop button, so a selection far larger than the host's single-request bound still completes; failures are summarised and stay selected for a retry.
 
 **Agent tool**: models can call `session_delete`, but only in two steps — `action=plan` returns the impact summary plus a single-use token (2 minutes), and `action=delete` needs that token. It refuses to delete the calling session, and a changed session invalidates the token. Deleting from the UI never requires the tool.
 
-**Keyboard**: Tab between controls, Enter/Space to activate, Esc to close a dialog. In the trash panel, ↑/↓/Home/End move focus between rows. `⌘/Ctrl + Alt + T` opens the trash. There is no one-key delete shortcut — deletion always goes through the menu and a confirmation dialog.
+**Keyboard**: the delete confirmation opens with focus on **Move to trash**, so Enter deletes and Esc cancels; when deletion is blocked, focus falls back to **Cancel**. Tab moves between the checkbox, the Details disclosure and the buttons. `⌘/Ctrl + Alt + T` opens the trash. The remembered cascade checkbox means the trigger is one key press away from a batch delete — the dialog always spells out how many child sessions come along.
+
+**Settings → Session trash**: deletion preferences (remember cascade, reset to default), a trash overview (entries, size, path), and maintenance — health check with a bookkeeping-only clean-up, operation receipts, and the audit log.
 
 **Refresh**: the trash panel has no refresh button. It loads on open and re-syncs every 5 seconds, when the window becomes visible again, and after every restore or permanent delete.
 

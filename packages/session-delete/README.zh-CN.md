@@ -8,10 +8,10 @@
 
 非官方 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 插件，与 DeepSeek 无关。
 
-> **状态：早期可用。** 已在当前目标 DSH 版本上用 `pnpm smoke:session-delete`（临时 DSH home，24 项端到端断言）和 `pnpm probe:runtime` 验证；桌面只读回归是在更早的版本上做的。具体范围见[兼容性与降级](#兼容性与降级)表格。`pnpm gate session-delete` 一条命令跑完发版门禁。仍是年轻软件，重要数据请自行备份。
+> **状态：早期可用。** 已在当前目标 DSH 版本上用 `pnpm smoke:session-delete`（临时 DSH home，27 项端到端断言）和 `pnpm probe:runtime` 验证；桌面只读回归是在更早的版本上做的。具体范围见[兼容性与降级](#兼容性与降级)表格。`pnpm gate session-delete` 一条命令跑完发版门禁。仍是年轻软件，重要数据请自行备份。
 
 
-![删除确认框：展示体积、子会话和将要清理的引用](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/overview.png)
+![删除确认框：一行影响面、可选的级联勾选、以及「详情」折叠](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/overview.png)
 
 ## 做什么
 
@@ -20,14 +20,15 @@ DSH 自带的「归档」只是把会话藏起来：id 记进工作区的归档�
 - **真正的删除。** 把会话目录从 `~/.dsh/sessions/` 移走，同时清掉还指向它的记账（归档集合、置顶集合、工作区归属、投影缓存），所以会话不会复活，也不会留下幽灵条目。
 - **默认进回收站。** 第一次点删除不会抹掉任何东西：会话进 `~/.dsh/session-trash/`，随时可恢复。「彻底删除」是另一个独立的显式动作。
 - **删前预演（plan / dry-run）。** 确认框由一份计划生成：占用体积、是否 live、有几个子会话、将清理哪些引用。真正执行前会重新算一遍并与你确认时的计划比对，不一致就中止，避免删掉你没看到的东西。
-- **审计日志。** 每次删除 / 恢复 / 彻底删除都往 `~/.dsh/session-trash/audit.log` 追加一行 JSON，回收站面板里能直接看。
-- **删除回执。** 移走之后核对会话可能被引用的几处，把没清干净的残留列出来（删除仍是一次一条；回收站页签支持批量恢复 / 批量彻底删除）。
+- **审计日志。** 每次删除 / 恢复 / 彻底删除都往 `~/.dsh/session-trash/audit.log` 追加一行 JSON，在 **设置 → 会话回收站** 里能直接看。
+- **删除回执。** 移走之后核对会话可能被引用的几处，把没清干净的残留列出来（删除仍是一次一条；回收站列表支持批量恢复 / 批量彻底删除）。
+- **安静的界面。** 确认框只留一行「体积 · 子会话 · 正在运行」，技术细节收进「详情」；回收站是单页列表；体检、审计、回执搬到设置页。子会话的勾选沿用你上次的选择，存在宿主侧 `~/.dsh/session-trash/preferences.json`。
 
 ## 截图
 
-| 删前预演                                                                                                                           | 回收站                                                                                                                        | 审计日志                                                                                                                      | 回执                                                                                                                         |
-| ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| ![删前预演](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/confirm-dialog.png) | ![回收站](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/trash-panel.png) | ![审计日志](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/audit-tab.png) | ![回执](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/receipts-tab.png) |
+| 删除确认                                                                                                                           | 回收站                                                                                                                        | 设置 → 会话回收站                                                                                                                      |
+| ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| ![删除确认](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/confirm-dialog.png) | ![回收站](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/trash-panel.png) | ![设置页分节](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/settings-section.png) |
 
 <sub>截图由 <code>SMOKE_DEMO=1 pnpm smoke:session-delete</code> 生成，工作区名、会话标题和 ID 都已替换为演示数据。</sub>
 
@@ -51,11 +52,13 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-session-delete-*.tgz
 
 ## 使用
 
-**回收站内批量**：回收站页签支持全选/清空/批量恢复/批量彻底删除，逐条执行，失败的条目会在面板里说明。
+**回收站内批量**：列表上方是吸顶的批量条（全选 / 批量恢复 / 批量彻底删除）。批量按 20 条一批执行，显示「处理中 n/总」，可随时「停止」——所以一次选 80 条也不会被宿主单次上限整单拒绝；失败的条目会汇总并保持选中，方便重试。
 
 **Agent 工具**：模型可以调用 `session_delete`，但必须两段式——`action=plan` 返回影响面摘要和一次性 token（2 分钟有效），`action=delete` 必须带这个 token。它拒绝删除调用者自己的会话，会话在此期间变化会让 token 失效。通过 UI 删除不需要这个工具。
 
-**键盘**：Tab 在各按钮间移动，Enter/Space 触发，Esc 关闭对话框；回收站面板里可用 ↑/↓/Home/End 在条目间移动焦点；`⌘/Ctrl + Alt + T` 直接打开回收站。删除始终需要菜单 + 确认框，没有一键删除的快捷键。
+**键盘**：删除确认框打开时焦点就在「移入回收站」上，**回车即执行**、Esc 取消；不可删除时焦点回落到「取消」。Tab 在勾选框、详情折叠与按钮之间移动。`⌘/Ctrl + Alt + T` 直接打开回收站。因为级联勾选会被记住，回车离批量删除只有一步——所以确认框始终写明会带上多少个子会话。
+
+**设置 → 会话回收站**：删除偏好（记住级联 / 重置为默认）、回收站概览（条目数、占用、路径），以及维护——体检（只动登记表）、操作回执、审计日志。
 
 **刷新**：回收站面板没有刷新按钮——打开时自动加载，之后每 5 秒、窗口重新可见、以及每次恢复/彻底删除后自动同步。
 
