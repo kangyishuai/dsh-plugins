@@ -114,6 +114,32 @@ SMOKE_DEMO=1 pnpm smoke:session-delete   # 截图在系统临时目录的 dsh-sm
 gh workflow run ci.yml --ref changeset-release/main
 ```
 
+### 叠式 PR（base 不是 `main`）
+
+大改动可以拆成两个 PR 叠着提：第二个 PR 的 base 指向第一个分支。**第一个分支一旦有新提交，
+第二个分支必须立刻 rebase 上去**，否则第二个分支与基分支分叉 → PR 变 `CONFLICTING` →
+GitHub 造不出 `refs/pull/<n>/merge` 这个合并引用 → 它的 `pull_request` 工作流（CI、PR title、
+gitleaks、runtime probe）会**静默地一次都不跑**，PR 页面上只剩 `pull_request_target` 的
+PR labeler 有结果。
+
+实际现象（2026-11-13 session-delete 的两个 PR 上确认过）：
+
+```bash
+gh run list --branch <分支> -L 3   # 只有 "PR labeler"，没有 CI
+gh api "repos/<owner>/<repo>/actions/runs?head_sha=<sha>"   # 也查不到 pull_request 的 run
+```
+
+两个补救办法，任选其一：
+
+1. `git rebase` 到基分支的最新提交后强推（`--force-with-lease`），PR 变回 `MERGEABLE` 之
+   后再推一次，`pull_request` 工作流就会重新触发；
+2. 或者按上面的兜底路径补跑一次：`gh workflow run ci.yml --ref <分支>`（`workflow_dispatch`
+   的结果挂在同一个 head commit 上；`commitlint` / `PR title` 属于 `pull_request` 工作流，
+   补跑不覆盖它们）。
+
+合并顺序永远是「先基分支 PR，再叠在上面的 PR」；两个都合进 `main` 之后各自的检查都会在
+`main` 的基线上重新跑一遍，所以别用 bypass 跳过。
+
 ### Issue 与标签
 
 | 标签                                      | 含义                                                              |
