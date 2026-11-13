@@ -313,12 +313,32 @@ const main = async () => {
       const sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const opener = '[data-shortcut-modal="settings"]';
       const isOpen = () => Boolean(document.querySelector(opener));
-      for (const needle of ["设置", "账号菜单", "Settings"]) {
+      // 装了账号插件时，侧栏底部的设置入口会被换成「账号菜单」按钮：
+      // 点它先开一个菜单，菜单里才有「设置 ⌘ ,」。两条路都要走一遍。
+      for (const needle of ["设置", "Settings"]) {
         if (isOpen()) break;
-        const btn = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes(needle));
+        const btn = [...document.querySelectorAll("button")].find(
+          (b) => (b.getAttribute("aria-label") || "") === needle,
+        );
         if (!btn) continue;
         btn.click();
         await sleepMs(800);
+      }
+      if (!isOpen()) {
+        const account = [...document.querySelectorAll("button")].find(
+          (b) => (b.getAttribute("aria-label") || "") === "账号菜单",
+        );
+        if (account) {
+          account.click();
+          await sleepMs(600);
+          const item = [...document.querySelectorAll('[role="menu"] button, [role="menuitem"]')].find(
+            (el) => (el.textContent || "").trim().startsWith("设置"),
+          );
+          if (item) {
+            item.click();
+            await sleepMs(900);
+          }
+        }
       }
       if (!isOpen()) return { status: "no-settings-panel" };
       const shell = document.querySelector(opener);
@@ -343,6 +363,40 @@ const main = async () => {
       (settings?.text ?? "").slice(0, 200),
     );
     await cdp.screenshot(join(SHOTS, "03-settings.png"));
+
+    // ---------- D2. 改键入口（只读：设置 → 通用 → 快捷键，确认命令进了 catalog） ----------
+    // 桌面端的按键派发走原生键盘桥，CDP 合成的按键到不了那里；这里只验证
+    // 「命令真的注册进了 catalog、出现在宿主的快捷键编辑面板里」这一层。
+    const rebind = await cdp.evaluate(`(async () => {
+      const sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const panel = () => document.querySelector('[data-shortcut-modal="settings"]');
+      if (!panel()) return { status: "no-settings" };
+      const general = [...panel().querySelectorAll("button")].find((b) =>
+        (b.textContent || "").includes("通用"));
+      if (!general) return { status: "no-general-nav" };
+      general.click();
+      await sleepMs(1200);
+      const row = [...panel().querySelectorAll("button")].find((b) =>
+        (b.textContent || "").includes("快捷键"));
+      if (!row) return { status: "no-shortcut-row" };
+      row.click();
+      await sleepMs(1500);
+      // 限定在快捷键编辑器容器里：body 文本含会话正文，可能含同样的字眼（本项目踩过）。
+      const editor =
+        document.querySelector('[data-shortcut-modal="shortcuts"]') ||
+        document.querySelector('[data-shortcut-modal="settings"]');
+      if (!editor) return { status: "no-shortcuts-editor" };
+      const text = (editor.innerText || "").replace(/\\s+/g, " ");
+      return { status: "ok", found: text.includes("删除当前会话") };
+    })()`);
+    check(
+      "快捷键编辑面板里能找到「删除当前会话…」",
+      rebind?.status === "ok" && rebind.found === true,
+      JSON.stringify(rebind ?? null),
+    );
+    await cdp.screenshot(join(SHOTS, "03b-shortcuts.png"));
+    await pressEscape(cdp);
+    await sleep(400);
     await pressEscape(cdp);
     await sleep(600);
 

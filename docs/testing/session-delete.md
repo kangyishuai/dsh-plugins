@@ -79,6 +79,18 @@ pnpm gate session-delete --skip-desktop         # 明确跳过桌面端（会提
 > 桌面端要先用 `open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1`
 > 重启；它只打开菜单/确认框/面板再 Esc 关闭，**从不确认删除**。
 
+> **写GUI断言时的一个陷阱（本项目踩过）**：不要用 `document.body.innerText` 判断某个词是否存在——
+> 页面里同时显示着会话正文，而正文可能恰好包含你正在找的字眼（这次就命中了：聊天记录里引用了
+> 插件的词典字符串，让「快捷键面板里有『删除当前会话…』」这条断言**假绿**）。断言必须限定在
+> 目标容器里：快捷键编辑器是 `[data-shortcut-modal="shortcuts"]`，设置面板是
+> `[data-shortcut-modal="settings"]`。
+
+> **0.5.0 的桌面回归实测进度（2026-11-13）**：用你正在跑的桌面版（0.4.9 + CDP 9222）跑了只读脚本，
+> 机制全部走通（账号菜单 → 设置 → 通用设置 → 快捷键编辑器、会话/工作区菜单、面板、确认框都开得出来、
+> Esc 都关得掉、没执行任何删除），失败项**恰好是 6 条「新界面尚未安装」的期望差异**：
+> 面板仍是四页签、没有设置分节、快捷键面板里查不到「删除当前会话…」、会话菜单没有键位、
+> 工作区菜单没有批量入口。也就是说：**装上新版并重启后重跑，这 6 条应当转绿**。
+
 > **实测踩到的三个坑**（2026-11-13 想在不打扰正在运行的桌面版的情况下复测 0.5.0 时）：
 >
 > 1. `open --env DSH_HOME=...` 在 app 已经运行时会被拒绝（`Application ... was already running and so the additional environment variables could not be set`）——
