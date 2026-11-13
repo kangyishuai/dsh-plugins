@@ -663,7 +663,7 @@ const main = async () => {
     }
 
     // ---------- E2. 设置页：一行开关 + 诊断（含运行时版本 / 构建哈希） ----------
-    // 入口是账号菜单 →「设置」→ 左栏「通用设置」（不要盲点坐标：先取元素 rect 再派发原生事件）。
+    // 入口是账号菜单 →「设置」→ 左栏「下一步建议」（独立分节；不要盲点坐标：先取元素 rect 再派发原生事件）。
     {
       const clickRect = async (/** @type {{x:number,y:number}} */ rect) => {
         for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) {
@@ -706,7 +706,7 @@ const main = async () => {
 
       const opened = await openSettings();
       const general = opened
-        ? await rectOf('[data-shortcut-modal="settings"] button', "通用设置")
+        ? await rectOf('[data-shortcut-modal="settings"] button', "下一步建议")
         : null;
       if (general !== null) {
         await clickRect(general);

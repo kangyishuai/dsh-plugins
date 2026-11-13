@@ -8,7 +8,7 @@
 // 端到端冒烟：临时 DSH_HOME 里启动**真实宿主**，装当前源码打出的包，再用 ego-browser
 // 在真实页面里点一遍 next-step 的六条主链路：
 //   1. 回答完成后，回合尾部出现决策卡；
-//   2. 卡片有两粒胶囊（stance 互斥、label 非空）；
+//   2. 卡片有 1–2 粒胶囊（stance 互斥、label 2–20 字且含具体对象）；
 //   3. 点击胶囊发出**一条真实用户消息**（DOM + 会话日志双重断言）；
 //   4. 点击后胶囊消失、卡片仍在并进入只读态；
 //   5. 刷新页面后状态仍在（来自会话投影，不是客户端内存）；
@@ -370,7 +370,7 @@ const THIRD_PROMPT = "不要使用任何工具，直接回答：哈希表解决�
 if (!CAN_MODEL) {
   const reason = "没有模型凭据：未设置 DEEPSEEK_API_KEY / ZHINAO_API_KEY，临时 DSH_HOME 里也没有 .credentials.yaml —— 卡片由一次真实模型调用生成，没有凭据就无法产出";
   skip("卡片在答后出现", reason);
-  skip("卡片有两粒胶囊（stance 互斥）", reason);
+  skip("卡片有 1–2 粒胶囊（stance 互斥）", reason);
   skip("点击胶囊发送出一条用户消息", reason);
   skip("点击后胶囊消失而卡片仍在", reason);
   skip("刷新页面后卡片状态仍在", reason);
@@ -478,14 +478,16 @@ if (card === null) {
 
 check("卡片处于可交互态", card.state === "interactive", "期望=interactive 实际=" + JSON.stringify(card.state));
 check(
-  "卡片有两粒胶囊",
-  card.pills.length === 2,
-  "期望=2 实际=" + card.pills.length + " pills=" + JSON.stringify(card.pills.map((p) => p.label)),
+  "卡片有 1–2 粒胶囊（下一步明确时只给一粒）",
+  card.pills.length >= 1 && card.pills.length <= 2,
+  "期望=1–2 实际=" + card.pills.length + " pills=" + JSON.stringify(card.pills.map((p) => p.label)),
 );
 check(
-  "两粒胶囊 stance 互斥且文案非空",
-  card.pills.length === 2 && card.pills[0].stance !== "" && card.pills[1].stance !== "" && card.pills[0].stance !== card.pills[1].stance && card.pills.every((p) => p.label.length > 0),
-  JSON.stringify(card.pills.map((p) => ({ stance: p.stance, label: p.label }))),
+  "胶囊 stance 非空且互斥、文案 2–20 字",
+  card.pills.length >= 1 &&
+    card.pills.every((p) => p.stance !== "" && p.label.length >= 2 && p.label.length <= 20) &&
+    (card.pills.length === 1 || card.pills[0].stance !== card.pills[1].stance),
+  JSON.stringify(card.pills.map((p) => ({ stance: p.stance, label: p.label, len: p.label.length }))),
 );
 check(
   "卡片带摘要与提问两段文本",
@@ -837,7 +839,7 @@ check(
 await shot("07-disabled");
 
 // ---------- 6. 设置页：开关 → updateSettings RPC 写盘（临时 home，安全） ----------
-// 入口是 账号菜单 →「设置」→ 左栏「通用设置」（插件行在 settings.general.item）。
+// 入口是 账号菜单 →「设置」→ 左栏「下一步建议」（独立设置分节，不再是 settings.general.item）。
 // 不写死坐标：按选择器找到元素后派发完整指针/鼠标事件序列。
 const fireClick = (selector, text) =>
   page.evaluate(
@@ -859,7 +861,7 @@ const menuHit = await fireClick('button[aria-label="账号菜单"]');
 await page.waitForTimeout(1200);
 const settingsHit = await fireClick('button[role="menuitem"]', "设置");
 await page.waitForTimeout(1600);
-const generalHit = await fireClick('[data-shortcut-modal="settings"] button', "通用设置");
+const generalHit = await fireClick('[data-shortcut-modal="settings"] button', "下一步建议");
 await page.waitForTimeout(1200);
 
 const readSettingsFile = async () => {
@@ -1249,11 +1251,13 @@ async function verifySessionLog(home, state) {
   const card = cardRecords.find((record) => record.data?.turn === targetTurn) ?? cardRecords[0];
   if (card === undefined) return checks;
   push(
-    "卡片记录：turn 是整数、options 恰好 2 条、stance 互斥",
+    "卡片记录：turn 是整数、options 1–2 条、stance 互斥",
     Number.isSafeInteger(card.data?.turn) &&
       Array.isArray(card.data?.options) &&
-      card.data.options.length === 2 &&
-      card.data.options[0]?.stance !== card.data.options[1]?.stance,
+      card.data.options.length >= 1 &&
+      card.data.options.length <= 2 &&
+      (card.data.options.length === 1 ||
+        card.data.options[0]?.stance !== card.data.options[1]?.stance),
     JSON.stringify({
       turn: card.data?.turn,
       options: card.data?.options?.map((/** @type {any} */ o) => ({
