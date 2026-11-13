@@ -21,6 +21,11 @@ This is an **on-demand** advisor, not a passive reviewer. The main model decides
 - **`off` / `shadow` / `advisory`.** Off by default. `shadow` runs one consultation after each normally completed turn and records it without injecting it; `advisory` is the live mode.
 - **Cross-provider by design.** The advisor route is independent of the main model. Different model families miss different things, which is the point of a second opinion — but read [Cost & privacy](#cost--privacy) before pointing it at another vendor.
 - **Budgets and a ledger.** Per turn, per session, per hour and a per-day cost ceiling, plus a token ledger at `<DSH_HOME>/advisor/usage.jsonl`. DSH does not record usage for extra model calls, so the plugin records it itself.
+- **A decision log, so "should it have asked?" can be answered with data.** `<DSH_HOME>/advisor/decisions.jsonl` gets
+  **one row per turn** (including turns with no consultation): whether it consulted, the reason code when it did not,
+  answer length / tool calls / errors, and whether the user's next message followed the advice.
+  `pnpm advisor:review` reports consult and acceptance rates per bucket and lists two kinds of suspects:
+  probably-missed and probably-wasted. Local file only — no network, no change to when it consults.
 
 ### What it is not
 
