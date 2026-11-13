@@ -86,7 +86,7 @@ pnpm gate session-delete --skip-desktop         # 明确跳过桌面端（会提
 > `[data-shortcut-modal="settings"]`。
 
 > **0.5.0 的桌面回归：已通过（2026-11-13）。** 装机流程就是上面那五条，跑完
-> `pnpm smoke:session-delete-desktop --require` → **17/17 PASS**（不带 `--workspace` 时会跳过
+> `pnpm smoke:session-delete-desktop --require` → **18/18 PASS**（不带 `--workspace` 时会跳过
 > 「该工作区的会话行」几条；带 `--workspace <标题>` 才跑满）。在此之前同脚本对着旧的 0.4.9 跑过一次，
 > 机制全绿、失败项恰好是「新界面尚未安装」的 6 条期望差异——两次对比正好说明脚本确实在测版本差异，
 > 而不是恒绿。
