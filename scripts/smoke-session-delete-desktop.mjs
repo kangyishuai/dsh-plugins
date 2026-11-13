@@ -346,6 +346,51 @@ const main = async () => {
     await pressEscape(cdp);
     await sleep(600);
 
+    // ---------- E. 菜单贡献（只读：开会话/工作区菜单，确认条目与键位，Esc 关闭） ----------
+    const menuChecks = await cdp.evaluate(`(async () => {
+      const sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const result = {};
+      const openMenuFor = async (selector, needle) => {
+        const rows = [...document.querySelectorAll(selector)];
+        const row = rows.find((el) => el.getAttribute("aria-expanded") === "true") || rows[0];
+        if (!row) return { status: "no-row" };
+        const btn = [...row.querySelectorAll("button")].find((b) =>
+          (b.getAttribute("aria-label") || "").includes("操作"));
+        if (!btn) return { status: "no-menu-button" };
+        btn.click();
+        for (let attempt = 0; attempt < 12; attempt += 1) {
+          await sleepMs(250);
+          const item = [...document.querySelectorAll("button, [role=menuitem]")].find((el) =>
+            (el.textContent || "").trim().startsWith(needle));
+          if (item) return { status: "ok", itemText: (item.textContent || "").replace(/\\s+/g, " ").slice(0, 80) };
+        }
+        return { status: "no-item" };
+      };
+      result.session = await openMenuFor("[data-row-key^='session:']", "删除会话");
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+        await sleepMs(200);
+      }
+      result.workspace = await openMenuFor("[data-row-key^='workspace:']", "删除此工作区的全部会话");
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+        await sleepMs(200);
+      }
+      return result;
+    })()`);
+    check(
+      "会话菜单有「删除会话」并显示快捷键",
+      menuChecks?.session?.status === "ok" &&
+        /⌘|Ctrl|Alt|\u232B/u.test(menuChecks.session.itemText || ""),
+      JSON.stringify(menuChecks?.session ?? null),
+    );
+    check(
+      "工作区菜单有「删除此工作区的全部会话」",
+      menuChecks?.workspace?.status === "ok",
+      JSON.stringify(menuChecks?.workspace ?? null),
+    );
+    await cdp.screenshot(join(SHOTS, "05-menus.png"));
+
     // 目标工作区的会话行数前后一致 = 确实没删（只比较该工作区，不看别人的会话）
     const afterCount =
       workspaceTitle === null

@@ -175,29 +175,68 @@ const openPanel = () => page.evaluate(async () => {
   const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent || "").includes("会话回收站"));
   return dlg ? (dlg.textContent || "").replace(/\\s+/g, " ") : "missing";
 });
+// 菜单项由各贡献方**异步 resolve**（contextMenus 的 provider 准备 + 图标查表），
+// 所以打开菜单后要轮询等条目出现，而不是睡固定时长。这两个 helper 在页面里只装一次。
+const installHelpers = () =>
+  page.evaluate(() => {
+  window.__sdsOpenMenu = async (kind) => {
+    const isWorkspace = kind === "workspace";
+    const row = isWorkspace
+      ? ([...document.querySelectorAll("[data-row-key^='workspace:']")].find(
+          (el) => el.getAttribute("aria-expanded") === "true",
+        ) || document.querySelector("[data-row-key^='workspace:']"))
+      : [...document.querySelectorAll("[data-row-key^='session:']")].find((el) => {
+          const text = (el.innerText || "").trim();
+          return text !== "" && text !== "新会话" && text !== "New chat" && text !== "未命名";
+        });
+    if (!row) return { status: "no-row" };
+    if (!isWorkspace) {
+      // 行未激活时「…」按钮不在 DOM 里，先点开这一行再 hover。
+      row.click();
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      row.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      row.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    const button =
+      [...row.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("的操作")) ||
+      [...row.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("操作")) ||
+      [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").startsWith("会话“"));
+    if (!button) return { status: "no-menu-button" };
+    button.click();
+    const label = isWorkspace ? "删除此工作区的全部会话" : "删除会话";
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const item = [...document.querySelectorAll("button, [role=menuitem]")].find((el) =>
+        (el.textContent || "").trim().startsWith(label));
+      if (item) {
+        return { status: "ok", itemText: (item.textContent || "").replace(/\\s+/g, " ").slice(0, 80) };
+      }
+    }
+    const popup = [...document.querySelectorAll('[role="menu"]')].pop();
+    return { status: "no-item", popup: (popup?.innerText || "").replace(/\\s+/g, " ").slice(0, 200) };
+  };
+  window.__sdsClickMenuItem = (label) => {
+    const item = [...document.querySelectorAll("button, [role=menuitem]")].find((el) =>
+      (el.textContent || "").trim().startsWith(label));
+    if (!item) return false;
+    item.click();
+    return true;
+  };
+  window.__sdsCloseAll = async () => {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+  };
+});
 const openConfirm = () => page.evaluate(async () => {
-  const row = [...document.querySelectorAll("[data-row-key^='session:']")].find((el) => {
-    const text = (el.innerText || "").trim();
-    return text !== "" && text !== "新会话" && text !== "New chat" && text !== "未命名";
-  });
-  if (!row) return "no-session-row";
-  // 行未激活时「…」菜单按钮不在 DOM 里（只在悬停/激活时渲染）。先点开这一行再悬停，
-  // 否则下面按 aria-label 找到的会是别的行的按钮，菜单里没有删除项。
-  row.click();
-  await new Promise((r) => setTimeout(r, 900));
-  row.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
-  row.dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 500));
-  const menuBtn = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").startsWith("会话“"));
-  if (!menuBtn) return "no-menu-button";
-  menuBtn.click();
-  await new Promise((r) => setTimeout(r, 500));
-  const item = [...document.querySelectorAll("button, [role=menuitem]")].find((el) => (el.textContent || "").trim() === "删除会话…");
-  if (!item) return "no-delete-item";
-  item.click();
+  const opened = await window.__sdsOpenMenu("session");
+  if (opened.status !== "ok") return "menu:" + opened.status;
+  window.__sdsClickMenuItem("删除会话");
   await new Promise((r) => setTimeout(r, 2200));
   const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent || "").includes("移入回收站"));
-  return dlg ? (dlg.textContent || "").replace(/\\s+/g, " ") : "missing";
+  return dlg ? (dlg.textContent || "").replace(/s+/g, " ") : "missing";
 });
 const clickDialogButton = (text) => page.evaluate(async (label) => {
   const btn = [...document.querySelectorAll('[role="dialog"] button')].find((b) => (b.textContent || "").trim() === label);
@@ -211,6 +250,7 @@ const dialogOpen = (needle) => page.evaluate((text) =>
 await page.goto(${JSON.stringify(url)});
 await page.waitForTimeout(4500);
 await dismiss();
+await installHelpers();
 
 // 1) slot 渲染
 const slotErrors = await page.evaluate(() =>
@@ -335,6 +375,57 @@ await page.keyboard.press("Escape");
 await page.waitForTimeout(500);
 check("Esc 可关闭确认框", !(await dialogOpen("移入回收站")));
 
+// 4b) 菜单项来自官方 contextMenus 贡献：应显示快捷键；快捷键能直接打开同一个确认框
+const menuInfo = await page.evaluate(async () => window.__sdsOpenMenu("session"));
+check(
+  "会话菜单的删除项显示快捷键",
+  menuInfo.status === "ok" && /⌘|Ctrl|Alt|\u232B/u.test(menuInfo.itemText || ""),
+  JSON.stringify(menuInfo).slice(0, 200),
+);
+// 先把菜单/浮层全部关掉：菜单打开时宿主会把它当成一个 modal，快捷键会被有意忽略。
+await page.evaluate(async () => window.__sdsCloseAll());
+await page.waitForTimeout(400);
+
+// ⌘⌥⌫：Web runtime 的 primary+alt+Backspace。用真实按键（CDP 输入，isTrusted=true），
+// 合成 KeyboardEvent 在部分浏览器里不会走宿主的关键字规范化。
+await page.keyboard.down("Meta");
+await page.keyboard.down("Alt");
+await page.keyboard.press("Backspace");
+await page.keyboard.up("Alt");
+await page.keyboard.up("Meta");
+await page.waitForTimeout(2500);
+const shortcutOpened = await dialogOpen("移入回收站");
+check("⌘⌥⌫ 能直接打开删除确认框", shortcutOpened === true, String(shortcutOpened));
+await page.keyboard.press("Escape");
+await page.waitForTimeout(500);
+
+// 4c) 工作区「…」菜单：删除这个工作区的全部会话（只打开确认框，不执行）
+const workspaceMenu = await page.evaluate(async () => {
+  const opened = await window.__sdsOpenMenu("workspace");
+  if (opened.status !== "ok") return opened;
+  window.__sdsClickMenuItem("删除此工作区的全部会话");
+  await new Promise((r) => setTimeout(r, 2400));
+  const dialog = [...document.querySelectorAll('[role="dialog"]')].find((d) =>
+    (d.textContent || "").includes("里的全部会话"));
+  return {
+    status: dialog ? "ok" : "no-dialog",
+    text: dialog ? (dialog.textContent || "").replace(/\\s+/g, " ").slice(0, 200) : "",
+  };
+});
+check(
+  "工作区「…」菜单能打开「删除此工作区的全部会话」确认框",
+  workspaceMenu.status === "ok",
+  JSON.stringify(workspaceMenu).slice(0, 220),
+);
+check(
+  "工作区确认框写明会话数与体积",
+  /个会话 · 约/u.test(workspaceMenu.text || ""),
+  workspaceMenu.text,
+);
+await shot("11-workspace-confirm");
+await page.keyboard.press("Escape");
+await page.waitForTimeout(500);
+
 // 5) 执行删除 → 行消失 + toast
 const beforeRows = await rows();
 const deletedRowKey = beforeRows[0];
@@ -356,6 +447,7 @@ await shot("04-after-delete");
 await page.reload();
 await page.waitForTimeout(4500);
 await dismiss();
+await installHelpers();
 const reloadRows = await rows();
 const resurrected = beforeRows.filter((id) => !afterRows.includes(id)).filter((id) => reloadRows.includes(id));
 check("刷新页面后已删会话不复活", resurrected.length === 0, JSON.stringify(resurrected));
@@ -572,34 +664,25 @@ for (const rowKey of sessionRows) {
     row.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
   }, rowKey);
   await page.waitForTimeout(300);
-  const probeResult = await page.evaluate(async (key) => {
-    const rowEl = document.querySelector('[data-row-key="' + key + '"]');
-    const rowButtons = rowEl ? [...rowEl.querySelectorAll("button")] : [];
-    const menuBtn =
-      rowButtons.find((b) => (b.getAttribute("aria-label") || "").includes("操作")) ||
-      rowButtons[rowButtons.length - 1];
-    if (!menuBtn) return "no-menu";
-    menuBtn.click();
-    await new Promise((r) => setTimeout(r, 450));
-    const item = [...document.querySelectorAll("button, [role=menuitem]")].find(
-      (el) => (el.textContent || "").trim() === "删除会话…");
-    if (!item) return "no-item";
-    item.click();
-    await new Promise((r) => setTimeout(r, 1800));
+  const probeResult = await page.evaluate(async () => {
+    const opened = await window.__sdsOpenMenu("session");
+    if (opened.status !== "ok") return "menu:" + opened.status;
+    window.__sdsClickMenuItem("删除会话");
+    await new Promise((r) => setTimeout(r, 2200));
     const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) =>
       (d.textContent || "").includes("移入回收站"));
     if (!dlg) return "no-dialog";
     const hasCheckbox =
-      Boolean(dlg.querySelector('input[type="checkbox"]')) ||
-      /同时删除|Also delete these/.test(dlg.textContent || "");
-    return hasCheckbox ? "found:" + key : "none";
-  }, rowKey);
+      Boolean(dlg.querySelector('[role="switch"], input[type="checkbox"]')) ||
+      /同时删除|Also delete these/u.test(dlg.textContent || "");
+    return hasCheckbox ? "found" : "none";
+  });
   await page.keyboard.press("Escape");
   await page.waitForTimeout(350);
   cascadeDetail = String(probeResult);
   if (cascadeDetail.startsWith("found:")) break;
 }
-check("有子会话的确认框出现级联勾选框", cascadeDetail.startsWith("found:"), cascadeDetail);
+check("有子会话的确认框出现级联勾选框", cascadeDetail.startsWith("found"), cascadeDetail);
 await shot("10-cascade-checkbox");
 
 await task.finish({ keep: false }).catch(() => {});

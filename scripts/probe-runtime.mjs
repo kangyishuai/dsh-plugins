@@ -251,6 +251,24 @@ const SEAM_CHECKS_SESSION_DELETE = [
     pattern: /data-modal-autofocus/u,
     breaks: "确认框不再默认聚焦「移入回收站」，回车即删的手感退化",
   },
+  {
+    file: "@deepseek-ai/dsh-client-ui-context-menu/lib/client.js",
+    name: "contextMenus 服务（会话「…」/ 工作区「…」菜单贡献）",
+    pattern: /contextMenus/u,
+    breaks: "菜单退回旧 slot：没有键位显示，工作区菜单里也不会出现批量入口",
+  },
+  {
+    file: "@deepseek-ai/dsh-client-ui-workspace/lib/client.js",
+    name: "contextMenus 的 workspace 目标（工作区「…」菜单）",
+    pattern: /workspaceMenuTarget/u,
+    breaks: "工作区「…」里没有「删除此工作区的全部会话」",
+  },
+  {
+    file: "@deepseek-ai/dsh-client-shortcuts/lib/client.js",
+    name: "shortcuts.register（可改键的应用命令）",
+    pattern: /registerFixed/u,
+    breaks: "⌘⌥⌫ 与设置 → 快捷键里的条目都消失（菜单仍可用）",
+  },
 ];
 
 /** next-step 依赖的私有 seam（决策卡 + 幽灵提示）。 */
