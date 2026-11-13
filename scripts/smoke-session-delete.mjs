@@ -86,6 +86,28 @@ function browserScript(url, shots, home, demo = false) {
   return `
 const task = await taskSpace("dsh smoke: session-delete");
 const page = task.page("p1");
+// cookie 卫生：宿主每个临时实例用新 token，而 cookie 名里带 token（dsh-auth-<hash>），
+// 于是每轮冒烟都会新增一条、而不是覆盖旧的。攒够了请求头超过宿主上限，页面直接 431
+// （ego 报 ERR_HTTP_RESPONSE_CODE_FAILURE）。
+// 只删「本机回环域 + dsh-auth- 前缀」——绝不能用 Network.clearBrowserCookies，
+// 那会把用户浏览器里其它站点的登录态一起清掉。
+const LOOPBACK_DOMAINS = ["127.0.0.1", "localhost", "::1"];
+const clearOwnCookies = async () => {
+  try {
+    const found = await page.cdp("Storage.getCookies", {});
+    const mine = (found.cookies || []).filter(
+      (c) => LOOPBACK_DOMAINS.includes(c.domain) && String(c.name || "").startsWith("dsh-auth-"),
+    );
+    for (const c of mine) {
+      await page.cdp("Network.deleteCookies", { name: c.name, domain: c.domain, path: c.path });
+    }
+    return mine.length;
+  } catch (error) {
+    console.log("cookie 清理跳过（不影响断言）：" + String(error).slice(0, 120));
+    return -1;
+  }
+};
+console.log("启动前清理自有 cookie：" + (await clearOwnCookies()));
 const SHOTS = ${JSON.stringify(shots)};
 const HOME_DIR = ${JSON.stringify(home)};
 const checks = [];
@@ -142,6 +164,11 @@ const anonymize = async () => { demoMap = await page.evaluate((saved) => {
   }
   return map;
 }, demoMap); };
+// 不脱敏、立刻截：用于必须在某个 DOM 状态还活着时捕捉的画面
+// （DEMO 的脱敏会做一次全页文本改写，宿主的浮层会被重渲染收掉）。
+const shotRaw = async (name) => {
+  await page.screenshot({ path: SHOTS + "/" + name + ".png" });
+};
 const shot = async (name) => {
   if (DEMO) await anonymize().catch((error) => console.log("DEBUG anonymize", String(error).slice(0, 160)));
   await page.screenshot({ path: SHOTS + "/" + name + ".png" });
@@ -535,6 +562,86 @@ check("彻底删除后角标归零", !/\\(\\d\\)/.test(badgeAfterPurge || ""), b
 // 10) 设置页「会话回收站」：偏好 / 概览 / 维护（原回收站面板的四个页签搬到这里）
 await page.keyboard.press("Escape");
 await page.waitForTimeout(500);
+// 设置面板的打开逻辑挂到 window 上给后面几步复用。
+// 关键：每次点击后**轮询等待**面板出现，而不是固定 sleep —— 宿主打开面板的耗时不稳定，
+// 固定等待会让调用方误判「打不开」，进而截图拍到欢迎页。
+await page.evaluate(() => {
+  window.__openSdsSettings = async () => {
+    const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+    const opener = '[data-shortcut-modal="settings"]';
+    const isOpen = () => Boolean(document.querySelector(opener));
+    const waitOpen = async (ms) => {
+      const deadline = Date.now() + ms;
+      while (Date.now() < deadline) {
+        if (isOpen()) return true;
+        await sleepMs(120);
+      }
+      return isOpen();
+    };
+
+    if (isOpen()) {
+      // 已开：确保停在「会话回收站」分节。
+      const shellNow = document.querySelector(opener);
+      const navNow = [...shellNow.querySelectorAll("button")].find(
+        (b) => (b.textContent || "").trim() === "会话回收站",
+      );
+      if (navNow) {
+        navNow.click();
+        await waitOpen(2500);
+      }
+      return isOpen() ? "ok" : "panel-closed";
+    }
+
+    for (const needle of ["设置", "Settings"]) {
+      const btn = [...document.querySelectorAll("button")].find(
+        (b) => (b.getAttribute("aria-label") || "") === needle,
+      );
+      if (!btn) continue;
+      btn.click();
+      if (await waitOpen(3000)) break;
+    }
+    if (!isOpen()) {
+      // 装了账号插件时，设置入口在「账号菜单 → 设置」里。
+      const account = [...document.querySelectorAll("button")].find(
+        (b) => (b.getAttribute("aria-label") || "") === "账号菜单",
+      );
+      if (account) {
+        account.click();
+        await sleepMs(500);
+        const item = [...document.querySelectorAll('[role="menu"] button, [role="menuitem"]')].find(
+          (el) => (el.textContent || "").trim().startsWith("设置"),
+        );
+        if (item) {
+          item.click();
+          await waitOpen(3000);
+        }
+      }
+    }
+    if (!isOpen()) {
+      // 兜底：Web 默认键位 primary+alt+Comma（macOS 上是 ⌘⌥,）
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: ",", code: "Comma", metaKey: true, altKey: true, ctrlKey: false, bubbles: true,
+        }),
+      );
+      await waitOpen(2500);
+    }
+    if (!isOpen()) return "no-settings-panel";
+
+    const shell = document.querySelector(opener);
+    const nav = [...shell.querySelectorAll("button")].find(
+      (b) => (b.textContent || "").trim() === "会话回收站",
+    );
+    if (!nav) return "no-section-nav";
+    nav.click();
+    await waitOpen(2500);
+    return isOpen() ? "ok" : "panel-closed-after-nav";
+  };
+});
+
+// 10) 设置页「会话回收站」：偏好 / 概览 / 维护（原回收站面板的四个页签搬到这里）
+await page.keyboard.press("Escape");
+await page.waitForTimeout(500);
 // 设置面板的打开逻辑只写一次，挂到 window 上给后面几步复用：
 // 面板在切换分节/重渲染后可能被 shell 关掉，测试要能幂等地重新打开。
 await page.evaluate(() => {
@@ -570,67 +677,91 @@ await page.evaluate(() => {
     return (document.querySelector(opener)?.textContent || "").replace(/\\s+/g, " ");
   };
 });
-const settingsText = await page.evaluate(async () => window.__openSdsSettings());
-await shot("07-settings");
+// 10) 设置页「会话回收站」
+// 注意：宿主会在两次 page.evaluate 之间重渲染，把设置面板收掉。所以
+//   (a) 打开面板 + 切换分节放在第一个 evaluate；
+//   (b) 面板内的三项交互（开关 / 展开审计 / 进快捷键面板）放在第二个 evaluate，
+//       且每次都先确认面板还在，不在才重开。
+// 截图紧跟打开那一步，避免拍到欢迎页。
+await page.keyboard.press("Escape");
+await page.waitForTimeout(500);
+// 首次打开可能赶上面板还在初始化（宿主重渲染），返回值不稳定；
+// 「分节是否真的存在」交给下一个 evaluate 的 hasSections 判定，这里只记录返回值。
+const settingsOpened = await page.evaluate(async () => window.__openSdsSettings());
+console.log("设置页首次打开返回：" + settingsOpened);
+// 用非脱敏截图：脱敏的 DOM 改写会把设置面板刷掉（07 只作诊断用，
+// README 里的设置页图是从真实桌面版现场截的）。
+await shotRaw("07-settings");
 
-// ③ 记忆级联：把开关打开，主进程随后核对 preferences.json 是否真的落盘。
-const cascadeToggled = await page.evaluate(async () => {
-  if (!document.querySelector('[data-shortcut-modal="settings"]')) await window.__openSdsSettings();
-  const panel = document.querySelector('[data-shortcut-modal="settings"]');
-  if (!panel) return "no-panel";
-  // 宿主 Switch 不一定是 input：可能是 role="switch" 的按钮，两种都认。
-  const box = panel.querySelector('[role="switch"], input[type="checkbox"]');
-  if (!box) return "no-switch";
-  const isOn = () =>
-    box.getAttribute("aria-checked") === "true" ||
-    (box instanceof HTMLInputElement && box.checked === true);
-  if (!isOn()) {
-    box.click();
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-  return isOn() ? "on" : "off";
-});
-check("设置页开关可打开「记住级联选择」", cascadeToggled === "on", cascadeToggled);
-
-// 维护区：展开审计日志（页面里只断言「能展开」，内容准确与否交给主进程读文件核对——
-// 页面文本可能被宿主的脱敏层改写，用文本来断言审计内容不稳定）。
-const auditExpanded = await page.evaluate(async () => {
-  if (!document.querySelector('[data-shortcut-modal="settings"]')) await window.__openSdsSettings();
-  const panel = document.querySelector('[data-shortcut-modal="settings"]');
-  if (!panel) return "no-panel";
-  // 折叠标题前面有 ▸ 字形，所以用 includes 而不是 startsWith。
-  const toggle = [...panel.querySelectorAll("button")].find((b) =>
-    (b.textContent || "").includes("审计日志"));
-  if (!toggle) return "no-audit-toggle";
-  toggle.click();
-  await new Promise((r) => setTimeout(r, 900));
-  return toggle.getAttribute("aria-expanded") === "true" ? "expanded" : "collapsed";
-});
-check("设置页的审计日志可展开", auditExpanded === "expanded", auditExpanded);
-// 4d) 快捷键可改键：宿主的编辑面板在 设置 → 通用 → 快捷键 里，我们的命令必须出现在那里。
-const rebindable = await page.evaluate(async () => {
-  if (!document.querySelector('[data-shortcut-modal="settings"]')) await window.__openSdsSettings();
+const settingsFlow = await page.evaluate(async () => {
+  const sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const panel = () => document.querySelector('[data-shortcut-modal="settings"]');
-  if (!panel()) return "no-settings";
-  const nav = [...panel().querySelectorAll("button")].find((b) => (b.textContent || "").includes("通用"));
-  if (!nav) return "no-general-nav";
-  nav.click();
-  await new Promise((r) => setTimeout(r, 1200));
-  const row = [...panel().querySelectorAll("button")].find((b) =>
-    (b.textContent || "").includes("快捷键"));
-  if (!row) return "no-shortcut-row";
-  row.click();
-  await new Promise((r) => setTimeout(r, 1500));
-  const text = (document.body.innerText || "").replace(/s+/g, " ");
-  const found = text.includes("删除当前会话");
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
-    await new Promise((r) => setTimeout(r, 200));
+  if (!panel()) {
+    await window.__openSdsSettings();
+    await sleepMs(400);
   }
-  return found ? "found" : "missing:" + text.slice(0, 200);
+  if (!panel()) return { cascade: "no-panel", audit: "no-panel", rebind: "no-panel" };
+
+  const text = panel().textContent || "";
+  const hasSections = text.includes("删除偏好") && text.includes("体检");
+
+  let cascade = "no-switch";
+  const box = panel().querySelector('[role="switch"], input[type="checkbox"]');
+  if (box) {
+    const isOn = () =>
+      box.getAttribute("aria-checked") === "true" ||
+      (box instanceof HTMLInputElement && box.checked === true);
+    if (!isOn()) {
+      box.click();
+      await sleepMs(500);
+    }
+    cascade = isOn() ? "on" : "off";
+  }
+
+  let audit = "no-audit-toggle";
+  const auditToggle = [...panel().querySelectorAll("button")].find((b) =>
+    (b.textContent || "").includes("审计日志"));
+  if (auditToggle) {
+    auditToggle.click();
+    await sleepMs(500);
+    audit = auditToggle.getAttribute("aria-expanded") === "true" ? "expanded" : "collapsed";
+  }
+
+  let rebind = "no-general-nav";
+  const generalNav = [...panel().querySelectorAll("button")].find((b) =>
+    (b.textContent || "").includes("通用"));
+  if (generalNav) {
+    generalNav.click();
+    await sleepMs(700);
+    const shortcutRow = [...panel().querySelectorAll("button")].find((b) =>
+      (b.textContent || "").includes("快捷键"));
+    if (shortcutRow) {
+      shortcutRow.click();
+      await sleepMs(800);
+      const editor =
+        document.querySelector('[data-shortcut-modal="shortcuts"]') ||
+        document.querySelector('[data-shortcut-modal="settings"]');
+      rebind = editor && (editor.innerText || "").includes("删除当前会话") ? "found" : "missing";
+    } else {
+      rebind = "no-shortcut-row";
+    }
+  }
+  return { hasSections: hasSections, cascade: cascade, audit: audit, rebind: rebind };
 });
-check("快捷键编辑面板里能找到「删除当前会话…」", rebindable === "found", rebindable);
-await shot("08-settings-audit");
+check(
+  "设置页出现「会话回收站」分节（含删除偏好与维护入口）",
+  settingsFlow.hasSections === true,
+  JSON.stringify(settingsFlow).slice(0, 200),
+);
+check("设置页开关可打开「记住级联选择」", settingsFlow.cascade === "on", settingsFlow.cascade);
+check("设置页的审计日志可展开", settingsFlow.audit === "expanded", settingsFlow.audit);
+check(
+  "快捷键编辑面板里能找到「删除当前会话…」",
+  settingsFlow.rebind === "found",
+  String(settingsFlow.rebind),
+);
+await page.keyboard.press("Escape");
+await page.waitForTimeout(600);
 await page.keyboard.press("Escape");
 await page.waitForTimeout(600);
 
@@ -708,6 +839,7 @@ for (const rowKey of sessionRows) {
 check("有子会话的确认框出现级联勾选框", cascadeDetail.startsWith("found"), cascadeDetail);
 await shot("10-cascade-checkbox");
 
+console.log("收尾清理自有 cookie：" + (await clearOwnCookies()));
 await task.finish({ keep: false }).catch(() => {});
 console.log("SMOKE_RESULT " + JSON.stringify({ checks }));
 `;
@@ -723,11 +855,25 @@ const main = async () => {
   /** @type {import("node:child_process").ChildProcess | undefined} */
   let host;
   try {
-    const profileSrc = join(process.env.HOME ?? "", ".dsh", "profiles", "desktop");
     const home = join(work, "home");
     const profile = join(home, "profiles", "sdel");
     await mkdir(join(home, "profiles"), { recursive: true });
-    await cp(profileSrc, profile, { recursive: true });
+    // 用宿主自带的 `web` profile 当模板：它干净且可渲染（只有宿主 bundle）。
+    // 不复制 dev 的 `desktop` profile —— 那会带两类与插件无关的失败：
+    //   (1) 第三方插件若是 link:/file: 到本机其它仓库，临时目录里装不上；
+    //   (2) 本插件那条依赖常指向上一次 smoke 留下的 /tmp/*.tgz，文件已被清理，
+    //       pnpm 解析 integrity 直接失败（exit 254）。
+    const stockProfile = join(process.env.HOME ?? "", ".dsh", "profiles", "web");
+    const hasStock = await readdir(stockProfile).then(
+      () => true,
+      () => false,
+    );
+    if (!hasStock) throw new Error("找不到宿主自带的 web profile（~/.dsh/profiles/web）");
+    await cp(stockProfile, profile, { recursive: true });
+    for (const stale of ["node_modules", "pnpm-lock.yaml", "cordis.yml"]) {
+      await rm(join(profile, stale), { recursive: true, force: true }).catch(() => {});
+    }
+    // 会话与工作区记账：没有会话就没什么可删的。
     for (const dir of ["sessions", "storages"]) {
       await cp(join(process.env.HOME ?? "", ".dsh", dir), join(home, dir), {
         recursive: true,
