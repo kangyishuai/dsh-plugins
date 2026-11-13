@@ -60,6 +60,7 @@ window.__ModuleLoader__.load({
       "retry.generate": "生成下一步建议",
       "retry.generating": "正在生成…",
       "settings.title": "下一步建议",
+      "settings.nav": "下一步建议",
       "settings.desc":
         "答完后判断是否值得继续；需要时生成一张含摘要与两个方向建议的决策卡（一次额外模型调用）。",
       "settings.enabled": "启用插件",
@@ -110,6 +111,7 @@ window.__ModuleLoader__.load({
       "retry.generate": "Generate a next-step card",
       "retry.generating": "Generating…",
       "settings.title": "Next-step suggestions",
+      "settings.nav": "Next-step suggestions",
       "settings.desc":
         "Judges whether a turn is worth continuing; when it is, adds a status summary and two directions (one extra model call).",
       "settings.enabled": "Enable the plugin",
@@ -1499,6 +1501,8 @@ window.__ModuleLoader__.load({
     /** @param {any} ctx */
     exports.apply = function apply(ctx) {
       ctx.effect(() => ctx.locale.register(NS, { zh: zh, en: en }), "next-step: dictionaries");
+      // settings.section 的 label 是惰性求值的，需要一个绑定到本插件的翻译函数。
+      const tr = ctx.locale.bind(NS);
 
       // 只注入一份样式；判重让 HMR / 重复挂载不会插第二份。
       ctx.effect(() => {
@@ -1702,15 +1706,16 @@ window.__ModuleLoader__.load({
         "next-step: ghost",
       );
 
-      // 设置页 → 通用：总开关、两个面、暂停、预算与诊断。
+      // 设置 → 下一步建议（独立分节；原来挤在「通用设置」里）。
       ctx.effect(
         () =>
-          ctx.slots.inject("settings.general.item", () =>
+          ctx.slots.inject("settings.section", () =>
             ctx.slots.register(
               {
-                name: "settings.general.item",
+                name: "settings.section",
                 id: "next-step",
-                order: 900,
+                order: 93,
+                label: () => tr("settings.nav"),
                 locale: NS,
                 inject: () => ({ api: api }),
               },

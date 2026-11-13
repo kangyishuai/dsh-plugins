@@ -40,6 +40,7 @@
     "error.inflight": "正在生成，请稍候",
     "error.noTurn": "没有可生成建议的回合",
     "retry.generate": "生成下一步建议",
-    "retry.generating": "正在生成…"
+    "retry.generating": "正在生成…",
+    "settings.nav": "下一步建议"
   }
 }

@@ -71,7 +71,7 @@ Re-run `pnpm pack` + `add` after changing the code. The plugin has a host half, 
 
 ## Settings & diagnostics
 
-Settings → **General** → “Next-step suggestions” is one row with everything you need to control it:
+Settings → **Next-step suggestions** (its own section now, no longer a row buried in General) has everything you need to control it:
 
 - **Enable the plugin** — the global switch. Off means **no generation request at all**, not a hidden UI.
 - **Decision card under the answer** / **Ghost hint in the composer** — one switch per face.

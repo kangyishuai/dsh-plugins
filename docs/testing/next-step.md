@@ -46,7 +46,7 @@ DSH_HOME=$H dsh --profile ns --port 0 --no-open
 | `node --test`（包内）          | 67 pass / 0 fail（settings 29 + prompt 38）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `pnpm probe:runtime`           | 60/60 PASS（含 8 条 next-step seam + 2 条 slot）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `pnpm smoke:next-step`         | **54 PASS + 0 SKIP（共 54 项）**（临时 `DSH_HOME`、真实宿主、真实模型调用）：投影健康、答后出卡、两粒胶囊、stance 互斥、**设置页开关 → updateSettings 写盘（点开关→读设置文件→点回）/ 幽灵提示出现 / 输入 @ 或斜杠时让位且关菜单后恢复 / 空草稿按 Enter 不发 / 输入即消失且 1.9s 不闪回 / Tab 接受进草稿 / 接受后消失 / Esc 清除不自动回来 / 清空草稿后胶囊仍可点**、点胶囊发送用户消息（文本 = `option.text` ≠ `label`）、点后胶囊消失且卡片保留为只读、只读态保留摘要与提问、刷新后仍只读、关开关后不再出卡；日志侧独立复核 `plugin:next-step/card` 与 `phase=sent` 记录形状。 |
-| 设置页 UI 写入                 | `pnpm smoke:next-step` 覆盖：账号菜单 → 设置 → 通用设置 → 点 `card` 开关 → 读临时 `$DSH_HOME` 的 `next-step.settings.json`（`card:false`）→ 点回（`card:true`），证明走的是 `updateSettings` RPC 而非缓存                                                                                                                                                                                                                                                                                                                                                                        |
+| 设置页 UI 写入                 | `pnpm smoke:next-step` 覆盖：账号菜单 → 设置 → 「下一步建议」分节 → 点 `card` 开关 → 读临时 `$DSH_HOME` 的 `next-step.settings.json`（`card:false`）→ 点回（`card:true`），证明走的是 `updateSettings` RPC 而非缓存                                                                                                                                                                                                                                                                                                                                                              |
 | 排队消息闸                     | `test/queue-gate.test.js` 5 项单测；`service.js` 在生成前判 `inbox.nextTurn + inbox.nextStep >= 2` 则跳过（`queuedMessageLimit`，与官方 action-cards 同规则）                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | 桌面真机回归（Electron + CDP） | **只读 9 PASS + 1 SKIP；`--deep` 19 PASS + 2 SKIP**（2026-11-10，真实桌面版、真实模型调用）：插件 client 半加载、投影健康、卡片结构不变量、最多一张可交互卡、答后出可交互卡、两粒 stance 互斥胶囊、点胶囊→`sent` 且胶囊消失、真的发出一条用户消息、仓库 cwd 无污染                                                                                                                                                                                                                                                                                                               |
 
@@ -207,7 +207,7 @@ pnpm smoke:next-step-desktop --require
 8. 最多一张可交互卡
 9. 找一个带可交互卡的会话（探测现有会话；**没有就 FAIL，不静默跳过**）
 10. 该会话的卡片结构（无卡时 SKIP）
-11. 设置页出现「下一步建议」行（3 开关 + 预算 + 暂停）——入口：账号菜单 → 设置 → 左栏「通用设置」
+11. 设置页出现「下一步建议」分节（3 开关 + 预算 + 暂停）——入口：账号菜单 → 设置 → 左栏「下一步建议」
 12. 诊断行显示运行时版本与构建哈希（`版本 x.y.z · 构建 abcdef12`）
 
 **注意**：脚本要求插件已装进**正在运行的那个 profile**。没装时第 2 项会失败，并把页面上全部
@@ -225,7 +225,7 @@ pnpm smoke:next-step-desktop --require --deep --workspace /tmp/next-step-deep
 
 ### 运行时自证版本（2026-11-10 实测，0.1.1）
 
-装 `0.1.1` 并重启后，用 CDP 打开 设置 → 通用设置 读到的诊断行：
+装 `0.1.1` 并重启后，用 CDP 打开 设置 → 下一步建议 读到的诊断行：
 
 ```
 已生成 0 · 失败 0 · 跳过 0 · 在途 0
