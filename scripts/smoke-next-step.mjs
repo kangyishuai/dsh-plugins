@@ -362,8 +362,10 @@ check("拿到会话 id（后续读日志用）", typeof sessionId === "string" &
 const userCountBefore = await countRows("user");
 check("新会话是空的（没有既有用户消息）", userCountBefore === 0, "期望=0 实际=" + userCountBefore);
 
-const FIRST_PROMPT = "用一句话解释什么是二分查找。不要使用任何工具，直接回答。";
-const THIRD_PROMPT = "用一句话解释什么是哈希表。不要使用任何工具，直接回答。";
+// 这两个提示词要能引出**有实质内容**的回答：插件新加的便宜闸里有「回答短于 80 字不出卡」
+// （一句话问答本来就没有下一步可建议），所以这里用多问句、要求分点，但依然禁止工具调用。
+const FIRST_PROMPT = "不要使用任何工具，直接回答：二分查找的前提条件、时间复杂度、以及一个最常见的实现错误，每项一句话。";
+const THIRD_PROMPT = "不要使用任何工具，直接回答：哈希表解决哈希冲突的两种主要方法、各自代价、以及什么情况下会退化，每项一句话。";
 
 if (!CAN_MODEL) {
   const reason = "没有模型凭据：未设置 DEEPSEEK_API_KEY / ZHINAO_API_KEY，临时 DSH_HOME 里也没有 .credentials.yaml —— 卡片由一次真实模型调用生成，没有凭据就无法产出";

@@ -10,6 +10,9 @@ import { test } from "node:test";
 import {
   buildMessages,
   buildSystemPrompt,
+  concreteTokens,
+  ghostAgreesWithLabel,
+  isGenericLabel,
   LABEL_MAX,
   LABEL_MIN,
   NEXT_PROMPT_MAX,
@@ -28,10 +31,11 @@ function validPayload() {
     summary: "已在 docs/runtime 里记录了 turnTail 槽位，还没写冒烟。",
     question: "下一步先补测试还是先把卡片接进去？",
     options: [
-      { stance: "verify", label: "先给 next-step 补 web 冒烟和桌面只读回归" },
-      { stance: "proceed", label: "先把决策卡接进 conversation.chat.turnTail" },
+      { stance: "verify", label: "补 next-step 冒烟" },
+      { stance: "proceed", label: "接 turnTail 卡片" },
     ],
-    nextPrompt: "先把 turnTail 卡片接进去，再加上冒烟。",
+    // 幽灵提示与推荐项（options[0]）共享具体对象 next-step，符合一致性校验。
+    nextPrompt: "先给 next-step 补 web 冒烟和桌面回归",
   };
 }
 
@@ -260,7 +264,7 @@ test("renderTranscript：空文本与非法输入不抛错", () => {
 // 3. buildSystemPrompt
 // ---------------------------------------------------------------------------
 
-test("buildSystemPrompt：要求严格 JSON、恰好两条、并写明各字段上限", () => {
+test("buildSystemPrompt：要求严格 JSON、1–2 条、并写明各字段上限", () => {
   const prompt = buildSystemPrompt({ locale: "zh-CN" });
   assert.equal(typeof prompt, "string", `期望字符串，实际=${typeof prompt}`);
   assert.equal(
@@ -269,9 +273,9 @@ test("buildSystemPrompt：要求严格 JSON、恰好两条、并写明各字段�
     `期望提到 JSON，实际=${JSON.stringify(prompt.slice(0, 120))}`,
   );
   assert.equal(
-    prompt.includes("恰好 2 条"),
+    prompt.includes("1–2 条"),
     true,
-    `期望写明 options 恰好 2 条，实际=${JSON.stringify(prompt.slice(0, 300))}`,
+    `期望写明 options 是 1–2 条，实际=${JSON.stringify(prompt.slice(0, 300))}`,
   );
   assert.equal(prompt.includes(String(LABEL_MAX)), true, `期望写明 label 上限 ${LABEL_MAX}`);
   assert.equal(
@@ -443,19 +447,16 @@ test("parseSuggestion：JSON 语法损坏 → null（不做修复）", () => {
   );
 });
 
-test("parseSuggestion：只有 1 条 option → null（不补第二条）", () => {
+test("parseSuggestion：只有 1 条 option 也合法（下一步很明确时不凑数）", () => {
   const payload = /** @type {any} */ (validPayload());
   payload.options = [payload.options[0]];
-  assert.equal(
-    parseSuggestion(JSON.stringify(payload)),
-    null,
-    `options 只有 1 条时期望=null，实际=${JSON.stringify(parseSuggestion(JSON.stringify(payload)))}`,
-  );
+  const parsed = expectSuggestion(parseSuggestion(JSON.stringify(payload)), "options 只有 1 条");
+  assert.equal(parsed.options.length, 1);
 });
 
 test("parseSuggestion：3 条 option → null", () => {
   const payload = /** @type {any} */ (validPayload());
-  payload.options.push({ stance: "third", label: "第三条动作的完整指令" });
+  payload.options.push({ stance: "third", label: "补第三种做法" });
   assert.equal(
     parseSuggestion(JSON.stringify(payload)),
     null,
@@ -498,28 +499,39 @@ test("parseSuggestion：label 恰好上限可接受（边界）", () => {
   );
 });
 
-test("parseSuggestion：nextPrompt 超 120 字 → null", () => {
+test("parseSuggestion：nextPrompt 超长时截断（不丢整张卡）", () => {
   const payload = /** @type {any} */ (validPayload());
-  payload.nextPrompt = "p".repeat(NEXT_PROMPT_MAX + 1);
-  assert.equal(
+  // 前缀带上推荐项的具体对象，保证它先通过一致性校验，再验证截断。
+  payload.nextPrompt = `补 next-step 冒烟 ${"再补一句".repeat(40)}`;
+  assert.ok(payload.nextPrompt.length > NEXT_PROMPT_MAX);
+  const parsed = expectSuggestion(
     parseSuggestion(JSON.stringify(payload)),
-    null,
-    `nextPrompt=${NEXT_PROMPT_MAX + 1} 字期望=null，实际=${JSON.stringify(parseSuggestion(JSON.stringify(payload)))}`,
+    `nextPrompt 超过 ${NEXT_PROMPT_MAX} 字`,
   );
+  assert.equal(parsed.nextPrompt?.length, NEXT_PROMPT_MAX);
 });
 
-test("parseSuggestion：nextPrompt 恰好 120 字可接受（边界）", () => {
+test("parseSuggestion：nextPrompt 与推荐项不一致时退化成按钮文案", () => {
   const payload = /** @type {any} */ (validPayload());
-  payload.nextPrompt = "p".repeat(NEXT_PROMPT_MAX);
+  payload.nextPrompt = "先别管这个，去看看 CI 的失败原因";
+  const parsed = expectSuggestion(
+    parseSuggestion(JSON.stringify(payload)),
+    "nextPrompt 与 options[0] 无关",
+  );
+  // 同一个建议的两种入口：宁可短，也不让两处打脸。
+  assert.equal(parsed.nextPrompt, payload.options[0].label);
+});
+
+test("parseSuggestion：nextPrompt 恰好上限可接受（边界）", () => {
+  const payload = /** @type {any} */ (validPayload());
+  const head = "补 next-step 冒烟 ";
+  payload.nextPrompt = `${head}${"x".repeat(NEXT_PROMPT_MAX - head.length)}`;
+  assert.equal(payload.nextPrompt.length, NEXT_PROMPT_MAX);
   const parsed = expectSuggestion(
     parseSuggestion(JSON.stringify(payload)),
     `nextPrompt=${NEXT_PROMPT_MAX} 字`,
   );
-  assert.equal(
-    parsed.nextPrompt?.length,
-    NEXT_PROMPT_MAX,
-    `期望 ${NEXT_PROMPT_MAX} 字，实际=${parsed.nextPrompt?.length}`,
-  );
+  assert.equal(parsed.nextPrompt?.length, NEXT_PROMPT_MAX);
 });
 
 test("parseSuggestion：label 少于下限 → null（「继续」这类悬空指令不可执行）", () => {
@@ -665,4 +677,66 @@ test("parseSuggestion：每次调用返回新对象（不共享引用，避免�
     validPayload().options[0].label,
     `期望互不影响，实际第二次=${JSON.stringify(second.options[0].label)}`,
   );
+});
+
+// ---------------------------------------------------------------------------
+// 10. 按钮具体性 / 幽灵提示一致性（v0.5：内容质量）
+// ---------------------------------------------------------------------------
+
+test("isGenericLabel：空话动词 + 无具体对象 → 判为泛化", () => {
+  for (const label of ["检查定义是否准确", "扩展到实现细节", "继续优化", "梳理一下流程"]) {
+    assert.equal(isGenericLabel(label), true, `期望判为泛化：${label}`);
+  }
+});
+
+test("isGenericLabel：带具体对象的按钮不算泛化", () => {
+  for (const label of [
+    "改成 %5",
+    "写 M4-07 任务书",
+    "排序取前 k",
+    "出 v1.5 和 E2E-01c",
+    "补 next-step 冒烟",
+  ]) {
+    assert.equal(isGenericLabel(label), false, `期望不算泛化：${label}`);
+  }
+});
+
+test("parseSuggestion：泛化按钮被丢掉，剩下的仍然可用", () => {
+  const payload = /** @type {any} */ (validPayload());
+  payload.options[0].label = "检查定义是否准确";
+  const parsed = expectSuggestion(parseSuggestion(JSON.stringify(payload)), "一条泛化 + 一条具体");
+  assert.equal(parsed.options.length, 1, "泛化那条应当被丢掉");
+  assert.equal(parsed.options[0].label, payload.options[1].label);
+});
+
+test("parseSuggestion：所有按钮都泛化 → 整卡不出（不凑数）", () => {
+  const payload = /** @type {any} */ (validPayload());
+  payload.options[0].label = "检查定义是否准确";
+  payload.options[1].label = "扩展到实现细节";
+  assert.equal(parseSuggestion(JSON.stringify(payload)), null);
+});
+
+test("ghostAgreesWithLabel：共享具体对象即视为一致（中文用包含关系）", () => {
+  assert.equal(
+    ghostAgreesWithLabel("先给 next-step 补 web 冒烟和桌面回归", "补 next-step 冒烟"),
+    true,
+  );
+  assert.equal(
+    ghostAgreesWithLabel("改 src/importer/csv.ts 的 BOM 处理", "改 src/importer/csv.ts"),
+    true,
+  );
+});
+
+test("ghostAgreesWithLabel：说的不是一件事 → false", () => {
+  assert.equal(
+    ghostAgreesWithLabel("先别管这个，去看看 CI 的失败原因", "补 next-step 冒烟"),
+    false,
+  );
+});
+
+test("concreteTokens：能抽出文件、命令、版本号与中文名词片段", () => {
+  const tokens = concreteTokens("改 src/importer/csv.ts，跑 pnpm test，升到 v1.5.0，补冒烟");
+  assert.ok(tokens.has("src/importer/csv.ts"), `实际=${[...tokens].join(",")}`);
+  assert.ok([...tokens].some((token) => token === "v1.5.0" || token === "1.5.0"));
+  assert.ok([...tokens].some((token) => token.includes("冒烟")));
 });
