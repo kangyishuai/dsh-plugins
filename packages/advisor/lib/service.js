@@ -20,6 +20,7 @@ import { applyAnchorVerdict, buildIndex, verifyAnchors } from "./anchors.js";
 import { checkPool, createBudgetPool } from "./budget.js";
 import { callAdvisor } from "./call.js";
 import { checkAllowlist, effectivePrice } from "./catalog.js";
+import { createDecisionLog, createDecisionTracker } from "./decisions.js";
 import {
   checkBudget,
   estimateCostUsd,
@@ -145,6 +146,10 @@ export class AdvisorService extends TypertRemoteService {
     this.logger = ctx?.logger ?? console;
     this.dataRoot = resolveDataRoot(this.config);
     this.ledger = createLedger({ home: this.dataRoot, logger: this.logger });
+    // 决策日志：一个回合一行，回答「该徵询的时候有没有徵询」，与钱的账本分开。
+    this.decisions = createDecisionLog({ home: this.dataRoot, logger: this.logger });
+    // 回合跟踪器：事件 → 特征 → 决策行 → outcome 回填（逻辑在 decisions.js，可单测）。
+    this.decisionTracker = createDecisionTracker({ log: this.decisions });
     this.pool = createBudgetPool({ home: this.dataRoot, logger: this.logger });
     void this.ledger.ready();
     /** @type {{ at: number, value: any }} */
@@ -813,6 +818,17 @@ export class AdvisorService extends TypertRemoteService {
     };
     this.lastResult = result;
 
+    // 决策日志：本回合确实徵询了，记下结果（回合结束时消费，用来算徵询率与采纳率）。
+    if (this.lastResult === result && result.status === "reviewed") {
+      this.decisionTracker.noteAdvice(sessionId, {
+        adviceId,
+        severity: result.severity,
+        trigger,
+        costUsd,
+        adviceText: result.advice,
+      });
+    }
+
     // 落一条 plugin record：turnTail 的「顾问线」与 /advisor report 都读它（不占模型可见 surface）。
     try {
       appendPluginRecord(session, ADVICE_RECORD, {
@@ -1272,6 +1288,10 @@ export class AdvisorService extends TypertRemoteService {
    */
   handleSessionEvent(session, event) {
     const sessionId = typeof session?.id === "string" ? session.id : "";
+    // ---- 决策日志：回合特征与 outcome 回填（与徵询逻辑无关，只做记录）----
+    if (sessionId !== "" && !isSubagentSession(session)) {
+      this.decisionTracker.track(sessionId, event);
+    }
     if (sessionId !== "" && event?.type === "turn/start") {
       // 用事件里的**绝对回合号**，不要自己累计：会话可能早于插件加载就已有多个回合，
       // 累计值会和 turnTail 的 props.turn 对不上，顾问线就永远不显示（真机踩过）。
@@ -1282,6 +1302,7 @@ export class AdvisorService extends TypertRemoteService {
           : (this.turnOf.get(sessionId) ?? 0) + 1;
       this.turnOf.set(sessionId, next);
       this.ledger.resetTurn(sessionId, next);
+      this.decisionTracker.startTurn(sessionId, next);
       return;
     }
     if (event?.type !== "turn/end") return;
@@ -1289,8 +1310,9 @@ export class AdvisorService extends TypertRemoteService {
     if (sessionId !== "" && Number.isSafeInteger(endTurn) && endTurn > 0) {
       this.turnOf.set(sessionId, endTurn);
     }
-    if (event?.data?.reason?.kind !== "completed") return;
     if (isSubagentSession(session)) return;
+    void this.writeDecision(session, event?.data?.reason?.kind ?? "completed");
+    if (event?.data?.reason?.kind !== "completed") return;
     // 重要：不能在事件分发里同步写会话（重入保护），必须异步一拍。
     void (async () => {
       try {
@@ -1312,6 +1334,25 @@ export class AdvisorService extends TypertRemoteService {
         this.warn("shadow review failed", error);
       }
     })();
+  }
+
+  /**
+   * 回合结束时写一行决策记录（把跟踪器与宿主状态接起来）。
+   * @param {any} session
+   * @param {string} endKind completed | aborted | blocked | …
+   * @returns {Promise<void>}
+   */
+  async writeDecision(session, endKind) {
+    const sessionId = typeof session?.id === "string" ? session.id : "";
+    if (sessionId === "") return;
+    const turn = Number(this.turnOf.get(sessionId)) || 0;
+    if (!Number.isSafeInteger(turn) || turn <= 0) return;
+    await this.decisionTracker.finishTurn({
+      sessionId,
+      turn,
+      endKind,
+      skipReason: this.lastSkip.get(sessionId),
+    });
   }
 
   // ---- Remote 方法 ------------------------------------------------------

@@ -581,6 +581,27 @@ const main = async () => {
       detail: `usage=${ledger.length}B advice=${advice.length}B`,
     });
 
+    // 决策日志：一个回合一行。本冒烟不发真实回合，所以文件可能不存在；
+    // 这里只守住「存在就必须是每行一个合法 JSON」这个格式约定。
+    const decisions = await readIfExists(join(home, "advisor", "decisions.jsonl"));
+    let decisionsValid = true;
+    if (decisions !== "") {
+      for (const line of decisions.split("\n")) {
+        if (line.trim() === "") continue;
+        try {
+          JSON.parse(line);
+        } catch (_error) {
+          decisionsValid = false;
+        }
+      }
+    }
+    checks.push({
+      name: "决策日志格式合法（每行一个 JSON）",
+      ok: decisionsValid,
+      detail:
+        decisions === "" ? "本冒烟未产生回合，文件不存在（符合预期）" : `${decisions.length}B`,
+    });
+
     for (const check of checks) {
       if (check.skip) console.log(`SKIP ${check.name}${check.detail ? ` :: ${check.detail}` : ""}`);
       else if (check.ok)
