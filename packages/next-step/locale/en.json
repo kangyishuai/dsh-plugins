@@ -40,6 +40,7 @@
     "error.inflight": "Already generating; try again in a moment",
     "error.noTurn": "No completed turn to generate a card for",
     "retry.generate": "Generate a next-step card",
-    "retry.generating": "Generating…"
+    "retry.generating": "Generating…",
+    "settings.nav": "Next-step suggestions"
   }
 }
