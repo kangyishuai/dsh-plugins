@@ -722,7 +722,7 @@ window.__ModuleLoader__.load({
       var setCascade = cascadeState[1];
       var confirmRef = React.useRef(null);
       var cancelRef = React.useRef(null);
-      var workspaceId = request && request.workspaceId ? String(request.workspaceId) : null;
+      var workspaceId = request?.workspaceId ? String(request.workspaceId) : null;
       var isWorkspace = workspaceId !== null;
       var requestKey = request
         ? isWorkspace
@@ -947,7 +947,7 @@ window.__ModuleLoader__.load({
           closeLabel: props.t("confirm.cancel"),
           title: isWorkspace
             ? props.t("confirm.workspace.title", {
-                name: request.title || (plan && plan.title) || workspaceId,
+                name: request.title || plan?.title || workspaceId,
               })
             : props.t("confirm.title"),
           description: props.t("confirm.desc"),
