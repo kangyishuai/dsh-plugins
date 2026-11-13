@@ -9,7 +9,7 @@
 //   # 发版门禁加 --require：连不上端口时失败而不是跳过
 //   pnpm smoke:session-delete-desktop --require
 //
-// 只读：只打开会话菜单、确认框、回收站面板与其页签，然后 Esc 关闭。
+// 只读：只打开会话菜单、确认框、回收站面板与设置页分节，然后 Esc 关闭。
 // **从不确认删除、不恢复、不彻底删除**，因此可以直接跑在真实 profile 上。
 // 端口可用 --port 或 DSH_CDP_PORT 覆盖（默认 9222）。
 //
@@ -230,7 +230,7 @@ const main = async () => {
     }
     await cdp.screenshot(join(SHOTS, "01-overview.png"));
 
-    // ---------- B. 回收站面板（只读：打开 → 四个页签 → Esc 关闭） ----------
+    // ---------- B. 回收站面板（只读：打开 → 单页列表 → Esc 关闭） ----------
     await cdp.evaluate(`(() => {
       const btn = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("回收站"));
       if (btn) btn.click();
@@ -242,31 +242,29 @@ const main = async () => {
       panel !== null,
       panel === null ? "面板没打开" : panel.slice(0, 80),
     );
-    const tabs = await cdp.evaluate(`(() => {
+    // 0.5.x：审计 / 体检 / 回执 已搬到设置页，面板只做回收站一件事。
+    const panelShape = await cdp.evaluate(`(() => {
       const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent || "").includes("会话回收站"));
-      if (!dlg) return [];
-      return [...dlg.querySelectorAll("button")].map((b) => (b.textContent || "").trim()).filter((text) => ["回收站", "审计", "体检", "回执"].some((tab) => text.startsWith(tab)));
+      if (!dlg) return null;
+      const text = dlg.textContent || "";
+      const buttons = [...dlg.querySelectorAll("button")].map((b) => (b.textContent || "").trim());
+      return {
+        hasTabs: ["审计", "体检", "回执"].some((tab) => buttons.some((label) => label.startsWith(tab))),
+        hasBatch: buttons.some((label) => label.startsWith("恢复（")) || text.includes("全选"),
+        text: text.replace(/\\s+/g, " ").slice(0, 120),
+      };
     })()`);
     check(
-      "面板有 回收站/审计/体检/回执 四个页签",
-      Array.isArray(tabs) && tabs.length >= 4,
-      JSON.stringify(tabs),
+      "回收站面板是单页（不再有 审计/体检/回执 页签）",
+      panelShape !== null && panelShape.hasTabs === false,
+      JSON.stringify(panelShape),
+    );
+    check(
+      "回收站面板保留全选与批量操作",
+      panelShape !== null && panelShape.hasBatch === true,
+      JSON.stringify(panelShape),
     );
     await cdp.screenshot(join(SHOTS, "02-panel.png"));
-    for (const tab of ["审计", "体检", "回执"]) {
-      const opened = await cdp.evaluate(`(async () => {
-        const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent || "").includes("会话回收站"));
-        if (!dlg) return false;
-        const btn = [...dlg.querySelectorAll("button")].find((b) => (b.textContent || "").trim().startsWith(${JSON.stringify(tab)}));
-        if (!btn) return false;
-        btn.click();
-        await new Promise((resolve) => setTimeout(resolve, 900));
-        return true;
-      })()`);
-      const text = await dialogText(cdp, "会话回收站");
-      check(`${tab} 页签可打开`, opened === true && text !== null, (text ?? "").slice(0, 100));
-    }
-    await cdp.screenshot(join(SHOTS, "03-panel-tabs.png"));
     await pressEscape(cdp);
     await sleep(600);
     check("Esc 关闭回收站面板", (await dialogText(cdp, "会话回收站")) === null, "面板仍在");
@@ -298,7 +296,7 @@ const main = async () => {
     check(
       "确认框写明影响面（日志大小/是否 live）",
       opened === "skipped" ||
-        (typeof confirm === "string" && /会话日志约|MB|KB|live|恢复/u.test(confirm)),
+        (typeof confirm === "string" && /约\s*[\d.]+\s*(B|KB|MB|GB)|移入本机回收站/u.test(confirm)),
       (confirm ?? "skipped").slice(0, 160),
     );
     await cdp.screenshot(join(SHOTS, "04-confirm.png"));
@@ -309,6 +307,44 @@ const main = async () => {
       return dlg === undefined;
     })()`);
     check("Esc 关闭确认框且未执行删除", afterEsc === true, "");
+
+    // ---------- D. 设置页分节（只读：打开 → 切到「会话回收站」→ Esc） ----------
+    const settings = await cdp.evaluate(`(async () => {
+      const sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const opener = '[data-shortcut-modal="settings"]';
+      const isOpen = () => Boolean(document.querySelector(opener));
+      for (const needle of ["设置", "账号菜单", "Settings"]) {
+        if (isOpen()) break;
+        const btn = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes(needle));
+        if (!btn) continue;
+        btn.click();
+        await sleepMs(800);
+      }
+      if (!isOpen()) return { status: "no-settings-panel" };
+      const shell = document.querySelector(opener);
+      const nav = [...shell.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === "会话回收站");
+      if (!nav) return { status: "no-section-nav" };
+      nav.click();
+      await sleepMs(1500);
+      const text = (shell.textContent || "").replace(/\\s+/g, " ");
+      return { status: "ok", text: text.slice(0, 400) };
+    })()`);
+    check(
+      "设置页出现「会话回收站」分节",
+      settings?.status === "ok",
+      JSON.stringify(settings ?? null),
+    );
+    check(
+      "设置页包含删除偏好与维护入口",
+      settings?.status === "ok" &&
+        settings.text.includes("删除偏好") &&
+        settings.text.includes("体检") &&
+        settings.text.includes("操作回执"),
+      (settings?.text ?? "").slice(0, 200),
+    );
+    await cdp.screenshot(join(SHOTS, "03-settings.png"));
+    await pressEscape(cdp);
+    await sleep(600);
 
     // 目标工作区的会话行数前后一致 = 确实没删（只比较该工作区，不看别人的会话）
     const afterCount =

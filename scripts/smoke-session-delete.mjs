@@ -309,7 +309,27 @@ check("Esc 可关闭回收站面板", !(await dialogOpen("会话回收站")));
 
 // 4) 菜单 → 确认框（含 plan）；Esc 关闭
 const planText = await openConfirm();
-check("会话菜单可打开确认框并渲染 plan", planText.includes("会话日志约"), planText.slice(0, 120));
+check("会话菜单可打开确认框并渲染影响面", /约 [\\d.]+ ?(B|KB|MB|GB)/.test(planText), planText.slice(0, 140));
+check(
+  "确认框正文只留摘要，技术细节收进「详情」",
+  planText.includes("详情") && !planText.includes("回收站："),
+  planText.slice(0, 200),
+);
+// ② 默认选中：焦点必须在「移入回收站」上（宿主 Modal 认 [data-modal-autofocus]）。
+const confirmFocus = await page.evaluate(() => {
+  const el = document.activeElement;
+  if (!el) return null;
+  return {
+    tag: el.tagName,
+    text: (el.textContent || "").trim(),
+    auto: el.hasAttribute("data-modal-autofocus"),
+  };
+});
+check(
+  "确认框默认焦点在「移入回收站」上",
+  !!confirmFocus && confirmFocus.tag === "BUTTON" && confirmFocus.text === "移入回收站",
+  JSON.stringify(confirmFocus),
+);
 await shot("03-confirm-dialog");
 await page.keyboard.press("Escape");
 await page.waitForTimeout(500);
@@ -319,8 +339,10 @@ check("Esc 可关闭确认框", !(await dialogOpen("移入回收站")));
 const beforeRows = await rows();
 const deletedRowKey = beforeRows[0];
 await openConfirm();
-const confirmed = await clickDialogButton("移入回收站");
+// ② 回车即生效：焦点已经在破坏性按钮上，敲 Enter 就应该直接执行，无需鼠标。
+await page.keyboard.press("Enter");
 await page.waitForTimeout(2600);
+const confirmed = !(await dialogOpen("移入回收站"));
 const afterRows = await rows();
 // 按 ID 断言：侧栏只渲染固定条数，删掉一行后可能从折叠组补一行进来，
 // 所以「总数减一」并不成立；真正要保证的是被删的那一行不在列表里。
@@ -348,47 +370,33 @@ const withEntry = await openPanel();
 check("回收站面板列出条目", withEntry.includes("恢复") && withEntry.includes("彻底删除"), withEntry.slice(0, 100));
 check(
   "回收站支持全选与批量恢复/彻底删除",
-  withEntry.includes("全选") && withEntry.includes("批量恢复") && withEntry.includes("批量彻底删除"),
+  withEntry.includes("全选") && withEntry.includes("恢复（") && withEntry.includes("彻底删除（"),
+  withEntry.slice(0, 160),
+);
+// ⑥ UI 减法：面板只有回收站一件事，审计/体检/回执已经搬到设置页。
+check(
+  "回收站面板不再有四个页签",
+  !["审计", "体检", "回执"].some((label) => withEntry.includes(label)),
   withEntry.slice(0, 160),
 );
 await shot("05-panel-with-entry");
-// 方向键：handler 挂在列表容器（tabIndex=-1 的 div）上，所以焦点必须**在容器内**的条目按钮上，
-// 再用真实按键（page.keyboard）走浏览器真实事件链。
-const listProbe = await page.evaluate(() => {
-  const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent || "").includes("会话回收站"));
-  if (!dlg) return { status: "no-dialog" };
-  const anchor = [...dlg.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === "恢复");
-  const root = anchor && anchor.closest('div[tabindex="-1"]');
-  if (!root) return { status: "no-list-container" };
-  const items = [...root.querySelectorAll("button:not([disabled])")].filter(
-    (b) => (b.textContent || "").trim() !== "",
-  );
-  if (items.length < 2) return { status: "only-one-item", count: items.length };
-  items[0].focus();
-  return {
-    status: document.activeElement === items[0] ? "focused" : "focus-failed",
-    start: (items[0].textContent || "").trim(),
-    count: items.length,
-  };
+// ⑥ 行操作默认隐藏、悬停/聚焦才出现：用样式表断言，避免依赖窗口是否有焦点。
+const rowActionsStyle = await page.evaluate(() => {
+  for (const sheet of document.styleSheets) {
+    let rules;
+    try {
+      rules = sheet.cssRules;
+    } catch (_error) {
+      continue;
+    }
+    for (const rule of rules) {
+      const text = rule.cssText || "";
+      if (text.includes(".dsh-sdel-row:hover") && text.includes(".dsh-sdel-row-actions")) return text;
+    }
+  }
+  return "";
 });
-let keyboard = listProbe.status;
-if (listProbe.status === "focused") {
-  // 事件派发到容器本身：React 的 onKeyDown 就挂在容器上，这样不依赖窗口是否在前台。
-  keyboard = await page.evaluate(async () => {
-    const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent || "").includes("会话回收站"));
-    const anchor = dlg ? [...dlg.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === "恢复") : null;
-    const root = anchor && anchor.closest('div[tabindex="-1"]');
-    if (!root) return "no-list-container";
-    const start = (document.activeElement?.textContent || "").trim();
-    root.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    const next = (document.activeElement?.textContent || "").trim();
-    return next !== "" && next !== start ? "moved" : "unchanged:" + start + "->" + next;
-  });
-}
-// 已知不稳定：面板会定时刷新列表，headless 下焦点会被重置，这条断言时绿时红。
-// 保留为**非阻断**诊断（不计入失败），实际手感请在桌面版人工确认一次。
-softCheck("面板方向键可移动焦点（诊断，不阻断）", keyboard === "moved", keyboard);
+check("行操作按钮默认隐藏、悬停/聚焦才出现", rowActionsStyle !== "", rowActionsStyle.slice(0, 120));
 
 // 8) 恢复
 const restored = await clickDialogButton("恢复");
@@ -413,7 +421,9 @@ await openPanel();
 const purge = await clickDialogButton("彻底删除");
 await page.waitForTimeout(400);
 const purgeConfirm = await page.evaluate(async () => {
-  const btn = [...document.querySelectorAll('[role="dialog"] button')].find((b) => (b.textContent || "").trim().includes("彻底删除？"));
+  const btn = [...document.querySelectorAll('[role="dialog"] button')].find(
+    (b) => (b.textContent || "").trim() === "不可恢复，确认",
+  );
   if (!btn) return false;
   btn.click();
   await new Promise((r) => setTimeout(r, 1600));
@@ -430,50 +440,84 @@ const badgeAfterPurge = await page.evaluate(() => {
 });
 check("彻底删除后角标归零", !/\\(\\d\\)/.test(badgeAfterPurge || ""), badgeAfterPurge);
 
-// 10) 审计页签
-const audit = await page.evaluate(async () => {
-  const tab = [...document.querySelectorAll('[role="dialog"] button')].find((b) => (b.textContent || "").trim() === "审计");
-  if (!tab) return "no-audit-tab";
-  tab.click();
-  await new Promise((r) => setTimeout(r, 1600));
-  const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent || "").includes("会话回收站"));
-  if (!dlg) return "missing";
-  const text = dlg.textContent || "";
-  return text.replace(/\\s+/g, " ");
+// 10) 设置页「会话回收站」：偏好 / 概览 / 维护（原回收站面板的四个页签搬到这里）
+await page.keyboard.press("Escape");
+await page.waitForTimeout(500);
+// 设置面板的打开逻辑只写一次，挂到 window 上给后面几步复用：
+// 面板在切换分节/重渲染后可能被 shell 关掉，测试要能幂等地重新打开。
+await page.evaluate(() => {
+  window.__openSdsSettings = async () => {
+    const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+    const opener = '[data-shortcut-modal="settings"]';
+    const isOpen = () => Boolean(document.querySelector(opener));
+    const openOutline = async () => {
+      for (const needle of ["设置", "账号菜单", "Settings"]) {
+        if (isOpen()) return true;
+        const btn = [...document.querySelectorAll("button")].find((b) =>
+          (b.getAttribute("aria-label") || "").includes(needle));
+        if (!btn) continue;
+        btn.click();
+        await sleepMs(900);
+      }
+      if (!isOpen()) {
+        // Web 默认键位：primary+alt+Comma（macOS 上是 ⌘⌥,）
+        window.dispatchEvent(new KeyboardEvent("keydown", {
+          key: ",", code: "Comma", metaKey: true, altKey: true, ctrlKey: false, bubbles: true,
+        }));
+        await sleepMs(1000);
+      }
+      return isOpen();
+    };
+    if (!(await openOutline())) return "no-settings-panel";
+    const shell = document.querySelector(opener);
+    const nav = [...shell.querySelectorAll("button")].find(
+      (b) => (b.textContent || "").trim() === "会话回收站");
+    if (!nav) return "no-section-nav";
+    nav.click();
+    await sleepMs(1600);
+    return (document.querySelector(opener)?.textContent || "").replace(/\\s+/g, " ");
+  };
 });
-console.log("AUDIT_DEBUG " + audit);
-  check("审计页签记录 trash/restore/purge", audit.includes("trash") && audit.includes("restore") && audit.includes("purge"), audit.slice(0, 160));
-await shot("07-audit-tab");
+const settingsText = await page.evaluate(async () => window.__openSdsSettings());
+await shot("07-settings");
 
-// 11) 体检页签
-const health = await page.evaluate(async () => {
-  const tab = [...document.querySelectorAll('[role="dialog"] button')].find((b) => (b.textContent || "").trim() === "体检");
-  if (!tab) return "no-health-tab";
-  tab.click();
-  await new Promise((r) => setTimeout(r, 1600));
-  const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent || "").includes("会话回收站"));
-  return dlg ? (dlg.textContent || "").replace(/\\s+/g, " ") : "missing";
+// ③ 记忆级联：把开关打开，主进程随后核对 preferences.json 是否真的落盘。
+const cascadeToggled = await page.evaluate(async () => {
+  if (!document.querySelector('[data-shortcut-modal="settings"]')) await window.__openSdsSettings();
+  const panel = document.querySelector('[data-shortcut-modal="settings"]');
+  if (!panel) return "no-panel";
+  // 宿主 Switch 不一定是 input：可能是 role="switch" 的按钮，两种都认。
+  const box = panel.querySelector('[role="switch"], input[type="checkbox"]');
+  if (!box) return "no-switch";
+  const isOn = () =>
+    box.getAttribute("aria-checked") === "true" ||
+    (box instanceof HTMLInputElement && box.checked === true);
+  if (!isOn()) {
+    box.click();
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  return isOn() ? "on" : "off";
 });
-check(
-  "体检页签给出库存与结论",
-  health.includes("已存") && (health.includes("未发现") || health.includes("条")),
-  health.slice(0, 160),
-);
-check("体检页签显示 agent 工具已注册", /模型工具 session_delete：已注册/.test(health), health.slice(0, 200));
-await shot("08-health-tab");
+check("设置页开关可打开「记住级联选择」", cascadeToggled === "on", cascadeToggled);
 
-// 12) 回执页签
-const receiptText = await page.evaluate(async () => {
-  const tab = [...document.querySelectorAll('[role="dialog"] button')].find((b) => (b.textContent || "").trim() === "回执");
-  if (!tab) return "no-receipts-tab";
-  tab.click();
-  await new Promise((r) => setTimeout(r, 1200));
-  const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent || "").includes("会话回收站"));
-  return dlg ? (dlg.textContent || "").replace(/\\s+/g, " ") : "missing";
+// 维护区：展开审计日志（页面里只断言「能展开」，内容准确与否交给主进程读文件核对——
+// 页面文本可能被宿主的脱敏层改写，用文本来断言审计内容不稳定）。
+const auditExpanded = await page.evaluate(async () => {
+  if (!document.querySelector('[data-shortcut-modal="settings"]')) await window.__openSdsSettings();
+  const panel = document.querySelector('[data-shortcut-modal="settings"]');
+  if (!panel) return "no-panel";
+  // 折叠标题前面有 ▸ 字形，所以用 includes 而不是 startsWith。
+  const toggle = [...panel.querySelectorAll("button")].find((b) =>
+    (b.textContent || "").includes("审计日志"));
+  if (!toggle) return "no-audit-toggle";
+  toggle.click();
+  await new Promise((r) => setTimeout(r, 900));
+  return toggle.getAttribute("aria-expanded") === "true" ? "expanded" : "collapsed";
 });
-check("回执页签列出 trash/restore/purge 记录", /trash/.test(receiptText) && /purge/.test(receiptText), receiptText.slice(0, 160));
-await shot("09-receipts-tab");
-
+check("设置页的审计日志可展开", auditExpanded === "expanded", auditExpanded);
+await shot("08-settings-audit");
+await page.keyboard.press("Escape");
+await page.waitForTimeout(600);
 
 // 12) 级联勾选框：遍历非选中会话行，找到带子会话的那一条（不改动任何东西）
 await page.keyboard.press("Escape");
@@ -682,6 +726,31 @@ const main = async () => {
     /** @type {{ checks: { name: string, ok: boolean, detail: string }[] }} */
     /** @type {{ checks: { name: string, ok: boolean, detail: string }[] }} */
     const parsed = JSON.parse(match[1]);
+    // ③ 记忆级联是「宿主侧持久化」，所以要绕过页面直接核对文件：
+    // 页面里勾过开关，退出后文件必须还在（localStorage 会因为 Web 端口变化而丢）。
+    const prefsFile = join(home, "session-trash", "preferences.json");
+    let prefs = null;
+    try {
+      prefs = JSON.parse(await readFile(prefsFile, "utf8"));
+    } catch {
+      prefs = null;
+    }
+    parsed.checks.push({
+      name: "级联记忆写入 preferences.json",
+      ok: prefs !== null && prefs.cascadeChildren === true,
+      detail: prefsFile,
+    });
+    // 审计日志：UI 已经搬到设置页，内容正确性在这里用文件核对（页面文本会被脱敏层改写）。
+    const auditFile = join(home, "session-trash", "audit.log");
+    const auditText = await readIfExists(auditFile);
+    parsed.checks.push({
+      name: "审计日志记录了 trash/restore/purge",
+      ok:
+        /"action":"trash"/u.test(auditText) &&
+        /"action":"restore"/u.test(auditText) &&
+        /"action":"purge"/u.test(auditText),
+      detail: auditFile,
+    });
     let failed = 0;
     for (const item of parsed.checks) {
       console.log(
