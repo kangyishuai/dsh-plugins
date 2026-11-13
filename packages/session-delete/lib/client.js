@@ -1851,6 +1851,13 @@ window.__ModuleLoader__.load({
     /** 单批条目数：既让「处理中 n/total」有节奏，也避免一次 RPC 太久没有反馈。 */
     var BATCH_CHUNK = 20;
 
+    /**
+     * 等 contextMenus 服务就绪的宽限期（毫秒）。Cordis 的 inject 只有「必须」语义，
+     * 没有可选依赖：老宿主永远不会提供这个服务，等下去就等于「会话菜单里没有删除项」。
+     * 所以超时就认为没有该服务，退回到旧的 slot 渲染。
+     */
+    var MENU_FALLBACK = { ms: 1200 };
+
     /** 菜单图标键：注册到宿主的 contextMenu.icon keyed slot 上。 */
     var TRASH_ICON = "session-delete.trash";
 
@@ -2182,7 +2189,8 @@ window.__ModuleLoader__.load({
         }
       };
 
-      const registerLegacyMenuItem = () => {
+      /** @returns {any} ctx.effect 的释放函数（contextMenus 迟到时用它撤掉旧 slot，避免两行）。 */
+      const registerLegacyMenuItem = () =>
         ctx.effect(
           () =>
             ctx.slots.inject("sidebar.workspaces.session.menu.item", () =>
@@ -2203,7 +2211,6 @@ window.__ModuleLoader__.load({
             ),
           "session-delete: session menu item (legacy slot)",
         );
-      };
 
       /**
        * 快捷键：删除「当前会话」与「当前工作区的全部会话」。
@@ -2276,30 +2283,45 @@ window.__ModuleLoader__.load({
       };
 
       // 两个服务都可能比插件晚就绪：用 ctx.inject 延迟，缺任何一个都不影响插件本身加载。
+      // ctx.inject 只有「必须」语义，所以再加一个宽限期兜底：超时就认定宿主没有
+      // contextMenus，直接上旧的会话菜单 slot（否则老宿主上「删除会话」入口会整个消失）。
       let menusInstalled = false;
+      /** @type {any} */
+      let legacyDispose = null;
+      const ensureLegacyMenu = () => {
+        if (menusInstalled || legacyDispose) return;
+        legacyDispose = registerLegacyMenuItem();
+      };
       try {
         if (typeof ctx.inject === "function") {
           ctx.inject(["contextMenus"], (/** @type {any} */ scoped) => {
             const service = scoped?.contextMenus ?? (ctx.get ? ctx.get("contextMenus") : undefined);
             if (installMenuContributions(service)) {
               menusInstalled = true;
-            } else if (!menusInstalled) {
-              registerLegacyMenuItem();
+              if (legacyDispose) {
+                legacyDispose();
+                legacyDispose = null;
+              }
+            } else {
+              ensureLegacyMenu();
             }
           });
           ctx.inject(["shortcuts"], (/** @type {any} */ scoped) => {
             installShortcuts(scoped?.shortcuts ?? (ctx.get ? ctx.get("shortcuts") : undefined));
           });
+          const timer = setTimeout(ensureLegacyMenu, MENU_FALLBACK.ms);
+          ctx.effect(() => () => clearTimeout(timer), "session-delete: menu fallback timer");
         } else {
           const menus = ctx.get ? ctx.get("contextMenus") : undefined;
-          if (!installMenuContributions(menus)) registerLegacyMenuItem();
+          if (installMenuContributions(menus)) menusInstalled = true;
+          else ensureLegacyMenu();
           installShortcuts(ctx.get ? ctx.get("shortcuts") : undefined);
         }
       } catch (error) {
         ctx.logger?.warn?.(
           `session-delete: menu/shortcut setup failed, falling back: ${errorText(error)}`,
         );
-        registerLegacyMenuItem();
+        ensureLegacyMenu();
       }
 
       // 回收站入口固定在侧栏页脚，不出现在每个会话的「…」菜单里。
@@ -2392,6 +2414,7 @@ window.__ModuleLoader__.load({
         joinList: joinList,
         impactLine: impactLine,
         batchChunk: BATCH_CHUNK,
+        menuFallback: MENU_FALLBACK,
         createPanelLoader: createPanelLoader,
         runBatch: runBatch,
         panelPollMs: PANEL_POLL_MS,
