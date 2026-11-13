@@ -513,7 +513,7 @@ const SETTINGS_MENU_ITEM = `(() => {
   };
 })()`;
 
-/** 设置对话框左栏的「通用设置」tab（`role=tab` 优先，按钮兜底；容忍英文 `General`）。 */
+/** 设置对话框左栏的「顾问」分节（`role=tab` 优先，按钮兜底；容忍英文 `Advisor`）。 */
 const GENERAL_TAB = `(() => {
   const visible = (el) => {
     const rect = el.getBoundingClientRect();
@@ -529,7 +529,8 @@ const GENERAL_TAB = `(() => {
     .map((el) => (el.textContent || "").trim())
     .filter((label) => label !== "")
     .slice(0, 24);
-  const hit = targets.find((el) => /^(通用设置|General)$/u.test((el.textContent || "").trim()));
+  // 设置卡已从「通用设置」迁到独立分节「顾问」。
+  const hit = targets.find((el) => /^(顾问|Advisor)$/u.test((el.textContent || "").trim()));
   if (hit === undefined) return { found: false, seen };
   const rect = hit.getBoundingClientRect();
   return {
@@ -611,7 +612,8 @@ const EXPAND_DISCLOSURES = `(async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const toggleOf = (key) => root.querySelector('[data-advisor-disclosure-toggle="' + key + '"]');
   const opened = [];
-  for (const key of ["advanced", "status"]) {
+  // 首屏只留模式/路由/预算摘要，其余项都在「更多设置」折叠里，必须先展开它。
+  for (const key of ["more", "advanced", "status"]) {
     let toggle = null;
     // 首次打开设置卡时宿主可能重挂组件：点一次没落住就等一拍再点，最多 4 轮。
     for (let round = 0; round < 4; round += 1) {

@@ -196,7 +196,7 @@ pnpm smoke:advisor-desktop --require --advice
 1. ✅ 连上桌面 UI（CDP）；
 2. ✅ 插件 client 半已加载：`style[data-plugin="@kangyishuai/dsh-advisor"]`；
 3. ✅（**web 冒烟**）`/` 菜单里能搜到 `advisor`，且描述非空（证明 `commands.register` 生效、宿主目录已刷新）；
-4. ✅ 设置页卡片（只读）：账号菜单 →「设置」→「通用设置」；卡片有 provider 下拉（≥1 个候选）与 model 下拉，
+4. ✅ 设置页分节（只读）：账号菜单 →「设置」→「顾问」；有首屏三行摘要（模式/路由/预算）与「更多设置」折叠，卡片有 provider 下拉（≥1 个候选）与 model 下拉，
    没有 `[data-advisor-error]`（宿主 RPC 正常），并出现新增字段「工作区」预算、「预览会发什么」、模型白名单、
    「确认跨 provider 发送」（没选 provider 时这项记 SKIP）；**不点保存、不改任何值**；关掉后对话框消失。
    文案从 `packages/advisor/locale/{zh,en}.json` 读，英文界面同样能过；
@@ -229,7 +229,7 @@ pnpm smoke:advisor-desktop --require --advice
 所以只跑在确认过基线的机器上：
 
 1. 新 client bundle 已加载（`style[data-plugin]` 里含 `dsh-advisor-settings`）；
-2. 设置 → 通用设置：卡片加载出 provider/model（**不是**「宿主未响应」），有预算与隐私分组；
+2. 设置 → 顾问：首屏三行摘要 + 「更多设置」折叠；展开后卡片加载出 provider/model（**不是**「宿主未响应」），有预算与隐私分组；
 3. 切 provider：model 下拉重新拉取并变化（实测 `zhinao` 5 个模型 ↔ `deepseek-official` 2 个）；
 4. 选当前模型：思考档下拉出现**真实档位** + 「自动（模型默认）」（实测 `zhinao/deepseek/deepseek-v4.1-flash` → `自动/off/low/high/max`）；
 5. 改 `maxTokens` → 保存 → 读 `$DSH_HOME/advisor.settings.json` 确认 → 改回 → 再确认（路由与模式必须不变）；再点「运行诊断」，检查项逐行渲染 `✅/⚠️/❌`。
