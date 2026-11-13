@@ -151,6 +151,7 @@ window.__ModuleLoader__.load({
       "settings.recallHint":
         "空草稿（或光标在第一行）按 ↑ 召回上一条已发送消息，↓ 前进、到底恢复你原来的草稿；只填草稿，不回溯、不发送。",
       "settings.saved": "已保存",
+      "settings.nav": "会话回溯",
       "settings.healthTitle": "诊断",
       "settings.healthRefresh": "刷新",
       "settings.healthLoading": "正在检查…",
@@ -302,6 +303,7 @@ window.__ModuleLoader__.load({
       "settings.recallHint":
         "In an empty draft (or with the caret on the first line) ↑ recalls the last prompt you sent, ↓ walks forward and restores your own draft at the bottom; it only fills the draft — never rewinds, never sends.",
       "settings.saved": "Saved",
+      "settings.nav": "Session rewind",
       "settings.healthTitle": "Diagnostics",
       "settings.healthRefresh": "Refresh",
       "settings.healthLoading": "Checking…",
@@ -620,7 +622,8 @@ window.__ModuleLoader__.load({
     let PAGE_SIZE_MAX = 500;
 
     /** 抽屉的四个 tab（顺序即渲染顺序）。 */
-    let DRAWER_TABS = ["ghost", "audit", "rescues", "settings"];
+    // 设置已迁到独立设置分节（设置 → 会话回溯），抽屉只保留会话级数据。
+    let DRAWER_TABS = ["ghost", "audit", "rescues"];
 
     /** 图片 media type → 文件扩展名（与宿主 composer 的图片白名单一致）。 */
     /** @type {Record<string, string>} */
@@ -2785,12 +2788,15 @@ window.__ModuleLoader__.load({
     }
 
     /** 设置 tab：本地偏好 + 诊断。 */
+    /**
+     * 撤回偏好 + 诊断。原来是抽屉里的第 4 个页签，现在渲染在
+     * 「设置 → 会话回溯」分节里：prefs / health 由调用方通过 props 传入。
+     */
     function SettingsTab(/** @type {any} */ props) {
-      let data = props.data;
-      let prefs = data.prefs;
+      let prefs = props.prefs;
       let api = props.api;
       let t = props.t;
-      let health = data.health || { loading: false, errorKey: null, data: null };
+      let health = props.health || { loading: false, errorKey: null, data: null };
 
       let modeRow = h(
         "label",
@@ -2962,7 +2968,8 @@ window.__ModuleLoader__.load({
         pageRow,
         confirmRow,
         recallRow,
-        data.saved === true
+        // 「已保存」提示来自抽屉时代的 store；分节里没有这个状态，恒不显示。
+        props.saved === true
           ? h("div", { className: "dsh-srw-dim dsh-srw-saved" }, t("settings.saved"))
           : null,
         h(
@@ -2972,10 +2979,52 @@ window.__ModuleLoader__.load({
             "div",
             { className: "dsh-srw-group-title" },
             h("span", null, t("settings.healthTitle")),
-            h(LinkBtn, { onClick: api.loadHealth }, t("settings.healthRefresh")),
+            h(
+              LinkBtn,
+              { onClick: props.onRefreshHealth || api.loadHealth },
+              t("settings.healthRefresh"),
+            ),
           ),
           healthBlock,
         ),
+      );
+    }
+
+    /**
+     * 「设置 → 会话回溯」分节：偏好 + 诊断。
+     * 只放全局/用户级的东西（偏好、宿主诊断）；回溯记录与救援点是会话级数据，留在抽屉里。
+     */
+    /**
+     * 设置分节依赖：settings.section 的注册方式与其它槽位不同（宿主直接渲染组件、
+     * 不经过 inject 合并 props），所以依赖在 apply() 里挂到模块级，组件自己取。
+     */
+    /** @type {{ prefsStore?: any, healthStore?: any, api?: any, t?: any } | null} */
+    let settingsSectionDeps = null;
+
+    function RewindSettingsSection() {
+      let deps = settingsSectionDeps;
+      // 兜底：依赖在 apply() 里先挂好；缺了就把状态渲染出来，不要让整个设置页崩掉。
+      if (!deps?.prefsStore || !deps.healthStore) {
+        return h("div", { className: "dsh-srw-settings-page", "data-srw-settings": "" }, "");
+      }
+      // 注意：本文件的 useStore 直接返回快照值（不像 session-delete 返回数组）。
+      let prefs = useStore(deps.prefsStore);
+      let health = useStore(deps.healthStore);
+      let api = deps.api;
+      let t = deps.t;
+      React.useEffect(() => {
+        api.loadSettingsHealth();
+      }, []);
+      return h(
+        "div",
+        { className: "dsh-srw-settings-page", "data-srw-settings": "" },
+        h(SettingsTab, {
+          prefs: prefs,
+          health: health,
+          api: api,
+          t: t,
+          onRefreshHealth: () => api.loadSettingsHealth(),
+        }),
       );
     }
 
@@ -2987,10 +3036,9 @@ window.__ModuleLoader__.load({
       if (drawer?.open !== true) return null;
       let tab = drawer.tab;
       let body = null;
-      if (tab === "ghost") body = h(GhostTab, { data: drawer.ghost, api: api, t: t });
-      else if (tab === "audit") body = h(AuditTab, { data: drawer.audit, api: api, t: t });
+      if (tab === "audit") body = h(AuditTab, { data: drawer.audit, api: api, t: t });
       else if (tab === "rescues") body = h(RescuesTab, { data: drawer.rescues, api: api, t: t });
-      else body = h(SettingsTab, { data: drawer.settings, api: api, t: t });
+      else body = h(GhostTab, { data: drawer.ghost, api: api, t: t });
 
       return h(
         "div",
@@ -3386,6 +3434,14 @@ window.__ModuleLoader__.load({
       }
 
       let prefs = readPrefs();
+      /** 设置分节用的两个 store：偏好与诊断（不与抽屉状态耦合）。 */
+      let prefsStore = createStore(prefs);
+      let settingsHealthStore = createStore({
+        loading: false,
+        errorKey: null,
+        errorParams: null,
+        data: null,
+      });
 
       function emptyTabState() {
         return { loading: false, errorKey: null, errorParams: null };
@@ -4567,6 +4623,29 @@ window.__ModuleLoader__.load({
       }
 
       /** 诊断（health RPC）。 */
+      /** 设置分节里的诊断：不带 sessionId 走全局体检，结果写进 settingsHealthStore。 */
+      function loadSettingsHealth() {
+        settingsHealthStore.set({ loading: true, errorKey: null, errorParams: null, data: null });
+        call("health", {})
+          .then((/** @type {any} */ value) => {
+            settingsHealthStore.set({
+              loading: false,
+              errorKey: null,
+              errorParams: null,
+              data: normalizeHealth(value),
+            });
+          })
+          .catch((/** @type {any} */ error) => {
+            let failure = errorStateOf(error);
+            settingsHealthStore.set({
+              loading: false,
+              errorKey: failure.errorKey,
+              errorParams: failure.errorParams,
+              data: null,
+            });
+          });
+      }
+
       function loadHealth(/** @type {any} */ sessionId) {
         let target = sessionId || store.getSnapshot().drawer?.sessionId;
         patchDrawer("settings", {
@@ -4600,6 +4679,7 @@ window.__ModuleLoader__.load({
       function updatePrefs(/** @type {any} */ partial) {
         prefs = sanitizePrefs(Object.assign({}, prefs, partial));
         writePrefs(prefs);
+        prefsStore.set(prefs);
         patchDrawer("settings", { prefs: prefs, saved: true });
         if (prefsSavedTimer !== null) clearTimeout(prefsSavedTimer);
         prefsSavedTimer = setTimeout(() => {
@@ -4840,6 +4920,9 @@ window.__ModuleLoader__.load({
         copyJson: copyJson,
         refillGhostItem: refillGhostItem,
         loadHealth: loadHealth,
+        loadSettingsHealth: loadSettingsHealth,
+        prefsStore: prefsStore,
+        settingsHealthStore: settingsHealthStore,
         updatePrefs: updatePrefs,
         setPendingRescue: setPendingRescue,
         cancelRescue: cancelRescue,
@@ -4982,6 +5065,32 @@ window.__ModuleLoader__.load({
             ),
           ),
         "session-rewind: header actions",
+      );
+
+      settingsSectionDeps = {
+        prefsStore: prefsStore,
+        healthStore: settingsHealthStore,
+        api: api,
+        t: t,
+      };
+
+      // 设置 → 会话回溯：撤回偏好与诊断（原来挤在抽屉里的第 4 个页签）。
+      // 会话级的「回溯记录 / 救援点」没有搬 —— 它们依赖当前会话，放进全局设置页语义不对。
+      ctx.effect(
+        () =>
+          ctx.slots.inject("settings.section", () =>
+            ctx.slots.register(
+              {
+                name: "settings.section",
+                id: "session-rewind",
+                order: 91,
+                label: () => t("settings.nav"),
+                locale: NS,
+              },
+              RewindSettingsSection,
+            ),
+          ),
+        "session-rewind: settings section",
       );
 
       // /rewind 命令装饰：宿主 popupSelect 列出候选，选中后打开确认框。

@@ -138,6 +138,7 @@
     "state.workingDirectory": "working directory",
     "state.separator": ", ",
     "timeline.kindRescue": "File restore",
-    "timeline.rescueMeta": "Restored {restored} file(s) from rescue {id}"
+    "timeline.rescueMeta": "Restored {restored} file(s) from rescue {id}",
+    "settings.nav": "Session rewind"
   }
 }
