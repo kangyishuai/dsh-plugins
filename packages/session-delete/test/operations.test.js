@@ -9,10 +9,10 @@ import { encodeSegment, projectKey } from "../lib/paths.js";
 
 /**
  * 造一个「像宿主」的最小替身。
- * @param {{ live?: boolean, createDir?: boolean, children?: { id: string, title: string | null }[] }} [options]
+ * @param {{ live?: boolean, createDir?: boolean, children?: { id: string, title: string | null }[], gate?: () => Promise<void> }} [options]
  */
 async function fixture(options = {}) {
-  const { live = false, createDir = true, children = [] } = options;
+  const { live = false, createDir = true, children = [], gate } = options;
   const dataRoot = await mkdtemp(join(tmpdir(), "dsh-sdel-ops-"));
   const sessionId = "session-abc";
   const cwd = "/w";
@@ -46,6 +46,9 @@ async function fixture(options = {}) {
       },
     ],
     archiveSession: async () => {
+      // 测试并发时不靠「谁先跑完」猜时序：给一个显式挂起点，
+      // 让第一个操作确定地停在 in-flight 状态里（之前这条断言在负载高时会假失败）。
+      if (typeof gate === "function") await gate();
       state.archived = true;
     },
     unarchiveSession: async () => {
@@ -224,13 +227,32 @@ test("health 报告能力档位与数据根", async () => {
 });
 
 test("并发 trash 同一会话时第二个被拒绝", async () => {
-  const { ops, sessionId, dataRoot } = await fixture();
+  /** @type {() => void} */
+  let release = () => {};
+  /** @type {() => void} */
+  let entered = () => {};
+  const gate = new Promise((resolve) => {
+    release = () => resolve(undefined);
+  });
+  const enteredGate = new Promise((resolve) => {
+    entered = () => resolve(undefined);
+  });
+  const { ops, sessionId, dataRoot } = await fixture({
+    gate: async () => {
+      entered();
+      await gate;
+    },
+  });
   const plan = await ops.plan(sessionId);
   const first = ops.trash(sessionId, { digest: plan.digest });
+  // 等第一个操作真的进到 archiveSession（此时 in-flight 必然已置位），再发第二个，
+  // 否则「并发」只是运气：第一个可能整体跑完了，第二个就不该被拒。
+  await enteredGate;
   await assert.rejects(
     ops.trash(sessionId, { digest: plan.digest }),
     (error) => /** @type {any} */ (error).code === "session-delete/busy",
   );
+  release();
   await first;
   await rm(dataRoot, { recursive: true, force: true });
 });
