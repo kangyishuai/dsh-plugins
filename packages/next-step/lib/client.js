@@ -62,7 +62,7 @@ window.__ModuleLoader__.load({
       "settings.title": "下一步建议",
       "settings.nav": "下一步建议",
       "settings.desc":
-        "答完后判断是否值得继续；需要时生成一张含摘要与两个方向建议的决策卡（一次额外模型调用）。",
+        "答完后判断是否值得继续；需要时生成一张含摘要、提问与 1–2 条具体建议的决策卡（一次额外模型调用）。",
       "settings.enabled": "启用插件",
       "settings.card": "回答下方的决策卡",
       "settings.ghost": "输入框里的幽灵提示",
@@ -113,7 +113,7 @@ window.__ModuleLoader__.load({
       "settings.title": "Next-step suggestions",
       "settings.nav": "Next-step suggestions",
       "settings.desc":
-        "Judges whether a turn is worth continuing; when it is, adds a status summary and two directions (one extra model call).",
+        "Judges whether a turn is worth continuing; when it is, adds a status summary, a question and 1–2 concrete next steps (one extra model call).",
       "settings.enabled": "Enable the plugin",
       "settings.card": "Decision card under the answer",
       "settings.ghost": "Ghost hint in the composer",
