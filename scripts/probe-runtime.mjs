@@ -267,7 +267,7 @@ const SEAM_CHECKS_SESSION_DELETE = [
     file: "@deepseek-ai/dsh-client-shortcuts/lib/client.js",
     name: "shortcuts.register（可改键的应用命令）",
     pattern: /registerFixed/u,
-    breaks: "⌘⌥⌫ 与设置 → 快捷键里的条目都消失（菜单仍可用）",
+    breaks: "⌘⌥⌫ 与 设置 → 通用 → 快捷键 里的条目都消失（菜单仍可用）",
   },
 ];
 

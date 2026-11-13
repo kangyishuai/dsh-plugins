@@ -72,7 +72,7 @@ pnpm gate session-delete --skip-desktop         # 明确跳过桌面端（会提
 1. `pnpm verify`（lint + 类型 + 规范 + 公开边界 + 全部单测）
 2. `pnpm probe:runtime`（含本插件依赖的私有 seam：`archiveSession`/`unarchiveSession`、
    后端 `locate()`、`sessions.detachEntered`、会话「…」菜单槽、页脚 action 槽）
-3. `pnpm smoke:session-delete`（临时 DSH_HOME 的 web 端到端，31 项）
+3. `pnpm smoke:session-delete`（临时 DSH_HOME 的 web 端到端，32 项）
 4. 桌面只读回归（`pnpm smoke:session-delete-desktop`，**永远带 `--require`**：没开调试端口就是失败）
 
 > 桌面端要先用 `open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1`
@@ -82,7 +82,7 @@ pnpm smoke:session-delete
 ````
 
 它会自动：复制 desktop profile 到临时 `DSH_HOME` → 打包安装当前源码 → 起真实
-宿主（随机端口）→ 用 ego-browser 点一遍主链路 → 断言 31 项，并把关键状态截图存到
+宿主（随机端口）→ 用 ego-browser 点一遍主链路 → 断言 32 项，并把关键状态截图存到
 系统临时目录 `dsh-smoke-shots/`（脚本结束会打印路径）：
 
 1. 无 `[data-slot-error]`（锁住 slot 漏注入类回归）
@@ -104,6 +104,7 @@ pnpm smoke:session-delete
 17. 会话「…」菜单里的「删除会话」**显示快捷键**（证明它已经是 contextMenus 贡献而不是旧 slot）
 18. **⌘⌥⌫ 能直接打开删除确认框**（真实按键；编辑区有焦点时也要生效）
 19. 工作区「…」菜单能打开「删除此工作区的全部会话」确认框，正文写明会话数与体积
+20. 宿主的快捷键编辑面板（设置 → 通用 → 快捷键）里能找到「删除当前会话…」——用户可改键
 
 截图（01–11）覆盖：页脚 hover、空面板、确认框、删除后、条目面板、恢复后、设置页、设置页审计、级联勾选框、工作区批量确认框。
 
@@ -245,7 +246,7 @@ pnpm smoke:session-delete
 | M3  | P0     | 工作区「…」→「删除此工作区的全部会话…」                   | 确认框标题带工作区名，正文是「N 个会话 · 约 X」+ 正在运行数 + 级联勾选                    |
 | M4  | P0     | 上一步确认                                               | 逐条进回收站；侧栏该工作区分组变空；toast 汇总「已移入回收站 ok/total 个会话」            |
 | M5  | P1     | 批量里夹着正在运行的会话                                 | 先停止再删，不阻塞其余会话；被阻断的条目在结果里报出来                                   |
-| M6  | P1     | 设置 → 快捷键                                            | 能找到「删除当前会话…」并改键；改成宿主已占用的组合时宿主提示冲突                         |
+| M6  | P1     | 设置 → 通用 → 快捷键                                     | 编辑面板里能找到「删除当前会话…」并改键；改成已占用的组合时宿主播报冲突噪音/不可用       |
 | M7  | P2     | 工作区记账里有已不存在的会话 id（幽灵）                  | 影响面里显示「N 个登记条目已失效，已忽略」，不阻塞其余会话                                |
 | M8  | P2     | 改键后刷新页面                                           | 新键位仍在（宿主侧持久化）                                                               |
 

@@ -607,6 +607,29 @@ const auditExpanded = await page.evaluate(async () => {
   return toggle.getAttribute("aria-expanded") === "true" ? "expanded" : "collapsed";
 });
 check("设置页的审计日志可展开", auditExpanded === "expanded", auditExpanded);
+// 4d) 快捷键可改键：宿主的编辑面板在 设置 → 通用 → 快捷键 里，我们的命令必须出现在那里。
+const rebindable = await page.evaluate(async () => {
+  if (!document.querySelector('[data-shortcut-modal="settings"]')) await window.__openSdsSettings();
+  const panel = () => document.querySelector('[data-shortcut-modal="settings"]');
+  if (!panel()) return "no-settings";
+  const nav = [...panel().querySelectorAll("button")].find((b) => (b.textContent || "").includes("通用"));
+  if (!nav) return "no-general-nav";
+  nav.click();
+  await new Promise((r) => setTimeout(r, 1200));
+  const row = [...panel().querySelectorAll("button")].find((b) =>
+    (b.textContent || "").includes("快捷键"));
+  if (!row) return "no-shortcut-row";
+  row.click();
+  await new Promise((r) => setTimeout(r, 1500));
+  const text = (document.body.innerText || "").replace(/s+/g, " ");
+  const found = text.includes("删除当前会话");
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return found ? "found" : "missing:" + text.slice(0, 200);
+});
+check("快捷键编辑面板里能找到「删除当前会话…」", rebindable === "found", rebindable);
 await shot("08-settings-audit");
 await page.keyboard.press("Escape");
 await page.waitForTimeout(600);
