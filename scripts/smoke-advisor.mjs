@@ -201,7 +201,7 @@ const openSettings = async () => {
   if (!clicked) return "no-settings";
   await page.waitForTimeout(1500);
   await page.evaluate(() => {
-    const tab = [...document.querySelectorAll("[role=tab],button")].find((x) => (x.textContent || "").trim() === "通用设置");
+    const tab = [...document.querySelectorAll("[role=tab],button")].find((x) => (x.textContent || "").trim() === "顾问");
     if (tab) tab.click();
   });
   await page.waitForTimeout(1800);
@@ -221,6 +221,8 @@ if (settingsState !== "ok") {
       configure: root.querySelector("[data-advisor-configure]") !== null,
       providerVisible: root.querySelector("[data-advisor-provider]") !== null,
       advancedClosed: root.querySelector('[data-advisor-disclosure="advanced"]') === null,
+      summaryRows: root.querySelectorAll("[data-advisor-summary] .dsh-advisor-summary-row").length,
+      moreClosed: root.querySelector('[data-advisor-disclosure="more"]') === null,
     };
   });
   check(
@@ -230,7 +232,9 @@ if (settingsState !== "ok") {
       card.compact === true &&
       card.configure === true &&
       card.providerVisible === false &&
-      card.advancedClosed === true,
+      card.advancedClosed === true &&
+      card.moreClosed === true &&
+      card.summaryRows === 3,
     JSON.stringify(card),
   );
   await page.evaluate(() => {
@@ -244,6 +248,12 @@ if (settingsState !== "ok") {
   await page.evaluate(() => {
     const configure = document.querySelector("[data-advisor-configure]");
     if (configure) configure.click();
+  });
+  await page.waitForTimeout(400);
+  await page.evaluate(() => {
+    // 「更多设置」默认收起（首屏只留模式/路由/预算三行），先展开它。
+    const more = document.querySelector('[data-advisor-disclosure-toggle="more"]');
+    if (more) more.click();
   });
   await page.waitForTimeout(400);
   await page.evaluate(() => {
