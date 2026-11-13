@@ -8,7 +8,7 @@
 
 Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). Not affiliated with DeepSeek.
 
-> **Status: early.** Verified on the current target DSH version with `pnpm smoke:session-delete` (31 end-to-end assertions on a throwaway DSH home) and `pnpm probe:runtime`; the desktop read-only pass was done on an earlier version. The [Compatibility](#compatibility--degradation) table records exactly what was run. `pnpm gate session-delete` runs the whole release gate in one command. Treat it as young software and keep backups of anything you cannot lose.
+> **Status: early.** Verified on the current target DSH version with `pnpm smoke:session-delete` (32 end-to-end assertions on a throwaway DSH home) and `pnpm probe:runtime`; the desktop read-only pass was done on an earlier version. The [Compatibility](#compatibility--degradation) table records exactly what was run. `pnpm gate session-delete` runs the whole release gate in one command. Treat it as young software and keep backups of anything you cannot lose.
 
 
 ![Delete confirmation: one line of impact, an opt-in cascade checkbox, and a Details disclosure](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/overview.png)
@@ -22,7 +22,7 @@ DSH's built-in _archive_ only hides a session: the id goes into the workspace's 
 - **Plan before you delete (dry-run).** The confirmation dialog is generated from a plan: on-disk size, whether the session is live, how many sub-sessions it has, and which references will be cleaned. Right before execution the plan is recomputed and compared with what you confirmed; a mismatch aborts the operation instead of deleting something you didn't see.
 - **Audit log.** Every delete / restore / purge appends one JSON line to `~/.dsh/session-trash/audit.log`, readable from **Settings → Session trash**.
 - **Receipt after delete.** After the move, the plugin checks the places a session can be referenced and reports anything left behind (deletion is one session at a time; the trash list supports batch restore / batch permanent delete).
-- **Keyboard + workspace batch.** `⌘⌥⌫` (rebindable in Settings → Shortcuts) opens the same confirmation for the current session, and the workspace `…` menu gains **Delete all sessions in this workspace…**, which previews the whole group and deletes it session by session.
+- **Keyboard + workspace batch.** `⌘⌥⌫` (rebindable in Settings → General → Shortcuts) opens the same confirmation for the current session, and the workspace `…` menu gains **Delete all sessions in this workspace…**, which previews the whole group and deletes it session by session.
 - **Quiet UI.** One dialog line tells you what will happen (size · sub-sessions · live), the technical detail hides under **Details**, the trash panel is a single page, and maintenance (health check, audit log, receipts) moved to its own settings section. Child-session handling remembers your last choice, stored host-side in `~/.dsh/session-trash/preferences.json`.
 
 ## Screenshots
