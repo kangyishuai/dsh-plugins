@@ -96,6 +96,30 @@ export function digestOf(plan) {
 }
 
 /**
+ * 工作区批量的摘要：覆盖工作区身份与**每个**会话的删除后果（体积/活体/子会话/阻断），
+ * 不覆盖标题与时间戳——改名不应该让用户重新确认一遍。
+ * 排序后再哈希，保证同一组事实永远得到同一摘要。
+ * @param {{ workspaceId: string, sessions: { sessionId: string, sizeBytes?: number | null, live?: boolean,
+ *   children?: { id: string }[], blockers?: { code: string }[] }[] }} input
+ * @returns {string}
+ */
+export function digestOfWorkspace(input) {
+  const canonical = {
+    workspaceId: input.workspaceId,
+    sessions: [...input.sessions]
+      .sort((a, b) => a.sessionId.localeCompare(b.sessionId))
+      .map((session) => ({
+        sessionId: session.sessionId,
+        sizeBytes: typeof session.sizeBytes === "number" ? session.sizeBytes : null,
+        live: session.live === true,
+        children: (session.children ?? []).map((child) => child.id).sort(),
+        blockers: (session.blockers ?? []).map((blocker) => blocker.code).sort(),
+      })),
+  };
+  return sha256(stableStringify(canonical)).slice(0, 32);
+}
+
+/**
  * 生成 Plan。纯函数：不读盘、不调宿主服务。
  * @param {PlanInput} input
  * @returns {Plan}

@@ -44,18 +44,19 @@ pnpm verify   # lint + typecheck + 规范检查 + 53 个单测
 
 已覆盖：
 
-| 文件                      | 覆盖内容                                                                                                                               |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `test/paths.test.js`      | 数据根优先级、id 校验（路径穿越）、`encodeSegment`/`projectKey` 与宿主编码一致、路径逃逸拒绝                                           |
-| `test/plan.test.js`       | digest 确定性、标题不参与摘要、缺位置产生 blocker、事实漂移检测、字节格式化                                                            |
-| `test/trash.test.js`      | 移入/列出/恢复/恢复冲突拒绝/彻底删除/陌生目录保留并告警/meta 契约                                                                      |
-| `test/journal.test.js`    | intent→done 清理、失败留现场、坏记录不阻断                                                                                             |
-| `test/audit.test.js`      | 20 并发追加无交错、超长截断、读取顺序                                                                                                  |
-| `test/capability.test.js` | 三档能力判定（api/internal/unknown）                                                                                                   |
-| `test/operations.test.js` | 完整 trash 流程（归档→停止→摘引用→审计→对账）、digest 漂移拒绝、无目录 blocked 且零副作用、restore 还原工作区记账、purge、并发双击拒绝 |
-| `test/client.test.js`     | client 半的设计 token：只用宿主真实存在的 `--dsw-*`、计数徽章的底色/前景必须是配对 token（不是写死的 `#fff`）                          |
+| 文件                         | 覆盖内容                                                                                                                                                                                                                               |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test/paths.test.js`         | 数据根优先级、id 校验（路径穿越）、`encodeSegment`/`projectKey` 与宿主编码一致、路径逃逸拒绝                                                                                                                                           |
+| `test/plan.test.js`          | digest 确定性、标题不参与摘要、缺位置产生 blocker、事实漂移检测、字节格式化                                                                                                                                                            |
+| `test/trash.test.js`         | 移入/列出/恢复/恢复冲突拒绝/彻底删除/陌生目录保留并告警/meta 契约                                                                                                                                                                      |
+| `test/journal.test.js`       | intent→done 清理、失败留现场、坏记录不阻断                                                                                                                                                                                             |
+| `test/audit.test.js`         | 20 并发追加无交错、超长截断、读取顺序                                                                                                                                                                                                  |
+| `test/capability.test.js`    | 三档能力判定（api/internal/unknown）                                                                                                                                                                                                   |
+| `test/operations.test.js`    | 完整 trash 流程（归档→停止→摘引用→审计→对账）、digest 漂移拒绝、无目录 blocked 且零副作用、restore 还原工作区记账、purge、并发双击拒绝                                                                                                 |
+| `test/client.test.js`        | client 半的纯逻辑：设计 token（只用宿主真实存在的 `--dsw-*`、徽章底色/前景成对）、确认框影响面只拼成立的事实、80 条分批不超上限、批量部分失败/中途停止、面板加载失败不拖死浮层、内联词典与 `locale/*.json` 键集一致                    |
+| `test/client-wiring.test.js` | client 半的接线：设置页分节、会话/工作区两个 contextMenus 贡献与 commandId、快捷键默认键的平台布局（Linux 不绑/编辑区放行/终端排除）、无当前会话 blocked、contextMenus 缺失退回旧 slot、键位冲突不拖垮菜单、两个服务都缺失插件照常加载 |
 
-**没覆盖**：client 的渲染与交互（`test/client.test.js` 只校验 token 与配色配对，不渲染组件）、RPC 线缆、真实宿主内部契约（`detachEntered`/`storageDomain`/`session-stop`）。所以下面两层不能省。
+**没覆盖**：React 的真实渲染与布局（两个 client 单测都不渲染组件，只直接驱动纯函数与注册动作）、RPC 线缆、真实宿主内部契约（`detachEntered`/`storageDomain`/`session-stop`）。所以下面两层不能省。
 
 ## 2. 启动冒烟（1 分钟）与 GUI 冒烟脚本（约 3 分钟）
 
@@ -72,17 +73,39 @@ pnpm gate session-delete --skip-desktop         # 明确跳过桌面端（会提
 1. `pnpm verify`（lint + 类型 + 规范 + 公开边界 + 全部单测）
 2. `pnpm probe:runtime`（含本插件依赖的私有 seam：`archiveSession`/`unarchiveSession`、
    后端 `locate()`、`sessions.detachEntered`、会话「…」菜单槽、页脚 action 槽）
-3. `pnpm smoke:session-delete`（临时 DSH_HOME 的 web 端到端，27 项）
+3. `pnpm smoke:session-delete`（临时 DSH_HOME 的 web 端到端，33 项）
 4. 桌面只读回归（`pnpm smoke:session-delete-desktop`，**永远带 `--require`**：没开调试端口就是失败）
 
 > 桌面端要先用 `open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1`
 > 重启；它只打开菜单/确认框/面板再 Esc 关闭，**从不确认删除**。
 
+> **写GUI断言时的一个陷阱（本项目踩过）**：不要用 `document.body.innerText` 判断某个词是否存在——
+> 页面里同时显示着会话正文，而正文可能恰好包含你正在找的字眼（这次就命中了：聊天记录里引用了
+> 插件的词典字符串，让「快捷键面板里有『删除当前会话…』」这条断言**假绿**）。断言必须限定在
+> 目标容器里：快捷键编辑器是 `[data-shortcut-modal="shortcuts"]`，设置面板是
+> `[data-shortcut-modal="settings"]`。
+
+> **0.5.0 的桌面回归：已通过（2026-11-13）。** 装机流程就是上面那五条，跑完
+> `pnpm smoke:session-delete-desktop --require` → **17/17 PASS**（不带 `--workspace` 时会跳过
+> 「该工作区的会话行」几条；带 `--workspace <标题>` 才跑满）。在此之前同脚本对着旧的 0.4.9 跑过一次，
+> 机制全绿、失败项恰好是「新界面尚未安装」的 6 条期望差异——两次对比正好说明脚本确实在测版本差异，
+> 而不是恒绿。
+
+> **实测踩到的三个坑**（2026-11-13 想在不打扰正在运行的桌面版的情况下复测 0.5.0 时）：
+>
+> 1. `open --env DSH_HOME=...` 在 app 已经运行时会被拒绝（`Application ... was already running and so the additional environment variables could not be set`）——
+>    要换 DSH_HOME 就必须先退出 app。
+> 2. 直接 `exec` 那个 Mach-O 会当成 node（本机 shell 里有 `ELECTRON_RUN_AS_NODE=1`），
+>    报 `bad option: --remote-debugging-port`；确实要直连二进制就先 `env -u ELECTRON_RUN_AS_NODE`。
+> 3. 用「临时 DSH_HOME + `--user-data-dir=<tmp>`」起第二个实例**能起来、CDP 也通**（单实例锁按 userData 分），
+>    但全新的 Electron userData 没有登录态，页面停在 welcome/登录页，主界面根本不挂载（插件的样式/入口都看不到）。
+>    所以这条「隔离复测」路线走不通——桌面回归**必须**在真 profile 上、把新版装好并重启后跑。
+
 pnpm smoke:session-delete
 ````
 
 它会自动：复制 desktop profile 到临时 `DSH_HOME` → 打包安装当前源码 → 起真实
-宿主（随机端口）→ 用 ego-browser 点一遍主链路 → 断言 27 项，并把关键状态截图存到
+宿主（随机端口）→ 用 ego-browser 点一遍主链路 → 断言 33 项，并把关键状态截图存到
 系统临时目录 `dsh-smoke-shots/`（脚本结束会打印路径）：
 
 1. 无 `[data-slot-error]`（锁住 slot 漏注入类回归）
@@ -101,8 +124,12 @@ pnpm smoke:session-delete
 14. 设置页开关打开后，**主进程核对 `preferences.json` 里 `cascadeChildren: true` 真的落盘**
 15. 设置页的审计日志可展开；主进程核对 `audit.log` 里确实有 trash/restore/purge
 16. 有子会话的确认框出现级联勾选框（自动展开工作区、真实鼠标 hover 探测，Esc 关闭）
+17. 会话「…」菜单里的「删除会话」**显示快捷键**（证明它已经是 contextMenus 贡献而不是旧 slot）
+18. **⌘⌥⌫ 能直接打开删除确认框**（真实按键；编辑区有焦点时也要生效）
+19. 工作区「…」菜单能打开「删除此工作区的全部会话」确认框，正文写明会话数与体积
+20. 宿主的快捷键编辑面板（设置 → 通用 → 快捷键）里能找到「删除当前会话…」——用户可改键
 
-截图（01–08）覆盖：页脚 hover、空面板、确认框、删除后、条目面板、恢复后、设置页、设置页审计。
+截图（01–11）覆盖：页脚 hover、空面板、确认框、删除后、条目面板、恢复后、设置页、设置页审计、级联勾选框、工作区批量确认框。
 
 缺 `dsh` 或 `ego-browser` 时打印 SKIP 并以 0 退出，方便 CI 跳过。
 
@@ -232,6 +259,19 @@ pnpm smoke:session-delete
 | L4  | P1     | 「回收站」块点「打开回收站」           | 关掉设置页并打开回收站面板                                        |
 | L5  | P1     | 制造一条归档幽灵后点体检的「N 条待清理」 | 内联确认「只动登记表，不碰会话文件」，清理后数字归零              |
 | L6  | P2     | 展开「操作回执 / 审计日志」            | 默认折叠；展开后限高滚动，长列表不撑长页面                        |
+
+### M. 快捷键与工作区批量
+
+| #   | 优先级 | 步骤                                                     | 预期                                                                                     |
+| --- | ------ | -------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| M1  | P0     | 悬停会话行 → 「…」                                       | 「删除会话…」右侧显示 `⌘⌥⌫`（说明它已经走官方 contextMenus，不是旧的兼容行）            |
+| M2  | P0     | 焦点在输入框里按 `⌘⌥⌫`                                   | 打开同一个确认框；回车执行、Esc 取消。终端里按不触发                                     |
+| M3  | P0     | 工作区「…」→「删除此工作区的全部会话…」                   | 确认框标题带工作区名，正文是「N 个会话 · 约 X」+ 正在运行数 + 级联勾选                    |
+| M4  | P0     | 上一步确认                                               | 逐条进回收站；侧栏该工作区分组变空；toast 汇总「已移入回收站 ok/total 个会话」            |
+| M5  | P1     | 批量里夹着正在运行的会话                                 | 先停止再删，不阻塞其余会话；被阻断的条目在结果里报出来                                   |
+| M6  | P1     | 设置 → 通用 → 快捷键                                     | 编辑面板里能找到「删除当前会话…」并改键；改成已占用的组合时宿主播报冲突噪音/不可用       |
+| M7  | P2     | 工作区记账里有已不存在的会话 id（幽灵）                  | 影响面里显示「N 个登记条目已失效，已忽略」，不阻塞其余会话                                |
+| M8  | P2     | 改键后刷新页面                                           | 新键位仍在（宿主侧持久化）                                                               |
 
 ### K. Agent 工具（session_delete）
 

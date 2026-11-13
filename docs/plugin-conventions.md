@@ -147,3 +147,27 @@ pnpm gate session-rewind
 2. `pnpm verify`：lint + 类型检查 + 规范检查 + 文档一致性 + 测试。
 3. 真实验证（必须做）：`cd packages/<name> && pnpm pack --pack-destination /tmp`，再 `dsh plugin --profile desktop add /tmp/<tgz>`，然后重启桌面版（host 半改动）或刷新页面（client 半改动），在 GUI 里手动点一遍。改完代码要**重新 pack 并再次 add** 才会更新已装副本；`link:` 安装会因宿主包解析不到而激活失败（[runtime](runtime/0.2.1-rc.5.md) §6.9）。
 4. 验证完可以 `dsh plugin --profile desktop remove <包名>`，再 `add` 正式版。
+
+### 6.3 用 ego-browser 跑 GUI 冒烟时的两条硬约定
+
+ego 的浏览器是**和用户共用**的实例：它的 cookie jar 里装着用户自己的登录态。写 GUI 冒烟脚本时必须遵守下面两条，否则会「跑几次就坏」或者损坏用户数据。
+
+1. **只清理自己的 cookie，禁止 `Network.clearBrowserCookies`。**
+   临时宿主的地址是 `127.0.0.1:<随机端口>`，而 cookie 按**主机名**共享（端口不隔离），每次冒烟又用新 token、cookie 名里带 token（`dsh-auth-<hash>`），于是每轮都新增一条而不会覆盖旧的。攒到请求头超过宿主上限（Node 默认 16 KB）时，页面直接 `431`，ego 只会报 `ERR_HTTP_RESPONSE_CODE_FAILURE`，很难联想。
+   正确做法：只删 `domain ∈ {127.0.0.1, localhost, ::1}` **且** `name` 以 `dsh-auth-` 开头的 cookie，并在跑完后再清一次（别把垃圾留给下一轮）：
+
+   ```js
+   const LOOPBACK = ["127.0.0.1", "localhost", "::1"];
+   const found = await page.cdp("Storage.getCookies", {});
+   const mine = (found.cookies ?? []).filter(
+     (c) => LOOPBACK.includes(c.domain) && String(c.name).startsWith("dsh-auth-"),
+   );
+   for (const c of mine) {
+     await page.cdp("Network.deleteCookies", { name: c.name, domain: c.domain, path: c.path });
+   }
+   ```
+
+   全清会顺手删掉用户自己的站点登录态、以及本机其它 dev server 在 `127.0.0.1` 上的会话——这属于破坏用户数据。
+
+2. **浮层的状态不能跨 `page.evaluate` 保持。**
+   宿主在两次 evaluate 之间会重渲染，刚打开的面板/编辑器会被收掉，后续调用一律拿到空引用（表现为「断言说打不开，但其实打开过」）。因此：**打开面板 + 在面板里做的一连串操作要放进同一个 evaluate**；需要分步时，每步开头都先检查目标是否还在，不在才重开。另外截图（`page.screenshot`）要在面板还活着时立刻执行——如果截图前先做 DOM 脱敏（遍历改写文本节点），那次改写本身就可能把面板刷掉。

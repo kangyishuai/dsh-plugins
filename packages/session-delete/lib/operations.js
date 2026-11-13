@@ -9,7 +9,7 @@ import { describeCapabilities, probeCapabilities } from "./capability.js";
 import { beginOperation, finishOperation, listPending } from "./journal.js";
 import { directorySize, locateSession } from "./locate.js";
 import { auditPath, requireSessionId, sessionsRoot, trashRoot } from "./paths.js";
-import { buildPlan, planExecutable, summarizePlan } from "./plan.js";
+import { buildPlan, digestOfWorkspace, planExecutable, summarizePlan } from "./plan.js";
 import { readPreferences, writePreferences } from "./preferences.js";
 import { listReceipts, writeReceipt } from "./receipts.js";
 import { buildRefs } from "./refs.js";
@@ -87,7 +87,11 @@ export function createOperations({ ctx, dataRoot, logger }) {
    * 收集一份完整事实并生成 Plan。
    * @param {unknown} sessionIdRaw
    */
-  async function makePlan(sessionIdRaw) {
+  /**
+   * @param {unknown} sessionIdRaw
+   * @param {{ all?: unknown[] }} [options] all = 预加载的 persistence.list()（工作区批量复用）
+   */
+  async function makePlan(sessionIdRaw, options = {}) {
     const sessionId = requireSessionId(sessionIdRaw);
     /** @type {string[]} */
     const notes = [];
@@ -126,7 +130,8 @@ export function createOperations({ ctx, dataRoot, logger }) {
     });
     if (caps.checks["persistence.list"] && caps.services.persistence?.list) {
       try {
-        const all = (await caps.services.persistence.list()) ?? [];
+        // 工作区批量会把同一个列表复用给每个会话，否则 N 个会话要拉 N 次全量列表。
+        const all = options.all ?? (await caps.services.persistence.list()) ?? [];
         /** @type {Map<string, { id: string, title: string | null }[]>} */
         const byParent = new Map();
         for (const entry of all) {
@@ -246,10 +251,11 @@ export function createOperations({ ctx, dataRoot, logger }) {
 
   /**
    * @param {string} sessionIdRaw
-   * @param {{ digest?: string, title?: string | null, operator?: string, cascade?: boolean, child?: boolean }} request
+   * @param {{ digest?: string, title?: string | null, operator?: string, cascade?: boolean, child?: boolean,
+   *   all?: unknown[] }} request all = 预加载的 persistence.list()（工作区批量复用）
    */
   async function trash(sessionIdRaw, request = {}) {
-    const loaded = await makePlan(sessionIdRaw);
+    const loaded = await makePlan(sessionIdRaw, { all: request.all });
     const { plan, location, header } = loaded;
     if (request.digest && request.digest !== plan.digest) {
       throw failure(
@@ -954,6 +960,183 @@ export function createOperations({ ctx, dataRoot, logger }) {
     return { ok: okCount === results.length, total: results.length, succeeded: okCount, results };
   }
 
+  /**
+   * 工作区记账里的成员会话。侧栏的工作区分组就是这份清单一族（组内 = 这些 id 里
+   * 还能在会话列表里找到的那些），所以「删这个工作区的会话」＝ 这里返回的 id。
+   * 优先读 host workspaceRegistry（活状态）；没有该服务时回落到 workspace.json（只读兜底）。
+   * @param {unknown} workspaceIdRaw
+   * @returns {Promise<{ workspaceId: string, title: string | null, sessionIds: string[] }>}
+   */
+  async function workspaceMembers(workspaceIdRaw) {
+    const workspaceId = typeof workspaceIdRaw === "string" ? workspaceIdRaw.trim() : "";
+    if (workspaceId.length === 0) {
+      throw failure("session-delete/invalid-request", "缺少工作区 id");
+    }
+    const registry = caps.services.workspace;
+    if (typeof registry?.list === "function") {
+      try {
+        const rows = registry.list() ?? [];
+        const found = rows.find((/** @type {any} */ row) => String(row?.id) === workspaceId);
+        if (found) {
+          return {
+            workspaceId,
+            title: typeof found.title === "string" ? found.title : null,
+            sessionIds: Array.isArray(found.sessionIds) ? found.sessionIds.map(String) : [],
+          };
+        }
+      } catch (error) {
+        logger.warn(`session-delete: workspaceRegistry.list failed: ${messageOf(error)}`);
+      }
+    }
+    // 文件兜底：老版本/headless 组合里没有 workspaceRegistry。
+    const state = await readWorkspaceState();
+    const fromFile = state.workspaces.find((row) => row.id === workspaceId);
+    if (fromFile) {
+      return { workspaceId, title: null, sessionIds: fromFile.sessionIds.map(String) };
+    }
+    throw failure("session-delete/not-found", `找不到工作区 ${workspaceId}`, { workspaceId });
+  }
+
+  /**
+   * 工作区级影响面（dry-run）。逐个会话算 plan，跳过已经不存在的（登记表幽灵），
+   * 聚合成一份带 digest 的预览，供确认框一次性展示。
+   * @param {unknown} workspaceIdRaw
+   * @returns {Promise<any>}
+   */
+  async function planWorkspace(workspaceIdRaw) {
+    const workspace = await workspaceMembers(workspaceIdRaw);
+    /** @type {unknown[] | undefined} */
+    let all;
+    if (caps.checks["persistence.list"] && caps.services.persistence?.list) {
+      try {
+        all = (await caps.services.persistence.list()) ?? [];
+      } catch (error) {
+        logger.warn(`session-delete: persistence.list failed: ${messageOf(error)}`);
+      }
+    }
+    /** @type {{ sessionId: string, title: string | null, sizeBytes: number | null, live: boolean,
+     *   children: { id: string, title: string | null }[], blockers: { code: string, message: string }[],
+     *   digest: string }[]} */
+    const sessions = [];
+    /** @type {string[]} */
+    const missing = [];
+    for (const sessionId of workspace.sessionIds) {
+      try {
+        const { plan } = await makePlan(sessionId, { all });
+        sessions.push({
+          sessionId: plan.sessionId,
+          title: plan.title,
+          sizeBytes: plan.sizeBytes,
+          live: plan.live,
+          children: plan.children,
+          blockers: plan.blockers,
+          digest: plan.digest,
+        });
+      } catch (error) {
+        // 登记表里指向已不存在的会话：跳过而不是整单失败（体检会单独报告它们）。
+        if (/** @type {any} */ (error)?.code === "session/not-found") {
+          missing.push(sessionId);
+          continue;
+        }
+        throw error;
+      }
+    }
+    let sizeBytes = 0;
+    let live = 0;
+    let children = 0;
+    let blocked = 0;
+    for (const session of sessions) {
+      if (typeof session.sizeBytes === "number") sizeBytes += session.sizeBytes;
+      if (session.live) live += 1;
+      children += session.children.length;
+      if (session.blockers.length > 0) blocked += 1;
+    }
+    return {
+      workspaceId: workspace.workspaceId,
+      title: workspace.title,
+      sessions,
+      total: sessions.length,
+      missing,
+      sizeBytes,
+      live,
+      children,
+      blocked,
+      digest: digestOfWorkspace({ workspaceId: workspace.workspaceId, sessions }),
+    };
+  }
+
+  /**
+   * 工作区级批量删除：逐条走既有的 trash（各自的归档闸门、停止、引用清理、审计与回执），
+   * 汇总部分失败而不是中途放弃——一个卡住的会话不应该让其余会话留在磁盘上。
+   * @param {unknown} workspaceIdRaw
+   * @param {{ digest?: string, cascade?: boolean, operator?: string }} [request]
+   * @returns {Promise<any>}
+   */
+  async function trashWorkspace(workspaceIdRaw, request = {}) {
+    const preview = await planWorkspace(workspaceIdRaw);
+    if (request.digest && request.digest !== preview.digest) {
+      throw failure(
+        "session-delete/stale-plan",
+        "这个工作区的会话在确认期间发生了变化，请重新查看影响面。",
+        { workspaceId: preview.workspaceId, expected: preview.digest, actual: request.digest },
+      );
+    }
+    const cascade = request.cascade === true;
+    const operator = request.operator ?? "ui";
+    /** @type {unknown[] | undefined} */
+    let all;
+    if (caps.checks["persistence.list"] && caps.services.persistence?.list) {
+      try {
+        all = (await caps.services.persistence.list()) ?? [];
+      } catch (error) {
+        logger.warn(`session-delete: persistence.list failed: ${messageOf(error)}`);
+      }
+    }
+    /** @type {{ sessionId: string, title: string | null, ok: boolean, entryId?: string, children?: number, error?: string }[]} */
+    const results = [];
+    for (const session of preview.sessions) {
+      try {
+        const result = await trash(session.sessionId, {
+          digest: session.digest,
+          cascade,
+          operator,
+          all,
+        });
+        results.push({
+          sessionId: session.sessionId,
+          title: session.title,
+          ok: true,
+          entryId: result.entryId,
+          children: Array.isArray(result.cascaded) ? result.cascaded.length : 0,
+        });
+      } catch (error) {
+        results.push({
+          sessionId: session.sessionId,
+          title: session.title,
+          ok: false,
+          error: messageOf(error),
+        });
+      }
+    }
+    const okCount = results.filter((item) => item.ok).length;
+    // 一次批量一条汇总审计：逐条的 trash 记录已经在 trash() 里写过了。
+    await audit
+      .append({
+        action: "trash",
+        result: okCount === results.length ? "ok" : "failed",
+        operator,
+        detail: `workspace ${preview.workspaceId}: ${okCount}/${results.length} 个会话，含 ${preview.children} 个子会话，cascade=${cascade}`,
+      })
+      .catch(() => {});
+    return {
+      ok: okCount === results.length,
+      workspaceId: preview.workspaceId,
+      total: results.length,
+      succeeded: okCount,
+      results,
+    };
+  }
+
   /** @param {number} [limit] */
   async function receipts(limit = 50) {
     return { entries: await listReceipts(dataRoot, limit) };
@@ -976,5 +1159,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
     auditLog,
     getPrefs,
     setPrefs,
+    planWorkspace,
+    trashWorkspace,
   };
 }

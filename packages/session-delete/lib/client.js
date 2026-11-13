@@ -126,6 +126,19 @@ window.__ModuleLoader__.load({
       "settings.audit.empty": "还没有审计记录。",
       "settings.audit.path": "日志文件：{path}",
       "settings.loading": "读取中…",
+      "confirm.workspace.title": "删除「{name}」里的全部会话？",
+      "confirm.workspace.summary": "{n} 个会话 · 约 {size}",
+      "confirm.workspace.live": "{n} 个正在运行，会先停止",
+      "confirm.workspace.blocked": "{n} 个暂时无法删除，会逐条报出来",
+      "confirm.workspace.missing": "{n} 个登记条目已失效，已忽略",
+      "confirm.workspace.confirm": "移入回收站（{n}）",
+      "confirm.detail.workspaceSessions": "会话：{list}",
+      "menu.workspaceTrash": "删除此工作区的全部会话…",
+      "toast.workspace.done": "已移入回收站 {ok}/{total} 个会话",
+      "shortcut.delete": "删除当前会话…",
+      "shortcut.workspace": "删除当前工作区的全部会话…",
+      "shortcut.noSession": "没有可以删除的当前会话",
+      "shortcut.busy": "删除确认框已经打开",
     };
 
     /** English dictionary（键集与 zh 完全一致）。 */
@@ -201,6 +214,19 @@ window.__ModuleLoader__.load({
       "settings.audit.empty": "No audit entries yet.",
       "settings.audit.path": "Log file: {path}",
       "settings.loading": "Loading…",
+      "confirm.workspace.title": 'Delete every session in "{name}"?',
+      "confirm.workspace.summary": "{n} session(s) · about {size}",
+      "confirm.workspace.live": "{n} running; their work stops first",
+      "confirm.workspace.blocked": "{n} cannot be deleted right now and will be reported",
+      "confirm.workspace.missing": "{n} stale bookkeeping entr(ies) ignored",
+      "confirm.workspace.confirm": "Move {n} to trash",
+      "confirm.detail.workspaceSessions": "Sessions: {list}",
+      "menu.workspaceTrash": "Delete all sessions in this workspace…",
+      "toast.workspace.done": "Moved {ok}/{total} session(s) to the trash",
+      "shortcut.delete": "Delete current session…",
+      "shortcut.workspace": "Delete every session in the current workspace…",
+      "shortcut.noSession": "No current session to delete",
+      "shortcut.busy": "A delete confirmation is already open",
     };
 
     /** @param {any} initial @returns {any} */
@@ -675,8 +701,9 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 删除确认框：三行正文（标题 / 影响面 / 引用）+ 一行级联勾选 + 折叠详情。
-     * 默认焦点在「移入回收站」上（回车即生效），Esc 取消；不可删除时焦点回落到「取消」。
+     * 删除确认框：会话与「整个工作区」共用一套。
+     * 正文三行（标题 / 影响面 / 需要留意的一行）+ 一行级联勾选 + 折叠详情；
+     * 默认焦点在「移入回收站」上（回车即生效），Esc 取消，不可删除时焦点回落到「取消」。
      */
     function DeleteConfirm(/** @type {any} */ props) {
       var requestState = useStore(props.requestStore);
@@ -690,12 +717,18 @@ window.__ModuleLoader__.load({
       var busyState = React.useState(false);
       var busy = busyState[0];
       var setBusy = busyState[1];
-      var requestId = request ? request.sessionId : null;
       var cascadeState = React.useState(false);
       var cascade = cascadeState[0];
       var setCascade = cascadeState[1];
       var confirmRef = React.useRef(null);
       var cancelRef = React.useRef(null);
+      var workspaceId = request?.workspaceId ? String(request.workspaceId) : null;
+      var isWorkspace = workspaceId !== null;
+      var requestKey = request
+        ? isWorkspace
+          ? `workspace:${workspaceId}`
+          : `session:${request.sessionId}`
+        : null;
 
       /** 偏好只决定「初值」：用户这次勾了什么，下次就带过来。 */
       var rememberCascade = (/** @type {any} */ next) => {
@@ -705,7 +738,7 @@ window.__ModuleLoader__.load({
       };
 
       React.useEffect(() => {
-        if (!requestId) {
+        if (!requestKey) {
           setPlan(null);
           setError(null);
           setBusy(false);
@@ -715,8 +748,10 @@ window.__ModuleLoader__.load({
         setPlan(null);
         setError(null);
         setCascade(props.prefsStore.getSnapshot()?.cascadeChildren === true);
-        props
-          .call("plan", { sessionId: requestId })
+        var pending = workspaceId
+          ? props.call("planWorkspace", { workspaceId: workspaceId })
+          : props.call("plan", { sessionId: request.sessionId });
+        pending
           .then((/** @type {any} */ value) => {
             if (alive) setPlan(value);
           })
@@ -726,14 +761,17 @@ window.__ModuleLoader__.load({
         return () => {
           alive = false;
         };
-      }, [requestId]);
+      }, [requestKey]);
 
       // hooks 必须在任何 return 之前：确认框组件常驻挂载，提前 return 会让 hook 数量在
       // 「有请求 / 无请求」两种渲染之间变化，React 会直接抛 rendered more hooks 错误。
-      var blocked = (plan?.blockers?.length ?? 0) > 0;
-      var children = plan && Array.isArray(plan.children) ? plan.children : [];
-      var removes = plan && Array.isArray(plan.removes) ? plan.removes : [];
-      var canConfirm = !!plan && !blocked && !busy;
+      var blocked = isWorkspace ? false : (plan?.blockers?.length ?? 0) > 0;
+      var children = isWorkspace || !plan ? [] : Array.isArray(plan.children) ? plan.children : [];
+      var removes = isWorkspace || !plan ? [] : Array.isArray(plan.removes) ? plan.removes : [];
+      // 工作区预览里的 children 是**汇总数字**，会话计划里是数组，这里统一成数量。
+      var childCount = isWorkspace ? Number(plan?.children ?? 0) : children.length;
+      var sessionTotal = isWorkspace ? Number(plan?.total ?? 0) : 0;
+      var canConfirm = !!plan && !blocked && !busy && (!isWorkspace || sessionTotal > 0);
 
       /** 焦点策略：可确认时落在破坏性按钮（回车即删），否则落在「取消」。 */
       React.useEffect(() => {
@@ -751,16 +789,23 @@ window.__ModuleLoader__.load({
       var confirm = () => {
         if (!plan || busy) return;
         setBusy(true);
-        props
-          .call("trash", {
-            sessionId: request.sessionId,
-            digest: plan.digest,
-            title: request.title || null,
-            cascade: cascade && plan.children.length > 0,
-          })
+        var pending = isWorkspace
+          ? props.call("trashWorkspace", {
+              workspaceId: workspaceId,
+              digest: plan.digest,
+              cascade: cascade && childCount > 0,
+            })
+          : props.call("trash", {
+              sessionId: request.sessionId,
+              digest: plan.digest,
+              title: request.title || null,
+              cascade: cascade && children.length > 0,
+            });
+        pending
           .then((/** @type {any} */ result) => {
             props.requestStore.set(null);
-            props.onTrashed(result);
+            if (isWorkspace) props.onTrashedMany?.(result);
+            else props.onTrashed?.(result);
           })
           .catch((/** @type {any} */ reason) => {
             setBusy(false);
@@ -768,10 +813,21 @@ window.__ModuleLoader__.load({
           });
       };
 
+      var impact = isWorkspace
+        ? plan
+          ? props.t("confirm.workspace.summary", {
+              n: sessionTotal,
+              size: formatBytes(plan.sizeBytes),
+            })
+          : props.t("confirm.loading")
+        : plan
+          ? impactLine(plan, props.t) || props.t("confirm.size", { size: "?" })
+          : props.t("confirm.loading");
+
       var body = h(
         React.Fragment,
         null,
-        request.title
+        !isWorkspace && request.title
           ? h(
               "div",
               {
@@ -782,28 +838,36 @@ window.__ModuleLoader__.load({
               request.title,
             )
           : null,
-        plan
-          ? h(
-              "div",
-              { style: { color: T.dim } },
-              impactLine(plan, props.t) || props.t("confirm.size", { size: "?" }),
-            )
-          : h("div", { style: { color: T.dim } }, props.t("confirm.loading")),
-        removes.length > 0
+        h("div", { style: { color: T.dim } }, impact),
+        !isWorkspace && removes.length > 0
           ? h(
               "div",
               { style: { color: T.faint, fontSize: "12px", marginTop: "2px" } },
               props.t("confirm.refs", { n: removes.length }),
             )
           : null,
-        children.length > 0
+        isWorkspace && plan && plan.live > 0
+          ? h(
+              "div",
+              { style: { color: T.faint, fontSize: "12px", marginTop: "2px" } },
+              props.t("confirm.workspace.live", { n: plan.live }),
+            )
+          : null,
+        isWorkspace && plan && plan.blocked > 0
+          ? h(
+              "div",
+              { style: { color: T.danger, fontSize: "12px", marginTop: "2px" } },
+              props.t("confirm.workspace.blocked", { n: plan.blocked }),
+            )
+          : null,
+        childCount > 0
           ? h(
               "div",
               { style: { marginTop: "10px" } },
               h(Check, {
                 checked: cascade,
                 disabled: busy,
-                label: props.t("confirm.cascade", { n: children.length }),
+                label: props.t("confirm.cascade", { n: childCount }),
                 onChange: rememberCascade,
               }),
             )
@@ -823,16 +887,54 @@ window.__ModuleLoader__.load({
               h(
                 Disclosure,
                 { label: props.t("confirm.details"), meta: null, maxHeight: "180px" },
-                removes.length > 0
-                  ? h("div", null, props.t("confirm.detail.refs", { list: joinList(removes) }))
-                  : null,
-                children.length > 0
-                  ? h("div", null, props.t("confirm.detail.children", { list: joinList(children) }))
-                  : null,
-                plan.trashPath
-                  ? h("div", null, props.t("confirm.detail.trashPath", { path: plan.trashPath }))
-                  : null,
-                h("div", null, props.t("confirm.detail.recoverable")),
+                isWorkspace
+                  ? h(
+                      React.Fragment,
+                      null,
+                      sessionTotal > 0
+                        ? h(
+                            "div",
+                            null,
+                            props.t("confirm.detail.workspaceSessions", {
+                              list: joinList(plan.sessions, 8),
+                            }),
+                          )
+                        : null,
+                      plan.missing && plan.missing.length > 0
+                        ? h(
+                            "div",
+                            null,
+                            props.t("confirm.workspace.missing", { n: plan.missing.length }),
+                          )
+                        : null,
+                      h("div", null, props.t("confirm.detail.recoverable")),
+                    )
+                  : h(
+                      React.Fragment,
+                      null,
+                      removes.length > 0
+                        ? h(
+                            "div",
+                            null,
+                            props.t("confirm.detail.refs", { list: joinList(removes) }),
+                          )
+                        : null,
+                      children.length > 0
+                        ? h(
+                            "div",
+                            null,
+                            props.t("confirm.detail.children", { list: joinList(children) }),
+                          )
+                        : null,
+                      plan.trashPath
+                        ? h(
+                            "div",
+                            null,
+                            props.t("confirm.detail.trashPath", { path: plan.trashPath }),
+                          )
+                        : null,
+                      h("div", null, props.t("confirm.detail.recoverable")),
+                    ),
               ),
             )
           : null,
@@ -843,7 +945,11 @@ window.__ModuleLoader__.load({
         {
           onClose: close,
           closeLabel: props.t("confirm.cancel"),
-          title: props.t("confirm.title"),
+          title: isWorkspace
+            ? props.t("confirm.workspace.title", {
+                name: request.title || plan?.title || workspaceId,
+              })
+            : props.t("confirm.title"),
           description: props.t("confirm.desc"),
           footer: h(
             React.Fragment,
@@ -862,7 +968,11 @@ window.__ModuleLoader__.load({
                 variant: "danger",
                 disabled: !canConfirm,
               },
-              busy ? props.t("confirm.pending") : props.t("confirm.confirm"),
+              busy
+                ? props.t("confirm.pending")
+                : isWorkspace
+                  ? props.t("confirm.workspace.confirm", { n: sessionTotal })
+                  : props.t("confirm.confirm"),
             ),
           ),
         },
@@ -1129,16 +1239,20 @@ window.__ModuleLoader__.load({
             }),
             h(
               "span",
-              {
-                className: "dsh-sdel-row-title dsh-sdel-truncate",
-                title: entry.title || entry.sessionId,
-              },
-              entry.title || entry.sessionId,
-            ),
-            h(
-              "span",
-              { className: "dsh-sdel-row-meta" },
-              `${props.t("panel.size", { size: formatBytes(entry.bytes) })} · ${props.t("panel.trashedAt", { time: formatTime(entry.trashedAt) })}`,
+              { className: "dsh-sdel-row-text" },
+              h(
+                "span",
+                {
+                  className: "dsh-sdel-row-title dsh-sdel-truncate",
+                  title: entry.title || entry.sessionId,
+                },
+                entry.title || entry.sessionId,
+              ),
+              h(
+                "span",
+                { className: "dsh-sdel-row-meta" },
+                `${props.t("panel.size", { size: formatBytes(entry.bytes) })} · ${props.t("panel.trashedAt", { time: formatTime(entry.trashedAt) })}`,
+              ),
             ),
             confirmThis
               ? h(
@@ -1517,6 +1631,7 @@ window.__ModuleLoader__.load({
       var toastState = useStore(props.toastStore);
       var toast = toastState[0];
       var entryId = toast ? toast.entryId : null;
+      var text = toast ? toast.text : null;
       var shownState = React.useState(false);
       var shown = shownState[0];
       var setShown = shownState[1];
@@ -1525,7 +1640,7 @@ window.__ModuleLoader__.load({
       var setRestoring = restoreState[1];
 
       React.useEffect(() => {
-        if (!entryId) {
+        if (!toast) {
           setShown(false);
           return undefined;
         }
@@ -1539,7 +1654,7 @@ window.__ModuleLoader__.load({
           clearTimeout(raise);
           clearTimeout(timer);
         };
-      }, [entryId]);
+      }, [toast]);
 
       if (!toast) return null;
       return h(
@@ -1565,26 +1680,28 @@ window.__ModuleLoader__.load({
             transition: "opacity .18s ease, transform .18s ease",
           },
         },
-        h("span", null, props.t("confirm.done")),
-        h(
-          Btn,
-          {
-            disabled: restoring,
-            onClick: () => {
-              setRestoring(true);
-              props
-                .call("restore", { entryId: toast.entryId })
-                .then(() => {
-                  setRestoring(false);
-                  props.toastStore.set(null);
-                })
-                .catch(() => {
-                  setRestoring(false);
-                });
-            },
-          },
-          props.t("confirm.undo"),
-        ),
+        h("span", null, text ? text : props.t("confirm.done")),
+        entryId
+          ? h(
+              Btn,
+              {
+                disabled: restoring,
+                onClick: () => {
+                  setRestoring(true);
+                  props
+                    .call("restore", { entryId: toast.entryId })
+                    .then(() => {
+                      setRestoring(false);
+                      props.toastStore.set(null);
+                    })
+                    .catch(() => {
+                      setRestoring(false);
+                    });
+                },
+              },
+              props.t("confirm.undo"),
+            )
+          : null,
       );
     }
 
@@ -1717,6 +1834,7 @@ window.__ModuleLoader__.load({
             prefsStore: props.prefsStore,
             call: props.call,
             onTrashed: props.onTrashed,
+            onTrashedMany: props.onTrashedMany,
           }),
         ),
         h(
@@ -1737,11 +1855,25 @@ window.__ModuleLoader__.load({
     /** 单批条目数：既让「处理中 n/total」有节奏，也避免一次 RPC 太久没有反馈。 */
     var BATCH_CHUNK = 20;
 
+    /**
+     * 等 contextMenus 服务就绪的宽限期（毫秒）。Cordis 的 inject 只有「必须」语义，
+     * 没有可选依赖：老宿主永远不会提供这个服务，等下去就等于「会话菜单里没有删除项」。
+     * 所以超时就认为没有该服务，退回到旧的 slot 渲染。
+     */
+    var MENU_FALLBACK = { ms: 1200 };
+
+    /** 菜单图标键：注册到宿主的 contextMenu.icon keyed slot 上。 */
+    var TRASH_ICON = "session-delete.trash";
+
+    /** 快捷键命令 id：菜单行的 commandId 必须与它一致，键位提示才会显示。 */
+    var COMMAND_DELETE = "session.delete";
+    var COMMAND_DELETE_WORKSPACE = "session.deleteWorkspace";
+
     exports.inject = ["slots", "locale", "connection"];
     exports.apply = function apply(/** @type {any} */ ctx) {
       ctx.effect(() => ctx.locale.register(NS, { zh: zh, en: en }), "session-delete: dictionaries");
 
-      /** @type {(key: string) => string} */
+      /** @type {(key: string, values?: any) => string} */
       var translate;
       var fallbackTranslate = (/** @type {string} */ key) =>
         /** @type {Record<string, string>} */ (zh)[key] || key;
@@ -1776,11 +1908,12 @@ window.__ModuleLoader__.load({
           ".dsh-sdel-panel{display:flex;flex-direction:column;gap:8px;min-height:0;}",
           ".dsh-sdel-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}",
           ".dsh-sdel-list{max-height:min(56vh,520px);overflow-y:auto;border-top:.5px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));}",
-          ".dsh-sdel-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:.5px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));}",
+          ".dsh-sdel-row{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:.5px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));min-width:0;}",
           ".dsh-sdel-row:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.08));}",
-          ".dsh-sdel-row-title{flex:1;font-size:13px;}",
-          ".dsh-sdel-row-meta{color:var(--dsw-alias-label-tertiary,GrayText);font-size:11px;white-space:nowrap;}",
-          ".dsh-sdel-row-actions{display:flex;gap:6px;opacity:0;transition:opacity 120ms ease;}",
+          ".dsh-sdel-row-text{display:flex;flex-direction:column;gap:1px;flex:1 1 auto;min-width:0;}",
+          ".dsh-sdel-row-title{font-size:13px;line-height:18px;min-width:0;}",
+          ".dsh-sdel-row-meta{color:var(--dsw-alias-label-tertiary,GrayText);font-size:11px;line-height:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+          ".dsh-sdel-row-actions{display:flex;gap:6px;flex:none;opacity:0;transition:opacity 120ms ease;}",
           ".dsh-sdel-row:hover .dsh-sdel-row-actions,.dsh-sdel-row:focus-within .dsh-sdel-row-actions,.dsh-sdel-row-actions--open{opacity:1;}",
           ".dsh-sdel-batch{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dsw-alias-label-secondary,GrayText);}",
           ".dsh-sdel-confirm{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;background:var(--dsw-alias-interactive-bg-hover-danger,rgba(217,83,79,.12));font-size:12px;color:var(--dsw-alias-state-error-primary,#d9534f);}",
@@ -1892,6 +2025,66 @@ window.__ModuleLoader__.load({
         void refreshRows(result?.sessionId ? result.sessionId : undefined);
         tickStore.set(tickStore.getSnapshot() + 1);
       };
+      /**
+       * 工作区批量的收尾：逐条结果汇总成一句 toast，并把删掉的 id 记进 retired，
+       * 让下一次 refreshRows 重放移除事件（否则刷新会把 live 会话折回来）。
+       * @param {any} result
+       */
+      const onTrashedMany = (result) => {
+        var ok = 0;
+        var total = 0;
+        if (result && Array.isArray(result.results)) {
+          total = result.results.length;
+          for (let index = 0; index < total; index += 1) {
+            const item = result.results[index];
+            if (!item.ok) continue;
+            ok += 1;
+            if (item.sessionId) retired.add(String(item.sessionId));
+          }
+        }
+        toastStore.set({ text: translate("toast.workspace.done", { ok: ok, total: total }) });
+        void refreshRows(undefined);
+        tickStore.set(tickStore.getSnapshot() + 1);
+      };
+
+      /** 当前会话（主视图持有的那一条）。快捷键的语义就是「这个会话」。 */
+      const currentSession = () => {
+        try {
+          const sessions = ctx.get ? ctx.get("sessions") : undefined;
+          const list = sessions?.list?.getSnapshot?.();
+          if (!list?.byId) return undefined;
+          const ids = Array.isArray(list.ids) ? list.ids : Object.keys(list.byId);
+          for (let index = 0; index < ids.length; index += 1) {
+            const row = list.byId[ids[index]];
+            if ((row?.retainedBy?.mainView ?? 0) > 0) return row;
+          }
+        } catch (_error) {
+          return undefined;
+        }
+        return undefined;
+      };
+
+      /** 当前会话所属的工作区（工作区记账里包含它，或路径与它的 cwd 相同）。 */
+      const currentWorkspace = () => {
+        var row = currentSession();
+        if (!row) return undefined;
+        try {
+          const workspaces = ctx.get ? ctx.get("workspaces") : undefined;
+          const snapshot = workspaces?.list?.getSnapshot?.();
+          const items = snapshot?.items || [];
+          for (let index = 0; index < items.length; index += 1) {
+            const item = items[index];
+            if (Array.isArray(item.sessionIds) && item.sessionIds.includes(row.id)) return item;
+          }
+          for (let cursor = 0; cursor < items.length; cursor += 1) {
+            if (typeof row.cwd === "string" && items[cursor].path === row.cwd) return items[cursor];
+          }
+        } catch (_error) {
+          return undefined;
+        }
+        return undefined;
+      };
+
       // 外部变更（agent 工具、另一个窗口、CLI）不会通知本页面，
       // 定期拉一次会话列表；页面重新可见时也立刻拉一次。
       ctx.effect(() => {
@@ -1918,26 +2111,223 @@ window.__ModuleLoader__.load({
         void refreshRows(undefined);
       };
 
-      ctx.effect(
-        () =>
-          ctx.slots.inject("sidebar.workspaces.session.menu.item", () =>
-            ctx.slots.register(
-              {
-                name: "sidebar.workspaces.session.menu.item",
-                id: "session-delete",
-                order: 420,
-                locale: NS,
-                inject: () => ({
-                  requestDelete: (/** @type {any} */ request) => {
-                    requestStore.set(request);
+      /**
+       * 菜单：优先走官方的 contextMenus 贡献。
+       * 好处有三点：能参与官方排序（不再是「兼容位置」的附加行）、能显示快捷键、
+       * 工作区「…」菜单也有正式入口。拿不到服务（老宿主）时退回旧 slot，功能不减。
+       */
+      const openSessionConfirm = (/** @type {any} */ sessionId, /** @type {any} */ title) => {
+        requestStore.set({ sessionId: sessionId, title: title || null });
+      };
+      const openWorkspaceConfirm = (/** @type {any} */ workspaceId, /** @type {any} */ title) => {
+        requestStore.set({ workspaceId: String(workspaceId), title: title || null });
+      };
+
+      /** @param {any} contextMenus */
+      const installMenuContributions = (contextMenus) => {
+        if (!contextMenus || typeof contextMenus.register !== "function") return false;
+        try {
+          ctx.effect(
+            () =>
+              contextMenus.register({
+                id: COMMAND_DELETE,
+                target: "session",
+                order: 560,
+                resolve: (/** @type {any} */ target) => [
+                  {
+                    id: "delete",
+                    label: translate("menu.delete"),
+                    danger: true,
+                    separatorBefore: true,
+                    ...(typeof IconTrash === "function" ? { icon: { key: TRASH_ICON } } : {}),
+                    commandId: COMMAND_DELETE,
+                    run: () => openSessionConfirm(target.sessionId, target.displayTitle),
                   },
-                }),
-              },
-              DeleteSessionMenuItem,
+                ],
+              }),
+            "session-delete: session menu action",
+          );
+          ctx.effect(
+            () =>
+              contextMenus.register({
+                id: COMMAND_DELETE_WORKSPACE,
+                target: "workspace",
+                order: 250,
+                resolve: (/** @type {any} */ target) => [
+                  {
+                    id: "delete-workspace-sessions",
+                    label: translate("menu.workspaceTrash"),
+                    danger: true,
+                    separatorBefore: true,
+                    ...(typeof IconTrash === "function" ? { icon: { key: TRASH_ICON } } : {}),
+                    commandId: COMMAND_DELETE_WORKSPACE,
+                    run: () => openWorkspaceConfirm(target.workspaceId, target.displayTitle),
+                  },
+                ],
+              }),
+            "session-delete: workspace menu action",
+          );
+          if (typeof IconTrash === "function") {
+            try {
+              ctx.effect(
+                () =>
+                  ctx.slots.inject("contextMenu.icon", () =>
+                    ctx.slots.register(
+                      { name: "contextMenu.icon", key: TRASH_ICON },
+                      function TrashMenuIcon() {
+                        return h(IconTrash, { size: 14 });
+                      },
+                    ),
+                  ),
+                "session-delete: menu icon",
+              );
+            } catch (_error) {
+              /* 图标 slot 不存在时菜单仍然可用（宿主的 icon key 匹配不到就不画） */
+            }
+          }
+          return true;
+        } catch (error) {
+          ctx.logger?.warn?.(
+            `session-delete: cannot register menu contributions: ${errorText(error)}`,
+          );
+          return false;
+        }
+      };
+
+      /** @returns {any} ctx.effect 的释放函数（contextMenus 迟到时用它撤掉旧 slot，避免两行）。 */
+      const registerLegacyMenuItem = () =>
+        ctx.effect(
+          () =>
+            ctx.slots.inject("sidebar.workspaces.session.menu.item", () =>
+              ctx.slots.register(
+                {
+                  name: "sidebar.workspaces.session.menu.item",
+                  id: "session-delete",
+                  order: 420,
+                  locale: NS,
+                  inject: () => ({
+                    requestDelete: (/** @type {any} */ request) => {
+                      requestStore.set(request);
+                    },
+                  }),
+                },
+                DeleteSessionMenuItem,
+              ),
             ),
-          ),
-        "session-delete: session menu item",
-      );
+          "session-delete: session menu item (legacy slot)",
+        );
+
+      /**
+       * 快捷键：删除「当前会话」与「当前工作区的全部会话」。
+       * 注册整体包 try/catch —— 与本机已有的自定义键位冲突时宿主会抛错，
+       * 那种情况下只失去快捷键，菜单与确认框照常工作。
+       */
+      /** @param {any} shortcuts */
+      const installShortcuts = (shortcuts) => {
+        if (!shortcuts || typeof shortcuts.register !== "function") return;
+        const register = (/** @type {any} */ command) => {
+          try {
+            ctx.effect(() => shortcuts.register(command), `session-delete: shortcut ${command.id}`);
+          } catch (error) {
+            ctx.logger?.warn?.(
+              `session-delete: shortcut ${command.id} unavailable: ${errorText(error)}`,
+            );
+          }
+        };
+        const busy = () =>
+          requestStore.getSnapshot()
+            ? { status: "blocked", reason: translate("shortcut.busy") }
+            : null;
+        register({
+          id: COMMAND_DELETE,
+          label: () => translate("shortcut.delete"),
+          aliases: ["delete session", "remove session", "删除会话"],
+          // Linux（桌面与 Web）都不声明默认值：宿主把「修饰键 + Backspace」列为保留组合，
+          // 声明了 register() 会抛错，整条快捷键就没了。用户在设置里可以自己绑。
+          defaults: {
+            "desktop:macos": { code: "Backspace", modifiers: ["primary", "alt"] },
+            "desktop:windows": { code: "Backspace", modifiers: ["primary", "alt"] },
+            "web:macos": { code: "Backspace", modifiers: ["primary", "alt"] },
+            "web:windows": { code: "Backspace", modifiers: ["primary", "alt"] },
+          },
+          // 编辑区也放行：⌘⌥⌫ 不是 macOS/Windows 的文本编辑键（那些是 ⌘⌫ / ⌥⌫ / ⌘⌃⌫），
+          // 而 composer 几乎总是持有焦点，只允许 page 会让快捷键实际上按不出来。
+          // 终端排除在外：那里的删除键有更强的本地语义。
+          regions: ["page", "editable"],
+          modals: [],
+          resolve: () => {
+            const blockedNow = busy();
+            if (blockedNow) return blockedNow;
+            const row = currentSession();
+            if (!row) return { status: "blocked", reason: translate("shortcut.noSession") };
+            return {
+              status: "handled",
+              run: () => openSessionConfirm(row.id, row.displayTitle),
+            };
+          },
+        });
+        // 工作区级清空没有默认键位：误触代价太大，键位留给用户在设置里自己绑。
+        register({
+          id: COMMAND_DELETE_WORKSPACE,
+          label: () => translate("shortcut.workspace"),
+          aliases: ["delete workspace sessions", "清空工作区会话"],
+          defaults: {},
+          regions: ["page"],
+          modals: [],
+          resolve: () => {
+            const blockedNow = busy();
+            if (blockedNow) return blockedNow;
+            const workspace = currentWorkspace();
+            if (!workspace) return { status: "blocked", reason: translate("shortcut.noSession") };
+            return {
+              status: "handled",
+              run: () => openWorkspaceConfirm(workspace.workspaceId, workspace.title),
+            };
+          },
+        });
+      };
+
+      // 两个服务都可能比插件晚就绪：用 ctx.inject 延迟，缺任何一个都不影响插件本身加载。
+      // ctx.inject 只有「必须」语义，所以再加一个宽限期兜底：超时就认定宿主没有
+      // contextMenus，直接上旧的会话菜单 slot（否则老宿主上「删除会话」入口会整个消失）。
+      let menusInstalled = false;
+      /** @type {any} */
+      let legacyDispose = null;
+      const ensureLegacyMenu = () => {
+        if (menusInstalled || legacyDispose) return;
+        legacyDispose = registerLegacyMenuItem();
+      };
+      try {
+        if (typeof ctx.inject === "function") {
+          ctx.inject(["contextMenus"], (/** @type {any} */ scoped) => {
+            const service = scoped?.contextMenus ?? (ctx.get ? ctx.get("contextMenus") : undefined);
+            if (installMenuContributions(service)) {
+              menusInstalled = true;
+              if (legacyDispose) {
+                legacyDispose();
+                legacyDispose = null;
+              }
+            } else {
+              ensureLegacyMenu();
+            }
+          });
+          ctx.inject(["shortcuts"], (/** @type {any} */ scoped) => {
+            installShortcuts(scoped?.shortcuts ?? (ctx.get ? ctx.get("shortcuts") : undefined));
+          });
+          const timer = setTimeout(ensureLegacyMenu, MENU_FALLBACK.ms);
+          ctx.effect(() => () => clearTimeout(timer), "session-delete: menu fallback timer");
+        } else {
+          const menus = ctx.get ? ctx.get("contextMenus") : undefined;
+          if (installMenuContributions(menus)) menusInstalled = true;
+          else ensureLegacyMenu();
+          installShortcuts(ctx.get ? ctx.get("shortcuts") : undefined);
+        }
+      } catch (error) {
+        ctx.logger?.warn?.(
+          `session-delete: menu/shortcut setup failed, falling back: ${errorText(error)}`,
+        );
+        ensureLegacyMenu();
+      }
 
       // 回收站入口固定在侧栏页脚，不出现在每个会话的「…」菜单里。
       ctx.effect(
@@ -2007,6 +2397,7 @@ window.__ModuleLoader__.load({
                     toastStore: toastStore,
                     call: call,
                     onTrashed: onTrashed,
+                    onTrashedMany: onTrashedMany,
                     onPurged: onPurged,
                     onRestored: onRestored,
                     tickStore: tickStore,
@@ -2028,6 +2419,7 @@ window.__ModuleLoader__.load({
         joinList: joinList,
         impactLine: impactLine,
         batchChunk: BATCH_CHUNK,
+        menuFallback: MENU_FALLBACK,
         createPanelLoader: createPanelLoader,
         runBatch: runBatch,
         panelPollMs: PANEL_POLL_MS,
