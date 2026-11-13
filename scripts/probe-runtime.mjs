@@ -239,6 +239,18 @@ const SEAM_CHECKS_SESSION_DELETE = [
     pattern: /sidebar\.footer\.action/u,
     breaks: "侧栏页脚的回收站入口与角标",
   },
+  {
+    file: "@deepseek-ai/dsh-client-ui-settings-general/lib/client.js",
+    name: "settings.section 槽（设置页「会话回收站」分节）",
+    pattern: /settings\.section/u,
+    breaks: "审计 / 体检 / 回执 / 偏好没有落点（设置页少一整节）",
+  },
+  {
+    file: "@deepseek-ai/dsh-web-frontend/dist/assets/index-ghOpC9uV.js",
+    name: "Modal 的 [data-modal-autofocus] 焦点约定（确认按钮默认选中）",
+    pattern: /data-modal-autofocus/u,
+    breaks: "确认框不再默认聚焦「移入回收站」，回车即删的手感退化",
+  },
 ];
 
 /** next-step 依赖的私有 seam（决策卡 + 幽灵提示）。 */

@@ -10,6 +10,7 @@ import { beginOperation, finishOperation, listPending } from "./journal.js";
 import { directorySize, locateSession } from "./locate.js";
 import { auditPath, requireSessionId, sessionsRoot, trashRoot } from "./paths.js";
 import { buildPlan, planExecutable, summarizePlan } from "./plan.js";
+import { readPreferences, writePreferences } from "./preferences.js";
 import { listReceipts, writeReceipt } from "./receipts.js";
 import { buildRefs } from "./refs.js";
 import { listEntries, moveIntoTrash, purgeEntry, readEntry, restoreEntry } from "./trash.js";
@@ -21,6 +22,14 @@ const pkg = nodeRequire("../package.json");
 const SETTLE_MS = 200;
 /** 移走之后复查原路径的时间点；活句柄迟到写入会在这个窗口里重建目录。 */
 const REVIVE_CHECK_MS = 1500;
+/**
+ * 单次批量 RPC 的条目上限。界面按 BATCH_CHUNK 分批调用，这里只是防御性硬上限：
+ * 0.4.x 的上限是 50，用户回收站 80 条时「全选 → 彻底删除」会被整单拒绝，
+ * 表现成「点了没反应」——所以上限要远大于一次常见的批量规模。
+ */
+const MAX_BATCH_IDS = 200;
+/** 客户端每次批量请求的条数，同时也是这里建议的单批规模。 */
+export const BATCH_CHUNK = 20;
 
 /** @param {unknown} error @returns {string} */
 function messageOf(error) {
@@ -859,6 +868,24 @@ export function createOperations({ ctx, dataRoot, logger }) {
     return { ok: errors.length === 0, cleaned: counts, total, errors, receiptId };
   }
 
+  /**
+   * 读取界面偏好（目前只有确认框里「同时删除子会话」的初值）。
+   * 坏文件/坏字段由 preferences.js 统一回落默认值，这里不抛。
+   * @returns {Promise<{ version: number, cascadeChildren: boolean }>}
+   */
+  async function getPrefs() {
+    return readPreferences(dataRoot, logger);
+  }
+
+  /**
+   * 合并写入界面偏好。
+   * @param {Record<string, unknown>} patch
+   * @returns {Promise<{ version: number, cascadeChildren: boolean }>}
+   */
+  async function setPrefs(patch = {}) {
+    return writePreferences(dataRoot, patch, logger);
+  }
+
   async function health() {
     const pending = await listPending(dataRoot);
     return {
@@ -880,7 +907,12 @@ export function createOperations({ ctx, dataRoot, logger }) {
   async function restoreMany(request = {}) {
     const ids = Array.isArray(request.entryIds) ? request.entryIds : [];
     if (ids.length === 0) throw failure("session-delete/invalid-request", "没有选择任何条目");
-    if (ids.length > 50) throw failure("session-delete/invalid-request", "一次最多 50 条");
+    if (ids.length > MAX_BATCH_IDS) {
+      throw failure(
+        "session-delete/invalid-request",
+        `一次最多 ${MAX_BATCH_IDS} 条（界面会自动分批）`,
+      );
+    }
     /** @type {{ entryId: string, ok: boolean, sessionId?: string, error?: string }[]} */
     const results = [];
     for (const entryId of ids) {
@@ -902,7 +934,12 @@ export function createOperations({ ctx, dataRoot, logger }) {
   async function purgeMany(request = {}) {
     const ids = Array.isArray(request.entryIds) ? request.entryIds : [];
     if (ids.length === 0) throw failure("session-delete/invalid-request", "没有选择任何条目");
-    if (ids.length > 50) throw failure("session-delete/invalid-request", "一次最多 50 条");
+    if (ids.length > MAX_BATCH_IDS) {
+      throw failure(
+        "session-delete/invalid-request",
+        `一次最多 ${MAX_BATCH_IDS} 条（界面会自动分批）`,
+      );
+    }
     /** @type {{ entryId: string, ok: boolean, bytes?: number, error?: string }[]} */
     const results = [];
     for (const entryId of ids) {
@@ -937,5 +974,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
     purge,
     reconcile,
     auditLog,
+    getPrefs,
+    setPrefs,
   };
 }

@@ -1,6 +1,6 @@
 // @ts-check
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -299,5 +299,29 @@ test("purgeMany 逐条彻底删除，并对不存在的条目如实报错", asyn
     result.results.find((/** @type {any} */ item) => item.entryId === "missing-entry")?.ok,
     false,
   );
+  await rm(dataRoot, { recursive: true, force: true });
+});
+
+test("界面偏好经 operations 读写并落盘", async () => {
+  const { ops, dataRoot } = await fixture();
+  assert.deepEqual(await ops.getPrefs(), { version: 1, cascadeChildren: false });
+  const saved = await ops.setPrefs({ cascadeChildren: true });
+  assert.equal(saved.cascadeChildren, true);
+  assert.equal((await ops.getPrefs()).cascadeChildren, true);
+  const raw = JSON.parse(
+    await readFile(join(dataRoot, "session-trash", "preferences.json"), "utf8"),
+  );
+  assert.equal(raw.cascadeChildren, true);
+  await rm(dataRoot, { recursive: true, force: true });
+});
+
+test("批量接口的硬上限远大于常见规模：80 条不会被整单拒绝", async () => {
+  const { ops, dataRoot } = await fixture();
+  const ids = Array.from({ length: 80 }, (_, index) => `entry-${index}`);
+  const result = await ops.purgeMany({ entryIds: ids });
+  // 条目都不存在，所以逐条失败；关键是「没有被整单拒绝」，能拿到逐条结果。
+  assert.equal(result.total, 80);
+  assert.equal(result.succeeded, 0);
+  assert.equal(result.results.length, 80);
   await rm(dataRoot, { recursive: true, force: true });
 });
