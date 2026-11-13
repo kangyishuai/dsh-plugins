@@ -141,12 +141,24 @@ pnpm verify                        # 仓库门禁（含单测、规范、文档�
 web 冒烟（`pnpm smoke:advisor`）→ 桌面只读回归（**永远带 `--require`**）。
 任何一步失败立刻停并给出下一步提示；只有显式 `--skip-desktop` 才跳桌面端，且结束时会打印"门禁不完整"。
 
+## 1.5 决策日志（`decisions.jsonl`）与复盘（`pnpm advisor:review`）
+
+宿主侧**每个回合**往 `<数据根>/advisor/decisions.jsonl` 写一行（没徵询的回合也写），
+用来回答「该徵询的时候有没有徵询」。字段与原因码定义在 `packages/advisor/lib/decisions.js`。
+
+- 单测：`test/decisions.test.js`（归类/分桶/回填/统计）与 `test/decisions-wiring.test.js`
+  （用真实事件序列驱动跟踪器，确认回合结束会落行、下一条用户消息能回填 outcome）。
+  注意 `service.js` 依赖 `@deepseek-ai/*`，单测环境里导入不了；所以「事件 → 决策行」这条逻辑
+  放在 `decisions.js` 的 `createDecisionTracker`，service 只做薄委托。
+- 复盘：`pnpm advisor:review [--home <数据根>] [--days N] [--json]`，只读本地文件。
+- 冒烟里只守住格式约定（存在就必须每行一个合法 JSON）；本冒烟不发真实回合，所以文件通常不存在。
+
 ## 2. web 端到端冒烟（`pnpm smoke:advisor`）
 
 临时 `DSH_HOME`（复制 desktop profile、剥掉第三方插件、只放一个临时工作区）里启动**真实宿主**，
 装当前源码打出的包，再用 ego-browser 跑一遍「装得上、命令注册了、设置卡渲染了、且**什么都没花**」。
 
-**13 项断言（2026-11-12 实测全 PASS）**：
+**14 项断言（2026-11-14 实测全 PASS）**：
 
 1. 页面可交互（`contenteditable` 输入框存在）；
 2. 插件 client 半已加载（`style[data-plugin]` 含 `@kangyishuai/dsh-advisor`）；
