@@ -44,18 +44,19 @@ pnpm verify   # lint + typecheck + 规范检查 + 53 个单测
 
 已覆盖：
 
-| 文件                      | 覆盖内容                                                                                                                               |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `test/paths.test.js`      | 数据根优先级、id 校验（路径穿越）、`encodeSegment`/`projectKey` 与宿主编码一致、路径逃逸拒绝                                           |
-| `test/plan.test.js`       | digest 确定性、标题不参与摘要、缺位置产生 blocker、事实漂移检测、字节格式化                                                            |
-| `test/trash.test.js`      | 移入/列出/恢复/恢复冲突拒绝/彻底删除/陌生目录保留并告警/meta 契约                                                                      |
-| `test/journal.test.js`    | intent→done 清理、失败留现场、坏记录不阻断                                                                                             |
-| `test/audit.test.js`      | 20 并发追加无交错、超长截断、读取顺序                                                                                                  |
-| `test/capability.test.js` | 三档能力判定（api/internal/unknown）                                                                                                   |
-| `test/operations.test.js` | 完整 trash 流程（归档→停止→摘引用→审计→对账）、digest 漂移拒绝、无目录 blocked 且零副作用、restore 还原工作区记账、purge、并发双击拒绝 |
-| `test/client.test.js`     | client 半的设计 token：只用宿主真实存在的 `--dsw-*`、计数徽章的底色/前景必须是配对 token（不是写死的 `#fff`）                          |
+| 文件                         | 覆盖内容                                                                                                                                                                                                                               |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test/paths.test.js`         | 数据根优先级、id 校验（路径穿越）、`encodeSegment`/`projectKey` 与宿主编码一致、路径逃逸拒绝                                                                                                                                           |
+| `test/plan.test.js`          | digest 确定性、标题不参与摘要、缺位置产生 blocker、事实漂移检测、字节格式化                                                                                                                                                            |
+| `test/trash.test.js`         | 移入/列出/恢复/恢复冲突拒绝/彻底删除/陌生目录保留并告警/meta 契约                                                                                                                                                                      |
+| `test/journal.test.js`       | intent→done 清理、失败留现场、坏记录不阻断                                                                                                                                                                                             |
+| `test/audit.test.js`         | 20 并发追加无交错、超长截断、读取顺序                                                                                                                                                                                                  |
+| `test/capability.test.js`    | 三档能力判定（api/internal/unknown）                                                                                                                                                                                                   |
+| `test/operations.test.js`    | 完整 trash 流程（归档→停止→摘引用→审计→对账）、digest 漂移拒绝、无目录 blocked 且零副作用、restore 还原工作区记账、purge、并发双击拒绝                                                                                                 |
+| `test/client.test.js`        | client 半的纯逻辑：设计 token（只用宿主真实存在的 `--dsw-*`、徽章底色/前景成对）、确认框影响面只拼成立的事实、80 条分批不超上限、批量部分失败/中途停止、面板加载失败不拖死浮层、内联词典与 `locale/*.json` 键集一致                    |
+| `test/client-wiring.test.js` | client 半的接线：设置页分节、会话/工作区两个 contextMenus 贡献与 commandId、快捷键默认键的平台布局（Linux 不绑/编辑区放行/终端排除）、无当前会话 blocked、contextMenus 缺失退回旧 slot、键位冲突不拖垮菜单、两个服务都缺失插件照常加载 |
 
-**没覆盖**：client 的渲染与交互（`test/client.test.js` 只校验 token 与配色配对，不渲染组件）、RPC 线缆、真实宿主内部契约（`detachEntered`/`storageDomain`/`session-stop`）。所以下面两层不能省。
+**没覆盖**：React 的真实渲染与布局（两个 client 单测都不渲染组件，只直接驱动纯函数与注册动作）、RPC 线缆、真实宿主内部契约（`detachEntered`/`storageDomain`/`session-stop`）。所以下面两层不能省。
 
 ## 2. 启动冒烟（1 分钟）与 GUI 冒烟脚本（约 3 分钟）
 
