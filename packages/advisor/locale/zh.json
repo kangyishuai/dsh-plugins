@@ -173,7 +173,7 @@
     "settings.group.money": "单价",
     "settings.group.generation": "生成参数",
     "settings.group.delivery": "投递与行为",
-    "settings.group.more": "更多",
+    "settings.group.more": "更多设置",
     "settings.group.status": "状态与诊断",
     "settings.basic.budgetHint": "0 = 不限；默认 0，范围 0–10000（按当前币种）。切换币种会按汇率折算；更细的限额在高级设置里。",
     "settings.budget.maxCostHint": "每天最多花多少钱；0 = 不限。只有填了单价才会计算金额。",
@@ -233,6 +233,12 @@
     "settings.budget.cachePriceSource.settings": "用户设置",
     "settings.budget.cachePriceSource.none": "未配置（缓存 token 不计）",
     "settings.status.cache": "缓存 token：{read} read / {write} write",
-    "settings.status.cacheUnpriced": "账本里有缓存 token，但缓存单价为 0：缓存部分没有计价。"
+    "settings.status.cacheUnpriced": "账本里有缓存 token，但缓存单价为 0：缓存部分没有计价。",
+    "settings.nav": "顾问",
+    "settings.summary.mode": "模式",
+    "settings.summary.route": "路由",
+    "settings.summary.budget": "预算",
+    "settings.route.unset": "还没选",
+    "settings.budget.unlimited": "不限"
   }
 }

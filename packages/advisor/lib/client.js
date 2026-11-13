@@ -77,6 +77,13 @@ window.__ModuleLoader__.load({
       "settings.group.budget": "预算",
       "settings.group.privacy": "隐私",
       "settings.group.advanced": "高级与状态",
+      "settings.group.more": "更多设置",
+      "settings.nav": "顾问",
+      "settings.summary.mode": "模式",
+      "settings.summary.route": "路由",
+      "settings.summary.budget": "预算",
+      "settings.route.unset": "还没选",
+      "settings.budget.unlimited": "不限",
       "settings.mode": "模式",
       "settings.mode.off": "关闭（off）",
       "settings.mode.offHint": "不发起任何徵询，也不产生费用。",
@@ -214,6 +221,13 @@ window.__ModuleLoader__.load({
       "settings.group.budget": "Budgets",
       "settings.group.privacy": "Privacy",
       "settings.group.advanced": "Advanced & status",
+      "settings.group.more": "More settings",
+      "settings.nav": "Advisor",
+      "settings.summary.mode": "Mode",
+      "settings.summary.route": "Route",
+      "settings.summary.budget": "Budget",
+      "settings.route.unset": "not chosen",
+      "settings.budget.unlimited": "Unlimited",
       "settings.mode": "Mode",
       "settings.mode.off": "Off",
       "settings.mode.offHint": "Never consult the advisor and never spend.",
@@ -317,6 +331,13 @@ window.__ModuleLoader__.load({
       ".dsh-advisor-toast-mark{font-weight:600;line-height:1.4;}",
       ".dsh-advisor-toast-text{flex:1;min-width:0;word-break:break-word;white-space:pre-wrap;}",
       ".dsh-advisor-settings{display:flex;flex-direction:column;gap:12px;font-size:13px;line-height:1.5;color:var(--dsw-alias-label-primary,CanvasText);}",
+      // 设置分节的首屏摘要：三行只读信息 + 一个紧凑的模式下拉。
+      ".dsh-advisor-summary{display:flex;flex-direction:column;gap:0;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.22));border-radius:8px;overflow:hidden;}",
+      ".dsh-advisor-summary-row{display:flex;align-items:center;gap:12px;padding:9px 12px;min-height:38px;}",
+      ".dsh-advisor-summary-row+.dsh-advisor-summary-row{border-top:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.16));}",
+      ".dsh-advisor-summary-label{flex:none;width:4.5em;color:var(--dsw-alias-label-secondary,#a4a4a4);}",
+      ".dsh-advisor-summary-value{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
+      ".dsh-advisor-select-compact{max-width:min(320px,100%);}",
       ".dsh-advisor-head{display:flex;flex-direction:column;gap:2px;}",
       ".dsh-advisor-title{font-size:14px;font-weight:600;}",
       ".dsh-advisor-desc{font-size:12px;color:var(--dsw-alias-label-secondary,GrayText);}",
@@ -1849,6 +1870,10 @@ window.__ModuleLoader__.load({
         return [value, set];
       }
 
+      // 「更多设置」默认收起：首屏只留模式/路由/预算三行。
+      let moreState = useUiState("more", false);
+      let moreOpen = moreState[0];
+      let setMoreOpen = moreState[1];
       let advancedState = useUiState("advanced", false);
       let advancedOpen = advancedState[0];
       let setAdvancedOpen = advancedState[1];
@@ -3631,20 +3656,63 @@ window.__ModuleLoader__.load({
       let showForm = draft.mode !== "off" || offExpanded;
       let dirty = isDirty();
 
+      // ---- 首屏摘要：模式 / 路由 / 预算 ----
+      // 设置从「通用设置里的一大张卡」搬进独立分节后，首屏只留三行；
+      // 其余项收进「更多设置」折叠，默认收起（偏好仍然是可改的，只是不占首屏）。
+      let routeText =
+        (draft.provider === "" ? t("settings.route.unset") : draft.provider) +
+        (draft.model === "" ? "" : ` / ${draft.model}`) +
+        (draft.reasoningEffort === "" || draft.reasoningEffort === undefined
+          ? ""
+          : ` · ${draft.reasoningEffort}`);
+      let budgetText =
+        draft.maxCostPerDay > 0
+          ? `${draft.maxCostPerDay} ${draft.currency}`
+          : t("settings.budget.unlimited");
+      /** @param {string} label @param {string} value */
+      const summaryRow = (label, value) =>
+        h("div", { className: "dsh-advisor-summary-row", key: label }, [
+          h("span", { className: "dsh-advisor-summary-label", key: "label" }, label),
+          h("span", { className: "dsh-advisor-summary-value", key: "value" }, value),
+        ]);
+      let modeSelect = h(
+        "select",
+        {
+          className: "dsh-advisor-select dsh-advisor-select-compact",
+          "data-advisor-select": "mode",
+          key: "modeSelect",
+          onChange: function onCompactModeChange(/** @type {any} */ event) {
+            chooseMode(String(event.target.value));
+          },
+          value: draft.mode,
+        },
+        SETTINGS_MODES.map((/** @type {string} */ value) =>
+          h("option", { key: value, value: value }, t(`settings.mode.${value}`)),
+        ),
+      );
+      let summary = h("div", { className: "dsh-advisor-summary", "data-advisor-summary": "" }, [
+        summaryRow(t("settings.summary.mode"), modeSelect),
+        summaryRow(t("settings.summary.route"), routeText),
+        summaryRow(t("settings.summary.budget"), budgetText),
+      ]);
+
       let children = [
         h("div", { className: "dsh-advisor-head", key: "head" }, [
           h("div", { className: "dsh-advisor-title", key: "title" }, t("settings.title")),
           h("div", { className: "dsh-advisor-desc", key: "desc" }, t("settings.desc")),
         ]),
         errorBanner(),
-        modeRow,
+        summary,
       ];
       if (!showForm) {
         children.push(offNotice());
       } else {
         if (draft.mode === "off") children.push(offNotice());
-        children.push(group("settings.group.basic", basicBody, "basic"));
-        children.push(
+        // 其余设置在折叠里：默认收起，标题上带「有改动」徽标。
+        let moreBody = [
+          // 首屏摘要里的模式下拉是紧凑版；展开「更多设置」后仍保留带说明的完整行。
+          modeRow,
+          group("settings.group.basic", basicBody, "basic"),
           disclosure(
             "advanced",
             t("settings.group.advanced"),
@@ -3655,8 +3723,6 @@ window.__ModuleLoader__.load({
               setAdvancedOpen(!advancedOpen);
             },
           ),
-        );
-        children.push(
           disclosure(
             "status",
             t("settings.group.status"),
@@ -3665,6 +3731,20 @@ window.__ModuleLoader__.load({
             statusOpen,
             function toggleStatus() {
               setStatusOpen(!statusOpen);
+            },
+          ),
+        ];
+        children.push(
+          disclosure(
+            "more",
+            t("settings.group.more"),
+            // 这里不放「高级项改了几处」的数字：对「更多设置」这个层级没意义，
+            // 容易被读成「还有 13 项没看」。
+            "",
+            moreBody,
+            moreOpen,
+            function toggleMore() {
+              setMoreOpen(!moreOpen);
             },
           ),
         );
@@ -3814,7 +3894,8 @@ window.__ModuleLoader__.load({
           "settings.group.money": "单价",
           "settings.group.generation": "生成参数",
           "settings.group.delivery": "投递与行为",
-          "settings.group.more": "更多",
+          // 「更多设置」这个折叠标题不在 LOCALE_EXTRA 里重复定义：同名键两处取值不同时，
+          // 后合并的会赢，之前就出现了「内嵌字典写更多设置、实际渲染成更多」的怪象。
           "settings.group.status": "状态与诊断",
           "settings.basic.budgetHint":
             "0 = 不限；默认 0，范围 0–10000（按当前币种）。切换币种会按汇率折算；更细的限额在高级设置里。",
@@ -3976,7 +4057,7 @@ window.__ModuleLoader__.load({
           "settings.group.money": "Prices",
           "settings.group.generation": "Generation",
           "settings.group.delivery": "Delivery & behavior",
-          "settings.group.more": "More",
+          // 同上：不在 LOCALE_EXTRA 里重复定义「更多设置」的英文名。
           "settings.group.status": "Status & diagnostics",
           "settings.basic.budgetHint":
             "0 = unlimited; default 0, range 0–10000. Finer limits are under Advanced.",
@@ -4415,12 +4496,13 @@ window.__ModuleLoader__.load({
       // 设置页 → 通用：顾问的模式、路由、预算、隐私与状态摘要。
       ctx.effect(
         () =>
-          ctx.slots.inject("settings.general.item", () =>
+          ctx.slots.inject("settings.section", () =>
             ctx.slots.register(
               {
-                name: "settings.general.item",
+                name: "settings.section",
                 id: "advisor",
-                order: 880,
+                order: 92,
+                label: () => t("settings.nav"),
                 locale: NS,
                 // 同时注入 apply 里绑定的 t：宿主没给 props.t 时也不会退化成裸 key。
                 inject: () => ({ api: settingsApi, t: t }),

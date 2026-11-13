@@ -58,7 +58,7 @@ Re-run `pnpm pack` + `add` after changing the code. The plugin has a host half a
 
 Settings live in one JSON file, `<DSH_HOME>/advisor.settings.json` (`DSH_HOME` defaults to `~/.dsh`; the plugin's `dataRoot` config overrides it). The host re-reads the file before each consultation (1 s cache), so editing it applies to the next call without a restart. Unknown keys are dropped, out-of-range numbers are clamped, and a corrupt file falls back to the defaults. **The default is `off`** — a plugin that spends money and sends conversation content stays opt-in.
 
-**Settings UI.** Settings → General → Advisor. With the default `off`, the card shows only the mode, a one-line status and “Configure advisor”. Expanding or enabling it reveals:
+**Settings UI.** Settings → **Advisor** (its own section now, no longer buried in General). The first screen is three rows: mode, route, budget; everything else sits in a “More settings” fold that starts collapsed. With the default `off`, the card shows only the mode, a one-line status and “Configure advisor”. Enabling it reveals:
 
 - **Basics**: mode, currency, provider, model, reasoning effort, daily budget, send scope, redaction.
 - **Advanced** (folded by default): call limits, workspace limits, CNY-per-USD rate, prices (including cache read/write), output/input caps, advice-item cap, allowlist, auto-review, file reading, shadow dedupe, sent-content recording. The heading shows “Defaults” or “N changed”.
@@ -191,7 +191,7 @@ Nothing else: no workspace files, no session-log records of its own (a consultat
 - **Pairing needs your declaration.** DSH has no cross-vendor capability catalog, so "is the advisor at least as strong as the main model" can only come from your `tiers`. Without an entry the result says **unverified** and the consultation proceeds; it never pretends the check passed. With `pairingEnforcement: "block"` a lower declared tier rejects the consultation.
 - **Token counts can be low on an aborted call.** If a consultation is cancelled or times out, no usage chunk may arrive; the ledger then records the call with zero tokens and a cost budget can lag real spend. Treat the ledger as a good estimate, not an invoice.
 - **The advisor route can be broken from outside this plugin** (wrong base URL, missing key, rate limit). Every failure becomes a structured tool result (`MISSING_CREDENTIAL`, `rate_limited`, `overloaded`, `prompt_too_long`, `timeout`, `aborted`, …) and never breaks the turn.
-- **The settings card lives at the bottom of Settings → General.** It may need scrolling; keys marked JSON-only still need the settings file, and the `/advisor` picker remains available.
+- **The settings live in their own Settings → Advisor section**, with a three-row summary on top and a collapsed “More settings” fold. Keys marked JSON-only still need the settings file, and the `/advisor` picker remains available.
 - **Partially enforced knobs.** `sessionCap` caps delivered advice per session (blockers exempt); `dedupe` / `immuneTurns` only matter on the shadow path — see [Configure](#configure).
 - **One attempt, not a retry loop.** A malformed advisor answer is reported as unavailable rather than retried; an unsupported thinking effort is retried exactly once without an effort.
 - **`shadow` mode still spends quota.** It skips the injection, not the call. And while `shadow` is on, an explicit `advisor` tool call still returns its advice: the mode suppresses the automatic end-of-turn review, not a model-initiated consultation. Use `off` to stop all calls.

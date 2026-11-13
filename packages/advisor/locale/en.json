@@ -173,7 +173,7 @@
     "settings.group.money": "Prices",
     "settings.group.generation": "Generation",
     "settings.group.delivery": "Delivery & behavior",
-    "settings.group.more": "More",
+    "settings.group.more": "More settings",
     "settings.group.status": "Status & diagnostics",
     "settings.basic.budgetHint": "0 = unlimited; default 0, range 0–10000 in the selected currency. Switching currency converts at the rate; finer limits are under Advanced.",
     "settings.budget.maxCostHint": "Maximum spend per day; 0 = unlimited. Only counted when prices are set.",
@@ -233,6 +233,12 @@
     "settings.budget.cachePriceSource.settings": "user settings",
     "settings.budget.cachePriceSource.none": "unset (cache tokens not priced)",
     "settings.status.cache": "Cache tokens: {read} read / {write} write",
-    "settings.status.cacheUnpriced": "The ledger has cache tokens, but cache prices are 0: that part is not priced."
+    "settings.status.cacheUnpriced": "The ledger has cache tokens, but cache prices are 0: that part is not priced.",
+    "settings.nav": "Advisor",
+    "settings.summary.mode": "Mode",
+    "settings.summary.route": "Route",
+    "settings.summary.budget": "Budget",
+    "settings.route.unset": "not chosen",
+    "settings.budget.unlimited": "Unlimited"
   }
 }
