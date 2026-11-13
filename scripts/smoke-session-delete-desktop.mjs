@@ -264,6 +264,34 @@ const main = async () => {
       panelShape !== null && panelShape.hasBatch === true,
       JSON.stringify(panelShape),
     );
+    // 行布局：条目标题必须能读出来（不能被压缩成「…」），体积/时间在第二行。
+    // 之前行的 flex 分配有问题，面板一窄标题就只剩 `❗…`。
+    const rowLayout = await cdp.evaluate(`(() => {
+      const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent || "").includes("会话回收站"));
+      if (!dlg) return { status: "no-panel" };
+      const rows = [...dlg.querySelectorAll(".dsh-sdel-row")];
+      const detail = rows.map((row) => {
+        const title = row.querySelector(".dsh-sdel-row-title");
+        const meta = row.querySelector(".dsh-sdel-row-meta");
+        const titleRect = title ? title.getBoundingClientRect() : null;
+        const metaRect = meta ? meta.getBoundingClientRect() : null;
+        return {
+          title: title ? (title.textContent || "").trim() : "",
+          titleWidth: titleRect ? Math.round(titleRect.width) : 0,
+          metaBelowTitle: Boolean(titleRect && metaRect && metaRect.top >= titleRect.bottom - 1),
+        };
+      });
+      const readable = detail.filter((row) => row.title.length >= 2 && row.titleWidth >= 60);
+      return { status: "ok", rows: rows.length, readable: readable.length, detail: detail.slice(0, 3) };
+    })()`);
+    check(
+      "回收站条目：标题可读且与体积/时间分两行",
+      rowLayout?.status === "ok" &&
+        (rowLayout.rows === 0 ||
+          (rowLayout.readable === rowLayout.rows &&
+            rowLayout.detail.every((/** @type {any} */ row) => row.metaBelowTitle === true))),
+      JSON.stringify(rowLayout ?? null).slice(0, 240),
+    );
     await cdp.screenshot(join(SHOTS, "02-panel.png"));
     await pressEscape(cdp);
     await sleep(600);
