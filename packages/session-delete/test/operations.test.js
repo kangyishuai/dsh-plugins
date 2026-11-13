@@ -325,3 +325,59 @@ test("批量接口的硬上限远大于常见规模：80 条不会被整单拒�
   assert.equal(result.results.length, 80);
   await rm(dataRoot, { recursive: true, force: true });
 });
+
+test("planWorkspace 聚合工作区里每个会话的影响面并给出 digest", async () => {
+  const { ops, dataRoot } = await fixture({ children: [{ id: "child-1", title: "子代理" }] });
+  const preview = await ops.planWorkspace("ws1");
+  assert.equal(preview.workspaceId, "ws1");
+  assert.equal(preview.total, 1);
+  assert.equal(preview.live, 0);
+  assert.equal(preview.children, 1, "子会话数量要汇总进来");
+  assert.ok(preview.sizeBytes >= 4096);
+  assert.match(preview.digest, /^[0-9a-f]{32}$/u);
+  assert.deepEqual(preview.missing, []);
+  // 同一组事实 → 同一摘要；换工作区 → 不同摘要。
+  assert.equal((await ops.planWorkspace("ws1")).digest, preview.digest);
+  await rm(dataRoot, { recursive: true, force: true });
+});
+
+test("planWorkspace 跳过登记表里已不存在的会话，而不是整单失败", async () => {
+  const { ops, state, dataRoot } = await fixture();
+  state.sessionIds.add("session-ghost");
+  const preview = await ops.planWorkspace("ws1");
+  assert.equal(preview.total, 1, "只有真实存在的会话进入影响面");
+  assert.deepEqual(preview.missing, ["session-ghost"]);
+  await rm(dataRoot, { recursive: true, force: true });
+});
+
+test("trashWorkspace 的 digest 漂移会拒绝执行", async () => {
+  const { ops, dataRoot } = await fixture();
+  await assert.rejects(
+    ops.trashWorkspace("ws1", { digest: "deadbeef" }),
+    /会话在确认期间发生了变化|发生了变化/u,
+  );
+  await rm(dataRoot, { recursive: true, force: true });
+});
+
+test("trashWorkspace 逐条删除并把全部会话移出工作区记账", async () => {
+  const { ops, state, sessionId, dataRoot } = await fixture({
+    children: [{ id: "child-1", title: "子代理" }],
+  });
+  const preview = await ops.planWorkspace("ws1");
+  const result = await ops.trashWorkspace("ws1", { digest: preview.digest, cascade: true });
+  assert.equal(result.ok, true);
+  assert.equal(result.total, 1);
+  assert.equal(result.succeeded, 1);
+  assert.ok(result.results[0].entryId, "每条都要给出回收站 entryId");
+  assert.equal(result.results[0].children, 1, "cascade 生效时报告带走的子会话数");
+  assert.equal(state.sessionIds.has(sessionId), false, "工作区记账里不该再留着它");
+  const listed = await ops.list();
+  assert.equal(listed.entries.length, 2, "父会话与子会话各自进回收站");
+  await rm(dataRoot, { recursive: true, force: true });
+});
+
+test("trashWorkspace 对不存在的工作区明确报错", async () => {
+  const { ops, dataRoot } = await fixture();
+  await assert.rejects(ops.planWorkspace("ws-missing"), /找不到工作区/u);
+  await rm(dataRoot, { recursive: true, force: true });
+});

@@ -224,6 +224,34 @@ export class SessionDeleteService extends TypertRemoteService {
   }
 
   /**
+   * 工作区级影响面：一次返回该工作区全部会话的体积/活体/子会话与聚合 digest。
+   * @param {{ workspaceId: string }} request
+   */
+  async planWorkspace(request) {
+    try {
+      return await this.ops.planWorkspace(request?.workspaceId);
+    } catch (error) {
+      rethrow(error);
+    }
+  }
+
+  /**
+   * 把整个工作区的会话逐条移入回收站（汇总部分失败）。
+   * @param {{ workspaceId: string, digest?: string, cascade?: boolean }} request
+   */
+  async trashWorkspace(request) {
+    try {
+      return await this.ops.trashWorkspace(request?.workspaceId, {
+        digest: request?.digest,
+        cascade: request?.cascade === true,
+        operator: "ui",
+      });
+    } catch (error) {
+      rethrow(error);
+    }
+  }
+
+  /**
    * 把会话移入回收站。
    * @param {{ sessionId: string, digest?: string, title?: string | null, cascade?: boolean }} request
    */
@@ -357,6 +385,8 @@ declareRemote(SessionDeleteService, "health");
 declareRemote(SessionDeleteService, "getPrefs");
 declareRemote(SessionDeleteService, "setPrefs");
 declareRemote(SessionDeleteService, "plan");
+declareRemote(SessionDeleteService, "planWorkspace");
+declareRemote(SessionDeleteService, "trashWorkspace");
 declareRemote(SessionDeleteService, "trash");
 declareRemote(SessionDeleteService, "list");
 declareRemote(SessionDeleteService, "restore");

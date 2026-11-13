@@ -8,7 +8,7 @@
 
 非官方 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 插件，与 DeepSeek 无关。
 
-> **状态：早期可用。** 已在当前目标 DSH 版本上用 `pnpm smoke:session-delete`（临时 DSH home，27 项端到端断言）和 `pnpm probe:runtime` 验证；桌面只读回归是在更早的版本上做的。具体范围见[兼容性与降级](#兼容性与降级)表格。`pnpm gate session-delete` 一条命令跑完发版门禁。仍是年轻软件，重要数据请自行备份。
+> **状态：早期可用。** 已在当前目标 DSH 版本上用 `pnpm smoke:session-delete`（临时 DSH home，31 项端到端断言）和 `pnpm probe:runtime` 验证；桌面只读回归是在更早的版本上做的。具体范围见[兼容性与降级](#兼容性与降级)表格。`pnpm gate session-delete` 一条命令跑完发版门禁。仍是年轻软件，重要数据请自行备份。
 
 
 ![删除确认框：一行影响面、可选的级联勾选、以及「详情」折叠](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/overview.png)
@@ -22,13 +22,14 @@ DSH 自带的「归档」只是把会话藏起来：id 记进工作区的归档�
 - **删前预演（plan / dry-run）。** 确认框由一份计划生成：占用体积、是否 live、有几个子会话、将清理哪些引用。真正执行前会重新算一遍并与你确认时的计划比对，不一致就中止，避免删掉你没看到的东西。
 - **审计日志。** 每次删除 / 恢复 / 彻底删除都往 `~/.dsh/session-trash/audit.log` 追加一行 JSON，在 **设置 → 会话回收站** 里能直接看。
 - **删除回执。** 移走之后核对会话可能被引用的几处，把没清干净的残留列出来（删除仍是一次一条；回收站列表支持批量恢复 / 批量彻底删除）。
+- **快捷键与工作区批量。** `⌘⌥⌫`（可在 设置 → 快捷键 改）对当前会话直接打开同一个确认框；工作区「…」菜单里多了 **删除此工作区的全部会话…**，先给出整组影响面，再逐条删除。
 - **安静的界面。** 确认框只留一行「体积 · 子会话 · 正在运行」，技术细节收进「详情」；回收站是单页列表；体检、审计、回执搬到设置页。子会话的勾选沿用你上次的选择，存在宿主侧 `~/.dsh/session-trash/preferences.json`。
 
 ## 截图
 
-| 删除确认                                                                                                                           | 回收站                                                                                                                        | 设置 → 会话回收站                                                                                                                      |
-| ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| ![删除确认](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/confirm-dialog.png) | ![回收站](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/trash-panel.png) | ![设置页分节](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/settings-section.png) |
+| 删除确认                                                                                                                           | 工作区批量                                                                                                                            | 回收站                                                                                                                        | 设置 → 会话回收站                                                                                                                      |
+| ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| ![删除确认](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/confirm-dialog.png) | ![工作区批量](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/workspace-batch.png) | ![回收站](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/trash-panel.png) | ![设置页分节](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/settings-section.png) |
 
 <sub>截图由 <code>SMOKE_DEMO=1 pnpm smoke:session-delete</code> 生成，工作区名、会话标题和 ID 都已替换为演示数据。</sub>
 
