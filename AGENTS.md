@@ -35,7 +35,7 @@
 1. 新插件：`pnpm new <name>`，然后 `pnpm install`
 2. 安装到本地验证：先打包再装——`cd packages/<name> && pnpm pack --pack-destination /tmp`，然后 `dsh plugin --profile desktop add /tmp/<tgz>`。**不要用 `link:`**：真实路径在 profile 外面，宿主注入的 `@deepseek-ai/*` 解析覆盖不到，插件会激活失败（见 [runtime](docs/runtime/0.2.1-rc.5.md) §6.9，该节在 0.2.2 仍然成立）
 3. host 半（`lib/index.js`）改动 → **重启 DSH 桌面版**；client 半（`lib/client.js`）改动 → **刷新页面**
-4. 验证完必须能在侧栏或设置里看到真实效果，不能只靠单元测试；有 client 半的插件**还必须**有桌面端自动化测试（见硬性约定 10）
+4. 验证完必须能在侧栏或设置里看到真实效果，不能只靠单元测试；有 client 半的插件**还必须**有桌面端自动化测试（见硬性约定 11）
 5. 需要发版的改动跑 `pnpm changeset`
 6. 新增插件时同步更新根目录两份 README 的插件清单；`pnpm new` 已自动登记 `.github/labeler.yml` 和 bug 报告下拉，按它的提示在 GitHub 上建 `plugin:<name>` 标签
 
@@ -86,7 +86,8 @@ git clone https://github.com/kangyishuai/dsh-plugins-notes.git notes
 7. **数据根目录必须可注入**，不能在模块顶层写死 `~/.dsh`；文件系统相关逻辑在 `mkdtemp` 临时目录里测试。
 8. 宿主类型声明（`types/*.d.ts`）只写已验证的成员。新发现的 API、slot、坑记到 `docs/runtime/<版本>.md`，不要写进 `plugin-conventions.md`。
 9. 重要的取舍写成 ADR（`docs/adr/`）。
-10. **有 client 半的插件必须做 DSH 桌面版的自动化测试**（`pnpm smoke:<name>-desktop`，走 CDP、
+10. **界面遵循 [plugin-conventions §7](docs/plugin-conventions.md#7-界面ui约定)**：设置进 `settings.section` 独立分节（首屏 ≤3 行）、面板单页优先（页签 ≤3）、破坏性操作一行影响面 + 默认聚焦 + 分批、列表行文本块 `min-width: 0`、关键节点给 `data-*` 锚点。视觉形态不强制统一。
+11. **有 client 半的插件必须做 DSH 桌面版的自动化测试**（`pnpm smoke:<name>-desktop`，走 CDP、
     支持 `--require`、默认只读）。`pnpm check` / `pnpm gate` / CI `--dry-run` 都会拦这条，
     细则见 [plugin-conventions §6.1](docs/plugin-conventions.md#61-桌面端自动化测试是硬性要求)。
 
