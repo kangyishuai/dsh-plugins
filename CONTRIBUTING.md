@@ -89,6 +89,42 @@ SMOKE_DEMO=1 pnpm smoke:session-delete   # 截图在系统临时目录的 dsh-sm
 - 描述里写 `Closes #<issue>`，按 PR 模板勾选自查清单。
 - 标签由 `actions/labeler` 按改动路径自动打（`plugin:<name>`、`area:repo`、`area:ci`、`documentation`），不用手动打。
 
+### 自动合并（automerge）分级
+
+CI 绿是**必要条件，不是充分条件**。哪类 PR 可以在 CI 绿之后自动 squash 合并，按「改动面 + 是否机器生成 + 能否机检」分三档（决策见 [ADR 0014](docs/adr/0014-automerge-tiers.md)）：
+
+| 档               | 适用改动（需**全部**满足）                                                                                                                                                                                    | 谁可以打 `automerge`            |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| **A 直接自动**   | 标题为 `chore(release): version packages`、来自 `changeset-release/main`，diff 只碰各包 `CHANGELOG.md` / `package.json`（版本号）/ `.changeset/**` / `pnpm-lock.yaml`                                         | 维护者、agent                   |
+| **B 证据门自动** | 标题为 `docs:` / `test:` / `chore(repo):` 且 diff 全部落在 `docs/**`、`*.md`、`.changeset/**`；**或** diff 全在一个 `packages/<name>/**` 内、且 PR 描述附了证据（单测覆盖；有 client 半时附桌面只读回归结果） | 维护者、agent（描述里写清证据） |
+| **C 只能人工**   | 其它全部。明确包含 `.github/**`、`scripts/**`、根 `package.json` 与依赖变更、`types/**`、`docs/adr/**`、`NOTICE`；任何 `feat(<plugin>)`、新增/删除插件、跨多个包；外部贡献者的 PR                             | ——                              |
+
+为什么这样分：
+
+- **门禁不能由门禁自己批**。`scripts/`（gate / publish / check-*）与 `.github/`（CI、分支保护）改的是检查本身；自动合并它们等于让被检查者改考卷。
+- **行为改动有 CI 覆盖不到的部分**（桌面真机上的真键盘、`setDraft → submit` 时序，见 [docs/testing](docs/testing/)）。这一档自动合并会把「发版前手工补真机回归」事实上废掉。
+- **release 与纯文档 PR 没有信息量可评审**：diff 形态可机检，人工那一下只是延迟发布。
+
+怎么武装（由提出 PR 的一方操作，CI 绿之前就可以打标签）：
+
+```bash
+gh pr edit <n> --add-label automerge
+gh pr merge <n> --auto --squash --delete-branch
+```
+
+- 打标签前先机检改动面：`git diff --name-only main...HEAD`，越出白名单就不打。
+- 仓库设置里必须打开 **Allow auto-merge**；没打开时退回「CI 绿后手动 squash 合并」，分级表照旧生效。
+- `automerge` 与「已评审」是两条独立条件：有 `REQUEST_CHANGES` 时即使 CI 全绿也不合。
+
+**必须摘掉 `automerge` 的情况**（任何有写权限的人直接摘，不需要解释）：
+
+- 任一必需检查红，或检查因分支落后而失效（先 `gh pr update-branch <n>` 再说）
+- 有人 `REQUEST_CHANGES`
+- 打标签之后追加的提交越出白名单
+- 需要人工核对真机行为（`needs-dsh-verify` 标签）
+
+来自 fork 的外部 PR 永不自动合并：标签与 auto-merge 只对维护者/agent 自己的分支生效。
+
 ### 分支保护（main）
 
 `main` 的规则集 `protect-main` 除了禁止删除和非快进之外，还要求这 4 个检查通过才能合并：
