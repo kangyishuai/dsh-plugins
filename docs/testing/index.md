@@ -59,7 +59,14 @@ node scripts/build-index.mjs            # 生成 build/index.json
 cat build/index.json | head -c 400
 ```
 
-然后在 Actions 里手动跑 `Plugin index`（`workflow_dispatch`）即可；它自己会比对内容、发布、purge。不要手工 `npm publish` 索引包——provenance 与版本号规则都在 workflow 里。
+然后在 Actions 里手动跑 `Plugin index`（`workflow_dispatch`），或：
+
+```bash
+gh workflow run index.yml --ref main
+gh run watch "$(gh run list --workflow=index.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+```
+
+它自己会比对内容、发布、purge。不要手工 `npm publish` 索引包——provenance 与版本号规则都在 workflow 里。**合并 PR 后第一件事就是跑它**：在这之前索引包还不存在，那个 URL 是 404。
 
 ## 4. 已知边界
 

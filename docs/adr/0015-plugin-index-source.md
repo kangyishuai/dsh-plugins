@@ -31,6 +31,7 @@ DSH 0.2.1 起，插件页多了一个「发现」标签页：它不内置任何�
 - **元数据**：分类、中英标题、中文描述写在 `scripts/index-meta.json`；`pnpm check` 会校验它与 `packages/` 双向一致（新插件漏写、旧条目没删都会红）。英文描述直接取 `package.json#description`，避免同一句话维护两遍。
 - **版本口径**：列出每个插件的**全部正式版本**，不只是 latest。Discover 因此可以直接装/回退到旧版本；"推荐"仍由宿主按最高稳定版算。
 - **不写 `engines.dsh`**：沿用 [ADR 0005](0005-dsh-version-compatibility.md) 的判断——预发布阶段的 semver 范围不可靠，写了反而会把能用的版本标成不兼容。兼容性以各插件 README 的表格为准。
+- **校验器与宿主的一致性经过交叉验证**：用它跑社区索引（宿主自己用官方校验器构建的 5643 条 format 1 文档）全部通过，说明规则没有写歪；真正的权威验收仍是 `pnpm smoke:index`。
 - **校验不引入宿主依赖**：仓库硬性约定 3 禁止把 `@deepseek-ai/*` 加进依赖（连 devDependencies 也不行），所以 `scripts/build-index.mjs` 内置了一份按宿主规则写的结构校验器；真正的权威验收是 `pnpm smoke:index`——临时 `DSH_HOME` + 真实宿主 + 真实「发现」页面，其中一条断言故意喂坏索引，要求宿主报 `invalid-index` 而不是静默空列表。
 
 ## 影响
