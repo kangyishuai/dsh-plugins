@@ -186,3 +186,5 @@ test("外部 PR、needs-dsh-verify、REQUEST_CHANGES 都是硬拒绝", () => {
   assert.equal(evaluate(pull({ labels: ["automerge", "needs-dsh-verify"] })).ok, false);
   assert.equal(evaluate(pull({ changesRequested: 1 })).ok, false);
 });
+
+// guard 反例冒烟 2026-11-15：本行只用于验证「标题 docs: + 路径落在 scripts/」会被 automerge-guard 拒绝；PR 关闭后不保留。
