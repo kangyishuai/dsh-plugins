@@ -411,7 +411,7 @@ function propsOf(plugin, projection, input = {}) {
  * @param {any} plugin
  * @returns {{consumed: boolean}}
  */
-function pressPrimaryEnter(plugin) {
+function pressPrimaryEnter(plugin, code = "Enter") {
   const state = { consumed: false };
   const occurrence = {
     getAttribute: (/** @type {string} */ name) =>
@@ -420,7 +420,7 @@ function pressPrimaryEnter(plugin) {
   plugin.press({
     type: "keydown",
     gesture: {
-      code: "Enter",
+      code: code,
       meta: true,
       control: false,
       alt: false,
@@ -488,6 +488,23 @@ test("只有一粒胶囊的卡片同样接管（与胶囊数量无关）", async
     assert.equal(pressPrimaryEnter(plugin).consumed, true);
     assert.equal(actCalls(plugin).length, 1);
     assert.deepEqual(actCalls(plugin)[0].payload.args.request.index, 0);
+    hooks.flush();
+    hooks.unmount(fiber);
+  } finally {
+    plugin.restore();
+  }
+});
+
+test("小键盘回车（NumpadEnter）与主键盘回车同等对待", async () => {
+  const hooks = createHooks();
+  const plugin = bootPlugin(hooks);
+  try {
+    const fiber = hooks.mount(plugin.card, propsOf(plugin, view()));
+    hooks.update(fiber, propsOf(plugin, view({ cards: { [String(TURN)]: CARD } })));
+
+    // 外接键盘上小键盘回车的 code 是 NumpadEnter，语义与 Enter 相同。
+    assert.equal(pressPrimaryEnter(plugin, "NumpadEnter").consumed, true);
+    assert.equal(actCalls(plugin).length, 1);
     hooks.flush();
     hooks.unmount(fiber);
   } finally {

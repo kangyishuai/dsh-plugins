@@ -606,12 +606,14 @@ window.__ModuleLoader__.load({
 
       let code = typeof gesture.code === "string" ? gesture.code : "";
       let primaryModifier = gesture.meta === true || gesture.control === true;
+      // 小键盘回车是 `NumpadEnter`，语义与 `Enter` 相同；只认 `Enter` 会让外接键盘上的 ⌘↵ 静默失效。
+      let enterLike = code === "Enter" || code === "NumpadEnter";
 
       // 卡片快捷键：宿主的同一个手势是「Queue/Steer 互补发送」，但空草稿时它是 no-op
       // （dsh-client-ui-conversation 的 empty-draft no-op），所以只在「输入干净 + 空闲 +
       // 本会话有可交互卡」时接管；其余情况完全透传，绝不抢排队/插话的语义。
       if (
-        code === "Enter" &&
+        enterLike &&
         primaryModifier &&
         !(gesture.meta === true && gesture.control === true) &&
         !gesture.alt &&
