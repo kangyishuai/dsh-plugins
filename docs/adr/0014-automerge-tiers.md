@@ -60,3 +60,12 @@
 为什么武装必须用 PAT 而不是 `GITHUB_TOKEN`：`GITHUB_TOKEN` 发起的合并不会触发 `push` 工作流，会吞掉
 Release（发版链）——那样 A 档的 Version Packages PR 永远发不出去。没配 PAT 时 guard 只打印提示、不武装，
 退回手动，但要求先等 guard 绿。
+
+## 增补 3（2026-11-15）：guard 升级为必需检查
+
+`guard` 已加入 `protect-main` 的必需检查（现为 5 项：四个原检查 + `guard`）。这样即使有人绕过约定手动
+`gh pr merge --auto`，越界 PR 也过不了合并门——否决权从"约定"变成"分支保护"。
+
+前提是它必须对**所有** PR 都产出结果，否则没跑过的 PR 会永远卡在等待检查：本 workflow 在
+`opened/reopened/labeled/unlabeled/synchronize/edited` 都跑，无标签时直接成功退出；`pull_request_target`
+的检查挂在 PR head commit 上（实测 PR 页面上能看到 `guard` 这一项）。代价是每个 PR 多一次约 10 秒的 job。
