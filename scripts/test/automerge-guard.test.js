@@ -35,6 +35,21 @@ test("档位：docs / test / chore(repo) 属于 B 档文档，feat 与跨包不�
   assert.equal(tierOf("chore(release): x", "changeset-release/main"), null);
 });
 
+test("档位：带 scope 的 docs(<plugin>): 也算文档档", () => {
+  assert.equal(tierOf("docs(next-step): 补发布记录", "docs/next-step-0-4-1")?.kind, "docs");
+  assert.equal(
+    evaluate(
+      pull({ title: "docs(next-step): 补发布记录", files: ["packages/next-step/README.md"] }),
+    ).ok,
+    true,
+  );
+  // 但路径白名单照旧：文档档仍然不许碰源码
+  assert.equal(
+    evaluate(pull({ title: "docs(next-step): x", files: ["packages/next-step/lib/client.js"] })).ok,
+    false,
+  );
+});
+
 test("档位：fix/test 带插件 scope 才是单插件档", () => {
   assert.deepEqual(tierOf("fix(next-step): 卡片晚到", "fix/next-step-card"), {
     kind: "code",

@@ -37,7 +37,10 @@ export function tierOf(title, headRef) {
   if (title === "chore(release): version packages") {
     return headRef === "changeset-release/main" ? { kind: "release", tier: "A" } : null;
   }
-  if (/^(docs:|test:|chore\(repo\):)/u.test(title)) return { kind: "docs", tier: "B · 文档" };
+  // `docs:` 与带 scope 的 `docs(<plugin>):` 都算文档档（scope 是仓库提交约定允许的写法）。
+  if (/^(docs:|test:|chore\(repo\):)/u.test(title) || /^docs\([^)]+\):/u.test(title)) {
+    return { kind: "docs", tier: "B · 文档" };
+  }
   const scoped = title.match(/^(fix|test)\(([^)]+)\):/u);
   if (scoped !== null && scoped[2] !== "") return { kind: "code", tier: "B · 单插件" };
   return null;
@@ -99,7 +102,7 @@ export function evaluate(pull) {
   const tier = tierOf(pull.title, pull.headRef);
   if (tier === null) {
     return fail(
-      "标题不在 A/B 档：只有 `chore(release): version packages`、`docs:` / `test:` / `chore(repo):`、" +
+      "标题不在 A/B 档：只有 `chore(release): version packages`、`docs:` / `docs(<plugin>):` / `test:` / `chore(repo):`、" +
         "`fix(<plugin>):` / `test(<plugin>):` 可以自动合并（C 档见 CONTRIBUTING §自动合并分级）",
     );
   }

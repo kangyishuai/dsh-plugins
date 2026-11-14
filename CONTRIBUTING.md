@@ -93,11 +93,11 @@ SMOKE_DEMO=1 pnpm smoke:session-delete   # 截图在系统临时目录的 dsh-sm
 
 CI 绿是**必要条件，不是充分条件**。哪类 PR 可以在 CI 绿之后自动 squash 合并，按「改动面 + 是否机器生成 + 能否机检」分三档（决策见 [ADR 0014](docs/adr/0014-automerge-tiers.md)）：
 
-| 档               | 适用改动（需**全部**满足）                                                                                                                                                                                                    | 谁可以打 `automerge`            |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
-| **A 直接自动**   | 标题为 `chore(release): version packages`、来自 `changeset-release/main`，diff 只碰各包 `CHANGELOG.md` / `package.json`（版本号）/ `.changeset/**` / `pnpm-lock.yaml`                                                         | 维护者、agent                   |
-| **B 证据门自动** | 标题为 `docs:` / `test:` / `chore(repo):` 且 diff 全部落在 `docs/**`、`*.md`、`.changeset/**`；**或** diff 只碰一个 `packages/<name>/**` 与 `.changeset/**`、且 PR 描述附了证据（单测覆盖；有 client 半时附桌面只读回归结果） | 维护者、agent（描述里写清证据） |
-| **C 只能人工**   | 其它全部。明确包含 `.github/**`、`scripts/**`、根 `package.json` 与依赖变更、`types/**`、`docs/adr/**`、`NOTICE`；任何 `feat(<plugin>)`、新增/删除插件、跨多个包；外部贡献者的 PR                                             | ——                              |
+| 档               | 适用改动（需**全部**满足）                                                                                                                                                                                                                        | 谁可以打 `automerge`            |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| **A 直接自动**   | 标题为 `chore(release): version packages`、来自 `changeset-release/main`，diff 只碰各包 `CHANGELOG.md` / `package.json`（版本号）/ `.changeset/**` / `pnpm-lock.yaml`                                                                             | 维护者、agent                   |
+| **B 证据门自动** | 标题为 `docs:` / `docs(<plugin>):` / `test:` / `chore(repo):` 且 diff 全部落在 `docs/**`、`*.md`、`.changeset/**`；**或** diff 只碰一个 `packages/<name>/**` 与 `.changeset/**`、且 PR 描述附了证据（单测覆盖；有 client 半时附桌面只读回归结果） | 维护者、agent（描述里写清证据） |
+| **C 只能人工**   | 其它全部。明确包含 `.github/**`、`scripts/**`、根 `package.json` 与依赖变更、`types/**`、`docs/adr/**`、`NOTICE`；任何 `feat(<plugin>)`、新增/删除插件、跨多个包；外部贡献者的 PR                                                                 | ——                              |
 
 为什么这样分：
 
