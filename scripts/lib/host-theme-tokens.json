@@ -1,8 +1,8 @@
 {
   "_meta": {
     "source": "DeepSeek Harness 桌面版（Electron）内置的 design-platform / base 样式表",
-    "dshVersion": "0.2.2-rc.2",
-    "extractedAt": "2026-11-12",
+    "dshVersion": "0.2.2-rc.3",
+    "extractedAt": "2026-11-14",
     "note": "由 scripts/host-tokens.mjs 生成；DSH 升级后重跑 pnpm tokens:host 并提交。"
   },
   "tokens": [

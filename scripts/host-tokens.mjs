@@ -75,7 +75,7 @@ if (isMain(import.meta.url)) {
     _meta: {
       source: "DeepSeek Harness 桌面版（Electron）内置的 design-platform / base 样式表",
       // 版本号是给升级时人工核对用的，脚本不解析它。
-      dshVersion: process.env.DSH_APP_VERSION ?? "0.2.2-rc.2",
+      dshVersion: process.env.DSH_APP_VERSION ?? "0.2.2-rc.3",
       extractedAt: new Date().toISOString().slice(0, 10),
       note: "由 scripts/host-tokens.mjs 生成；DSH 升级后重跑 pnpm tokens:host 并提交。",
     },
