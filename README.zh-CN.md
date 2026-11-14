@@ -26,6 +26,16 @@
 
 ## 安装
 
+**从发现页安装（推荐）。** 打开 DSH 的 **插件 → 发现 → 添加索引源**，填入：
+
+```
+https://cdn.jsdelivr.net/npm/@kangyishuai/dsh-plugin-index/index.json
+```
+
+本仓库的插件就会带着简介、分类和版本列表出现在发现页里，点一下即可安装。索引在每次发版后从 npm 重建，列出来的版本一定真实存在。
+
+**或者用命令行：**
+
 ```bash
 dsh plugin --profile desktop add @kangyishuai/dsh-session-delete
 dsh plugin --profile desktop add @kangyishuai/dsh-session-rewind

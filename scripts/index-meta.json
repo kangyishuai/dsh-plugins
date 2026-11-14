@@ -1,0 +1,43 @@
+{
+  "title": {
+    "en": "kangyishuai DSH plugins",
+    "zh": "kangyishuai DSH 插件"
+  },
+  "description": {
+    "en": "Careful, end-to-end verified plugins for DeepSeek Harness: real session deletion, in-place rewind, next-step cards, and an on-demand advisor.",
+    "zh": "为 DeepSeek Harness 写的、逐项真机验证过的插件：会话真删除、就地回滚、下一步决策卡，以及按需顾问。"
+  },
+  "categories": {
+    "session": {
+      "title": { "en": "Sessions", "zh": "会话" }
+    },
+    "workflow": {
+      "title": { "en": "Workflow", "zh": "工作流" }
+    },
+    "tools": {
+      "title": { "en": "Tools", "zh": "工具" }
+    }
+  },
+  "plugins": {
+    "@kangyishuai/dsh-session-delete": {
+      "category": "session",
+      "title": { "en": "Session Delete", "zh": "会话删除" },
+      "descriptionZh": "真正删除会话：默认进回收站、删除前给计划、全程审计日志，并对残留给回执。"
+    },
+    "@kangyishuai/dsh-session-rewind": {
+      "category": "session",
+      "title": { "en": "Session Rewind", "zh": "会话回滚" },
+      "descriptionZh": "就地回滚对话：撤回目标消息之后的内容，可恢复那些轮次改过的文件，并把消息放回输入框。"
+    },
+    "@kangyishuai/dsh-next-step": {
+      "category": "workflow",
+      "title": { "en": "Next Step", "zh": "下一步" },
+      "descriptionZh": "值得继续时给一张决策卡：现状、待定问题、1–2 个互斥下一步，点一下按原文发送。"
+    },
+    "@kangyishuai/dsh-advisor": {
+      "category": "tools",
+      "title": { "en": "Advisor", "zh": "顾问" },
+      "descriptionZh": "按需第二意见：主模型自己决定何时咨询一个单独配置的顾问模型，只给建议，从不放行或执行。"
+    }
+  }
+}
