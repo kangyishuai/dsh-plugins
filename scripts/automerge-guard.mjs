@@ -123,23 +123,36 @@ export function evaluate(pull) {
 }
 
 /**
- * gh 输出按行切分。
- * @param {string} args
+ * 跑一次 gh，返回去掉首尾空白的 stdout。
+ * 参数一律用数组传：注释标记 `<!-- automerge-guard -->` 里有空格，按空格切会把 jq 表达式切碎
+ * （2026-11-14 冒烟实测踩到：整条命令变成 usage 报错，评论没发出来）。
+ * @param {string[]} args
+ * @param {NodeJS.ProcessEnv} [env]
  */
-function gh(args) {
-  return execFileSync("gh", args.split(" ").filter(Boolean), { encoding: "utf8" }).trim();
+function gh(args, env = process.env) {
+  return execFileSync("gh", args, { encoding: "utf8", env }).trim();
 }
 
 /** @param {string} repo @param {number} pr */
 function readPull(repo, pr) {
-  const raw = JSON.parse(gh(`api repos/${repo}/pulls/${pr}`));
-  const files = gh(`api --paginate repos/${repo}/pulls/${pr}/files?per_page=100 --jq .[].filename`)
+  const raw = JSON.parse(gh(["api", `repos/${repo}/pulls/${pr}`]));
+  const files = gh([
+    "api",
+    "--paginate",
+    `repos/${repo}/pulls/${pr}/files?per_page=100`,
+    "--jq",
+    ".[].filename",
+  ])
     .split("\n")
     .filter(Boolean);
   const changesRequested = Number(
-    gh(
-      `api --paginate repos/${repo}/pulls/${pr}/reviews?per_page=100 --jq [.[]|select(.state=="CHANGES_REQUESTED")]|length`,
-    ),
+    gh([
+      "api",
+      "--paginate",
+      `repos/${repo}/pulls/${pr}/reviews?per_page=100`,
+      "--jq",
+      '[.[]|select(.state=="CHANGES_REQUESTED")]|length',
+    ]),
   );
   return {
     repo,
@@ -154,24 +167,34 @@ function readPull(repo, pr) {
   };
 }
 
-/** @param {string} repo @param {number} pr @param {string} body */
+/**
+ * 找本 PR 上带标记的那条说明评论（没有返回空串）。
+ * @param {string} repo
+ * @param {number} pr
+ */
+function findGuardComment(repo, pr) {
+  return gh([
+    "api",
+    "--paginate",
+    `repos/${repo}/issues/${pr}/comments?per_page=100`,
+    "--jq",
+    `[.[]|select(.body|contains("${COMMENT_MARKER}"))]|last|.id//empty`,
+  ]);
+}
+
+/**
+ * 幂等评论：有就改，没有就建。
+ * @param {string} repo
+ * @param {number} pr
+ * @param {string} body
+ */
 function upsertComment(repo, pr, body) {
-  const existing = gh(
-    `api --paginate repos/${repo}/issues/${pr}/comments?per_page=100 --jq [.[]|select(.body|contains("${COMMENT_MARKER}"))]|last|.id//empty`,
-  );
+  const existing = findGuardComment(repo, pr);
   if (existing !== "") {
-    execFileSync(
-      "gh",
-      ["api", "-X", "PATCH", `repos/${repo}/issues/comments/${existing}`, "-f", `body=${body}`],
-      {
-        encoding: "utf8",
-      },
-    );
+    gh(["api", "-X", "PATCH", `repos/${repo}/issues/comments/${existing}`, "-f", `body=${body}`]);
     return;
   }
-  execFileSync("gh", ["pr", "comment", String(pr), "--repo", repo, "--body", body], {
-    encoding: "utf8",
-  });
+  gh(["pr", "comment", String(pr), "--repo", repo, "--body", body]);
 }
 
 /**
@@ -197,6 +220,54 @@ function commentBody(verdict, pr) {
   return lines.join("\n");
 }
 
+/**
+ * 合规评论（覆盖之前的"不合规"评论，保留可追溯的一条）。
+ * @param {string} tier
+ * @param {number} fileCount
+ * @param {number} pr
+ */
+function compliantBody(tier, fileCount, pr) {
+  return [
+    COMMENT_MARKER,
+    "### ✅ 自动合并条件满足",
+    "",
+    `${tier} 档：${fileCount} 个文件都在白名单里，guard 已武装 auto-merge（CI 绿后 squash 合并、删分支）。`,
+    "",
+    "> 若之后追加的提交越出白名单，guard 会摘掉标签并关闭 auto-merge。",
+    `> PR #${pr} · 规则见 [CONTRIBUTING §自动合并分级](https://github.com/kangyishuai/dsh-plugins/blob/main/CONTRIBUTING.md#自动合并automerge分级)。`,
+  ].join("\n");
+}
+
+/**
+ * 合规时由 guard 自己武装 auto-merge。
+ *
+ * 必须用 PAT（`AUTOMERGE_PAT`，跑在 workflow 里就是 `secrets.RELEASE_TOKEN`）：
+ * 用 `GITHUB_TOKEN` 发起的合并不会触发 `push` 工作流，会吞掉 Release（发版链）。
+ * 没有 PAT 就只打印提示、不武装——退回手动，但**不要**在 guard 跑完前手动提前武装：
+ * guard 不是必需检查，提前武装会在校验完成前就把 PR 合掉（2026-11-14 冒烟实测发生过）。
+ * @param {string} repo
+ * @param {number} pr
+ */
+function armAutoMerge(repo, pr) {
+  const pat = process.env.AUTOMERGE_PAT ?? "";
+  if (pat === "") {
+    console.log("⚠️ 未配置 AUTOMERGE_PAT：跳过武装，请手动 gh pr merge --auto（等本检查通过之后）");
+    return;
+  }
+  try {
+    gh(["pr", "merge", String(pr), "--repo", repo, "--auto", "--squash", "--delete-branch"], {
+      ...process.env,
+      GH_TOKEN: pat,
+    });
+    console.log("已武装 auto-merge（squash + 删分支）：CI 绿后自动合并");
+  } catch (error) {
+    console.error(
+      `武装 auto-merge 失败：${error instanceof Error ? error.message : String(error)}`,
+    );
+    process.exitCode = 1;
+  }
+}
+
 function main() {
   const { values } = parseArgs({
     options: { repo: { type: "string" }, pr: { type: "string" } },
@@ -218,6 +289,10 @@ function main() {
   const verdict = evaluate(pull);
   if (verdict.ok) {
     console.log(`✅ 合规（${verdict.tier} 档）：${pull.files.length} 个文件都在白名单里`);
+    if (findGuardComment(repo, pr) !== "") {
+      upsertComment(repo, pr, compliantBody(String(verdict.tier), pull.files.length, pr));
+    }
+    armAutoMerge(repo, pr);
     return;
   }
 
