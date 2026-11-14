@@ -6,7 +6,7 @@
 
 这是个人开发 DeepSeek Harness (DSH) 插件的**单仓多包**仓库，计划开源。每个 `packages/<name>/` 是一个独立的 npm 包，可以单独 `npm publish`、单独安装进任意 DSH profile。
 
-- 目标运行时：**DSH 桌面版 0.2.2-rc.2**（Electron，profile 目录 `~/.dsh/profiles/desktop`）；旧版本的勘察记录保留在 `docs/runtime/`
+- 目标运行时：**DSH 桌面版 0.2.2-rc.3**（Electron，profile 目录 `~/.dsh/profiles/desktop`）；旧版本的勘察记录保留在 `docs/runtime/`
 - Node：开发用 24（`.node-version`），最低支持 22.19；pnpm >= 11
 - 包名统一用 `@kangyishuai/dsh-<name>`
 

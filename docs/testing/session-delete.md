@@ -314,6 +314,20 @@ DSH_AGENT_TOOL_PATCH=/tmp/model-overlay.yml ZHINAO_API_KEY=<key> pnpm smoke:agen
 > `minimal` 档：会话目录、投影缓存、宿主内存条目正常清理；归档/置顶/工作区记账/spill
 > 标记为 skipped 并在回执里逐项列出，模型据此说明「这些接口当前宿主不提供」。
 
+## 0.5.0 在 0.2.2-rc.3 上的复核记录（2026-11-14，DSH 0.2.2-rc.3）
+
+插件代码没有改动；这一版只验证「升级后仍然成立」。
+
+| 层                                            | 结果                                                                                              |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `node --test`（包内）                         | **86 pass / 0 fail**                                                                              |
+| `pnpm verify`                                 | 通过                                                                                              |
+| `pnpm probe:runtime`                          | **72/72 PASS**                                                                                    |
+| `pnpm smoke:session-delete`（web）            | **33/33 PASS**（临时 DSH home：确认框默认焦点/回车即删、`⌘⌥⌫`、工作区批量、回收站、设置页、审计） |
+| `pnpm smoke:session-delete-desktop --require` | **18/18 PASS**（只读；从未执行删除）                                                              |
+
+结论：**rc.3 上 session-delete 无回归**。
+
 ## 4. 回归节奏
 
 - **每次提交**：`pnpm verify` + 冒烟 4 条。
