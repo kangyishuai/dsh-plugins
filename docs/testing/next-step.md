@@ -406,6 +406,21 @@ npm view @kangyishuai/dsh-next-step version
 6. `ctx.get("llm")` 的 `prepareCall` / `call.stream` 形状，以及
    `ctx.get("agents").get(sessionId)?.model?.current?.()` 的读取方式。
 
+## 0.10 0.4.0 发布记录（核对时间 2026-11-14）
+
+| 项                     | 值                                                                                                                                                    |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| npm `dist-tags.latest` | `0.4.0`                                                                                                                                               |
+| git tag                | `@kangyishuai/dsh-next-step@0.4.0` → `b2004cf`（`chore(release): version packages (#119)`）                                                           |
+| GitHub Release         | `@kangyishuai/dsh-next-step@0.4.0`，Latest，2026-11-14T12:59:13Z（body 即 CHANGELOG）                                                                 |
+| 发布物与仓库对照       | 下载 npm tarball → `lib/` 与 `locale/` **逐字节一致**、`package.json` 字段无差异、构建哈希 `3afdd017` = 仓库同一提交                                  |
+| 发版前门禁             | `pnpm verify` 全绿（170 单测 / 文档一致性 0 错 / 公开边界 0 问题）、`probe:runtime` 72/72、web 冒烟 **71/71**、桌面只读回归 12 PASS + 1 SKIP + 0 FAIL |
+| 合并提交               | 特性 PR #118 → `dc9cdf8`；版本 PR #119 → `b2004cf`                                                                                                    |
+| 发布后自证             | 桌面版重启后诊断行 `版本 0.4.0 · 构建 3afdd017 · 提示词 v3 · 口径 v0.4`（详见 §4.5.1）                                                                |
+
+> 0.4.0 的浏览器端与桌面端验证是在**本地 `file:` tarball** 上做的，随后 profile 已改为从 npm 安装 0.4.0；
+> 两者哈希不同属预期（见 §4.5.1）。0.4.0 没有 `--deep` 的桌面发送链重跑记录。
+
 ## 0.9 0.2.0 发布记录（核对时间 2026-11-11）
 
 | 项                     | 值                                                                                                                             |
