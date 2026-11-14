@@ -122,7 +122,7 @@ const SHOTS = ${JSON.stringify(shots)};
 const HOME = ${JSON.stringify(home)};
 const CAN_MODEL = ${canModel ? "true" : "false"};
 const WORKSPACE_TITLE = ${JSON.stringify(WORKSPACE_TITLE)};
-const { readFile, writeFile } = await import("node:fs/promises");
+const { readFile, readdir, writeFile } = await import("node:fs/promises");
 const { join } = await import("node:path");
 // 幽灵面默认关：冒烟一开始就在设置文件里打开它，顺带验证 B 面；后面的「关闭开关」段会覆盖成 enabled:false。
 try {
@@ -903,16 +903,27 @@ const readSettingsRow = () =>
   page.evaluate(() => {
     const row = document.querySelector("[data-next-step-settings]");
     if (!row) return null;
+    const advanced = row.querySelector("[data-next-step-advanced]");
     return {
       switches: [...row.querySelectorAll("[data-next-step-switch]")].map((el) => ({
         key: el.getAttribute("data-next-step-switch"),
         on: el.getAttribute("aria-checked"),
       })),
+      tiers: [...row.querySelectorAll("[data-next-step-tier]")].map((el) => ({
+        value: el.getAttribute("data-next-step-tier"),
+        on: el.getAttribute("aria-checked"),
+      })),
+      advanced: !!advanced,
+      advancedOpen: advanced !== null && advanced.getAttribute("aria-expanded") === "true",
+      advancedBody: !!row.querySelector("[data-next-step-advanced-body]"),
       diag: (row.querySelector("[data-next-step-diag]") || {}).textContent || "",
       budget: !!row.querySelector("[data-next-step-budget]"),
       pause: !!row.querySelector("[data-next-step-pause]"),
       offHint: !!row.querySelector("[data-next-step-off]"),
       generateHint: !!row.querySelector("[data-next-step-hint]"),
+      review: !!row.querySelector("[data-next-step-review]"),
+      reviewStats: (row.querySelector("[data-next-step-review-stats]") || {}).textContent || "",
+      report: !!row.querySelector("[data-next-step-report]"),
     };
   });
 let settingsRow = null;
@@ -933,34 +944,201 @@ check(
     settingsRow.offHint === true &&
     settingsRow.budget === false &&
     settingsRow.pause === false &&
-    settingsRow.diag === "",
+    settingsRow.diag === "" &&
+    Array.isArray(settingsRow.tiers) &&
+    settingsRow.tiers.length === 0 &&
+    settingsRow.advanced === false,
   settingsRow === null ? "导航=" + navDetail : JSON.stringify(settingsRow),
 );
 await shot("08-settings-off");
 
-// 点开总开关 → 依赖项出现（渐进披露：启用后才展示其他设置）。
+// 点开总开关 → 首屏 3 行出现（启用 / 出卡频率 / 决策卡），其余收进「更多设置」。
 const enabledClicked = await fireClick('[data-next-step-switch="enabled"]');
 let settingsOn = null;
 for (let attempt = 0; attempt < 24; attempt += 1) {
   settingsOn = await readSettingsRow();
-  if (settingsOn !== null && settingsOn.switches.length === 3) break;
+  if (settingsOn !== null && settingsOn.switches.length === 2) break;
   await page.waitForTimeout(300);
 }
 check(
-  "启用后才展示其他设置项（3 开关 + 预算 + 暂停 + 诊断含版本）",
+  "启用后首屏只有 3 行（2 开关 + 档位三选一），其余折叠",
   enabledClicked.ok === true &&
     settingsOn !== null &&
-    settingsOn.switches.length === 3 &&
-    settingsOn.budget === true &&
-    settingsOn.pause === true &&
-    settingsOn.generateHint === true &&
-    settingsOn.diag.includes("版本 ") &&
-    settingsOn.diag.includes("构建 ") &&
-    /[0-9]+.[0-9]+.[0-9]+/u.test(settingsOn.diag) &&
-    /[0-9a-f]{8}/u.test(settingsOn.diag),
+    settingsOn.switches.length === 2 &&
+    settingsOn.switches[0].key === "enabled" &&
+    settingsOn.switches[1].key === "card" &&
+    Array.isArray(settingsOn.tiers) &&
+    settingsOn.tiers.length === 3 &&
+    settingsOn.tiers.map((tier) => tier.value).join(",") === "must,could,any" &&
+    settingsOn.tiers.some((tier) => tier.on === "true") &&
+    settingsOn.advanced === true &&
+    settingsOn.advancedOpen === false &&
+    settingsOn.advancedBody === false &&
+    settingsOn.budget === false &&
+    settingsOn.pause === false &&
+    settingsOn.diag === "",
   settingsOn === null ? "导航=" + navDetail : JSON.stringify(settingsOn),
 );
 await shot("08-settings-on");
+
+// 展开「更多设置」→ 依赖项出现（幽灵/采集/暂停/预算/诊断/回顾）。
+const advancedClick = await fireClick("[data-next-step-advanced]");
+let settingsOpen = null;
+for (let attempt = 0; attempt < 24; attempt += 1) {
+  settingsOpen = await readSettingsRow();
+  if (settingsOpen !== null && settingsOpen.advancedBody === true) break;
+  await page.waitForTimeout(300);
+}
+check(
+  "「更多设置」展开后出现 4 个开关 + 预算 + 暂停 + 诊断（含版本与提示词版本）+ 回顾块",
+  advancedClick.ok === true &&
+    settingsOpen !== null &&
+    settingsOpen.advancedOpen === true &&
+    settingsOpen.switches.length === 4 &&
+    settingsOpen.budget === true &&
+    settingsOpen.pause === true &&
+    settingsOpen.generateHint === true &&
+    settingsOpen.review === true &&
+    settingsOpen.report === true &&
+    settingsOpen.diag.includes("版本 ") &&
+    settingsOpen.diag.includes("构建 ") &&
+    /[0-9]+.[0-9]+.[0-9]+/u.test(settingsOpen.diag) &&
+    /[0-9a-f]{8}/u.test(settingsOpen.diag) &&
+    /提示词 v[0-9]+/u.test(settingsOpen.diag),
+  settingsOpen === null ? "导航=" + navDetail : JSON.stringify(settingsOpen),
+);
+await shot("08-settings-advanced");
+
+// 档位：点「严格」→ 设置文件 cardThreshold=must；点回「平衡」恢复。
+const tierMust = await fireClick('[data-next-step-tier="must"]');
+let tierWritten = null;
+for (let attempt = 0; attempt < 20; attempt += 1) {
+  tierWritten = await readSettingsFile();
+  if (tierWritten !== null && tierWritten.cardThreshold === "must") break;
+  await page.waitForTimeout(250);
+}
+check(
+  "档位切到「严格」后设置文件 cardThreshold=must（UI ↔ RPC ↔ 磁盘）",
+  tierMust.ok === true && tierWritten !== null && tierWritten.cardThreshold === "must",
+  JSON.stringify({ clicked: tierMust.ok, cardThreshold: tierWritten === null ? null : tierWritten.cardThreshold }),
+);
+const tierCould = await fireClick('[data-next-step-tier="could"]');
+let tierRestored = null;
+for (let attempt = 0; attempt < 20; attempt += 1) {
+  tierRestored = await readSettingsFile();
+  if (tierRestored !== null && tierRestored.cardThreshold === "could") break;
+  await page.waitForTimeout(250);
+}
+check(
+  "档位切回「平衡」后设置文件 cardThreshold=could",
+  tierCould.ok === true && tierRestored !== null && tierRestored.cardThreshold === "could",
+  JSON.stringify({ clicked: tierCould.ok, cardThreshold: tierRestored === null ? null : tierRestored.cardThreshold }),
+);
+check(
+  "设置文件带 schemaVersion=2 且预算默认 120",
+  tierRestored !== null && tierRestored.schemaVersion === 2 && tierRestored.maxCardsPerSession === 120,
+  JSON.stringify(tierRestored === null ? null : { schemaVersion: tierRestored.schemaVersion, maxCardsPerSession: tierRestored.maxCardsPerSession }),
+);
+
+// ---------- 6.5 采集：events.jsonl 有 turn / action / followup，且不含对话原文 ----------
+const readEvents = async () => {
+  const rows = [];
+  for (const name of ["events.jsonl", "events.jsonl.1"]) {
+    try {
+      const text = await readFile(join(HOME, "next-step", name), "utf8");
+      for (const line of text.split("\\n")) {
+        if (line.trim() === "") continue;
+        try {
+          rows.push(JSON.parse(line));
+        } catch (_error) {
+          rows.push({ t: "__bad__" });
+        }
+      }
+    } catch (_error) {
+      /* 文件不存在是正常的（还没生成过） */
+    }
+  }
+  return rows;
+};
+const events = await readEvents();
+const turnRows = events.filter((event) => event.t === "turn");
+const actionRows = events.filter((event) => event.t === "action");
+const followupRows = events.filter((event) => event.t === "followup");
+const metaRows = events.filter((event) => event.t === "meta");
+check(
+  "events.jsonl 存在且写了起算点 meta（tier + scheme）",
+  metaRows.length === 1 && metaRows[0].scheme === "v0.4" && typeof metaRows[0].tier === "string",
+  JSON.stringify({ events: events.length, meta: metaRows.length }),
+);
+check(
+  "每个合格回合都有 turn 事件（gate 与 sid 齐全，不只记录出过卡的回合）",
+  turnRows.length > 0 &&
+    turnRows.every(
+      (row) =>
+        typeof row.gate === "string" &&
+        typeof row.sid === "string" &&
+        typeof row.feat === "object" &&
+        typeof row.feat.answerChars === "number" &&
+        typeof row.feat.toolCalls === "number",
+    ),
+  JSON.stringify({ turnRows: turnRows.length, gates: turnRows.map((row) => row.gate) }),
+);
+check(
+  "出过的卡带 cand.value / cand.shown，且带耗时与模型",
+  turnRows.some(
+    (row) =>
+      row.cand &&
+      typeof row.cand.value === "string" &&
+      typeof row.cand.shown === "boolean" &&
+      typeof row.cand.latencyMs === "number" &&
+      typeof row.cand.model === "string",
+  ),
+  JSON.stringify(turnRows.map((row) => (row.cand ? { value: row.cand.value, shown: row.cand.shown } : null))),
+);
+check(
+  "点过胶囊 → 有 action{clicked} 事件（带 index 与 stance）",
+  actionRows.some((row) => row.kind === "clicked" && Number.isInteger(row.index)),
+  JSON.stringify(actionRows.map((row) => ({ kind: row.kind, index: row.index }))),
+);
+check(
+  "点击发送后 → 有 followup 事件（typed / textChars / overlap 都是数字）",
+  followupRows.length > 0 &&
+    followupRows.every(
+      (row) =>
+        typeof row.typed === "boolean" &&
+        Number.isFinite(row.textChars) &&
+        Number.isFinite(row.overlap),
+    ),
+  JSON.stringify({ followupRows: followupRows.length }),
+);
+const leaked = events.some((row) => JSON.stringify(row).includes("用户：") || JSON.stringify(row).includes("助手："));
+check("事件文件不含对话原文（只有长度/计数，隐私边界）", leaked === false, leaked ? "发现转录原文" : "");
+
+// ---------- 6.6 回顾块：点「生成报告」→ 落盘一份 Markdown ----------
+const reportClick = await fireClick("[data-next-step-report]");
+let reportFile = "";
+for (let attempt = 0; attempt < 40; attempt += 1) {
+  const names = await readdir(join(HOME, "next-step")).catch(() => []);
+  reportFile = names.filter((name) => /^report-\\d{8}-\\d{6}\\.md$/u.test(name)).sort().pop() || "";
+  if (reportFile !== "") break;
+  await page.waitForTimeout(250);
+}
+const reportText =
+  reportFile === "" ? "" : await readFile(join(HOME, "next-step", reportFile), "utf8");
+check(
+  "点「生成报告」在 next-step/ 下落一份 Markdown（五段结构）",
+  reportClick.ok === true &&
+    reportFile !== "" &&
+    reportText.includes("next-step 复盘报告") &&
+    reportText.includes("## 1. 样本量") &&
+    reportText.includes("## 5. 建议动作"),
+  JSON.stringify({ clicked: reportClick.ok, file: reportFile, bytes: reportText.length }),
+);
+check(
+  "样本不足的新环境里报告明写「样本不足」而不是硬下结论",
+  reportText.includes("样本不足"),
+  JSON.stringify(reportText.slice(0, 120)),
+);
 
 // 断言 2：点 card 开关 → aria-checked 立即翻转
 const cardBefore = await switchState(CARD_SWITCH);
@@ -1260,7 +1438,15 @@ async function verifySessionLog(home, state) {
     skip("读会话日志：卡片/决策记录", "没有模型凭据，本轮不产生卡片记录");
     return checks;
   }
-  const cardRecords = collectPluginRecords(log.events, "plugin:next-step/card");
+  const allCardRecords = collectPluginRecords(log.events, "plugin:next-step/card");
+  const revealRecords = collectPluginRecords(log.events, "plugin:next-step/reveal");
+  const revealedTurns = new Set(revealRecords.map((record) => record.data?.turn));
+  // v0.4 起「被档位抑制的候选」也落一条 card 记录（shown:false）。用户真正看到过的卡 =
+  // shown !== false 的，或之后被 reveal 过的（记录里的 shown 是写卡时冻结的，不会翻）。
+  // 不过滤的话，「关闭后没有新卡」会被未显示的候选误判成失败。
+  const cardRecords = allCardRecords.filter(
+    (record) => record.data?.shown !== false || revealedTurns.has(record.data?.turn),
+  );
   const decisionRecords = collectPluginRecords(log.events, "plugin:next-step/decision");
   push(
     "日志里有卡片记录（可跨重启重建）",
@@ -1377,7 +1563,7 @@ async function verifySessionLog(home, state) {
   push(
     "关闭开关后没有新的 card 记录（日志层面同样成立）",
     typeof state.cardsBeforeDisable === "number" && cardRecords.length === state.cardsBeforeDisable,
-    `关闭前卡片数=${state.cardsBeforeDisable} 日志 card 记录数=${cardRecords.length}`,
+    `关闭前卡片数=${state.cardsBeforeDisable} 日志 card 记录数=${cardRecords.length}（全部记录含未显示=${allCardRecords.length}）`,
   );
   return checks;
 }
