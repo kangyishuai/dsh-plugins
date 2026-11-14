@@ -2,7 +2,7 @@
 
 > 真正的删除会话：默认进回收站、删前先预演、留审计日志，删完给你一份残留回执。
 
-[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-delete?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-session-delete) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.2-4b6bfb)](#兼容性与降级) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-delete?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-session-delete) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.3-4b6bfb)](#兼容性与降级) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
 [English](./README.md)
 
@@ -124,6 +124,7 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-session-delete-*.tgz
 
 | 插件版本 | 已验证的 DSH 版本               | 说明                                                                                                                                                                                                                                                                                                                                                                    |
 | -------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.5.0    | **0.2.2-rc.3**（桌面版）        | 这一版 DSH 不需要改代码。已验证：86 项单测 + `pnpm probe:runtime` 72/72 + web `pnpm smoke:session-delete` **33/33**（临时 DSH home）+ 桌面只读回归 **18/18**。                                                                                                                                                                                                          |
 | 0.5.0    | **0.2.2-rc.2**（桌面版）        | 界面重构：确认框默认焦点落在「移入回收站」（回车即执行）、记忆「同时删除子会话」、回收站单页化并把审计/体检/回执迁到设置页、批量彻底删除按 20 条分批；会话菜单走官方 `contextMenus` 并新增 `⌘⌥⌫`、工作区菜单新增「删除此工作区的全部会话」。发版门禁 4 步全绿（verify / 探针 72 项 / web 冒烟 33 项 / 桌面只读回归 18 项），桌面回归在**发布产物 0.5.0** 上复跑 18/18。 |
 | 0.4.9    | **0.2.2-rc.2**（桌面版）        | 回收站计数徽章的前景色改用配对 token：深色主题下 `state-error` 是浅红 `#f25a5a`，原先配写死白只有 3.29:1，配 `label-primary-foreground` 是 5.75:1（浅色仍 4.5:1）。新增 `test/client.test.js` 守住「token 必须真实存在 + 底色/前景成对」。桌面只读回归 14/14，单测 53。                                                                                                 |
 | 0.4.8    | **0.2.2-rc.2**（桌面版）        | macOS 窗口拖动修复：自绘确认框 fallback 的遮罩声明 `data-window-drag-exclude`。桌面只读回归在发布版上复跑 14/14，宿主探针 67/67。                                                                                                                                                                                                                                       |
