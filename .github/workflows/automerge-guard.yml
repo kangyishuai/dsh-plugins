@@ -1,0 +1,40 @@
+name: Automerge guard
+
+# PR 带 `automerge` 标签时，校验改动面是否落在 CONTRIBUTING §自动合并分级 的白名单里：
+# 不合规就摘标签 + 关闭已武装的 auto-merge + 留一条说明评论（判定逻辑见
+# scripts/automerge-guard.mjs，规则见 docs/adr/0014-automerge-tiers.md）。
+#
+# 故意**不**由本工作流代劳「武装 auto-merge」：用 GITHUB_TOKEN 发起的合并不会触发
+# push 工作流，会吞掉 Release（发版链）。武装仍然只由人或 agent 用 PAT 执行。
+on:
+  pull_request_target:
+    types: [opened, reopened, labeled, unlabeled, synchronize, edited]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: automerge-guard-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    if: github.repository == 'kangyishuai/dsh-plugins'
+    runs-on: ubuntu-latest
+    steps:
+      # pull_request_target 下必须显式检出**基分支**：PR 里的代码一行都不执行。
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+      - name: 校验 automerge 分级
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node scripts/automerge-guard.mjs --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER"
