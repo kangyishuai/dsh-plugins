@@ -408,6 +408,20 @@ npm view @kangyishuai/dsh-next-step version
 6. `ctx.get("llm")` 的 `prepareCall` / `call.stream` 形状，以及
    `ctx.get("agents").get(sessionId)?.model?.current?.()` 的读取方式。
 
+## 0.11 0.4.1 发布记录（核对时间 2026-11-15）
+
+| 项                     | 值                                                                                                                                                          |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| npm `dist-tags.latest` | `0.4.1`（发布于 2026-11-14T14:50:42Z）                                                                                                                      |
+| git tag                | `@kangyishuai/dsh-next-step@0.4.1` → `5f3a349`（`chore(release): version packages (#124)`）                                                                 |
+| GitHub Release         | `@kangyishuai/dsh-next-step@0.4.1`，Latest，2026-11-14T14:48:38Z（body 即 CHANGELOG）                                                                       |
+| 发版前门禁             | `pnpm verify` 全绿（175 单测，含新增 `test/client-card-shortcut.test.js`；文档一致性 0 错、公开边界 0 问题）                                                |
+| 合并提交               | 修复 PR #123 → `45bc54a`；版本 PR #124 → `5f3a349`                                                                                                          |
+| 发布后自证             | desktop profile 从 npm 装 0.4.1（`lib/client.js` 含修复）；真机「晚到约 2.3s 的两粒卡」按 `⌘↵` 成功发出 primary 胶囊并转 `sent`（0.4.0 上同类晚到卡不接管） |
+
+> 0.4.1 只有客户端改动（`lib/client.js` 一处 effect 依赖数组），host 半未变，装完**刷新页面**即可生效。
+> 同一轮还修了两份 README 兼容性表的表头/分隔行错位（0.4.0 行被插在表头与分隔行之间，GFM 下整张表渲染不出）。
+
 ## 0.10 0.4.0 发布记录（核对时间 2026-11-14）
 
 | 项                     | 值                                                                                                                                                    |
