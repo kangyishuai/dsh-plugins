@@ -25,7 +25,7 @@ Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/de
 ## Cost & model calls
 
 - One extra model call per trigger, on the model the session's agent is currently using (falling back to the default model selection), billed to your own provider quota.
-- The call times out after 20 s. Failures, rate limits and malformed JSON are silent: no card, no dialog — only a counter in the plugin's diagnostics. Malformed output is dropped without writing a record.
+- The call times out after 20 s. Other failures, rate limits and malformed JSON are silent: no card, no dialog — only a counter in the plugin's diagnostics. A **timeout or cancellation** is counted separately (the `aborted` counter plus a "Last skipped" reason such as `generation timeout after 20s`), and the generate button then says the generation timed out or was cancelled — so this class stays diagnosable afterwards. Malformed output is dropped without writing a record.
 - When the model decides the turn is not worth continuing, no card is written — but **the call still happens**: this saves UI noise, not tokens. The model's reason is kept in the settings row's “Last skipped” line.
 - No other network access, no telemetry.
 
@@ -37,7 +37,7 @@ Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/de
 - **What is sent is a normal user message.** It enters the model context and is visible in the transcript exactly as if you had typed it.
 - **Private host seams.** The card renders through `conversation.chat.turnTail`; state comes from a host session projection read via `useProjection`; click-to-send uses the composer shell (`setDraft` / `submit`, waiting for the draft to settle before submitting); the ghost uses `conversation.input.overlay` and the host's placeholder DOM. These are internal, untyped and unversioned: a DSH upgrade can make the card, the send path or the ghost stop working **silently**. The plugin degrades instead of breaking a session, but after an upgrade run `pnpm probe:runtime` and the smoke suites, and check diagnostics.
 - **The ghost is coupled to the host placeholder DOM**, which is why it ships off by default; if that DOM changes, the hint can simply disappear.
-- **Silent failure is by design.** “No card appeared” is not an error dialog; look at the diagnostics counters before filing a bug.
+- **Silent failure is by design.** “No card appeared” is not an error dialog; look at the diagnostics counters before filing a bug. Timeouts and cancellations are the one exception worth knowing: they are labelled rather than lumped into a generic failure, because an unlabelled abort is what made one “no card” incident undiagnosable.
 - **No plugin data directory and no workspace files.** Everything lives in the existing session log; nothing is written under `DSH_HOME` besides the session itself.
 - **Subagent sessions never get cards**, and only normally completed turns are eligible.
 
@@ -77,7 +77,7 @@ Settings → **Next-step suggestions** (its own section now, no longer a row bur
 - **Decision card under the answer** / **Ghost hint in the composer** — one switch per face.
 - **Cadence** — “Pause for 1 hour” / “Resume”.
 - **Per session, at most N cards** — the budget (`maxCardsPerSession`, clamped to 0–1000).
-- **Diagnostics** — generated / failed / skipped / in-flight counters, the **reason the last card was skipped** (model judged unnecessary / queued / paused / budget / failure, with the model's own sentence), the last error, the runtime **version + build hash**, and a Refresh button. `nextStep/diagnostics` returns the same `version` / `buildHash` / `buildFiles` / `packagePath`, so a running build can be matched against `dsh plugin list` or the npm tarball without digging through startup logs.
+- **Diagnostics** — generated / failed / aborted / skipped / in-flight counters, the **reason the last card was skipped** (model judged unnecessary / queued / paused / budget / failure / timeout / cancelled, with the model's own sentence), the last error, the runtime **version + build hash**, and a Refresh button. `nextStep/diagnostics` returns the same `version` / `buildHash` / `buildFiles` / `packagePath`, so a running build can be matched against `dsh plugin list` or the npm tarball without digging through startup logs.
 
 Turning the global switch off **hides every dependent row** (card / ghost / pause / budget / diagnostics) and leaves just the switch plus one line of explanation — off means off, nothing looks like it still runs, and re-enabling restores the previous switch values.
 
@@ -85,18 +85,19 @@ The row writes the same `$DSH_HOME/next-step.settings.json` that the host re-rea
 
 ## When no card appears
 
-| Situation                                                                                         | What happens                                                               |
-| ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| The turn was stopped, errored, or produced no text                                                | No card: only normally completed turns are eligible.                       |
-| Subagent session                                                                                  | No card, by design.                                                        |
-| Global switch off                                                                                 | No request is made at all; existing cards remain in the transcript.        |
-| Paused, or the session's card budget (`maxCardsPerSession`) used up                               | No new card; existing cards stay.                                          |
-| A card or a decision already exists for that turn                                                 | One card per turn; no duplicates.                                          |
-| The model judges the turn not worth continuing (`needed=false`)                                   | No card; “Last skipped” in diagnostics shows the model's reason.           |
-| Model call failed, timed out (20 s), was rate-limited, bad JSON                                   | Silent; only a diagnostics counter goes up.                                |
-| The reply is still streaming                                                                      | Nothing is rendered for the turn until it ends.                            |
-| The composer already has a draft                                                                  | The card is visible but the pills are disabled until the draft is cleared. |
-| Ghost face on, but the composer is not plain (draft, attachment, `@`, `/`, or a non-idle session) | The hint stays hidden.                                                     |
+| Situation                                                                                         | What happens                                                                                    |
+| ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| The turn was stopped, errored, or produced no text                                                | No card: only normally completed turns are eligible.                                            |
+| Subagent session                                                                                  | No card, by design.                                                                             |
+| Global switch off                                                                                 | No request is made at all; existing cards remain in the transcript.                             |
+| Paused, or the session's card budget (`maxCardsPerSession`) used up                               | No new card; existing cards stay.                                                               |
+| A card or a decision already exists for that turn                                                 | One card per turn; no duplicates.                                                               |
+| The model judges the turn not worth continuing (`needed=false`)                                   | No card; “Last skipped” in diagnostics shows the model's reason.                                |
+| Model call failed, was rate-limited, bad JSON                                                     | Silent; only a diagnostics counter goes up.                                                     |
+| The generation **timed out (20 s) or was cancelled**                                              | Counted in `aborted`; “Last skipped” says which, and the generate button reports it. No dialog. |
+| The reply is still streaming                                                                      | Nothing is rendered for the turn until it ends.                                                 |
+| The composer already has a draft                                                                  | The card is visible but the pills are disabled until the draft is cleared.                      |
+| Ghost face on, but the composer is not plain (draft, attachment, `@`, `/`, or a non-idle session) | The hint stays hidden.                                                                          |
 
 ## Known limitations
 

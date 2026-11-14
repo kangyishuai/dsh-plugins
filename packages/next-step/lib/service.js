@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { BlockAssembler, createUserMessage } from "@deepseek-ai/dsh-llm";
 import { appendPluginRecord, pluginRecordOf } from "@deepseek-ai/dsh-session";
 import { Remote, RemoteError, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
+import { abortReasonOf, abortReasonText, abortSkipKind, TIMEOUT_MESSAGE } from "./abort-reason.js";
 import { buildIdentity } from "./build-info.js";
 import { cheapSkipReason } from "./gates.js";
 import {
@@ -188,10 +189,13 @@ export class NextStepService extends TypertRemoteService {
     this.config = config ?? {};
     this.logger = ctx?.logger ?? console;
     this.dataRoot = resolveDataRoot(this.config);
-    /** @type {{ generated: number, failed: number, skipped: number, skippedByModel: number, acted: number, dismissed: number }} */
+    /** @type {{ generated: number, failed: number, aborted: number, skipped: number, skippedByModel: number, acted: number, dismissed: number }} */
     this.counters = {
       generated: 0,
       failed: 0,
+      // 生成被中止（超时/取消）。单独计数：中止既不写会话日志、原来也不计数，
+      // 导致「卡片没出来」在诊断里完全无痕（见 abort-reason.js 的说明）。
+      aborted: 0,
       skipped: 0,
       skippedByModel: 0,
       acted: 0,
@@ -326,13 +330,20 @@ export class NextStepService extends TypertRemoteService {
     const controller = new AbortController();
     this.inflight.set(sessionId, controller);
     const timer = setTimeout(
-      () => controller.abort(new Error("next-step timeout")),
+      () => controller.abort(new Error(TIMEOUT_MESSAGE)),
       settings.timeoutMs,
     );
     try {
       const result = await this.generate(session, settings, controller.signal);
-      if (controller.signal.aborted) return { ok: false, reason: "aborted" };
-      if (this.inflight.get(sessionId) !== controller) return { ok: false, reason: "aborted" };
+      if (controller.signal.aborted) {
+        this.markAbort(controller.signal.reason, settings.timeoutMs);
+        return { ok: false, reason: "aborted" };
+      }
+      // 同一会话又起了新的一次生成：这次被后来者取代，算取消而不是超时。
+      if (this.inflight.get(sessionId) !== controller) {
+        this.markAbort(undefined, settings.timeoutMs);
+        return { ok: false, reason: "aborted" };
+      }
       if (result === null) {
         this.counters.failed += 1;
         this.lastError = "model output did not match the card schema";
@@ -368,12 +379,21 @@ export class NextStepService extends TypertRemoteService {
       this.lastError = "";
       return { ok: true, card };
     } catch (error) {
-      if (!controller.signal.aborted) {
-        this.counters.failed += 1;
-        this.lastError = error instanceof Error ? error.message : String(error);
-        this.markFailure(this.lastError);
-        this.warn("card generation failed", error);
+      // 超时/取消会让 generate() 以抛错收场（不是返回 null）：这种中止原来完全无痕，
+      // 既不计 failed 也不写 lastSkip，诊断里看不到——所以先单独归类。
+      if (controller.signal.aborted) {
+        this.markAbort(controller.signal.reason, settings.timeoutMs);
+        return { ok: false, reason: "aborted" };
       }
+      // 宿主自己抛的错误里也可能写着超时（定时器还没触发）：同样按中止记，不记成 failed。
+      if (abortReasonOf(error) === "timeout") {
+        this.markAbort(error, settings.timeoutMs);
+        return { ok: false, reason: "aborted" };
+      }
+      this.counters.failed += 1;
+      this.lastError = error instanceof Error ? error.message : String(error);
+      this.markFailure(this.lastError);
+      this.warn("card generation failed", error);
       return { ok: false, reason: "failed" };
     } finally {
       clearTimeout(timer);
@@ -403,6 +423,22 @@ export class NextStepService extends TypertRemoteService {
     this.lastSkip = {
       kind: "failed",
       reason: String(reason).slice(0, 160),
+      at: Date.now(),
+    };
+  }
+
+  /**
+   * 记录一次「生成被中止」：计入 aborted 并写 lastSkip，让诊断行显示得出来。
+   * 不碰 failed（中止不是失败，也不该把 lastError 写成中止原因）。
+   * @param {unknown} reason AbortController 的 reason（超时时是本插件的 timeout Error）
+   * @param {number} [timeoutMs]
+   */
+  markAbort(reason, timeoutMs) {
+    const kind = abortReasonOf(reason);
+    this.counters.aborted += 1;
+    this.lastSkip = {
+      kind: abortSkipKind(kind),
+      reason: abortReasonText(kind, timeoutMs),
       at: Date.now(),
     };
   }
