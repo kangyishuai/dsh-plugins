@@ -64,6 +64,29 @@ DSH_HOME=$H dsh --profile ad --port 0 --no-open
 
 结论：**rc.3 上 advisor 无回归**。
 
+## 超时 vs 取消：一次真机 90 秒超时的定位（2026-11-14）
+
+排查「advisor 工具报 `顾问不可用（aborted）：顾问调用被中止`」时，先用三条独立证据把范围钉死：
+
+| 证据                                 | 读数                                                                                                       |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| 会话日志 `tool/call` → `tool/result` | 时间戳差 **90,017 ms**（seq 617 → 622）                                                                    |
+| `~/.dsh/advisor/usage.jsonl` 末条    | `trigger:"tool"` · `verdict:"unavailable"` · `code:"aborted"` · **`ms:90002`** · in/out 全 0 · `costUsd:0` |
+| `~/.dsh/advisor/settings.json`       | **不存在** → 用的就是内置默认 `timeoutMs: 90000`                                                           |
+
+结论：不是插件崩、也不是 rc.3 引入的回归，而是**顾问路由太慢、撞上了插件自己的 90 秒单次超时**。
+
+28 次真实徵询的耗时分布（同一份 `usage.jsonl`）：p50 **6.2s**、p90 **52.5s**、max **90.0s**；`>60s` 3 次，`≥90s` **2 次**——其中一次在 **2026-11-12** 就已经发生过（`ms:90007`），早于 rc.3，所以是这条路由的既有特征。
+
+顺带发现两个真问题（已修，见 changeset `advisor-timeout-code`）：
+
+1. **超时被当成「被取消」。** `call.js` 的 abort 分支只看 `finish.kind === "aborted"`，把 `AbortSignal.timeout` 触发的超时也归成 `code:"aborted"`，与 README 里 `timeout` / `aborted` 分列的失败码清单不符。
+2. **超时文案说「0 秒」。** 不足 1 秒的时长会拼出「顾问调用超时（0 秒）」。
+
+修法：新增纯函数 `lib/abort-reason.js`（`classifyAbort` / `formatTimeout`），`call.js` 根据「超时 signal 是否真的触发」区分 `timeout` 与 `aborted`；不足 1 秒按 1 秒显示。单测 4 项覆盖，接线用 stub 宿主验证过：`timeoutMs:120` → `code:"timeout"`「顾问调用超时（1 秒）」；外部 signal 取消 → `code:"aborted"`「顾问调用被中止」。
+
+后续动作：默认 90s **没有**改（改默认会连带影响成本与最坏延迟），但把实测分布写进了 README 的 `timeoutMs` 行；这条路由慢就自己调大（5000–600000）。
+
 ## 0.6.1 复核记录（2026-11-14，DSH 0.2.2-rc.2）
 
 | 层                                   | 结果                                                                 |

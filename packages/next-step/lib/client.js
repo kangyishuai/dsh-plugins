@@ -52,6 +52,7 @@ window.__ModuleLoader__.load({
       "error.missing": "找不到这条建议",
       "error.disabled": "插件已停用",
       "error.failed": "操作失败，请重试",
+      "error.aborted": "生成超时或被取消，请重试",
       "error.send": "没能把建议写进输入框",
       "error.budget": "本会话的卡片预算已用完",
       "error.exists": "这一轮已经有卡片了",
@@ -73,7 +74,8 @@ window.__ModuleLoader__.load({
       "settings.budgetUnit": "张卡",
       "settings.diagnostics": "诊断",
       "settings.refresh": "刷新",
-      "settings.stats": "已生成 {generated} · 失败 {failed} · 跳过 {skipped} · 在途 {inflight}",
+      "settings.stats":
+        "已生成 {generated} · 失败 {failed} · 已中止 {aborted} · 跳过 {skipped} · 在途 {inflight}",
       "settings.lastError": "最近错误：{message}",
       "settings.noError": "无错误",
       "settings.paused": "已暂停，约 {time} 后恢复",
@@ -103,6 +105,7 @@ window.__ModuleLoader__.load({
       "error.missing": "That suggestion is no longer available",
       "error.disabled": "The plugin is disabled",
       "error.failed": "Something went wrong. Try again.",
+      "error.aborted": "Generation timed out or was cancelled. Try again.",
       "error.send": "Could not fill the composer",
       "error.budget": "This session has used up its card budget",
       "error.exists": "This turn already has a card",
@@ -125,7 +128,7 @@ window.__ModuleLoader__.load({
       "settings.diagnostics": "Diagnostics",
       "settings.refresh": "Refresh",
       "settings.stats":
-        "Generated {generated} · failed {failed} · skipped {skipped} · in flight {inflight}",
+        "Generated {generated} · failed {failed} · aborted {aborted} · skipped {skipped} · in flight {inflight}",
       "settings.lastError": "Last error: {message}",
       "settings.noError": "No errors",
       "settings.paused": "Paused; resumes in about {time}",
@@ -157,7 +160,7 @@ window.__ModuleLoader__.load({
       "no-turn": "error.noTurn",
       failed: "error.failed",
       schema: "error.failed",
-      aborted: "error.failed",
+      aborted: "error.aborted",
       "not-needed": "error.failed",
     };
 
@@ -1367,6 +1370,7 @@ window.__ModuleLoader__.load({
         diagText = t("settings.stats", {
           generated: String(stats.generated || 0),
           failed: String(stats.failed || 0),
+          aborted: String(stats.aborted || 0),
           skipped: String(stats.skipped || 0),
           inflight: String(stats.inflight || 0),
         });

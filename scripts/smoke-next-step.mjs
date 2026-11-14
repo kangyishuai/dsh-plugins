@@ -470,8 +470,28 @@ check(
 const card = cards.length === 0 ? null : cards[cards.length - 1];
 if (card === null) {
   await shot("03-no-card");
+  // 没出卡时把插件自己报的原因抓回来：client 半的失败区带 data-next-step-retry-error，
+  // 文案已经能区分「超时/取消」与「其它失败」（error.aborted vs error.failed）。
+  // 没有这段，冒烟只能报「宿主生成失败/被门挡/客户端没渲染」——2026-11-14 就卡在这。
+  let retryErrorText = "";
+  try {
+    retryErrorText = await page.evaluate(() => {
+      const el = document.querySelector("[data-next-step-retry-error]");
+      return el ? String(el.textContent || "").trim() : "";
+    });
+  } catch (error) {
+    retryErrorText = "读取失败： " + String(error).slice(0, 120);
+  }
+  checks.push({
+    name: "没出卡时插件报的原因（data-next-step-retry-error）",
+    ok: retryErrorText !== "",
+    detail: retryErrorText === "" ? "失败区没有渲染出原因文案" : retryErrorText,
+  });
   await task.finish({ keep: false }).catch(() => {});
-  console.log("SMOKE_STATE " + JSON.stringify({ sessionId: sessionId, canModel: true, cards: 0 }));
+  console.log(
+    "SMOKE_STATE " +
+      JSON.stringify({ sessionId: sessionId, canModel: true, cards: 0, retryError: retryErrorText }),
+  );
   console.log("SMOKE_RESULT " + JSON.stringify({ checks }));
   return;
 }
@@ -1586,6 +1606,10 @@ const main = async () => {
     const total = parsed.checks.length + logChecks.length;
     console.log(`截图目录：${SHOTS_OUT}`);
     if (failed > 0) {
+      // 把插件自己报的原因一起打出来，省掉「再去翻截图/临时目录」这一步。
+      if (typeof state.retryError === "string" && state.retryError !== "") {
+        console.log(`      插件报错（没出卡时）：${state.retryError}`);
+      }
       fail(`${failed} 项断言失败（共 ${total} 项，SKIP ${skipped} 项）`);
       return;
     }
@@ -1603,8 +1627,16 @@ const main = async () => {
     // 先搬截图，再删临时目录（顺序反了会把证据一起删掉）。
     await mkdir(SHOTS_OUT, { recursive: true }).catch(() => {});
     await cp(join(work, "shots"), SHOTS_OUT, { recursive: true }).catch(() => {});
-    if (process.env.SMOKE_KEEP === "1") {
+    // 失败时自动保留临时 DSH_HOME：临时目录里有宿主日志、profile 与插件设置，
+    // 是排查「卡片为什么没出来」的唯一现场。以前只有 SMOKE_KEEP=1 才保留，
+    // 结果 2026-11-14 那次失败把现场一起删了。
+    if (process.env.SMOKE_KEEP === "1" || process.exitCode !== 0) {
       console.log(`临时目录已保留：${work}`);
+      if (process.env.SMOKE_KEEP !== "1") {
+        console.log(
+          "       （因为这次有断言失败，临时 DSH_HOME 自动保留；删掉或设 SMOKE_KEEP=0 不再保留）",
+        );
+      }
     } else {
       await rm(work, { recursive: true, force: true });
     }

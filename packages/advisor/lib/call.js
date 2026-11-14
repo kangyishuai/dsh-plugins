@@ -2,6 +2,7 @@
 // 一次顾问调用：prepareCall → stream → 聚合文本 / usage / 错误分类。
 // 这是整个插件唯一会花钱的地方，所有失败都必须变成**结构化结果**，绝不向上抛。
 import { BlockAssembler } from "@deepseek-ai/dsh-llm";
+import { classifyAbort } from "./abort-reason.js";
 import { advisorSystemPrompt, buildAdvisorInput, mintNonce } from "./prompt.js";
 
 /** 额外调用统一打这个 purpose：也是递归防护的判据（监听器按它跳过自己）。 */
@@ -93,6 +94,12 @@ export async function callAdvisor(input) {
 
   // 超时与用户中断合并：任一触发都中止（绝不留下孤儿请求继续烧 token）。
   const timeoutSignal = AbortSignal.timeout(settings.timeoutMs);
+  // 超时与用户取消都会让流以 aborted 收尾，事后无法从 finish 分辨；
+  // 这里先记住「信号里的一员确实因超时触发」，收尾时用它区分 code。
+  let timedOut = false;
+  timeoutSignal.addEventListener("abort", () => {
+    timedOut = true;
+  });
   const signals = [input.signal, timeoutSignal].filter(Boolean);
   const signal =
     signals.length > 1 && typeof AbortSignal.any === "function"
@@ -162,10 +169,16 @@ export async function callAdvisor(input) {
       };
     }
     if (settled?.kind === "aborted" || finish?.kind === "aborted") {
+      const verdict = classifyAbort({
+        // 外部 signal 先于超时触发 → 用户/回合取消；超时 signal 触发 → 超时。
+        cancelled: timedOut !== true && (input.signal?.aborted ?? false),
+        timedOut,
+        timeoutMs: settings.timeoutMs,
+      });
       return {
         ok: false,
-        code: "aborted",
-        message: "顾问调用被中止",
+        code: verdict.code,
+        message: verdict.message,
         ms: Date.now() - startedAt,
         model,
         effort: useEffort,
