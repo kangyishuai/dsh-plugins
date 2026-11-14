@@ -466,6 +466,25 @@ test("卡片晚到（先 interactive、后到投影）时 ⌘↵ 仍能接管", 
   }
 });
 
+test("只有一粒胶囊的卡片同样接管（与胶囊数量无关）", async () => {
+  const hooks = createHooks();
+  const plugin = bootPlugin(hooks);
+  try {
+    // 真机复现过「一粒能用、两粒失效」的错觉：实际是卡片到达时机不同，不是胶囊数量。
+    const single = { ...CARD, options: [CARD.options[0]] };
+    const fiber = hooks.mount(plugin.card, propsOf(plugin, view()));
+    hooks.update(fiber, propsOf(plugin, view({ cards: { [String(TURN)]: single } })));
+
+    assert.equal(pressPrimaryEnter(plugin).consumed, true);
+    assert.equal(actCalls(plugin).length, 1);
+    assert.deepEqual(actCalls(plugin)[0].payload.args.request.index, 0);
+    hooks.flush();
+    hooks.unmount(fiber);
+  } finally {
+    plugin.restore();
+  }
+});
+
 test("输入框有草稿时 ⌘↵ 透传（不抢宿主的 Queue/Steer）", async () => {
   const hooks = createHooks();
   const plugin = bootPlugin(hooks);
