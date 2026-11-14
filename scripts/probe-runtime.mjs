@@ -107,6 +107,10 @@ const API_CHECKS = [
  * 匹配 client 源码时注意：0.2.2-rc.2 起 `lib/client.js` 是压缩产物，字符串可能改用
  * 反引号、逗号后不留空格；0.2.2-rc.1 及更早则是未压缩、双引号。所以字符串一律写成
  * [`"'] 字符类 + `\s*`，不要写死双引号或空格，否则升级会误报 FAIL。
+ *
+ * 定位文件时：固定路径用 `file`；文件名带内容哈希的产物（web-frontend 的
+ * `dist/assets/index-<hash>.js`）必须用 `filePattern` 扫——哈希每个版本都变，
+ * 写死会让探针每次升级都误报（rc.3 实测：`index-ghOpC9uV.js` → `index-Ciz7DZxv.js`）。
  */
 const SEAM_CHECKS = [
   {
@@ -246,7 +250,9 @@ const SEAM_CHECKS_SESSION_DELETE = [
     breaks: "审计 / 体检 / 回执 / 偏好没有落点（设置页少一整节）",
   },
   {
-    file: "@deepseek-ai/dsh-web-frontend/dist/assets/index-ghOpC9uV.js",
+    // 文件名带内容哈希，每个版本都不同：用 filePattern 扫，不写死（rc.2 = index-ghOpC9uV.js，rc.3 = index-Ciz7DZxv.js）。
+    filePattern:
+      /^\/dsh\/node_modules\/@deepseek-ai\/dsh-web-frontend\/dist\/assets\/index-.*\.js$/u,
     name: "Modal 的 [data-modal-autofocus] 焦点约定（确认按钮默认选中）",
     pattern: /data-modal-autofocus/u,
     breaks: "确认框不再默认聚焦「移入回收站」，回车即删的手感退化",
@@ -426,6 +432,46 @@ async function openAsar(asarPath) {
   };
 }
 
+/**
+ * 跑一组「私有 seam」检查，按功能影响分组报告。
+ *
+ * 定位目标文件有两种写法：
+ *   - `file`：相对 `/dsh/node_modules/` 的固定路径（`lib/client.js`、`lib/index.js` 这类）。
+ *   - `filePattern`：对 asar 全路径做正则，扫到哪个算哪个。**文件名带内容哈希的产物必须用它**
+ *     ——例如 web-frontend 的 `dist/assets/index-<hash>.js`、`index-<hash>.css`，每个版本的
+ *     哈希都不同（rc.2 是 `index-ghOpC9uV.js`，rc.3 是 `index-Ciz7DZxv.js`）。写死会让探针
+ *     在每次升级都误报 FAIL（规则 1：不写死 DSH 内部实现，扫描 + 匹配已知模式）。
+ *
+ * @param {Awaited<ReturnType<typeof openAsar>>} asar
+ * @param {(kind: "PASS"|"FAIL"|"WARN", name: string, detail: string) => void} push
+ * @param {{ file?: string, filePattern?: RegExp, name: string, pattern: RegExp, breaks: string }[]} checks
+ */
+async function runSeamChecks(asar, push, checks) {
+  for (const check of checks) {
+    const paths = check.filePattern
+      ? [...asar.files.keys()].filter((path) => check.filePattern?.test(path))
+      : [`/dsh/node_modules/${check.file}`];
+    if (paths.length === 0) {
+      const label = check.file ?? String(check.filePattern);
+      push("FAIL", `seam ${check.name}`, `文件不存在：${label}｜影响：${check.breaks}`);
+      continue;
+    }
+    let matched = false;
+    for (const path of paths) {
+      const buffer = await asar.read(path);
+      if (buffer && check.pattern.test(buffer.toString("utf8"))) {
+        matched = true;
+        break;
+      }
+    }
+    push(
+      matched ? "PASS" : "FAIL",
+      `seam ${check.name}`,
+      matched ? "" : `源码里没有匹配到特征｜影响：${check.breaks}`,
+    );
+  }
+}
+
 const main = async () => {
   const { values } = parseArgs({
     options: {
@@ -493,68 +539,13 @@ const main = async () => {
   }
 
   // 3.5) 私有 seam（按功能影响分组报告）
-  for (const check of SEAM_CHECKS) {
-    const path = `/dsh/node_modules/${check.file}`;
-    const buffer = await asar.read(path);
-    if (!buffer) {
-      push("FAIL", `seam ${check.name}`, `文件不存在：${check.file}｜影响：${check.breaks}`);
-      continue;
-    }
-    const ok = check.pattern.test(buffer.toString("utf8"));
-    push(
-      ok ? "PASS" : "FAIL",
-      `seam ${check.name}`,
-      ok ? "" : `源码里没有匹配到特征｜影响：${check.breaks}`,
-    );
-  }
-
+  await runSeamChecks(asar, push, SEAM_CHECKS);
   // 3.6) session-delete 的私有 seam
-  for (const check of SEAM_CHECKS_SESSION_DELETE) {
-    const path = `/dsh/node_modules/${check.file}`;
-    const buffer = await asar.read(path);
-    if (!buffer) {
-      push("FAIL", `seam ${check.name}`, `文件不存在：${check.file}｜影响：${check.breaks}`);
-      continue;
-    }
-    const ok = check.pattern.test(buffer.toString("utf8"));
-    push(
-      ok ? "PASS" : "FAIL",
-      `seam ${check.name}`,
-      ok ? "" : `源码里没有匹配到特征｜影响：${check.breaks}`,
-    );
-  }
-
+  await runSeamChecks(asar, push, SEAM_CHECKS_SESSION_DELETE);
   // 3.7) next-step 的私有 seam
-  for (const check of SEAM_CHECKS_NEXT_STEP) {
-    const path = `/dsh/node_modules/${check.file}`;
-    const buffer = await asar.read(path);
-    if (!buffer) {
-      push("FAIL", `seam ${check.name}`, `文件不存在：${check.file}｜影响：${check.breaks}`);
-      continue;
-    }
-    const ok = check.pattern.test(buffer.toString("utf8"));
-    push(
-      ok ? "PASS" : "FAIL",
-      `seam ${check.name}`,
-      ok ? "" : `源码里没有匹配到特征｜影响：${check.breaks}`,
-    );
-  }
-
+  await runSeamChecks(asar, push, SEAM_CHECKS_NEXT_STEP);
   // 3.8) advisor 的私有 seam
-  for (const check of SEAM_CHECKS_ADVISOR) {
-    const path = `/dsh/node_modules/${check.file}`;
-    const buffer = await asar.read(path);
-    if (!buffer) {
-      push("FAIL", `seam ${check.name}`, `文件不存在：${check.file}｜影响：${check.breaks}`);
-      continue;
-    }
-    const ok = check.pattern.test(buffer.toString("utf8"));
-    push(
-      ok ? "PASS" : "FAIL",
-      `seam ${check.name}`,
-      ok ? "" : `源码里没有匹配到特征｜影响：${check.breaks}`,
-    );
-  }
+  await runSeamChecks(asar, push, SEAM_CHECKS_ADVISOR);
 
   // 4) slot：扫描所有 client 包的 lib/*.js
   const clientFiles = [...asar.files.keys()].filter((path) =>
