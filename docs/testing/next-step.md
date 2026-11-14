@@ -118,7 +118,7 @@ gh release view '@kangyishuai/dsh-next-step@0.1.2' --json tagName,body --jq '{ta
 | `pnpm probe:runtime`                   | **60/60 PASS**（seam 与 slot 全在；本次没有新增私有 seam）                                                                                            | ~1s    |
 | `pnpm smoke:next-step`（SMOKE_KEEP=1） | **59 PASS + 0 SKIP / 0 FAIL**（真实宿主 + 真实模型调用）：冒烟第一轮模型就返回了 `needed=false`，于是走「补生成按钮」兜底路径出卡，后面 57 项照常通过 | ~4 min |
 
-重要观察：**默认提示词（「用一句话解释二分查找」）下模型返回 `needed=false`**——这正是 v0.2 想避免的噪音卡。
+重要观察：**当时的默认提示词（「用一句话解释二分查找」）下模型返回 `needed=false`**（该提示词后来换掉了，见上文的现役记录）——这正是 v0.2 想避免的噪音卡。
 冒烟因此改成「自动出卡 **或** 点补生成按钮出卡」两条合法路径，并额外断言按钮存在、可点、点后出卡；
 真实会话里这条路径已在 0.7 之前的人工验证中确认。
 

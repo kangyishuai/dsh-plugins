@@ -49,6 +49,17 @@ DSH_HOME=$H dsh --profile ad --port 0 --no-open
 | `pnpm smoke:advisor-desktop --require`     | **19 PASS + 1 SKIP（20 项；真机 DSH 桌面版 0.2.2-rc.2，冷启动实测）**：插件加载、选择器、设置卡（含「读到的是展开后快照」这条回归断言）、分页 `status`/`doctor`（读会话日志）、收尾清理。`--advice` 再加 4 项共 24 项 |
 | 真机徵询（`pnpm pack` → `add` → 手动徵询） | **已完成**（2026-11-14 用 0.6.0 发布版补做，过程与证据见下面的 0.6.0 小节）                                                                                                                                           |
 
+## 0.6.1 复核记录（2026-11-14，DSH 0.2.2-rc.2）
+
+| 层                                   | 结果                                                                 |
+| ------------------------------------ | -------------------------------------------------------------------- |
+| `node --test`（`decisions.test.js`） | **18 pass**（新增 3 项：aborted/blocked 原因码、「回合被中断」归类） |
+| `pnpm verify`                        | 通过                                                                 |
+| `pnpm smoke:advisor`（web）          | 14/14（未受本次改动影响）                                            |
+
+0.6.1 只改决策日志的归类：`endKind` 为 `aborted`/`blocked` 时直接记 `skipped-aborted`/`skipped-blocked`，
+不再从人话里猜。桌面只读回归没有复跑（改的是 host 半的日志写入，不在桌面脚本覆盖面内）。
+
 ## 0.6.0 复核记录（2026-11-14，DSH 0.2.2-rc.2）
 
 | 层                                      | 结果                                                                                      |
