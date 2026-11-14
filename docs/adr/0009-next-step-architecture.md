@@ -26,6 +26,7 @@
 5. **点击 = 用户消息，走宿主输入框。** `setDraft(text)` → 轮询等编辑器草稿落定 → `submit()`（内部 `mode: "queue"`，与手动回车同一条提交链）。不伪造会话事件。发送前的决策记录让界面立即进入只读态；草稿非空时禁用胶囊（`setDraft` 是整篇替换，会覆盖用户正在打的字）。
 6. **严格门控。** 只在 `turn/end` 且 `reason.kind === "completed"` 时生成；Stop/报错/`max-tokens`/待审批一律不出卡；子代理会话不出卡；流式期间宿主本来就不渲染 turnTail 节点。官方 action-cards 只判「有没有最终文本」，会在 `max-tokens` 后误出卡——这里做对，是产品可信度上的差异点。
 7. **开关 = 不再发请求，而不是隐藏 UI。** 设置在 `$DSH_HOME/next-step.settings.json`，host 每次生成前重读（1s 缓存），所以改文件即生效、不需要重启；`enabled=false` 时在发请求之前就返回。另有 `pauseUntil`、`maxCardsPerSession` 预算闸与超时（默认 20s）、失败静默。
+    > 2026-11-14 补注：**超时与取消**这两个中止原因不再完全静默——它们会计入 `aborted`、写进诊断的「最近跳过」，补生成按钮也会显示「生成超时或被取消」。这不违背「失败静默」的本意（仍然不出卡、不弹框、不把回合弄坏），而是补上可诊断性：此前中止既不计数也不落日志，一次「没出卡」事后完全无法定位。
 8. **幽灵提示默认关。** 它必须 portal 进编辑器位置盒、复用宿主 placeholder 的 class 才能保证同基线同字号——这是私有 DOM 依赖，宿主升级会静默失效。把它做成默认关闭的 flag，失败时只是没有提示。
 
 ## 备选方案
@@ -40,7 +41,7 @@
 - 好：状态可审计（谁在什么上下文下被建议了什么、选了哪条），可随会话 fork；客户端不需要轮询或内存态；两个面对外的成本与开关只有一个入口。
 - 代价：
   - 依赖三条私有 seam：`conversation.chat.turnTail`、`ctx.sessionProjections.register`、composer facade 的 `setDraft`/`submit`（外加幽灵提示的 `conversation.input.overlay` + placeholder DOM）。升级 DSH 可能静默失效；`pnpm probe:runtime` 需要跟进体检项。
-  - 每次触发多一次真实模型调用，占用用户额度；`max-tokens`、限流、超时都必须静默降级。
+  - 每次触发多一次真实模型调用，占用用户额度；`max-tokens`、限流、超时都必须静默降级（超时/取消只在诊断与补生成按钮上留痕，见第 7 条的补注）。
   - 插件记录会随会话增长（每轮最多一条），`maxCardsPerSession` 只限制生成数量。
 
 ## 验证
