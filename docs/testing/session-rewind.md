@@ -56,10 +56,10 @@ pnpm gate session-rewind --deep --workspace ~/Workspace/dsh-rewind-ui-smoke
 按「便宜的先跑」排序，任何一步失败立刻停并给出下一步提示：
 
 1. `pnpm verify`（lint + 类型 + 规范 + 公开边界 + 208 单测）
-2. `pnpm probe:runtime`（宿主包/API/slot/私有 seam，50 项）
+2. `pnpm probe:runtime`（宿主包/API/slot/私有 seam，72 项）
 3. `pnpm smoke:session-rewind`（临时 DSH_HOME 的 web 端到端，52 项）
-4. 桌面只读回归（24 项，**永远带 `--require`**：没开调试端口就是失败，不是跳过）
-5. 桌面 `--deep` 文件模式 e2e（24 只读 + 16 深链 = 40 项，需 `--workspace`；2026-11-13 实测 **40/40 全绿、0 SKIP**）
+4. 桌面只读回归（25 项，**永远带 `--require`**：没开调试端口就是失败，不是跳过）
+5. 桌面 `--deep` 文件模式 e2e（25 只读 + 16 深链 = 41 项，需 `--workspace`；2026-11-13 时只读段是 24 项，当时实测 40/40 全绿；2026-11-14 只读段增加到 25 项，深链段本轮未重跑）
 
 只有显式 `--skip-desktop` 才跳过桌面端，且结束时会明确打印「门禁不完整」。
 
@@ -245,7 +245,7 @@ pnpm smoke:session-rewind-desktop -- --require --recall --deep \
 | 23  | 诊断报告孤儿数据检查存在                                        |
 | 24  | 面板可关闭                                                      |
 
-门禁建议直接跑**全量组合** `--recall --deep`（47 项 = 24 只读 + 7 召回 + 16 深链）：只读与召回 2026-11-12 实测全绿，只读 + 深链 2026-11-13 实测 40/40 全绿；**47 项的整串组合本身还没一次跑完过**（分两段验的）：召回段会切会话、`--deep`
+门禁建议直接跑**全量组合** `--recall --deep`（48 项 = 25 只读 + 7 召回 + 16 深链）：只读与召回 2026-11-12 实测全绿，只读 + 深链 2026-11-13 实测 40/40 全绿；**47 项的整串组合本身还没一次跑完过**（分两段验的）：召回段会切会话、`--deep`
 段自己新建会话，互不干扰；召回段结束会把草稿清空，`--deep` 的输入才不会被旧草稿污染。
 
 `--recall` 追加的 7 项（合计 31 项）：找到可召回的会话 → 输入框已聚焦且草稿为空 → 空草稿按 `↑`
@@ -303,3 +303,15 @@ pnpm smoke:session-rewind-desktop -- --require --recall --deep \
    （输入历史召回依赖它把**每个 keydown** 都送给观察者，并附带 `context.region` / `gesture.composing`）；
    `data-conversation-session` 这个会话根 DOM 标记也由 `dsh-client-ui-conversation` 提供；
 5. Typert Remote 的 SRC 网关仍要求 `method(request)` 且形参不可解构。
+
+## 0.7.0 复核记录（2026-11-14，DSH 0.2.2-rc.2）
+
+| 层                                            | 结果                                                                            |
+| --------------------------------------------- | ------------------------------------------------------------------------------- |
+| `node --test`（包内）                         | **208 pass / 0 fail**（`client.test.js` 90 项，含新增的分节与 store 断言）      |
+| `pnpm probe:runtime`                          | **72/72 PASS**                                                                  |
+| `pnpm smoke:session-rewind`（web）            | **52/52**（49 → 52：抽屉三页签、设置分节的三条交互）                            |
+| `pnpm smoke:session-rewind-desktop --require` | **25/25**，0 FAIL（真实 Electron + 本分支构建；设置分节的三行文案与诊断都读到） |
+
+设置从抽屉第 4 个页签迁到独立分节「设置 → 会话回溯」；抽屉只剩会话级数据（已撤回 / 回溯记录 / 救援点）。
+回溯记录与救援点依赖当前会话，**没有**搬进全局设置页。
