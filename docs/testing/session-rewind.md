@@ -304,6 +304,13 @@ pnpm smoke:session-rewind-desktop -- --require --recall --deep \
    `data-conversation-session` 这个会话根 DOM 标记也由 `dsh-client-ui-conversation` 提供；
 5. Typert Remote 的 SRC 网关仍要求 `method(request)` 且形参不可解构。
 
+## 0.7.0 踩到的跨插件陷阱（2026-11-14）
+
+**`useStore` 的返回形态不一样。** session-delete 的 `useStore(store)` 返回 `[state, setState]` 元组，
+而本插件的 `useStore(store)` **直接返回快照值**。做设置分节时照抄 `useStore(store)[0]` 拿到 `undefined`，
+渲染时 `prefs.defaultMode` 抛错，宿主的 slot 错误边界只留下一个空的 `data-slot-error` 锚点——
+现象是「设置页空白/打不开」，而不是一个像样的异常。抄跨插件的渲染代码前，先确认这层 API 的返回形态。
+
 ## 0.7.0 复核记录（2026-11-14，DSH 0.2.2-rc.2）
 
 | 层                                            | 结果                                                                            |

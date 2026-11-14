@@ -126,8 +126,14 @@ packages/<name>/
 
 参考实现：
 
-- `scripts/smoke-session-rewind-desktop.mjs`（24 项只读；`--recall` 再加 7 项输入框召回；`--deep` 再加文件模式 e2e 16 项，合计 40 项。只读与召回 2026-11-12 实测，只读 + `--deep` 2026-11-13 实测 40/40 全绿）
-- `scripts/smoke-session-delete-desktop.mjs`（14 项只读；`--workspace` 时 15 项）
+- `scripts/smoke-session-rewind-desktop.mjs`（25 项只读，2026-11-14 实测 25/25；`--recall` 再加 7 项输入框召回；`--deep` 再加文件模式 e2e，合计 40 项）
+- `scripts/smoke-session-delete-desktop.mjs`（18 项只读，2026-11-13 实测 18/18；带 `--workspace` 时另有写文件段落）
+- `scripts/smoke-advisor-desktop.mjs`（20 项，2026-11-14 实测 19 PASS + 1 SKIP；SKIP 是「该会话没有顾问记录」——脚本不制造徵询）
+- `scripts/smoke-next-step-desktop.mjs`（12 项只读，实测 10 PASS + 2 SKIP；`--deep` 发消息造卡后合计 25 项，实测 23 PASS + 2 SKIP）
+
+**agent 自己跑桌面回归时会撞上的前置**：advisor / next-step 的脚本带「当前会话不能有运行中的回合」的安全检查
+（检测到「停止」按钮就拒绝一切交互，只留 SKIP）。而 agent 的回合就跑在同一个桌面版里，所以它自己跑必然失败。
+做法是把**可见会话**切到一个空闲会话再跑，跑完切回——切换只是换视图，不会中断正在跑的回合（2026-11-14 实测）。
 
 发版前用 `pnpm gate <plugin>` 一次跑完（桌面步骤永远带 `--require`）：
 
@@ -169,5 +175,10 @@ ego 的浏览器是**和用户共用**的实例：它的 cookie jar 里装着用
 
    全清会顺手删掉用户自己的站点登录态、以及本机其它 dev server 在 `127.0.0.1` 上的会话——这属于破坏用户数据。
 
-2. **浮层的状态不能跨 `page.evaluate` 保持。**
+2. **页面额度是硬上限（8 个），自己开的页面要自己关。**
+   `TaskSpace` 对每个任务空间限制 8 个 Page。冒烟里 `task.newPage()` 建了第二个标签页却不关，
+   就会随每轮运行累积，攒满后**所有**断言都以 `Page budget reached (8/8)` 失败——表现像被测代码坏了。
+   做法：开跑前清理遗留页面，跑完关掉自己开的；`task.page()` 只能引用**已存在**的页面，新建要用 `await task.newPage()`。
+
+3. **浮层的状态不能跨 `page.evaluate` 保持。**
    宿主在两次 evaluate 之间会重渲染，刚打开的面板/编辑器会被收掉，后续调用一律拿到空引用（表现为「断言说打不开，但其实打开过」）。因此：**打开面板 + 在面板里做的一连串操作要放进同一个 evaluate**；需要分步时，每步开头都先检查目标是否还在，不在才重开。另外截图（`page.screenshot`）要在面板还活着时立刻执行——如果截图前先做 DOM 脱敏（遍历改写文本节点），那次改写本身就可能把面板刷掉。
