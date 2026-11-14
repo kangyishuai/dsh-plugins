@@ -88,6 +88,41 @@ describe("buildDecision", () => {
   });
 });
 
+describe("buildDecision：结束原因优先于文本猜测", () => {
+  it("aborted / blocked 直接用原因码，不落到 skipped-other", () => {
+    assert.equal(
+      buildDecision({ sessionId: "s", turn: 1, endKind: "aborted" }).skipCode,
+      "skipped-aborted",
+    );
+    assert.equal(
+      buildDecision({ sessionId: "s", turn: 1, endKind: "blocked" }).skipCode,
+      "skipped-blocked",
+    );
+  });
+
+  it("中文原因文本也能归类（真实日志里出现过「回合被中断」）", () => {
+    assert.equal(classifySkip("回合被中断"), "skipped-aborted");
+    assert.equal(classifySkip("回合被阻塞"), "skipped-blocked");
+    assert.equal(
+      buildDecision({ sessionId: "s", turn: 1, endKind: "aborted", skipReason: "回合被中断" })
+        .skipCode,
+      "skipped-aborted",
+    );
+  });
+
+  it("正常结束仍按人话原因归类", () => {
+    assert.equal(
+      buildDecision({
+        sessionId: "s",
+        turn: 1,
+        endKind: "completed",
+        skipReason: "已达会话投递上限",
+      }).skipCode,
+      "skipped-limit",
+    );
+  });
+});
+
 describe("outcomeOf", () => {
   it("下一条用户消息命中建议里的信号 → accepted", () => {
     assert.equal(
