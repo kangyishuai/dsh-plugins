@@ -47,7 +47,7 @@ DSH_HOME=$H dsh --profile ad --port 0 --no-open
 | `node --test`（`packages/advisor`）        | **115 pass / 0 fail**（adoption / anchors / catalog / client / guard / locale-parity / money / prompt / redact / route / settings / tool-schema / trace / transcript / twopass / verifier）                           |
 | `pnpm probe:runtime`                       | **67/67 PASS**（含 advisor 的 7 条 seam：`resolveModelInfo` / `prepareCall+configure` / `UNSUPPORTED_REASONING_EFFORT` / usage 分片 / `commands.register` / `commandUi.decorate` / `popupSelect`）                    |
 | `pnpm smoke:advisor-desktop --require`     | **19 PASS + 1 SKIP（20 项；真机 DSH 桌面版 0.2.2-rc.2，冷启动实测）**：插件加载、选择器、设置卡（含「读到的是展开后快照」这条回归断言）、分页 `status`/`doctor`（读会话日志）、收尾清理。`--advice` 再加 4 项共 24 项 |
-| 真机徵询（`pnpm pack` → `add` → 手动徵询） | **未做**（P1 收尾的验收项，步骤见 [§4](#4-手工-gui-验证步骤)）                                                                                                                                                        |
+| 真机徵询（`pnpm pack` → `add` → 手动徵询） | **已完成**（2026-11-14 用 0.6.0 发布版补做，过程与证据见下面的 0.6.0 小节）                                                                                                                                           |
 
 ## 0.6.0 复核记录（2026-11-14，DSH 0.2.2-rc.2）
 
@@ -61,6 +61,22 @@ DSH_HOME=$H dsh --profile ad --port 0 --no-open
 
 本版新增的决策日志落在 `<数据根>/advisor/decisions.jsonl`，与 `usage.jsonl`（钱的账本）分开：
 一个回合一行，没徵询的回合也写。
+
+**真机徵询（手工 `/advisor ask`，2026-11-14）**：`trigger` 为 `manual` 的路径在真实桌面版上跑通。
+
+```
+命令输出：顾问认为无需建议。 2.1k in / 72 out / 4.6s / ≈¥0.0260
+usage.jsonl ：trigger=manual · provider=zhinao · model=moonshotai/kimi-k3.1-pro
+              verdict=declined · inputTokens=2124 · outputTokens=72 · costUsd=0.0039
+advice.jsonl：trigger=manual · status=declined · severity=nit · sessionId 与所在会话一致
+```
+
+两个观察（不是缺陷，记下来免得下次误判）：
+
+1. `/advisor ask` **不接受问句参数**——多带的文字会让命令报「无法识别的参数」；
+   它是「就当前会话内容徵询一次」，要指定重点请用 `/advisor ask` 后的其它子命令或直接让模型调用工具。
+2. `declined` 在界面上被渲染成「失败 advisor 顾问认为无需建议」——前缀来自宿主对「非成功结果」的
+   统一渲染，不是插件报错；账本里的 `verdict` 才是准的。
 
 **第一次在真实日志上跑复盘（2026-11-14，16 个回合）**：
 
