@@ -16,5 +16,6 @@
 | [0010](0010-advisor-architecture.md)                  | advisor：模型自主时机的按需顾问，成本与原因必须可见   | 已接受 |
 | [0011](0011-advisor-currency.md)                      | advisor：人民币设置与 USD 内部账本口径                | 已接受 |
 | [0012](0012-advisor-cache-pricing.md)                 | advisor：缓存读/写 token 的单价与两阶段成本           | 已接受 |
+| [0013](0013-next-step-gating-telemetry.md)            | next-step：三档判定、展示与生成解耦、本地事件与复盘   | 已接受 |
 
 新建：复制 [0000-template.md](0000-template.md)。

@@ -712,42 +712,110 @@ const main = async () => {
         await clickRect(general);
         await sleep(1000);
       }
-      let row = null;
-      const rowDeadline = Date.now() + 10000;
-      while (Date.now() < rowDeadline) {
-        row = await cdp.evaluate(`(() => {
+      const readRow = async () =>
+        cdp.evaluate(`(() => {
           const host = document.querySelector("[data-next-step-settings]");
           if (!host) return null;
           const diag = document.querySelector("[data-next-step-diag]");
+          const advanced = host.querySelector("[data-next-step-advanced]");
           return {
             switches: [...host.querySelectorAll("[data-next-step-switch]")].map((el) => el.getAttribute("data-next-step-switch")),
+            tiers: [...host.querySelectorAll("[data-next-step-tier]")].map((el) => el.getAttribute("data-next-step-tier")),
+            advanced: !!advanced,
+            advancedOpen: advanced !== null && advanced.getAttribute("aria-expanded") === "true",
             budget: !!host.querySelector("[data-next-step-budget]"),
             pause: !!host.querySelector("[data-next-step-pause]"),
+            review: !!host.querySelector("[data-next-step-review]"),
             diag: diag ? (diag.textContent || "").trim() : "",
           };
         })()`);
+      let row = null;
+      const rowDeadline = Date.now() + 10000;
+      while (Date.now() < rowDeadline) {
+        row = await readRow();
         if (row !== null) break;
         await sleep(400);
       }
       check(
-        "设置页出现「下一步建议」行（3 开关 + 预算 + 暂停）",
+        "设置页出现「下一步建议」分节：首屏 3 行（启用 / 出卡频率三选一 / 决策卡），其余折叠",
         row !== null &&
           Array.isArray(row.switches) &&
-          row.switches.length === 3 &&
-          row.budget === true &&
-          row.pause === true,
+          row.switches.length === 2 &&
+          Array.isArray(row.tiers) &&
+          row.tiers.join(",") === "must,could,any" &&
+          row.advanced === true &&
+          row.advancedOpen === false &&
+          row.budget === false &&
+          row.pause === false,
         JSON.stringify({
           opened,
           generalFound: general !== null,
           row:
-            row === null ? null : { switches: row.switches, budget: row.budget, pause: row.pause },
+            row === null
+              ? null
+              : {
+                  switches: row.switches,
+                  tiers: row.tiers,
+                  advancedOpen: row.advancedOpen,
+                  budget: row.budget,
+                },
         }),
       );
+
+      // 展开「更多设置」（纯 UI 展开，只读）→ 依赖项与回顾块出现
+      const advancedRect = await cdp.evaluate(`(() => {
+        const el = document.querySelector("[data-next-step-advanced]");
+        if (!el) return null;
+        const box = el.getBoundingClientRect();
+        return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+      })()`);
+      if (advancedRect !== null) {
+        for (const type of ["mousePressed", "mouseReleased"]) {
+          await cdp.send("Input.dispatchMouseEvent", {
+            type,
+            x: Math.round(advancedRect.x),
+            y: Math.round(advancedRect.y),
+            button: "left",
+            clickCount: 1,
+          });
+        }
+        await sleep(600);
+      }
+      let rowOpen = null;
+      const openDeadline = Date.now() + 8000;
+      while (Date.now() < openDeadline) {
+        rowOpen = await readRow();
+        if (rowOpen !== null && rowOpen.advancedOpen === true) break;
+        await sleep(300);
+      }
       check(
-        "诊断行显示运行时版本与构建哈希",
-        row !== null && /版本\s+\d+\.\d+\.\d+\s+·\s+构建\s+[0-9a-f]{8}/u.test(row.diag),
-        JSON.stringify({ diag: row === null ? null : row.diag }),
+        "「更多设置」展开后出现 4 个开关 + 预算 + 暂停 + 诊断 + 回顾块",
+        rowOpen !== null &&
+          rowOpen.switches.length === 4 &&
+          rowOpen.budget === true &&
+          rowOpen.pause === true &&
+          rowOpen.review === true,
+        JSON.stringify(
+          rowOpen === null
+            ? null
+            : {
+                switches: rowOpen.switches,
+                budget: rowOpen.budget,
+                pause: rowOpen.pause,
+                review: rowOpen.review,
+              },
+        ),
       );
+      check(
+        "诊断行显示运行时版本、构建哈希与提示词版本",
+        rowOpen !== null &&
+          /版本\s+\d+\.\d+\.\d+\s+·\s+构建\s+[0-9a-f]{8}/u.test(rowOpen.diag) &&
+          /提示词 v\d+/u.test(rowOpen.diag),
+        JSON.stringify({ diag: rowOpen === null ? null : rowOpen.diag }),
+      );
+      if (rowOpen !== null)
+        console.log(`      diagnostics: ${rowOpen.diag.replace(/\n/gu, " | ")}`);
+      row = rowOpen;
       if (row !== null) console.log(`      diagnostics: ${row.diag.replace(/\n/gu, " | ")}`);
       await cdp.screenshot(join(SHOTS, "05-settings.png"));
       // 关掉设置面板，别把界面留在设置里。

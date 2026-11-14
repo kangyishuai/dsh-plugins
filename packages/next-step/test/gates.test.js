@@ -14,7 +14,7 @@ function base() {
     now: 1_000_000,
     queued: 0,
     cardsForTurn: false,
-    cardsInSession: 0,
+    shownCardsInSession: 0,
     maxCards: 30,
     endKind: "completed",
     answerChars: 1200,
@@ -43,7 +43,10 @@ test("用户已经排了 ≥2 条消息就跳过（他马上要说的话比任�
 
 test("这一轮已经有卡 → duplicate；达到会话上限 → budget", () => {
   assert.equal(cheapSkipReason({ ...base(), cardsForTurn: true })?.reason, "duplicate");
-  assert.equal(cheapSkipReason({ ...base(), cardsInSession: 30, maxCards: 30 })?.reason, "budget");
+  assert.equal(
+    cheapSkipReason({ ...base(), shownCardsInSession: 30, maxCards: 30 })?.reason,
+    "budget",
+  );
 });
 
 test("上一轮不是 completed（报错/中断/阻塞）就跳过", () => {
@@ -55,12 +58,37 @@ test("上一轮不是 completed（报错/中断/阻塞）就跳过", () => {
   assert.equal(cheapSkipReason({ ...base(), endKind: "completed" }), null);
 });
 
-test("回答过短就跳过（没有上下文，生成出来必然是套话）", () => {
+test("回答短且没有工具调用才跳过（工具密集型回合的收尾回答常常只有一句）", () => {
   assert.equal(
     cheapSkipReason({ ...base(), answerChars: MIN_ANSWER_CHARS - 1 })?.reason,
     "short-answer",
   );
+  // 边界：恰好达到字数就不拦
   assert.equal(cheapSkipReason({ ...base(), answerChars: MIN_ANSWER_CHARS }), null);
+  // 回答很短但有工具调用：上下文充分，放行（v0.4 的新口径）
+  assert.equal(
+    cheapSkipReason({ ...base(), answerChars: 12, toolCalls: 7 }),
+    null,
+    "有工具调用的短答案不应被拦",
+  );
+  // 没有工具调用、字数为 0：仍然拦
+  assert.equal(
+    cheapSkipReason({ ...base(), answerChars: 0, toolCalls: 0 })?.reason,
+    "short-answer",
+  );
+});
+
+test("预算闸只统计出过的卡：被档位抑制的候选不占预算", () => {
+  // 会话里生成过很多候选，但只出过 2 张卡 → 不触发预算
+  assert.equal(
+    cheapSkipReason({ ...base(), shownCardsInSession: 2, maxCards: 30 }),
+    null,
+    "抑制的候选不应消耗预算",
+  );
+  assert.equal(
+    cheapSkipReason({ ...base(), shownCardsInSession: 30, maxCards: 30 })?.reason,
+    "budget",
+  );
 });
 
 test("多个条件同时不满足时，按便宜闸的顺序先报更靠前的", () => {

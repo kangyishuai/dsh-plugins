@@ -8,9 +8,13 @@ import { join, relative } from "node:path";
 import { after, test } from "node:test";
 import {
   DEFAULT_SETTINGS,
+  LEGACY_MAX_CARDS,
   loadSettings,
+  loadSettingsWithMeta,
+  migrateSettings,
   normalizeSettings,
   SETTINGS_FILE,
+  SETTINGS_SCHEMA_VERSION,
   saveSettings,
   settingsPath,
 } from "../lib/settings.js";
@@ -71,7 +75,11 @@ test("默认值本身：卡片开、幽灵关、预算 30 张", () => {
   assert.equal(DEFAULT_SETTINGS.enabled, true, "期望 enabled=true");
   assert.equal(DEFAULT_SETTINGS.card, true, "期望 card=true");
   assert.equal(DEFAULT_SETTINGS.ghost, false, "期望 ghost=false（幽灵提示默认关）");
-  assert.equal(DEFAULT_SETTINGS.maxCardsPerSession, 30, "期望 maxCardsPerSession=30");
+  assert.equal(
+    DEFAULT_SETTINGS.maxCardsPerSession,
+    120,
+    "期望 maxCardsPerSession=120（v0.4 放宽）",
+  );
   assert.equal(DEFAULT_SETTINGS.pauseUntil, 0, "期望 pauseUntil=0（未暂停）");
 });
 
@@ -469,4 +477,113 @@ test("并发写不会交错出半个 JSON（rename 原子性）", async () => {
     [],
     `并发写后不应残留 .tmp 文件，实际=${JSON.stringify(names)}`,
   );
+});
+
+// ---------------------------------------------------------------------------
+// v0.4：档位 / 采集开关 / v1 → v2 迁移
+// ---------------------------------------------------------------------------
+
+test("v2 默认值：档位平衡、采集开、schemaVersion=2、预算 120", () => {
+  const settings = normalizeSettings({});
+  assert.equal(settings.cardThreshold, "could", "默认档位应为平衡（could）");
+  assert.equal(settings.telemetry, true, "采集默认开");
+  assert.equal(settings.schemaVersion, SETTINGS_SCHEMA_VERSION);
+  assert.equal(settings.maxCardsPerSession, 120);
+});
+
+test("cardThreshold 只接受三个枚举值，非法值回落默认档位", () => {
+  for (const good of ["must", "could", "any"]) {
+    assert.equal(normalizeSettings({ cardThreshold: good }).cardThreshold, good);
+  }
+  for (const bad of ["", "balanced", "MUST", 1, null, true]) {
+    assert.equal(
+      normalizeSettings({ cardThreshold: bad }).cardThreshold,
+      "could",
+      `cardThreshold=${JSON.stringify(bad)} 期望回落 could`,
+    );
+  }
+});
+
+test("telemetry 只接受布尔值（字符串 true 不算开）", () => {
+  assert.equal(normalizeSettings({ telemetry: false }).telemetry, false);
+  assert.equal(normalizeSettings({ telemetry: true }).telemetry, true);
+  assert.equal(
+    normalizeSettings({ telemetry: "false" }).telemetry,
+    true,
+    "字符串不是布尔，回落默认",
+  );
+  assert.equal(normalizeSettings({ telemetry: 0 }).telemetry, true);
+});
+
+test("migrateSettings：v1 文件（无 schemaVersion）里的旧默认 30 → 120", () => {
+  const { settings, migrated } = migrateSettings({
+    enabled: true,
+    card: true,
+    ghost: false,
+    maxCardsPerSession: LEGACY_MAX_CARDS,
+  });
+  assert.equal(migrated, true, "缺 schemaVersion 应标记为需要写回");
+  assert.equal(settings.maxCardsPerSession, 120, "旧默认值应被抬到 120");
+  assert.equal(settings.schemaVersion, SETTINGS_SCHEMA_VERSION);
+  assert.equal(settings.cardThreshold, "could", "新字段补默认值");
+});
+
+test("migrateSettings：v1 文件里用户自己设的其它数字不动", () => {
+  const { settings } = migrateSettings({ maxCardsPerSession: 7, timeoutMs: 15000 });
+  assert.equal(settings.maxCardsPerSession, 7, "非旧默认值不应被改");
+  assert.equal(settings.timeoutMs, 15000);
+});
+
+test("migrateSettings：显式 schemaVersion=2 的文件里 30 就是用户的选择，不抬", () => {
+  const { settings, migrated } = migrateSettings({
+    schemaVersion: 2,
+    maxCardsPerSession: LEGACY_MAX_CARDS,
+  });
+  assert.equal(migrated, false, "已是 v2，不需要写回");
+  assert.equal(settings.maxCardsPerSession, 30, "v2 文件里的 30 必须保留");
+});
+
+test("migrateSettings：非法输入不抛错，返回默认值", () => {
+  for (const raw of [null, undefined, 42, "text", []]) {
+    const { settings } = migrateSettings(raw);
+    assert.equal(settings.cardThreshold, "could");
+    assert.equal(settings.maxCardsPerSession, 120);
+  }
+});
+
+test("loadSettingsWithMeta：磁盘上是 v1 文件时标记 migrated，且读取值已迁移", async () => {
+  const home = await mkdtemp(join(tmpdir(), "ns-settings-meta-"));
+  tempDirs.push(home);
+  await writeFile(
+    join(home, SETTINGS_FILE),
+    `${JSON.stringify({ enabled: true, card: true, maxCardsPerSession: LEGACY_MAX_CARDS })}\n`,
+    "utf8",
+  );
+  const meta = await loadSettingsWithMeta({ home });
+  assert.equal(meta.migrated, true);
+  assert.equal(meta.exists, true);
+  assert.equal(meta.settings.maxCardsPerSession, 120);
+  assert.equal(meta.settings.cardThreshold, "could");
+});
+
+test("loadSettingsWithMeta：文件不存在时不标记迁移（不凭空造文件）", async () => {
+  const home = await mkdtemp(join(tmpdir(), "ns-settings-meta2-"));
+  tempDirs.push(home);
+  const meta = await loadSettingsWithMeta({ home });
+  assert.equal(meta.migrated, false);
+  assert.equal(meta.exists, false);
+  assert.deepEqual(meta.settings, { ...DEFAULT_SETTINGS });
+  const files = await readdir(home);
+  assert.deepEqual(files, [], "读取不应创建任何文件");
+});
+
+test("saveSettings 写出的文件带 schemaVersion=2（下一次读取不再迁移）", async () => {
+  const home = await mkdtemp(join(tmpdir(), "ns-settings-schema-"));
+  tempDirs.push(home);
+  await saveSettings({ home, patch: { cardThreshold: "must" } });
+  const text = JSON.parse(await readFile(join(home, SETTINGS_FILE), "utf8"));
+  assert.equal(text.schemaVersion, SETTINGS_SCHEMA_VERSION);
+  assert.equal(text.cardThreshold, "must");
+  const meta = await loadSettingsWithMeta({ home });
+  assert.equal(meta.migrated, false, "写回之后不应再迁移");
 });

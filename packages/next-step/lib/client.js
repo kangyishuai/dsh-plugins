@@ -74,8 +74,29 @@ window.__ModuleLoader__.load({
       "settings.budgetUnit": "张卡",
       "settings.diagnostics": "诊断",
       "settings.refresh": "刷新",
+      "settings.tier": "出卡频率",
+      "settings.tier.must": "严格",
+      "settings.tier.could": "平衡",
+      "settings.tier.any": "积极",
+      "settings.tier.mustHint": "只在明确需要时出卡",
+      "settings.tier.couldHint": "拿不准也出卡（默认）",
+      "settings.tier.anyHint": "每轮都出卡，含模型判为不需要的（实验档）",
+      "settings.advanced": "更多设置",
+      "settings.telemetry": "本地采集与复盘数据",
+      "settings.telemetryHint": "只写本机文件，不含你的原文",
+      "settings.telemetryStats": "事件 {events} 条 · {size}",
+      "settings.review": "回顾",
+      "settings.reviewMetrics":
+        "出卡率 {shown} · 点击率 {clicked} · 忽略率 {ignored} · 漏判 {missed}",
+      "settings.reviewInsufficient": "样本不足（{turns} 回合 / {shown} 张卡），继续积累",
+      "settings.report": "生成报告",
+      "settings.reporting": "正在生成…",
+      "settings.reportDone": "已生成 {file}",
+      "settings.reportFailed": "生成失败",
+      "settings.promptVersion": "提示词 v{version} · 口径 {scheme}",
+      "error.hidden": "这张建议当前没有显示",
       "settings.stats":
-        "已生成 {generated} · 失败 {failed} · 已中止 {aborted} · 跳过 {skipped} · 在途 {inflight}",
+        "已生成 {generated}（未显示 {hidden}） · 失败 {failed} · 已中止 {aborted} · 跳过 {skipped} · 在途 {inflight}",
       "settings.lastError": "最近错误：{message}",
       "settings.noError": "无错误",
       "settings.paused": "已暂停，约 {time} 后恢复",
@@ -127,8 +148,29 @@ window.__ModuleLoader__.load({
       "settings.budgetUnit": "cards",
       "settings.diagnostics": "Diagnostics",
       "settings.refresh": "Refresh",
+      "settings.tier": "Card frequency",
+      "settings.tier.must": "Strict",
+      "settings.tier.could": "Balanced",
+      "settings.tier.any": "Eager",
+      "settings.tier.mustHint": "Only when it is clearly needed",
+      "settings.tier.couldHint": "Also when it is a plausible next step (default)",
+      "settings.tier.anyHint": "Every turn, even when judged unnecessary (experimental)",
+      "settings.advanced": "More settings",
+      "settings.telemetry": "Local usage data",
+      "settings.telemetryHint": "Local file only, never your message text",
+      "settings.telemetryStats": "{events} events · {size}",
+      "settings.review": "Review",
+      "settings.reviewMetrics":
+        "Cards {shown} · clicked {clicked} · ignored {ignored} · missed {missed}",
+      "settings.reviewInsufficient": "Not enough data ({turns} turns / {shown} cards); keep going",
+      "settings.report": "Generate report",
+      "settings.reporting": "Generating…",
+      "settings.reportDone": "Written {file}",
+      "settings.reportFailed": "Could not generate",
+      "settings.promptVersion": "Prompt v{version} · scheme {scheme}",
+      "error.hidden": "This suggestion is not shown right now",
       "settings.stats":
-        "Generated {generated} · failed {failed} · aborted {aborted} · skipped {skipped} · in flight {inflight}",
+        "Generated {generated} ({hidden} hidden) · failed {failed} · aborted {aborted} · skipped {skipped} · in flight {inflight}",
       "settings.lastError": "Last error: {message}",
       "settings.noError": "No errors",
       "settings.paused": "Paused; resumes in about {time}",
@@ -148,6 +190,7 @@ window.__ModuleLoader__.load({
       stale: "error.stale",
       missing: "error.missing",
       disabled: "error.disabled",
+      hidden: "error.hidden",
     };
 
     /** 手动补生成失败原因 → 文案 key。 @type {Record<string, string>} */
@@ -218,6 +261,18 @@ window.__ModuleLoader__.load({
 .ns_track[data-on="true"] .ns_thumb{transform:translateX(14px);}
 .ns_setBtn{height:26px;padding:0 10px;border-radius:13px;border:1px solid var(--dsw-alias-border-l3,#3a3a3a);background:transparent;color:var(--dsw-alias-label-secondary,#a4a4a4);font-size:12px;cursor:pointer;}
 .ns_setBtn:hover{color:var(--dsw-alias-label-primary,#e8e8e8);border-color:var(--dsw-alias-border-l4,#4a4a4a);}
+.ns_tiers{display:inline-flex;gap:2px;padding:2px;border:1px solid var(--dsw-alias-border-l3,#3a3a3a);border-radius:13px;}
+.ns_tier{height:22px;padding:0 10px;border:0;border-radius:11px;background:transparent;color:var(--dsw-alias-label-secondary,#a4a4a4);font-family:inherit;font-size:12px;cursor:pointer;}
+.ns_tier[data-on="true"]{background:var(--dsw-alias-bg-layer-3,#2e2e2e);color:var(--dsw-alias-label-primary,#e8e8e8);}
+.ns_tier:disabled{cursor:default;opacity:.6;}
+.ns_tier:focus-visible{outline:2px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#4176e6));outline-offset:1px;}
+.ns_advBtn{display:inline-flex;align-items:center;gap:4px;padding:2px 0;border:0;background:transparent;color:var(--dsw-alias-label-tertiary,#8a8a8a);font-family:inherit;font-size:12px;line-height:18px;cursor:pointer;}
+.ns_advBtn:hover{color:var(--dsw-alias-label-secondary,#a4a4a4);}
+.ns_advBtn:focus-visible{outline:2px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#4176e6));outline-offset:2px;border-radius:4px;}
+.ns_advBody{display:flex;flex-direction:column;gap:10px;padding:10px 0 0 0;border-top:1px solid var(--dsw-alias-border-l2,#242424);}
+.ns_review{display:flex;flex-direction:column;gap:6px;padding-top:2px;}
+.ns_reviewStats{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#a4a4a4);}
+.ns_reviewVerdict{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8a8a8a);}
 .ns_setBtn:disabled{opacity:.5;cursor:default;}
 .ns_setInput{width:64px;height:26px;border-radius:8px;border:1px solid var(--dsw-alias-border-l3,#3a3a3a);background:transparent;color:var(--dsw-alias-label-primary,#e8e8e8);font-size:12px;padding:0 8px;}
 .ns_diag{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8a8a8a);white-space:pre-wrap;overflow-wrap:anywhere;}
@@ -246,6 +301,25 @@ window.__ModuleLoader__.load({
     let emptyKeyedHook = function emptyKeyedHook() {
       return undefined;
     };
+
+    /**
+     * 文件体积的可读形式（诊断用）。
+     * @param {number} bytes
+     * @returns {string}
+     */
+    function formatBytes(bytes) {
+      let value = typeof bytes === "number" && Number.isFinite(bytes) ? bytes : 0;
+      if (value < 1024) return `${String(Math.round(value))} B`;
+      if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+      return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    /** 高精度时钟（曝光计时用；performance 缺失时回落 Date.now）。 @returns {number} */
+    function now() {
+      return typeof performance !== "undefined" && typeof performance.now === "function"
+        ? performance.now()
+        : Date.now();
+    }
 
     /**
      * Turn 对象里的轮次数字（渲染 slot 时宿主传的是 Turn 记录，不是数字）。
@@ -286,6 +360,19 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 这一轮的候选是否已被用户要求显示（揭示）。
+     * @param {any} view
+     * @param {number} turn
+     * @returns {boolean}
+     */
+    function revealedOf(view, turn) {
+      if (!view || typeof view !== "object") return false;
+      let reveals = view.reveals;
+      if (!reveals || typeof reveals !== "object" || turn < 0) return false;
+      return reveals[String(turn)] === true;
+    }
+
+    /**
      * 从投影视图里取一条决策。
      * @param {any} view
      * @param {number} turn
@@ -299,7 +386,8 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 最新一张卡所在的轮次（-1 = 没有卡）。
+     * 最新一张**出过**的卡所在的轮次（-1 = 没有卡）。
+     * `shown === false` 的候选是"决定不展示"的，绝不能拿来喂幽灵提示——否则门控白做。
      * @param {any} view
      * @returns {number}
      */
@@ -310,7 +398,11 @@ window.__ModuleLoader__.load({
       let latest = -1;
       for (let key of Object.keys(cards)) {
         let value = Number(key);
-        if (Number.isFinite(value) && value > latest && cards[key]) latest = value;
+        let card = cards[key];
+        if (!Number.isFinite(value) || value <= latest || !card) continue;
+        // 旧记录没有 shown 字段 → 视为出过（向后兼容）
+        if (card.shown === false && view.reveals?.[key] !== true) continue;
+        latest = value;
       }
       return latest;
     }
@@ -644,6 +736,7 @@ window.__ModuleLoader__.load({
       let showMore = moreState[0];
       let setShowMore = moreState[1];
       let summaryRef = React.useRef(/** @type {any} */ (null));
+      let cardRef = React.useRef(/** @type {any} */ (null));
 
       // 「没出卡时」的补生成入口：设置只从宿主 RPC 读（投影里没有 settings）。
       let settingsState = React.useState(/** @type {any} */ (null));
@@ -661,13 +754,16 @@ window.__ModuleLoader__.load({
 
       let card = cardOf(view, turnNumber);
       let decision = decisionOf(view, turnNumber);
+      let revealed = revealedOf(view, turnNumber);
+      // 被档位抑制、用户还没要求显示的候选：不渲染卡片，只渲染「生成下一步建议」。
+      let hiddenCard = card !== undefined && card !== null && card.shown === false && !revealed;
 
       // 只有「最新一轮且没有卡」才需要读设置（决定要不要画补生成按钮），
       // 历史轮次不读，避免一个长会话里每个 turn-tail 都发一次 RPC。
       React.useEffect(() => {
         if (!api || typeof api.settings !== "function") return undefined;
         if (!isLastTurn) return undefined;
-        if (card !== undefined && card !== null) return undefined;
+        if (card !== undefined && card !== null && !hiddenCard) return undefined;
         let alive = true;
         Promise.resolve(api.settings())
           .then((value) => {
@@ -677,17 +773,17 @@ window.__ModuleLoader__.load({
         return () => {
           alive = false;
         };
-      }, [api, card, isLastTurn]);
+      }, [api, card, hiddenCard, isLastTurn]);
 
       // 留 2.5s 给自动生成：期间按钮不出现，避免「按钮闪一下又被卡片顶掉」。
       React.useEffect(() => {
-        if (!isLastTurn || (card !== undefined && card !== null)) {
+        if (!isLastTurn || (card !== undefined && card !== null && !hiddenCard)) {
           setGrace(false);
           return undefined;
         }
         let timer = setTimeout(() => setGrace(true), RETRY_GRACE_MS);
         return () => clearTimeout(timer);
-      }, [turnNumber, card, sessionId, isLastTurn]);
+      }, [turnNumber, card, hiddenCard, sessionId, isLastTurn]);
 
       // 投影一旦追上，乐观态就退场（投影是唯一事实来源）。
       React.useEffect(() => {
@@ -702,9 +798,12 @@ window.__ModuleLoader__.load({
         setShowMore(overflowing);
       });
 
-      let options = card && Array.isArray(card.options) ? card.options : [];
-      let summary = card && typeof card.summary === "string" ? card.summary : "";
-      let question = card && typeof card.question === "string" ? card.question : "";
+      let visibleCard = card !== undefined && card !== null && !hiddenCard ? card : null;
+      let options = visibleCard && Array.isArray(visibleCard.options) ? visibleCard.options : [];
+      let summary =
+        visibleCard && typeof visibleCard.summary === "string" ? visibleCard.summary : "";
+      let question =
+        visibleCard && typeof visibleCard.question === "string" ? visibleCard.question : "";
       let status = phaseOf(decision, optimistic, pendingIndex, isLastTurn);
       let busy = status === "sending";
       let showPills = (status === "interactive" || status === "sending") && options.length > 0;
@@ -784,7 +883,7 @@ window.__ModuleLoader__.load({
       };
 
       React.useEffect(() => {
-        if (sessionId === "" || status !== "interactive" || !card || options.length === 0) {
+        if (sessionId === "" || status !== "interactive" || !visibleCard || options.length === 0) {
           return undefined;
         }
         let entry = {
@@ -797,8 +896,62 @@ window.__ModuleLoader__.load({
         };
       }, [sessionId, status]);
 
+      // 曝光：卡片**真正进入视口**才上报（挂载 ≠ 被看见）。只在最新一轮的可交互卡上观察，
+      // 历史卡滚动回来不上报（它们的曝光在第一眼就该记过一次了）。
+      React.useEffect(() => {
+        if (!api || typeof api.impress !== "function") return undefined;
+        if (isLastTurn !== true || visibleCard === null) return undefined;
+        let element = cardRef.current;
+        if (!element) return undefined;
+        let sent = false;
+        let total = 0;
+        let started = 0;
+        let ratio = 0;
+        let send = (/** @type {number} */ visibleMs) => {
+          if (sent) return;
+          sent = true;
+          Promise.resolve(api.impress(sessionId, turnNumber, visibleMs, ratio)).catch(
+            () => undefined,
+          );
+        };
+        // 没有 IntersectionObserver 的宿主：给 ratio=-1（报表单列"未知"，不混进曝光率分母）
+        if (typeof IntersectionObserver !== "function") {
+          ratio = -1;
+          send(0);
+          return undefined;
+        }
+        let observer = new IntersectionObserver(
+          (entries) => {
+            for (let entry of entries) {
+              if (entry.isIntersecting && entry.intersectionRatio >= 0.5) {
+                if (started === 0) started = now();
+                ratio = entry.intersectionRatio;
+              } else if (started !== 0) {
+                total += now() - started;
+                started = 0;
+              }
+            }
+          },
+          { threshold: [0, 0.5, 1] },
+        );
+        observer.observe(element);
+        let ticker = setInterval(() => {
+          if (sent) return;
+          if (started !== 0 && total + (now() - started) >= 300) send(total + (now() - started));
+        }, 250);
+        // 5s 内一次都没进视口 → 记一条 visibleMs=0（"挂载了但没看见"，与"看见但没点"要分开）
+        let unseen = setTimeout(() => {
+          if (!sent && total === 0 && started === 0) send(0);
+        }, 5000);
+        return () => {
+          observer.disconnect();
+          clearInterval(ticker);
+          clearTimeout(unseen);
+        };
+      }, [api, isLastTurn, sessionId, turnNumber, visibleCard === null]);
+
       if (turnNumber < 0 || !isTurnTailReady(turn)) return null;
-      if (card === undefined || card === null) {
+      if (visibleCard === null) {
         // 只在最新一轮、且卡面开着的时候给「补生成」入口。
         let retryEnabled =
           sessionId !== "" &&
@@ -1011,6 +1164,7 @@ window.__ModuleLoader__.load({
       return h(
         "section",
         {
+          ref: cardRef,
           className: "ns_card",
           "data-next-step-card": "",
           "data-next-step-turn": String(turnNumber),
@@ -1256,6 +1410,15 @@ window.__ModuleLoader__.load({
      * @param {any} props
      * @returns {any}
      */
+    /**
+     * 设置页 → 「下一步建议」分节。
+     *
+     * v0.4 按 [plugin-conventions §7.2] 收敛：**首屏 3 行**（启用 / 出卡频率 / 决策卡），
+     * 其余（幽灵、暂停、预算、诊断、回顾）收进「更多设置」折叠，默认收起。
+     * 总开关关闭时只留总开关 + 一行说明（关闭 = 不发请求，别的项不该看起来还在跑）。
+     * @param {any} props
+     * @returns {any}
+     */
     function NextStepSettings(props) {
       let api = props.api;
       let t = typeof props.t === "function" ? props.t : fallbackTranslate;
@@ -1274,6 +1437,18 @@ window.__ModuleLoader__.load({
       let budgetState = React.useState("");
       let budgetDraft = budgetState[0];
       let setBudgetDraft = budgetState[1];
+      let advancedState = React.useState(false);
+      let advanced = advancedState[0];
+      let setAdvanced = advancedState[1];
+      let reviewState = React.useState(/** @type {any} */ (null));
+      let review = reviewState[0];
+      let setReview = reviewState[1];
+      let reportState = React.useState("");
+      let reportState2 = reportState[0];
+      let setReportState = reportState[1];
+      let reportPathState = React.useState("");
+      let reportPath = reportPathState[0];
+      let setReportPath = reportPathState[1];
 
       let refresh = React.useCallback(() => {
         if (!api) return;
@@ -1288,6 +1463,14 @@ window.__ModuleLoader__.load({
           Promise.resolve(api.diagnostics())
             .then((value) => {
               if (value) setStats(value);
+            })
+            .catch(() => undefined);
+        }
+        // 回顾块只要指标，不落盘（落盘是「生成报告」按钮的事）
+        if (typeof api.report === "function") {
+          Promise.resolve(api.report(false))
+            .then((value) => {
+              if (value) setReview(value);
             })
             .catch(() => undefined);
         }
@@ -1360,6 +1543,45 @@ window.__ModuleLoader__.load({
         ]);
       };
 
+      /** 出卡频率：三档分段控件，点了立刻写盘（不藏进折叠里——这是本次最主要的旋钮）。 */
+      let tierRow = () => {
+        let current = typeof settings.cardThreshold === "string" ? settings.cardThreshold : "could";
+        let tiers = ["must", "could", "any"];
+        return h("div", { className: "ns_setRow", key: "tier" }, [
+          h("span", { className: "ns_setLabel", key: "label" }, t("settings.tier")),
+          h(
+            "div",
+            {
+              key: "group",
+              className: "ns_tiers",
+              role: "radiogroup",
+              "aria-label": t("settings.tier"),
+            },
+            tiers.map((/** @type {string} */ tier) =>
+              h(
+                "button",
+                {
+                  key: tier,
+                  type: "button",
+                  role: "radio",
+                  "aria-checked": current === tier ? "true" : "false",
+                  "data-next-step-tier": tier,
+                  "data-on": current === tier ? "true" : "false",
+                  className: "ns_tier",
+                  title: t(`settings.tier.${tier}Hint`),
+                  disabled: busy === "tier",
+                  onClick: () => {
+                    if (current === tier) return;
+                    patch({ cardThreshold: tier }, "tier");
+                  },
+                },
+                t(`settings.tier.${tier}`),
+              ),
+            ),
+          ),
+        ]);
+      };
+
       let paused = typeof settings.pauseUntil === "number" && settings.pauseUntil > Date.now();
       let minutes = paused
         ? Math.max(1, Math.round((settings.pauseUntil - Date.now()) / 60000))
@@ -1369,6 +1591,7 @@ window.__ModuleLoader__.load({
       if (stats !== null) {
         diagText = t("settings.stats", {
           generated: String(stats.generated || 0),
+          hidden: String(stats.hidden || 0),
           failed: String(stats.failed || 0),
           aborted: String(stats.aborted || 0),
           skipped: String(stats.skipped || 0),
@@ -1396,11 +1619,133 @@ window.__ModuleLoader__.load({
         if (typeof stats.version === "string" && stats.version !== "") {
           let buildHash = typeof stats.buildHash === "string" ? stats.buildHash.slice(0, 8) : "";
           diagText += `\n${t("settings.version", { version: stats.version, hash: buildHash })}`;
+          if (typeof stats.promptVersion === "number") {
+            diagText += `\n${t("settings.promptVersion", {
+              version: String(stats.promptVersion),
+              scheme: typeof stats.scheme === "string" ? stats.scheme : "—",
+            })}`;
+          }
+        }
+        let telemetry = stats.telemetry;
+        if (telemetry && typeof telemetry === "object") {
+          diagText += `\n${t("settings.telemetryStats", {
+            events: String(telemetry.lines || 0),
+            size: formatBytes(telemetry.bytes || 0),
+          })}`;
+          if (typeof telemetry.path === "string" && telemetry.path !== "") {
+            diagText += `\n${telemetry.path}`;
+          }
         }
       }
 
-      // 关闭 = 不发请求，所以依赖它的设置项（卡片/幽灵/暂停/预算/诊断）一律不渲染，
-      // 只留总开关和一行说明；重新启用时这些开关的取值仍然保留。
+      /** 回顾块：4 个数字 + 「生成报告」。样本不足时明写，不让人看一堆 0% 乱猜。 */
+      let reviewRows = [];
+      if (review !== null && typeof review === "object" && review.metrics) {
+        let metrics = review.metrics;
+        let rates = metrics.rates || {};
+        let fmt = (/** @type {any} */ value) =>
+          typeof value === "number" && Number.isFinite(value) ? `${Math.round(value * 100)}%` : "—";
+        reviewRows.push(
+          h(
+            "div",
+            { className: "ns_reviewStats", key: "stats", "data-next-step-review-stats": "" },
+            review.insufficient === true
+              ? t("settings.reviewInsufficient", {
+                  turns: String(metrics.turns || 0),
+                  shown: String(metrics.shown || 0),
+                })
+              : t("settings.reviewMetrics", {
+                  shown: fmt(rates.cardRate),
+                  clicked: fmt(rates.ctr),
+                  ignored: fmt(rates.ignoreRate),
+                  missed: String(metrics.misses || 0),
+                }),
+          ),
+        );
+        if (
+          review.insufficient !== true &&
+          Array.isArray(review.verdicts) &&
+          review.verdicts.length > 0
+        ) {
+          reviewRows.push(
+            h(
+              "div",
+              {
+                className: "ns_reviewVerdict",
+                key: "verdict",
+                "data-next-step-review-verdict": "",
+              },
+              String(review.verdicts[0].text || ""),
+            ),
+          );
+        }
+      }
+      reviewRows.push(
+        h("div", { className: "ns_setRow", key: "report" }, [
+          h("span", { className: "ns_setLabel", key: "label" }, t("settings.review")),
+          h(
+            "button",
+            {
+              key: "btn",
+              type: "button",
+              className: "ns_setBtn",
+              "data-next-step-report": "",
+              disabled: reportState2 === "loading" || !api || typeof api.report !== "function",
+              onClick: () => {
+                if (!api || typeof api.report !== "function") return;
+                setReportState("loading");
+                setReportPath("");
+                Promise.resolve(api.report(true))
+                  .then((result) => {
+                    setReportState("");
+                    if (!result) {
+                      setReportState("failed");
+                      return;
+                    }
+                    let path = typeof result.path === "string" ? result.path : "";
+                    setReportPath(path.split("/").pop() || path);
+                    if (result.metrics) setReview(result);
+                    if (typeof api.diagnostics === "function") {
+                      Promise.resolve(api.diagnostics())
+                        .then((value) => {
+                          if (value) setStats(value);
+                        })
+                        .catch(() => undefined);
+                    }
+                  })
+                  .catch(() => {
+                    setReportState("failed");
+                  });
+              },
+            },
+            reportState2 === "loading" ? t("settings.reporting") : t("settings.report"),
+          ),
+        ]),
+      );
+      if (reportState2 === "failed") {
+        reviewRows.push(
+          h(
+            "div",
+            { className: "ns_setError", key: "reportError", role: "alert" },
+            t("settings.reportFailed"),
+          ),
+        );
+      }
+      if (reportPath !== "") {
+        reviewRows.push(
+          h(
+            "div",
+            {
+              className: "ns_setHint",
+              key: "reportPath",
+              "data-next-step-report-path": "",
+              title: reportPath,
+            },
+            t("settings.reportDone", { file: reportPath }),
+          ),
+        );
+      }
+
       let enabledOn = settings.enabled === true;
       let rows = [
         h("div", { key: "head" }, [
@@ -1418,81 +1763,115 @@ window.__ModuleLoader__.load({
           ),
         );
       } else {
+        // 首屏 3 行：启用 / 出卡频率 / 决策卡
+        rows.push(tierRow(), switchRow("card", "settings.card"));
         rows.push(
-          switchRow("card", "settings.card"),
-          switchRow("ghost", "settings.ghost"),
-          h("div", { className: "ns_setRow", key: "pause" }, [
-            h(
-              "span",
-              { className: "ns_setLabel", key: "label" },
-              paused
-                ? t("settings.paused", { time: `${String(minutes)}m` })
-                : t("settings.pauseLabel"),
-            ),
-            h(
-              "button",
-              {
-                key: "btn",
-                type: "button",
-                className: "ns_setBtn",
-                "data-next-step-pause": "",
-                disabled: busy === "pause",
-                onClick: () => patch({ pauseUntil: paused ? 0 : Date.now() + 3600000 }, "pause"),
-              },
-              paused ? t("settings.resume") : t("settings.pause"),
-            ),
-          ]),
-          h("div", { className: "ns_setRow", key: "budget" }, [
-            h(
-              "span",
-              { className: "ns_setLabel", key: "label" },
-              `${t("settings.budget")} ${t("settings.budgetUnit")}`,
-            ),
-            h("input", {
-              key: "input",
-              type: "number",
-              min: "0",
-              max: "1000",
-              className: "ns_setInput",
-              "data-next-step-budget": "",
-              "aria-label": `${t("settings.budget")} ${t("settings.budgetUnit")}`,
-              value: budgetDraft === "" ? String(settings.maxCardsPerSession) : budgetDraft,
-              onChange: (/** @type {any} */ event) => setBudgetDraft(String(event.target.value)),
-              onBlur: () => {
-                if (budgetDraft === "") return;
-                patch({ maxCardsPerSession: Number(budgetDraft) }, "budget");
-                setBudgetDraft("");
-              },
-            }),
-          ]),
-          h("div", { className: "ns_setRow", key: "diag" }, [
-            h("span", { className: "ns_setLabel", key: "label" }, t("settings.diagnostics")),
-            h(
-              "button",
-              {
-                key: "refresh",
-                type: "button",
-                className: "ns_setBtn",
-                "data-next-step-refresh": "",
-                onClick: () => refresh(),
-              },
-              t("settings.refresh"),
-            ),
-          ]),
-          diagText === ""
-            ? null
-            : h(
-                "div",
-                { className: "ns_diag", key: "diagText", "data-next-step-diag": "" },
-                diagText,
-              ),
-          // 手动补生成：自动门控跳过（或模型判断不需要）时，用户可以用 /next-step 立刻要一张。
           h(
             "div",
-            { className: "ns_setHint", key: "hint", "data-next-step-hint": "" },
-            t("settings.generateHint"),
+            { className: "ns_setRow", key: "advanced" },
+            h(
+              "button",
+              {
+                type: "button",
+                className: "ns_advBtn",
+                "data-next-step-advanced": "",
+                "aria-expanded": advanced ? "true" : "false",
+                onClick: () => setAdvanced(!advanced),
+              },
+              h("span", { key: "chevron", "aria-hidden": "true" }, advanced ? "▾ " : "▸ "),
+              h("span", { key: "label" }, t("settings.advanced")),
+            ),
           ),
         );
+        if (advanced) {
+          rows.push(
+            h(
+              "div",
+              { className: "ns_advBody", key: "advBody", "data-next-step-advanced-body": "" },
+              [
+                switchRow("ghost", "settings.ghost"),
+                switchRow("telemetry", "settings.telemetry"),
+                h("div", { className: "ns_setRow", key: "pause" }, [
+                  h(
+                    "span",
+                    { className: "ns_setLabel", key: "label" },
+                    paused
+                      ? t("settings.paused", { time: `${String(minutes)}m` })
+                      : t("settings.pauseLabel"),
+                  ),
+                  h(
+                    "button",
+                    {
+                      key: "btn",
+                      type: "button",
+                      className: "ns_setBtn",
+                      "data-next-step-pause": "",
+                      disabled: busy === "pause",
+                      onClick: () =>
+                        patch({ pauseUntil: paused ? 0 : Date.now() + 3600000 }, "pause"),
+                    },
+                    paused ? t("settings.resume") : t("settings.pause"),
+                  ),
+                ]),
+                h("div", { className: "ns_setRow", key: "budget" }, [
+                  h(
+                    "span",
+                    { className: "ns_setLabel", key: "label" },
+                    `${t("settings.budget")} ${t("settings.budgetUnit")}`,
+                  ),
+                  h("input", {
+                    key: "input",
+                    type: "number",
+                    min: "0",
+                    max: "1000",
+                    className: "ns_setInput",
+                    "data-next-step-budget": "",
+                    "aria-label": `${t("settings.budget")} ${t("settings.budgetUnit")}`,
+                    value: budgetDraft === "" ? String(settings.maxCardsPerSession) : budgetDraft,
+                    onChange: (/** @type {any} */ event) =>
+                      setBudgetDraft(String(event.target.value)),
+                    onBlur: () => {
+                      if (budgetDraft === "") return;
+                      patch({ maxCardsPerSession: Number(budgetDraft) }, "budget");
+                      setBudgetDraft("");
+                    },
+                  }),
+                ]),
+                h("div", { className: "ns_setRow", key: "diag" }, [
+                  h("span", { className: "ns_setLabel", key: "label" }, t("settings.diagnostics")),
+                  h(
+                    "button",
+                    {
+                      key: "refresh",
+                      type: "button",
+                      className: "ns_setBtn",
+                      "data-next-step-refresh": "",
+                      onClick: () => refresh(),
+                    },
+                    t("settings.refresh"),
+                  ),
+                ]),
+                diagText === ""
+                  ? null
+                  : h(
+                      "div",
+                      { className: "ns_diag", key: "diagText", "data-next-step-diag": "" },
+                      diagText,
+                    ),
+                h(
+                  "div",
+                  { className: "ns_review", key: "review", "data-next-step-review": "" },
+                  reviewRows,
+                ),
+                h(
+                  "div",
+                  { className: "ns_setHint", key: "hint", "data-next-step-hint": "" },
+                  t("settings.generateHint"),
+                ),
+              ],
+            ),
+          );
+        }
       }
       if (errorKey !== "") {
         rows.push(h("div", { className: "ns_setError", key: "error", role: "alert" }, t(errorKey)));
@@ -1667,6 +2046,22 @@ window.__ModuleLoader__.load({
         updateSettings: (/** @type {any} */ patch) =>
           callRemote("updateSettings", { patch: patch }).then((result) =>
             result && typeof result === "object" ? result : { ok: false },
+          ),
+        impress: (
+          /** @type {string} */ sessionId,
+          /** @type {number} */ turn,
+          /** @type {number} */ visibleMs,
+          /** @type {number} */ ratio,
+        ) =>
+          callRemote("impression", {
+            sessionId: sessionId,
+            turn: turn,
+            visibleMs: visibleMs,
+            ratio: ratio,
+          }),
+        report: (/** @type {boolean} */ write) =>
+          callRemote("report", { write: write === true }).then((result) =>
+            result && typeof result === "object" && result.ok === true ? result : null,
           ),
         diagnostics: () =>
           callRemote("diagnostics").then((result) => {
