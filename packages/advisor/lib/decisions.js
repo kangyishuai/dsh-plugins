@@ -36,6 +36,10 @@ const SKIP_PATTERNS = [
   [/投递上限|会话上限|session.?cap/iu, "skipped-limit"],
   [/预算|额度|budget|quota/iu, "skipped-budget"],
   [/确认|confirm/iu, "skipped-needs-confirmation"],
+  // finishTurn 在非正常结束时会写「回合被中断 / 被阻塞」，
+  // 不加这两条就会归到 skipped-other（真实日志里踩到过）。
+  [/中断|abort/iu, "skipped-aborted"],
+  [/阻塞|blocked/iu, "skipped-blocked"],
 ];
 
 /**
@@ -83,14 +87,18 @@ export function turnFeatures(input) {
 export function buildDecision(input) {
   const advice = input.advice;
   const consulted = advice !== undefined && advice !== null;
+  const endKind = input.endKind ?? "completed";
+  // 结束原因本身就是最可靠的原因码来源；不要把它降级成「从人话里猜」。
+  const endKindCode =
+    endKind === "aborted" ? "skipped-aborted" : endKind === "blocked" ? "skipped-blocked" : null;
   return {
     at: input.at ?? new Date().toISOString(),
     sessionId: input.sessionId,
     turn: input.turn,
-    endKind: input.endKind ?? "completed",
+    endKind,
     consulted,
     // 没徵询时给出原因码，复盘时先看这一列。
-    skipCode: consulted ? null : classifySkip(input.skipReason),
+    skipCode: consulted ? null : (endKindCode ?? classifySkip(input.skipReason)),
     skipReason: consulted ? null : (input.skipReason ?? ""),
     ...turnFeatures(input.features ?? {}),
     adviceId: advice?.adviceId ?? null,
