@@ -26,6 +26,16 @@
 
 ## Install
 
+**From Discover (recommended).** Open **Plugins → Discover → Add index source** in DSH and paste:
+
+```
+https://cdn.jsdelivr.net/npm/@kangyishuai/dsh-plugin-index/index.json
+```
+
+Every plugin in this repository then shows up with its description, category and version list, and can be installed with one click. The index is rebuilt from npm after every release, so it always lists the versions that actually exist.
+
+**From the command line:**
+
 ```bash
 dsh plugin --profile desktop add @kangyishuai/dsh-session-delete
 dsh plugin --profile desktop add @kangyishuai/dsh-session-rewind
