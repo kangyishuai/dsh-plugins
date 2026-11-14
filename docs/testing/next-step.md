@@ -50,6 +50,18 @@ DSH_HOME=$H dsh --profile ns --port 0 --no-open
 | 排队消息闸                     | `test/queue-gate.test.js` 5 项单测；`service.js` 在生成前判 `inbox.nextTurn + inbox.nextStep >= 2` 则跳过（`queuedMessageLimit`，与官方 action-cards 同规则）                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | 桌面真机回归（Electron + CDP） | **只读 9 PASS + 1 SKIP；`--deep` 19 PASS + 2 SKIP**（2026-11-10，真实桌面版、真实模型调用）：插件 client 半加载、投影健康、卡片结构不变量、最多一张可交互卡、答后出可交互卡、两粒 stance 互斥胶囊、点胶囊→`sent` 且胶囊消失、真的发出一条用户消息、仓库 cwd 无污染                                                                                                                                                                                                                                                                                                               |
 
+## 0.3.0 复核记录（2026-11-14，DSH 0.2.2-rc.2）
+
+| 层                                          | 结果                                                                                           |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `node --test`（包内）                       | **99 pass / 0 fail**（prompt 50 + gates 8 + 其余）                                             |
+| `pnpm probe:runtime`                        | **72/72 PASS**                                                                                 |
+| `pnpm smoke:next-step`（web，真实模型调用） | **59/59**；胶囊数量断言已放宽为 1–2 条（真实模型这次就返回了 1 条）                            |
+| `pnpm smoke:next-step-desktop --require`    | **10 PASS + 2 SKIP**，0 FAIL（SKIP：当前会话没有决策卡 / 只读模式不造卡；造卡交互需 `--deep`） |
+| 设置页                                      | 已迁到「设置 → 下一步建议」独立分节；桌面只读核验读到 3 开关 + 生成节奏 + 诊断（`版本 0.3.0`） |
+
+内容规则变化见 [ADR 0009](../adr/0009-next-step-architecture.md) 的 v0.3.0 增补。
+
 本轮踩到的两个**真 bug**（都属"静默失效"，值得记住）：
 
 1. **投影缺 `stateSchema` / `wire.viewSchema` 会让整条会话历史加载失败**（页面「历史加载失败」、卡片永不渲染，但发消息与日志都正常）。注册表在读取路径上无条件 `parse`，注册时却不校验。修法：给恒等桩 `{ parse: (v) => v }`，详见 [runtime 0.2.2-rc.1 §9.14](../runtime/0.2.2-rc.1.md)。

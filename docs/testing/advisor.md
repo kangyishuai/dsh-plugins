@@ -49,6 +49,19 @@ DSH_HOME=$H dsh --profile ad --port 0 --no-open
 | `pnpm smoke:advisor-desktop --require`     | **19 PASS + 1 SKIP（20 项；真机 DSH 桌面版 0.2.2-rc.2，冷启动实测）**：插件加载、选择器、设置卡（含「读到的是展开后快照」这条回归断言）、分页 `status`/`doctor`（读会话日志）、收尾清理。`--advice` 再加 4 项共 24 项 |
 | 真机徵询（`pnpm pack` → `add` → 手动徵询） | **未做**（P1 收尾的验收项，步骤见 [§4](#4-手工-gui-验证步骤)）                                                                                                                                                        |
 
+## 0.6.0 复核记录（2026-11-14，DSH 0.2.2-rc.2）
+
+| 层                                      | 结果                                                                                      |
+| --------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `node --test`（`packages/advisor`）     | **135 pass / 0 fail**（新增 `decisions.test.js` 15 项 + `decisions-wiring.test.js` 5 项） |
+| `pnpm probe:runtime`                    | **72/72 PASS**                                                                            |
+| `pnpm smoke:advisor`（web，不花 token） | **14/14**（新增「决策日志格式合法」一项）                                                 |
+| `pnpm smoke:advisor-desktop --require`  | **19 PASS + 1 SKIP**，0 FAIL（SKIP 是「该会话没有顾问记录」，脚本不制造徵询）             |
+| `pnpm advisor:review --home <temp>`     | 用 3 行样本跑通，输出徵询率/采纳率/分桶表与两类可疑样本                                   |
+
+本版新增的决策日志落在 `<数据根>/advisor/decisions.jsonl`，与 `usage.jsonl`（钱的账本）分开：
+一个回合一行，没徵询的回合也写。
+
 单测与 seam 数字都会随实现增长，上面只是本次核对时的快照。
 
 ### 过期快照陷阱（桌面脚本，2026-11-12 定位并修复）
