@@ -298,6 +298,8 @@ export class NextStepService extends TypertRemoteService {
     this.settingsCache = { at: 0, value: /** @type {any} */ (null) };
     /** 事件日志（惰性创建：需要知道包版本）。 @type {any} */
     this.eventLogHandle = null;
+    /** 首次写入前确保 meta 已经落盘的 promise。 @type {Promise<unknown> | null} */
+    this.metaReady = null;
     /** 待追踪的卡片（下一次用户消息到来时写 followup）。 @type {Map<string, { turn: number, labels: string[], at: number }>} */
     this.pendingFollowup = new Map();
     /** 已记录的曝光（sid:turn），宿主侧去重。 @type {Set<string>} */
@@ -345,8 +347,10 @@ export class NextStepService extends TypertRemoteService {
     if (typeof session?.id !== "string") return;
     // 新一轮一旦开始，上一轮的生成就没有意义了（省一次请求、也避免把过期卡写进日志）。
     if (event?.type === "turn/start") {
+      // 只中止上一轮的在途生成。**不要**在这里收尾 followup：宿主的顺序是
+      // `turn/start` 先于 `user/message`（冒烟实测），在此清掉 pending 就永远记不到
+      // 「用户自己打了下一条」——而那正是最重要的隐式负反馈。
       this.abortInflight(session.id);
-      this.closeFollowup(session.id, { typed: false });
       return;
     }
     if (event?.type === "user/message") {
@@ -395,6 +399,27 @@ export class NextStepService extends TypertRemoteService {
         overlap,
       }),
     );
+  }
+
+  /**
+   * 登记「这张卡在场上」：下一条用户消息到来时写一条 followup。
+   * @param {string} sessionId
+   * @param {number} turn
+   * @param {{ label?: string }[]} options
+   * @param {number} at
+   */
+  rememberPending(sessionId, turn, options, at) {
+    /** @type {string[]} */
+    const labels = [];
+    for (const option of Array.isArray(options) ? options : []) {
+      if (typeof option?.label === "string" && option.label !== "") labels.push(option.label);
+    }
+    if (labels.length === 0) return;
+    this.pendingFollowup.set(sessionId, {
+      turn,
+      labels,
+      at: Number.isFinite(at) && at > 0 ? at : Date.now(),
+    });
   }
 
   /**
@@ -542,11 +567,7 @@ export class NextStepService extends TypertRemoteService {
       appendPluginRecord(session, CARD_RECORD, card);
       this.counters.generated += 1;
       if (shown) {
-        this.pendingFollowup.set(sessionId, {
-          turn,
-          labels: card.options.map((/** @type {any} */ option) => String(option.label)),
-          at: card.createdAt,
-        });
+        this.rememberPending(sessionId, turn, card.options, card.createdAt);
       } else {
         this.counters.hidden += 1;
       }
@@ -863,9 +884,9 @@ export class NextStepService extends TypertRemoteService {
         logger: this.logger,
         pkg: typeof identity.version === "string" ? identity.version : "",
       });
-      void this.eventLogHandle.ensureMeta({
-        tier: (await this.currentSettings().catch(() => DEFAULT_SETTINGS)).cardThreshold,
-      });
+      // 起算点必须排在第一条事件之前：报表靠它算天数，顺序错了 meta 就没用。
+      const tier = (await this.currentSettings().catch(() => DEFAULT_SETTINGS)).cardThreshold;
+      this.metaReady = this.eventLogHandle.ensureMeta({ tier }).catch(() => false);
     }
     return this.eventLogHandle;
   }
@@ -880,6 +901,7 @@ export class NextStepService extends TypertRemoteService {
       const settings = await this.currentSettings();
       if (settings.telemetry !== true) return;
       const log = await this.eventLog();
+      if (this.metaReady !== null) await this.metaReady;
       await log.append(event);
     } catch (error) {
       this.warn("cannot record event", error);
@@ -967,6 +989,7 @@ export class NextStepService extends TypertRemoteService {
         at: Date.now(),
       });
       this.counters.acted += 1;
+      this.rememberPending(sessionId, turn, card.options, card.createdAt || Date.now());
       await this.writeEvent(
         actionEvent({
           at: Date.now(),
@@ -1050,6 +1073,7 @@ export class NextStepService extends TypertRemoteService {
           appendPluginRecord(session, REVEAL_RECORD, { turn, at: Date.now(), via });
         }
         this.counters.revealed += 1;
+        this.rememberPending(sessionId, turn, existing.options, Date.now());
         await this.writeEvent(
           promoteEvent({
             at: Date.now(),
@@ -1116,9 +1140,11 @@ export class NextStepService extends TypertRemoteService {
   /**
    * 复盘：读事件日志 → 指标 → 判读 → 写 Markdown 报告。
    * 默认只统计同一 scheme（v0.4）的事件，避免把不同口径的数据混算。
+   * `write === false` 时只算指标、不落盘（设置页的「回顾」块用，避免开一次设置就写一份报告）。
+   * @param {any} [request]
    * @returns {Promise<any>}
    */
-  async report() {
+  async report(request) {
     try {
       const log = await this.eventLog();
       const dir = eventsDirOf(this.dataRoot);
@@ -1138,7 +1164,8 @@ export class NextStepService extends TypertRemoteService {
       const metrics = summarize(relevant);
       const list = verdicts(metrics);
       const markdown = renderMarkdown(metrics, list);
-      const path = await writeReport({ home: this.dataRoot, markdown });
+      const write = request?.write !== false;
+      const path = write ? await writeReport({ home: this.dataRoot, markdown }) : "";
       const stats = await log.stats();
       return {
         ok: true,
