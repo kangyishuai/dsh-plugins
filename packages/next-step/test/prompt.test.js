@@ -3,12 +3,15 @@
 //  - buildMessages({transcript}) 的消息结构与纯对象性；
 //  - renderTranscript / buildSystemPrompt 的裁剪与约束（提示词里写死的上限必须真的被实现）；
 //  - parseSuggestion(raw)：合法 JSON、```json 围栏、前后多余文字、1 条/3 条 option、
-//    两条同 stance、needed / reason 缺失、超长 label / nextPrompt、空字符串、缺字段——
-//    **非法一律 null，绝不截断**。
+//    两条同 stance、value（三档）/ needed（旧字段）缺失、超长 label / nextPrompt、空字符串、缺字段。
+//    v0.4 起是**宽容解析**：展示文本超长截断、单条 option 不合格只丢这一条；
+//    只有「结构不可用 / 三档判定缺失 / 一条可用建议都不剩」才失败（交给 service 修一次）。
+//  - buildRepairMessage：修复调用只发一条 user 消息、回贴原文与问题。
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   buildMessages,
+  buildRepairMessage,
   buildSystemPrompt,
   concreteTokens,
   ghostAgreesWithLabel,
@@ -16,17 +19,38 @@ import {
   LABEL_MAX,
   LABEL_MIN,
   NEXT_PROMPT_MAX,
-  parseSuggestion,
+  OPTIONS_MAX,
+  parseSuggestion as parseRaw,
+  problemText,
   QUESTION_MAX,
   REASON_MAX,
+  REPAIR_ECHO_MAX,
   renderTranscript,
   SUMMARY_MAX,
 } from "../lib/prompt.js";
 
+/** v0.4 起返回 { suggestion, problem, detail }：这里取 suggestion，让大多数断言保持原写法。 */
+const parseSuggestion = (/** @type {unknown} */ raw) => parseRaw(raw).suggestion;
+
+/**
+ * 断言解析失败，并返回 problem.kind。
+ * @param {unknown} raw
+ * @param {string} expectedKind
+ * @returns {string}
+ */
+function expectProblem(raw, expectedKind) {
+  const result = parseRaw(raw);
+  assert.equal(result.suggestion, null, `期望解析失败，实际=${JSON.stringify(result.suggestion)}`);
+  assert.notEqual(result.problem, null, "期望带上 problem，实际=null");
+  const kind = /** @type {any} */ (result.problem).kind;
+  assert.equal(kind, expectedKind, `期望 problem.kind=${expectedKind}，实际=${kind}`);
+  return kind;
+}
+
 /** 一个合法的模型输出对象。 */
 function validPayload() {
   return {
-    needed: true,
+    value: "must",
     reason: "卡片已经接进 turnTail，但还没有回归测试。",
     summary: "已在 docs/runtime 里记录了 turnTail 槽位，还没写冒烟。",
     question: "下一步先补测试还是先把卡片接进去？",
@@ -43,7 +67,7 @@ function validPayload() {
  * 断言解析结果非 null 并收窄类型。
  * @param {unknown} result
  * @param {string} label
- * @returns {{ needed: boolean, reason: string, summary: string, question: string, options: { stance: string, label: string }[], nextPrompt?: string }}
+ * @returns {{ value: "must"|"could"|"no", reason: string, summary: string, question: string, options: { stance: string, label: string }[], nextPrompt?: string }}
  */
 function expectSuggestion(result, label) {
   assert.notEqual(result, null, `${label} 期望解析成功（非 null），实际=null`);
@@ -278,10 +302,17 @@ test("buildSystemPrompt：要求严格 JSON、1–2 条、并写明各字段上�
     `期望写明 options 是 1–2 条，实际=${JSON.stringify(prompt.slice(0, 300))}`,
   );
   assert.equal(prompt.includes(String(LABEL_MAX)), true, `期望写明 label 上限 ${LABEL_MAX}`);
+  for (const token of ["must", "could", "no"]) {
+    assert.equal(
+      prompt.includes(`"${token}"`),
+      true,
+      `期望提示词用三档判定并提到 ${token}，实际=${JSON.stringify(prompt.slice(0, 600))}`,
+    );
+  }
   assert.equal(
-    prompt.includes("needed"),
+    prompt.includes("拿不准"),
     true,
-    `期望提示词提到 needed（模型自评是否值得继续），实际=${JSON.stringify(prompt.slice(0, 400))}`,
+    `期望提示词明写「拿不准一律判 could」，实际=${JSON.stringify(prompt.slice(0, 800))}`,
   );
   assert.equal(
     prompt.includes("reason"),
@@ -318,7 +349,7 @@ test("buildSystemPrompt：locale 缺失时回落 auto，不抛错", () => {
 test("parseSuggestion：合法 JSON 对象被完整解析", () => {
   const payload = validPayload();
   const parsed = expectSuggestion(parseSuggestion(JSON.stringify(payload)), "合法 JSON");
-  assert.equal(parsed.needed, true, `needed 期望=true，实际=${JSON.stringify(parsed.needed)}`);
+  assert.equal(parsed.value, "must", `value 期望=must，实际=${JSON.stringify(parsed.value)}`);
   assert.equal(
     parsed.reason,
     payload.reason,
@@ -454,35 +485,28 @@ test("parseSuggestion：只有 1 条 option 也合法（下一步很明确时不
   assert.equal(parsed.options.length, 1);
 });
 
-test("parseSuggestion：3 条 option → null", () => {
+test("parseSuggestion：3 条 option → 只保留前两条（多余的是选择成本，但不废整张卡）", () => {
   const payload = /** @type {any} */ (validPayload());
   payload.options.push({ stance: "third", label: "补第三种做法" });
-  assert.equal(
-    parseSuggestion(JSON.stringify(payload)),
-    null,
-    `options 有 3 条时期望=null，实际=${JSON.stringify(parseSuggestion(JSON.stringify(payload)))}`,
-  );
+  const parsed = expectSuggestion(parseSuggestion(JSON.stringify(payload)), "options 有 3 条");
+  assert.equal(parsed.options.length, OPTIONS_MAX, `期望保留 ${OPTIONS_MAX} 条`);
+  assert.equal(parsed.options[1].stance, "proceed", "保留的是前两条");
 });
 
-test("parseSuggestion：两条同 stance → null（大小写/空白归一化后仍相同）", () => {
+test("parseSuggestion：两条同 stance → 丢掉第二条（互斥是硬要求，但不必废掉整张卡）", () => {
   const payload = /** @type {any} */ (validPayload());
   payload.options[1].stance = "  VERIFY  ";
-  assert.equal(
-    parseSuggestion(JSON.stringify(payload)),
-    null,
-    `两条 stance 归一化后相同时期望=null，实际=${JSON.stringify(parseSuggestion(JSON.stringify(payload)))}`,
-  );
+  const parsed = expectSuggestion(parseSuggestion(JSON.stringify(payload)), "两条同 stance");
+  assert.equal(parsed.options.length, 1, "期望只剩 1 条");
+  assert.equal(parsed.options[0].stance, "verify");
 });
 
-test("parseSuggestion：label 超上限 → null（整条丢弃，不截断）", () => {
+test("parseSuggestion：label 超上限 → 只丢这一条（不截断、也不废整张卡）", () => {
   const payload = /** @type {any} */ (validPayload());
   payload.options[0].label = "这".repeat(LABEL_MAX + 1);
-  const result = parseSuggestion(JSON.stringify(payload));
-  assert.equal(
-    result,
-    null,
-    `label=${LABEL_MAX + 1} 字时期望=null（不要截断成 ${LABEL_MAX} 字），实际=${JSON.stringify(result)}`,
-  );
+  const parsed = expectSuggestion(parseSuggestion(JSON.stringify(payload)), "一条 label 超长");
+  assert.equal(parsed.options.length, 1, "超长那一条应当被丢掉");
+  assert.equal(parsed.options[0].label, payload.options[1].label);
 });
 
 test("parseSuggestion：label 恰好上限可接受（边界）", () => {
@@ -534,24 +558,21 @@ test("parseSuggestion：nextPrompt 恰好上限可接受（边界）", () => {
   assert.equal(parsed.nextPrompt?.length, NEXT_PROMPT_MAX);
 });
 
-test("parseSuggestion：label 少于下限 → null（「继续」这类悬空指令不可执行）", () => {
+test("parseSuggestion：label 少于下限 → 只丢这一条", () => {
   const payload = /** @type {any} */ (validPayload());
   payload.options[0].label = "继续".slice(0, LABEL_MIN - 1);
-  assert.equal(
-    parseSuggestion(JSON.stringify(payload)),
-    null,
-    `label=${LABEL_MIN - 1} 字期望=null，实际=${JSON.stringify(parseSuggestion(JSON.stringify(payload)))}`,
-  );
+  const parsed = expectSuggestion(parseSuggestion(JSON.stringify(payload)), "一条 label 过短");
+  assert.equal(parsed.options.length, 1, "过短那一条应当被丢掉");
 });
 
-test("parseSuggestion：只有 text 没有 label → null（v0.2 起按钮文本就是消息）", () => {
+test("parseSuggestion：只有 text 没有 label → 丢这一条（v0.2 起按钮文本就是消息）", () => {
   const payload = /** @type {any} */ (validPayload());
   payload.options[0] = { stance: "verify", text: "先给 next-step 写冒烟" };
-  assert.equal(
-    parseSuggestion(JSON.stringify(payload)),
-    null,
-    `缺 label 期望=null，实际=${JSON.stringify(parseSuggestion(JSON.stringify(payload)))}`,
-  );
+  const parsed = expectSuggestion(parseSuggestion(JSON.stringify(payload)), "缺 label");
+  assert.equal(parsed.options.length, 1, "缺 label 的那条应当被丢掉");
+  // 两条都缺 label 时整张卡不可用 → 交给修复调用
+  payload.options[1] = { stance: "proceed", text: "接 turnTail" };
+  expectProblem(JSON.stringify(payload), "options");
 });
 
 test("parseSuggestion：残留的 text 字段被忽略（不进入解析结果）", () => {
@@ -565,41 +586,48 @@ test("parseSuggestion：残留的 text 字段被忽略（不进入解析结果�
   );
 });
 
-test("parseSuggestion：needed 缺失或不是布尔 → null", () => {
+test("parseSuggestion：value 缺失或非法 → problem=value（交给修复调用）", () => {
   const missing = /** @type {any} */ (validPayload());
-  delete missing.needed;
-  assert.equal(parseSuggestion(JSON.stringify(missing)), null, "缺 needed 期望=null");
-  for (const value of ["true", 1, null]) {
+  delete missing.value;
+  expectProblem(JSON.stringify(missing), "value");
+  for (const bad of ["true", 1, null, "MUST"]) {
     const payload = /** @type {any} */ (validPayload());
-    payload.needed = value;
-    assert.equal(
-      parseSuggestion(JSON.stringify(payload)),
-      null,
-      `needed=${JSON.stringify(value)} 期望=null，实际=${JSON.stringify(parseSuggestion(JSON.stringify(payload)))}`,
-    );
+    payload.value = bad;
+    expectProblem(JSON.stringify(payload), "value");
   }
 });
 
-test("parseSuggestion：needed=false 的卡仍然被解析（用户可手动补生成）", () => {
-  const payload = /** @type {any} */ (validPayload());
-  payload.needed = false;
-  payload.reason = "回答已经向用户提出了明确问题，这一轮不需要再出卡。";
-  const parsed = expectSuggestion(parseSuggestion(JSON.stringify(payload)), "needed=false");
-  assert.equal(parsed.needed, false, `needed 期望=false，实际=${JSON.stringify(parsed.needed)}`);
-  assert.equal(parsed.options.length, 2, "needed=false 时 options 仍应完整");
+test("parseSuggestion：旧字段 needed 兼容映射（提示词漂移时不让整张卡作废）", () => {
+  const on = /** @type {any} */ (validPayload());
+  delete on.value;
+  on.needed = true;
+  assert.equal(expectSuggestion(parseSuggestion(JSON.stringify(on)), "needed=true").value, "must");
+  const off = /** @type {any} */ (validPayload());
+  delete off.value;
+  off.needed = false;
+  assert.equal(expectSuggestion(parseSuggestion(JSON.stringify(off)), "needed=false").value, "no");
 });
 
-test("parseSuggestion：reason 为空或超长 → null", () => {
+test('parseSuggestion：value="no" 的卡内容仍然完整（用户可手动补生成）', () => {
+  const payload = /** @type {any} */ (validPayload());
+  payload.value = "no";
+  payload.reason = "回答已经向用户提出了明确问题，这一轮不需要再出卡。";
+  const parsed = expectSuggestion(parseSuggestion(JSON.stringify(payload)), 'value="no"');
+  assert.equal(parsed.value, "no", `value 期望=no，实际=${JSON.stringify(parsed.value)}`);
+  assert.equal(parsed.options.length, 2, 'value="no" 时 options 仍应完整');
+});
+
+test("parseSuggestion：reason 为空可接受（只进诊断）、超长截断", () => {
   const empty = /** @type {any} */ (validPayload());
   empty.reason = "   ";
-  assert.equal(parseSuggestion(JSON.stringify(empty)), null, "reason 为空期望=null");
+  const parsedEmpty = expectSuggestion(parseSuggestion(JSON.stringify(empty)), "reason 为空");
+  assert.equal(parsedEmpty.reason, "", "reason 为空时期望空字符串，而不是丢掉整张卡");
+  assert.equal(parsedEmpty.options.length, 2);
   const long = /** @type {any} */ (validPayload());
   long.reason = "r".repeat(REASON_MAX + 1);
-  assert.equal(
-    parseSuggestion(JSON.stringify(long)),
-    null,
-    `reason=${REASON_MAX + 1} 字期望=null，实际=${JSON.stringify(parseSuggestion(JSON.stringify(long)))}`,
-  );
+  const parsedLong = expectSuggestion(parseSuggestion(JSON.stringify(long)), "reason 超长");
+  assert.equal(parsedLong.reason.length, REASON_MAX + 1, "截断后长度含末尾省略号");
+  assert.equal(parsedLong.reason.endsWith("…"), true, "截断后应以省略号结尾");
 });
 
 test("parseSuggestion：summary / question 为空 → null", () => {
@@ -611,36 +639,39 @@ test("parseSuggestion：summary / question 为空 → null", () => {
   assert.equal(parseSuggestion(JSON.stringify(noQuestion)), null, "question 为空期望=null");
 });
 
-test("parseSuggestion：summary / question 超长 → null（不截断）", () => {
+test("parseSuggestion：summary / question 超长 → 截断到上限（展示文本，丢整张卡不划算）", () => {
   const longSummary = /** @type {any} */ (validPayload());
   longSummary.summary = "s".repeat(SUMMARY_MAX + 1);
-  assert.equal(
+  const parsedSummary = expectSuggestion(
     parseSuggestion(JSON.stringify(longSummary)),
-    null,
-    `summary=${SUMMARY_MAX + 1} 字期望=null，实际=${JSON.stringify(parseSuggestion(JSON.stringify(longSummary)))}`,
+    "summary 超长",
   );
+  assert.equal(parsedSummary.summary.length, SUMMARY_MAX + 1, "截断后长度含末尾省略号");
+  assert.equal(parsedSummary.summary.endsWith("…"), true);
   const longQuestion = /** @type {any} */ (validPayload());
-  longQuestion.question = "q".repeat(QUESTION_MAX + 1);
-  assert.equal(
+  longQuestion.question = `${"q".repeat(QUESTION_MAX + 1)}？`;
+  const parsedQuestion = expectSuggestion(
     parseSuggestion(JSON.stringify(longQuestion)),
-    null,
-    `question=${QUESTION_MAX + 1} 字期望=null，实际=${JSON.stringify(parseSuggestion(JSON.stringify(longQuestion)))}`,
+    "question 超长",
   );
+  assert.equal(parsedQuestion.question.length, QUESTION_MAX + 1, "截断后长度含末尾省略号");
 });
 
-test("parseSuggestion：options 缺失或不是数组 → null", () => {
+test("parseSuggestion：options 缺失或不是数组 → problem=options", () => {
   const missing = /** @type {any} */ (validPayload());
   delete missing.options;
-  assert.equal(parseSuggestion(JSON.stringify(missing)), null, "缺 options 期望=null");
+  expectProblem(JSON.stringify(missing), "options");
   const notArray = /** @type {any} */ (validPayload());
   notArray.options = "nope";
-  assert.equal(parseSuggestion(JSON.stringify(notArray)), null, "options 非数组期望=null");
+  expectProblem(JSON.stringify(notArray), "options");
+  // 含 null 项：丢掉那一项，剩下的仍可用
   const nullItem = /** @type {any} */ (validPayload());
   nullItem.options = [null, nullItem.options[1]];
-  assert.equal(parseSuggestion(JSON.stringify(nullItem)), null, "options 含 null 项期望=null");
+  const parsed = expectSuggestion(parseSuggestion(JSON.stringify(nullItem)), "options 含 null 项");
+  assert.equal(parsed.options.length, 1, "null 项被丢掉，剩下的那条保留");
 });
 
-test("parseSuggestion：stance 为空、label 为空 → null", () => {
+test("parseSuggestion：stance 为空 / label 为空 → 丢该条；两条都坏 → problem=options", () => {
   for (const mutate of [
     (/** @type {any} */ payload) => {
       payload.options[0].stance = "";
@@ -651,11 +682,12 @@ test("parseSuggestion：stance 为空、label 为空 → null", () => {
   ]) {
     const payload = /** @type {any} */ (validPayload());
     mutate(payload);
-    assert.equal(
-      parseSuggestion(JSON.stringify(payload)),
-      null,
-      `非法字段期望=null，实际=${JSON.stringify(parseSuggestion(JSON.stringify(payload)))}`,
-    );
+    const parsed = expectSuggestion(parseSuggestion(JSON.stringify(payload)), "一条非法");
+    assert.equal(parsed.options.length, 1, "非法那条被丢掉");
+    // 两条都坏 → 整卡不可用，交给修复调用
+    payload.options[1].stance = "";
+    payload.options[1].label = "";
+    expectProblem(JSON.stringify(payload), "options");
   }
 });
 
@@ -739,4 +771,87 @@ test("concreteTokens：能抽出文件、命令、版本号与中文名词片段
   assert.ok(tokens.has("src/importer/csv.ts"), `实际=${[...tokens].join(",")}`);
   assert.ok([...tokens].some((token) => token === "v1.5.0" || token === "1.5.0"));
   assert.ok([...tokens].some((token) => token.includes("冒烟")));
+});
+
+// ---------------------------------------------------------------------------
+// 11. v0.4：宽容解析的失败分类 + 修复调用
+// ---------------------------------------------------------------------------
+
+test("parseSuggestion：三类失败各自带上 problem.kind（service 据此决定要不要修）", () => {
+  expectProblem("", "json");
+  expectProblem("这不是 JSON", "json");
+  expectProblem('{"summary":"x"', "json");
+  expectProblem("[1,2,3]", "json");
+  const noValue = /** @type {any} */ (validPayload());
+  delete noValue.value;
+  expectProblem(JSON.stringify(noValue), "value");
+  const noOptions = /** @type {any} */ (validPayload());
+  noOptions.options = [];
+  expectProblem(JSON.stringify(noOptions), "options");
+});
+
+test("parseSuggestion：成功时 problem 为 null，detail 记录被容忍的问题", () => {
+  const payload = /** @type {any} */ (validPayload());
+  payload.summary = "s".repeat(SUMMARY_MAX + 5);
+  payload.options[0].label = "这".repeat(LABEL_MAX + 1);
+  const result = parseRaw(JSON.stringify(payload));
+  assert.equal(result.problem, null, "期望 problem=null");
+  assert.notEqual(result.suggestion, null, "期望仍然解析成功");
+  assert.match(result.detail, /truncated:summary/u, `期望记录截断，实际=${result.detail}`);
+  assert.match(
+    result.detail,
+    /dropped-option:0:label-length/u,
+    `期望记录丢弃，实际=${result.detail}`,
+  );
+});
+
+test("parseSuggestion：旧字段 needed 映射会记进 detail（便于观察提示词漂移）", () => {
+  const payload = /** @type {any} */ (validPayload());
+  delete payload.value;
+  payload.needed = true;
+  const result = parseRaw(JSON.stringify(payload));
+  assert.equal(result.problem, null);
+  assert.match(result.detail, /legacy-needed/u);
+});
+
+test("buildRepairMessage：只发一条 user 消息，回贴原文与具体问题", () => {
+  const raw = '{"value":"maybe","summary":"x","question":"y","options":[]}';
+  const messages = buildRepairMessage({ raw, problem: "value" });
+  assert.equal(messages.length, 1, `期望恰好 1 条消息，实际=${messages.length}`);
+  assert.equal(messages[0].role, "user", "不伪造 assistant 轮次");
+  assert.equal(messages[0].content.length, 1);
+  const text = messages[0].content[0].text;
+  assert.equal(text.includes(raw), true, "期望回贴模型原文");
+  assert.equal(text.includes('"must"'), true, "期望重申三档取值");
+  assert.equal(text.includes("不要输出任何解释"), true, "期望再次强调只输出 JSON");
+});
+
+test("buildRepairMessage：超长原文被截断，避免把上一次的超长输出再喂回上下文", () => {
+  const raw = "x".repeat(REPAIR_ECHO_MAX + 500);
+  const messages = buildRepairMessage({ raw, problem: "json" });
+  const text = messages[0].content[0].text;
+  assert.equal(text.includes("x".repeat(REPAIR_ECHO_MAX + 1)), false, "期望原文被截断");
+  assert.equal(text.includes("…"), true, "截断处应有省略号");
+});
+
+test("buildRepairMessage：problem 说明能区分三类失败", () => {
+  const cases = /** @type {const} */ (["json", "value", "options"]);
+  const texts = cases.map((kind) => problemText(kind));
+  for (let index = 0; index < cases.length; index += 1) {
+    for (let other = index + 1; other < cases.length; other += 1) {
+      assert.notEqual(
+        texts[index],
+        texts[other],
+        `${cases[index]} 与 ${cases[other]} 的说明应不同`,
+      );
+    }
+  }
+});
+
+test("buildRepairMessage：raw 不是字符串也不抛错", () => {
+  for (const raw of [undefined, null, 42, { a: 1 }]) {
+    const messages = buildRepairMessage({ raw, problem: "json" });
+    assert.equal(messages.length, 1);
+    assert.equal(typeof messages[0].content[0].text, "string");
+  }
 });
