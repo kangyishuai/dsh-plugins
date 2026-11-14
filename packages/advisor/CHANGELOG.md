@@ -1,5 +1,12 @@
 # @kangyishuai/dsh-advisor
 
+## 0.6.1
+
+### Patch Changes
+
+- [#108](https://github.com/kangyishuai/dsh-plugins/pull/108) [`0863809`](https://github.com/kangyishuai/dsh-plugins/commit/086380951e59dbf57132943bb72fb51c1016bd68) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 修决策日志的原因码归类：`aborted` / `blocked` 的回合现在直接记 `skipped-aborted` / `skipped-blocked`，
+  不再落到 `skipped-other`。真实日志里出现过「回合被中断」被归为未识别的情况。
+
 ## 0.6.0
 
 ### Minor Changes
