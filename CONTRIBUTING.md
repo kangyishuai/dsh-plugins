@@ -93,11 +93,11 @@ SMOKE_DEMO=1 pnpm smoke:session-delete   # 截图在系统临时目录的 dsh-sm
 
 CI 绿是**必要条件，不是充分条件**。哪类 PR 可以在 CI 绿之后自动 squash 合并，按「改动面 + 是否机器生成 + 能否机检」分三档（决策见 [ADR 0014](docs/adr/0014-automerge-tiers.md)）：
 
-| 档               | 适用改动（需**全部**满足）                                                                                                                                                                                    | 谁可以打 `automerge`            |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
-| **A 直接自动**   | 标题为 `chore(release): version packages`、来自 `changeset-release/main`，diff 只碰各包 `CHANGELOG.md` / `package.json`（版本号）/ `.changeset/**` / `pnpm-lock.yaml`                                         | 维护者、agent                   |
-| **B 证据门自动** | 标题为 `docs:` / `test:` / `chore(repo):` 且 diff 全部落在 `docs/**`、`*.md`、`.changeset/**`；**或** diff 全在一个 `packages/<name>/**` 内、且 PR 描述附了证据（单测覆盖；有 client 半时附桌面只读回归结果） | 维护者、agent（描述里写清证据） |
-| **C 只能人工**   | 其它全部。明确包含 `.github/**`、`scripts/**`、根 `package.json` 与依赖变更、`types/**`、`docs/adr/**`、`NOTICE`；任何 `feat(<plugin>)`、新增/删除插件、跨多个包；外部贡献者的 PR                             | ——                              |
+| 档               | 适用改动（需**全部**满足）                                                                                                                                                                                                    | 谁可以打 `automerge`            |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| **A 直接自动**   | 标题为 `chore(release): version packages`、来自 `changeset-release/main`，diff 只碰各包 `CHANGELOG.md` / `package.json`（版本号）/ `.changeset/**` / `pnpm-lock.yaml`                                                         | 维护者、agent                   |
+| **B 证据门自动** | 标题为 `docs:` / `test:` / `chore(repo):` 且 diff 全部落在 `docs/**`、`*.md`、`.changeset/**`；**或** diff 只碰一个 `packages/<name>/**` 与 `.changeset/**`、且 PR 描述附了证据（单测覆盖；有 client 半时附桌面只读回归结果） | 维护者、agent（描述里写清证据） |
+| **C 只能人工**   | 其它全部。明确包含 `.github/**`、`scripts/**`、根 `package.json` 与依赖变更、`types/**`、`docs/adr/**`、`NOTICE`；任何 `feat(<plugin>)`、新增/删除插件、跨多个包；外部贡献者的 PR                                             | ——                              |
 
 为什么这样分：
 
@@ -105,14 +105,20 @@ CI 绿是**必要条件，不是充分条件**。哪类 PR 可以在 CI 绿之�
 - **行为改动有 CI 覆盖不到的部分**（桌面真机上的真键盘、`setDraft → submit` 时序，见 [docs/testing](docs/testing/)）。这一档自动合并会把「发版前手工补真机回归」事实上废掉。
 - **release 与纯文档 PR 没有信息量可评审**：diff 形态可机检，人工那一下只是延迟发布。
 
-怎么武装（由提出 PR 的一方操作，CI 绿之前就可以打标签）：
+怎么武装（由提出 PR 的一方操作）：
 
 ```bash
-gh pr edit <n> --add-label automerge
-gh pr merge <n> --auto --squash --delete-branch
+gh pr edit <n> --add-label automerge     # 1. 先打标签，让 automerge guard 校验
+gh pr checks <n>                          # 2. 等必检 + automerge guard 都过
+gh pr merge <n> --auto --squash --delete-branch   # 3. 再武装，CI 一绿就自动合
 ```
 
-- 打标签前先机检改动面：`git diff --name-only main...HEAD`，越出白名单就不打。
+**这一步有机器兜底**：`.github/workflows/automerge-guard.yml` 在标签出现、分支更新、标题被编辑时跑
+`scripts/automerge-guard.mjs`，把上面三档的白名单机检一遍。不合规会**摘掉 `automerge` 标签、关闭已武装的
+auto-merge、并在 PR 上留一条说明评论**（同时该检查变红）。所以"先打标签、等它过、再武装"是推荐顺序；
+顺序反了也会被回头纠正，只是多一次评论。机检对 A/B 档还会**再拦一次硬黑名单**：`.github/**`、`scripts/**`、`types/**`、`docs/adr/**` 里的文件即使标题是 `docs:` 也不放行。
+
+- 打标签前也可以自己机检：`git diff --name-only main...HEAD`，越出白名单就别打。
 - 仓库设置里必须打开 **Allow auto-merge**；没打开时退回「CI 绿后手动 squash 合并」，分级表照旧生效。
 - `automerge` 与「已评审」是两条独立条件：有 `REQUEST_CHANGES` 时即使 CI 全绿也不合。
 
