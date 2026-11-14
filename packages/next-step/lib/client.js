@@ -2145,3 +2145,5 @@ window.__ModuleLoader__.load({
     return module.exports;
   },
 });
+
+// 必需检查冒烟 2026-11-15：验证 guard 变红时合并会被分支保护拦下；PR 关闭后不保留。
