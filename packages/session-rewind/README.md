@@ -2,7 +2,7 @@
 
 > In-place conversation rewind for DeepSeek Harness: send the conversation back to before any user message, withdraw everything after it from the model context and the transcript, optionally restore the workspace files those turns changed, and put the message back into the composer.
 
-[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-rewind?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-session-rewind) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.2-4b6bfb)](#compatibility) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-rewind?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-session-rewind) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.3-4b6bfb)](#compatibility) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
 [中文](./README.zh-CN.md)
 
@@ -124,6 +124,7 @@ On startup the plugin also removes data for sessions that no longer exist (they 
 
 | DSH version | Status                                                                                                                                                                                                                                                                                                            |
 | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.2.2-rc.3  | **0.7.0** (2026-11-14): no code change needed for this DSH build. Verified: 208 unit tests + `pnpm probe:runtime` 72/72 + web `pnpm smoke:session-rewind` **52/52** (throwaway DSH home) + desktop read-only regression **25/25** (real Electron, this build).                                                    |
 | 0.2.2-rc.2  | **0.7.0** (2026-11-14): settings moved to their own "Settings → Session rewind" section, drawer slimmed from 4 tabs to 3. Verified: 208 unit tests + `pnpm probe:runtime` 72/72 + web `smoke:session-rewind` **52/52** (throwaway DSH home) + desktop read-only regression **25/25** (real Electron, this build). |
 | 0.2.2-rc.1  | Verified 2026-11-09: 205 unit tests + web `smoke:session-rewind` 49/49 (temp DSH home) + desktop `smoke:session-rewind-desktop` 23/23 read-only, 30/30 with `--recall`, and 39/39 with `--deep` (file mode end to end, real Electron renderer over CDP); the full `--recall --deep` combination is 46/46.         |
 

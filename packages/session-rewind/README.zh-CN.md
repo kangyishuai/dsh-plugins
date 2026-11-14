@@ -2,7 +2,7 @@
 
 > DeepSeek Harness 的「就地回溯」：把会话退回到任意一条用户消息之前，目标消息及其后的内容同时从模型上下文和渲染对话中撤回；可选择一并还原这些轮次改过的工作区文件；目标消息文本（和图片）自动回填输入框。
 
-[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-rewind?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-session-rewind) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.2-4b6bfb)](#兼容性) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-rewind?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-session-rewind) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.3-4b6bfb)](#兼容性) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
 [English](./README.md)
 
@@ -124,6 +124,7 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-session-rewind-*.tgz
 
 | DSH 版本   | 状态                                                                                                                                                                                                                                                                                                                                       |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0.2.2-rc.3 | **0.7.0**（2026-11-14）：这一版 DSH 不需要改代码。已验证：208 项单测 + `pnpm probe:runtime` 72/72 + web `pnpm smoke:session-rewind` **52/52**（临时 DSH home）+ 桌面只读回归 **25/25**（真实 Electron，本版本）。                                                                                                                          |
 | 0.2.2-rc.2 | **0.7.0**（2026-11-14）：设置独立成「设置 → 会话回溯」分节，抽屉 4 → 3 页签。已验证：单测 90 + `pnpm probe:runtime` 72/72 + web `smoke:session-rewind` **52/52**（临时 DSH home）+ 桌面只读回归 **25/25**（真实 Electron + 本分支构建）。0.6.2 当时的记录是单测 208 / web 49/49 / 桌面只读 24、召回 31、深链 40；本行只列 0.7.0 的新数字。 |
 | 0.2.2-rc.1 | 2026-11-09 已验证：205 个单测 + Web `smoke:session-rewind` 49/49（临时 DSH home）+ 桌面 `smoke:session-rewind-desktop` 只读 23/23、加 `--recall` 30/30、加 `--deep` 39/39（文件模式端到端，真实 Electron 渲染进程走 CDP）；全量组合 `--recall --deep` 46/46。                                                                              |
 
