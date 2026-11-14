@@ -208,3 +208,23 @@ test("写失败只 warn 一次、返回 false，不抛错（数据根不可写�
   assert.equal(warnings.length, 1, `期望只 warn 一次，实际=${warnings.length}`);
   assert.match(warnings[0], /cannot write events log/u);
 });
+
+test("ensureMeta：并发调用只写一条 meta（stat 必须在串行链内部）", async () => {
+  const home = await tempHome();
+  const log = createEventLog({ home });
+  const results = await Promise.all([
+    log.ensureMeta({ tier: "could" }),
+    log.ensureMeta({ tier: "could" }),
+    log.ensureMeta({ tier: "could" }),
+  ]);
+  assert.equal(
+    results.filter(Boolean).length,
+    1,
+    `期望只有一次真的写入，实际=${JSON.stringify(results)}`,
+  );
+  const rows = (await readFile(eventsPathOf(home), "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  assert.equal(rows.filter((row) => row.t === "meta").length, 1, "并发时也绝不能写出两条 meta");
+});

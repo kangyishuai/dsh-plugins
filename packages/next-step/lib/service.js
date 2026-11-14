@@ -296,8 +296,10 @@ export class NextStepService extends TypertRemoteService {
     this.inflight = new Map();
     /** 设置缓存（1s TTL），使「改文件即生效」成立又不必每次读盘。 */
     this.settingsCache = { at: 0, value: /** @type {any} */ (null) };
-    /** 事件日志（惰性创建：需要知道包版本）。 @type {any} */
+    /** 事件日志（惰性创建：需要知道包版本）。**缓存 promise**，避免并发创建写两条 meta。 @type {any} */
     this.eventLogHandle = null;
+    /** @type {Promise<any> | null} */
+    this.eventLogPromise = null;
     /** 首次写入前确保 meta 已经落盘的 promise。 @type {Promise<unknown> | null} */
     this.metaReady = null;
     /** 待追踪的卡片（下一次用户消息到来时写 followup）。 @type {Map<string, { turn: number, labels: string[], at: number }>} */
@@ -877,18 +879,24 @@ export class NextStepService extends TypertRemoteService {
    * @returns {Promise<any>}
    */
   async eventLog() {
-    if (this.eventLogHandle === null) {
-      const identity = await buildIdentity().catch(() => ({ version: "" }));
-      this.eventLogHandle = createEventLog({
-        home: this.dataRoot,
-        logger: this.logger,
-        pkg: typeof identity.version === "string" ? identity.version : "",
-      });
-      // 起算点必须排在第一条事件之前：报表靠它算天数，顺序错了 meta 就没用。
-      const tier = (await this.currentSettings().catch(() => DEFAULT_SETTINGS)).cardThreshold;
-      this.metaReady = this.eventLogHandle.ensureMeta({ tier }).catch(() => false);
+    // 并发调用（两个 diagnostics / diagnostics + report）必须共享同一个创建过程：
+    // 各自 await 之后各自 createEventLog + ensureMeta 会写出两条 meta。
+    if (this.eventLogPromise === null) {
+      this.eventLogPromise = (async () => {
+        const identity = await buildIdentity().catch(() => ({ version: "" }));
+        const log = createEventLog({
+          home: this.dataRoot,
+          logger: this.logger,
+          pkg: typeof identity.version === "string" ? identity.version : "",
+        });
+        this.eventLogHandle = log;
+        // 起算点必须排在第一条事件之前：报表靠它算天数，顺序错了 meta 就没用。
+        const tier = (await this.currentSettings().catch(() => DEFAULT_SETTINGS)).cardThreshold;
+        this.metaReady = log.ensureMeta({ tier }).catch(() => false);
+        return log;
+      })();
     }
-    return this.eventLogHandle;
+    return this.eventLogPromise;
   }
 
   /**

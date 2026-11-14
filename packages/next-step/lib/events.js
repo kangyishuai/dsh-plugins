@@ -245,17 +245,24 @@ export function createEventLog({ home, pkg, logger, now }) {
     },
     /**
      * 首次运行时写一条 meta（记录采集起算点与当时档位）。已有事件时不写。
+     *
+     * 幂等性放在**串行链内部**判：并发调用时若在外面 stat，两次都会看到「空文件」，
+     * 于是写出两条 meta（桌面实测踩到：两个 diagnostics 并发就把起算点写了两遍）。
      * @param {{ tier: string }} input
      * @returns {Promise<boolean>}
      */
-    async ensureMeta(input) {
-      try {
+    ensureMeta(input) {
+      const run = async () => {
         const info = await stat(path).catch(() => null);
         if (info !== null && info.size > 0) return false;
-      } catch (_error) {
-        return false;
-      }
-      return this.append(metaEvent({ at: clock(), tier: input.tier }));
+        return write(metaEvent({ at: clock(), tier: input.tier }));
+      };
+      const next = chain.then(run);
+      chain = next.then(
+        () => undefined,
+        () => undefined,
+      );
+      return next;
     },
     /**
      * 文件体积与行数（设置页「回顾」块用；行数是近似值，1 s 内复用缓存）。
