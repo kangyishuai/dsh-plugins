@@ -49,6 +49,21 @@ DSH_HOME=$H dsh --profile ad --port 0 --no-open
 | `pnpm smoke:advisor-desktop --require`     | **19 PASS + 1 SKIP（20 项；真机 DSH 桌面版 0.2.2-rc.2，冷启动实测）**：插件加载、选择器、设置卡（含「读到的是展开后快照」这条回归断言）、分页 `status`/`doctor`（读会话日志）、收尾清理。`--advice` 再加 4 项共 24 项 |
 | 真机徵询（`pnpm pack` → `add` → 手动徵询） | **已完成**（2026-11-14 用 0.6.0 发布版补做，过程与证据见下面的 0.6.0 小节）                                                                                                                                           |
 
+## 0.6.1 在 0.2.2-rc.3 上的复核记录（2026-11-14，DSH 0.2.2-rc.3）
+
+插件代码没有改动；这一版只验证「升级后仍然成立」。
+
+| 层                                         | 结果                                                                                                  |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `node --test`（包内）                      | **138 pass / 0 fail**                                                                                 |
+| `pnpm verify`                              | 通过（lint / typecheck / check / check:docs / check:public / 单测）                                   |
+| `pnpm probe:runtime`                       | **72/72 PASS**（探针侧改了 1 条硬编码哈希资源的误报，见 [runtime rc.3 §2](../runtime/0.2.2-rc.3.md)） |
+| `pnpm smoke:advisor`（web，临时 DSH home） | **14/14**，账本 0（不发起模型调用）                                                                   |
+| `pnpm smoke:advisor-desktop --require`     | **19 PASS + 1 SKIP**，0 FAIL（SKIP：本会话没有顾问记录）                                              |
+| 设置页                                     | 桌面只读读到紧凑态 3 行摘要、45 个 provider 候选、19 个「?」帮助按钮；字段与文案断言全过              |
+
+结论：**rc.3 上 advisor 无回归**。
+
 ## 0.6.1 复核记录（2026-11-14，DSH 0.2.2-rc.2）
 
 | 层                                   | 结果                                                                 |
