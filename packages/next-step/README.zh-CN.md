@@ -83,7 +83,7 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-next-step-*.tgz
 - **生成节奏** —— 「暂停 1 小时」/「恢复生成」。
 - **每会话最多 N 张卡** —— 预算（`maxCardsPerSession`，夹在 0–1000，默认 120）。只统计**出过**的卡，被抑制的候选不占预算。
 - **回顾** —— 四个关键数字（出卡率 / 点击率 / 忽略率 / 漏判）+ 样本够时的一句话判读 + **「生成报告」**按钮，报告写在日志旁边。
-- **诊断** —— 已生成（含未显示数）/ 失败 / 已中止 / 跳过 / 在途计数、**最近一次没出卡的原因**（模型判断不需要 / 排队 / 暂停 / 预算 / 失败 / 超时 / 取消，附模型给的理由）、最近错误、**运行时版本 + 构建哈希**、刷新按钮。`nextStep/diagnostics` 同样返回 `version` / `buildHash` / `buildFiles` / `packagePath` 与 `lastSkip`，所以运行中的构建可以和 `dsh plugin list` 或 npm 上的 tarball 对照，不需要翻启动日志。
+- **诊断** —— 已生成（含未显示数）/ 失败 / 已中止 / 跳过 / 在途计数、**最近一次没出卡的原因**（模型判断不需要 / 排队 / 暂停 / 预算 / 失败 / 超时 / 取消，附模型给的理由）、最近错误、**运行时版本 + 构建哈希**、刷新按钮。`nextStep/diagnostics` 同样返回 `version` / `buildHash` / `buildFiles` / `packagePath` 与 `lastSkip`，所以运行中的构建可以和 `dsh plugin list` 或 npm 上的 tarball 对照，不需要翻启动日志。注意：`buildHash` 覆盖 `package.json`，而 pnpm 在 `file:` 安装时会重写它——那种情况要和 **profile 里已安装的那一份**比，别拿仓库的哈希去对（详见 [docs/testing §4.5](../../docs/testing/next-step.md)）。
 
 关闭总开关后，卡片 / 幽灵 / 暂停 / 预算 / 诊断这些依赖项会**整段隐藏**，只留总开关和一行说明——关掉就是关掉，不会让人以为还有东西在跑；重新启用时这些开关的取值都还在。
 

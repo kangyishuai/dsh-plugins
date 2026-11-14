@@ -329,6 +329,41 @@ npm view @kangyishuai/dsh-next-step version
 `buildHash` 覆盖 `package.json`、`cordis.patch.yml`、`lib/**`、`locale/**`（**不含** README / LICENSE：改文档不该改变构建身份），
 按相对路径排序后对「路径 + 长度 + 内容」做 sha256，跨平台一致。
 
+### 4.5.1 哈希怎么比才算数（2026-11-14 实测踩坑）
+
+`buildHash` 覆盖 `package.json`，而 **pnpm 把包装进 profile 时会重写 `package.json`**（键顺序重排、
+末尾换行）。于是同一个提交、同样逐字节的 `lib/**`，会因为「怎么装的」报出不同哈希：
+
+| 安装方式                                                             | profile 内哈希               | 能否直接和仓库 / 发布包对照                |
+| -------------------------------------------------------------------- | ---------------------------- | ------------------------------------------ |
+| 从 **npm** 安装（`dsh plugin add @kangyishuai/dsh-next-step@0.4.0`） | `3afdd017` = 仓库 `3afdd017` | **能**：npm 包里的 `package.json` 未被改写 |
+| 用 **`file:` 本地 tarball** 安装（`dsh plugin add /tmp/xxx.tgz`）    | `89b56034`                   | 不能：pnpm 重排了 `package.json`           |
+| 更早的构建（缺并发 meta 修复）                                       | `fbdc7b61`                   | 与上面两者都不是同一份代码                 |
+
+（三个哈希都来自 0.4.0 这一轮，`lib/` 与 `locale/` 在前两种情况下逐字节相同。）
+
+规则：
+
+1. **先看安装方式**。npm 安装 → 直接和仓库同一提交比；`file:` 安装 → 和 **profile 内已安装的那份**比，
+   不要拿仓库的哈希去对。
+2. 比哈希之外更硬的证据是逐字节 diff：
+
+   ```bash
+   diff -r packages/next-step/lib ~/.dsh/profiles/desktop/node_modules/@kangyishuai/dsh-next-step/lib
+   diff -r packages/next-step/locale ~/.dsh/profiles/desktop/node_modules/@kangyishuai/dsh-next-step/locale
+   ```
+3. 算任意一份包（仓库、已安装、下载来核对的 npm tarball）的哈希——`build-info.js` 用自身位置定位包根：
+
+   ```bash
+   cd ~/.dsh/profiles/desktop/node_modules/@kangyishuai/dsh-next-step   # 或 packages/next-step
+   node --input-type=module -e 'const {computeBuildIdentity}=await import("./lib/build-info.js");const id=await computeBuildIdentity();console.log(id.buildHash.slice(0,8), id.version, id.buildFiles)'
+   ```
+4. **哈希在每个进程内只算一次**（`buildIdentity()` 有缓存）。所以「运行时报出另一个哈希」只能说明
+   「这个进程启动时加载的是别的文件」。确认新代码真的生效要同时满足两点：
+   **进程启动时间晚于安装时间**，且 **host 半已重启**——`lib/index.js` / `service.js` 只在启动时加载，
+   `lib/client.js` 改完刷新页面即可；只刷新不重启会出现「client 新、host 旧」的半新状态
+   （诊断行缺「提示词 v3」就是这种状态的特征）。
+
 ## 5. DSH 升级时要重点看的宿主事实
 
 1. `conversation.chat.turnTail` 槽位是否还在、props 是否仍是 `{ turn, seq, openFile, t }`，以及
