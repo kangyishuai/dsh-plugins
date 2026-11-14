@@ -233,11 +233,21 @@ function installBrowserGlobals() {
 function bootPlugin(hooks) {
   const browser = installBrowserGlobals();
   try {
-    new Function(readFileSync(CLIENT, "utf8"))();
+    return bootPluginInto(browser, hooks);
   } catch (error) {
     browser.restore();
     throw error;
   }
+}
+
+/**
+ * bootPlugin 的实体：拆出来是为了让**任何**断言失败都能恢复全局桩
+ * （否则后面的用例会看到残留的 window / document，失败原因被掩盖）。
+ * @param {ReturnType<typeof installBrowserGlobals>} browser
+ * @param {any} hooks
+ */
+function bootPluginInto(browser, hooks) {
+  new Function(readFileSync(CLIENT, "utf8"))();
   const definition = browser.definition();
   assert.ok(definition !== null, "client.js 没有向 window.__ModuleLoader__ 注册");
   assert.equal(definition.id, "@kangyishuai/dsh-next-step");
