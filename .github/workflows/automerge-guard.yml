@@ -34,7 +34,11 @@ jobs:
           node-version-file: .node-version
       - name: 校验 automerge 分级
         env:
+          # 标签 / 评论 / 关闭 auto-merge 用仓库自带 token 就够。
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 合规后由 guard 武装 auto-merge，必须用 PAT：GITHUB_TOKEN 发起的合并不会触发
+          # push 工作流，会吞掉 Release（发版链）。没配 PAT 时 guard 只打印提示、不武装。
+          AUTOMERGE_PAT: ${{ secrets.RELEASE_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: node scripts/automerge-guard.mjs --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER"

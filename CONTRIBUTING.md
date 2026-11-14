@@ -105,18 +105,26 @@ CI 绿是**必要条件，不是充分条件**。哪类 PR 可以在 CI 绿之�
 - **行为改动有 CI 覆盖不到的部分**（桌面真机上的真键盘、`setDraft → submit` 时序，见 [docs/testing](docs/testing/)）。这一档自动合并会把「发版前手工补真机回归」事实上废掉。
 - **release 与纯文档 PR 没有信息量可评审**：diff 形态可机检，人工那一下只是延迟发布。
 
-怎么武装（由提出 PR 的一方操作）：
+怎么武装（**只有一步**）：
 
 ```bash
-gh pr edit <n> --add-label automerge     # 1. 先打标签，让 automerge guard 校验
-gh pr checks <n>                          # 2. 等必检 + automerge guard 都过
-gh pr merge <n> --auto --squash --delete-branch   # 3. 再武装，CI 一绿就自动合
+gh pr edit <n> --add-label automerge
 ```
 
-**这一步有机器兜底**：`.github/workflows/automerge-guard.yml` 在标签出现、分支更新、标题被编辑时跑
-`scripts/automerge-guard.mjs`，把上面三档的白名单机检一遍。不合规会**摘掉 `automerge` 标签、关闭已武装的
-auto-merge、并在 PR 上留一条说明评论**（同时该检查变红）。所以"先打标签、等它过、再武装"是推荐顺序；
-顺序反了也会被回头纠正，只是多一次评论。机检对 A/B 档还会**再拦一次硬黑名单**：`.github/**`、`scripts/**`、`types/**`、`docs/adr/**` 里的文件即使标题是 `docs:` 也不放行。
+打上标签后由 `.github/workflows/automerge-guard.yml` 跑 `scripts/automerge-guard.mjs`：
+
+| 判定   | guard 的动作                                                                         |
+| ------ | ------------------------------------------------------------------------------------ |
+| 合规   | 用 `RELEASE_TOKEN`（PAT）**替你武装** auto-merge（squash + 删分支），CI 绿后自动合并 |
+| 不合规 | 摘掉 `automerge` 标签、关闭已武装的 auto-merge、留一条说明评论，该检查变红           |
+
+机检对 A/B 档还会**再拦一次硬黑名单**：`.github/**`、`scripts/**`、`types/**`、`docs/adr/**` 里的文件即使标题是 `docs:` 也不放行。
+
+> ⚠️ **不要手动 `gh pr merge --auto`。** guard 不是必需检查，手动提前武装会在它跑完之前就把 PR 合掉。
+> 2026-11-14 用冒烟 PR 实测过：一个碰 `docs/adr/**` 的 `docs:` PR 加上标签并立刻武装，guard 正确判红、
+> 摘了标签，但 PR 已经被合进 `main` 了（只能再开一个 PR 回滚）。武装权只给 guard。
+>
+> PAT 缺失时 guard 打印警告并跳过武装，此时才退回手动 `gh pr merge --auto`——但也必须等 guard 绿。
 
 - 打标签前也可以自己机检：`git diff --name-only main...HEAD`，越出白名单就别打。
 - 仓库设置里必须打开 **Allow auto-merge**；没打开时退回「CI 绿后手动 squash 合并」，分级表照旧生效。
