@@ -1,5 +1,23 @@
 # @kangyishuai/dsh-advisor
 
+## 0.6.0
+
+### Minor Changes
+
+- [#98](https://github.com/kangyishuai/dsh-plugins/pull/98) [`87182b9`](https://github.com/kangyishuai/dsh-plugins/commit/87182b95f6ae22b439e967242d3e61d9c40386ef) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 新增**决策日志与复盘**，用来回答「该徵询的时候有没有徵询」：
+  
+  - `<DSH_HOME>/advisor/decisions.jsonl` 一个回合一行（没徵询的回合也记）：是否徵询、原因码、
+    回答长度 / 工具调用数 / 是否报错、徵询后的 severity 与成本，以及用户下一条消息是否照着建议做（outcome）。
+  - `pnpm advisor:review` 按「长/短回答 × 有无工具 × 有无报错」分桶给出徵询率与采纳率，
+    并列出两类可疑样本：疑似漏徵询（有工具 + 长回答却没问）与疑似无效徵询（问了但用户另说别的）。
+  - 只写本地文件：不联网、不改变徵询时机、不增加模型调用（仍是 `postAnswer: off` 的工作方式）。
+
+- [#99](https://github.com/kangyishuai/dsh-plugins/pull/99) [`9204f38`](https://github.com/kangyishuai/dsh-plugins/commit/9204f38d39d35639357994b5a946fb3910e3d3e4) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 把设置从「通用设置里的一大张卡」搬到**独立设置分节 设置 → 顾问**：
+  
+  - 首屏只留三行摘要：模式（可直接改）、路由、预算；
+  - 其余项（基础 / 预算 / 隐私 / 高级与状态 / 状态诊断）收进「更多设置」折叠，默认收起；
+  - 保存 / 重新加载动作条位置不变，行为不变；不看设置的人少滚动一屏。
+
 ## 0.5.1
 
 ### Patch Changes

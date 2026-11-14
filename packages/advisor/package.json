@@ -1,6 +1,6 @@
 {
   "name": "@kangyishuai/dsh-advisor",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Pair the main model with a stronger advisor model it consults at key moments: autonomous second opinion, cost ledger, and model picker",
   "keywords": [
     "dsh",
