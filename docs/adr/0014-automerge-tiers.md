@@ -45,3 +45,5 @@
 - **不由 workflow 代劳「武装 auto-merge」**：用 `GITHUB_TOKEN` 发起的合并不会触发 `push` 工作流，会吞掉 Release（发版链）。所以武装仍只由人或 agent 用用户/PAT 凭据执行，workflow 只做否决。
 - 顺序建议：先打 `automerge` 标签 → 等必检与 guard 都过 → 再 `gh pr merge --auto`。顺序反了 guard 也会回头纠正，只是多一条评论。
 - 若以后想把 guard 加进 `protect-main` 的必需检查：它必须对**所有** PR 都产生结果（本 workflow 就是这样——没标签时直接成功退出），否则没有该检查的历史 PR 会永远卡在"等待检查"。
+
+<!-- guard smoke 2026-11-14：本行只用于验证 automerge-guard 会拒绝 docs/adr/** 的自动合并，PR 关闭后不保留。 -->
