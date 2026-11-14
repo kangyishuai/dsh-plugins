@@ -2145,3 +2145,5 @@ window.__ModuleLoader__.load({
     return module.exports;
   },
 });
+
+// C 档反例冒烟 2026-11-15：本行只用于验证 feat 标题 / needs-dsh-verify 会被 automerge-guard 拒绝；PR 关闭后不保留。
