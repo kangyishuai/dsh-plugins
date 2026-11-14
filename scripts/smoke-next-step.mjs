@@ -1816,7 +1816,10 @@ const main = async () => {
     // 失败时自动保留临时 DSH_HOME：临时目录里有宿主日志、profile 与插件设置，
     // 是排查「卡片为什么没出来」的唯一现场。以前只有 SMOKE_KEEP=1 才保留，
     // 结果 2026-11-14 那次失败把现场一起删了。
-    if (process.env.SMOKE_KEEP === "1" || process.exitCode !== 0) {
+    // process.exitCode 初始值是 undefined（不是 0）：直接 !== 0 会把成功也判成失败，
+    // 每次跑完都留着临时目录并打印「因为断言失败」（冒烟实测踩到）。
+    const failedRun = process.exitCode !== undefined && process.exitCode !== 0;
+    if (process.env.SMOKE_KEEP === "1" || failedRun) {
       console.log(`临时目录已保留：${work}`);
       if (process.env.SMOKE_KEEP !== "1") {
         console.log(
