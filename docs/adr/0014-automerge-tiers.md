@@ -1,0 +1,40 @@
+# 0014. 自动合并分级：release / 文档 / 证据齐全的单插件改动
+
+- 状态：已接受
+- 日期：2026-11-14
+- 涉及：repo
+
+## 背景
+
+`main` 的合并门禁是四个 CI 检查（`verify (node 22.19)`、`verify (node 24)`、`runtime probe`、`gitleaks`）。日常要合并的 PR 有三类：
+
+1. changesets 生成的 Version Packages PR；
+2. 纯文档 PR（兼容性表、发布记录、测试清单）；
+3. 单插件的修复 / 测试 PR。
+
+第 1、2 类人工点一次合并没有信息增量——diff 形态可以机检，人工那一下只是延迟发布；第 3 类相反：CI 覆盖不到桌面真机行为（真键盘 `⌘↵`、`setDraft → submit` 时序等，见 [docs/testing](../testing/)），无条件自动合并会把「发版前必须手工补真机回归」这条硬约定事实上废掉。
+
+另有一类改动是**门禁自身**：`.github/`（CI 与分支保护）、`scripts/`（gate / publish / check-*）、根 `package.json`、`types/`。让 CI 绿就自动合并这些，等于让被检查者自己改考卷。
+
+## 可选方案
+
+1. **一律 CI 绿即自动合并**：延迟最低。缺点：行为改动与门禁改动无人复核，发布链全自动；一次错误直接进 npm，且没有中间人可以发现"检查本身被改松了"。
+2. **一律人工合并**：最稳。缺点：release 与文档 PR 的等待是纯空转；agent 只能轮询等 CI，浪费上下文和时间。
+3. **按风险分级 + 显式标签**（选定）：机器生成或可机检的改动自动，行为改动与门禁改动人工；"自动"由 `automerge` 标签**显式开启**，而不是默认行为。
+
+## 决定
+
+采用方案 3。分级、白名单路径、打/摘标签的规则写在 [CONTRIBUTING.md §自动合并分级](../../CONTRIBUTING.md#自动合并automerge分级)；AGENTS.md 只留一句指路，不复制表格（它已经在体积上限附近）。要点：
+
+- **A 档（直接自动）**：Version Packages PR（`chore(release): version packages`，diff 只碰 CHANGELOG / 包内 version / lockfile）。
+- **B 档（证据门自动）**：纯文档 PR；或 diff 全在单个 `packages/<name>/**` 内、且 PR 描述附了证据（单测覆盖 + 有 client 半时的桌面只读回归结果）的 `fix` / `test`。
+- **C 档（人工）**：`.github/**`、`scripts/**`、根依赖、`types/**`、`docs/adr/**`、`NOTICE`；`feat(<plugin>)`、新增/删除插件、跨包改动；外部贡献者的 PR。
+- 任一必需检查红、分支落后导致检查失效、或有人 `REQUEST_CHANGES`，自动合并即失效；任何人可摘掉标签。
+- 机制用 GitHub **原生 auto-merge**（`gh pr merge --auto --squash --delete-branch`），不自建合并脚本——合并动作交给平台，仓库里只维护"谁可以打标签"的规则。
+
+## 影响
+
+- 发布链上人工点合并从两次（feature + Version Packages）降到最多一次。
+- 需要两个可撤销的开关：仓库设置里的 **Allow auto-merge**，以及 `automerge` 标签的存在。两者缺一时退回"CI 绿后手动 squash"，分级表照旧生效。
+- 桌面真机回归仍是发版前的硬要求：B 档说的"证据"是 PR 描述里附的结果，不是 CI 自动产出的。想让 B 档真正安全，前提是把桌面回归纳入 `pnpm gate` 并能被 CI 复现（目前 `--deep` 需要真机）。
+- 重新考虑的时机：出现"自动合并后才发现门禁漏检"的事故、或开始接收外部维护者批量 PR 时，收紧回只有 A 档自动。

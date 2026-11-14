@@ -100,6 +100,7 @@ git clone https://github.com/kangyishuai/dsh-plugins-notes.git notes
 - 并行任务（多个插件、多个 agent）**各用一个 worktree**：`pnpm wt <branch>`。不在别人的 worktree 里改文件；同一个插件同一时间只在一个分支上开发
 - 并行时的 GUI 验证用 `pnpm smoke:<plugin>`（临时 DSH 目录），不要往共用的 `desktop` profile 里装开发版
 - `main` 受分支保护：`verify (node 22.19)`、`verify (node 24)`、`runtime probe (DSH surface)`、`gitleaks (full history)` 四个检查绿了才能合并。检查没跑完不要催合并，也不要用 admin bypass 绕过
+- 合并分级见 [CONTRIBUTING.md §自动合并分级](CONTRIBUTING.md#自动合并automerge分级)：release PR、纯文档 PR、单插件内且描述附了证据的 `fix`/`test` 可以打 `automerge` 标签并 `gh pr merge --auto --squash --delete-branch`；改 `.github/`、`scripts/`、根依赖、`types/`、`docs/adr/`、`NOTICE`，以及 `feat(<plugin>)`、跨包改动**只能人工合并**
 - Version Packages PR（`changeset-release/main`）由 `RELEASE_TOKEN`（fine-grained PAT）创建，所以自带常规 CI；secret 缺失或 PAT 过期时 `release.yml` 会自动退回 `workflow_dispatch` 补跑。手工补跑：`gh workflow run ci.yml --ref changeset-release/main`。**不要**为了让它能合并而改 `GITHUB_TOKEN`/删分支保护
 - 收尾：PR 合并后 `pnpm wt rm <branch> --delete-branch`
 
