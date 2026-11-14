@@ -72,7 +72,7 @@ DSH_HOME=$H dsh --profile ad --port 0 --no-open
 | ------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
 | 会话日志 `tool/call` → `tool/result` | 时间戳差 **90,017 ms**（seq 617 → 622）                                                                    |
 | `~/.dsh/advisor/usage.jsonl` 末条    | `trigger:"tool"` · `verdict:"unavailable"` · `code:"aborted"` · **`ms:90002`** · in/out 全 0 · `costUsd:0` |
-| `~/.dsh/advisor/settings.json`       | **不存在** → 用的就是内置默认 `timeoutMs: 90000`                                                           |
+| `~/.dsh/advisor.settings.json`       | **存在**，且**显式**配着 `timeoutMs: 90000`（注意：在 `$DSH_HOME` 根下，不是 `advisor/` 子目录里）         |
 
 结论：不是插件崩、也不是 rc.3 引入的回归，而是**顾问路由太慢、撞上了插件自己的 90 秒单次超时**。
 
@@ -84,6 +84,42 @@ DSH_HOME=$H dsh --profile ad --port 0 --no-open
 2. **超时文案说「0 秒」。** 不足 1 秒的时长会拼出「顾问调用超时（0 秒）」。
 
 修法：新增纯函数 `lib/abort-reason.js`（`classifyAbort` / `formatTimeout`），`call.js` 根据「超时 signal 是否真的触发」区分 `timeout` 与 `aborted`；不足 1 秒按 1 秒显示。单测 4 项覆盖，接线用 stub 宿主验证过：`timeoutMs:120` → `code:"timeout"`「顾问调用超时（1 秒）」；外部 signal 取消 → `code:"aborted"`「顾问调用被中止」。
+
+### 修复后的真机端到端复验（2026-11-14 15:26，DSH 0.2.2-rc.3 + advisor 0.6.2）
+
+rc.3 桌面版重启后，在 **live 宿主**上把 `<DSH_HOME>/advisor.settings.json` 的 `timeoutMs` 临时改成 `5000`（允许的最小值），同时把 `maxInputChars` 压到 4000、`maxTokens` 压到 512，这样**万一没有超时，花费也可忽略**。然后触发一次真实徵询：
+
+```
+顾问不可用（timeout）：顾问调用超时（5 秒）
+```
+
+账本新增一条（29 条中的最后一条）：
+
+```json
+{
+  "at": "2026-11-14T07:26:25.131Z",
+  "trigger": "tool",
+  "verdict": "unavailable",
+  "code": "timeout",
+  "ms": 5003,
+  "in": 0,
+  "out": 0,
+  "costUsd": 0
+}
+```
+
+修复前后的对照（同一个工具、同一个路由）：
+
+|           | 修复前（13:39，advisor 0.6.1） | 修复后（15:26，advisor 0.6.2） |
+| --------- | ------------------------------ | ------------------------------ |
+| `code`    | `aborted`（错）                | **`timeout`**                  |
+| `message` | 顾问调用被中止                 | 顾问调用超时（5 秒）           |
+| `ms`      | 90002                          | 5003（= 配置的 5 秒）          |
+| 花费      | 0                              | **0**（超时不计 token）        |
+
+结论：**超时与取消的分码在真机上生效**，不再把超时误报成「被中止」。测完设置已恢复，与备份逐字节一致（`cmp` + md5 均相同）。
+
+> 教训：`$DSH_HOME/advisor.settings.json` 在 **`$DSH_HOME` 根下**，不在 `advisor/` 子目录（那里只有 `usage.jsonl` / `decisions.jsonl` / `advice.jsonl` / `budget.json`）。第一次定位时我查错了路径，误以为「没有设置文件、用的是内置默认 90s」——实际是显式配了 90000。数字巧合导致结论没错，但依据是错的，已更正。
 
 后续动作：默认 90s **没有**改（改默认会连带影响成本与最坏延迟），但把实测分布写进了 README 的 `timeoutMs` 行；这条路由慢就自己调大（5000–600000）。
 
