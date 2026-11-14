@@ -1,5 +1,11 @@
 # @kangyishuai/dsh-next-step
 
+## 0.4.2
+
+### Patch Changes
+
+- [#133](https://github.com/kangyishuai/dsh-plugins/pull/133) [`a0c34e2`](https://github.com/kangyishuai/dsh-plugins/commit/a0c34e2c78203ab7b9db39deef2dd6b555d34fe3) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 卡片快捷键 `⌘↵` / `Ctrl+↵` 现在也认**小键盘回车**。此前只判断 `event.code === "Enter"`，而外接键盘小键盘上的回车是 `NumpadEnter`——同一组手势在那种键盘上静默失效（卡片可点、点胶囊正常，只有快捷键不响应）。现在两者同等对待，并补了一条单测（去掉修复即红）。
+
 ## 0.4.1
 
 ### Patch Changes
