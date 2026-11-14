@@ -865,6 +865,9 @@ window.__ModuleLoader__.load({
       };
 
       // 卡片快捷键桥：只有「这一步真的能点」时才登记，键盘观察者据此决定是否接管 ⌘/Ctrl+Enter。
+      // 注意：登记的时机与「卡片是否已经到达」无关——卡片是**投影晚到**的（宿主在回合结束后
+      // 才生成），回合尾部先挂载、status 先变成 interactive，卡片数据随后才进来。若登记只在
+      // status/sessionId 变化时重跑，晚到的卡片永远登记不上，⌘↵ 会静默失效（点击仍然正常）。
       let sendPillRef = React.useRef(/** @type {(index: number) => void} */ (() => {}));
       sendPillRef.current = sendPill;
       let gateRef = React.useRef({ ready: false });
@@ -894,7 +897,8 @@ window.__ModuleLoader__.load({
         return () => {
           if (cardEntries.get(sessionId) === entry) cardEntries.delete(sessionId);
         };
-      }, [sessionId, status]);
+        // 可见性（而不是卡片对象本身）必须进依赖：卡片晚到时这个 effect 要再跑一次。
+      }, [sessionId, status, visibleCard === null, options.length]);
 
       // 曝光：卡片**真正进入视口**才上报（挂载 ≠ 被看见）。只在最新一轮的可交互卡上观察，
       // 历史卡滚动回来不上报（它们的曝光在第一眼就该记过一次了）。
