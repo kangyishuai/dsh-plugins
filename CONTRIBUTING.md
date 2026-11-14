@@ -120,11 +120,12 @@ gh pr edit <n> --add-label automerge
 
 机检对 A/B 档还会**再拦一次硬黑名单**：`.github/**`、`scripts/**`、`types/**`、`docs/adr/**` 里的文件即使标题是 `docs:` 也不放行。
 
-> ⚠️ **不要手动 `gh pr merge --auto`。** guard 不是必需检查，手动提前武装会在它跑完之前就把 PR 合掉。
-> 2026-11-14 用冒烟 PR 实测过：一个碰 `docs/adr/**` 的 `docs:` PR 加上标签并立刻武装，guard 正确判红、
-> 摘了标签，但 PR 已经被合进 `main` 了（只能再开一个 PR 回滚）。武装权只给 guard。
+> ⚠️ **仍然只打标签、不要手动 `gh pr merge --auto`。** 2026-11-14 的冒烟里，手动提前武装曾让一个越界 PR
+> 在 guard 判红并摘标签之后仍然合进了 `main`（当时 guard 还不是必需检查）。现在 `guard` 已是
+> `protect-main` 的必需检查，手动提前武装也会被它拦住；但武装仍交给 guard，因为只有它用 PAT 合并，
+> 而用 `GITHUB_TOKEN` 发起的合并不触发 `push` 工作流、会吞掉 Release。
 >
-> PAT 缺失时 guard 打印警告并跳过武装，此时才退回手动 `gh pr merge --auto`——但也必须等 guard 绿。
+> PAT 缺失时 guard 打印警告并跳过武装，此时才退回手动 `gh pr merge --auto`。
 
 - 打标签前也可以自己机检：`git diff --name-only main...HEAD`，越出白名单就别打。
 - 仓库设置里必须打开 **Allow auto-merge**；没打开时退回「CI 绿后手动 squash 合并」，分级表照旧生效。
@@ -141,14 +142,19 @@ gh pr edit <n> --add-label automerge
 
 ### 分支保护（main）
 
-`main` 的规则集 `protect-main` 除了禁止删除和非快进之外，还要求这 4 个检查通过才能合并：
+`main` 的规则集 `protect-main` 除了禁止删除和非快进之外，还要求这 5 个检查通过才能合并：
 
-| 必需检查                      | 来自 `ci.yml` 的 job |
-| ----------------------------- | -------------------- |
-| `verify (node 22.19)`         | `verify`（矩阵）     |
-| `verify (node 24)`            | `verify`（矩阵）     |
-| `runtime probe (DSH surface)` | `probe`              |
-| `gitleaks (full history)`     | `secrets`            |
+| 必需检查                      | 来自                                     |
+| ----------------------------- | ---------------------------------------- |
+| `verify (node 22.19)`         | `ci.yml` 的 `verify`（矩阵）             |
+| `verify (node 24)`            | `ci.yml` 的 `verify`（矩阵）             |
+| `runtime probe (DSH surface)` | `ci.yml` 的 `probe`                      |
+| `gitleaks (full history)`     | `ci.yml` 的 `secrets`                    |
+| `guard`                       | `automerge-guard.yml` 的 `guard`（见下） |
+
+`guard` 是 [§自动合并分级](#自动合并automerge分级) 的机检。它被设为必需检查，因此**所有** PR（包括没打
+`automerge` 标签的）都必须带着一个通过的 `guard` 才能合并——这也是它必须对每个 PR 都产出结果的原因
+（无标签时直接成功退出；`pull_request_target` 的检查挂在 PR 的 head commit 上）。
 
 `commitlint` 不在必需列表里：`ci.yml` 的 job 和 `pr-title.yml` 的 job 同名，两个工作流都产出叫 `commitlint` 的检查，按名字要求会不稳定。PR 标题仍由 `PR title` 工作流校验。
 
