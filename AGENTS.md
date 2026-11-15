@@ -121,3 +121,4 @@ git clone https://github.com/kangyishuai/dsh-plugins-notes.git notes
 - 不要在插件里修改 `~/.dsh/profiles/*/cordis.patch.yml`（`dsh.bundle.patch` 会自动接线）
 - 不要在没确认许可证的情况下复制其他社区插件的代码；借用了就写进根目录的 `NOTICE`
 - 不要在本地手动 `npm publish`，发版走 Changesets + CI
+- 不要手工维护插件索引：`build/index.json` 不入库，npm 上的 `@kangyishuai/dsh-plugin-index` 也不手改。发版后 `.github/workflows/index.yml` 会从 registry 现场重建并发布，内容以 `scripts/index-meta.json` 与 npm 上的版本为准

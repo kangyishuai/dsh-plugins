@@ -257,6 +257,8 @@ gh workflow run ci.yml --ref changeset-release/main
 
 不要在本地 `npm publish`，脚本在 CI 之外也会拒绝执行。想看会发布什么，用 `node scripts/publish.mjs --dry-run`。
 
+发布成功后，GitHub Release 会触发 `.github/workflows/index.yml`：它从 npm 上重新枚举全部正式版本，重建插件索引源 `@kangyishuai/dsh-plugin-index`（走 jsDelivr），再 purge CDN 缓存。索引**不需要人工维护**；首次发布时 registry 与 CDN 各有几分钟可见延迟，工作流里的等待与重试就是按这个设计的。索引的排障与手工补发见 [docs/testing/index.md](docs/testing/index.md)。
+
 0.x 阶段：破坏性改动 bump minor，其余 bump patch。
 
 本地跑 `pnpm version-packages` 需要 `GITHUB_TOKEN`，因为 changelog 由 `@changesets/changelog-github` 生成。
