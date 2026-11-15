@@ -12,23 +12,26 @@
 
 ## 常用命令
 
-| 命令                        | 作用                                                   |
-| --------------------------- | ------------------------------------------------------ |
-| `pnpm new <name> [描述]`    | 从 `templates/plugin` 生成新插件（**不要手抄文件**）   |
-| `pnpm verify`               | lint + typecheck + 规范检查 + 测试，**交付前必须通过** |
-| `pnpm check`                | 只跑插件规范检查（`scripts/check-plugins.mjs`）        |
-| `pnpm tokens:host`          | DSH 升级后重抽宿主主题 token 快照（`--check` 只比对）  |
-| `pnpm check:public`         | 公开边界检查（见「公开边界」一节）                     |
-| `pnpm wt <branch>`          | 新建分支 + worktree（并行开发用，见下文）              |
-| `pnpm format`               | Biome 格式化并自动修复                                 |
-| `pnpm changeset`            | 为需要发版的改动写变更说明                             |
-| `pnpm probe:runtime`        | 体检：宿主包/API/slot + 插件依赖的私有 seam 是否还在   |
-| `pnpm gate <plugin>`        | 一键发版门禁（verify→体检→web→桌面，通用）             |
-| `pnpm gate:<plugin>`        | 同上，固定插件名的等价写法                             |
-| `pnpm smoke:session-delete` | 端到端 GUI 冒烟（临时 DSH_HOME，33 项断言）            |
-| `pnpm smoke:advisor`        | web 端到端冒烟（临时 DSH_HOME，14 项断言，不花 token） |
-| `pnpm smoke:<name>-desktop` | **桌面版只读回归（有 client 半的插件必须有）**         |
-| `pnpm smoke:agent-tool`     | agent 工具真机冒烟（需要模型凭据，否则 SKIP）          |
+| 命令                        | 作用                                                                          |
+| --------------------------- | ----------------------------------------------------------------------------- |
+| `pnpm new <name> [描述]`    | 从 `templates/plugin` 生成新插件（**不要手抄文件**）                          |
+| `pnpm verify`               | lint + typecheck + 规范检查 + 测试，**交付前必须通过**                        |
+| `pnpm check`                | 插件规范 + 索引 meta 一致性（`check-plugins.mjs`、`build-index.mjs --check`） |
+| `pnpm tokens:host`          | DSH 升级后重抽宿主主题 token 快照（`--check` 只比对）                         |
+| `pnpm check:public`         | 公开边界检查（见「公开边界」一节）                                            |
+| `pnpm wt <branch>`          | 新建分支 + worktree（并行开发用，见下文）                                     |
+| `pnpm format`               | Biome 格式化并自动修复                                                        |
+| `pnpm changeset`            | 为需要发版的改动写变更说明                                                    |
+| `pnpm probe:runtime`        | 体检：宿主包/API/slot + 插件依赖的私有 seam 是否还在                          |
+| `pnpm gate <plugin>`        | 一键发版门禁（verify→体检→web→桌面，通用）                                    |
+| `pnpm gate:<plugin>`        | 同上，固定插件名的等价写法                                                    |
+| `pnpm smoke:session-delete` | 端到端 GUI 冒烟（临时 DSH_HOME，33 项断言）                                   |
+| `pnpm smoke:advisor`        | web 端到端冒烟（临时 DSH_HOME，14 项断言，不花 token）                        |
+| `pnpm index`                | 从 npm registry 重建插件索引源（`build/index.json`，不入库）                  |
+| `pnpm check:index`          | 只校验索引 meta 一致性与已有输出结构（离线）                                  |
+| `pnpm smoke:index`          | 索引源真机冒烟（临时 DSH_HOME，12 项断言，含坏索引拒收）                      |
+| `pnpm smoke:<name>-desktop` | **桌面版只读回归（有 client 半的插件必须有）**                                |
+| `pnpm smoke:agent-tool`     | agent 工具真机冒烟（需要模型凭据，否则 SKIP）                                 |
 
 ## 开发流程
 
@@ -37,7 +40,7 @@
 3. host 半（`lib/index.js`）改动 → **重启 DSH 桌面版**；client 半（`lib/client.js`）改动 → **刷新页面**
 4. 验证完必须能在侧栏或设置里看到真实效果，不能只靠单元测试；有 client 半的插件**还必须**有桌面端自动化测试（见硬性约定 11）
 5. 需要发版的改动跑 `pnpm changeset`
-6. 新增插件时同步更新根目录两份 README 的插件清单；`pnpm new` 已自动登记 `.github/labeler.yml` 和 bug 报告下拉，按它的提示在 GitHub 上建 `plugin:<name>` 标签
+6. 新增插件时同步更新根目录两份 README 的插件清单，并在 `scripts/index-meta.json` 里登记分类、中英标题与中文描述（漏了 `pnpm check` 会拦）；`pnpm new` 已自动登记 `.github/labeler.yml` 和 bug 报告下拉，按它的提示在 GitHub 上建 `plugin:<name>` 标签
 
 ## 公开边界
 
