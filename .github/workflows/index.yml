@@ -1,0 +1,119 @@
+name: Plugin index
+
+# 每次有插件发版（changesets 创建 GitHub Release）之后，重建「插件索引源」并发布成
+# 一个只含 JSON 的 npm 数据包，Discover 里加这个地址的人和 `plugin_market` 工具就能
+# 看到新版本：
+#
+#   https://cdn.jsdelivr.net/npm/@kangyishuai/dsh-plugin-index/index.json
+#
+# 为什么不在仓库里存 index.json：format 1 是写死的版本清单，宿主的 Discover 只信
+# 索引里列出的版本。版本列表必须跟着 npm 现实走，所以每次发版从 registry 现场枚举，
+# 而不是人工维护一份会过期的文件（见 docs/adr/0015-plugin-index-source.md）。
+#
+# 为什么发 npm 而不是 GitHub Pages / raw.githubusercontent：宿主拒绝跟随重定向、只给
+# 一次读取 15 秒预算；jsDelivr 的 npm 入口两者都满足，而且在国内可达性明显更好。
+# 实测结论记在 docs/runtime/0.2.2-rc.3.md。
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # npm provenance
+
+# 一次发版会创建多个 Release（每个包一个），这些运行内容相同：先到的那次发布，
+# 后面的比对内容相同直接跳过，所以串行排队而不是互相取消。
+concurrency:
+  group: plugin-index
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'kangyishuai/dsh-plugins'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          registry-url: https://registry.npmjs.org
+
+      - name: Build the index from the npm registry
+        run: node scripts/build-index.mjs --out dist/index.json
+
+      # 幂等：与 npm 上已发布的版本逐字节比较。一次发版会触发多次本工作流，
+      # 只有内容真的变了才发新版本；手动重跑同理。
+      - name: Compare with the published index
+        id: diff
+        run: |
+          set -euo pipefail
+          tarball=$(npm view @kangyishuai/dsh-plugin-index dist.tarball 2>/dev/null || true)
+          if [ -z "${tarball}" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "还没有发布过索引包"
+            exit 0
+          fi
+          curl -fsSL "${tarball}" -o /tmp/published.tgz
+          tar -xzOf /tmp/published.tgz package/index.json > /tmp/published.json
+          if cmp -s /tmp/published.json dist/index.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "索引没有变化，跳过发布"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish the index package
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          pkg=/tmp/dsh-plugin-index
+          mkdir -p "${pkg}"
+          cp dist/index.json "${pkg}/index.json"
+          # 版本号只用来让 npm 接受发布；内容由 index.json 决定，不需要人工管理。
+          cat > "${pkg}/package.json" <<EOF
+          {
+            "name": "@kangyishuai/dsh-plugin-index",
+            "version": "0.0.${GITHUB_RUN_ID}",
+            "description": "DSH plugin market index (format 1) for the @kangyishuai/dsh-* plugins: one JSON file, no code.",
+            "license": "MIT",
+            "repository": { "type": "git", "url": "git+https://github.com/kangyishuai/dsh-plugins.git" },
+            "homepage": "https://github.com/kangyishuai/dsh-plugins#readme",
+            "files": ["index.json"]
+          }
+          EOF
+          npm publish "${pkg}" --provenance --access public
+
+      # jsDelivr 对未固定版本的路径有 12 小时边缘缓存；发版后主动失效，
+      # 否则用户最多要等半天才看到新版本。
+      - name: Purge the jsDelivr cache
+        if: steps.diff.outputs.changed == 'true'
+        run: curl -fsS "https://purge.jsdelivr.net/npm/@kangyishuai/dsh-plugin-index/index.json"
+
+      # 验收：真正从 CDN 取一次，用仓库自己的校验器确认它是合法索引。
+      # 缓存没失效时这里读到的是上一版，仍然是合法索引——发布步骤已经成功。
+      - name: Verify the published URL
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://cdn.jsdelivr.net/npm/@kangyishuai/dsh-plugin-index/index.json" -o /tmp/live.json
+          node scripts/build-index.mjs --check --out /tmp/live.json
+          node -e "
+            const index = JSON.parse(require('node:fs').readFileSync('/tmp/live.json', 'utf8'));
+            console.log('live index:', index.plugins.length, 'plugins');
+            for (const plugin of index.plugins) console.log(' ', plugin.name, plugin.versions[0].version);
+          "
+
+      - name: Summary
+        run: |
+          {
+            echo "### 插件索引源"
+            echo
+            echo '```'
+            echo "https://cdn.jsdelivr.net/npm/@kangyishuai/dsh-plugin-index/index.json"
+            echo '```'
+            echo
+            echo "在 **插件 → 发现 → 添加索引源** 里填这个地址。"
+          } >> "$GITHUB_STEP_SUMMARY"

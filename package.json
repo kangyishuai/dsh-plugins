@@ -17,7 +17,9 @@
   "scripts": {
     "new": "node scripts/new-plugin.mjs",
     "wt": "node scripts/worktree.mjs",
-    "check": "node scripts/check-plugins.mjs",
+    "check": "node scripts/check-plugins.mjs && node scripts/build-index.mjs --check",
+    "index": "node scripts/build-index.mjs",
+    "check:index": "node scripts/build-index.mjs --check",
     "check:public": "node scripts/check-public.mjs",
     "list-plugins": "node scripts/list-plugins.mjs",
     "lint": "biome check .",
@@ -48,6 +50,7 @@
     "gate:advisor": "node scripts/gate.mjs advisor",
     "tokens:host": "node scripts/host-tokens.mjs",
     "tokens:host:check": "node scripts/host-tokens.mjs --check",
+    "smoke:index": "node scripts/smoke-index.mjs",
     "advisor:review": "node scripts/advisor-review.mjs"
   },
   "simple-git-hooks": {

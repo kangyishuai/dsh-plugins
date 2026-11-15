@@ -33,3 +33,6 @@ coverage/
 
 # 私有调研笔记（独立私有仓库 kangyishuai/dsh-plugins-notes，见 AGENTS.md）
 /notes
+
+# 索引生成产物（发版时由 workflow 生成，不入库）
+build/

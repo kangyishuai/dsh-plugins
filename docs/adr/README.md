@@ -18,5 +18,6 @@
 | [0012](0012-advisor-cache-pricing.md)                 | advisor：缓存读/写 token 的单价与两阶段成本           | 已接受 |
 | [0013](0013-next-step-gating-telemetry.md)            | next-step：三档判定、展示与生成解耦、本地事件与复盘   | 已接受 |
 | [0014](0014-automerge-tiers.md)                       | 自动合并分级：release / 文档 / 证据齐全的单插件改动   | 已接受 |
+| [0015](0015-plugin-index-source.md)                   | 自建插件索引源：发版后用 npm 数据包 + jsDelivr 发布   | 已接受 |
 
 新建：复制 [0000-template.md](0000-template.md)。
