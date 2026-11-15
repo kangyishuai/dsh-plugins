@@ -415,7 +415,7 @@ function ciText(ci) {
 export function renderMarkdown(metrics, list) {
   const lines = [];
   const iso = (/** @type {number} */ at) =>
-    at > 0 ? new Date(at).toISOString().replace("T", " ").slice(0, 16) + "Z" : "—";
+    at > 0 ? `${new Date(at).toISOString().replace("T", " ").slice(0, 16)}Z` : "—";
   lines.push("# next-step 复盘报告");
   lines.push("");
   lines.push(`- 生成时间：${iso(metrics.lastAt)}`);
