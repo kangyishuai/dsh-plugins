@@ -87,26 +87,73 @@ jobs:
           EOF
           npm publish "${pkg}" --provenance --access public
 
+      # npm 刚发完会先"处理"一会儿（日志里就写着 may take a few minutes），registry
+      # 可能还 404。先等 registry 真正提供这个版本，再做后面的 CDN 验收——否则第一次
+      # 发版（2026-11-15 02:56 UTC）就是在这里被 CDN 的 404 判了失败。
+      - name: Wait for the npm registry to serve the version
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="0.0.${GITHUB_RUN_ID}"
+          # 首次发布实测用了 5 分 21 秒才在 registry 可见（2026-11-15 02:56:40 →
+          # 03:02:01 UTC），所以预算给 15 分钟，别贴着边界。
+          for attempt in $(seq 1 90); do
+            if npm view "@kangyishuai/dsh-plugin-index@${version}" version >/dev/null 2>&1; then
+              echo "registry 已提供 ${version}（第 ${attempt} 次查询，间隔 10s）"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::npm registry 在 15 分钟内没有提供 ${version}，请检查发布日志"
+          exit 1
+
+      # 权威核对：registry 上那个版本的 tarball 里的 index.json 必须与本次构建一致。
+      - name: Compare the published tarball with the build
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="0.0.${GITHUB_RUN_ID}"
+          tarball=$(npm view "@kangyishuai/dsh-plugin-index@${version}" dist.tarball 2>/dev/null)
+          curl -fsSL "${tarball}" -o /tmp/published-new.tgz
+          tar -xzOf /tmp/published-new.tgz package/index.json > /tmp/published-new.json
+          cmp /tmp/published-new.json dist/index.json
+          echo "registry 上的 index.json 与本次构建逐字节一致"
+
       # jsDelivr 对未固定版本的路径有 12 小时边缘缓存；发版后主动失效，
       # 否则用户最多要等半天才看到新版本。
       - name: Purge the jsDelivr cache
         if: steps.diff.outputs.changed == 'true'
         run: curl -fsS "https://purge.jsdelivr.net/npm/@kangyishuai/dsh-plugin-index/index.json"
 
-      # 验收：真正从 CDN 取一次，用仓库自己的校验器确认它是合法索引。
-      # 缓存没失效时这里读到的是上一版，仍然是合法索引——发布步骤已经成功。
+      # 验收：从 CDN 取一次，用仓库自己的校验器确认它是合法索引。
+      # CDN 索引新包可能滞后几分钟，所以重试；重试完仍没有只告警不失败——
+      # npm 上已经发布成功，CDN 会随后跟上，标红只会制造无意义的告警。
       - name: Verify the published URL
+        id: verify
         run: |
           set -euo pipefail
-          curl -fsSL "https://cdn.jsdelivr.net/npm/@kangyishuai/dsh-plugin-index/index.json" -o /tmp/live.json
-          node scripts/build-index.mjs --check --out /tmp/live.json
-          node -e "
-            const index = JSON.parse(require('node:fs').readFileSync('/tmp/live.json', 'utf8'));
-            console.log('live index:', index.plugins.length, 'plugins');
-            for (const plugin of index.plugins) console.log(' ', plugin.name, plugin.versions[0].version);
-          "
+          for attempt in $(seq 1 18); do
+            if curl -fsSL "https://cdn.jsdelivr.net/npm/@kangyishuai/dsh-plugin-index/index.json" -o /tmp/live.json; then
+              node scripts/build-index.mjs --check --out /tmp/live.json
+              node -e "
+                const index = JSON.parse(require('node:fs').readFileSync('/tmp/live.json', 'utf8'));
+                console.log('live index:', index.plugins.length, 'plugins');
+                for (const plugin of index.plugins) console.log(' ', plugin.name, plugin.versions[0].version);
+              "
+              echo "cdn=ok" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::warning::jsDelivr 在 3 分钟内没有提供 index.json；npm 上已发布，CDN 会随后跟上"
+          echo "cdn=lagging" >> "$GITHUB_OUTPUT"
 
       - name: Summary
+        if: always()
         run: |
           {
             echo "### 插件索引源"
@@ -116,4 +163,7 @@ jobs:
             echo '```'
             echo
             echo "在 **插件 → 发现 → 添加索引源** 里填这个地址。"
+            echo
+            echo "- 本次内容是否变化：\`${{ steps.diff.outputs.changed }}\`"
+            echo "- CDN 验收：\`${{ steps.verify.outputs.cdn }}\`（空表示本次跳过）"
           } >> "$GITHUB_STEP_SUMMARY"
