@@ -73,5 +73,6 @@ gh run watch "$(gh run list --workflow=index.yml --limit 1 --json databaseId --j
 - **每个插件只显示默认版本**：卡片上的版本是索引里最高稳定版；更老的版本在条目详情页的 **版本** 列表里（format 1 里我们列出了全部正式版本）。
 - **索引没有签名**：条目是索引作者的声明。发现页自己也提示「索引由第三方提供」。别把别人的索引当成安全审查。
 - **缓存**：宿主侧 `cacheTtlMs` 默认 10 分钟，读者点「刷新」即可；jsDelivr 侧 12 小时，workflow 发布后会主动 purge。
+- **首次发布会有延迟**：2026-11-15 实测，registry 约 **5 分 21 秒**才可见、jsDelivr 的 `latest` 约 **9 分钟**（第二次 purge 后才 200）。后续发版仍要等 registry，但 CDN 已经认识这个包，通常快得多。
 - **灾备 URL**：如果 jsDelivr 不可达，可以把 `build/index.json` 放到任意 https 直链（GitHub raw 对现成文件不跳转，实测 `cache-control: max-age=300`）临时顶上；宿主要求 URL **不带 query/fragment** 且**不跟随重定向**。
 - **不写 `engines.dsh`**：发现页因此不会按版本过滤；兼容性以各插件 README 的表格为准。
