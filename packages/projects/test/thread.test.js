@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { promisify } from "node:util";
 
 import { ProjectStore } from "../lib/store.js";
-import { createIsolatedThread, reclaimThreadWorktree } from "../lib/thread.js";
+import { createIsolatedThread, reclaimThreadWorktree, reconcileWorktrees } from "../lib/thread.js";
 
 const exec = promisify(execFile);
 
@@ -230,5 +230,43 @@ describe("reclaimThreadWorktree", () => {
       deps: { runGit },
     });
     assert.deepEqual(result, { reclaimed: false, reason: "no-worktree" });
+  });
+});
+
+describe("reconcileWorktrees（启动对账）", () => {
+  it("记录里有、磁盘上没有 → 清掉记录并报告", () => {
+    const store = new ProjectStore({ root: join(root, "data") }).load();
+    const project = store.createProject("payments", { dirs: [repo] });
+    store.attachThread("session-a", project.id);
+    store.setThreadWorktree("session-a", {
+      worktree: "/nope/gone",
+      branch: "dsh/p-1",
+      baseSha: "a".repeat(40),
+    });
+
+    const changes = reconcileWorktrees(store, { exists: () => false });
+    assert.deepEqual(changes, [
+      { sessionId: "session-a", worktree: "/nope/gone", reason: "worktree-missing" },
+    ]);
+    assert.equal(store.listThreads(project.id)[0].worktree, null);
+    assert.equal(store.listThreads(project.id)[0].baseSha, null);
+  });
+
+  it("磁盘上还在 → 不动记录", () => {
+    const store = new ProjectStore({ root: join(root, "data") }).load();
+    const project = store.createProject("payments", { dirs: [repo] });
+    store.attachThread("session-b", project.id);
+    store.setThreadWorktree("session-b", { worktree: "/exists/wt", branch: "dsh/p-1" });
+
+    const changes = reconcileWorktrees(store, { exists: () => true });
+    assert.deepEqual(changes, []);
+    assert.equal(store.listThreads(project.id)[0].worktree, "/exists/wt");
+  });
+
+  it("没有 worktree 的线程被忽略（no-op）", () => {
+    const store = new ProjectStore({ root: join(root, "data") }).load();
+    const project = store.createProject("plain", { dirs: [repo] });
+    store.attachThread("session-c", project.id);
+    assert.deepEqual(reconcileWorktrees(store, { exists: () => false }), []);
   });
 });

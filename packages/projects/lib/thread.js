@@ -165,3 +165,25 @@ function firstLine(text) {
     .trim()
     .slice(0, 160);
 }
+
+/**
+ * 启动对账：记录里有 worktree、磁盘上没有 → 清掉记录并报告。
+ * **绝不**反向删除磁盘上的未记录目录（硬性约定 1：不认识的条目保留 + 告警）。
+ * @param {any} store
+ * @param {{ exists: (path: string) => boolean }} deps
+ * @returns {{ sessionId: string, worktree: string, reason: string }[]}
+ */
+export function reconcileWorktrees(store, deps) {
+  /** @type {{ sessionId: string, worktree: string, reason: string }[]} */
+  const changes = [];
+  for (const project of store.listProjects()) {
+    for (const thread of store.listThreads(project.id)) {
+      const worktree = thread.worktree;
+      if (typeof worktree !== "string" || worktree === "") continue;
+      if (deps.exists(worktree)) continue;
+      store.setThreadWorktree(thread.sessionId, { worktree: null, baseSha: null });
+      changes.push({ sessionId: thread.sessionId, worktree, reason: "worktree-missing" });
+    }
+  }
+  return changes;
+}

@@ -11,7 +11,7 @@
 // - **不发起任何模型调用**：不发送消息、不跑 agent，因此不花 token，也不需要凭据。
 // - 临时 home 里只放临时 profile；跑完删除（SMOKE_KEEP=1 除外）。
 import { execFile, spawn } from "node:child_process";
-import { createWriteStream } from "node:fs";
+import { createWriteStream, existsSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -557,6 +557,24 @@ const main = async () => {
     const isolated = Object.values(parsed?.threads ?? {}).filter(
       (/** @type {any} */ thread) => typeof thread?.worktree === "string" && thread.worktree !== "",
     );
+    checks.push({
+      name: "隔离 worktree 目录真实存在",
+      ok:
+        isolated.length > 0 &&
+        isolated.every((/** @type {any} */ thread) => existsSync(String(thread.worktree))),
+      detail: JSON.stringify(
+        isolated.map((/** @type {any} */ thread) => String(thread.worktree)).slice(0, 2),
+      ),
+    });
+    checks.push({
+      name: "隔离 worktree 不在主工作树里（同级隐藏目录）",
+      ok: isolated.every(
+        (/** @type {any} */ thread) =>
+          String(thread.worktree).includes("/.dsh-worktrees/") &&
+          !String(thread.worktree).includes("/.git/"),
+      ),
+      detail: "",
+    });
     checks.push({
       name: "新建的线程带 worktree 隔离记录",
       ok: isolated.length > 0,

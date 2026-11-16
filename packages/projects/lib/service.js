@@ -3,6 +3,7 @@
 // 注意（docs/runtime/0.2.1-rc.5.md §6.10）：Remote 方法必须声明在**这个被导出的类自身原型**上，
 // 否则网关不会 claim 端点，所有 /api/projects/* 返回 404。
 import { execFile as execFileCallback } from "node:child_process";
+import { existsSync } from "node:fs";
 import { promisify } from "node:util";
 
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
@@ -11,7 +12,7 @@ import { attachProjectContext } from "./attach.js";
 import { initialView, reduce, sortRows } from "./overview.js";
 import { readProjectFiles } from "./project-files.js";
 import { ProjectStore } from "./store.js";
-import { createIsolatedThread, reclaimThreadWorktree } from "./thread.js";
+import { createIsolatedThread, reclaimThreadWorktree, reconcileWorktrees } from "./thread.js";
 
 /**
  * 运行时不支持装饰器语法，用命令式方式登记 Remote（与 advisor / next-step 同法）。
@@ -127,6 +128,36 @@ export class ProjectsService extends TypertRemoteService {
     ctx.on?.("agent/disposed", (/** @type {any} */ payload) =>
       this.onAgentDisposed(payload?.agent?.id),
     );
+    // 启动对账：记录有、磁盘没的 worktree 直接清掉记录（反向不删，只报告）
+    try {
+      if (this.store) {
+        const changes = reconcileWorktrees(this.store, { exists: (path) => existsSync(path) });
+        if (changes.length > 0) {
+          for (const change of changes) {
+            this.store.appendAudit({
+              action: "worktree/missing",
+              projectId: null,
+              sessionId: change.sessionId,
+            });
+          }
+          this.store.save();
+          this.logger.info?.(`[projects] reconciled ${changes.length} missing worktree(s)`);
+        }
+      }
+    } catch (error) {
+      this.logger.warn?.(
+        `[projects] reconcile failed: ${String(/** @type {any} */ (error)?.message ?? error)}`,
+      );
+    }
+
+    // 归档一个会话 → 尽力回收它的 worktree（脏/未推送/当前会话会被拒绝）
+    ctx.on?.("workspace/session-archived", (/** @type {any} */ request) => {
+      const sessionId = String(request?.sessionId ?? "");
+      if (sessionId === "") return undefined;
+      void this.onSessionArchived(sessionId);
+      return undefined;
+    });
+
     ctx.on?.("session/event", (/** @type {any} */ session, /** @type {any} */ event) => {
       const sessionId = String(session?.id ?? "");
       if (sessionId === "" || !this.store) return;
@@ -175,6 +206,36 @@ export class ProjectsService extends TypertRemoteService {
       dispose?.();
     } catch {
       /* ignore */
+    }
+  }
+
+  /**
+   * 会话归档后的回收钩子：不抛错（归档已经成功，回收失败只记录）。
+   * @param {string} sessionId
+   */
+  async onSessionArchived(sessionId) {
+    try {
+      const store = this.requireStore();
+      if (!store.projectOfSession(sessionId)) return;
+      const result = await reclaimThreadWorktree({
+        store,
+        sessionId,
+        deps: { runGit },
+      });
+      store.appendAudit({
+        action: "worktree/reclaim",
+        projectId: null,
+        sessionId,
+        result: result.reason || "ok",
+      });
+      store.save();
+      if (!result.reclaimed) {
+        this.logger.info?.(`[projects] kept worktree for ${sessionId}: ${result.reason}`);
+      }
+    } catch (error) {
+      this.logger.warn?.(
+        `[projects] archive reclaim failed for ${sessionId}: ${String(/** @type {any} */ (error)?.message ?? error)}`,
+      );
     }
   }
 
