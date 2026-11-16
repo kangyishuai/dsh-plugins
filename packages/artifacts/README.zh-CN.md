@@ -31,7 +31,6 @@ dsh plugin --profile desktop add @kangyishuai/dsh-artifacts
 - **注册一条 HTTP 路由。** 宿主 web server 上的 `/artifacts/`：拒绝未认证请求、只接受 `GET`/`HEAD`、不提供目录列表。
 - **会渲染模型写的 markup。** 预览 iframe 不带 `allow-same-origin`，路由发 `default-src 'none'` 且只允许内联样式。页面脚本只在该沙箱里跑；工件内容按不可信数据处理，和模型的其它输出一样。
 - **无外联、无遥测、无 install 脚本。**
-- **调试面（待删）：** `window.__dshArtifacts` 与 Remote `appendDev` 只在 `DSH_ARTIFACTS_DEV=1` 或插件配置 `dev: true` 时开启，用于驱动验证脚本。
 
 ## 共享与局域网
 

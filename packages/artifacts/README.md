@@ -31,7 +31,6 @@ Restart the DSH desktop app afterwards. For the web profile, use `dsh plugin --p
 - **Adds one HTTP route.** `/artifacts/` is registered on the host web server. It rejects unauthenticated requests, answers `GET`/`HEAD` only, and never serves a directory listing.
 - **Serves model-authored markup.** The preview iframe is sandboxed without `allow-same-origin`, and the route sends `default-src 'none'` with inline styles only. Page scripts run only inside that sandbox; treat artifact content as untrusted, the same way the model's other output is treated.
 - **No network egress, no telemetry, no install scripts.**
-- **Debug surface (to be removed):** `window.__dshArtifacts` and the `appendDev` Remote method are enabled only when `DSH_ARTIFACTS_DEV=1` or the plugin config sets `dev: true`; they exist to drive the verification scripts.
 
 ## Sharing and LAN access
 
