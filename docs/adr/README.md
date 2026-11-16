@@ -20,5 +20,7 @@
 | [0014](0014-automerge-tiers.md)                       | 自动合并分级：release / 文档 / 证据齐全的单插件改动   | 已接受 |
 | [0016](0016-btw-fork-subagent.md)                     | btw：建在 fork 子代理上，而不是直接调用 llm           | 已接受 |
 | [0015](0015-plugin-index-source.md)                   | 自建插件索引源：发版后用 npm 数据包 + jsDelivr 发布   | 已接受 |
+| [0016](0016-artifacts-local-first.md)                 | artifacts：本地优先，发布目标可插拔                   | 已接受 |
+| [0017](0017-artifacts-update-mechanism.md)            | artifacts：摘要行 + 右栏面板 + 元数据封面             | 已接受 |
 
 新建：复制 [0000-template.md](0000-template.md)。
