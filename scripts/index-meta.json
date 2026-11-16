@@ -81,6 +81,14 @@
         "zh": "工件"
       },
       "descriptionZh": "把会话产出变成可看、可改、可回溯的本地工件：模型用 artifact 工具发布自包含页面，时间线只留一行摘要，右栏沙箱面板原地刷新，每个版本各留一份文件。"
+    },
+    "@kangyishuai/dsh-projects": {
+      "category": "workflow",
+      "title": {
+        "en": "Projects",
+        "zh": "项目"
+      },
+      "descriptionZh": "把项目做成一等上下文单元：会话归属、项目级指令与记忆注入、每线程独立工作树、可审计的协调器，以及可封顶的成本闸。"
     }
   }
 }

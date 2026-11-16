@@ -44,6 +44,8 @@ importers:
 
   packages/next-step: {}
 
+  packages/projects: {}
+
   packages/session-delete: {}
 
   packages/session-rewind: {}

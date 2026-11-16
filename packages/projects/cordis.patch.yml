@@ -1,0 +1,3 @@
+- insert:
+    - id: projects
+      name: "@kangyishuai/dsh-projects"
