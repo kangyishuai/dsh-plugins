@@ -51,7 +51,8 @@
     "tokens:host": "node scripts/host-tokens.mjs",
     "tokens:host:check": "node scripts/host-tokens.mjs --check",
     "smoke:index": "node scripts/smoke-index.mjs",
-    "advisor:review": "node scripts/advisor-review.mjs"
+    "advisor:review": "node scripts/advisor-review.mjs",
+    "smoke:btw": "node scripts/smoke-btw.mjs"
   },
   "simple-git-hooks": {
     "pre-commit": "pnpm exec lint-staged && node scripts/check-public.mjs",
