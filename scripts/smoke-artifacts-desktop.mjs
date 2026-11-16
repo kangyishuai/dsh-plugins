@@ -55,8 +55,9 @@ async function connect(port) {
   return { evaluate, close: () => ws.close() };
 }
 
-/** @param {string} name @param {boolean} ok @param {string} [detail] */
+/** @type {{ name: string, ok: boolean, detail: string }[]} */
 const results = [];
+/** @param {string} name @param {boolean} ok @param {string} [detail] */
 const record = (name, ok, detail = "") => results.push({ name, ok, detail });
 const sleep = (/** @type {number} */ ms) => new Promise((r) => setTimeout(r, ms));
 
