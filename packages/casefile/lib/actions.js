@@ -1,0 +1,434 @@
+// @ts-check
+// actions.js：casefile 的全部业务动作（纯 Node，不 import 宿主包，可单测）。
+//
+// 分工：service.js 只做「数据根解析 + Remote 声明 + 会话记忆」；本文件承载
+// 项目/证据/结论/功能/未知项/规格包的实际逻辑，tools.js 与 Remote 共用同一份实现。
+
+import { buildSpecPack, writeSpecPack } from "./core/brief.js";
+import { shortDigest } from "./core/digest.js";
+import { gradeCapabilities } from "./core/manifest.js";
+import {
+  CasefileInputError,
+  normalizeClaim,
+  normalizeEvidence,
+  normalizeFeature,
+  normalizeUnknown,
+  nowIso,
+  projectStats,
+} from "./core/model.js";
+import { CaseStoreError } from "./core/store.js";
+
+/** 业务错误：带稳定 code（由 service 映射成 RemoteError / 工具错误）。 */
+export class CasefileActionError extends Error {
+  /**
+   * @param {string} code
+   * @param {string} message
+   */
+  constructor(code, message) {
+    super(message);
+    this.name = "CasefileActionError";
+    this.code = code;
+  }
+}
+
+/**
+ * 造一组动作。
+ * @param {{
+ *   store: import("./core/store.js").CaseStore,
+ *   currentProject?: Map<string, string>,
+ *   dataRoot?: string,
+ * }} options
+ */
+export function createActions(options) {
+  const store = options.store;
+  const currentProject = options.currentProject ?? new Map();
+  const dataRoot = options.dataRoot ?? store.rootDir;
+
+  /**
+   * @param {string} projectId
+   * @returns {Record<string, any>}
+   */
+  const requireProject = (projectId) => {
+    const id = String(projectId ?? "");
+    const project = store.getProject(id);
+    if (!project) throw new CaseStoreError("project-not-found", `项目不存在：${id || "(空)"}`);
+    return project;
+  };
+
+  /**
+   * @param {any} exec
+   * @returns {string | undefined}
+   */
+  const sessionOf = (exec) => {
+    const id = exec?.agent?.id;
+    return typeof id === "string" && id !== "" ? id : undefined;
+  };
+
+  return {
+    // ---------- 会话记忆 ----------
+
+    /**
+     * @param {any} exec
+     * @param {string} projectId
+     */
+    remember(exec, projectId) {
+      const sessionId = sessionOf(exec);
+      if (sessionId) currentProject.set(sessionId, projectId);
+    },
+
+    /**
+     * @param {any} exec
+     * @returns {string | undefined}
+     */
+    recall(exec) {
+      const sessionId = sessionOf(exec);
+      return sessionId ? currentProject.get(sessionId) : undefined;
+    },
+
+    // ---------- 项目 ----------
+
+    /** @returns {Promise<any[]>} */
+    async listProjects() {
+      return store.listProjects().map((project) => {
+        const data = store.readAll(project.id);
+        return projectStats(project, data);
+      });
+    },
+
+    /**
+     * @param {Record<string, any>} input
+     * @param {any} [exec]
+     * @returns {Promise<Record<string, any>>}
+     */
+    async openProject(input, exec) {
+      const project = store.createProject(input ?? {});
+      if (exec) this.remember(exec, project.id);
+      return project;
+    },
+
+    /**
+     * @param {string} projectId
+     * @returns {Promise<Record<string, any>>}
+     */
+    async detail(projectId) {
+      const project = requireProject(projectId);
+      const data = store.readAll(project.id);
+      return {
+        project,
+        stats: projectStats(project, data),
+        claims: data.claims,
+        evidence: data.evidence,
+        features: data.features,
+        unknowns: data.unknowns,
+      };
+    },
+
+    /**
+     * @param {string} projectId
+     * @param {Record<string, any>} patch
+     * @returns {Promise<Record<string, any>>}
+     */
+    async updateProject(projectId, patch) {
+      return store.updateProject(projectId, patch ?? {});
+    },
+
+    /**
+     * @param {string} projectId
+     * @param {ReturnType<typeof import("./core/manifest.js").diffCapabilities>} capabilities
+     * @returns {Promise<Record<string, any>>}
+     */
+    async status(projectId, capabilities) {
+      const detail = await this.detail(projectId);
+      return { ...detail, capabilities: gradeCapabilities(capabilities) };
+    },
+
+    /**
+     * @param {ReturnType<typeof import("./core/manifest.js").diffCapabilities>} capabilities
+     * @returns {Promise<Record<string, any>>}
+     */
+    async diagnose(capabilities) {
+      return {
+        dataRoot,
+        projects: store.listProjects().length,
+        rea: {
+          availableTools: capabilities.availableReaTools,
+          present: capabilities.present,
+          missingRequired: capabilities.missingRequired,
+          missingOptional: capabilities.missingOptional,
+          capabilityHash: capabilities.capabilityHash,
+        },
+        grade: gradeCapabilities(capabilities),
+      };
+    },
+
+    // ---------- 证据 ----------
+
+    /**
+     * @param {string} projectId
+     * @param {Record<string, any>} input
+     * @param {any} [exec]
+     * @returns {Promise<Record<string, any>>}
+     */
+    async addEvidence(projectId, input, exec) {
+      const project = requireProject(projectId);
+      const record = normalizeEvidence({
+        ...input,
+        sessionId: input?.sessionId ?? sessionOf(exec) ?? null,
+      });
+      store.appendRecord(project.id, "evidence", record);
+      store.touch(project.id);
+      store.audit(project.id, {
+        actor: "agent",
+        action: "evidence/add",
+        target: record.id,
+        detail: { kind: record.kind, confidence: record.confidence },
+      });
+      return record;
+    },
+
+    /**
+     * @param {string} projectId
+     * @param {Record<string, any>} [filter]
+     * @returns {Promise<any[]>}
+     */
+    async listEvidence(projectId, filter = {}) {
+      requireProject(projectId);
+      return store.readRecords(projectId, "evidence").filter((item) => {
+        if (filter?.kind && item.kind !== filter.kind) return false;
+        if (filter?.confidence && item.confidence !== filter.confidence) return false;
+        if (filter?.claimId && !(item.claimIds ?? []).includes(filter.claimId)) return false;
+        return true;
+      });
+    },
+
+    /**
+     * @param {string} projectId
+     * @param {string} evidenceId
+     * @returns {Promise<Record<string, any>>}
+     */
+    async showEvidence(projectId, evidenceId) {
+      requireProject(projectId);
+      const found = store.readRecords(projectId, "evidence").find((item) => item.id === evidenceId);
+      if (!found) throw new CaseStoreError("not-found", `证据不存在：${evidenceId}`);
+      return found;
+    },
+
+    // ---------- 结论 ----------
+
+    /**
+     * @param {string} projectId
+     * @param {Record<string, any>} input
+     * @returns {Promise<Record<string, any>>}
+     */
+    async addClaim(projectId, input) {
+      const project = requireProject(projectId);
+      const record = normalizeClaim(input);
+      store.appendRecord(project.id, "claims", record);
+      store.touch(project.id);
+      store.audit(project.id, {
+        actor: "agent",
+        action: "claim/add",
+        target: record.id,
+        detail: { kind: record.kind, status: record.status },
+      });
+      return record;
+    },
+
+    /**
+     * @param {string} projectId
+     * @param {Record<string, any>} [filter]
+     * @returns {Promise<any[]>}
+     */
+    async listClaims(projectId, filter = {}) {
+      requireProject(projectId);
+      return store.readRecords(projectId, "claims").filter((item) => {
+        if (typeof filter?.selected === "boolean" && item.selected !== filter.selected)
+          return false;
+        if (filter?.status && item.status !== filter.status) return false;
+        if (filter?.featureId && !(item.featureIds ?? []).includes(filter.featureId)) return false;
+        return true;
+      });
+    },
+
+    /**
+     * @param {string} projectId
+     * @param {string} query
+     * @returns {Promise<any[]>}
+     */
+    async searchClaims(projectId, query) {
+      requireProject(projectId);
+      const needle = String(query ?? "").toLowerCase();
+      if (needle === "") return [];
+      return store.readRecords(projectId, "claims").filter((item) => {
+        const haystack = `${item.text ?? ""} ${(item.limitations ?? []).join(" ")}`.toLowerCase();
+        return haystack.includes(needle);
+      });
+    },
+
+    /**
+     * 勾选/取消结论（append-only：追加同 id 的新记录，读时后者胜）。
+     * @param {string} projectId
+     * @param {string[]} claimIds
+     * @param {boolean} selected
+     * @returns {Promise<any[]>}
+     */
+    async selectClaims(projectId, claimIds, selected) {
+      const project = requireProject(projectId);
+      const wanted = new Set((Array.isArray(claimIds) ? claimIds : []).map(String));
+      if (wanted.size === 0) {
+        throw new CasefileInputError("invalid-input", "claimIds 不能为空");
+      }
+      const rows = store.readRecords(project.id, "claims");
+      /** @type {any[]} */
+      const updated = [];
+      for (const claim of rows) {
+        if (!wanted.has(claim.id)) continue;
+        const next = { ...claim, selected: selected === true };
+        store.appendRecord(project.id, "claims", next);
+        updated.push(next);
+      }
+      if (updated.length === 0) {
+        throw new CaseStoreError("not-found", `没有匹配的结论：${[...wanted].join("、")}`);
+      }
+      store.touch(project.id);
+      store.audit(project.id, {
+        actor: "agent",
+        action: "claim/select",
+        target: [...wanted].join(","),
+        detail: { selected: selected === true, count: updated.length },
+      });
+      return updated;
+    },
+
+    // ---------- 功能 / 未知项 ----------
+
+    /**
+     * @param {string} projectId
+     * @param {Record<string, any>} input
+     * @returns {Promise<Record<string, any>>}
+     */
+    async addFeature(projectId, input) {
+      const project = requireProject(projectId);
+      const record = normalizeFeature(input);
+      store.appendRecord(project.id, "features", record);
+      store.touch(project.id);
+      store.audit(project.id, {
+        actor: "agent",
+        action: "feature/add",
+        target: record.id,
+        detail: { name: record.name },
+      });
+      return record;
+    },
+
+    /**
+     * @param {string} projectId
+     * @returns {Promise<any[]>}
+     */
+    async listFeatures(projectId) {
+      requireProject(projectId);
+      return store.readRecords(projectId, "features");
+    },
+
+    /**
+     * @param {string} projectId
+     * @param {Record<string, any>} input
+     * @returns {Promise<Record<string, any>>}
+     */
+    async addUnknown(projectId, input) {
+      const project = requireProject(projectId);
+      const record = normalizeUnknown(input);
+      store.appendRecord(project.id, "unknowns", record);
+      store.touch(project.id);
+      store.audit(project.id, {
+        actor: "agent",
+        action: "unknown/add",
+        target: record.id,
+        detail: { severity: record.severity },
+      });
+      return record;
+    },
+
+    /**
+     * @param {string} projectId
+     * @returns {Promise<any[]>}
+     */
+    async listUnknowns(projectId) {
+      requireProject(projectId);
+      return store.readRecords(projectId, "unknowns");
+    },
+
+    /**
+     * @param {string} projectId
+     * @param {string} unknownId
+     * @param {string} [note]
+     * @returns {Promise<Record<string, any>>}
+     */
+    async resolveUnknown(projectId, unknownId, note) {
+      const project = requireProject(projectId);
+      const found = store.readRecords(project.id, "unknowns").find((item) => item.id === unknownId);
+      if (!found) throw new CaseStoreError("not-found", `未知项不存在：${unknownId}`);
+      /** @type {any} */
+      const next = {
+        ...found,
+        status: "resolved",
+        note: note == null ? (found.note ?? "") : String(note).slice(0, 2000),
+        resolvedAt: nowIso(),
+      };
+      store.appendRecord(project.id, "unknowns", next);
+      store.touch(project.id);
+      store.audit(project.id, { actor: "agent", action: "unknown/resolve", target: next.id });
+      return next;
+    },
+
+    // ---------- 规格包 ----------
+
+    /**
+     * @param {string} projectId
+     * @param {{ redact?: boolean, redactOptions?: Record<string, any> }} [options]
+     * @returns {Promise<Record<string, any>>}
+     */
+    async exportSpecPack(projectId, options = {}) {
+      const project = requireProject(projectId);
+      const data = store.readAll(project.id);
+      const pack = buildSpecPack({ project, ...data });
+      if (pack.claims.length === 0) {
+        throw new CasefileActionError(
+          "nothing-selected",
+          "没有选中的结论：先勾选要导出的结论（case_claim select）",
+        );
+      }
+      const written = writeSpecPack({
+        projectDir: store.projectDir(project.id),
+        pack,
+        redact: options?.redact !== false,
+        redactOptions: {
+          home: process.env.HOME ?? process.env.USERPROFILE,
+          cwd: process.cwd(),
+          extraPaths: [dataRoot],
+          ...(options?.redactOptions ?? {}),
+        },
+      });
+      store.audit(project.id, {
+        actor: "agent",
+        action: "spec/export",
+        target: written.dir,
+        detail: { claims: pack.claims.length, redact: options?.redact !== false },
+      });
+      return {
+        data: {
+          path: written.dir,
+          files: written.files.map((file) => file.split("/").slice(-1)[0]),
+          claims: pack.claims.length,
+          evidence: pack.evidence.length,
+          features: pack.features.length,
+          openUnknowns: pack.unknowns.length,
+          integrity: shortDigest(pack.integrity),
+        },
+        summary: `规格包已写入 ${written.dir}（${pack.claims.length} 条结论 / ${pack.unknowns.length} 个未知项）`,
+      };
+    },
+  };
+}
+
+/** @typedef {ReturnType<typeof createActions>} CasefileActions */

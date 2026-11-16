@@ -1,0 +1,3 @@
+- insert:
+    - id: casefile
+      name: "@kangyishuai/dsh-casefile"

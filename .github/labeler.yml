@@ -52,7 +52,8 @@ documentation:
 "plugin:artifacts":
   - changed-files:
       - any-glob-to-any-file: "packages/artifacts/**"
-
 "plugin:projects":
   - changed-files:
       - any-glob-to-any-file: "packages/projects/**"
+"plugin:casefile":
+      - any-glob-to-any-file: "packages/casefile/**"

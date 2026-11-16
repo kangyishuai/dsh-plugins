@@ -34,6 +34,11 @@
     }
   },
   "plugins": {
+    "@kangyishuai/dsh-casefile": {
+      "category": "tools",
+      "title": { "en": "Casefile", "zh": "案卷" },
+      "descriptionZh": "REA 循证工作台：把逆向观察落成可引用的证据、可交接的规格包与可复算的验收；不做桥、不带引擎。"
+    },
     "@kangyishuai/dsh-session-delete": {
       "category": "session",
       "title": {

@@ -15,6 +15,7 @@ body:
         - "@kangyishuai/dsh-btw"
         - "@kangyishuai/dsh-artifacts"
         - "@kangyishuai/dsh-projects"
+        - "@kangyishuai/dsh-casefile"
         - other
     validations:
       required: true

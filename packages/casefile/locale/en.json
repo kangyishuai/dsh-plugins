@@ -1,0 +1,19 @@
+{
+  "casefile": {
+    "title": "Casefile: evidence-first workbench for REA",
+    "description": "Turn REA observations into citable evidence, handoff-ready spec packs, and recomputable acceptance.",
+    "panel.title": "Casefile",
+    "panel.empty": "No projects yet. Create one and collect targets, evidence, and claims.",
+    "panel.new": "New project",
+    "panel.refresh": "Refresh",
+    "panel.loading": "Loading…",
+    "panel.error": "Failed to load: {reason}",
+    "settings.section": "Casefile",
+    "settings.summary": "{count} projects",
+    "settings.dataRoot": "Data root",
+    "settings.hint": "Project data stays on this machine; nothing is uploaded.",
+    "error.reaMissing": "No REA tools detected (mcp__rea__*).",
+    "error.projectNotFound": "Project not found.",
+    "error.nothingSelected": "No claims selected yet."
+  }
+}

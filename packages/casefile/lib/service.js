@@ -1,0 +1,379 @@
+// @ts-check
+// service.js：casefile 的 Host 半。**薄桥接**：数据根解析 + Remote 声明 + 工具注册。
+// 业务逻辑全部在 ./actions.js（可单测）；Remote 方法必须声明在**被导出的类自身原型**上
+// （否则 /api/casefile/* 返回 404，见 docs/runtime/0.2.1-rc.5.md §6.10）。
+
+import { Remote, RemoteError, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
+
+import { createActions } from "./actions.js";
+import { diffCapabilities, gradeCapabilities } from "./core/manifest.js";
+import { CaseStore } from "./core/store.js";
+import { buildToolDefinitions } from "./tools.js";
+
+/**
+ * 运行时不支持装饰器语法，用命令式方式登记 Remote（与 advisor / projects 同法）。
+ * @param {any} Proto
+ * @param {string} method
+ * @returns {void}
+ */
+function declareRemote(Proto, method) {
+  /** @type {Function[]} */
+  const initializers = [];
+  Remote(method)(void 0, {
+    name: method,
+    static: false,
+    private: false,
+    addInitializer(/** @type {Function} */ initializer) {
+      initializers.push(initializer);
+    },
+  });
+  if (initializers.length !== 1) {
+    throw new Error(`casefile: cannot declare Remote method ${method}`);
+  }
+  initializers[0].call(Object.create(Proto.prototype));
+}
+
+/**
+ * 数据根：显式配置优先；否则 `<DSH_HOME>/casefile`，再退 `~/.dsh/casefile`。
+ * @param {Record<string, any> | undefined} config
+ * @returns {string}
+ */
+export function resolveDataRoot(config) {
+  if (config && typeof config.dataRoot === "string" && config.dataRoot.trim() !== "") {
+    return config.dataRoot;
+  }
+  const home = process.env.DSH_HOME;
+  if (typeof home === "string" && home.trim() !== "") return `${home}/casefile`;
+  const userHome = process.env.HOME ?? process.env.USERPROFILE ?? "";
+  return userHome === "" ? ".dsh/casefile" : `${userHome}/.dsh/casefile`;
+}
+
+/**
+ * 内部错误 → RemoteError（客户端能看到稳定 code）。
+ * @param {unknown} error
+ * @returns {never}
+ */
+function fail(error) {
+  const anyError = /** @type {any} */ (error);
+  const code = typeof anyError?.code === "string" ? anyError.code : "internal";
+  const message = String(anyError?.message ?? error ?? "unknown error");
+  if (code === "invalid-input" || code === "bad-project-id" || code === "nothing-selected") {
+    throw new RemoteError("gateway/bad-request", message, {});
+  }
+  throw new RemoteError("gateway/internal", `[${code}] ${message}`, {});
+}
+
+/** casefile 服务。 */
+export class CasefileService extends TypertRemoteService {
+  /**
+   * @param {any} ctx
+   * @param {Record<string, any>} [config]
+   */
+  constructor(ctx, config) {
+    super(ctx, "casefile");
+    this.config = config ?? {};
+    this.logger = ctx?.logger ?? console;
+    this.dataRoot = resolveDataRoot(this.config);
+    this.store = new CaseStore({ dataRoot: this.dataRoot, logger: this.logger });
+    /** 会话 → 最近打开的项目（工具省略 projectId 时用）。 @type {Map<string, string>} */
+    this.currentProject = new Map();
+    this.actions = createActions({
+      store: this.store,
+      currentProject: this.currentProject,
+      dataRoot: this.dataRoot,
+    });
+    this.installTools();
+    this.logger.info?.(`[casefile] loaded, dataRoot=${this.dataRoot}`);
+  }
+
+  /**
+   * 运行时能力探测：当前可见的 REA 工具。
+   * @returns {ReturnType<typeof diffCapabilities>}
+   */
+  capabilities() {
+    try {
+      const tools = this.ctx.get?.("tools");
+      const definitions = tools?.definitions?.() ?? [];
+      return diffCapabilities(
+        definitions.map((/** @type {any} */ item) => String(item?.name ?? "")),
+      );
+    } catch {
+      return diffCapabilities([]);
+    }
+  }
+
+  installTools() {
+    try {
+      this.ctx.inject?.(/** @type {any} */ (["tools"]), (/** @type {any} */ scope) => {
+        scope.effect(() => {
+          const definitions = buildToolDefinitions(this.toolHandlers(), (exec) =>
+            this.actions.recall(exec),
+          );
+          const disposers = definitions.map((definition) => scope.tools.register(definition));
+          return () => {
+            for (const dispose of disposers) {
+              if (typeof dispose === "function") dispose();
+            }
+          };
+        }, "casefile: tools");
+      });
+    } catch (error) {
+      this.logger.warn?.(`[casefile] 无法注册工具：${String(error)}`);
+    }
+  }
+
+  /**
+   * 工具用的动作表：在 actions 之上补「打开即记住当前项目」等会话语义。
+   * @returns {Record<string, (...args: any[]) => any>}
+   */
+  toolHandlers() {
+    return {
+      openProject: (input, exec) => this.actions.openProject(input, exec),
+      listProjects: () => this.actions.listProjects(),
+      getProject: (projectId) => this.actions.detail(projectId),
+      updateProject: (projectId, patch) => this.actions.updateProject(projectId, patch),
+      addEvidence: (projectId, input, exec) => this.actions.addEvidence(projectId, input, exec),
+      listEvidence: (projectId, filter) => this.actions.listEvidence(projectId, filter),
+      showEvidence: (projectId, evidenceId) => this.actions.showEvidence(projectId, evidenceId),
+      addClaim: (projectId, input) => this.actions.addClaim(projectId, input),
+      listClaims: (projectId, filter) => this.actions.listClaims(projectId, filter),
+      searchClaims: (projectId, query) => this.actions.searchClaims(projectId, query),
+      selectClaims: (projectId, ids, selected) =>
+        this.actions.selectClaims(projectId, ids, selected),
+      addFeature: (projectId, input) => this.actions.addFeature(projectId, input),
+      listFeatures: (projectId) => this.actions.listFeatures(projectId),
+      addUnknown: (projectId, input) => this.actions.addUnknown(projectId, input),
+      listUnknowns: (projectId) => this.actions.listUnknowns(projectId),
+      resolveUnknown: (projectId, id, note) => this.actions.resolveUnknown(projectId, id, note),
+      exportSpecPack: (projectId, options) => this.actions.exportSpecPack(projectId, options),
+    };
+  }
+
+  // ---------- Remote ----------
+
+  /** @returns {Promise<any[]>} */
+  async listProjects() {
+    try {
+      return await this.actions.listProjects();
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {Record<string, any>} input
+   * @returns {Promise<Record<string, any>>}
+   */
+  async createProject(input) {
+    try {
+      return await this.actions.openProject(input ?? {});
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
+   * @returns {Promise<Record<string, any>>}
+   */
+  async projectDetail(projectId) {
+    try {
+      const detail = await this.actions.detail(projectId);
+      return { ...detail, capabilities: gradeCapabilities(this.capabilities()) };
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
+   * @param {Record<string, any>} patch
+   * @returns {Promise<Record<string, any>>}
+   */
+  async updateProject(projectId, patch) {
+    try {
+      return await this.actions.updateProject(projectId, patch);
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /** @returns {Promise<Record<string, any>>} */
+  async diagnose() {
+    return this.actions.diagnose(this.capabilities()).catch(fail);
+  }
+
+  /**
+   * @param {string} projectId
+   * @param {Record<string, any>} input
+   * @returns {Promise<Record<string, any>>}
+   */
+  async addEvidence(projectId, input) {
+    try {
+      return await this.actions.addEvidence(projectId, input);
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
+   * @param {Record<string, any>} [filter]
+   * @returns {Promise<any[]>}
+   */
+  async listEvidence(projectId, filter) {
+    try {
+      return await this.actions.listEvidence(projectId, filter);
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
+   * @param {Record<string, any>} input
+   * @returns {Promise<Record<string, any>>}
+   */
+  async addClaim(projectId, input) {
+    try {
+      return await this.actions.addClaim(projectId, input);
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
+   * @param {Record<string, any>} [filter]
+   * @returns {Promise<any[]>}
+   */
+  async listClaims(projectId, filter) {
+    try {
+      return await this.actions.listClaims(projectId, filter);
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
+   * @param {string} query
+   * @returns {Promise<any[]>}
+   */
+  async searchClaims(projectId, query) {
+    try {
+      return await this.actions.searchClaims(projectId, query);
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
+   * @param {string[]} claimIds
+   * @param {boolean} selected
+   * @returns {Promise<any[]>}
+   */
+  async selectClaims(projectId, claimIds, selected) {
+    try {
+      return await this.actions.selectClaims(projectId, claimIds, selected);
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
+   * @param {Record<string, any>} input
+   * @returns {Promise<Record<string, any>>}
+   */
+  async addFeature(projectId, input) {
+    try {
+      return await this.actions.addFeature(projectId, input);
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
+   * @returns {Promise<any[]>}
+   */
+  async listFeatures(projectId) {
+    try {
+      return await this.actions.listFeatures(projectId);
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
+   * @param {Record<string, any>} input
+   * @returns {Promise<Record<string, any>>}
+   */
+  async addUnknown(projectId, input) {
+    try {
+      return await this.actions.addUnknown(projectId, input);
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
+   * @returns {Promise<any[]>}
+   */
+  async listUnknowns(projectId) {
+    try {
+      return await this.actions.listUnknowns(projectId);
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
+   * @param {string} unknownId
+   * @param {string} [note]
+   * @returns {Promise<Record<string, any>>}
+   */
+  async resolveUnknown(projectId, unknownId, note) {
+    try {
+      return await this.actions.resolveUnknown(projectId, unknownId, note);
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
+   * @param {{ redact?: boolean }} [options]
+   * @returns {Promise<Record<string, any>>}
+   */
+  async exportSpecPack(projectId, options) {
+    try {
+      return await this.actions.exportSpecPack(projectId, options);
+    } catch (error) {
+      fail(error);
+    }
+  }
+}
+
+declareRemote(CasefileService, "listProjects");
+declareRemote(CasefileService, "createProject");
+declareRemote(CasefileService, "projectDetail");
+declareRemote(CasefileService, "updateProject");
+declareRemote(CasefileService, "diagnose");
+declareRemote(CasefileService, "addEvidence");
+declareRemote(CasefileService, "listEvidence");
+declareRemote(CasefileService, "addClaim");
+declareRemote(CasefileService, "listClaims");
+declareRemote(CasefileService, "searchClaims");
+declareRemote(CasefileService, "selectClaims");
+declareRemote(CasefileService, "addFeature");
+declareRemote(CasefileService, "listFeatures");
+declareRemote(CasefileService, "addUnknown");
+declareRemote(CasefileService, "listUnknowns");
+declareRemote(CasefileService, "resolveUnknown");
+declareRemote(CasefileService, "exportSpecPack");
