@@ -30,7 +30,16 @@ DSH_HOME="$H" dsh --profile web --port 0 --no-open
 | `pnpm smoke:artifacts`（**待补**）                   | 临时 home + 真实宿主 + 浏览器：库 → 面板 → 追加两版 → 原地刷新（元素标记证明未重建）→ 刷新恢复 → 路由 200/401/404                          | 本机 `dsh`、`ego-browser`               |
 | `pnpm smoke:artifacts-desktop --require`（**待补**） | 真实桌面版只读回归：插件已加载、页签类型存在、库能打开且不崩                                                                               | 桌面版 + `--remote-debugging-port=9222` |
 
-> 冒烟脚本尚未落地（模板 TODO），这是合并前必须补齐的硬性约定（`docs/plugin-conventions.md` §6.1）。上面两行是脚本应覆盖的断言清单。
+> 桌面回归是**发版前手工门禁**：CI 只跑 `pnpm smoke:artifacts`（web、临时 home）。
+> 验收桌面时临时安装，验完卸载，不把开发版留在共用 profile：
+>
+> ```bash
+> cd packages/artifacts && pnpm pack --pack-destination /tmp
+> dsh plugin --profile desktop add /tmp/kangyishuai-dsh-artifacts-0.0.0.tgz
+> open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1
+> pnpm smoke:artifacts-desktop --require
+> dsh plugin --profile desktop remove @kangyishuai/dsh-artifacts
+> ```
 
 ## 2. 界面手测（发版 / 升级后）
 
