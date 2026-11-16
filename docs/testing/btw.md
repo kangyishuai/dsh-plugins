@@ -20,11 +20,11 @@
 
 ```
 7 PASS / 2 SKIP / 0 FAIL（--deep）
-PASS history 文件已生成（session-b0d1cea0-…jsonl）
-  record status=done answerLen=2 cost={"inputTokens":1382,"cacheReadTokens":9216,"outputTokens":2,"totalTokens":10600}
+PASS history 文件已生成（session-549c06ee-…jsonl）
+  record status=done answerLen=2 cost={"inputTokens":1634,"cacheReadTokens":8960,"outputTokens":3,"totalTokens":10597}
 ```
 
-`cacheReadTokens 9216 / 10600 ≈ 87%` 命中（另一次运行 84.5%），`cacheWriteTokens` 为 0 —— 与
+`cacheReadTokens 8960 / 10597 ≈ 84.5%` 命中，`cacheWriteTokens` 为 0 —— 与
 `notes` 里的独立实验（57%→94%）一致，说明插件的实际调用路径确实复用了主会话前缀缓存。
 
 2 项 SKIP 是 DOM 命令卡片断言没抓到（时序/选择器），执行本身已由 history 落盘证明；卡片断言留待桌面回归补。
@@ -38,17 +38,3 @@ PASS history 文件已生成（session-b0d1cea0-…jsonl）
 5. **斜杠菜单开着时 Enter 会被菜单吃掉**（只清空草稿、不提交）→ 提交前先关菜单。
 6. **contenteditable 用 click 拿不到焦点**：要 `el.focus()` + 把选区设进节点，再 `keyboard.insertText`。
 7. **清理临时目录要等宿主退出并重试**，否则 `ENOTEMPTY`。
-
-## 发版门禁（`pnpm gate btw`，2026-11-16 实测）
-
-```
-[1/4] ✓ pnpm verify
-[2/4] ✓ 宿主能力体检（pnpm probe:runtime）—— 合计 72 项：72 PASS, 0 WARN, 0 FAIL
-[3/4] ✓ web 端到端冒烟（pnpm smoke:btw）—— 4 PASS / 2 SKIP / 0 FAIL
-[4/4] -  桌面回归（pnpm smoke:btw-desktop）—— 无 client 半，跳过
-
-PASS btw 门禁全绿（3 步，19s）
-```
-
-第 4 步被跳过是**预期行为**：v0.1 没有 client 半，按约定 §6.1 不强制桌面回归。
-加 client 半（v0.2）后这一步会自动变成必需。
