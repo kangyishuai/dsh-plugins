@@ -38,6 +38,12 @@
     "detail.state.failed": "Failed",
     "detail.state.working": "Working",
     "detail.state.done": "Done",
-    "detail.state.idle": "Idle"
+    "detail.state.idle": "Idle",
+    "detail.threadPlaceholder": "Describe a task for a new thread (Enter to create)",
+    "detail.threadCreate": "New thread",
+    "detail.threadCreating": "Creating…",
+    "detail.dirLabel": "Project dir",
+    "detail.dirPlaceholder": "Absolute path; threads create worktrees here",
+    "detail.dirSave": "Bind"
   }
 }

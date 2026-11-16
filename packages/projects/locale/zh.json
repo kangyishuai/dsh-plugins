@@ -38,6 +38,12 @@
     "detail.state.failed": "失败",
     "detail.state.working": "进行中",
     "detail.state.done": "已完成",
-    "detail.state.idle": "空闲"
+    "detail.state.idle": "空闲",
+    "detail.threadPlaceholder": "给这个线程一个任务，回车即建",
+    "detail.threadCreate": "新建线程",
+    "detail.threadCreating": "正在建…",
+    "detail.dirLabel": "项目目录",
+    "detail.dirPlaceholder": "绝对路径；线程会在这里建 worktree",
+    "detail.dirSave": "绑定"
   }
 }

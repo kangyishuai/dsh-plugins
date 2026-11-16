@@ -79,10 +79,11 @@ async function waitForBoot(logPath, timeoutMs) {
 
 /**
  * 浏览器脚本：以字符串拼出，避免内层模板插值。
- * @param {string} url @param {string} shotsDir
+ * @param {string} url @param {string} shotsDir @param {string} workspaceDir
  */
-function browserScript(url, shotsDir) {
+function browserScript(url, shotsDir, workspaceDir) {
   return `
+const SMOKE_WORKSPACE_DIR = ${JSON.stringify(workspaceDir)};
 const result = { checks: [], fatal: "" };
 const add = (name, ok, detail) => result.checks.push({ name, ok: Boolean(ok), detail: String(detail || "") });
 try {
@@ -244,6 +245,46 @@ try {
     JSON.stringify({ detail, ...detailState }),
   );
 
+  // 先给项目绑定目录（否则线程没有隔离目标，会走「无目录」降级）
+  const bound = await page.evaluate((dir) => {
+    const input = document.querySelector("[data-projects-dir-input]");
+    const button = document.querySelector("[data-projects-dir-save]");
+    if (!input || !button) return "no-controls";
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    setter.call(input, dir);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    button.click();
+    return "clicked";
+  }, SMOKE_WORKSPACE_DIR);
+  await page.waitForTimeout(1500);
+  add("可在详情页绑定项目目录", bound === "clicked", String(bound));
+
+  // 详情页里新建一个线程：这会走 createThread（worktree 隔离 + 建会话）
+  const threadCreated = await page.evaluate(() => {
+    const input = document.querySelector("[data-projects-thread-input]");
+    const button = document.querySelector("[data-projects-thread-create]");
+    if (!input || !button) return "no-controls";
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    setter.call(input, "smoke: reply with OK");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    button.click();
+    return "clicked";
+  });
+  let threadRow = null;
+  for (let i = 0; i < 30; i += 1) {
+    threadRow = await page.evaluate(() => {
+      const row = document.querySelector("[data-projects-thread-row]");
+      return row ? { id: row.getAttribute("data-projects-thread-row"), state: row.getAttribute("data-projects-thread-state") } : null;
+    });
+    if (threadRow) break;
+    await page.waitForTimeout(500);
+  }
+  add("详情页可新建线程", threadCreated === "clicked" && threadRow !== null, JSON.stringify({ threadCreated, threadRow }));
+  const attention = await page.evaluate(() =>
+    document.querySelector("[data-projects-threads]")?.getAttribute("data-projects-attention"),
+  );
+  add("线程计数/需要我 可断言", attention !== null && attention !== undefined, String(attention));
+
   const memoryTab = await page.evaluate(() => {
     const tab = document.querySelector('[data-projects-tab="memory"]');
     if (!tab) return "no-tab";
@@ -348,6 +389,18 @@ const main = async () => {
     const workspaceDirRaw = join(work, "workspace");
     await mkdir(workspaceDirRaw, { recursive: true });
     const workspaceDir = await realpath(workspaceDirRaw);
+    // 让工作区是一个**真实 git 仓库**：否则 createThread 会走「非 git → 共享目录」降级，
+    // worktree 隔离那条断言就永远没有意义。
+    await writeFile(join(workspaceDir, "seed.txt"), "seed\n", "utf8");
+    await run("git", ["init", "-q"], { cwd: workspaceDir });
+    await run("git", ["add", "."], { cwd: workspaceDir });
+    await run(
+      "git",
+      ["-c", "user.email=smoke@local", "-c", "user.name=smoke", "commit", "-qm", "seed"],
+      {
+        cwd: workspaceDir,
+      },
+    );
     const workspaceId = "11111111-2222-4333-8444-555555555555";
     await mkdir(join(home, "storages"), { recursive: true });
     const nowIso = new Date().toISOString();
@@ -402,6 +455,7 @@ const main = async () => {
       return;
     }
 
+    const SMOKE_WORKSPACE_DIR = workspaceDir;
     const logPath = join(work, "host.log");
     host = spawn("dsh", ["--profile", PROFILE, "--port", "0", "--no-open"], {
       env,
@@ -422,7 +476,11 @@ const main = async () => {
     const shotsDir = join(work, "shots");
     await mkdir(shotsDir, { recursive: true });
     const browserFile = join(work, "browser.mjs");
-    const source = browserScript(`http://127.0.0.1:${boot.port}/?token=${boot.token}`, shotsDir);
+    const source = browserScript(
+      `http://127.0.0.1:${boot.port}/?token=${boot.token}`,
+      shotsDir,
+      SMOKE_WORKSPACE_DIR,
+    );
     await writeFile(browserFile, source);
 
     const raw = await new Promise((resolvePromise) => {
@@ -496,6 +554,16 @@ const main = async () => {
     const leftovers = (await readdir(join(home, "projects")).catch(() => [])).filter((name) =>
       String(name).includes(".tmp-"),
     );
+    const isolated = Object.values(parsed?.threads ?? {}).filter(
+      (/** @type {any} */ thread) => typeof thread?.worktree === "string" && thread.worktree !== "",
+    );
+    checks.push({
+      name: "新建的线程带 worktree 隔离记录",
+      ok: isolated.length > 0,
+      detail: JSON.stringify(
+        isolated.map((/** @type {any} */ thread) => String(thread.branch ?? "")).slice(0, 2),
+      ),
+    });
     const threadIds = parsed?.threads ? Object.keys(parsed.threads) : [];
     checks.push({
       name: "会话归属记录已落盘（threads 非空）",

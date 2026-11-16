@@ -59,6 +59,12 @@ window.__ModuleLoader__.load({
       "detail.state.working": "进行中",
       "detail.state.done": "已完成",
       "detail.state.idle": "空闲",
+      "detail.threadPlaceholder": "给这个线程一个任务，回车即建",
+      "detail.threadCreate": "新建线程",
+      "detail.threadCreating": "正在建…",
+      "detail.dirLabel": "项目目录",
+      "detail.dirPlaceholder": "绝对路径；线程会在这里建 worktree",
+      "detail.dirSave": "绑定",
     };
     var EN = {
       title: "Projects",
@@ -103,6 +109,12 @@ window.__ModuleLoader__.load({
       "detail.state.working": "Working",
       "detail.state.done": "Done",
       "detail.state.idle": "Idle",
+      "detail.threadPlaceholder": "Describe a task for a new thread (Enter to create)",
+      "detail.threadCreate": "New thread",
+      "detail.threadCreating": "Creating…",
+      "detail.dirLabel": "Project dir",
+      "detail.dirPlaceholder": "Absolute path; threads create worktrees here",
+      "detail.dirSave": "Bind",
     };
     var PANEL_ID = "projects";
     var SERVICE = "projects";
@@ -457,6 +469,54 @@ window.__ModuleLoader__.load({
         );
       }, [api, project.id]);
 
+      const draftState = useState("");
+      const draft = draftState[0];
+      const setDraft = draftState[1];
+      const busyState = useState(false);
+      const busy = busyState[0];
+      const setBusy = busyState[1];
+
+      const dirState = useState(
+        project.dirs && project.dirs.length > 0 ? String(project.dirs[0]) : "",
+      );
+      const dirDraft = dirState[0];
+      const setDirDraft = dirState[1];
+      const saveDir = useCallback(() => {
+        const value = String(dirDraft).trim();
+        call(api.ctx, "updateProject", {
+          id: project.id,
+          patch: { dirs: value === "" ? [] : [value] },
+        }).then(
+          () => load(),
+          (error) => {
+            setData((/** @type {any} */ prev) => ({
+              ...prev,
+              error: String(error?.message ?? error),
+            }));
+          },
+        );
+      }, [api, dirDraft, load, project.id, setData]);
+
+      const createThread = useCallback(() => {
+        const task = String(draft).trim();
+        if (task === "" || busy) return;
+        setBusy(true);
+        call(api.ctx, "createThread", { projectId: project.id, task }).then(
+          () => {
+            setDraft("");
+            setBusy(false);
+            load();
+          },
+          (error) => {
+            setBusy(false);
+            setData((/** @type {any} */ prev) => ({
+              ...prev,
+              error: String(error?.message ?? error),
+            }));
+          },
+        );
+      }, [api, busy, draft, load, project.id, setBusy, setDraft, setData]);
+
       useEffect(() => {
         load();
       }, [load]);
@@ -490,6 +550,32 @@ window.__ModuleLoader__.load({
               "data-projects-threads": "",
               "data-projects-attention": String(data.progress?.attention ?? 0),
             },
+            h(
+              "div",
+              { style: { display: "flex", gap: "8px", margin: "0 0 8px" } },
+              h("input", {
+                style: styles.input,
+                value: draft,
+                placeholder: text(t, "detail.threadPlaceholder"),
+                "data-projects-thread-input": "",
+                onChange: (/** @type {any} */ event) => setDraft(event.target.value),
+                onKeyDown: (/** @type {any} */ event) => {
+                  if (event.key === "Enter") createThread();
+                },
+                disabled: busy,
+              }),
+              h(
+                "button",
+                {
+                  type: "button",
+                  style: styles.button,
+                  "data-projects-thread-create": "",
+                  onClick: createThread,
+                  disabled: busy,
+                },
+                busy ? text(t, "detail.threadCreating") : text(t, "detail.threadCreate"),
+              ),
+            ),
             h(
               "div",
               { style: { ...styles.meta, margin: "0 0 6px" }, "data-projects-counts": "" },
@@ -603,6 +689,31 @@ window.__ModuleLoader__.load({
             "span",
             { style: styles.summary, "data-projects-detail-goal": "" },
             project.goal || text(t, "panel.goalEmpty"),
+          ),
+        ),
+        h(
+          "div",
+          { style: { display: "flex", gap: "8px", alignItems: "center", marginTop: "6px" } },
+          h("span", { style: { ...styles.meta, flex: "none" } }, text(t, "detail.dirLabel")),
+          h("input", {
+            style: styles.input,
+            value: dirDraft,
+            placeholder: text(t, "detail.dirPlaceholder"),
+            "data-projects-dir-input": "",
+            onChange: (/** @type {any} */ event) => setDirDraft(event.target.value),
+            onKeyDown: (/** @type {any} */ event) => {
+              if (event.key === "Enter") saveDir();
+            },
+          }),
+          h(
+            "button",
+            {
+              type: "button",
+              style: styles.button,
+              "data-projects-dir-save": "",
+              onClick: saveDir,
+            },
+            text(t, "detail.dirSave"),
           ),
         ),
         h(
