@@ -1,6 +1,6 @@
 // @ts-check
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -14,6 +14,13 @@ import {
   looksLikeToolCalls,
   sanitizeReplayAnswer,
 } from "../lib/prompts.js";
+import {
+  DEFAULT_SETTINGS,
+  loadSettings,
+  sanitizeSettings,
+  saveSettings,
+  settingsPath,
+} from "../lib/settings.js";
 import { extractText, makeReadOnlyGuard } from "../lib/subagent.js";
 
 const LOCALE_DIR = new URL("../locale/", import.meta.url).pathname;
@@ -179,4 +186,49 @@ test("parseAllowedTools: 去空、拒绝 send_message、受上限约束", () => 
   assert.deepEqual([...parseAllowedTools({ allowedTools: ["read"] })], ["read"]);
   const many = Array.from({ length: 20 }, (_, i) => `t${i}`);
   assert.equal([...parseAllowedTools({ allowedTools: many })].length, LIMITS.allowedToolsMax);
+});
+
+// --- settings --------------------------------------------------------------
+
+test("settings: 默认值、夹紧与非法输入", () => {
+  assert.deepEqual(sanitizeSettings({}), {
+    schemaVersion: 1,
+    allowedTools: [],
+    historyLimit: DEFAULT_SETTINGS.historyLimit,
+  });
+  const clamped = sanitizeSettings({
+    allowedTools: "read, send_message ,read ,grep",
+    historyLimit: 9999,
+  });
+  assert.deepEqual(clamped.allowedTools, ["read", "grep"], "去空、去重、拒绝 send_message");
+  assert.equal(clamped.historyLimit, 200, "上限夹到 200");
+  assert.equal(sanitizeSettings({ historyLimit: 0 }).historyLimit, 1, "下限夹到 1");
+  assert.deepEqual(sanitizeSettings(null).allowedTools, []);
+  assert.deepEqual(
+    sanitizeSettings({ allowedTools: ["a", "b", "c", "d", "e", "f", "g", "h", "i"] }).allowedTools
+      .length,
+    LIMITS.allowedToolsMax,
+    "白名单条数受上限约束",
+  );
+});
+
+test("settings: 文件缺失返回默认，坏 JSON 静默回落", async () => {
+  const dir = await tempDir();
+  assert.deepEqual((await loadSettings(dir)).allowedTools, []);
+  await mkdir(join(dir, "btw"), { recursive: true });
+  await writeFile(settingsPath(dir), "{not json", "utf8");
+  assert.deepEqual((await loadSettings(dir)).allowedTools, []);
+});
+
+test("settings: 保存是原子替换且只合并已知字段", async () => {
+  const dir = await tempDir();
+  const saved = await saveSettings(dir, { allowedTools: ["read"], historyLimit: 7, unknown: "x" });
+  assert.deepEqual(saved.allowedTools, ["read"]);
+  assert.equal(saved.historyLimit, 7);
+  assert.ok(!("unknown" in saved), "未知字段被丢弃");
+  const reread = await loadSettings(dir);
+  assert.deepEqual(reread.allowedTools, ["read"]);
+  assert.equal(reread.historyLimit, 7);
+  const raw = await readFile(settingsPath(dir), "utf8");
+  assert.ok(raw.trim().startsWith("{"), "落盘是 JSON");
 });

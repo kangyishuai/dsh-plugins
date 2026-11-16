@@ -8,6 +8,7 @@ import { appendRecord, lastRecord, listRecent } from "./history.js";
 import { clip, LIMITS } from "./limits.js";
 import { format, loadMessages, pickLanguage } from "./messages.js";
 import { historyFile, resolveDataRoot } from "./paths.js";
+import { loadSettings, saveSettings } from "./settings.js";
 import { observeUsage, runSideQuestion } from "./subagent.js";
 
 /**
@@ -60,7 +61,9 @@ export class BtwService extends TypertRemoteService {
     this.config = config ?? {};
     this.logger = ctx?.logger ?? console;
     this.dataRoot = resolveDataRoot(this.config);
-    this.allowedTools = parseAllowedTools(this.config);
+    // 配置里的白名单是静态的；设置文件里的会动态覆盖（每次使用前重读）。
+    this.configAllowedTools = parseAllowedTools(this.config);
+    this.allowedTools = this.configAllowedTools;
     this.language = pickLanguage(this.config?.language);
     this.usageBySession = observeUsage(ctx);
     /** @type {Record<string, string>} */
@@ -135,6 +138,8 @@ export class BtwService extends TypertRemoteService {
       };
     }
 
+    const stored = await loadSettings(this.dataRoot).catch(() => undefined);
+    const allowedTools = stored === undefined ? this.allowedTools : new Set(stored.allowedTools);
     const history = await listRecent(file, LIMITS.replayRecords).catch(() => []);
     const outcome = await runSideQuestion({
       ctx: this.scoped,
@@ -142,7 +147,7 @@ export class BtwService extends TypertRemoteService {
       agent,
       question: question.text,
       history,
-      allowedTools: this.allowedTools,
+      allowedTools,
       signal: invocation?.signal,
       usageBySession: this.usageBySession,
     });
@@ -200,6 +205,36 @@ export class BtwService extends TypertRemoteService {
     return lastRecord(historyFile(this.dataRoot, String(input.sessionId ?? "")));
   }
 
+  /**
+   * 读当前设置（client 设置面板用）。
+   * @param {undefined} request 参数必须存在且是单一标识符（网关 SRC 校验）。
+   * @returns {Promise<any>}
+   */
+  async settings(request) {
+    void request;
+    const stored = await loadSettings(this.dataRoot);
+    return {
+      ...stored,
+      configAllowedTools: [...this.configAllowedTools],
+      readOnly: stored.allowedTools.length === 0,
+    };
+  }
+
+  /**
+   * 更新设置（只接受已知字段，未知字段忽略）。
+   * @param {{ allowedTools?: string, historyLimit?: number } | undefined} request
+   * @returns {Promise<any>}
+   */
+  async updateSettings(request) {
+    const input = request ?? {};
+    const saved = await saveSettings(this.dataRoot, {
+      ...(input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools }),
+      ...(input.historyLimit === undefined ? {} : { historyLimit: input.historyLimit }),
+    });
+    this.allowedTools = new Set(saved.allowedTools);
+    return { ...saved, readOnly: saved.allowedTools.length === 0 };
+  }
+
   /** @param {any} record */
   formatAnswer(record) {
     const usage = record.cost ?? {};
@@ -225,3 +260,5 @@ export class BtwService extends TypertRemoteService {
 
 declareRemote(BtwService, "history");
 declareRemote(BtwService, "last");
+declareRemote(BtwService, "settings");
+declareRemote(BtwService, "updateSettings");

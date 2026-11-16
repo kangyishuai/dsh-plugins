@@ -100,3 +100,19 @@ ego 与用户共用浏览器，宿主每轮用新 token 生成 `dsh-auth-<hash>`
 
 修法（已实现在 `scripts/smoke-btw.mjs`）：**只删回环地址上的 `dsh-auth-*`**，且每轮开头与结尾各清一次；
 绝不动用户自己的其它 cookie。
+
+## 设置分节（v0.2）的验证状态
+
+**已验证（单测，17 项）**：
+
+- `sanitizeSettings`：默认值、上下限夹紧（1–200）、去空/去重、**拒绝 `send_message`**、白名单条数上限
+- `loadSettings`：文件缺失返回默认；坏 JSON 静默回落（不让插件因设置损坏而不可用）
+- `saveSettings`：原子替换（临时文件 + rename）、只合并已知字段、未知字段丢弃
+
+**未验证（如实标注）**：`settings.section` 的**渲染与交互**还没在真机上看过。
+在临时 profile 里点「设置」会先弹「开始使用 / 添加 API Key」门禁，拿不到真正的设置对话框；
+换到已登录的桌面版即可验证（v0.2 发版前的待办）。
+
+对应的 `data-*` 锚点已就位，桌面回归可直接断言：
+`data-btw-settings`、`data-btw-setting-tools`、`data-btw-setting-limit`、
+`data-btw-settings-more`、`data-btw-settings-extra`、`data-btw-settings-save`。

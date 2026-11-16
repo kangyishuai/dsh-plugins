@@ -40,6 +40,17 @@ window.__ModuleLoader__.load({
       failed: "读取旁问历史失败",
       sent: "已提交，答案会出现在对话里",
       sendFailed: "提交失败（输入框不可用）",
+      "settings.nav": "旁问",
+      "settings.title": "旁问（只读）",
+      "settings.tools": "允许旁问使用的工具",
+      "settings.toolsHint": "留空 = 完全只读（推荐）。多个工具用逗号分隔；send_message 永不放行。",
+      "settings.limit": "每会话保留条数",
+      "settings.more": "更多设置",
+      "settings.save": "保存",
+      "settings.saved": "已保存",
+      "settings.failed": "保存失败",
+      "settings.mode": "模式",
+      "settings.readOnly": "只读",
     };
     const en = {
       button: "btw",
@@ -52,6 +63,18 @@ window.__ModuleLoader__.load({
       failed: "Could not read side-question history",
       sent: "Submitted; the answer appears in the conversation",
       sendFailed: "Could not submit (composer unavailable)",
+      "settings.nav": "Side questions",
+      "settings.title": "Side questions (read-only)",
+      "settings.tools": "Tools the side question may use",
+      "settings.toolsHint":
+        "Empty = fully read-only (recommended). Separate names with commas; send_message is never allowed.",
+      "settings.limit": "Records kept per session",
+      "settings.more": "More settings",
+      "settings.save": "Save",
+      "settings.saved": "Saved",
+      "settings.failed": "Save failed",
+      "settings.mode": "Mode",
+      "settings.readOnly": "read-only",
     };
 
     const CSS = [
@@ -67,6 +90,8 @@ window.__ModuleLoader__.load({
       ".dsh-btw-dim{color:var(--dsw-alias-label-tertiary,GrayText);padding:6px 0;}",
       ".dsh-btw-err{color:var(--dsw-alias-state-error-primary,#d9534f);padding:6px 0;}",
       ".dsh-btw-row{display:flex;gap:6px;margin-top:8px;}",
+      ".dsh-btw-setrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:6px 0;}",
+      ".dsh-btw-setlabel{min-width:0;color:var(--dsw-alias-label-secondary,GrayText);}",
       ".dsh-btw-input{flex:1 1 auto;min-width:0;resize:vertical;min-height:52px;padding:6px 8px;border-radius:var(--dsw-radius-sm,6px);border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));background:var(--dsw-alias-bg-base,Canvas);color:var(--dsw-alias-label-primary,CanvasText);font:inherit;}",
     ].join("");
 
@@ -423,6 +448,159 @@ window.__ModuleLoader__.load({
           ),
         );
       }
+
+      /** 设置分节（约定 §7.2：首屏 ≤3 行、可直改、无改动时禁用保存）。 */
+      function BtwSettings(/** @type {any} */ props) {
+        const api = props?.api;
+        const [loaded, setLoaded] = React.useState(/** @type {any} */ (null));
+        const [tools, setTools] = React.useState("");
+        const [limit, setLimit] = React.useState("");
+        const [saving, setSaving] = React.useState(false);
+        const [notice, setNotice] = React.useState("");
+        const [expanded, setExpanded] = React.useState(false);
+
+        const hydrate = React.useCallback((/** @type {any} */ value) => {
+          if (!value || typeof value !== "object") return;
+          setLoaded(value);
+          setTools(Array.isArray(value.allowedTools) ? value.allowedTools.join(", ") : "");
+          setLimit(String(value.historyLimit ?? ""));
+        }, []);
+
+        React.useEffect(() => {
+          const call = api && typeof api.settings === "function" ? api.settings : undefined;
+          if (!call) return;
+          Promise.resolve(call()).then((value) => hydrate(value));
+        }, [api, hydrate]);
+
+        const dirty =
+          loaded !== null &&
+          (tools !== (loaded.allowedTools ?? []).join(", ") ||
+            limit !== String(loaded.historyLimit ?? ""));
+
+        const save = async () => {
+          const call =
+            api && typeof api.updateSettings === "function" ? api.updateSettings : undefined;
+          if (!call || saving) return;
+          setSaving(true);
+          setNotice("");
+          const next = await Promise.resolve(
+            call({ allowedTools: tools, historyLimit: Number(limit) }),
+          ).catch(() => undefined);
+          setSaving(false);
+          if (next && typeof next === "object") {
+            hydrate(next);
+            setNotice(t("settings.saved"));
+          } else {
+            setNotice(t("settings.failed"));
+          }
+        };
+
+        const row = (
+          /** @type {string} */ label,
+          /** @type {any} */ control,
+          /** @type {string} */ hint,
+        ) =>
+          h(
+            "div",
+            { className: "dsh-btw-setrow" },
+            h("span", { className: "dsh-btw-setlabel" }, label),
+            control,
+            hint === "" ? null : h("div", { className: "dsh-btw-meta" }, hint),
+          );
+
+        return h(
+          "div",
+          { "data-btw-settings": "true" },
+          h(
+            "div",
+            { className: "dsh-btw-setrow" },
+            h("span", { className: "dsh-btw-setlabel" }, t("settings.mode")),
+            h(
+              "span",
+              { className: "dsh-btw-a" },
+              loaded === null
+                ? "…"
+                : loaded.readOnly
+                  ? t("settings.readOnly")
+                  : `${loaded.allowedTools.length}`,
+            ),
+          ),
+          row(
+            t("settings.tools"),
+            h("input", {
+              className: "dsh-btw-input",
+              "data-btw-setting-tools": "true",
+              value: tools,
+              placeholder: "read, grep",
+              onChange: (/** @type {any} */ event) => setTools(String(event?.target?.value ?? "")),
+            }),
+            "",
+          ),
+          h(
+            "div",
+            { className: "dsh-btw-setrow" },
+            h(
+              "button",
+              {
+                type: "button",
+                className: "dsh-btw-btn",
+                "data-btw-settings-more": "true",
+                onClick: () => setExpanded((/** @type {boolean} */ value) => !value),
+              },
+              t("settings.more"),
+            ),
+            h(
+              "button",
+              {
+                type: "button",
+                className: "dsh-btw-btn",
+                "data-btw-settings-save": "true",
+                disabled: !dirty || saving,
+                onClick: () => void save(),
+              },
+              t("settings.save"),
+            ),
+            notice === "" ? null : notice,
+          ),
+          expanded
+            ? h(
+                "div",
+                { "data-btw-settings-extra": "true" },
+                row(
+                  t("settings.limit"),
+                  h("input", {
+                    className: "dsh-btw-input",
+                    "data-btw-setting-limit": "true",
+                    value: limit,
+                    onChange: (/** @type {any} */ event) =>
+                      setLimit(String(event?.target?.value ?? "")),
+                  }),
+                  "",
+                ),
+                h("div", { className: "dsh-btw-meta" }, t("settings.toolsHint")),
+              )
+            : null,
+        );
+      }
+
+      ctx.slots.inject("settings.section", () =>
+        ctx.slots.register(
+          {
+            name: "settings.section",
+            id: "btw",
+            order: 94,
+            label: () => t("settings.nav"),
+            locale: NS,
+            inject: () => ({
+              api: {
+                settings: () => callRemote("settings", undefined),
+                updateSettings: (/** @type {any} */ patch) => callRemote("updateSettings", patch),
+              },
+            }),
+          },
+          (/** @type {any} */ slotProps) => h(BtwSettings, slotProps),
+        ),
+      );
 
       ctx.slots.inject("conversation.input.left", () =>
         ctx.slots.register(
