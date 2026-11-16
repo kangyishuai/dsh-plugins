@@ -97,7 +97,7 @@ export function reduce(view, event) {
         awaitingUser: false,
         lastTurnFailed: failed,
         state: failed ? "failed" : "done",
-        unread: failed ? false : true,
+        unread: !failed,
       };
       break;
     }

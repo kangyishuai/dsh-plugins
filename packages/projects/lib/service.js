@@ -2,6 +2,9 @@
 // host 半的 Typert Remote Service：项目 CRUD、会话归属、上下文注入的挂载点。
 // 注意（docs/runtime/0.2.1-rc.5.md §6.10）：Remote 方法必须声明在**这个被导出的类自身原型**上，
 // 否则网关不会 claim 端点，所有 /api/projects/* 返回 404。
+import { execFile as execFileCallback } from "node:child_process";
+import { promisify } from "node:util";
+
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 
 import { attachProjectContext } from "./attach.js";
@@ -30,6 +33,31 @@ function declareRemote(Proto, method) {
     throw new Error(`projects: cannot declare Remote method ${method}`);
   }
   initializers[0].call(Object.create(Proto.prototype));
+}
+
+const execFile = promisify(execFileCallback);
+
+/**
+ * 跑一次 git。
+ * 为什么不用 ctx.subprocess：那是个策略 seam（SubprocessSpawnSpec 要 argv/stdio/graceMs，
+ * 返回的是带采集上限的句柄），而这里只需要一次短命令的 stdout/exit code。
+ * 插件本身就跑在宿主 Node 进程里，node:child_process 总是可用；git 的失败一律由调用方降级。
+ * @param {string[]} args
+ * @param {string} cwd
+ * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
+ */
+async function runGit(args, cwd) {
+  try {
+    const { stdout, stderr } = await execFile("git", args, { cwd, maxBuffer: 8 * 1024 * 1024 });
+    return { code: 0, stdout: String(stdout), stderr: String(stderr) };
+  } catch (error) {
+    const anyError = /** @type {any} */ (error);
+    return {
+      code: Number(anyError?.code ?? 1),
+      stdout: String(anyError?.stdout ?? ""),
+      stderr: String(anyError?.stderr ?? ""),
+    };
+  }
 }
 
 /**
@@ -61,15 +89,24 @@ export class ProjectsService extends TypertRemoteService {
     this.attached = new Map();
     /** @type {any} */
     this.agents = undefined;
+    /** @type {any} */
+    this.sessionController = undefined;
 
     // Cordis 里未 inject 的服务属性访问会抛错（0.2.2-rc.3 实测），必须显式 inject。
-    ctx.inject?.(["agents"], (/** @type {any} */ scope) => {
-      this.agents = scope.agents;
+    // inject 回调是异步的：外部可能在本服务刚构造、回调还没跑时就调 createThread。
+    // 用一个就绪 Promise 兜住这个时序（配上超时，避免依赖缺失时永久挂起）。
+    /** @type {() => void} */
+    let markReady = () => {};
+    this.servicesReady = new Promise((resolve) => {
+      markReady = () => resolve(undefined);
     });
-    /** @type {any} */
-    this.subprocess = undefined;
-    ctx.inject?.(["subprocess"], (/** @type {any} */ scope) => {
-      this.subprocess = scope.subprocess;
+    ctx.inject?.(["agents", "sessionController"], (/** @type {any} */ scope) => {
+      this.agents = scope.agents;
+      this.sessionController = scope.sessionController;
+      markReady();
+    });
+    ctx.inject?.(["sessionController"], (/** @type {any} */ scope) => {
+      this.sessionController = scope.sessionController;
     });
 
     try {
@@ -128,6 +165,11 @@ export class ProjectsService extends TypertRemoteService {
     } catch {
       /* ignore */
     }
+  }
+
+  /** 等注入就绪（最多 5s）；超时视为依赖缺失，由调用方报错。 */
+  async waitServices() {
+    await Promise.race([this.servicesReady, new Promise((resolve) => setTimeout(resolve, 5000))]);
   }
 
   /** @returns {any} */
@@ -285,36 +327,16 @@ export class ProjectsService extends TypertRemoteService {
    * @param {string} task
    */
   async createThread(projectId, task) {
+    await this.waitServices();
     const store = this.requireStore();
     const sc = this.sessionController;
     if (!sc) throw new Error("projects: session controller unavailable");
-    const runGit = async (/** @type {string[]} */ args, /** @type {string} */ cwd) => {
-      const handle = this.subprocess?.spawn
-        ? this.subprocess.spawn({ command: "git", args, cwd, stdio: "pipe" })
-        : undefined;
-      if (!handle) return { code: 1, stdout: "", stderr: "no-subprocess" };
-      /** @type {string} */
-      let stdout = "";
-      /** @type {string} */
-      let stderr = "";
-      handle.stdout?.on?.("data", (/** @type {any} */ chunk) => {
-        stdout += String(chunk);
-      });
-      handle.stderr?.on?.("data", (/** @type {any} */ chunk) => {
-        stderr += String(chunk);
-      });
-      const code = await new Promise((resolve) => {
-        handle.on?.("close", (/** @type {number} */ exitCode) => resolve(exitCode ?? 1));
-        handle.on?.("error", () => resolve(1));
-      });
-      return { code, stdout, stderr };
-    };
     const thread = await createIsolatedThread({
       store,
       dataRoot: this.dataRoot,
       projectId,
       deps: {
-        runGit,
+        runGit: runGit,
         createSession: async (/** @type {{cwd: string}} */ request) => {
           const created = await sc.create({ cwd: request.cwd });
           return { sessionId: String(created.sessionId) };
@@ -346,25 +368,6 @@ export class ProjectsService extends TypertRemoteService {
    */
   async reclaimThread(sessionId) {
     const store = this.requireStore();
-    const runGit = async (/** @type {string[]} */ args, /** @type {string} */ cwd) => {
-      const handle = this.subprocess?.spawn
-        ? this.subprocess.spawn({ command: "git", args, cwd, stdio: "pipe" })
-        : undefined;
-      if (!handle) return { code: 1, stdout: "", stderr: "no-subprocess" };
-      let stdout = "";
-      let stderr = "";
-      handle.stdout?.on?.("data", (/** @type {any} */ chunk) => {
-        stdout += String(chunk);
-      });
-      handle.stderr?.on?.("data", (/** @type {any} */ chunk) => {
-        stderr += String(chunk);
-      });
-      const code = await new Promise((resolve) => {
-        handle.on?.("close", (/** @type {number} */ exitCode) => resolve(exitCode ?? 1));
-        handle.on?.("error", () => resolve(1));
-      });
-      return { code, stdout, stderr };
-    };
     const result = await reclaimThreadWorktree({ store, sessionId, deps: { runGit } });
     store.save();
     return result;
