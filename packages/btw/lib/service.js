@@ -179,25 +179,25 @@ export class BtwService extends TypertRemoteService {
 
   /**
    * 只读历史查询（给 client 半用）。
-   * @param {string} sessionId
-   * @param {number} [limit]
+   * 参数必须是单个标识符、**不能有默认值/解构/剩余参数**——网关注册时会做 SRC 签名校验
+   * （dsh-api-gateway: "SRC method ... must use unique identifier parameters"）。
+   * @param {{ sessionId?: string, limit?: number } | undefined} request
    * @returns {Promise<any[]>}
    */
-  async history(sessionId, limit = LIMITS.replayRecords) {
-    const file = historyFile(this.dataRoot, sessionId);
-    return listRecent(
-      file,
-      Math.min(Number(limit) || LIMITS.replayRecords, LIMITS.perSessionRecords),
-    );
+  async history(request) {
+    const input = request ?? {};
+    const limit = Math.min(Number(input.limit) || LIMITS.replayRecords, LIMITS.perSessionRecords);
+    return listRecent(historyFile(this.dataRoot, String(input.sessionId ?? "")), limit);
   }
 
   /**
-   * 最近一条旁问（裸 `/btw` 重开用）。
-   * @param {string} sessionId
+   * 最近一条旁问（裸 `/btw` 重开用）。同上：单标识符参数，无默认值。
+   * @param {{ sessionId?: string } | undefined} request
    * @returns {Promise<any | undefined>}
    */
-  async last(sessionId) {
-    return lastRecord(historyFile(this.dataRoot, sessionId));
+  async last(request) {
+    const input = request ?? {};
+    return lastRecord(historyFile(this.dataRoot, String(input.sessionId ?? "")));
   }
 
   /** @param {any} record */

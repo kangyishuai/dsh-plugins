@@ -41,6 +41,7 @@
     "smoke:artifacts": "node scripts/smoke-artifacts.mjs",
     "smoke:artifacts-desktop": "node scripts/smoke-artifacts-desktop.mjs",
     "smoke:btw": "node scripts/smoke-btw.mjs",
+    "smoke:btw-desktop": "node scripts/smoke-btw-desktop.mjs",
     "smoke:index": "node scripts/smoke-index.mjs",
     "smoke:next-step": "node scripts/smoke-next-step.mjs",
     "smoke:next-step-desktop": "node scripts/smoke-next-step-desktop.mjs",
