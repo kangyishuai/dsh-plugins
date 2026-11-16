@@ -58,7 +58,9 @@
     "typecheck": "tsc -p .",
     "verify": "pnpm lint && pnpm typecheck && pnpm check && pnpm check:docs && pnpm check:public && pnpm test",
     "version-packages": "changeset version && pnpm install --lockfile-only",
-    "wt": "node scripts/worktree.mjs"
+    "wt": "node scripts/worktree.mjs",
+    "smoke:casefile": "node scripts/smoke-casefile.mjs",
+    "gate:casefile": "node scripts/gate.mjs casefile"
   },
   "simple-git-hooks": {
     "pre-commit": "pnpm exec lint-staged && node scripts/check-public.mjs",
