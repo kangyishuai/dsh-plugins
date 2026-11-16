@@ -132,3 +132,24 @@ ego 与用户共用浏览器，宿主每轮用新 token 生成 `dsh-auth-<hash>`
 
 这样一旦把插件装进已登录的 desktop profile，一条命令即可验证设置 UI（当前在临时
 profile 里无法验证，因为有登录门禁）。
+
+## v0.2 发版就绪度（2026-11-17，变基到合并后的 main 之后重验）
+
+```
+pnpm gate btw --skip-desktop   → PASS btw 门禁全绿（3 步，20s）
+pnpm smoke:btw --deep          → 7 PASS / 2 SKIP / 0 FAIL
+  history status=done cost={"inputTokens":2400,"cacheReadTokens":8192,"outputTokens":2,"totalTokens":10594}
+```
+
+结论：变基没有让 host 路径回归（`status=done`、缓存命中 77%、写缓存 0）。
+**唯一未完成的是桌面回归**，它要求先把包装进已登录的 desktop profile 并重启：
+
+```bash
+cd packages/btw && pnpm pack --pack-destination /tmp
+dsh plugin --profile desktop add /tmp/kangyishuai-dsh-btw-0.<x>.tgz
+open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1
+pnpm gate btw          # 这次不跳过第 4 步
+```
+
+桌面回归会断言：client 半注入、浮层开关、设置分节（`data-btw-settings` 等）。
+不满足前置时会打印可操作的安装提示，而不是裸 FAIL。
