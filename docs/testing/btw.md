@@ -153,3 +153,28 @@ pnpm gate btw          # 这次不跳过第 4 步
 
 桌面回归会断言：client 半注入、浮层开关、设置分节（`data-btw-settings` 等）。
 不满足前置时会打印可操作的安装提示，而不是裸 FAIL。
+
+## 发布包体检（2026-11-17）
+
+`cd packages/btw && pnpm pack --pack-destination /tmp` 后检查 tarball：
+
+```
+18 个文件 / 22K：
+  cordis.patch.yml
+  lib/{index,service,subagent,history,prompts,limits,messages,paths,config,settings}.js
+  lib/client.js
+  locale/{en,zh}.json
+  LICENSE / README.md / README.zh-CN.md / package.json
+```
+
+`test/` 未进包（`files` 白名单生效）。
+
+依赖检查（约定 §1）：
+
+| 项                                                      | 结果                                                                                                              |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `dependencies` / `peerDependencies` / `devDependencies` | 全空                                                                                                              |
+| 是否把 `@deepseek-ai/*` 写进依赖                        | **没有**（`lib/service.js` 里 `import "@deepseek-ai/dsh-typert-protocol"` 是运行时由宿主解析，与 next-step 同形） |
+| `engines.dsh`                                           | 未声明（按约定 §4，预发布阶段不写范围，用 README 兼容性表代替）                                                   |
+| `dsh.client`                                            | `{ platform: "web", inject: ["@deepseek-ai/dsh-client-ui-conversation", "@deepseek-ai/dsh-client-ui-slots"] }`    |
+| `exports`                                               | `.` / `./package.json` / `./client`                                                                               |
