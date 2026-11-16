@@ -14,6 +14,9 @@ DSH groups sessions by working directory and gives the model no project-level me
 
 - **Project as a first-class context unit** — a durable record with a goal, directories, budget, and policy. Session membership is stored by the plugin (not derived from an immutable `cwd`).
 - **Project instructions and memory injection** _(M1, in progress)_ — every session attached to a project receives the project's standing rules and `MEMORY.md` index before each request.
+- **Project-level budget gate** — a daily thread cap and a concurrent cap are enforced before a thread is created (token-level spend caps come with the coordinator).
+- **Pause, archive, delete** — pause is reversible and only blocks new threads; delete follows ADR 0002: one-line impact (threads, size, running, restorable), a two-step confirm, and everything moved into `trash/` with a `manifest.json`.
+- **In-app notifications** — a global overlay poller raises a toast when a thread newly fails or starts waiting on you; the browser Notification API stays off by default.
 - **Isolated parallel threads** — one session per task. When the project directory is a Git repository, the thread gets its own worktree under `<repoParent>/.dsh-worktrees/<repo>/`; otherwise it degrades to a shared directory with an explicit warning instead of failing.
 - **Overview with what needs you** — five thread states (`waiting-user > failed > working > done > idle`) derived from the durable session event log, not from model self-reports; whatever needs you sorts first.
 - **Optional coordinator** _(M3)_ — event-driven wake, rule-first routing with an auditable decision record, and a per-project autonomy level. Off by default (`L1` = propose, do not start).

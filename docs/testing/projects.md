@@ -44,7 +44,7 @@ pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体�
 | `thread.test.js`   | **真 git 集成**：建隔离线程、非 git 降级、建失败降级、脏工作区拒绝回收、启动对账              |
 | `index.test.js`    | 清单自检：`dsh.bundle.patch` 存在、`files` 白名单逐项存在、**不把宿主包声明成依赖**           |
 
-## 2. web 端到端冒烟（34 项）
+## 2. web 端到端冒烟（43 项）
 
 `pnpm smoke:projects` 在临时 home 里种子一个**真实 git 仓库**作为工作区，然后：
 
@@ -54,7 +54,11 @@ pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体�
 4. 详情页 → 三个页签可切换 → 返回回到列表
 5. **绑定项目目录** → **新建线程** → 断言线程行、`data-projects-thread-state`、
    `branch` 形如 `dsh/…`、**worktree 目录真实存在且在主工作树之外**
-6. 宿主侧断言：`projects.json` 是合法 JSON、`format=1`、默认策略 L1、无 `.tmp` 残留、截图落盘
+6. **暂停/恢复**项目 → 断言详情页有按钮、预算用量可见、宿主侧 `state=paused`
+7. **删除**一个一次性项目 → 断言影响面文案、确认后项目从列表消失、回收站有 `manifest.json` 且写明可恢复
+8. **通知器**挂载在 `shell.overlay`（全局轮询，不依赖浏览器 Notification 授权）
+9. 宿主侧断言：`projects.json` 合法 JSON、`format=1`、默认策略 L1、无 `.tmp` 残留、
+   `threads` 有归属、worktree 目录真实存在且在主工作树之外、回收站清单存在、截图落盘
 
 ## 3. 桌面只读回归
 
