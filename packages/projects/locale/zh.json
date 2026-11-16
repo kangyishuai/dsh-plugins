@@ -22,6 +22,17 @@
     "settings.hint": "项目元数据与内容文件都在本机；不会写任何远端仓库。",
     "menu.attach": "归属到项目…",
     "menu.loading": "加载中…",
-    "menu.empty": "还没有项目，先在项目面板里建一个"
+    "menu.empty": "还没有项目，先在项目面板里建一个",
+    "detail.back": "返回",
+    "detail.loading": "加载中…",
+    "detail.tab.threads": "线程 ({count})",
+    "detail.tab.memory": "记忆",
+    "detail.tab.audit": "审计",
+    "detail.threadsEmpty": "还没有会话归属到这个项目。在会话行的「…」菜单里选择「归属到项目…」。",
+    "detail.threadState": "状态：{state}",
+    "detail.instructions": "常设规则（instructions.md）",
+    "detail.memoryIndex": "记忆索引（MEMORY.md）",
+    "detail.emptyFile": "（空）",
+    "detail.auditEmpty": "还没有审计记录。"
   }
 }

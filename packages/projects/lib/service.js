@@ -5,6 +5,7 @@
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 
 import { attachProjectContext } from "./attach.js";
+import { readProjectFiles } from "./project-files.js";
 import { ProjectStore } from "./store.js";
 
 /**
@@ -155,6 +156,30 @@ export class ProjectsService extends TypertRemoteService {
     return this.requireStore().projectOfSession(sessionId) ?? null;
   }
 
+  /**
+   * 项目内容文件（只读）：常设规则与记忆索引。
+   * @param {string} projectId
+   */
+  getProjectContent(projectId) {
+    const store = this.requireStore();
+    if (!store.getProject(projectId)) throw new Error(`projects: unknown project ${projectId}`);
+    const files = readProjectFiles(this.dataRoot, projectId);
+    return { instructions: files.instructions, memoryIndex: files.memoryIndex };
+  }
+
+  /**
+   * 审计尾巴（只读）：默认返回全局最近 100 条，给了 projectId 就只返回该项目的。
+   * @param {string|undefined} projectId
+   */
+  listAudit(projectId) {
+    const store = this.requireStore();
+    const entries = Array.isArray(store.state?.audit) ? store.state.audit : [];
+    const filtered = projectId
+      ? entries.filter((/** @type {any} */ entry) => entry.projectId === projectId)
+      : entries;
+    return filtered.slice(-100);
+  }
+
   // ---- Remote：写 ----
 
   /**
@@ -269,3 +294,5 @@ declareRemote(ProjectsService, "detachThread");
 declareRemote(ProjectsService, "debugAttached");
 declareRemote(ProjectsService, "detachSession");
 declareRemote(ProjectsService, "describe");
+declareRemote(ProjectsService, "getProjectContent");
+declareRemote(ProjectsService, "listAudit");

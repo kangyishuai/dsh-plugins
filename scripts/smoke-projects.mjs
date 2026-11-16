@@ -217,6 +217,67 @@ try {
   });
   add("归属动作没有报错", menuError === "" || !/失败|error/i.test(menuError), menuError);
 
+  // 回到项目面板（上一步归属后视图切到了会话）
+  await page.evaluate(() => {
+    const button = document.querySelector("button[aria-label='项目']") || document.querySelector("button[aria-label='Projects']");
+    if (button) button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  await page.waitForSelector("[data-projects-panel]", { timeout: 15000 });
+  await page.waitForTimeout(1200);
+
+  // 项目详情：点项目行 → 三个页签（线程/记忆/审计）都可切换，返回后回到列表。
+  const detail = await page.evaluate(() => {
+    const row = document.querySelector("[data-projects-row]");
+    if (!row) return "no-row";
+    row.click();
+    return "clicked";
+  });
+  await page.waitForTimeout(1500);
+  const detailState = await page.evaluate(() => ({
+    present: Boolean(document.querySelector("[data-projects-detail]")),
+    tabs: [...document.querySelectorAll("[data-projects-tab]")].map((n) => n.getAttribute("data-projects-tab")),
+    threadsTab: Boolean(document.querySelector("[data-projects-threads], [data-projects-threads-empty]")),
+  }));
+  add(
+    "项目详情可打开且有三个页签",
+    detailState.present && detailState.tabs.length === 3 && detailState.threadsTab,
+    JSON.stringify({ detail, ...detailState }),
+  );
+
+  const memoryTab = await page.evaluate(() => {
+    const tab = document.querySelector('[data-projects-tab="memory"]');
+    if (!tab) return "no-tab";
+    tab.click();
+    return "clicked";
+  });
+  await page.waitForTimeout(900);
+  const memorySeen = await page.evaluate(() =>
+    Boolean(document.querySelector("[data-projects-instructions]") && document.querySelector("[data-projects-memory-index]")),
+  );
+  add("记忆页签渲染规则与索引", memorySeen === true, String(memoryTab));
+
+  const auditTab = await page.evaluate(() => {
+    const tab = document.querySelector('[data-projects-tab="audit"]');
+    if (!tab) return "no-tab";
+    tab.click();
+    return "clicked";
+  });
+  await page.waitForTimeout(900);
+  const auditSeen = await page.evaluate(() =>
+    Boolean(document.querySelector("[data-projects-audit], [data-projects-audit-empty]")),
+  );
+  add("审计页签可渲染（空态也算）", auditSeen === true, String(auditTab));
+
+  const backOk = await page.evaluate(() => {
+    const back = document.querySelector("[data-projects-detail-back]");
+    if (!back) return "no-back";
+    back.click();
+    return "clicked";
+  });
+  await page.waitForTimeout(900);
+  const listBack = await page.evaluate(() => Boolean(document.querySelector("[data-projects-row]")) && !document.querySelector("[data-projects-detail]"));
+  add("返回后回到项目列表", listBack === true, String(backOk));
+
   // 设置分节：本机 profile 的 cordis.patch.yml 可能把设置页整体禁用（该插件 enabled:false），
   // 那就无从打开——记录为 tolerated 而不是失败，真正的分节渲染由桌面回归在可打开的环境里覆盖。
   const openedSettings = await page.evaluate(() => {

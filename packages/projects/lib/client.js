@@ -43,6 +43,17 @@ window.__ModuleLoader__.load({
       "menu.attach": "归属到项目…",
       "menu.loading": "加载中…",
       "menu.empty": "还没有项目，先在项目面板里建一个",
+      "detail.back": "返回",
+      "detail.loading": "加载中…",
+      "detail.tab.threads": "线程 ({count})",
+      "detail.tab.memory": "记忆",
+      "detail.tab.audit": "审计",
+      "detail.threadsEmpty": "还没有会话归属到这个项目。在会话行的「…」菜单里选择「归属到项目…」。",
+      "detail.threadState": "状态：{state}",
+      "detail.instructions": "常设规则（instructions.md）",
+      "detail.memoryIndex": "记忆索引（MEMORY.md）",
+      "detail.emptyFile": "（空）",
+      "detail.auditEmpty": "还没有审计记录。",
     };
     var EN = {
       title: "Projects",
@@ -70,6 +81,18 @@ window.__ModuleLoader__.load({
       "menu.attach": "Add to project…",
       "menu.loading": "Loading…",
       "menu.empty": "No projects yet — create one in the Projects panel first",
+      "detail.back": "Back",
+      "detail.loading": "Loading…",
+      "detail.tab.threads": "Threads ({count})",
+      "detail.tab.memory": "Memory",
+      "detail.tab.audit": "Audit",
+      "detail.threadsEmpty":
+        "No sessions belong to this project yet. Use “Add to project…” in a session's … menu.",
+      "detail.threadState": "state: {state}",
+      "detail.instructions": "Standing rules (instructions.md)",
+      "detail.memoryIndex": "Memory index (MEMORY.md)",
+      "detail.emptyFile": "(empty)",
+      "detail.auditEmpty": "No audit entries yet.",
     };
     var PANEL_ID = "projects";
     var SERVICE = "projects";
@@ -262,6 +285,9 @@ window.__ModuleLoader__.load({
           });
       }, [api, name, creating, refresh, t]);
 
+      var selectedState = useState(null);
+      var selectedId = selectedState[0];
+      var setSelectedId = selectedState[1];
       var describe = view.describe;
       var projects = view.projects || [];
       var summaryText = describe
@@ -319,39 +345,251 @@ window.__ModuleLoader__.load({
         view.error
           ? h("div", { style: styles.error, "data-projects-error": "" }, view.error)
           : null,
-        projects.length === 0 && !view.loading
-          ? h("p", { style: styles.empty, "data-projects-empty": "" }, text(t, "panel.empty"))
-          : h(
-              "div",
-              { style: styles.list, "data-projects-list": "" },
-              projects.map((/** @type {any} */ project) =>
-                h(
-                  "div",
-                  { style: styles.row, key: project.id, "data-projects-row": project.id },
+        selectedId && projects.some((/** @type {any} */ p) => p.id === selectedId)
+          ? h(ProjectDetail, {
+              api: api,
+              t: t,
+              project: projects.find((/** @type {any} */ p) => p.id === selectedId),
+              onBack: () => setSelectedId(null),
+            })
+          : null,
+        selectedId
+          ? null
+          : projects.length === 0 && !view.loading
+            ? h("p", { style: styles.empty, "data-projects-empty": "" }, text(t, "panel.empty"))
+            : h(
+                "div",
+                { style: styles.list, "data-projects-list": "" },
+                projects.map((/** @type {any} */ project) =>
                   h(
                     "div",
-                    { style: styles.rowMain },
-                    h("span", { style: styles.name }, project.name),
+                    {
+                      style: { ...styles.row, cursor: "pointer" },
+                      key: project.id,
+                      "data-projects-row": project.id,
+                      onClick: () => setSelectedId(project.id),
+                    },
+                    h(
+                      "div",
+                      { style: styles.rowMain },
+                      h("span", { style: styles.name }, project.name),
+                      h(
+                        "span",
+                        { style: styles.meta },
+                        // 目标为空时给一句话，别留空白让人以为坏了
+                        (project.goal ? project.goal : text(t, "panel.goalEmpty")) +
+                          (project.threadCount > 0
+                            ? " · " + text(t, "panel.threads", { count: project.threadCount })
+                            : ""),
+                      ),
+                    ),
                     h(
                       "span",
-                      { style: styles.meta },
-                      // 目标为空时给一句话，别留空白让人以为坏了
-                      (project.goal ? project.goal : text(t, "panel.goalEmpty")) +
-                        (project.threadCount > 0
-                          ? " · " + text(t, "panel.threads", { count: project.threadCount })
-                          : ""),
+                      { style: styles.meta, "data-projects-state": project.state },
+                      project.state === "archived"
+                        ? text(t, "panel.state.archived")
+                        : text(t, "panel.state.active"),
                     ),
                   ),
+                ),
+              ),
+      );
+    }
+
+    /**
+     * 项目详情：线程 / 记忆 / 审计三个页签（conventions §7.3：页签 ≤3）。
+     * 只读；写操作留给后续里程碑。
+     * @param {{api: any, t: any, project: any, onBack: () => void}} props
+     */
+    function ProjectDetail(props) {
+      const api = props.api;
+      const t = props.t;
+      const project = props.project;
+      const tabState = useState("threads");
+      const tab = tabState[0];
+      const setTab = tabState[1];
+      const dataState = useState({
+        loading: true,
+        error: "",
+        threads: [],
+        content: null,
+        audit: [],
+      });
+      const data = dataState[0];
+      const setData = dataState[1];
+
+      const load = useCallback(() => {
+        setData((/** @type {any} */ prev) => ({ ...prev, loading: true, error: "" }));
+        Promise.all([
+          call(api.ctx, "listThreads", { projectId: project.id }),
+          call(api.ctx, "getProjectContent", { projectId: project.id }),
+          call(api.ctx, "listAudit", { projectId: project.id }),
+        ]).then(
+          (values) => {
+            setData({
+              loading: false,
+              error: "",
+              threads: Array.isArray(values[0]) ? values[0] : [],
+              content: values[1] || null,
+              audit: Array.isArray(values[2]) ? values[2] : [],
+            });
+          },
+          (error) => {
+            setData({
+              loading: false,
+              error: String(error?.message ?? error),
+              threads: [],
+              content: null,
+              audit: [],
+            });
+          },
+        );
+      }, [api, project.id]);
+
+      useEffect(() => {
+        load();
+      }, [load]);
+
+      const tabs = [
+        { id: "threads", label: text(t, "detail.tab.threads", { count: data.threads.length }) },
+        { id: "memory", label: text(t, "detail.tab.memory") },
+        { id: "audit", label: text(t, "detail.tab.audit") },
+      ];
+
+      const body = (() => {
+        if (data.loading) return h("p", { style: styles.empty }, text(t, "detail.loading"));
+        if (data.error !== "") return h("p", { style: styles.error }, data.error);
+        if (tab === "threads") {
+          if (data.threads.length === 0)
+            return h(
+              "p",
+              { style: styles.empty, "data-projects-threads-empty": "" },
+              text(t, "detail.threadsEmpty"),
+            );
+          return h(
+            "div",
+            { "data-projects-threads": "" },
+            data.threads.map((/** @type {any} */ thread) =>
+              h(
+                "div",
+                {
+                  key: thread.sessionId,
+                  style: styles.row,
+                  "data-projects-thread-row": thread.sessionId,
+                },
+                h(
+                  "div",
+                  { style: styles.rowMain },
+                  h("span", { style: styles.name }, String(thread.sessionId).slice(0, 20)),
                   h(
                     "span",
-                    { style: styles.meta, "data-projects-state": project.state },
-                    project.state === "archived"
-                      ? text(t, "panel.state.archived")
-                      : text(t, "panel.state.active"),
+                    { style: styles.meta },
+                    text(t, "detail.threadState", { state: thread.state }),
                   ),
                 ),
               ),
             ),
+          );
+        }
+        if (tab === "memory") {
+          const content = data.content || {};
+          return h(
+            "div",
+            { "data-projects-memory": "" },
+            h("h3", { style: styles.name }, text(t, "detail.instructions")),
+            h(
+              "pre",
+              {
+                style: { ...styles.meta, whiteSpace: "pre-wrap", margin: "4px 0 12px" },
+                "data-projects-instructions": "",
+              },
+              content.instructions || text(t, "detail.emptyFile"),
+            ),
+            h("h3", { style: styles.name }, text(t, "detail.memoryIndex")),
+            h(
+              "pre",
+              {
+                style: { ...styles.meta, whiteSpace: "pre-wrap", margin: "4px 0" },
+                "data-projects-memory-index": "",
+              },
+              content.memoryIndex || text(t, "detail.emptyFile"),
+            ),
+          );
+        }
+        if (data.audit.length === 0)
+          return h(
+            "p",
+            { style: styles.empty, "data-projects-audit-empty": "" },
+            text(t, "detail.auditEmpty"),
+          );
+        return h(
+          "div",
+          { "data-projects-audit": "" },
+          data.audit.map((/** @type {any} */ entry, /** @type {any} */ index) =>
+            h(
+              "div",
+              { key: String(index), style: styles.row },
+              h(
+                "div",
+                { style: styles.rowMain },
+                h("span", { style: styles.name }, String(entry.action || entry.kind || "?")),
+                h("span", { style: styles.meta }, String(entry.at || "")),
+              ),
+            ),
+          ),
+        );
+      })();
+
+      return h(
+        "div",
+        {
+          "data-projects-detail": project.id,
+          style: { display: "flex", flexDirection: "column", gap: "8px" },
+        },
+        h(
+          "div",
+          { style: { display: "flex", alignItems: "center", gap: "8px" } },
+          h(
+            "button",
+            {
+              type: "button",
+              style: styles.button,
+              "data-projects-detail-back": "",
+              onClick: () => props.onBack(),
+            },
+            text(t, "detail.back"),
+          ),
+          h("span", { style: styles.title }, project.name),
+          h(
+            "span",
+            { style: styles.summary, "data-projects-detail-goal": "" },
+            project.goal || text(t, "panel.goalEmpty"),
+          ),
+        ),
+        h(
+          "div",
+          { style: { display: "flex", gap: "6px", marginTop: "6px" }, role: "tablist" },
+          tabs.map((/** @type {any} */ item) =>
+            h(
+              "button",
+              {
+                type: "button",
+                key: item.id,
+                role: "tab",
+                "aria-selected": tab === item.id ? "true" : "false",
+                "data-projects-tab": item.id,
+                style: {
+                  ...styles.button,
+                  borderColor: tab === item.id ? T.accentText : T.border,
+                  color: tab === item.id ? T.accentText : T.text,
+                },
+                onClick: () => setTab(item.id),
+              },
+              item.label,
+            ),
+          ),
+        ),
+        body,
       );
     }
 

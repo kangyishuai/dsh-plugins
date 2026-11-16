@@ -22,6 +22,17 @@
     "settings.hint": "Project metadata and content files stay local; no remote repository is written.",
     "menu.attach": "Add to project…",
     "menu.loading": "Loading…",
-    "menu.empty": "No projects yet — create one in the Projects panel first"
+    "menu.empty": "No projects yet — create one in the Projects panel first",
+    "detail.back": "Back",
+    "detail.loading": "Loading…",
+    "detail.tab.threads": "Threads ({count})",
+    "detail.tab.memory": "Memory",
+    "detail.tab.audit": "Audit",
+    "detail.threadsEmpty": "No sessions belong to this project yet. Use “Add to project…” in a session's … menu.",
+    "detail.threadState": "state: {state}",
+    "detail.instructions": "Standing rules (instructions.md)",
+    "detail.memoryIndex": "Memory index (MEMORY.md)",
+    "detail.emptyFile": "(empty)",
+    "detail.auditEmpty": "No audit entries yet."
   }
 }
