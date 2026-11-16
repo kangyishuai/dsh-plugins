@@ -7,6 +7,7 @@ import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 import { attachProjectContext } from "./attach.js";
 import { readProjectFiles } from "./project-files.js";
 import { ProjectStore } from "./store.js";
+import { createIsolatedThread, reclaimThreadWorktree } from "./thread.js";
 
 /**
  * 运行时不支持装饰器语法，用命令式方式登记 Remote（与 advisor / next-step 同法）。
@@ -64,6 +65,11 @@ export class ProjectsService extends TypertRemoteService {
     // Cordis 里未 inject 的服务属性访问会抛错（0.2.2-rc.3 实测），必须显式 inject。
     ctx.inject?.(["agents"], (/** @type {any} */ scope) => {
       this.agents = scope.agents;
+    });
+    /** @type {any} */
+    this.subprocess = undefined;
+    ctx.inject?.(["subprocess"], (/** @type {any} */ scope) => {
+      this.subprocess = scope.subprocess;
     });
 
     try {
@@ -273,6 +279,97 @@ export class ProjectsService extends TypertRemoteService {
     };
   }
 
+  /**
+   * 建一个线程（尽力隔离到独立 worktree）。
+   * @param {string} projectId
+   * @param {string} task
+   */
+  async createThread(projectId, task) {
+    const store = this.requireStore();
+    const sc = this.sessionController;
+    if (!sc) throw new Error("projects: session controller unavailable");
+    const runGit = async (/** @type {string[]} */ args, /** @type {string} */ cwd) => {
+      const handle = this.subprocess?.spawn
+        ? this.subprocess.spawn({ command: "git", args, cwd, stdio: "pipe" })
+        : undefined;
+      if (!handle) return { code: 1, stdout: "", stderr: "no-subprocess" };
+      /** @type {string} */
+      let stdout = "";
+      /** @type {string} */
+      let stderr = "";
+      handle.stdout?.on?.("data", (/** @type {any} */ chunk) => {
+        stdout += String(chunk);
+      });
+      handle.stderr?.on?.("data", (/** @type {any} */ chunk) => {
+        stderr += String(chunk);
+      });
+      const code = await new Promise((resolve) => {
+        handle.on?.("close", (/** @type {number} */ exitCode) => resolve(exitCode ?? 1));
+        handle.on?.("error", () => resolve(1));
+      });
+      return { code, stdout, stderr };
+    };
+    const thread = await createIsolatedThread({
+      store,
+      dataRoot: this.dataRoot,
+      projectId,
+      deps: {
+        runGit,
+        createSession: async (/** @type {{cwd: string}} */ request) => {
+          const created = await sc.create({ cwd: request.cwd });
+          return { sessionId: String(created.sessionId) };
+        },
+      },
+    });
+    store.save();
+    if (typeof task === "string" && task.trim() !== "") {
+      try {
+        await sc.prompt(
+          {
+            requestId: `projects-thread-${Date.now()}`,
+            sessionId: thread.sessionId,
+            mode: "queue",
+            content: [{ type: "text", text: task }],
+          },
+          new AbortController().signal,
+        );
+      } catch {
+        /* 投递失败不影响线程本身；面板会显示 idle */
+      }
+    }
+    return thread;
+  }
+
+  /**
+   * 回收一个线程的 worktree（三重判据不满足就拒绝）。
+   * @param {string} sessionId
+   */
+  async reclaimThread(sessionId) {
+    const store = this.requireStore();
+    const runGit = async (/** @type {string[]} */ args, /** @type {string} */ cwd) => {
+      const handle = this.subprocess?.spawn
+        ? this.subprocess.spawn({ command: "git", args, cwd, stdio: "pipe" })
+        : undefined;
+      if (!handle) return { code: 1, stdout: "", stderr: "no-subprocess" };
+      let stdout = "";
+      let stderr = "";
+      handle.stdout?.on?.("data", (/** @type {any} */ chunk) => {
+        stdout += String(chunk);
+      });
+      handle.stderr?.on?.("data", (/** @type {any} */ chunk) => {
+        stderr += String(chunk);
+      });
+      const code = await new Promise((resolve) => {
+        handle.on?.("close", (/** @type {number} */ exitCode) => resolve(exitCode ?? 1));
+        handle.on?.("error", () => resolve(1));
+      });
+      return { code, stdout, stderr };
+    };
+    const result = await reclaimThreadWorktree({ store, sessionId, deps: { runGit } });
+    store.save();
+    return result;
+  }
+
   /** @param {string} sessionId */
   detachThread(sessionId) {
     const store = this.requireStore();
@@ -291,6 +388,8 @@ declareRemote(ProjectsService, "updateProject");
 declareRemote(ProjectsService, "archiveProject");
 declareRemote(ProjectsService, "attachThread");
 declareRemote(ProjectsService, "detachThread");
+declareRemote(ProjectsService, "createThread");
+declareRemote(ProjectsService, "reclaimThread");
 declareRemote(ProjectsService, "debugAttached");
 declareRemote(ProjectsService, "detachSession");
 declareRemote(ProjectsService, "describe");

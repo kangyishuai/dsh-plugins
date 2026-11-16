@@ -280,6 +280,23 @@ export class ProjectStore {
     return { ...this.state.threads[sessionId] };
   }
 
+  /**
+   * 记录线程的 worktree 归属（建 worktree 成功后调用）。
+   * @param {string} sessionId
+   * @param {{ branch?: string|null, worktree?: string|null, baseSha?: string|null, state?: string }} patch
+   */
+  setThreadWorktree(sessionId, patch) {
+    const current = this.state.threads[sessionId];
+    if (!current) throw new Error(`projects: unknown thread ${sessionId}`);
+    if (typeof patch.branch === "string" || patch.branch === null) current.branch = patch.branch;
+    if (typeof patch.worktree === "string" || patch.worktree === null)
+      current.worktree = patch.worktree;
+    if (typeof patch.baseSha === "string" || patch.baseSha === null)
+      current.baseSha = patch.baseSha;
+    if (typeof patch.state === "string") current.state = patch.state;
+    return { ...current };
+  }
+
   /** @param {string} sessionId */
   detachThread(sessionId) {
     const existed = Boolean(this.state.threads[sessionId]);
