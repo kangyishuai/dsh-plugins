@@ -28,7 +28,7 @@
     "gate:session-delete": "node scripts/gate.mjs session-delete",
     "gate:session-rewind": "node scripts/gate.mjs session-rewind",
     "index": "node scripts/build-index.mjs",
-    "lint": "biome check .",
+    "lint": "biome ci --error-on-warnings .",
     "list-plugins": "node scripts/list-plugins.mjs",
     "new": "node scripts/new-plugin.mjs",
     "prepare": "simple-git-hooks",
