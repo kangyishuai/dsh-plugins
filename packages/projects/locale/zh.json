@@ -53,6 +53,8 @@
     "detail.deleteConfirm": "确认删除",
     "detail.deleteCancel": "取消",
     "detail.deleteDetails": "详情（路径与恢复位置）",
-    "detail.deleteImpact": "{summary}"
+    "detail.deleteImpact": "{summary}",
+    "notify.failed": "{count} 个线程失败",
+    "notify.waiting": "{count} 个线程在等你"
   }
 }

@@ -92,6 +92,11 @@ try {
   await page.goto(${JSON.stringify(url)});
   await page.waitForSelector("button[aria-label='项目'], button[aria-label='Projects']", { timeout: 40000 });
   add("页面已加载（导航入口出现）", true, "");
+  // 通知器挂在 shell.overlay 上（全局轮询，不依赖浏览器 Notification 授权）
+  const notifierMounted = await page.evaluate(() => Boolean(document.querySelector("[data-projects-notifier]")));
+  add("全局通知器已挂载", notifierMounted === true, String(notifierMounted));
+
+
 
   const dismissed = await page.evaluate(() => {
     const dialog = document.querySelector("[role=dialog], dialog");

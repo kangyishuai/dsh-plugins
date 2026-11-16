@@ -53,6 +53,8 @@
     "detail.deleteConfirm": "Delete",
     "detail.deleteCancel": "Cancel",
     "detail.deleteDetails": "Details (path and restore location)",
-    "detail.deleteImpact": "{summary}"
+    "detail.deleteImpact": "{summary}",
+    "notify.failed": "{count} threads failed",
+    "notify.waiting": "{count} threads waiting on you"
   }
 }

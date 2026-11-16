@@ -74,6 +74,8 @@ window.__ModuleLoader__.load({
       "detail.deleteCancel": "取消",
       "detail.deleteDetails": "详情（路径与恢复位置）",
       "detail.deleteImpact": "{summary}",
+      "notify.failed": "{count} 个线程失败",
+      "notify.waiting": "{count} 个线程在等你",
     };
     var EN = {
       title: "Projects",
@@ -133,6 +135,8 @@ window.__ModuleLoader__.load({
       "detail.deleteCancel": "Cancel",
       "detail.deleteDetails": "Details (path and restore location)",
       "detail.deleteImpact": "{summary}",
+      "notify.failed": "{count} threads failed",
+      "notify.waiting": "{count} threads waiting on you",
     };
     var PANEL_ID = "projects";
     var SERVICE = "projects";
@@ -1043,6 +1047,147 @@ window.__ModuleLoader__.load({
       );
     }
 
+    /**
+     * 全局通知：轮询各活跃项目的线程状态，新出现「失败 / 等你」时弹一条应用内 toast。
+     * 不依赖浏览器 Notification（那条需要用户手势授权，默认不开）。
+     * @param {{api: any, t: any, onOpen?: () => void}} props
+     */
+    function ProjectsNotifier(props) {
+      const api = props.api;
+      const t = props.t;
+      const state = useState(null);
+      const notice = state[0];
+      const setNotice = state[1];
+      const previous = React.useRef({ threads: {}, projects: [] });
+
+      useEffect(() => {
+        let cancelled = false;
+        const tick = () => {
+          call(api.ctx, "listProjects").then(
+            (projects) => {
+              if (cancelled || !Array.isArray(projects)) return;
+              const active = projects.filter(
+                (/** @type {any} */ project) => project.state === "active",
+              );
+              Promise.all(
+                active.map((/** @type {any} */ project) =>
+                  call(api.ctx, "progress", { projectId: project.id }).then(
+                    (value) => ({ projectId: project.id, value }),
+                    () => null,
+                  ),
+                ),
+              ).then((results) => {
+                if (cancelled) return;
+                /** @type {Record<string, {state: string, projectId?: string}>} */
+                const threads = {};
+                for (const result of results) {
+                  if (!result?.value) continue;
+                  for (const row of result.value.rows ?? []) {
+                    threads[row.sessionId] = {
+                      state: row.view?.state ?? "idle",
+                      projectId: result.projectId,
+                    };
+                  }
+                }
+                const next = {
+                  threads,
+                  projects: active.map((/** @type {any} */ project) => project.id),
+                };
+                const items = diffAttention(previous.current, next);
+                previous.current = next;
+                const counts = summarize(items);
+                const parts = [];
+                if (counts.failed > 0)
+                  parts.push(text(t, "notify.failed", { count: counts.failed }));
+                if (counts.waiting > 0)
+                  parts.push(text(t, "notify.waiting", { count: counts.waiting }));
+                const line = parts.join(" · ");
+                if (line !== "") setNotice({ text: line, at: Date.now() });
+              });
+            },
+            () => {},
+          );
+        };
+        tick();
+        const timer = setInterval(tick, 5000);
+        return () => {
+          cancelled = true;
+          clearInterval(timer);
+        };
+      }, [api]);
+
+      useEffect(() => {
+        if (!notice) return undefined;
+        const timer = setTimeout(() => setNotice(null), 8000);
+        return () => clearTimeout(timer);
+      }, [notice]);
+
+      return h(
+        "div",
+        { "data-projects-notifier": "", style: { display: "contents" } },
+        notice
+          ? h(
+              "div",
+              {
+                role: "status",
+                "data-projects-toast": "",
+                style: {
+                  position: "fixed",
+                  right: "16px",
+                  bottom: "16px",
+                  zIndex: 60,
+                  maxWidth: "320px",
+                  padding: "10px 12px",
+                  borderRadius: "8px",
+                  border: `1px solid ${T.border}`,
+                  background: T.bg,
+                  color: T.text,
+                  boxShadow: "0 6px 20px rgba(0,0,0,0.18)",
+                  fontSize: "13px",
+                  cursor: "pointer",
+                },
+                onClick: () => {
+                  setNotice(null);
+                  if (typeof props.onOpen === "function") props.onOpen();
+                },
+              },
+              notice.text,
+            )
+          : null,
+      );
+    }
+
+    /** 与 lib/notify.js 同源的实现（client 半不能 import，逻辑保持逐行一致）。 */
+    /**
+     * @param {any} previous @param {any} next
+     */
+    function diffAttention(previous, next) {
+      const before = previous?.threads ?? {};
+      const after = next?.threads ?? {};
+      const out = [];
+      for (const sessionId of Object.keys(after)) {
+        const entry = after[sessionId];
+        const was = before[sessionId]?.state;
+        if (entry.state === "failed" && was !== "failed") {
+          out.push({ kind: "failed", projectId: String(entry.projectId || ""), sessionId });
+        } else if (entry.state === "waiting-user" && was !== "waiting-user") {
+          out.push({ kind: "waiting-user", projectId: String(entry.projectId || ""), sessionId });
+        }
+      }
+      return out;
+    }
+
+    /** @param {any[]} items */
+    function summarize(items) {
+      const list = Array.isArray(items) ? items : [];
+      const failed = list.filter((item) => item.kind === "failed").length;
+      const waiting = list.filter((item) => item.kind === "waiting-user").length;
+      const parts = [];
+      if (failed > 0) parts.push(`${failed} 个线程失败`);
+      if (waiting > 0) parts.push(`${waiting} 个线程在等你`);
+      return { failed, waiting, text: parts.join(" · ") };
+    }
+
     /** 侧栏图标入口：宿主会传 {size, active}。 */
     /** @param {any} props */
     function ProjectsPanelIcon(props) {
@@ -1173,6 +1318,23 @@ window.__ModuleLoader__.load({
             ),
           ),
         "projects: session menu",
+      );
+
+      c.effect(
+        () =>
+          c.slots.inject("shell.overlay", () =>
+            c.slots.register(
+              {
+                name: "shell.overlay",
+                id: "projects-notifier",
+                order: 60,
+                locale: NS,
+                inject: () => ({ api: api, t: t, onOpen: () => c.selectPanel(PANEL_ID) }),
+              },
+              ProjectsNotifier,
+            ),
+          ),
+        "projects: notifier",
       );
 
       c.effect(
