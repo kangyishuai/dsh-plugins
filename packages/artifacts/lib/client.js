@@ -72,7 +72,7 @@ window.__ModuleLoader__.load({
       const [error, setError] = React.useState("");
       const reload = React.useCallback(async () => {
         const result = await props.rpc("list");
-        if (!result || result.ok !== true) {
+        if (result?.ok !== true) {
           setError("读不到工件列表");
           return;
         }

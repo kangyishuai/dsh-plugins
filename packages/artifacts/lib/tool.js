@@ -84,7 +84,7 @@ export const TOOL_OUTPUT_SCHEMA = Object.freeze({
  * @returns {Array<{ type: "text", text: string }>}
  */
 export function renderToolOutput(_args, value) {
-  if (!value || value.ok !== true) {
+  if (value?.ok !== true) {
     return [{ type: "text", text: `artifact failed: ${String(value?.error ?? "unknown error")}` }];
   }
   if (value.action === "list") {
