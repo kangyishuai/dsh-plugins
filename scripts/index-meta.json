@@ -25,6 +25,12 @@
         "en": "Tools",
         "zh": "工具"
       }
+    },
+    "artifact": {
+      "title": {
+        "en": "Artifacts",
+        "zh": "工件"
+      }
     }
   },
   "plugins": {
@@ -60,13 +66,13 @@
       },
       "descriptionZh": "按需第二意见：主模型自己决定何时咨询一个单独配置的顾问模型，只给建议，从不放行或执行。"
     },
-    "@kangyishuai/dsh-btw": {
-      "category": "tools",
+    "@kangyishuai/dsh-artifacts": {
+      "category": "artifact",
       "title": {
-        "en": "btw Side Questions",
-        "zh": "btw 旁问"
+        "en": "Artifacts",
+        "zh": "工件"
       },
-      "descriptionZh": "不打断主任务地提一个只读旁问：fork 只读子代理执行，答案不进对话历史，复用主会话前缀缓存（实测命中 57%→94%），历史落盘可重开。"
+      "descriptionZh": "把会话产出变成可看、可改、可回溯的本地工件：模型用 artifact 工具发布自包含页面，时间线只留一行摘要，右栏沙箱面板原地刷新，每个版本各留一份文件。"
     }
   }
 }

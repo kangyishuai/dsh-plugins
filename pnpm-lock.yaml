@@ -38,7 +38,7 @@ importers:
 
   packages/advisor: {}
 
-  packages/btw: {}
+  packages/artifacts: {}
 
   packages/next-step: {}
 
