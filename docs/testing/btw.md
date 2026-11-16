@@ -73,3 +73,30 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-btw-0.<x>.tgz
 
 另外一条**agent 自己跑会撞上的前置**：脚本检测到「停止生成」按钮（当前会话正在跑回合）时只报 SKIP，
 因为 agent 的回合就跑在同一个桌面版里。做法是把可见会话切到一个空闲会话再跑。
+
+## v0.2 client 半端到端实测（2026-11-16，分支 `spike/btw-service`）
+
+在临时宿主 + ego-browser 里驱动真实页面，走完整链路（浮层内发问）：
+
+```
+BEFORE: {"overlay":true,"input":true,"send":true,"items":1}
+TYPED:  "reply with exactly OK"
+POLL2:  {"items":2,
+         "meta":"新增 2429 · 命中缓存 8192 · 1815ms",
+         "answer":"OK","err":""}
+```
+
+→ 浮层打开、输入、提交（经 composer façade 的 `setDraft` + `submit`）、
+host fork 作答、历史自动刷新、成本徽章渲染，全部工作。
+缓存命中 `8192/(2429+8192) ≈ 77%`，与 host-only 时期的 84–87% 同量级。
+
+**为什么发问必须借 composer**：真实 `Agent` 只能从命令/工具调用上下文取（`ctx.agents.get()` 返回
+`undefined`，见 ADR 0016），所以浮层把 `/btw <问题>` 塞进输入框再提交，而不是直接调 Remote。
+
+## 冒烟脚本的 cookie 卫生（约定 §6.3，必须做）
+
+多次跑 web 冒烟后出现过 `net::ERR_HTTP_RESPONSE_CODE_FAILURE` —— 这是约定 §6.3 记录的 **431 坑**：
+ego 与用户共用浏览器，宿主每轮用新 token 生成 `dsh-auth-<hash>` cookie，累积后请求头超限。
+
+修法（已实现在 `scripts/smoke-btw.mjs`）：**只删回环地址上的 `dsh-auth-*`**，且每轮开头与结尾各清一次；
+绝不动用户自己的其它 cookie。
