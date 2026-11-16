@@ -201,6 +201,77 @@ const main = async () => {
       check("没有遗留浮层", closed.overlay === false, JSON.stringify(closed));
     }
 
+    // ---- 设置分节（只读）--------------------------------------------
+    // 打开账号菜单 → 设置 → 点「旁问」nav → 断言分节渲染 → Esc 关闭。
+    // 打不开设置对话框（未登录 / 门禁）时只报 SKIP，不制造失败。
+    const openedSettings = await cdp.evaluate(`(() => {
+      const label = (b) => ((b.getAttribute('aria-label') || '') + ' ' + (b.textContent || '')).trim();
+      const acct = [...document.querySelectorAll('button')].find((b) => /账号|Account/i.test(label(b)));
+      if (!acct) return 'no-account-button';
+      acct.click();
+      return 'clicked';
+    })()`);
+    await sleep(900);
+    const clickedSettings = await cdp.evaluate(`(() => {
+      const label = (b) => ((b.getAttribute('aria-label') || '') + ' ' + (b.textContent || '')).trim();
+      const item = [...document.querySelectorAll('button,[role=menuitem]')].find((b) => /^设置$|^Settings$/i.test(label(b)));
+      if (!item) return false;
+      item.click();
+      return true;
+    })()`);
+    await sleep(1500);
+    const settingsState = await cdp.evaluate(`(() => {
+      const dialog = document.querySelector('[role="dialog"]');
+      const title = dialog ? dialog.getAttribute('aria-label') || '' : '';
+      return {
+        dialog: dialog !== null,
+        title,
+        gated: /开始使用|Get started|添加 API Key|Add API key/i.test(dialog ? dialog.innerText || '' : ''),
+        nav: [...document.querySelectorAll('[role=tab],nav button')].map((b) => (b.textContent || '').trim()).filter(Boolean).slice(0, 16),
+      };
+    })()`);
+    if (openedSettings !== "clicked" || clickedSettings !== true) {
+      skip("设置分节", `打不开设置入口（account=${openedSettings}, settings=${clickedSettings}）`);
+    } else if (settingsState.gated) {
+      skip("设置分节", "设置对话框被「开始使用 / 添加 API Key」门禁挡住（需要已登录的桌面版）");
+    } else {
+      const clickedNav = await cdp.evaluate(`(() => {
+        const nodes = [...document.querySelectorAll('[role=tab],nav button,button')]
+          .filter((b) => (b.textContent || '').trim() === '旁问' && !b.hasAttribute('data-btw-toggle'));
+        if (nodes.length === 0) return false;
+        nodes[0].click();
+        return true;
+      })()`);
+      await sleep(1200);
+      const section = await cdp.evaluate(`(() => ({
+        hasSection: !!document.querySelector('[data-btw-settings]'),
+        hasTools: !!document.querySelector('[data-btw-setting-tools]'),
+        hasSave: !!document.querySelector('[data-btw-settings-save]'),
+        saveDisabled: (document.querySelector('[data-btw-settings-save]') || {}).disabled ?? null,
+        hasMore: !!document.querySelector('[data-btw-settings-more]'),
+        extraVisible: !!document.querySelector('[data-btw-settings-extra]'),
+      }))()`);
+      if (clickedNav !== true) {
+        skip("设置分节", `设置对话框里没有「旁问」nav（可见：${settingsState.nav.join(" / ")}）`);
+      } else {
+        check("设置分节渲染", section.hasSection === true, JSON.stringify(section));
+        check("首屏有工具白名单输入", section.hasTools === true, JSON.stringify(section));
+        check("无改动时保存按钮禁用", section.saveDisabled === true, JSON.stringify(section));
+        check("「更多设置」默认折叠", section.extraVisible === false, JSON.stringify(section));
+      }
+      // Esc 关掉设置对话框
+      for (const type of ["keyDown", "keyUp"]) {
+        await cdp.send("Input.dispatchKeyEvent", {
+          type,
+          key: "Escape",
+          code: "Escape",
+          windowsVirtualKeyCode: 27,
+          nativeVirtualKeyCode: 53,
+        });
+      }
+      await sleep(600);
+    }
+
     try {
       await cdp.screenshot(join(shots, "after.png"));
       console.log(`截图：${join(shots, "after.png")}`);

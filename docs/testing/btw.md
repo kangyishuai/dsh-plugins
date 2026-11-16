@@ -116,3 +116,19 @@ ego 与用户共用浏览器，宿主每轮用新 token 生成 `dsh-auth-<hash>`
 对应的 `data-*` 锚点已就位，桌面回归可直接断言：
 `data-btw-settings`、`data-btw-setting-tools`、`data-btw-setting-limit`、
 `data-btw-settings-more`、`data-btw-settings-extra`、`data-btw-settings-save`。
+
+### 桌面回归现在覆盖设置分节
+
+`pnpm smoke:btw-desktop --require` 新增一段：账号菜单 → 设置 → 点「旁问」nav →
+断言 `[data-btw-settings]`、工具白名单输入、**无改动时保存按钮禁用**、「更多设置」默认折叠 → Esc 关闭。
+
+三种无法断言的情形都只报 **SKIP 并说明原因**，不制造假失败：
+
+| 情形                     | SKIP 文案                                                               |
+| ------------------------ | ----------------------------------------------------------------------- |
+| 找不到账号/设置入口      | `打不开设置入口（account=…, settings=…）`                               |
+| 设置对话框被登录门禁挡住 | `设置对话框被「开始使用 / 添加 API Key」门禁挡住（需要已登录的桌面版）` |
+| 设置里没有「旁问」nav    | `设置对话框里没有「旁问」nav（可见：…）`                                |
+
+这样一旦把插件装进已登录的 desktop profile，一条命令即可验证设置 UI（当前在临时
+profile 里无法验证，因为有登录门禁）。
