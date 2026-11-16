@@ -45,9 +45,9 @@ documentation:
   - changed-files:
       - any-glob-to-any-file: "packages/advisor/**"
 
-"plugin:artifacts":
+"plugin:btw":
   - changed-files:
-      - any-glob-to-any-file: "packages/artifacts/**"
+      - any-glob-to-any-file: "packages/btw/**"
 
 "plugin:artifacts":
   - changed-files:

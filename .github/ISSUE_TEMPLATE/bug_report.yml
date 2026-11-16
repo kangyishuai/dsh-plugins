@@ -12,6 +12,7 @@ body:
         - "@kangyishuai/dsh-session-rewind"
         - "@kangyishuai/dsh-next-step"
         - "@kangyishuai/dsh-advisor"
+        - "@kangyishuai/dsh-btw"
         - "@kangyishuai/dsh-artifacts"
         - other
     validations:
