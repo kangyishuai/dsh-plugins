@@ -113,6 +113,20 @@ const main = async () => {
   }
 
   await mkdir(SHOTS, { recursive: true }).catch(() => {});
+
+  /** 关掉首启「预览版说明」对话框：它会把其余内容置为 inert，导致后续聚焦/点击失效。 */
+  const dismissFirstRunDialog = async () => {
+    return cdp.evaluate(`(() => {
+      const dialog = document.querySelector("[role=dialog], dialog");
+      if (!dialog) return "none";
+      const buttons = [...dialog.querySelectorAll("button")];
+      const primary = dialog.querySelector("[data-modal-autofocus]") || buttons[buttons.length - 1];
+      if (!primary) return "no-button";
+      primary.click();
+      return "dismissed";
+    })()`);
+  };
+
   try {
     // 等页面可交互（紧接着别的 GUI 冒烟跑时渲染线程可能还在忙）
     const deadline = Date.now() + 15_000;
@@ -129,31 +143,130 @@ const main = async () => {
 
     const info = await cdp.evaluate(`(() => ({
       title: document.title,
-      pluginStyles: [...document.querySelectorAll("style[data-plugin]")].map((s) => s.dataset.plugin).filter((p) => p && p.includes(${JSON.stringify(PLUGIN)})),
-      buttons: [...document.querySelectorAll("button")].map((b) => b.getAttribute("aria-label") || "").filter(Boolean),
+      booted: (window.__DSH_BOOT__?.entries ?? []).map((entry) => entry.name ?? entry.id ?? ""),
+      styles: [...document.querySelectorAll("style[data-plugin]")].map((s) => s.dataset.plugin).filter(Boolean),
+      labels: [...document.querySelectorAll("button")].map((b) => b.getAttribute("aria-label") || "").filter(Boolean),
     }))()`);
     check(
       "连接到 DSH 桌面 UI",
       typeof info?.title === "string" && info.title.length > 0,
       info?.title ?? "",
     );
-    // 约定：client 半的 <style> 要带 data-plugin，这里据此断言插件真的加载了。
+
+    const loaded = (info?.booted ?? []).some((name) => String(name).includes(PLUGIN));
+    if (!loaded) {
+      const count = Array.isArray(info?.booted) ? info.booted.length : 0;
+      const message = `插件未装进当前 live profile（${PLUGIN}；已加载 ${count} 个 client 模块）`;
+      if (values.require === true) {
+        check("插件已加载（client 半）", false, message);
+        throw new Error(message);
+      }
+      console.log(`SKIP ${message}`);
+      console.log("（发版门禁请加 --require；装插件后需重启桌面版，host 半才会生效。）");
+      return;
+    }
+    check("插件已加载（client 半）", true, "");
+
+    const dismissed = await dismissFirstRunDialog();
+    check("首启对话框已处理（不再 inert）", dismissed !== "no-button", dismissed);
+    await sleep(400);
+
+    // 1) 侧栏导航入口
+    const navLabel = await cdp.evaluate(`(() => {
+      const names = ["项目", "Projects"];
+      for (const name of names) {
+        const button = document.querySelector('button[aria-label="' + name + '"]');
+        if (button) return name;
+      }
+      return "";
+    })()`);
+    check("侧栏有「项目」入口", typeof navLabel === "string" && navLabel !== "", navLabel);
+
+    // 2) 打开面板
+    await cdp.evaluate(`(() => {
+      const button = document.querySelector('button[aria-label="项目"]') || document.querySelector('button[aria-label="Projects"]');
+      if (button) button.click();
+    })()`);
+    let opened = false;
+    for (let i = 0; i < 25; i += 1) {
+      opened = await cdp.evaluate(`Boolean(document.querySelector("[data-projects-panel]"))`);
+      if (opened === true) break;
+      await sleep(200);
+    }
+    check("项目面板已渲染", opened === true, "");
+    await sleep(600);
+
+    const status = await cdp
+      .evaluate(
+        `document.querySelector("[data-projects-panel]")?.getAttribute("data-projects-status") ?? ""`,
+      )
+      .catch(() => "");
     check(
-      "插件 client 半已加载（样式注入）",
-      info?.pluginStyles?.length > 0,
-      JSON.stringify(info?.pluginStyles ?? []),
+      "面板状态可断言（data-projects-status）",
+      /^(loading|ready)\|\d+\|(ok|error)\|\S*$/u.test(String(status)),
+      String(status),
     );
 
-    // TODO: 换成你的入口断言，例如：
-    // check("侧栏/头部/页脚有入口", info?.buttons?.some((aria) => aria.includes("<你的入口 aria-label>")), "");
+    const crashed = await cdp
+      .evaluate(`document.querySelector("[data-projects-crash]")?.textContent ?? ""`)
+      .catch(() => "");
+    check("面板没有渲染崩溃", crashed === "", String(crashed).slice(0, 200));
 
-    await cdp.screenshot(join(SHOTS, "01-overview.png"));
+    const summary = await cdp
+      .evaluate(`document.querySelector("[data-projects-summary]")?.textContent ?? ""`)
+      .catch(() => "");
+    check(
+      "摘要文案已本地化（非裸 key）",
+      typeof summary === "string" && summary !== "" && !summary.includes("panel."),
+      String(summary),
+    );
 
-    // TODO: 在这里加只读交互（打开面板 → 切页签 → Esc 关闭），并断言每一步。
+    // 3) 只读断言：新建控件存在，但不提交（默认只读）
+    const controls = await cdp.evaluate(`(() => ({
+      input: Boolean(document.querySelector("[data-projects-create-input]")),
+      button: Boolean(document.querySelector("[data-projects-create]")),
+    }))()`);
+    check(
+      "新建控件存在（不提交）",
+      controls?.input === true && controls?.button === true,
+      JSON.stringify(controls ?? {}),
+    );
+    await cdp.screenshot(join(SHOTS, "01-projects-panel.png"));
 
-    check("（骨架）只读回归可执行", true, "把上面的 TODO 换成本插件的真实断言");
+    // 4) 设置分节
+    const openedSettings = await cdp.evaluate(`(() => {
+      const button = [...document.querySelectorAll("button")].find((b) => /设置|Settings/u.test(b.getAttribute("aria-label") || ""));
+      if (!button) return "no-button";
+      button.click();
+      return "clicked";
+    })()`);
+    let settingsSeen = false;
+    for (let i = 0; i < 25; i += 1) {
+      settingsSeen = await cdp.evaluate(
+        `Boolean(document.querySelector("[data-projects-settings]"))`,
+      );
+      if (settingsSeen === true) break;
+      await sleep(200);
+    }
+    check("设置页出现「项目」分节", settingsSeen === true, String(openedSettings));
+    await cdp.screenshot(join(SHOTS, "02-projects-settings.png"));
+
+    // 5) 关闭设置并回到会话，确认界面未崩
+    await cdp.evaluate(
+      `document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))`,
+    );
+    await sleep(500);
+    const bodyLength = await cdp.evaluate(`document.body.innerText.trim().length`);
+    check(
+      "关闭后界面仍可用",
+      typeof bodyLength === "number" && bodyLength > 50,
+      String(bodyLength),
+    );
+    await cdp.screenshot(join(SHOTS, "03-back.png"));
   } catch (error) {
-    check("桌面回归执行", false, error instanceof Error ? error.message : String(error));
+    if (!checks.some((item) => item.ok === false)) {
+      check("桌面回归执行", false, error instanceof Error ? error.message : String(error));
+    }
   } finally {
     cdp?.ws.close();
   }
