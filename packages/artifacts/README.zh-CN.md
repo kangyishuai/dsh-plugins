@@ -33,6 +33,21 @@ dsh plugin --profile desktop add @kangyishuai/dsh-artifacts
 - **无外联、无遥测、无 install 脚本。**
 - **调试面（待删）：** `window.__dshArtifacts` 与 Remote `appendDev` 只在 `DSH_ARTIFACTS_DEV=1` 或插件配置 `dev: true` 时开启，用于驱动验证脚本。
 
+## 共享与局域网
+
+工件是**本地**的：URL 是 `http://127.0.0.1:<端口>/artifacts/<id>`，由持有数据的 DSH 宿主提供。本插件不提供"一键局域网共享"，在给出显式开关之前也不会提供——宿主无法只暴露单条路由：
+
+- **桌面版不能绑定局域网地址。** 它的 host 子进程不接受 `--host`，`dsh-app://app/*` 只向 loopback 转发并附带 host cookie。0.2.2-rc.3 实测：`lib/main.js` 里完全没有 `--host` / `--trusted-host` 的处理。
+- **`--host` 属于 web profile。** `dsh --profile web --host <局域网 IP>` 只绑定一个具体的本机接口，并且暴露的是**整个 GUI**——所有 `/api` 路由、所有插件路由，以及本插件的 `/artifacts/`。`--public-url` 只改对外广告的地址、不授予任何信任，通配地址会被拒绝。让别人访问之前请自行加 `--trusted-host`、反向代理与 `--tls-cert/--tls-key`，并把它当作你自己的安全决策。
+
+需要给别人看时，优先走这三条：
+
+1. **导出单文件**（默认、最安全）：自包含 HTML，任何渠道都能发。
+2. **你自己的静态托管**（GitHub Pages、对象存储、内网 web 服务器）——访问控制与生命周期由你掌握。
+3. **本机反向代理**：网络里已有反代时，转发这条 loopback URL。
+
+不要把工件 URL 当作访问控制边界：路由鉴权的是浏览器会话，不是"某个人"。
+
 ## 限制
 
 - 单页、HTML 上限 2 MiB；没有后端、没有共享、没有评论。路由只发静态 markup（`script-src 'none'`），可交互页面在面板里预览，不通过 URL 提供。

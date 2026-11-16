@@ -33,6 +33,21 @@ Restart the DSH desktop app afterwards. For the web profile, use `dsh plugin --p
 - **No network egress, no telemetry, no install scripts.**
 - **Debug surface (to be removed):** `window.__dshArtifacts` and the `appendDev` Remote method are enabled only when `DSH_ARTIFACTS_DEV=1` or the plugin config sets `dev: true`; they exist to drive the verification scripts.
 
+## Sharing and LAN access
+
+Artifacts are **local**: the URL is `http://127.0.0.1:<port>/artifacts/<id>`, served by the DSH host that owns the data. This plugin does not offer "one-click LAN sharing", and it never will without a deliberate opt-in, because the host cannot expose a single route:
+
+- **The desktop app cannot bind a LAN address.** Its host child process takes no `--host`, and `dsh-app://app/*` forwards to loopback with a host cookie. Verified on 0.2.2-rc.3: `lib/main.js` contains no `--host` or `--trusted-host` handling at all.
+- **`--host` belongs to the web profile.** `dsh --profile web --host <LAN IP>` binds one concrete local interface and exposes **the whole GUI** — every `/api` route, every plugin route, and this plugin's `/artifacts/` route. `--public-url` only changes the advertised address; it grants no trust, and wildcard hosts are rejected. Add `--trusted-host`, a reverse proxy, and `--tls-cert/--tls-key` before letting anyone else reach it, and treat it as your own security decision.
+
+If someone else needs to see an artifact, use one of these instead:
+
+1. **Export a single file** (the default, safest): self-contained HTML you can send over any channel.
+2. **Your own static hosting** (GitHub Pages, an object store, an internal web server) — you own the access control and the lifetime.
+3. **A local reverse proxy** in front of the loopback URL, if your network already has one.
+
+Do not treat an artifact URL as an access-control boundary: the route authenticates the browser session, not a person.
+
 ## Limits
 
 - Single page, 2 MiB of HTML, no backend, no sharing, no comments. The route serves static markup only (`script-src 'none'`); interactive pages are previewed in the panel, not through the URL.
