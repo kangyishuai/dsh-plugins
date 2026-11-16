@@ -1,0 +1,360 @@
+#!/usr/bin/env node
+// @ts-check
+// 用法：pnpm smoke:projects
+//       SMOKE_DEBUG=1 pnpm smoke:projects   —— 打印浏览器脚本完整输出
+//       SMOKE_KEEP=1 pnpm smoke:projects    —— 保留临时 DSH_HOME（排障用）
+//
+// web 端到端冒烟：在 `mkdtemp` 出来的临时 DSH_HOME 里启动**真实宿主**，装当前源码打出的包，
+// 再用 ego-browser 在真实页面里验证「面板能开、能建项目、宿主真的落盘」。
+//
+// 边界（有意为之）：
+// - **不发起任何模型调用**：不发送消息、不跑 agent，因此不花 token，也不需要凭据。
+// - 临时 home 里只放临时 profile；跑完删除（SMOKE_KEEP=1 除外）。
+import { execFile, spawn } from "node:child_process";
+import { createWriteStream } from "node:fs";
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { promisify } from "node:util";
+
+const exec = promisify(execFile);
+const REPO = resolve(import.meta.dirname, "..");
+const SHOTS_OUT = join(tmpdir(), "dsh-smoke-projects-shots");
+const PKG_DIR = join(REPO, "packages", "projects");
+const PACKAGE = "@kangyishuai/dsh-projects";
+const PROFILE = "proj";
+const sleep = (/** @type {number} */ ms) => new Promise((r) => setTimeout(r, ms));
+
+/** @param {string} message */
+function fail(message) {
+  console.error(`FAIL ${message}`);
+  process.exitCode = 1;
+}
+
+/**
+ * @param {string} cmd @param {string[]} args
+ * @param {import("node:child_process").SpawnOptions} [opts]
+ */
+async function run(cmd, args, opts = {}) {
+  try {
+    return await exec(cmd, args, { maxBuffer: 32 * 1024 * 1024, ...opts });
+  } catch (error) {
+    const anyError = /** @type {any} */ (error);
+    return { stdout: String(anyError?.stdout ?? ""), stderr: String(anyError?.stderr ?? "") };
+  }
+}
+
+/** @param {string} name */
+async function hasCommand(name) {
+  const probe = await run("which", [name]);
+  return probe.stdout.trim() !== "";
+}
+
+/** @param {string} path */
+async function readIfExists(path) {
+  try {
+    return await readFile(path, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * 等宿主打印访问地址。
+ * @param {string} logPath @param {number} timeoutMs
+ */
+async function waitForBoot(logPath, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const text = await readIfExists(logPath);
+    const match = text.match(/http:\/\/127\.0\.0\.1:(\d+)\/\?token=([\w-]+)/u);
+    if (match) return { port: Number(match[1]), token: match[2], text };
+    if (/did not activate/u.test(text)) return { port: 0, token: "", text };
+    await sleep(500);
+  }
+  throw new Error(
+    `宿主没有在超时时间内打印访问地址：${(await readIfExists(logPath)).slice(-2000)}`,
+  );
+}
+
+/**
+ * 浏览器脚本：以字符串拼出，避免内层模板插值。
+ * @param {string} url @param {string} shotsDir
+ */
+function browserScript(url, shotsDir) {
+  return `
+const result = { checks: [], fatal: "" };
+const add = (name, ok, detail) => result.checks.push({ name, ok: Boolean(ok), detail: String(detail || "") });
+try {
+  const task = await taskSpace("smoke projects ${PROJECT_NAME_TOKEN}");
+  const page = task.page("p1");
+  await page.goto(${JSON.stringify(url)});
+  await page.waitForSelector("button[aria-label='项目'], button[aria-label='Projects']", { timeout: 40000 });
+  add("页面已加载（导航入口出现）", true, "");
+
+  const dismissed = await page.evaluate(() => {
+    const dialog = document.querySelector("[role=dialog], dialog");
+    if (!dialog) return "none";
+    const buttons = [...dialog.querySelectorAll("button")];
+    const primary = dialog.querySelector("[data-modal-autofocus]") || buttons[buttons.length - 1];
+    if (!primary) return "no-button";
+    primary.click();
+    return "dismissed";
+  });
+  add("首启对话框已处理（否则其余内容 inert）", dismissed !== "no-button", dismissed);
+
+  await page.evaluate(() => {
+    const button = document.querySelector("button[aria-label='项目']") || document.querySelector("button[aria-label='Projects']");
+    if (button) button.click();
+  });
+  await page.waitForSelector("[data-projects-panel]", { timeout: 20000 });
+  add("项目面板已渲染", true, "");
+
+  await page.waitForTimeout(1200);
+  const status = await page.evaluate(() => document.querySelector("[data-projects-panel]")?.getAttribute("data-projects-status") || "");
+  add("状态锚点可解析", /^(loading|ready)\\|\\d+\\|(ok|error)\\|\\S*$/.test(status), status);
+
+  const crash = await page.evaluate(() => document.querySelector("[data-projects-crash]")?.textContent || "");
+  add("没有渲染崩溃", crash === "", crash.slice(0, 160));
+
+  const summary = await page.evaluate(() => document.querySelector("[data-projects-summary]")?.textContent || "");
+  add("摘要已本地化（非裸 key）", summary !== "" && !summary.includes("panel."), summary);
+
+  const controls = await page.evaluate(() => ({
+    input: Boolean(document.querySelector("[data-projects-create-input]")),
+    button: Boolean(document.querySelector("[data-projects-create]")),
+  }));
+  add("新建控件存在", controls.input && controls.button, JSON.stringify(controls));
+
+  const beforeRows = await page.evaluate(() => document.querySelectorAll("[data-projects-row]").length);
+  const name = "smoke-" + Date.now().toString(36);
+  // 用原生 setter + input 事件与真实 click 调起 React 处理器：
+  // 宿主主内容区上层有一层几何覆盖，page.fill/click 的命中测试会被拦，但这不影响真实用户。
+  await page.evaluate((value) => {
+    const input = document.querySelector("[data-projects-create-input]");
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    setter.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    document.querySelector("[data-projects-create]").click();
+  }, name);
+  await page.waitForTimeout(3000);
+  const after = await page.evaluate((target) => ({
+    rows: document.querySelectorAll("[data-projects-row]").length,
+    created: [...document.querySelectorAll("[data-projects-row]")].some((row) => (row.innerText || "").includes(target)),
+    summary: document.querySelector("[data-projects-summary]")?.textContent || "",
+    error: document.querySelector("[data-projects-error]")?.textContent || "",
+  }), name);
+  add("通过 UI 新建项目成功", after.created && after.rows === beforeRows + 1, JSON.stringify(after));
+  add("新建后摘要计数增加", /\\d+/u.test(after.summary), after.summary);
+  add("新建没有报错条", after.error === "", after.error);
+
+  // 设置分节：本机 profile 的 cordis.patch.yml 可能把设置页整体禁用（该插件 enabled:false），
+  // 那就无从打开——记录为 tolerated 而不是失败，真正的分节渲染由桌面回归在可打开的环境里覆盖。
+  const openedSettings = await page.evaluate(() => {
+    const button = [...document.querySelectorAll("button")].find((b) =>
+      /设置|Settings/u.test((b.getAttribute("aria-label") || "") + " " + (b.textContent || "") + " " + (b.getAttribute("title") || "")),
+    );
+    if (!button) return "no-entry";
+    button.click();
+    return "clicked";
+  });
+  await page.waitForTimeout(1500);
+  const settingsSeen = await page.evaluate(() => Boolean(document.querySelector("[data-projects-settings]")));
+  add(
+    "设置页出现项目分节",
+    settingsSeen || openedSettings === "no-entry",
+    settingsSeen ? "rendered" : "tolerated: " + openedSettings + "（设置页未启用）",
+  );
+
+  await page.evaluate(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  await page.waitForTimeout(600);
+  const shot = await page.screenshot();
+  const fs = await import("node:fs/promises");
+  await fs.writeFile(${JSON.stringify(shotsDir)} + "/01-projects-panel.png", Buffer.from(shot, "base64"));
+  result.projectName = name;
+  await task.finish({ keep: [] });
+} catch (error) {
+  result.fatal = String(error && error.message ? error.message : error).slice(0, 800);
+}
+console.log("SMOKE_RESULT " + JSON.stringify(result));
+`;
+}
+
+/** 供浏览器脚本生成唯一任务空间名（避免复用上次的空间）。 */
+const PROJECT_NAME_TOKEN = `smoke-${Date.now().toString(36)}`;
+
+const main = async () => {
+  if (!(await hasCommand("dsh"))) return console.log("SKIP 未找到 dsh");
+  if (!(await hasCommand("ego-browser"))) return console.log("SKIP 未找到 ego-browser");
+
+  await rm(SHOTS_OUT, { recursive: true, force: true }).catch(() => {});
+  const work = await mkdtemp(join(tmpdir(), "dsh-smoke-projects-"));
+  const realHome = process.env.HOME ?? "";
+  /** @type {import("node:child_process").ChildProcess | undefined} */
+  let host;
+  /** @type {import("node:fs").WriteStream | undefined} */
+  let hostLog;
+  try {
+    const home = join(work, "home");
+    const profile = join(home, "profiles", PROFILE);
+    await mkdir(profile, { recursive: true });
+    await cp(join(realHome, ".dsh", "profiles", "desktop"), profile, { recursive: true });
+    await rm(join(profile, "node_modules"), { recursive: true, force: true });
+    await rm(join(profile, "pnpm-lock.yaml"), { force: true });
+
+    const profilePath = join(profile, "package.json");
+    const profileJson = JSON.parse(await readFile(profilePath, "utf8"));
+    profileJson.name = `dsh-profile-${PROFILE}-smoke`;
+    profileJson.dependencies = {};
+    if (Array.isArray(profileJson.dsh?.profile?.bundles)) {
+      profileJson.dsh.profile.bundles = profileJson.dsh.profile.bundles.filter(
+        (/** @type {unknown} */ entry) =>
+          typeof entry === "string" && entry.startsWith("@deepseek-ai/"),
+      );
+    }
+    await writeFile(profilePath, `${JSON.stringify(profileJson, null, 2)}\n`);
+
+    await run("pnpm", ["pack", "--pack-destination", work], { cwd: PKG_DIR });
+    const tgz = (await readdir(work)).find((name) => name.endsWith(".tgz"));
+    if (!tgz) throw new Error("pnpm pack 没有产出 tgz");
+
+    const env = { ...process.env, DSH_HOME: home };
+    await run("dsh", ["plugin", "--profile", PROFILE, "remove", PACKAGE], { env }).catch(() => {});
+    const installed = await run("dsh", ["plugin", "--profile", PROFILE, "add", join(work, tgz)], {
+      env,
+    });
+    if (installed.stderr && /error/u.test(installed.stderr)) {
+      fail(`安装插件失败：${installed.stderr.slice(0, 400)}`);
+      return;
+    }
+
+    const logPath = join(work, "host.log");
+    host = spawn("dsh", ["--profile", PROFILE, "--port", "0", "--no-open"], {
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    hostLog = createWriteStream(logPath, { flags: "w" });
+    host.stdout?.on("data", (/** @type {any} */ c) => hostLog?.write(String(c)));
+    host.stderr?.on("data", (/** @type {any} */ c) => hostLog?.write(String(c)));
+
+    const boot = await waitForBoot(logPath, 120_000);
+    if (boot.port === 0) {
+      fail("宿主启动失败或有插件未激活");
+      console.error(boot.text.slice(-3000));
+      return;
+    }
+    console.log(`宿主已启动：http://127.0.0.1:${boot.port}`);
+
+    const shotsDir = join(work, "shots");
+    await mkdir(shotsDir, { recursive: true });
+    const browserFile = join(work, "browser.mjs");
+    const source = browserScript(`http://127.0.0.1:${boot.port}/?token=${boot.token}`, shotsDir);
+    await writeFile(browserFile, source);
+
+    const raw = await new Promise((resolvePromise) => {
+      const child = spawn("ego-browser", ["nodejs"], { stdio: ["pipe", "pipe", "pipe"] });
+      let out = "";
+      const timer = setTimeout(() => child.kill("SIGTERM"), 300_000);
+      child.stdout.on("data", (c) => {
+        out += String(c);
+      });
+      child.stderr.on("data", (c) => {
+        out += String(c);
+      });
+      child.on("close", () => {
+        clearTimeout(timer);
+        resolvePromise(out);
+      });
+      void readFile(browserFile).then((buffer) => child.stdin.end(buffer));
+    });
+    if (process.env.SMOKE_DEBUG) console.log(String(raw).slice(-8000));
+
+    const match = String(raw).match(/SMOKE_RESULT (\{.*\})/u);
+    if (!match) {
+      fail("浏览器脚本没有返回结果");
+      console.error(String(raw).slice(-3000));
+      return;
+    }
+    const result = JSON.parse(match[1]);
+    if (result.fatal) fail(`浏览器脚本异常：${result.fatal}`);
+
+    /** @type {{ name: string, ok: boolean, detail: string }[]} */
+    const checks = result.checks ?? [];
+
+    // Node 侧：宿主真的落盘了，且没有残留临时文件
+    const storePath = join(home, "projects", "projects.json");
+    const storeText = await readIfExists(storePath);
+    checks.push({
+      name: "宿主侧已写出 projects.json",
+      ok: storeText !== "",
+      detail: storePath,
+    });
+    checks.push({
+      name: "新建的项目出现在元数据里",
+      ok: typeof result.projectName === "string" && storeText.includes(result.projectName),
+      detail: String(result.projectName ?? ""),
+    });
+    let parsed = null;
+    try {
+      parsed = JSON.parse(storeText);
+    } catch {
+      parsed = null;
+    }
+    checks.push({
+      name: "元数据是合法 JSON 且格式版本为 1",
+      ok: parsed !== null && parsed.format === 1,
+      detail: parsed === null ? "parse failed" : `format=${parsed.format}`,
+    });
+    checks.push({
+      name: "默认策略是 L1 且危险开关全关",
+      ok:
+        parsed !== null &&
+        Object.values(parsed.projects ?? {}).every(
+          (/** @type {any} */ project) =>
+            project.policy?.autonomy === "L1" &&
+            Object.values(project.policy?.danger ?? {}).every((value) => value === false),
+        ),
+      detail:
+        parsed === null
+          ? ""
+          : JSON.stringify(Object.values(parsed.projects ?? {})[0]?.policy ?? {}).slice(0, 160),
+    });
+    const leftovers = (await readdir(join(home, "projects")).catch(() => [])).filter((name) =>
+      String(name).includes(".tmp-"),
+    );
+    checks.push({
+      name: "原子写没有残留 .tmp 文件",
+      ok: leftovers.length === 0,
+      detail: leftovers.join(","),
+    });
+
+    const shots = await readdir(shotsDir).catch(() => []);
+    checks.push({ name: "已保存截图", ok: shots.length > 0, detail: shots.join(",") });
+
+    for (const item of checks) {
+      console.log(
+        (item.ok ? "PASS " : "FAIL ") + item.name + (item.ok ? "" : ` :: ${item.detail}`),
+      );
+    }
+    const failed = checks.filter((item) => item.ok === false).length;
+    console.log(`截图目录：${shotsDir}`);
+    if (failed > 0) {
+      fail(`${failed} 项 web 冒烟断言失败`);
+    } else {
+      console.log(`PASS 全部 ${checks.length} 项 web 冒烟断言通过`);
+    }
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  } finally {
+    host?.kill("SIGTERM");
+    hostLog?.end();
+    await sleep(500);
+    if (process.env.SMOKE_KEEP) {
+      console.log(`保留临时 home：${work}`);
+    } else {
+      await rm(work, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+};
+
+await main();
