@@ -20,11 +20,11 @@
 
 ```
 7 PASS / 2 SKIP / 0 FAIL（--deep）
-PASS history 文件已生成（session-549c06ee-…jsonl）
-  record status=done answerLen=2 cost={"inputTokens":1634,"cacheReadTokens":8960,"outputTokens":3,"totalTokens":10597}
+PASS history 文件已生成（session-b0d1cea0-…jsonl）
+  record status=done answerLen=2 cost={"inputTokens":1382,"cacheReadTokens":9216,"outputTokens":2,"totalTokens":10600}
 ```
 
-`cacheReadTokens 8960 / 10597 ≈ 84.5%` 命中，`cacheWriteTokens` 为 0 —— 与
+`cacheReadTokens 9216 / 10600 ≈ 87%` 命中（另一次运行 84.5%），`cacheWriteTokens` 为 0 —— 与
 `notes` 里的独立实验（57%→94%）一致，说明插件的实际调用路径确实复用了主会话前缀缓存。
 
 2 项 SKIP 是 DOM 命令卡片断言没抓到（时序/选择器），执行本身已由 history 落盘证明；卡片断言留待桌面回归补。
