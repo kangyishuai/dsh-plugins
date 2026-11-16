@@ -40,6 +40,9 @@ window.__ModuleLoader__.load({
       "settings.diag": "诊断",
       "settings.unavailable": "不可用",
       "settings.hint": "项目元数据与内容文件都在本机；不会写任何远端仓库。",
+      "menu.attach": "归属到项目…",
+      "menu.loading": "加载中…",
+      "menu.empty": "还没有项目，先在项目面板里建一个",
     };
     var EN = {
       title: "Projects",
@@ -64,6 +67,9 @@ window.__ModuleLoader__.load({
       "settings.unavailable": "Unavailable",
       "settings.hint":
         "Project metadata and content files stay local; no remote repository is written.",
+      "menu.attach": "Add to project…",
+      "menu.loading": "Loading…",
+      "menu.empty": "No projects yet — create one in the Projects panel first",
     };
     var PANEL_ID = "projects";
     var SERVICE = "projects";
@@ -330,7 +336,10 @@ window.__ModuleLoader__.load({
                       "span",
                       { style: styles.meta },
                       // 目标为空时给一句话，别留空白让人以为坏了
-                      project.goal ? project.goal : text(t, "panel.goalEmpty"),
+                      (project.goal ? project.goal : text(t, "panel.goalEmpty")) +
+                        (project.threadCount > 0
+                          ? " · " + text(t, "panel.threads", { count: project.threadCount })
+                          : ""),
                     ),
                   ),
                   h(
@@ -364,6 +373,123 @@ window.__ModuleLoader__.load({
           String(/** @type {any} */ (error)?.stack || error),
         );
       }
+    }
+
+    /**
+     * 会话行「…」菜单里的一项：把该会话归属到某个项目。
+     * slot 契约：renderSlot(slot, target.value, { hookContext })，target.value 里带会话标识。
+     * 刻意用内联展开而不是弹窗：菜单里再弹 modal 会叠两层焦点陷阱。
+     * @param {any} props
+     */
+    function AttachToProjectMenu(props) {
+      const expanded = useState(false);
+      const open = expanded[0];
+      const setOpen = expanded[1];
+      const state = useState({ loading: false, error: "", projects: [] });
+      const view = state[0];
+      const setView = state[1];
+      const t = props.api.t;
+      const api = props.api;
+
+      const sessionId =
+        props.sessionId ||
+        (props.session && props.session.id) ||
+        (props.target && props.target.sessionId) ||
+        (props.value && props.value.sessionId) ||
+        props.id ||
+        "";
+
+      const load = useCallback(() => {
+        setView((/** @type {any} */ prev) => ({
+          loading: true,
+          error: prev.error,
+          projects: prev.projects,
+        }));
+        call(api.ctx, "listProjects").then(
+          (projects) => {
+            setView({
+              loading: false,
+              error: "",
+              projects: Array.isArray(projects) ? projects : [],
+            });
+          },
+          (error) => {
+            setView({ loading: false, error: String(error?.message ?? error), projects: [] });
+          },
+        );
+      }, [api]);
+
+      const attach = useCallback(
+        (/** @type {any} */ projectId) => {
+          if (String(sessionId) === "") return;
+          call(api.ctx, "attachThread", { sessionId: String(sessionId), projectId }).then(
+            () => {
+              const hook = props.hookContext;
+              if (Array.isArray(hook) && typeof hook[1] === "function") hook[1](false);
+            },
+            (error) => {
+              setView((/** @type {any} */ prev) => ({
+                loading: false,
+                error: String(error?.message ?? error),
+                projects: prev.projects,
+              }));
+            },
+          );
+        },
+        [api, props, sessionId],
+      );
+
+      if (String(sessionId) === "") return null;
+
+      return h(
+        "div",
+        { "data-projects-attach": sessionId },
+        h(
+          "button",
+          {
+            type: "button",
+            style: { ...styles.button, width: "100%", textAlign: "left", marginTop: "4px" },
+            "data-projects-attach-open": "",
+            onClick: () => {
+              setOpen(!open);
+              if (!open) load();
+            },
+          },
+          text(t, "menu.attach"),
+        ),
+        open
+          ? h(
+              "div",
+              {
+                style: { marginTop: "4px", display: "flex", flexDirection: "column", gap: "2px" },
+                "data-projects-attach-list": "",
+              },
+              view.loading ? h("span", { style: styles.meta }, text(t, "menu.loading")) : null,
+              view.error ? h("span", { style: styles.error }, view.error) : null,
+              view.projects.length === 0 && !view.loading
+                ? h(
+                    "span",
+                    { style: styles.meta, "data-projects-attach-empty": "" },
+                    text(t, "menu.empty"),
+                  )
+                : view.projects.map((/** @type {any} */ project) =>
+                    h(
+                      "button",
+                      {
+                        type: "button",
+                        key: project.id,
+                        style: { ...styles.button, textAlign: "left" },
+                        "data-projects-attach-option": project.id,
+                        onClick: () => attach(project.id),
+                      },
+                      project.threadCount > 0
+                        ? `${project.name} · ${text(t, "panel.threads", { count: project.threadCount })}`
+                        : project.name,
+                    ),
+                  ),
+            )
+          : null,
+      );
     }
 
     /** 侧栏图标入口：宿主会传 {size, active}。 */
@@ -479,6 +605,23 @@ window.__ModuleLoader__.load({
             ),
           ),
         "projects: nav entry",
+      );
+
+      c.effect(
+        () =>
+          c.slots.inject("sidebar.workspaces.session.menu.item", () =>
+            c.slots.register(
+              {
+                name: "sidebar.workspaces.session.menu.item",
+                id: PANEL_ID,
+                order: 430,
+                locale: NS,
+                inject: () => ({ api: api, t: t }),
+              },
+              AttachToProjectMenu,
+            ),
+          ),
+        "projects: session menu",
       );
 
       c.effect(

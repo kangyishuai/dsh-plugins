@@ -132,7 +132,12 @@ export class ProjectsService extends TypertRemoteService {
   // ---- Remote：只读 ----
 
   listProjects() {
-    return this.requireStore().listProjects();
+    const store = this.requireStore();
+    // 顺带给出线程数：面板要用它显示「N 个线程」，避免每个项目再发一次 RPC。
+    return store.listProjects().map((/** @type {any} */ project) => ({
+      ...project,
+      threadCount: store.listThreads(project.id).length,
+    }));
   }
 
   /** @param {string} id */

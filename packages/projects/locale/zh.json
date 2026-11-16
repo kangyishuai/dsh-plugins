@@ -19,6 +19,9 @@
     "settings.summary": "{count} 个项目",
     "settings.diag": "诊断",
     "settings.unavailable": "不可用",
-    "settings.hint": "项目元数据与内容文件都在本机；不会写任何远端仓库。"
+    "settings.hint": "项目元数据与内容文件都在本机；不会写任何远端仓库。",
+    "menu.attach": "归属到项目…",
+    "menu.loading": "加载中…",
+    "menu.empty": "还没有项目，先在项目面板里建一个"
   }
 }

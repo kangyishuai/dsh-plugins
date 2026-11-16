@@ -19,6 +19,9 @@
     "settings.summary": "{count} projects",
     "settings.diag": "Diagnostics",
     "settings.unavailable": "Unavailable",
-    "settings.hint": "Project metadata and content files stay local; no remote repository is written."
+    "settings.hint": "Project metadata and content files stay local; no remote repository is written.",
+    "menu.attach": "Add to project…",
+    "menu.loading": "Loading…",
+    "menu.empty": "No projects yet — create one in the Projects panel first"
   }
 }
