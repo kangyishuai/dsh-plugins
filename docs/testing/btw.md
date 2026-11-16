@@ -38,3 +38,17 @@ PASS history 文件已生成（session-b0d1cea0-…jsonl）
 5. **斜杠菜单开着时 Enter 会被菜单吃掉**（只清空草稿、不提交）→ 提交前先关菜单。
 6. **contenteditable 用 click 拿不到焦点**：要 `el.focus()` + 把选区设进节点，再 `keyboard.insertText`。
 7. **清理临时目录要等宿主退出并重试**，否则 `ENOTEMPTY`。
+
+## 发版门禁（`pnpm gate btw`，2026-11-16 实测）
+
+```
+[1/4] ✓ pnpm verify
+[2/4] ✓ 宿主能力体检（pnpm probe:runtime）—— 合计 72 项：72 PASS, 0 WARN, 0 FAIL
+[3/4] ✓ web 端到端冒烟（pnpm smoke:btw）—— 4 PASS / 2 SKIP / 0 FAIL
+[4/4] -  桌面回归（pnpm smoke:btw-desktop）—— 无 client 半，跳过
+
+PASS btw 门禁全绿（3 步，19s）
+```
+
+第 4 步被跳过是**预期行为**：v0.1 没有 client 半，按约定 §6.1 不强制桌面回归。
+加 client 半（v0.2）后这一步会自动变成必需。
