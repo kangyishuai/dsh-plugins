@@ -22,16 +22,8 @@ window.__ModuleLoader__.load({
     const TAB_KIND = "artifact";
     const POLL_MS = 1000;
 
-    /** @type {{ updates: number, frameLoads: number, renders: number, mounts: number, unmounts: number, lastVersion: number, errors: string[] }} */
-    const probe = {
-      updates: 0,
-      frameLoads: 0,
-      renders: 0,
-      mounts: 0,
-      unmounts: 0,
-      lastVersion: 0,
-      errors: [],
-    };
+    /** 会话内最近打开的 artifact id：刷新/重启后恢复的页签没有 params，靠它回退（localStorage）。 */
+    const RECENT_KEY = "dsh-artifacts:last-id:v1";
 
     /**
      * @param {any} value
@@ -263,7 +255,13 @@ window.__ModuleLoader__.load({
       const info =
         typeof props.useTabInfo === "function" ? props.useTabInfo() : (props.tab ?? undefined);
       const params = info?.tab?.navigation?.params ?? {};
-      const id = typeof params.id === "string" ? params.id : "";
+      const paramId = typeof params.id === "string" ? params.id : "";
+      const wantsLibrary = params.view === "library";
+      // 恢复的页签没有 params：回退到"上次打开的工件"，仍没有才显示库视图（不出现空白错误态）。
+      const [restoredId] = React.useState(() =>
+        paramId === "" && !wantsLibrary ? (readLast() ?? "") : "",
+      );
+      const id = paramId !== "" ? paramId : wantsLibrary ? "" : restoredId;
       const visible = info?.tab?.visible !== false;
 
       const [state, setState] = React.useState({
@@ -275,18 +273,6 @@ window.__ModuleLoader__.load({
       });
       const versionRef = React.useRef(0);
       const frameRef = React.useRef(/** @type {any} */ (null));
-
-      React.useEffect(() => {
-        probe.renders += 1;
-      });
-
-      // 挂载/卸载计数：用来证明连续更新时 iframe 没有重建（同一个元素、同一个 React 实例）。
-      React.useEffect(() => {
-        probe.mounts += 1;
-        return () => {
-          probe.unmounts += 1;
-        };
-      }, []);
 
       React.useEffect(() => {
         if (id === "") return undefined;
@@ -305,8 +291,7 @@ window.__ModuleLoader__.load({
           }
           if (result.changed !== true) return;
           versionRef.current = result.version;
-          probe.updates += 1;
-          probe.lastVersion = result.version;
+          rememberLast(id);
           setState({
             title: String(result.title ?? ""),
             version: result.version,
@@ -355,9 +340,6 @@ window.__ModuleLoader__.load({
           title: state.title || id,
           sandbox: "allow-scripts",
           srcDoc: state.html,
-          onLoad: () => {
-            probe.frameLoads += 1;
-          },
           style: { flex: 1, width: "100%", border: "0", background: "#fff", minHeight: 0 },
         }),
       );
@@ -446,6 +428,25 @@ window.__ModuleLoader__.load({
       );
     }
 
+    /** 记住本会话最近打开的 artifact id（刷新/重启后恢复的页签没有 params）。 @param {string} id */
+    function rememberLast(id) {
+      try {
+        if (typeof id === "string" && id !== "") window.localStorage.setItem(RECENT_KEY, id);
+      } catch {
+        // 隐私模式/沙箱里不可写：忽略，面板退化为库视图。
+      }
+    }
+
+    /** @returns {string | undefined} */
+    function readLast() {
+      try {
+        const value = window.localStorage.getItem(RECENT_KEY);
+        return typeof value === "string" && value !== "" ? value : undefined;
+      } catch {
+        return undefined;
+      }
+    }
+
     /**
      * @param {any} ctx
      */
@@ -465,8 +466,7 @@ window.__ModuleLoader__.load({
           if (result && typeof result === "object" && Object.hasOwn(result, "value"))
             return result.value;
           return result;
-        } catch (error) {
-          probe.errors.push(String(error));
+        } catch {
           return undefined;
         }
       }
@@ -483,24 +483,14 @@ window.__ModuleLoader__.load({
             target = listed?.artifacts?.[0]?.id;
           }
           if (target === undefined) return;
+          if (target !== "") rememberLast(target);
           try {
             ctx.sidebarRight?.openTab?.(TAB_KIND, { params: target === "" ? {} : { id: target } });
-          } catch (error) {
-            probe.errors.push(String(error));
+          } catch {
             window.open(`/artifacts/${encodeURIComponent(target)}`, "_blank", "noopener");
           }
         })();
       }
-
-      // spike 探针：供 CDP/冒烟脚本驱动与断言；正式版删除。
-      /** @type {any} */ (window).__dshArtifacts = {
-        rpc,
-        open,
-        probe,
-        appendDev: (/** @type {string} */ id, /** @type {string} */ html) =>
-          rpc("appendDev", { id, html }),
-        list: () => rpc("list"),
-      };
 
       ctx.effect(
         () =>
@@ -518,7 +508,12 @@ window.__ModuleLoader__.load({
           ctx.sidebarRightTabs.register({
             id: PLUGIN_ID,
             kind: TAB_KIND,
-            title: () => "Artifact",
+            title: (/** @type {any} */ address) => (address ? "Artifact" : "Artifacts"),
+            guide: {
+              order: 40,
+              title: () => "Artifacts",
+              description: () => "本地工件库：模型发布的页面都在这里",
+            },
           }),
         "artifacts: sidebar tab type",
       );

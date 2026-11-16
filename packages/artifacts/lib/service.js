@@ -47,8 +47,6 @@ export class ArtifactsService extends TypertRemoteService {
     this.logger = ctx?.logger ?? console;
     this.dataRoot = resolveDataRoot(this.config);
     this.store = createArtifactStore({ root: this.dataRoot });
-    /** spike 期间的调试开关：允许从浏览器追加版本，正式版必须删掉。 */
-    this.dev = process.env.DSH_ARTIFACTS_DEV === "1" || this.config.dev === true;
 
     // Cordis 的服务必须在 inject 作用域里取：直接读 ctx.webServer 会抛 "cannot get property without inject"。
     /** @type {any} */
@@ -157,23 +155,7 @@ export class ArtifactsService extends TypertRemoteService {
       })),
     };
   }
-
-  /**
-   * spike 专用：从浏览器追加一个版本，用来验证"同一 artifact 连续更新时预览原地刷新"。
-   * 默认关闭，只有 DSH_ARTIFACTS_DEV=1 或 config.dev=true 时可用。
-   * @param {any} [request]
-   * @returns {Promise<any>}
-   */
-  async appendDev(request) {
-    if (!this.dev)
-      return { ok: false, code: "artifacts/disabled", message: "dev append is disabled" };
-    const id = String(request?.id ?? "");
-    const html = String(request?.html ?? "");
-    const meta = await this.store.append(id, { title: request?.title, html });
-    return { ok: true, id, version: meta.latest };
-  }
 }
 
 declareRemote(ArtifactsService, "latest");
 declareRemote(ArtifactsService, "list");
-declareRemote(ArtifactsService, "appendDev");
