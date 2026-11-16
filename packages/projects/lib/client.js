@@ -130,7 +130,7 @@ window.__ModuleLoader__.load({
      * @param {Record<string, unknown>} [args]
      */
     function call(ctx, method, args) {
-      var rpc = ctx && ctx.connection && ctx.connection.rpc;
+      var rpc = ctx?.connection?.rpc;
       if (!rpc || typeof rpc.call !== "function") {
         return Promise.reject(new Error("projects: no connection to the host"));
       }
@@ -379,7 +379,7 @@ window.__ModuleLoader__.load({
                         // 目标为空时给一句话，别留空白让人以为坏了
                         (project.goal ? project.goal : text(t, "panel.goalEmpty")) +
                           (project.threadCount > 0
-                            ? " · " + text(t, "panel.threads", { count: project.threadCount })
+                            ? ` · ${text(t, "panel.threads", { count: project.threadCount })}`
                             : ""),
                       ),
                     ),
@@ -631,9 +631,9 @@ window.__ModuleLoader__.load({
 
       const sessionId =
         props.sessionId ||
-        (props.session && props.session.id) ||
-        (props.target && props.target.sessionId) ||
-        (props.value && props.value.sessionId) ||
+        props.session?.id ||
+        props.target?.sessionId ||
+        props.value?.sessionId ||
         props.id ||
         "";
 
@@ -733,7 +733,7 @@ window.__ModuleLoader__.load({
     /** 侧栏图标入口：宿主会传 {size, active}。 */
     /** @param {any} props */
     function ProjectsPanelIcon(props) {
-      var size = props && props.size ? props.size : 16;
+      var size = props?.size ? props.size : 16;
       return h(
         "span",
         {
@@ -746,7 +746,7 @@ window.__ModuleLoader__.load({
             height: size,
             fontSize: size - 2,
             lineHeight: 1,
-            color: props && props.active ? T.accentText : "inherit",
+            color: props?.active ? T.accentText : "inherit",
           },
           "aria-hidden": "true",
         },
