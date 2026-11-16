@@ -12,7 +12,7 @@
 // - 临时 home 里只放临时 profile；跑完删除（SMOKE_KEEP=1 除外）。
 import { execFile, spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
-import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -148,6 +148,75 @@ try {
   add("新建后摘要计数增加", /\\d+/u.test(after.summary), after.summary);
   add("新建没有报错条", after.error === "", after.error);
 
+  // 会话行菜单：先建一个会话（临时 home 已种工作区），再打开它的「…」菜单归属到项目。
+  const createdSession = await page.evaluate(() => {
+    const button = [...document.querySelectorAll("button")].find((b) =>
+      /新建会话|New session/u.test((b.getAttribute("aria-label") || "") + (b.textContent || "")),
+    );
+    if (!button) return "no-button";
+    button.click();
+    return "clicked";
+  });
+  await page.waitForTimeout(2500);
+  const rowSeen = await page.evaluate(() => document.querySelectorAll('[role="treeitem"]').length);
+  add("侧栏出现会话行", rowSeen > 0, JSON.stringify({ createdSession, rows: rowSeen }));
+
+  // 空白会话不渲染行内动作（ui-workspace 的 !row.blank 分支），所以先发一条消息让它非空白。
+  // 临时 home 没有模型凭据，这一轮必然以 MISSING_CREDENTIAL 结束——正是我们要的：不花钱、但会落 user/message。
+  // composer 是 contenteditable（不是 textarea）：必须聚焦后用真实键盘输入，再用 Enter 提交。
+  await page.evaluate(() => document.querySelector('[role="textbox"]').focus());
+  await page.keyboard.type("smoke: make this session non-blank");
+  await page.keyboard.press("Enter");
+  let triggerSeen = false;
+  for (let i = 0; i < 16; i += 1) {
+    triggerSeen = await page.evaluate(() => {
+      const row = [...document.querySelectorAll('[role="treeitem"]')].find((r) =>
+        (r.getAttribute("data-row-key") || "").startsWith("session:"),
+      );
+      return Boolean(row && row.querySelector("[data-context-menu-trigger]"));
+    });
+    if (triggerSeen === true) break;
+    await page.waitForTimeout(500);
+  }
+  const rowDetail = await page.evaluate(() => {
+    const row = [...document.querySelectorAll('[role="treeitem"]')].find((r) =>
+      (r.getAttribute("data-row-key") || "").startsWith("session:"),
+    );
+    return row ? row.outerHTML.slice(0, 300) : "no-session-row";
+  });
+  add("会话已非空白（行内动作可用）", triggerSeen === true, rowDetail);
+
+  const menuOpened = await page.evaluate(() => {
+    // 会话行菜单触发器：data-context-menu-trigger（aria-label 形如「会话“<标题>”的操作」）
+    const row = [...document.querySelectorAll('[role="treeitem"]')].find((r) =>
+      (r.getAttribute("data-row-key") || "").startsWith("session:"),
+    );
+    const button = row && row.querySelector("[data-context-menu-trigger]");
+    if (!button) return "no-button";
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    return "clicked";
+  });
+  await page.waitForTimeout(900);
+  const attachItem = await page.evaluate(() => {
+    const item = document.querySelector("[data-projects-attach-open]");
+    if (!item) return "no-item";
+    item.click();
+    return "clicked";
+  });
+  await page.waitForTimeout(1200);
+  const optionCount = await page.evaluate(() => document.querySelectorAll("[data-projects-attach-option]").length);
+  add("会话菜单出现归属入口（含项目列表）", attachItem === "clicked" && optionCount > 0, JSON.stringify({ menuOpened, attachItem, optionCount }));
+  await page.evaluate(() => {
+    const option = document.querySelector("[data-projects-attach-option]");
+    if (option) option.click();
+  });
+  await page.waitForTimeout(1800);
+  const menuError = await page.evaluate(() => {
+    const list = document.querySelector("[data-projects-attach-list]");
+    return list ? (list.textContent || "").slice(0, 120) : "";
+  });
+  add("归属动作没有报错", menuError === "" || !/失败|error/i.test(menuError), menuError);
+
   // 设置分节：本机 profile 的 cordis.patch.yml 可能把设置页整体禁用（该插件 enabled:false），
   // 那就无从打开——记录为 tolerated 而不是失败，真正的分节渲染由桌面回归在可打开的环境里覆盖。
   const openedSettings = await page.evaluate(() => {
@@ -213,6 +282,43 @@ const main = async () => {
       );
     }
     await writeFile(profilePath, `${JSON.stringify(profileJson, null, 2)}\n`);
+
+    // 种一个工作区：没有它侧栏不出现会话行，会话菜单那条路径就没法断言。
+    const workspaceDirRaw = join(work, "workspace");
+    await mkdir(workspaceDirRaw, { recursive: true });
+    const workspaceDir = await realpath(workspaceDirRaw);
+    const workspaceId = "11111111-2222-4333-8444-555555555555";
+    await mkdir(join(home, "storages"), { recursive: true });
+    const nowIso = new Date().toISOString();
+    await writeFile(
+      join(home, "storages", "workspace.json"),
+      `${JSON.stringify(
+        {
+          unit: { name: "workspace", version: 2 },
+          global: {
+            initialized: true,
+            defaultWorkspaceId: workspaceId,
+            workspaceIds: [workspaceId],
+            archivedSessionIds: [],
+            pinnedSessionIds: [],
+          },
+          tables: {
+            workspaces: {
+              [workspaceId]: {
+                path: workspaceDir,
+                title: "projects-smoke",
+                sessionIds: [],
+                createdAt: nowIso,
+                updatedAt: nowIso,
+              },
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
 
     await run("pnpm", ["pack", "--pack-destination", work], { cwd: PKG_DIR });
     const tgz = (await readdir(work)).find((name) => name.endsWith(".tgz"));
@@ -322,6 +428,19 @@ const main = async () => {
     const leftovers = (await readdir(join(home, "projects")).catch(() => [])).filter((name) =>
       String(name).includes(".tmp-"),
     );
+    const threadIds = parsed?.threads ? Object.keys(parsed.threads) : [];
+    checks.push({
+      name: "会话归属记录已落盘（threads 非空）",
+      ok: threadIds.length > 0,
+      detail: threadIds.map((id) => String(id).slice(0, 12)).join(","),
+    });
+    checks.push({
+      name: "归属记录指向真实项目",
+      ok:
+        parsed !== null &&
+        threadIds.every((id) => Boolean(parsed.projects?.[parsed.threads[id]?.projectId])),
+      detail: "",
+    });
     checks.push({
       name: "原子写没有残留 .tmp 文件",
       ok: leftovers.length === 0,
