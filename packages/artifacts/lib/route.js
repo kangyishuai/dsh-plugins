@@ -8,6 +8,8 @@
 //   - frame-ancestors 'self'：只允许 DSH 自己的页面嵌（外部站点不能套）；
 //   - no-store：版本随时变，不缓存。
 
+import { createCoverSvg } from "./cover.js";
+
 const CSP = [
   "default-src 'none'",
   "style-src 'unsafe-inline'",
@@ -41,8 +43,44 @@ export function createRouteHandler({ store, connection }) {
       const url = new URL(String(req.url ?? "/"), "http://127.0.0.1");
       const prefix = "/artifacts/";
       const rest = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) : "";
-      const id = decodeURIComponent(rest);
-      if (id === "" || id.includes("/")) {
+      const segments = rest.split("/");
+      const id = decodeURIComponent(segments[0] ?? "");
+      const sub = segments[1] ?? "";
+      if (id === "" || segments.length > 2) {
+        res.statusCode = 404;
+        res.end("not found");
+        return;
+      }
+      // 封面：GET /artifacts/<id>/cover.svg —— 纯 SVG，不需要 headless 渲染器。
+      if (sub === "cover.svg") {
+        const target = await store.read(id);
+        if (target === undefined) {
+          res.statusCode = 404;
+          res.end("not found");
+          return;
+        }
+        const svg = createCoverSvg({
+          id,
+          title: target.meta.title,
+          html: target.html,
+          kind: "artifact",
+        });
+        res.statusCode = 200;
+        res.setHeader("content-type", "image/svg+xml; charset=utf-8");
+        res.setHeader(
+          "content-security-policy",
+          "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox",
+        );
+        res.setHeader("x-content-type-options", "nosniff");
+        res.setHeader("cache-control", "private, no-cache");
+        if (req.method === "HEAD") {
+          res.end();
+          return;
+        }
+        res.end(svg);
+        return;
+      }
+      if (sub !== "") {
         res.statusCode = 404;
         res.end("not found");
         return;

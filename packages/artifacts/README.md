@@ -12,6 +12,7 @@ Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/de
 
 - **One tool, four verbs.** `artifact` with `action` = `publish` (new page), `append` (new version of the same id), `list`, `read`. The page body is passed as `html` and stored under the DSH data root — nothing is uploaded.
 - **A compact timeline row.** Each call renders as `Artifact <id> 最新 vN [打开预览]` through the `tool.call.toolview` keyed slot, so page markup never enters the conversation log.
+- **A cover grid.** With no artifact selected the tab shows every artifact as a card with a generated SVG cover (`GET /artifacts/<id>/cover.svg`): title, palette picked from the id, first heading as the subtitle, version and size. No headless renderer is involved, so nothing stays resident.
 - **A live sidebar panel.** The `artifact` tab type renders the latest version inside `sandbox="allow-scripts"` and polls the host Remote `artifacts/latest`; a new version replaces `srcDoc` on the **same** iframe instead of remounting it.
 - **Old rows point to the latest version.** Every row opens the panel by artifact id, and the panel always reads the newest version, so a row created for `v1` shows `v3` once the page has moved on.
 - **A read-only URL.** `GET /artifacts/<id>[?v=N]` serves one version behind the host's connection check, with a strict `Content-Security-Policy`, `nosniff`, and `no-store`.

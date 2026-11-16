@@ -134,6 +134,7 @@ export class ArtifactsService extends TypertRemoteService {
       versions: meta.versions.map((/** @type {any} */ item) => item.version),
       bytes,
       changed: true,
+      coverUrl: `${ROUTE_PREFIX}/${encodeURIComponent(id)}/cover.svg`,
       html: found.html,
     };
   }
@@ -152,6 +153,7 @@ export class ArtifactsService extends TypertRemoteService {
         latest: meta.latest,
         bytes: meta.versions[meta.versions.length - 1]?.bytes ?? 0,
         updatedAt: meta.updatedAt,
+        coverUrl: `${ROUTE_PREFIX}/${encodeURIComponent(meta.id)}/cover.svg`,
       })),
     };
   }

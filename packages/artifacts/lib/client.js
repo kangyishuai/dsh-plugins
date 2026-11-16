@@ -63,11 +63,139 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 工件库：空 id 时的页签内容——封面网格。封面来自 /artifacts/<id>/cover.svg，
+     * 由宿主用元数据合成 SVG，不依赖 headless 渲染器。
+     * @param {any} props
+     */
+    function ArtifactLibrary(props) {
+      const [rows, setRows] = React.useState(/** @type {any[]} */ ([]));
+      const [error, setError] = React.useState("");
+      const reload = React.useCallback(async () => {
+        const result = await props.rpc("list");
+        if (!result || result.ok !== true) {
+          setError("读不到工件列表");
+          return;
+        }
+        setRows(Array.isArray(result.artifacts) ? result.artifacts : []);
+        setError("");
+      }, [props]);
+      React.useEffect(() => {
+        void reload();
+      }, [reload]);
+      const buttonStyle = {
+        font: "inherit",
+        padding: "1px 8px",
+        borderRadius: "6px",
+        border: "1px solid rgba(128,128,128,0.35)",
+        background: "transparent",
+        color: "inherit",
+        cursor: "pointer",
+      };
+      return h(
+        "div",
+        {
+          "data-dsh-artifact-library": "1",
+          style: { display: "flex", flexDirection: "column", minHeight: 0, height: "100%" },
+        },
+        h(
+          "div",
+          {
+            style: {
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              padding: "8px 12px",
+              borderBottom: "1px solid rgba(128,128,128,0.28)",
+              fontSize: "12px",
+            },
+          },
+          h("strong", null, "全部工件"),
+          h("span", { style: { opacity: 0.6 } }, String(rows.length)),
+          h("span", { style: { flex: 1 } }),
+          h(
+            "button",
+            {
+              type: "button",
+              "data-dsh-artifact-refresh": "1",
+              onClick: () => void reload(),
+              style: buttonStyle,
+            },
+            "刷新",
+          ),
+        ),
+        error === ""
+          ? null
+          : h("div", { style: { padding: "8px 12px", fontSize: "12px", opacity: 0.7 } }, error),
+        h(
+          "div",
+          {
+            style: {
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(138px, 1fr))",
+              gap: "10px",
+              padding: "12px",
+              overflow: "auto",
+              minHeight: 0,
+            },
+          },
+          rows.map((/** @type {any} */ row) =>
+            h(
+              "button",
+              {
+                key: row.id,
+                type: "button",
+                "data-dsh-artifact-card": row.id,
+                onClick: () => props.open(row.id),
+                title: row.title,
+                style: {
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "6px",
+                  padding: 0,
+                  border: "1px solid rgba(128,128,128,0.3)",
+                  borderRadius: "10px",
+                  overflow: "hidden",
+                  background: "transparent",
+                  color: "inherit",
+                  cursor: "pointer",
+                  textAlign: "left",
+                  minWidth: 0,
+                },
+              },
+              h("img", {
+                "data-dsh-artifact-cover": row.id,
+                src: row.coverUrl,
+                alt: "",
+                width: 320,
+                height: 200,
+                style: { display: "block", width: "100%", height: "auto", aspectRatio: "16 / 10" },
+              }),
+              h(
+                "div",
+                { style: { padding: "6px 8px 8px", fontSize: "12px", minWidth: 0 } },
+                h(
+                  "div",
+                  { style: { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } },
+                  row.title,
+                ),
+                h(
+                  "div",
+                  { style: { opacity: 0.6, marginTop: "2px" } },
+                  `v${row.latest} · ${row.bytes} B`,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    /**
      * @param {any} args
      * @returns {any}
      */
     function PanelHeader(args) {
-      const { state, id } = args;
+      const { state, id, open } = args;
       return h(
         "div",
         {
@@ -82,6 +210,25 @@ window.__ModuleLoader__.load({
             minWidth: 0,
           },
         },
+        h(
+          "button",
+          {
+            "data-dsh-artifact-back": "1",
+            type: "button",
+            onClick: () => open(""),
+            title: "全部工件",
+            style: {
+              font: "inherit",
+              padding: "0 6px",
+              borderRadius: "6px",
+              border: "1px solid rgba(128,128,128,0.35)",
+              background: "transparent",
+              color: "inherit",
+              cursor: "pointer",
+            },
+          },
+          "‹",
+        ),
         h(
           "strong",
           { style: { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } },
@@ -177,11 +324,7 @@ window.__ModuleLoader__.load({
       }, [id, visible, props]);
 
       if (id === "") {
-        return h(
-          "div",
-          { style: { padding: "12px", fontSize: "12px", opacity: 0.7 } },
-          "没有选中 artifact。",
-        );
+        return h(ArtifactLibrary, { rpc: props.rpc, open: props.open });
       }
       if (state.error !== "" && state.html === "") {
         return h(
@@ -205,7 +348,7 @@ window.__ModuleLoader__.load({
             minWidth: 0,
           },
         },
-        h(PanelHeader, { state, id }),
+        h(PanelHeader, { state, id, open: props.open }),
         h("iframe", {
           ref: frameRef,
           "data-dsh-artifact-frame": id,
@@ -341,7 +484,7 @@ window.__ModuleLoader__.load({
           }
           if (target === undefined) return;
           try {
-            ctx.sidebarRight?.openTab?.(TAB_KIND, { params: { id: target } });
+            ctx.sidebarRight?.openTab?.(TAB_KIND, { params: target === "" ? {} : { id: target } });
           } catch (error) {
             probe.errors.push(String(error));
             window.open(`/artifacts/${encodeURIComponent(target)}`, "_blank", "noopener");
@@ -384,7 +527,7 @@ window.__ModuleLoader__.load({
         () =>
           ctx.slots.inject("sidebar.right.pane.tab", () =>
             ctx.slots.register(
-              { name: "sidebar.right.pane.tab", key: PLUGIN_ID, inject: () => ({ rpc }) },
+              { name: "sidebar.right.pane.tab", key: PLUGIN_ID, inject: () => ({ rpc, open }) },
               ArtifactPanel,
             ),
           ),

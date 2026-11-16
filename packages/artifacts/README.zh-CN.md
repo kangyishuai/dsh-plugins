@@ -12,6 +12,7 @@
 
 - **一个工具、四个动词。** `artifact` 工具的 `action` 为 `publish`（新页面）、`append`（同一 id 追加版本）、`list`、`read`。正文走 `html` 参数，存在 DSH 数据根下，**不上传任何地方**。
 - **时间线只放摘要行。** 每次调用渲染成 `Artifact <id> 最新 vN [打开预览]`（`tool.call.toolview` keyed slot），页面正文不进会话日志。
+- **封面网格。** 没有选中工件时，页签显示「全部工件」：每张卡片配一张生成的 SVG 封面（`GET /artifacts/<id>/cover.svg`），含标题、按 id 取的色板、首屏标题作副标题、版本与体积。不依赖 headless 渲染器，没有常驻进程。
 - **右栏实时面板。** `artifact` 页签类型在 `sandbox="allow-scripts"` 里渲染最新版，并轮询宿主 Remote `artifacts/latest`；新版本只替换同一个 iframe 的 `srcDoc`，**不重建 iframe**。
 - **旧行指向最新版。** 每一行都按 artifact id 打开面板，面板永远读最新版本——所以 v1 时创建的行，在页面更新到 v3 后打开就是 v3。
 - **只读 URL。** `GET /artifacts/<id>[?v=N]` 在宿主连接鉴权之后返回某个版本，带严格 `Content-Security-Policy`、`nosniff`、`no-store`。
