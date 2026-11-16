@@ -54,6 +54,11 @@ window.__ModuleLoader__.load({
       "detail.memoryIndex": "记忆索引（MEMORY.md）",
       "detail.emptyFile": "（空）",
       "detail.auditEmpty": "还没有审计记录。",
+      "detail.state.waiting-user": "待你处理",
+      "detail.state.failed": "失败",
+      "detail.state.working": "进行中",
+      "detail.state.done": "已完成",
+      "detail.state.idle": "空闲",
     };
     var EN = {
       title: "Projects",
@@ -93,6 +98,11 @@ window.__ModuleLoader__.load({
       "detail.memoryIndex": "Memory index (MEMORY.md)",
       "detail.emptyFile": "(empty)",
       "detail.auditEmpty": "No audit entries yet.",
+      "detail.state.waiting-user": "Waiting on you",
+      "detail.state.failed": "Failed",
+      "detail.state.working": "Working",
+      "detail.state.done": "Done",
+      "detail.state.idle": "Idle",
     };
     var PANEL_ID = "projects";
     var SERVICE = "projects";
@@ -421,7 +431,7 @@ window.__ModuleLoader__.load({
       const load = useCallback(() => {
         setData((/** @type {any} */ prev) => ({ ...prev, loading: true, error: "" }));
         Promise.all([
-          call(api.ctx, "listThreads", { projectId: project.id }),
+          call(api.ctx, "progress", { projectId: project.id }),
           call(api.ctx, "getProjectContent", { projectId: project.id }),
           call(api.ctx, "listAudit", { projectId: project.id }),
         ]).then(
@@ -429,7 +439,8 @@ window.__ModuleLoader__.load({
             setData({
               loading: false,
               error: "",
-              threads: Array.isArray(values[0]) ? values[0] : [],
+              threads: Array.isArray(values[0]?.rows) ? values[0].rows : [],
+              progress: values[0] || null,
               content: values[1] || null,
               audit: Array.isArray(values[2]) ? values[2] : [],
             });
@@ -451,7 +462,12 @@ window.__ModuleLoader__.load({
       }, [load]);
 
       const tabs = [
-        { id: "threads", label: text(t, "detail.tab.threads", { count: data.threads.length }) },
+        {
+          id: "threads",
+          label: text(t, "detail.tab.threads", {
+            count: data.progress?.total ?? data.threads.length,
+          }),
+        },
         { id: "memory", label: text(t, "detail.tab.memory") },
         { id: "audit", label: text(t, "detail.tab.audit") },
       ];
@@ -460,7 +476,9 @@ window.__ModuleLoader__.load({
         if (data.loading) return h("p", { style: styles.empty }, text(t, "detail.loading"));
         if (data.error !== "") return h("p", { style: styles.error }, data.error);
         if (tab === "threads") {
-          if (data.threads.length === 0)
+          const rows = data.progress?.rows ?? [];
+          const counts = data.progress?.counts ?? {};
+          if (rows.length === 0)
             return h(
               "p",
               { style: styles.empty, "data-projects-threads-empty": "" },
@@ -468,23 +486,44 @@ window.__ModuleLoader__.load({
             );
           return h(
             "div",
-            { "data-projects-threads": "" },
-            data.threads.map((/** @type {any} */ thread) =>
+            {
+              "data-projects-threads": "",
+              "data-projects-attention": String(data.progress?.attention ?? 0),
+            },
+            h(
+              "div",
+              { style: { ...styles.meta, margin: "0 0 6px" }, "data-projects-counts": "" },
+              ["waiting-user", "failed", "working", "done", "idle"]
+                .filter((state) => (counts[state] ?? 0) > 0)
+                .map((state) => `${text(t, `detail.state.${state}`)} ${counts[state]}`)
+                .join(" · "),
+            ),
+            rows.map((/** @type {any} */ row) =>
               h(
                 "div",
                 {
-                  key: thread.sessionId,
+                  key: row.sessionId,
                   style: styles.row,
-                  "data-projects-thread-row": thread.sessionId,
+                  "data-projects-thread-row": row.sessionId,
+                  "data-projects-thread-state": row.view.state,
                 },
                 h(
                   "div",
                   { style: styles.rowMain },
-                  h("span", { style: styles.name }, String(thread.sessionId).slice(0, 20)),
+                  h(
+                    "span",
+                    { style: styles.name },
+                    `${String(row.sessionId).slice(0, 20)} · ${text(t, `detail.state.${row.view.state}`)}`,
+                  ),
                   h(
                     "span",
                     { style: styles.meta },
-                    text(t, "detail.threadState", { state: thread.state }),
+                    [
+                      row.view.turn > 0 ? `turn ${row.view.turn}` : "",
+                      row.branch ? String(row.branch) : "",
+                    ]
+                      .filter((part) => part !== "")
+                      .join(" · ") || "—",
                   ),
                 ),
               ),

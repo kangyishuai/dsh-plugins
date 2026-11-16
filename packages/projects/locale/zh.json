@@ -33,6 +33,11 @@
     "detail.instructions": "常设规则（instructions.md）",
     "detail.memoryIndex": "记忆索引（MEMORY.md）",
     "detail.emptyFile": "（空）",
-    "detail.auditEmpty": "还没有审计记录。"
+    "detail.auditEmpty": "还没有审计记录。",
+    "detail.state.waiting-user": "待你处理",
+    "detail.state.failed": "失败",
+    "detail.state.working": "进行中",
+    "detail.state.done": "已完成",
+    "detail.state.idle": "空闲"
   }
 }

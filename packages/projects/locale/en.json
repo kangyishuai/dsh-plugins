@@ -33,6 +33,11 @@
     "detail.instructions": "Standing rules (instructions.md)",
     "detail.memoryIndex": "Memory index (MEMORY.md)",
     "detail.emptyFile": "(empty)",
-    "detail.auditEmpty": "No audit entries yet."
+    "detail.auditEmpty": "No audit entries yet.",
+    "detail.state.waiting-user": "Waiting on you",
+    "detail.state.failed": "Failed",
+    "detail.state.working": "Working",
+    "detail.state.done": "Done",
+    "detail.state.idle": "Idle"
   }
 }

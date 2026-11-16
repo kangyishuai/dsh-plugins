@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 
 import { attachProjectContext } from "./attach.js";
+import { initialView, reduce, sortRows } from "./overview.js";
 import { readProjectFiles } from "./project-files.js";
 import { ProjectStore } from "./store.js";
 import { createIsolatedThread, reclaimThreadWorktree } from "./thread.js";
@@ -87,6 +88,8 @@ export class ProjectsService extends TypertRemoteService {
     this.dataRoot = "";
     /** @type {Map<string, () => void>} */
     this.attached = new Map();
+    /** 每个线程会话的状态视图（从持久事件归约，重启后可由 replay 重建）。 @type {Map<string, any>} */
+    this.views = new Map();
     /** @type {any} */
     this.agents = undefined;
     /** @type {any} */
@@ -124,6 +127,14 @@ export class ProjectsService extends TypertRemoteService {
     ctx.on?.("agent/disposed", (/** @type {any} */ payload) =>
       this.onAgentDisposed(payload?.agent?.id),
     );
+    ctx.on?.("session/event", (/** @type {any} */ session, /** @type {any} */ event) => {
+      const sessionId = String(session?.id ?? "");
+      if (sessionId === "" || !this.store) return;
+      // 只跟项目线程，其它会话零开销
+      if (!this.store.projectOfSession(sessionId)) return;
+      const previous = this.views.get(sessionId) ?? initialView();
+      this.views.set(sessionId, reduce(previous, event));
+    });
     ctx.effect?.(() => () => {
       for (const dispose of this.attached.values()) {
         try {
@@ -304,6 +315,31 @@ export class ProjectsService extends TypertRemoteService {
     return thread;
   }
 
+  /**
+   * 线程进度（面板用）：状态由持久事件归约，按「需要我」优先排序。
+   * @param {string} projectId
+   */
+  progress(projectId) {
+    const store = this.requireStore();
+    const threads = store.listThreads(projectId);
+    const rows = threads.map((/** @type {any} */ thread) => ({
+      sessionId: thread.sessionId,
+      branch: thread.branch ?? null,
+      worktree: thread.worktree ?? null,
+      view: this.views.get(thread.sessionId) ?? initialView(),
+    }));
+    const sorted = sortRows(rows);
+    /** @type {Record<string, number>} */
+    const counts = { "waiting-user": 0, failed: 0, working: 0, done: 0, idle: 0 };
+    for (const row of rows) counts[row.view.state] = (counts[row.view.state] ?? 0) + 1;
+    return {
+      rows: sorted,
+      counts,
+      total: rows.length,
+      attention: counts["waiting-user"] + counts.failed,
+    };
+  }
+
   /** 诊断：哪些会话已挂上项目上下文（只读，供冒烟/排障）。 */
   debugAttached() {
     return [...this.attached.keys()];
@@ -393,6 +429,7 @@ declareRemote(ProjectsService, "attachThread");
 declareRemote(ProjectsService, "detachThread");
 declareRemote(ProjectsService, "createThread");
 declareRemote(ProjectsService, "reclaimThread");
+declareRemote(ProjectsService, "progress");
 declareRemote(ProjectsService, "debugAttached");
 declareRemote(ProjectsService, "detachSession");
 declareRemote(ProjectsService, "describe");
