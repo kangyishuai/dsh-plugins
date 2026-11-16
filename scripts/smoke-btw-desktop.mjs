@@ -97,6 +97,7 @@ const STATE = `(() => {
   const err = document.querySelector('[data-btw-error]');
   return {
     styleInjected: style !== null,
+    pluginCount: document.querySelectorAll('style[data-plugin]').length,
     toggle: toggle !== null,
     overlay: overlay !== null,
     overlayRole: overlay ? overlay.getAttribute('role') : null,
@@ -164,7 +165,10 @@ const main = async () => {
     check(
       "client 半已注入（style[data-plugin]）",
       initial.styleInjected === true,
-      JSON.stringify(initial),
+      initial.styleInjected === true
+        ? ""
+        : `页面有 ${initial.pluginCount} 个插件样式，但没有 btw —— 多半是没装进 desktop profile：` +
+            "先 pnpm pack --pack-destination /tmp，再 dsh plugin --profile desktop add /tmp/<tgz>，然后重启桌面版",
     );
     check("输入框左侧出现 btw 按钮", initial.toggle === true, JSON.stringify(initial));
 

@@ -52,3 +52,24 @@ PASS btw 门禁全绿（3 步，19s）
 
 第 4 步被跳过是**预期行为**：v0.1 没有 client 半，按约定 §6.1 不强制桌面回归。
 加 client 半（v0.2）后这一步会自动变成必需。
+
+## 桌面回归的前置（v0.2 起，有 client 半之后）
+
+`pnpm gate btw` 的第 4 步会跑 `pnpm smoke:btw-desktop --require`，它**驱动的是用户真实的桌面版**，
+所以插件必须**先装进 desktop profile 并重启**，否则 client 半不会注入，门禁按设计变红：
+
+```
+FAIL client 半已注入（style[data-plugin]） — 页面有 196 个插件样式，但没有 btw
+      —— 多半是没装进 desktop profile
+```
+
+装法：
+
+```bash
+cd packages/btw && pnpm pack --pack-destination /tmp
+dsh plugin --profile desktop add /tmp/kangyishuai-dsh-btw-0.<x>.tgz
+# 重启桌面版（host 半改动也必须重启；只改 client 半刷新页面即可）
+```
+
+另外一条**agent 自己跑会撞上的前置**：脚本检测到「停止生成」按钮（当前会话正在跑回合）时只报 SKIP，
+因为 agent 的回合就跑在同一个桌面版里。做法是把可见会话切到一个空闲会话再跑。
