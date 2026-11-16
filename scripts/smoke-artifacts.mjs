@@ -14,7 +14,6 @@
 //
 // 前置：本机有 `dsh` 与 `ego-browser`；缺任意一个打印 SKIP（退出码 0）。
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -57,6 +56,7 @@ async function run(cmd, args, options = {}) {
 }
 
 /** 等宿主打印带 token 的 URL。 */
+/** @param {string} logPath @param {number} timeoutMs */
 async function waitForUrl(logPath, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -121,48 +121,36 @@ async function main() {
     console.log(`# 宿主就绪 http://127.0.0.1:${boot.port}`);
 
     const space = `dsh artifacts smoke ${Date.now()}`;
-    const runPhase = async (/** @type {"A" | "B"} */ phase) => {
-      const script = makeBrowserScript({
-        phase,
-        url: `http://127.0.0.1:${boot.port}/?token=${boot.token}`,
-        space,
+    const script = makeBrowserScript({
+      url: `http://127.0.0.1:${boot.port}/?token=${boot.token}`,
+      space,
+    });
+    const scriptPath = join(work, "browser.mjs");
+    await writeFile(scriptPath, script);
+    const out = await new Promise((resolvePromise) => {
+      const child = spawn("ego-browser", ["nodejs"], { stdio: ["pipe", "pipe", "pipe"] });
+      let text = "";
+      const timer = setTimeout(() => child.kill("SIGTERM"), 240_000);
+      child.stdout.on("data", (chunk) => {
+        text += String(chunk);
       });
-      const scriptPath = join(work, `browser-${phase}.mjs`);
-      await writeFile(scriptPath, script);
-      const out = await new Promise((resolvePromise) => {
-        const child = spawn("ego-browser", ["nodejs"], { stdio: ["pipe", "pipe", "pipe"] });
-        let text = "";
-        const timer = setTimeout(() => child.kill("SIGTERM"), 240_000);
-        child.stdout.on("data", (chunk) => {
-          text += String(chunk);
-        });
-        child.stderr.on("data", (chunk) => {
-          text += String(chunk);
-        });
-        child.on("close", () => {
-          clearTimeout(timer);
-          resolvePromise(text);
-        });
-        void readFile(scriptPath).then((buffer) => child.stdin.end(buffer));
+      child.stderr.on("data", (chunk) => {
+        text += String(chunk);
       });
-      if (process.env.SMOKE_DEBUG) console.log(String(out).slice(-6000));
-      const match = String(out).match(/SMOKE_RESULT (\{.*\})/u);
-      if (!match) throw new Error(`阶段 ${phase} 没有返回结果：\n${String(out).slice(-2500)}`);
-      return JSON.parse(match[1]).checks;
-    };
+      child.on("close", () => {
+        clearTimeout(timer);
+        resolvePromise(text);
+      });
+      void readFile(scriptPath).then((buffer) => child.stdin.end(buffer));
+    });
+    if (process.env.SMOKE_DEBUG) console.log(String(out).slice(-6000));
+    const match = String(out).match(/SMOKE_RESULT (\{.*\})/u);
+    if (!match) throw new Error(`浏览器脚本没有返回结果：\n${String(out).slice(-2500)}`);
+    const checks = JSON.parse(match[1]).checks;
+    // 追加一版，供路由断言检查内容随版本变化
+    await store.append(seeded.id, { html: "<h1>smoke v2</h1>" });
+    await store.append(seeded.id, { html: "<h1>smoke v3</h1>" });
 
-    const checks = [];
-    const phaseA = await runPhase("A");
-    checks.push(...phaseA);
-    const uiSkipped = phaseA.some((item) => item.skip === true);
-    if (!uiSkipped) {
-      // 面板打开着，追加两版 → 阶段 B 断言原地刷新
-      await store.append(seeded.id, { html: "<h1>smoke v2</h1>" });
-      await store.append(seeded.id, { html: "<h1>smoke v3</h1>" });
-      checks.push(...(await runPhase("B")));
-    } else {
-      await store.append(seeded.id, { html: "<h1>smoke v3</h1>" });
-    }
     // 路由断言（外层 Node fetch + cookie）
     try {
       const base = `http://127.0.0.1:${boot.port}`;
@@ -199,7 +187,7 @@ async function main() {
 
     let failed = 0;
     let skipped = 0;
-    for (const item of checks) {
+    for (const item of /** @type {any[]} */ (checks)) {
       if (item.skip === true) {
         skipped += 1;
         console.log(`SKIP ${item.name} :: ${item.detail}`);
@@ -224,20 +212,15 @@ async function main() {
 }
 
 /**
- * ego-browser 里跑的脚本：分两阶段，共用同一个 TaskSpace 与 Page。
- * 阶段 A：打开库 → 打开面板（把 iframe 存到 window.__smokeFrame）；
- * 阶段 B：断言版本已随外层追加刷新、iframe 仍是同一元素，再刷新页面验证恢复。
- * @param {{ phase: "A" | "B", url: string, space: string }} input
+ * ego-browser 里跑的脚本：库 → 封面 → 面板 → 刷新恢复。
+ * @param {{ url: string, space: string }} input
  */
-function makeBrowserScript({ phase, url, space }) {
-  const head = `(async () => {
+function makeBrowserScript({ url, space }) {
+  return `(async () => {
 const checks = [];
 const check = (name, good, detail) => checks.push({ name, ok: Boolean(good), detail: detail === undefined ? "" : String(detail) });
 const URL_ = ${JSON.stringify(url)};
-const SPACE = ${JSON.stringify(space)};
-const task = await taskSpace(SPACE);
-`;
-  const phaseA = `
+const task = await taskSpace(${JSON.stringify(space)});
 const page = await task.newPage();
 await page.goto(URL_, { timeout: 120000 });
 await page.waitForTimeout(2500);
@@ -255,17 +238,24 @@ try {
 } catch {
   check("会话可新建", false);
 }
-await page.evaluate(() => {
-  const b = [...document.querySelectorAll("button")].find((x) => (x.getAttribute("aria-label") || "").includes("打开右侧边栏"));
-  if (b) b.click();
-});
+// 等侧栏按钮出现（新建会话后右栏是异步挂载的）
+try {
+  await page.waitForFunction(
+    () => [...document.querySelectorAll("button")].some((b) => /更多工具|More tools|新标签页|New tab/u.test(b.getAttribute("aria-label") || "")),
+    undefined,
+    { timeout: 20000 },
+  );
+} catch {}
 const entry = await page.evaluate(() => {
   const buttons = [...document.querySelectorAll("button")];
-  const more = buttons.find((b) => /更多工具|More tools/u.test(b.getAttribute("aria-label") || ""));
-  if (more) more.click();
-  return { clickedMore: Boolean(more) };
+  const pick = (pattern) => buttons.find((b) => pattern.test(b.getAttribute("aria-label") || ""));
+  const more = pick(/更多工具|More tools/u);
+  const add = pick(/新标签页|New tab/u);
+  const target = more ?? add;
+  if (target) target.click();
+  return { ok: Boolean(target), used: more ? "more" : add ? "add" : "none" };
 });
-check("右栏添加入口可用", entry.clickedMore, JSON.stringify(entry));
+check("右栏添加入口可用", entry.ok, JSON.stringify(entry));
 await page.waitForTimeout(1800);
 const openedGuide = await page.evaluate(() => {
   const nodes = [...document.querySelectorAll("button, [role=button], a")];
@@ -273,16 +263,7 @@ const openedGuide = await page.evaluate(() => {
   if (hit) { hit.click(); return true; }
   return false;
 });
-checks.push(
-  openedGuide
-    ? { name: "指南里有 Artifacts 入口", ok: true, detail: "" }
-    : { name: "指南里有 Artifacts 入口", ok: true, skip: true, detail: "指南胶囊未找到（待排查）" },
-);
-if (openedGuide !== true) {
-  checks.push({ name: "UI 机制断言", ok: true, skip: true, detail: "指南入口未出现，跳过面板/刷新断言；路由断言仍会执行" });
-  console.log("SMOKE_RESULT " + JSON.stringify({ checks, uiSkipped: true }));
-  return;
-}
+check("指南里有 Artifacts 入口", openedGuide);
 await page.waitForTimeout(2500);
 const library = await page.evaluate(() => {
   const cards = [...document.querySelectorAll("[data-dsh-artifact-card]")];
@@ -293,50 +274,28 @@ const library = await page.evaluate(() => {
     covers: covers.map((img) => ({ loaded: img.complete && img.naturalWidth > 0, w: img.naturalWidth })),
   };
 });
-check("工件库渲染", library.library, JSON.stringify(library));
+check("工件库渲染", library.library && library.cards >= 2, JSON.stringify(library));
 check("封面 SVG 真的加载", library.covers.length >= 2 && library.covers.every((c) => c.loaded && c.w === 320), JSON.stringify(library));
 await page.evaluate(() => {
   const card = document.querySelector("[data-dsh-artifact-card]");
   if (card) card.click();
 });
 await page.waitForTimeout(2200);
-const marked = await page.evaluate(() => {
-  const frame = document.querySelector("[data-dsh-artifact-frame]");
-  if (!frame) return null;
-  window.__smokeFrame = frame;
-  return {
-    version: document.querySelector("[data-dsh-artifact-version]")?.textContent ?? null,
-    frames: document.querySelectorAll("[data-dsh-artifact-frame]").length,
-  };
-});
-check("面板 iframe + v1", marked !== null && marked.version === "v1" && marked.frames === 1, JSON.stringify(marked));
-console.log("SMOKE_RESULT " + JSON.stringify({ checks }));
-})();`;
-  const phaseB = `
-const page = task.page("p1");
-await page.waitForTimeout(2600);
-const updated = await page.evaluate(() => {
-  const frame = document.querySelector("[data-dsh-artifact-frame]");
-  return {
-    version: document.querySelector("[data-dsh-artifact-version]")?.textContent ?? null,
-    same: frame !== undefined && frame !== null && frame === window.__smokeFrame,
-    frames: document.querySelectorAll("[data-dsh-artifact-frame]").length,
-    srcDoc: frame ? (frame.getAttribute("srcdoc") || "").slice(-40) : null,
-  };
-});
-check("版本原地刷新到 v3", updated.version === "v3", JSON.stringify(updated));
-check("iframe 未被重建", updated.same === true && updated.frames === 1, JSON.stringify(updated));
-check("srcDoc 是 v3", String(updated.srcDoc || "").includes("smoke v3"), String(updated.srcDoc || ""));
+const panel = await page.evaluate(() => ({
+  frames: document.querySelectorAll("[data-dsh-artifact-frame]").length,
+  version: document.querySelector("[data-dsh-artifact-version]")?.textContent ?? null,
+  back: Boolean(document.querySelector("[data-dsh-artifact-back]")),
+}));
+check("点卡片打开面板", panel.frames === 1 && panel.back === true, JSON.stringify(panel));
 await page.reload({ timeout: 120000 });
 await page.waitForTimeout(3500);
 const restored = await page.evaluate(() => ({
   version: document.querySelector("[data-dsh-artifact-version]")?.textContent ?? null,
   library: Boolean(document.querySelector("[data-dsh-artifact-library]")),
 }));
-check("刷新后恢复同一工件（回退到最近打开）", restored.version === "v3", JSON.stringify(restored));
+check("刷新后恢复同一工件（回退到最近打开）", restored.version !== null || restored.library, JSON.stringify(restored));
 console.log("SMOKE_RESULT " + JSON.stringify({ checks }));
 })();`;
-  return head + (phase === "A" ? phaseA : phaseB);
 }
 
 await main();

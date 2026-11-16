@@ -509,11 +509,14 @@ window.__ModuleLoader__.load({
             id: PLUGIN_ID,
             kind: TAB_KIND,
             title: (/** @type {any} */ address) => (address ? "Artifact" : "Artifacts"),
-            guide: {
-              order: 40,
-              title: () => "Artifacts",
-              description: () => "本地工件库：模型发布的页面都在这里",
-            },
+            guide: [
+              {
+                id: "artifact",
+                order: 40,
+                title: () => "Artifacts",
+                description: () => "本地工件库：模型发布的页面都在这里",
+              },
+            ],
           }),
         "artifacts: sidebar tab type",
       );
