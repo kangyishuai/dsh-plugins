@@ -1,0 +1,27 @@
+{
+  "btw": {
+    "title": "Read-only side questions that do not interrupt the main task",
+    "command": {
+      "description": "Ask a read-only side question without interrupting the main task"
+    },
+    "usage": {
+      "hint": "[question]",
+      "empty": "Usage: /btw <your question>. Run /btw with no question to reopen the last answer.",
+      "noHistory": "No side question yet in this session."
+    },
+    "answer": {
+      "meta": "btw · new {newTokens} tokens · cached {cachedTokens} · {ms}ms",
+      "reopen": "Last side question: {question}",
+      "truncated": "The answer was cut off; ask again to retry.",
+      "questionHeading": "Side question: {question}"
+    },
+    "error": {
+      "forkUnavailable": "Side questions are unavailable right now (the subagent runtime is not loaded).",
+      "forkFailed": "The side question could not start. Try again, or ask in the main conversation.",
+      "emptyAnswer": "The model returned no answer. Try rephrasing, or ask in the main conversation.",
+      "timeout": "The side question timed out before it answered.",
+      "cancelled": "The side question was cancelled.",
+      "tooLong": "That question is too long ({length} characters, limit {max})."
+    }
+  }
+}

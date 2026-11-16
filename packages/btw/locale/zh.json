@@ -1,0 +1,27 @@
+{
+  "btw": {
+    "title": "不打断主任务的只读旁问",
+    "command": {
+      "description": "不打断主任务地提一个只读旁问"
+    },
+    "usage": {
+      "hint": "[问题]",
+      "empty": "用法：/btw <你的问题>。不带问题运行 /btw 可重新打开上一条答案。",
+      "noHistory": "本会话还没有旁问记录。"
+    },
+    "answer": {
+      "meta": "旁问 · 新增 {newTokens} tokens · 命中缓存 {cachedTokens} · {ms}ms",
+      "reopen": "上一条旁问：{question}",
+      "truncated": "答案被截断，可再问一次重试。",
+      "questionHeading": "旁问：{question}"
+    },
+    "error": {
+      "forkUnavailable": "暂时无法旁问（子代理运行时未加载）。",
+      "forkFailed": "旁问没能启动，请重试，或回主对话询问。",
+      "emptyAnswer": "模型没有给出答案，换个说法再问，或回主对话询问。",
+      "timeout": "旁问超时，没有得到答案。",
+      "cancelled": "旁问已取消。",
+      "tooLong": "问题太长（{length} 字符，上限 {max}）。"
+    }
+  }
+}
