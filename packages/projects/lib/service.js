@@ -156,9 +156,10 @@ export class ProjectsService extends TypertRemoteService {
    * @param {string} name
    * @param {{goal?: string, dirs?: string[]}} [input]
    */
-  createProject(name, input = {}) {
+  createProject(name, input) {
+    // SRC 模式（无生成描述符）要求 Remote 方法不带默认参数/解构/rest，否则网关直接拒绝。
     const store = this.requireStore();
-    const project = store.createProject(name, input);
+    const project = store.createProject(name, input ?? {});
     store.save();
     return project;
   }
@@ -230,6 +231,18 @@ export class ProjectsService extends TypertRemoteService {
     return [...this.attached.keys()];
   }
 
+  /** 只读概览：数据根、项目数、已挂上下文的会话数（给客户端首屏与冒烟用）。 */
+  describe() {
+    const projects = this.store ? this.store.listProjects() : [];
+    return {
+      dataRoot: this.dataRoot,
+      available: Boolean(this.store),
+      projectCount: projects.length,
+      activeCount: projects.filter((p) => p.state === "active").length,
+      attachedSessions: this.attached.size,
+    };
+  }
+
   /** @param {string} sessionId */
   detachThread(sessionId) {
     const store = this.requireStore();
@@ -250,3 +263,4 @@ declareRemote(ProjectsService, "attachThread");
 declareRemote(ProjectsService, "detachThread");
 declareRemote(ProjectsService, "debugAttached");
 declareRemote(ProjectsService, "detachSession");
+declareRemote(ProjectsService, "describe");

@@ -1,5 +1,24 @@
 {
   "projects": {
-    "title": "Project-level context for DeepSeek Harness: group sessions into projects, inject instructions and memory, run isolated parallel threads, and coordinate them with an optional auditable coordinator."
+    "title": "项目",
+    "panel.title": "项目",
+    "panel.summary": "{projects} 个项目 · {active} 个活跃 · {attached} 个会话已挂上下文",
+    "panel.empty": "还没有项目。建一个，把会话丢进去，下次就不用重复交代背景。",
+    "panel.createPlaceholder": "项目名，例如 payments-api",
+    "panel.create": "新建项目",
+    "panel.creating": "正在新建…",
+    "panel.refresh": "刷新",
+    "panel.threads": "{count} 个线程",
+    "panel.goalEmpty": "未设置目标",
+    "panel.unavailable": "项目数据不可用：{reason}",
+    "panel.errorCreate": "新建失败：{reason}",
+    "panel.state.active": "活跃",
+    "panel.state.archived": "已归档",
+    "settings.section": "项目",
+    "settings.dataRoot": "数据根目录",
+    "settings.summary": "{count} 个项目",
+    "settings.diag": "诊断",
+    "settings.unavailable": "不可用",
+    "settings.hint": "项目元数据与内容文件都在本机；不会写任何远端仓库。"
   }
 }
