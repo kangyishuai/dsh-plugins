@@ -9,35 +9,64 @@
   },
   "categories": {
     "session": {
-      "title": { "en": "Sessions", "zh": "会话" }
+      "title": {
+        "en": "Sessions",
+        "zh": "会话"
+      }
     },
     "workflow": {
-      "title": { "en": "Workflow", "zh": "工作流" }
+      "title": {
+        "en": "Workflow",
+        "zh": "工作流"
+      }
     },
     "tools": {
-      "title": { "en": "Tools", "zh": "工具" }
+      "title": {
+        "en": "Tools",
+        "zh": "工具"
+      }
     }
   },
   "plugins": {
     "@kangyishuai/dsh-session-delete": {
       "category": "session",
-      "title": { "en": "Session Delete", "zh": "会话删除" },
+      "title": {
+        "en": "Session Delete",
+        "zh": "会话删除"
+      },
       "descriptionZh": "真正删除会话：默认进回收站、删除前给计划、全程审计日志，并对残留给回执。"
     },
     "@kangyishuai/dsh-session-rewind": {
       "category": "session",
-      "title": { "en": "Session Rewind", "zh": "会话回滚" },
+      "title": {
+        "en": "Session Rewind",
+        "zh": "会话回滚"
+      },
       "descriptionZh": "就地回滚对话：撤回目标消息之后的内容，可恢复那些轮次改过的文件，并把消息放回输入框。"
     },
     "@kangyishuai/dsh-next-step": {
       "category": "workflow",
-      "title": { "en": "Next Step", "zh": "下一步" },
+      "title": {
+        "en": "Next Step",
+        "zh": "下一步"
+      },
       "descriptionZh": "值得继续时给一张决策卡：现状、待定问题、1–2 个互斥下一步，点一下按原文发送。"
     },
     "@kangyishuai/dsh-advisor": {
       "category": "tools",
-      "title": { "en": "Advisor", "zh": "顾问" },
+      "title": {
+        "en": "Advisor",
+        "zh": "顾问"
+      },
       "descriptionZh": "按需第二意见：主模型自己决定何时咨询一个单独配置的顾问模型，只给建议，从不放行或执行。"
+    },
+    "@kangyishuai/dsh-btw": {
+      "category": "tools",
+      "title": {
+        "en": "btw Side Questions",
+        "zh": "btw 旁问"
+      },
+      "descriptionZh": "不打断主任务地提一个只读旁问：fork 只读子代理执行，答案不进对话历史，复用主会话前缀缓存（实测命中 57%→94%），历史落盘可重开。"
     }
   }
 }

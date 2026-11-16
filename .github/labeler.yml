@@ -44,3 +44,7 @@ documentation:
 "plugin:advisor":
   - changed-files:
       - any-glob-to-any-file: "packages/advisor/**"
+
+"plugin:btw":
+  - changed-files:
+      - any-glob-to-any-file: "packages/btw/**"
