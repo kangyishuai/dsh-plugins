@@ -285,6 +285,25 @@ try {
   );
   add("线程计数/需要我 可断言", attention !== null && attention !== undefined, String(attention));
 
+  // 暂停项目：UI 只断言按钮存在与可点，**状态变化由宿主侧 projects.json 断言**（更硬）
+  const pauseClicked = await page.evaluate(() => {
+    const button = document.querySelector("[data-projects-toggle-pause]");
+    if (!button) return "no-button";
+    button.click();
+    return "clicked";
+  });
+  await page.waitForTimeout(2500);
+  add("详情页有暂停项目按钮且可点", pauseClicked === "clicked", String(pauseClicked));
+  let budgetText = "";
+  for (let i = 0; i < 12; i += 1) {
+    budgetText = await page.evaluate(
+      () => (document.querySelector("[data-projects-budget]")?.textContent || "").trim(),
+    );
+    if (budgetText !== "") break;
+    await page.waitForTimeout(500);
+  }
+  add("详情页显示预算用量", budgetText !== "", budgetText);
+
   const memoryTab = await page.evaluate(() => {
     const tab = document.querySelector('[data-projects-tab="memory"]');
     if (!tab) return "no-tab";
@@ -580,6 +599,16 @@ const main = async () => {
       ok: isolated.length > 0,
       detail: JSON.stringify(
         isolated.map((/** @type {any} */ thread) => String(thread.branch ?? "")).slice(0, 2),
+      ),
+    });
+    const pausedProjects = Object.values(parsed?.projects ?? {}).filter(
+      (/** @type {any} */ project) => project?.state === "paused",
+    );
+    checks.push({
+      name: "暂停动作在宿主侧生效（state=paused）",
+      ok: pausedProjects.length > 0,
+      detail: JSON.stringify(
+        pausedProjects.map((/** @type {any} */ project) => project.name).slice(0, 2),
       ),
     });
     const threadIds = parsed?.threads ? Object.keys(parsed.threads) : [];

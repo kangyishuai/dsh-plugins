@@ -44,6 +44,9 @@
     "detail.threadCreating": "正在建…",
     "detail.dirLabel": "项目目录",
     "detail.dirPlaceholder": "绝对路径；线程会在这里建 worktree",
-    "detail.dirSave": "绑定"
+    "detail.dirSave": "绑定",
+    "detail.pause": "暂停项目",
+    "detail.resume": "恢复项目",
+    "detail.budget": "今日 {today} 个线程 · 进行中 {running}"
   }
 }

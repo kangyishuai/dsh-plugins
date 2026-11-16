@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 
 import { attachProjectContext } from "./attach.js";
+import { checkThreadBudget } from "./budget.js";
 import { initialView, reduce, sortRows } from "./overview.js";
 import { readProjectFiles } from "./project-files.js";
 import { ProjectStore } from "./store.js";
@@ -325,6 +326,28 @@ export class ProjectsService extends TypertRemoteService {
     return project;
   }
 
+  /**
+   * 暂停项目：不再能建新线程，已有线程不受影响（可逆）。
+   * @param {string} id
+   */
+  pauseProject(id) {
+    const store = this.requireStore();
+    const project = store.updateProject(id, { state: "paused" });
+    store.save();
+    return project;
+  }
+
+  /**
+   * 恢复项目。
+   * @param {string} id
+   */
+  resumeProject(id) {
+    const store = this.requireStore();
+    const project = store.updateProject(id, { state: "active" });
+    store.save();
+    return project;
+  }
+
   /** @param {string} id */
   archiveProject(id) {
     const store = this.requireStore();
@@ -393,11 +416,20 @@ export class ProjectsService extends TypertRemoteService {
     /** @type {Record<string, number>} */
     const counts = { "waiting-user": 0, failed: 0, working: 0, done: 0, idle: 0 };
     for (const row of rows) counts[row.view.state] = (counts[row.view.state] ?? 0) + 1;
+    const project = store.getProject(projectId);
+    const budget = checkThreadBudget({ project, threads, now: Date.now() });
     return {
       rows: sorted,
       counts,
       total: rows.length,
       attention: counts["waiting-user"] + counts.failed,
+      budget: {
+        ok: budget.ok,
+        reason: budget.reason,
+        used: budget.used,
+        limits: project?.budget ?? null,
+      },
+      projectState: project?.state ?? "active",
     };
   }
 
@@ -426,6 +458,21 @@ export class ProjectsService extends TypertRemoteService {
   async createThread(projectId, task) {
     await this.waitServices();
     const store = this.requireStore();
+    // 预算闸：暂停/归档、每日线程数、并发数。拒绝时给可读原因，不静默降级。
+    const project = store.getProject(projectId);
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const verdict = checkThreadBudget({
+      project,
+      threads: store.listThreads(projectId),
+      now: Date.now(),
+    });
+    if (!verdict.ok) {
+      store.appendAudit({ action: "thread/rejected", projectId, reason: verdict.reason });
+      store.save();
+      throw new Error(
+        `projects: ${verdict.reason} (today=${verdict.used.today}, running=${verdict.used.running})`,
+      );
+    }
     const sc = this.sessionController;
     if (!sc) throw new Error("projects: session controller unavailable");
     const thread = await createIsolatedThread({
@@ -485,6 +532,8 @@ declareRemote(ProjectsService, "listThreads");
 declareRemote(ProjectsService, "projectOfSession");
 declareRemote(ProjectsService, "createProject");
 declareRemote(ProjectsService, "updateProject");
+declareRemote(ProjectsService, "pauseProject");
+declareRemote(ProjectsService, "resumeProject");
 declareRemote(ProjectsService, "archiveProject");
 declareRemote(ProjectsService, "attachThread");
 declareRemote(ProjectsService, "detachThread");

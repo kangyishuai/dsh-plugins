@@ -44,6 +44,9 @@
     "detail.threadCreating": "Creating…",
     "detail.dirLabel": "Project dir",
     "detail.dirPlaceholder": "Absolute path; threads create worktrees here",
-    "detail.dirSave": "Bind"
+    "detail.dirSave": "Bind",
+    "detail.pause": "Pause project",
+    "detail.resume": "Resume project",
+    "detail.budget": "{today} threads today · {running} running"
   }
 }

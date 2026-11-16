@@ -142,6 +142,7 @@ export function normalize(raw, root) {
         branch: typeof thread.branch === "string" ? thread.branch : null,
         worktree: typeof thread.worktree === "string" ? thread.worktree : null,
         seq: Number.isInteger(thread.seq) ? thread.seq : 0,
+        createdAt: typeof thread.createdAt === "string" ? thread.createdAt : iso(),
       };
     }
   }
@@ -220,7 +221,12 @@ export class ProjectStore {
       dirs: Array.isArray(input.dirs) ? input.dirs.filter((d) => typeof d === "string") : [],
       coordinatorSessionId: null,
       policy: defaultPolicy(),
-      budget: { dailyTokens: null, maxThreadsPerDay: null, maxStepsPerThread: null },
+      budget: {
+        dailyTokens: null,
+        maxThreadsPerDay: null,
+        maxStepsPerThread: null,
+        maxConcurrent: null,
+      },
       createdAt: stamp,
       updatedAt: stamp,
     };
@@ -276,6 +282,7 @@ export class ProjectStore {
       branch: current?.branch ?? null,
       worktree: current?.worktree ?? null,
       seq: current?.seq ?? 0,
+      createdAt: current?.createdAt ?? iso(this.now()),
     };
     return { ...this.state.threads[sessionId] };
   }

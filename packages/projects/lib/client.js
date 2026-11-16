@@ -65,6 +65,9 @@ window.__ModuleLoader__.load({
       "detail.dirLabel": "项目目录",
       "detail.dirPlaceholder": "绝对路径；线程会在这里建 worktree",
       "detail.dirSave": "绑定",
+      "detail.pause": "暂停项目",
+      "detail.resume": "恢复项目",
+      "detail.budget": "今日 {today} 个线程 · 进行中 {running}",
     };
     var EN = {
       title: "Projects",
@@ -115,6 +118,9 @@ window.__ModuleLoader__.load({
       "detail.dirLabel": "Project dir",
       "detail.dirPlaceholder": "Absolute path; threads create worktrees here",
       "detail.dirSave": "Bind",
+      "detail.pause": "Pause project",
+      "detail.resume": "Resume project",
+      "detail.budget": "{today} threads today · {running} running",
     };
     var PANEL_ID = "projects";
     var SERVICE = "projects";
@@ -453,6 +459,7 @@ window.__ModuleLoader__.load({
               error: "",
               threads: Array.isArray(values[0]?.rows) ? values[0].rows : [],
               progress: values[0] || null,
+              projectState: values[0]?.projectState ?? project.state,
               content: values[1] || null,
               audit: Array.isArray(values[2]) ? values[2] : [],
             });
@@ -689,6 +696,44 @@ window.__ModuleLoader__.load({
             "span",
             { style: styles.summary, "data-projects-detail-goal": "" },
             project.goal || text(t, "panel.goalEmpty"),
+          ),
+        ),
+        h(
+          "div",
+          {
+            style: { display: "flex", gap: "6px", marginTop: "6px" },
+            "data-projects-state-actions": "",
+          },
+          h(
+            "button",
+            {
+              type: "button",
+              style: styles.button,
+              "data-projects-toggle-pause": "",
+              onClick: () => {
+                const next = data.projectState === "paused" ? "resumeProject" : "pauseProject";
+                call(api.ctx, next, { id: project.id }).then(
+                  () => load(),
+                  (error) => {
+                    setData((/** @type {any} */ prev) => ({
+                      ...prev,
+                      error: String(error?.message ?? error),
+                    }));
+                  },
+                );
+              },
+            },
+            data.projectState === "paused" ? text(t, "detail.resume") : text(t, "detail.pause"),
+          ),
+          h(
+            "span",
+            { style: styles.meta, "data-projects-budget": "" },
+            data.progress?.budget
+              ? text(t, "detail.budget", {
+                  today: data.progress.budget.used?.today ?? 0,
+                  running: data.progress.budget.used?.running ?? 0,
+                })
+              : "",
           ),
         ),
         h(
