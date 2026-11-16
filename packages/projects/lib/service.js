@@ -3,7 +3,7 @@
 // 注意（docs/runtime/0.2.1-rc.5.md §6.10）：Remote 方法必须声明在**这个被导出的类自身原型**上，
 // 否则网关不会 claim 端点，所有 /api/projects/* 返回 404。
 import { execFile as execFileCallback } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { promisify } from "node:util";
 
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
@@ -14,6 +14,7 @@ import { initialView, reduce, sortRows } from "./overview.js";
 import { readProjectFiles } from "./project-files.js";
 import { ProjectStore } from "./store.js";
 import { createIsolatedThread, reclaimThreadWorktree, reconcileWorktrees } from "./thread.js";
+import { impactOf, trashDirFor } from "./trash.js";
 
 /**
  * 运行时不支持装饰器语法，用命令式方式登记 Remote（与 advisor / next-step 同法）。
@@ -61,6 +62,25 @@ async function runGit(args, cwd) {
       stderr: String(anyError?.stderr ?? ""),
     };
   }
+}
+
+/**
+ * 递归统计目录体积（只用于影响面展示，不追求精确到字节）。
+ * @param {string} dir
+ * @returns {number}
+ */
+function dirSize(dir) {
+  let total = 0;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = `${dir}/${entry.name}`;
+    try {
+      if (entry.isDirectory()) total += dirSize(path);
+      else if (entry.isFile()) total += statSync(path).size;
+    } catch {
+      /* 读不到就跳过，不因为统计失败阻断删除 */
+    }
+  }
+  return total;
 }
 
 /**
@@ -361,6 +381,88 @@ export class ProjectsService extends TypertRemoteService {
   }
 
   /**
+   * dry-run：删除这个项目会影响什么（数量/体积/是否在跑/能否恢复）。
+   * @param {string} id
+   */
+  previewDeleteProject(id) {
+    const store = this.requireStore();
+    const project = store.getProject(id);
+    if (!project) throw new Error(`projects: unknown project ${id}`);
+    const threads = store.listThreads(id);
+    const contentDir = `${this.dataRoot}/${id}`;
+    let contentBytes = 0;
+    let hasContentDir = false;
+    try {
+      if (existsSync(contentDir)) {
+        hasContentDir = true;
+        contentBytes = dirSize(contentDir);
+      }
+    } catch {
+      hasContentDir = false;
+    }
+    return {
+      projectId: id,
+      name: project.name,
+      impact: impactOf({ threads, contentBytes, hasContentDir, name: project.name }),
+      threads: threads.map((/** @type {any} */ thread) => ({
+        sessionId: thread.sessionId,
+        state: thread.state,
+      })),
+      contentDir,
+    };
+  }
+
+  /**
+   * 删除项目：记录与内容文件移入回收站（会话日志不动），写审计。
+   * 调用方应先跑 previewDeleteProject 把影响面展示给用户。
+   * @param {string} id
+   */
+  deleteProject(id) {
+    const store = this.requireStore();
+    const preview = this.previewDeleteProject(id);
+    const trashDir = trashDirFor({ dataRoot: this.dataRoot, projectId: id });
+    mkdirSync(trashDir, { recursive: true, mode: 0o700 });
+    const removed = store.removeProject(id);
+    // 内容文件（如果有）整体搬进回收站；搬不动就把元数据留在回收站里并报错
+    if (preview.impact.hasContentDir && existsSync(preview.contentDir)) {
+      try {
+        renameSync(preview.contentDir, `${trashDir}/content`);
+      } catch (error) {
+        writeFileSync(
+          `${trashDir}/manifest.json`,
+          `${JSON.stringify({ project: removed.project, threads: removed.threads, contentDir: preview.contentDir, moved: false }, null, 2)}\n`,
+          { mode: 0o600 },
+        );
+        store.save();
+        throw new Error(
+          `projects: content move failed (${String(/** @type {any} */ (error)?.message ?? error)})`,
+        );
+      }
+    }
+    writeFileSync(
+      `${trashDir}/manifest.json`,
+      `${JSON.stringify(
+        {
+          format: 1,
+          deletedAt: new Date().toISOString(),
+          project: removed.project,
+          threads: removed.threads,
+          contentDir: preview.contentDir,
+          moved: preview.impact.hasContentDir,
+          summary: preview.impact.summary,
+        },
+        null,
+        2,
+      )}\n`,
+      { mode: 0o600 },
+    );
+    for (const thread of removed.threads) this.detachSession(thread.sessionId);
+    store.appendAudit({ action: "project/deleted", projectId: id, reason: "trash", trashDir });
+    store.save();
+    return { deleted: true, trashDir, summary: preview.impact.summary };
+  }
+
+  /**
    * 摘掉一个会话已挂的项目上下文（不动归属记录）。
    * @param {string} sessionId
    */
@@ -535,6 +637,8 @@ declareRemote(ProjectsService, "updateProject");
 declareRemote(ProjectsService, "pauseProject");
 declareRemote(ProjectsService, "resumeProject");
 declareRemote(ProjectsService, "archiveProject");
+declareRemote(ProjectsService, "previewDeleteProject");
+declareRemote(ProjectsService, "deleteProject");
 declareRemote(ProjectsService, "attachThread");
 declareRemote(ProjectsService, "detachThread");
 declareRemote(ProjectsService, "createThread");

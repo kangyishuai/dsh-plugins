@@ -288,6 +288,22 @@ export class ProjectStore {
   }
 
   /**
+   * 删除一个项目记录，并摘掉它的线程归属（**不动会话日志**）。
+   * 返回被删内容，供调用方写进回收站清单。
+   * @param {string} id
+   */
+  removeProject(id) {
+    const project = this.state.projects[id];
+    if (!project) throw new Error(`projects: unknown project ${id}`);
+    const threads = Object.entries(this.state.threads)
+      .filter(([, thread]) => /** @type {any} */ (thread).projectId === id)
+      .map(([sessionId, thread]) => ({ sessionId, .../** @type {any} */ (thread) }));
+    delete this.state.projects[id];
+    for (const thread of threads) delete this.state.threads[thread.sessionId];
+    return { project: { ...project }, threads };
+  }
+
+  /**
    * 记录线程的 worktree 归属（建 worktree 成功后调用）。
    * @param {string} sessionId
    * @param {{ branch?: string|null, worktree?: string|null, baseSha?: string|null, state?: string }} patch

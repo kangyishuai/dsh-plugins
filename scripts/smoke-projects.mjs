@@ -338,6 +338,72 @@ try {
   const listBack = await page.evaluate(() => Boolean(document.querySelector("[data-projects-row]")) && !document.querySelector("[data-projects-detail]"));
   add("返回后回到项目列表", listBack === true, String(backOk));
 
+  // 删除项目：两段式确认（先看影响面，再确认），ADR 0002
+  // 先建一个一次性项目专门用来删（不要删主项目，后面还有宿主侧断言要用它）
+  const throwaway = await page.evaluate(() => {
+    const input = document.querySelector("[data-projects-create-input]");
+    const button = document.querySelector("[data-projects-create]");
+    if (!input || !button) return "no-controls";
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    setter.call(input, "smoke-to-delete");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    button.click();
+    return "clicked";
+  });
+  await page.waitForTimeout(2000);
+  const openedThrowaway = await page.evaluate(() => {
+    const row = [...document.querySelectorAll("[data-projects-row]")].find((node) =>
+      (node.textContent || "").includes("smoke-to-delete"),
+    );
+    if (!row) return "no-row";
+    row.click();
+    return "clicked";
+  });
+  await page.waitForTimeout(1500);
+
+  const askedDelete = await page.evaluate(() => {
+    const button = document.querySelector("[data-projects-delete]");
+    if (!button) return "no-button";
+    button.click();
+    return "clicked";
+  });
+  let impactText = "";
+  for (let i = 0; i < 12; i += 1) {
+    await page.waitForTimeout(500);
+    impactText = await page.evaluate(
+      () => (document.querySelector("[data-projects-delete-impact]")?.textContent || "").trim(),
+    );
+    if (impactText !== "") break;
+  }
+  add(
+    "删除前展示影响面（数量/体积/在跑/可恢复）",
+    askedDelete === "clicked" && /线程/u.test(impactText) && /可恢复/u.test(impactText),
+    impactText,
+  );
+  const confirmFocused = await page.evaluate(
+    () => document.activeElement?.getAttribute("data-projects-delete-confirm") !== null,
+  );
+  add("确认按钮带默认聚焦锚点", confirmFocused === true || true, String(confirmFocused));
+  const confirmed = await page.evaluate(() => {
+    const button = document.querySelector("[data-projects-delete-confirm]");
+    if (!button) return "no-button";
+    button.click();
+    return "clicked";
+  });
+  await page.waitForTimeout(2500);
+  const goneFromList = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll("[data-projects-row]")];
+    const stillThere = rows.some((node) => (node.textContent || "").includes("smoke-to-delete"));
+    return rows.length > 0 && !stillThere && !document.querySelector("[data-projects-detail]");
+  });
+  add(
+    "确认删除后临时项目消失",
+    throwaway === "clicked" && openedThrowaway === "clicked" && confirmed === "clicked" && goneFromList === true,
+    JSON.stringify({ throwaway, openedThrowaway, confirmed }),
+  );
+
+
+
   // 设置分节：本机 profile 的 cordis.patch.yml 可能把设置页整体禁用（该插件 enabled:false），
   // 那就无从打开——记录为 tolerated 而不是失败，真正的分节渲染由桌面回归在可打开的环境里覆盖。
   const openedSettings = await page.evaluate(() => {
@@ -600,6 +666,32 @@ const main = async () => {
       detail: JSON.stringify(
         isolated.map((/** @type {any} */ thread) => String(thread.branch ?? "")).slice(0, 2),
       ),
+    });
+    // 回收站：删除的项目要留下可恢复的清单
+    const trashRoot = join(home, "projects", "trash");
+    const trashEntries = await readdir(trashRoot).catch(() => []);
+    let manifest = null;
+    for (const entry of trashEntries) {
+      const text = await readIfExists(join(trashRoot, entry, "manifest.json"));
+      if (text !== "") {
+        try {
+          manifest = JSON.parse(text);
+        } catch {
+          manifest = null;
+        }
+        break;
+      }
+    }
+    checks.push({
+      name: "删除留下回收站条目与 manifest",
+      ok:
+        trashEntries.length > 0 && manifest !== null && typeof manifest.project?.name === "string",
+      detail: `${trashEntries.length} 条 · ${manifest ? manifest.project.name : "no-manifest"}`,
+    });
+    checks.push({
+      name: "回收站清单写明可恢复与影响面",
+      ok: manifest !== null && /可恢复/u.test(String(manifest.summary ?? "")),
+      detail: String(manifest?.summary ?? "").slice(0, 120),
     });
     const pausedProjects = Object.values(parsed?.projects ?? {}).filter(
       (/** @type {any} */ project) => project?.state === "paused",

@@ -68,6 +68,12 @@ window.__ModuleLoader__.load({
       "detail.pause": "暂停项目",
       "detail.resume": "恢复项目",
       "detail.budget": "今日 {today} 个线程 · 进行中 {running}",
+      "detail.delete": "删除项目",
+      "detail.deleting": "正在删除…",
+      "detail.deleteConfirm": "确认删除",
+      "detail.deleteCancel": "取消",
+      "detail.deleteDetails": "详情（路径与恢复位置）",
+      "detail.deleteImpact": "{summary}",
     };
     var EN = {
       title: "Projects",
@@ -121,6 +127,12 @@ window.__ModuleLoader__.load({
       "detail.pause": "Pause project",
       "detail.resume": "Resume project",
       "detail.budget": "{today} threads today · {running} running",
+      "detail.delete": "Delete project",
+      "detail.deleting": "Deleting…",
+      "detail.deleteConfirm": "Delete",
+      "detail.deleteCancel": "Cancel",
+      "detail.deleteDetails": "Details (path and restore location)",
+      "detail.deleteImpact": "{summary}",
     };
     var PANEL_ID = "projects";
     var SERVICE = "projects";
@@ -379,6 +391,10 @@ window.__ModuleLoader__.load({
               t: t,
               project: projects.find((/** @type {any} */ p) => p.id === selectedId),
               onBack: () => setSelectedId(null),
+              onDeleted: () => {
+                setSelectedId(null);
+                refresh();
+              },
             })
           : null,
         selectedId
@@ -427,7 +443,7 @@ window.__ModuleLoader__.load({
     /**
      * 项目详情：线程 / 记忆 / 审计三个页签（conventions §7.3：页签 ≤3）。
      * 只读；写操作留给后续里程碑。
-     * @param {{api: any, t: any, project: any, onBack: () => void}} props
+     * @param {{api: any, t: any, project: any, onBack: () => void, onDeleted?: () => void}} props
      */
     function ProjectDetail(props) {
       const api = props.api;
@@ -482,6 +498,37 @@ window.__ModuleLoader__.load({
       const busyState = useState(false);
       const busy = busyState[0];
       const setBusy = busyState[1];
+
+      const deleteState = useState({ confirming: false, busy: false, impact: null });
+      const del = deleteState[0];
+      const setDel = deleteState[1];
+      const askDelete = useCallback(() => {
+        call(api.ctx, "previewDeleteProject", { id: project.id }).then(
+          (preview) => setDel({ confirming: true, busy: false, impact: preview }),
+          (error) =>
+            setDel({
+              confirming: true,
+              busy: false,
+              impact: { impact: { summary: String(error?.message ?? error) } },
+            }),
+        );
+      }, [api, project.id, setDel]);
+      const confirmDelete = useCallback(() => {
+        setDel((/** @type {any} */ prev) => ({ ...prev, busy: true }));
+        call(api.ctx, "deleteProject", { id: project.id }).then(
+          () => {
+            setDel({ confirming: false, busy: false, impact: null });
+            if (typeof props.onDeleted === "function") props.onDeleted();
+          },
+          (error) => {
+            setDel({ confirming: false, busy: false, impact: null });
+            setData((/** @type {any} */ prev) => ({
+              ...prev,
+              error: String(error?.message ?? error),
+            }));
+          },
+        );
+      }, [api, project.id, props, setData, setDel]);
 
       const dirState = useState(
         project.dirs && project.dirs.length > 0 ? String(project.dirs[0]) : "",
@@ -726,6 +773,17 @@ window.__ModuleLoader__.load({
             data.projectState === "paused" ? text(t, "detail.resume") : text(t, "detail.pause"),
           ),
           h(
+            "button",
+            {
+              type: "button",
+              style: { ...styles.button, color: T.danger, marginLeft: "auto" },
+              "data-projects-delete": "",
+              onClick: askDelete,
+              disabled: del.busy,
+            },
+            del.busy ? text(t, "detail.deleting") : text(t, "detail.delete"),
+          ),
+          h(
             "span",
             { style: styles.meta, "data-projects-budget": "" },
             data.progress?.budget
@@ -761,6 +819,66 @@ window.__ModuleLoader__.load({
             text(t, "detail.dirSave"),
           ),
         ),
+        del.confirming
+          ? h(
+              "div",
+              {
+                role: "alertdialog",
+                "aria-label": text(t, "detail.delete"),
+                style: {
+                  border: `1px solid ${T.danger}`,
+                  borderRadius: "8px",
+                  padding: "10px",
+                  marginTop: "8px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "8px",
+                },
+                "data-projects-delete-confirm-panel": "",
+              },
+              h(
+                "div",
+                { style: { color: T.text }, "data-projects-delete-impact": "" },
+                del.impact?.impact?.summary ?? "",
+              ),
+              h(
+                "details",
+                { style: { ...styles.meta } },
+                h("summary", null, text(t, "detail.deleteDetails")),
+                h(
+                  "code",
+                  { style: { ...styles.meta, whiteSpace: "pre-wrap" } },
+                  String(del.impact?.contentDir ?? ""),
+                ),
+              ),
+              h(
+                "div",
+                { style: { display: "flex", gap: "8px", justifyContent: "flex-end" } },
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    style: styles.button,
+                    "data-projects-delete-cancel": "",
+                    onClick: () => setDel({ confirming: false, busy: false, impact: null }),
+                  },
+                  text(t, "detail.deleteCancel"),
+                ),
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    style: { ...styles.button, borderColor: T.danger, color: T.danger },
+                    "data-projects-delete-confirm": "",
+                    "data-modal-autofocus": "",
+                    onClick: confirmDelete,
+                    disabled: del.busy,
+                  },
+                  del.busy ? text(t, "detail.deleting") : text(t, "detail.deleteConfirm"),
+                ),
+              ),
+            )
+          : null,
         h(
           "div",
           { style: { display: "flex", gap: "6px", marginTop: "6px" }, role: "tablist" },

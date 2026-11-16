@@ -47,6 +47,12 @@
     "detail.dirSave": "绑定",
     "detail.pause": "暂停项目",
     "detail.resume": "恢复项目",
-    "detail.budget": "今日 {today} 个线程 · 进行中 {running}"
+    "detail.budget": "今日 {today} 个线程 · 进行中 {running}",
+    "detail.delete": "删除项目",
+    "detail.deleting": "正在删除…",
+    "detail.deleteConfirm": "确认删除",
+    "detail.deleteCancel": "取消",
+    "detail.deleteDetails": "详情（路径与恢复位置）",
+    "detail.deleteImpact": "{summary}"
   }
 }

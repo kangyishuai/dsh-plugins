@@ -47,6 +47,12 @@
     "detail.dirSave": "Bind",
     "detail.pause": "Pause project",
     "detail.resume": "Resume project",
-    "detail.budget": "{today} threads today · {running} running"
+    "detail.budget": "{today} threads today · {running} running",
+    "detail.delete": "Delete project",
+    "detail.deleting": "Deleting…",
+    "detail.deleteConfirm": "Delete",
+    "detail.deleteCancel": "Cancel",
+    "detail.deleteDetails": "Details (path and restore location)",
+    "detail.deleteImpact": "{summary}"
   }
 }
