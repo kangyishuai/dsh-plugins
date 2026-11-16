@@ -385,7 +385,14 @@ const main = async () => {
     const tgz = (await readdir(work)).find((name) => name.endsWith(".tgz"));
     if (!tgz) throw new Error("pnpm pack 没有产出 tgz");
 
-    const env = { ...process.env, DSH_HOME: home };
+    // 卫生：临时 home 不该带任何模型凭据——否则「冒烟不发模型调用」就成了空话。
+    // 显式清掉进程环境里的密钥类变量，并把 DSH_HOME 指向临时目录。
+    /** @type {Record<string, string|undefined>} */
+    const scrubbed = { ...process.env, DSH_HOME: home };
+    for (const key of Object.keys(scrubbed)) {
+      if (/API_KEY|_TOKEN$|SECRET|PASSWORD/iu.test(key)) delete scrubbed[key];
+    }
+    const env = scrubbed;
     await run("dsh", ["plugin", "--profile", PROFILE, "remove", PACKAGE], { env }).catch(() => {});
     const installed = await run("dsh", ["plugin", "--profile", PROFILE, "add", join(work, tgz)], {
       env,

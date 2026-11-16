@@ -5,6 +5,7 @@ import { describe, it } from "node:test";
 
 import {
   deriveState,
+  hasErrorFinish,
   initialView,
   isFailureEnd,
   needsAttention,
@@ -98,6 +99,62 @@ describe("reduce", () => {
     const restarted = reduce(failed, { type: "turn/start", at: at(2), data: { turn: 2 } });
     assert.equal(restarted.state, "working");
     assert.equal(restarted.lastTurnFailed, false);
+  });
+});
+
+describe("assistant/attempt 级别的失败", () => {
+  it("hasErrorFinish 认出 rc.3 的真实形状", () => {
+    assert.equal(
+      hasErrorFinish({
+        stream: [
+          {
+            chunk: {
+              type: "finish",
+              reason: { kind: "error", failure: { code: "MISSING_CREDENTIAL" } },
+            },
+          },
+        ],
+      }),
+      true,
+    );
+    assert.equal(
+      hasErrorFinish({ stream: [{ chunk: { type: "finish", reason: { kind: "end_turn" } } }] }),
+      false,
+    );
+    assert.equal(hasErrorFinish({ stream: [] }), false);
+    assert.equal(hasErrorFinish({}), false);
+  });
+
+  it("turn/end 不带 reason 时，靠本轮 attempt 的失败把状态判成 failed", () => {
+    const events = [
+      { type: "turn/start", at: at(1), data: { turn: 1 } },
+      {
+        type: "assistant/attempt",
+        at: at(2),
+        data: { stream: [{ chunk: { type: "finish", reason: { kind: "error" } } }] },
+      },
+      { type: "turn/end", at: at(3), data: { turn: 1 } },
+    ];
+    const view = replay(events);
+    assert.equal(view.state, "failed", "这正是真机上曾误判成 done 的场景");
+    assert.equal(view.lastTurnFailed, true);
+  });
+
+  it("下一轮开始时清掉上一轮的 attempt 失败标记", () => {
+    const events = [
+      { type: "turn/start", at: at(1), data: { turn: 1 } },
+      {
+        type: "assistant/attempt",
+        at: at(2),
+        data: { stream: [{ chunk: { type: "finish", reason: { kind: "error" } } }] },
+      },
+      { type: "turn/end", at: at(3), data: { turn: 1 } },
+      { type: "turn/start", at: at(4), data: { turn: 2 } },
+      { type: "turn/end", at: at(5), data: { turn: 2 } },
+    ];
+    const view = replay(events);
+    assert.equal(view.state, "done");
+    assert.equal(view.lastAttemptFailed, false);
   });
 });
 

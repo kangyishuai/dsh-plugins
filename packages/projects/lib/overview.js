@@ -27,6 +27,7 @@ export const STATE_RANK = Object.freeze({
  * @property {number} turn 最近一次看到的 turn 号（0 表示还没跑过）
  * @property {boolean} awaitingUser 是否有待处理的交互（审批/提问/计划审阅）
  * @property {boolean} lastTurnFailed 最近一轮是否以错误结束
+ * @property {boolean} lastAttemptFailed 本轮里是否出现过带 error 的 assistant/attempt
  * @property {number} lastActivityAt 最近一次活动时间（毫秒时间戳，0 表示未知）
  * @property {boolean} unread 是否有未读完成
  */
@@ -38,6 +39,7 @@ export function initialView() {
     turn: 0,
     awaitingUser: false,
     lastTurnFailed: false,
+    lastAttemptFailed: false,
     lastActivityAt: 0,
     unread: false,
   };
@@ -77,8 +79,14 @@ export function reduce(view, event) {
         turn: Number.isFinite(turn) ? turn : view.turn,
         state: "working",
         lastTurnFailed: false,
+        lastAttemptFailed: false,
         unread: false,
       };
+      break;
+    }
+    case "assistant/attempt": {
+      // 失败信息在这里，不在 turn/end：rc.3 实测 turn/end 只带 { turn }。
+      if (hasErrorFinish(event?.data)) next = { ...next, lastAttemptFailed: true };
       break;
     }
     case "interaction/pending": {
@@ -91,12 +99,13 @@ export function reduce(view, event) {
       break;
     }
     case "turn/end": {
-      const failed = isFailureEnd(event);
+      const failed = isFailureEnd(event) || view.lastAttemptFailed === true;
       next = {
         ...next,
         awaitingUser: false,
         lastTurnFailed: failed,
         state: failed ? "failed" : "done",
+        lastAttemptFailed: false,
         unread: !failed,
       };
       break;
@@ -115,6 +124,24 @@ export function reduce(view, event) {
   }
 
   return { ...next, state: deriveState(next) };
+}
+
+/**
+ * assistant/attempt 的 stream 里是否出现 error 结束。
+ * 形状（rc.3 实测）：{ stream: [{ chunk: { type: "finish", reason: { kind: "error", failure } } }] }
+ * @param {any} data
+ * @returns {boolean}
+ */
+export function hasErrorFinish(data) {
+  const stream = Array.isArray(data?.stream) ? data.stream : [];
+  for (const entry of stream) {
+    const chunk = entry?.chunk ?? entry;
+    if (String(chunk?.type ?? "") !== "finish") continue;
+    const reason = chunk?.reason;
+    if (reason && typeof reason === "object" && String(reason.kind ?? "") === "error") return true;
+    if (typeof reason === "string" && /error|fail/iu.test(reason)) return true;
+  }
+  return false;
 }
 
 /**
