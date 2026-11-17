@@ -78,7 +78,10 @@ test("runCycle：不带 builder 时直接跑 loop 并关闭义务", async () => 
 test("runCycle：带 builder 时先起会话、等它停，再跑 loop", async () => {
   const sessions = fakeSessions();
   const { actions, impl } = makeActions({ sessions });
-  const project = await actions.openProject({ title: "Cycle With Builder" });
+  const project = await actions.openProject({
+    title: "Cycle With Builder",
+    authTier: "authorized",
+  });
   const app = join(impl, "app.mjs");
   const claim = await actions.addClaim(project.id, { text: "输出含 Usage" });
   await actions.selectClaims(project.id, [claim.id], true);
@@ -113,7 +116,7 @@ test("runCycle：builder 会话被取消（input-required）也继续跑 loop", 
   const sessions = fakeSessions();
   sessions.wait = async () => ({ reason: "input-required", output: null });
   const { actions, impl } = makeActions({ sessions });
-  const project = await actions.openProject({ title: "Needs Input" });
+  const project = await actions.openProject({ title: "Needs Input", authTier: "authorized" });
   const claim = await actions.addClaim(project.id, { text: "x" });
   await actions.selectClaims(project.id, [claim.id], true);
   const result = await actions.runCycle(project.id, {

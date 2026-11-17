@@ -79,6 +79,10 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-casefile-*.tgz
 
 截图采集由别处完成（REA 的 browser 工具或用户自己的工具），`web` checker 只负责判定。PNG 解码器在仓库内（`lib/core/png.js`，无第三方依赖），支持 8-bit RGB/RGBA、非隔行。
 
+## 授权档
+
+项目带 `authTier`：`owned` / `authorized` / `research`。**起复刻构建**（`case_build agent` / `cycle`）时，`research` 档默认被拒绝；要放行必须显式传 `allowResearchTier: true` 并给 `reason`，放行会以 `auth/research-override` 写进项目审计。这样授权档不是装饰：research 档的项目可以调查、可以出规格，但不能悄悄被复刻。
+
 ## 关闭项目
 
 `case_project close` 在项目真的做完之前会一直拒绝。闸门按顺序检查：至少一条义务；没有 `open`/`fail`/`blocked` 义务；覆盖率 ≥ `minCoverage`（默认 100%）；没有未解决未知项；存在一条新鲜的、实现 digest 与当前构建一致的检查。每个卡点都按名字报出来，知道该修什么。

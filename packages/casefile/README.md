@@ -79,6 +79,10 @@ Obligations may carry `featureIds`, so a **scoped replica** can report coverage 
 
 Screenshots are captured elsewhere (REA's browser tools or any tool the user prefers); the `web` checker only judges. The PNG decoder is in-repo (`lib/core/png.js`, no third-party dependency) and supports 8-bit RGB/RGBA, non-interlaced.
 
+## Authorization tiers
+
+A project carries `authTier`: `owned`, `authorized`, or `research`. Starting a **replica build** (`case_build agent` / `cycle`) is refused when the tier is `research` unless the caller passes `allowResearchTier: true` with a `reason` — the override is written to the project audit log as `auth/research-override`. This keeps the tier from being decorative: a research-only project can be investigated and specified, but not quietly reconstructed.
+
 ## Closing a project
 
 `case_project close` refuses until the project is actually done. The gate checks, in order: at least one obligation; no `open`/`fail`/`blocked` obligations; coverage ≥ `minCoverage` (default 100%); no unresolved unknowns; a fresh check whose implementation digest matches the current build. Each blocker is reported by name, so you know what to fix.

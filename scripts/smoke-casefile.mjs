@@ -442,7 +442,13 @@ async function main() {
     // 9.7) builder 会话（真实宿主里创建会话 + 投喂规格 + 等待）
     const builder = await remote(session, "startBuilder", {
       projectId: "todo-app-smoke",
-      input: { cwd: implDir, timeoutMs: 15000 },
+      input: {
+        cwd: implDir,
+        timeoutMs: 15000,
+        // 该项目建时没指定授权档 → 默认 research；显式覆盖以验证「覆盖后可放行」并留审计
+        allowResearchTier: true,
+        reason: "冒烟：临时目录内的自造目标，无第三方内容",
+      },
     });
     check(
       "startBuilder 在真实宿主里创建会话并投喂规格",
@@ -791,6 +797,35 @@ async function main() {
       "报告 md 里有按功能覆盖率表且该功能 0% 或 100% 有据可查",
       featureReportMd.includes("按功能覆盖率") && featureReportMd.includes("启动输出"),
       featureReportMd.slice(0, 200),
+    );
+
+    // 9.15) 授权档闸门：research 档默认禁止起 builder 复刻
+    await remote(session, "createProject", {
+      input: {
+        title: "Research Only",
+        target: { kind: "web", ref: "https://example.test" },
+        authTier: "research",
+      },
+    });
+    const researchClaim = await remote(session, "addClaim", {
+      projectId: "research-only",
+      input: { text: "x" },
+    });
+    await remote(session, "selectClaims", {
+      projectId: "research-only",
+      claimIds: [researchClaim.value?.id],
+      selected: true,
+    });
+    const researchBuilder = await remote(session, "startBuilder", {
+      projectId: "research-only",
+      input: { cwd: implDir },
+    });
+    check(
+      "research 档默认拒绝起 builder（auth-tier-blocked → bad-request）",
+      researchBuilder.ok === false &&
+        researchBuilder.error?.code === "gateway/bad-request" &&
+        /research/u.test(String(researchBuilder.error?.message ?? "")),
+      researchBuilder.raw.slice(0, 300),
     );
 
     // 10) 详情统计

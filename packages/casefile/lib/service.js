@@ -69,6 +69,7 @@ function fail(error) {
     "obligationTooTall",
     "coverage-not-met",
     "builder-unavailable",
+    "auth-tier-blocked",
   ]);
   if (BUSINESS_CODES.has(code)) {
     throw new RemoteError("gateway/bad-request", message, {});

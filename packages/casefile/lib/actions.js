@@ -772,6 +772,16 @@ export function createActions(options) {
       return reopened;
     },
 
+    /**
+     * 读审计日志（只读）。
+     * @param {string} projectId
+     * @returns {any[]}
+     */
+    readAudit(projectId) {
+      const project = requireProject(projectId);
+      return store.readAudit(project.id);
+    },
+
     /** @param {string} projectId */
     readRunData(projectId) {
       const data = store.readAll(projectId);
@@ -893,7 +903,10 @@ export function createActions(options) {
      * 说明：DSH 的 agent preset 目前无法用 bundle 名组合（见 runtime §10.7），
      * 因此这里用「独立会话 + 只投喂规格」做信息流隔离，而不是工具白名单。
      * @param {string} projectId
-     * @param {{ cwd: string, prompt?: string, featureIds?: string[], timeoutMs?: number }} input
+     * @param {{
+     *   cwd: string, prompt?: string, featureIds?: string[], timeoutMs?: number,
+     *   allowResearchTier?: boolean, reason?: string,
+     * }} input
      * @returns {Promise<Record<string, any>>}
      */
     async startBuilder(projectId, input) {
@@ -906,6 +919,21 @@ export function createActions(options) {
       }
       const cwd = String(input?.cwd ?? "").trim();
       if (cwd === "") throw new CasefileInputError("invalid-input", "cwd 不能为空");
+      // 授权档闸门：research 档默认不允许「复刻」这种高争议动作，必须显式覆盖并留审计。
+      if (project.authTier === "research" && input?.allowResearchTier !== true) {
+        throw new CasefileActionError(
+          "auth-tier-blocked",
+          `项目授权档是 research：默认不许起复刻构建。确认有权复刻后，用 allowResearchTier 显式覆盖（会写审计）。`,
+        );
+      }
+      if (project.authTier === "research" && input?.allowResearchTier === true) {
+        store.audit(project.id, {
+          actor: "agent",
+          action: "auth/research-override",
+          target: project.id,
+          detail: { reason: String(input?.reason ?? "").slice(0, 500) },
+        });
+      }
       const data = store.readAll(project.id);
       const pack = buildSpecPack({
         project,
@@ -1001,7 +1029,10 @@ export function createActions(options) {
      * 这是 spec 里「builder 停下 → 自动 build → 自动 check」的落点。
      * @param {string} projectId
      * @param {{
-     *   builder?: { cwd: string, prompt?: string, featureIds?: string[], timeoutMs?: number },
+     *   builder?: {
+     *     cwd: string, prompt?: string, featureIds?: string[], timeoutMs?: number,
+     *     allowResearchTier?: boolean, reason?: string,
+     *   },
      *   command?: string, cwd?: string, maxRounds?: number, timeoutMs?: number,
      *   stop?: Record<string, any>,
      * }} input
@@ -1016,6 +1047,8 @@ export function createActions(options) {
           cwd: input.builder.cwd,
           prompt: input.builder.prompt,
           featureIds: input.builder.featureIds,
+          allowResearchTier: input.builder.allowResearchTier,
+          reason: input.builder.reason,
         });
         const awaited = await this.awaitBuilder(project.id, {
           sessionId: started.builder.sessionId,

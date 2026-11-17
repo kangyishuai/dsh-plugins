@@ -472,6 +472,11 @@ export function buildToolDefinitions(handlers, projectOf) {
           action: { type: "string", enum: ["start", "status", "agent", "loop", "cycle"] },
           projectId: PROJECT_ID,
           prompt: { type: "string", description: "agent 时可选：给 builder 的额外指令" },
+          allowResearchTier: {
+            type: "boolean",
+            description: "授权档是 research 时，确认有权复刻后显式放行（会写审计）",
+          },
+          reason: { type: "string", description: "放行 research 档的理由（进审计）" },
           featureIds: { type: "array", items: { type: "string" } },
           sessionId: { type: "string", description: "await 用：builder 会话 id" },
           command: { type: "string", description: "start 时必填：构建命令（shell）" },
@@ -527,6 +532,8 @@ export function buildToolDefinitions(handlers, projectOf) {
               cwd: args.cwd,
               prompt: args.prompt,
               featureIds: args.featureIds,
+              allowResearchTier: args.allowResearchTier,
+              reason: args.reason,
             });
             return {
               ...started,
