@@ -6,7 +6,7 @@
 
 Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). Not affiliated with DeepSeek. It is an adapter on top of [REA](https://github.com/morluto/rea) (MIT); it ships none of REA's code and no analysis engine.
 
-> **Status: M2.5 (build → check → stale + builder session).** Persists projects, evidence, claims, features, unknowns, obligations and check records; exports a redacted spec pack; ships a workbench page (evidence / obligations / runs), a sidebar entry and a settings section. A **builder session** can be started from a project: casefile creates a child session, feeds it only the spec pack (never the original target), and returns the session id; `awaitBuilder` reports why it stopped. The build/check loop runs real commands: `case_build start` records a `BuildRun` with an implementation digest, `case_check run` records a result bound to that digest, and a later build whose digest differs automatically **reopens** the obligations it had closed. Verified by 70 unit tests, a 30-assertion web end-to-end smoke on a throwaway DSH home (including the stale-reopen path), and a manual GUI pass in a real browser; the desktop read-only suite is written but still needs the plugin installed in the desktop profile before it can run. Treat it as young software.
+> **Status: M3 core (auto loop + near-miss proof).** Persists projects, evidence, claims, features, unknowns, obligations and check records; exports a redacted spec pack; ships a workbench page (evidence / obligations / runs), a sidebar entry and a settings section. A **builder session** can be started from a project: casefile creates a child session, feeds it only the spec pack (never the original target), and returns the session id; `awaitBuilder` reports why it stopped. The build/check loop runs real commands: `case_build start` records a `BuildRun` with an implementation digest, `case_check run` records a result bound to that digest, and a later build whose digest differs automatically **reopens** the obligations it had closed. Verified by 70 unit tests, a 30-assertion web end-to-end smoke on a throwaway DSH home (including the stale-reopen path), and a manual GUI pass in a real browser; the desktop read-only suite is written but still needs the plugin installed in the desktop profile before it can run. Treat it as young software.
 
 ## What it does
 
@@ -65,6 +65,10 @@ A settings section shows the data root, project count and REA capability status,
 | `case_brief`    | `export`                          | Write the redacted spec pack (`spec.json` + `brief.md`)                         |
 
 Every tool returns `{ ok, data?, error?{code,message,hint}, summary }`; errors carry a stable code, so the model can correct itself instead of guessing.
+
+## Anti-false-green
+
+The suite includes **near-miss injection** tests: an obligation is closed against a correct implementation, then one character of the output is changed, and the next round must fail that obligation and reopen it. A failed build also skips checks entirely instead of producing a misleading pass. See `packages/casefile/test/near-miss.test.js`.
 
 ## Data layout
 

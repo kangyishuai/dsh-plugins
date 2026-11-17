@@ -459,7 +459,7 @@ export function buildToolDefinitions(handlers, projectOf) {
         type: "object",
         additionalProperties: false,
         properties: {
-          action: { type: "string", enum: ["start", "status", "agent"] },
+          action: { type: "string", enum: ["start", "status", "agent", "loop"] },
           projectId: PROJECT_ID,
           prompt: { type: "string", description: "agent 时可选：给 builder 的额外指令" },
           featureIds: { type: "array", items: { type: "string" } },
@@ -467,6 +467,7 @@ export function buildToolDefinitions(handlers, projectOf) {
           command: { type: "string", description: "start 时必填：构建命令（shell）" },
           cwd: { type: "string", description: "构建目录；给了才会算实现 digest" },
           round: { type: "integer", description: "可选：指定轮次，默认自动递增" },
+          maxRounds: { type: "integer", description: "loop 最多跑几轮（默认 1）" },
           timeoutMs: { type: "integer" },
         },
         required: ["action"],
@@ -475,8 +476,17 @@ export function buildToolDefinitions(handlers, projectOf) {
       /** @param {any} args @param {any} exec */
       async execute(args, exec) {
         return run(async () => {
-          const action = assertAction(args.action, ["start", "status", "agent"]);
+          const action = assertAction(args.action, ["start", "status", "agent", "loop"]);
           const id = projectId(args, exec);
+          if (action === "loop") {
+            const result = await handlers.advanceLoop(id, {
+              command: args.command,
+              cwd: args.cwd,
+              maxRounds: args.maxRounds,
+              timeoutMs: args.timeoutMs,
+            });
+            return result;
+          }
           if (action === "agent") {
             if (args.sessionId) {
               const awaited = await handlers.awaitBuilder(id, {

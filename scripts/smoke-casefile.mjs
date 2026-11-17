@@ -464,6 +464,62 @@ async function main() {
     const stillAlive = await remote(session, "diagnose");
     check("builder 会话之后宿主仍可用", stillAlive.ok === true, stillAlive.raw.slice(0, 200));
 
+    // 9.8) 自动循环 + near-miss（真跑子进程，检查不能被"差不多"骗过）
+    const tiny = join(work, "tiny");
+    await mkdir(tiny, { recursive: true });
+    const tinyApp = join(tiny, "app.mjs");
+    await writeFile(tinyApp, "console.log('Usage: tiny');\n", "utf8");
+    await remote(session, "createProject", {
+      input: { title: "Tiny Loop", target: { kind: "binary", ref: "node" } },
+    });
+    await remote(session, "addClaim", {
+      projectId: "tiny-loop",
+      input: { text: "app 打印 Usage: tiny" },
+    });
+    const tinyClaim = await remote(session, "listClaims", { projectId: "tiny-loop" });
+    const tinyClaimId = (tinyClaim.value || [])[0]?.id;
+    await remote(session, "selectClaims", {
+      projectId: "tiny-loop",
+      claimIds: [tinyClaimId],
+      selected: true,
+    });
+    await remote(session, "addObligation", {
+      projectId: "tiny-loop",
+      input: {
+        statement: "`app` 输出包含 Usage: tiny",
+        kind: "behavior",
+        check: {
+          checker: "cli",
+          command: `node ${tinyApp}`,
+          expect: { exitCode: 0, stdoutIncludes: ["Usage: tiny"] },
+        },
+      },
+    });
+    const loopOk = await remote(session, "advanceLoop", {
+      projectId: "tiny-loop",
+      input: { command: 'node -e "0"', cwd: tiny, maxRounds: 2 },
+    });
+    check(
+      "advanceLoop 正确实现：构建→检查→关闭",
+      loopOk.ok && loopOk.value?.closed === 1 && loopOk.value?.open === 0,
+      loopOk.raw.slice(0, 400),
+    );
+
+    // near-miss：改坏一个字符
+    await writeFile(tinyApp, "console.log('Usage:tny');\n", "utf8");
+    const loopBad = await remote(session, "advanceLoop", {
+      projectId: "tiny-loop",
+      input: { command: 'node -e "0"', cwd: tiny, maxRounds: 2 },
+    });
+    const badVerdicts = (loopBad.value?.rounds || []).flatMap((/** @type {any} */ round) =>
+      (round.checked || []).map((/** @type {any} */ item) => item.verdict),
+    );
+    check(
+      "near-miss 注入后检查必须 fail、义务回到 open",
+      loopBad.ok && badVerdicts.includes("fail") && loopBad.value?.open >= 1,
+      loopBad.raw.slice(0, 400),
+    );
+
     // 10) 详情统计
     const detail = await remote(session, "projectDetail", { projectId: "todo-app-smoke" });
     check(

@@ -785,6 +785,87 @@ export function createActions(options) {
       };
     },
 
+    // ---------- 自动循环（M3） ----------
+
+    /**
+     * 跑一轮自动循环：构建 → 对带 recipe 的未关闭义务逐个检查 → 通过就关闭 → 停止条件。
+     * 不猜「像不像」：只跑义务自带的 check recipe，没有 recipe 的义务保持 open 并列入 needsRecipe。
+     * @param {string} projectId
+     * @param {{
+     *   command: string, cwd?: string, round?: number, timeoutMs?: number,
+     *   maxRounds?: number, stop?: Record<string, any>,
+     * }} input
+     * @returns {Promise<Record<string, any>>}
+     */
+    async advanceLoop(projectId, input) {
+      const project = requireProject(projectId);
+      const requestedMax = Number(input?.maxRounds);
+      const maxRounds = Number.isInteger(requestedMax) && requestedMax > 0 ? requestedMax : 1;
+      /** @type {any[]} */
+      const rounds = [];
+      for (let index = 0; index < maxRounds; index += 1) {
+        const build = await this.startBuild(project.id, {
+          command: input?.command,
+          cwd: input?.cwd,
+          timeoutMs: input?.timeoutMs,
+        });
+        /** @type {any[]} */
+        const opened = store
+          .readRecords(project.id, "obligations")
+          .filter((item) => item.status === "open");
+        const withRecipe = opened.filter((item) => item.check != null);
+        const needsRecipe = opened.filter((item) => item.check == null).map((item) => item.id);
+        /** @type {any[]} */
+        const checked = [];
+        // 构建失败时不做检查：在坏实现上跑检查没有意义，也容易产生误导性的绿灯。
+        if (build.build.status === "pass") {
+          for (const obligation of withRecipe) {
+            const recipe = obligation.check;
+            const result = await this.runCheck(project.id, {
+              obligationId: obligation.id,
+              checker: recipe.checker,
+              command: recipe.command,
+              cwd: recipe.cwd ?? input?.cwd,
+              expect: recipe.expect ?? {},
+              timeoutMs: recipe.timeoutMs,
+            });
+            let closed = null;
+            if (result.check.verdict === "pass") {
+              closed = await this.closeObligation(project.id, obligation.id, {
+                checkId: result.check.id,
+                note: "advanceLoop",
+              });
+            }
+            checked.push({
+              obligationId: obligation.id,
+              verdict: result.check.verdict,
+              status: closed ? "pass" : "open",
+            });
+          }
+        }
+        const status = await this.loopStatus(project.id, input?.stop);
+        rounds.push({
+          round: build.build.round,
+          buildStatus: build.build.status,
+          checked,
+          needsRecipe,
+          openObligations: status.obligations.open,
+          stop: status.stop,
+        });
+        if (status.stop.stop) break;
+        if (status.obligations.open === 0) break;
+      }
+      const final = await this.loopStatus(project.id, input?.stop);
+      return {
+        rounds,
+        closed: final.obligations.pass,
+        open: final.obligations.open,
+        stop: final.stop,
+        openObligations: final.openObligations,
+        summary: `跑了 ${rounds.length} 轮；关闭 ${final.obligations.pass} 条；停止条件 ${final.stop.reason}`,
+      };
+    },
+
     // ---------- builder 会话（M2.5） ----------
 
     /**

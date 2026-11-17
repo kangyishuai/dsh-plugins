@@ -300,6 +300,22 @@ export function normalizeUnknown(input) {
  */
 export function normalizeObligation(input) {
   const statement = text(input?.statement, "statement", { max: 2000 });
+  /** @type {Record<string, any> | null} */
+  let check = null;
+  if (input?.check != null) {
+    const raw = input.check;
+    const checker = oneOf(raw?.checker ?? "cli", ["build", "cli"], "check.checker");
+    const command = text(raw?.command, "check.command", { max: 2000 });
+    check = { checker, command };
+    if (raw?.expect != null) {
+      if (typeof raw.expect !== "object" || Array.isArray(raw.expect)) {
+        throw new CasefileInputError("invalid-input", "check.expect 必须是对象");
+      }
+      check.expect = raw.expect;
+    }
+    if (raw?.cwd != null) check.cwd = text(raw.cwd, "check.cwd", { max: 2000 });
+    if (raw?.timeoutMs != null) check.timeoutMs = Number(raw.timeoutMs);
+  }
   return {
     id: newId("obl"),
     source: input?.source == null ? "manual" : text(input.source, "source", { max: 200 }),
@@ -315,6 +331,7 @@ export function normalizeObligation(input) {
     evidenceIds: idList(input?.evidenceIds, "evidenceIds"),
     ownerDigest:
       input?.ownerDigest == null ? null : text(input.ownerDigest, "ownerDigest", { max: 128 }),
+    check,
     version: 1,
   };
 }
