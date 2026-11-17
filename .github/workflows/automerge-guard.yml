@@ -7,7 +7,10 @@ name: Automerge guard
 # 故意**不**由本工作流代劳「武装 auto-merge」：用 GITHUB_TOKEN 发起的合并不会触发
 # push 工作流，会吞掉 Release（发版链）。武装仍然只由人或 agent 用 PAT 执行。
 on:
-  pull_request_target:
+  # pull_request_target 在本仓库自 2026-11-16 16:49Z 起整类启动失败（guard 与 labeler
+  # 同时 startup_failure，CI 的 pull_request 正常）。这里改用 pull_request：同仓 PR 的
+  # GITHUB_TOKEN 仍可写标签/评论，脚本行为不变，只是不再检出基分支执行。
+  pull_request:
     types: [opened, reopened, labeled, unlabeled, synchronize, edited]
 
 permissions:
@@ -24,10 +27,9 @@ jobs:
     if: github.repository == 'kangyishuai/dsh-plugins'
     runs-on: ubuntu-latest
     steps:
-      # pull_request_target 下必须显式检出**基分支**：PR 里的代码一行都不执行。
+      # pull_request 下检出的是 PR 合并结果，但脚本只读标签与改动面，不执行 PR 里的代码。
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.base.ref }}
           persist-credentials: false
       - uses: actions/setup-node@v7
         with:
