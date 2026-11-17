@@ -1,5 +1,11 @@
 # @kangyishuai/dsh-btw
 
+## 0.4.0
+
+### Minor Changes
+
+- [#172](https://github.com/kangyishuai/dsh-plugins/pull/172) [`885eae6`](https://github.com/kangyishuai/dsh-plugins/commit/885eae6d709a602dabb639ecd9ddf14abe6d5f41) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 旁问面板改为 **DSH 原生右侧栏 tab**（主对话变窄但不被遮挡，可收起/展开；旧宿主回退到右侧浮层抽屉）；答案**流式输出**并按 **Markdown** 渲染；成本徽章的 token 数与耗时自适应 `K/M/B/T` 与 `ms/s/m/h`；消息顺序改为**旧→新、最新在底部**并展开线程全部轮次；转正草稿保留 Markdown 源码（输入框里是原文，发送后由 DSH 渲染）。
+
 ## 0.3.0
 
 ### Minor Changes
