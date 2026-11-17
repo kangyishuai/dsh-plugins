@@ -56,4 +56,4 @@ documentation:
   - changed-files:
       - any-glob-to-any-file: "packages/projects/**"
 "plugin:casefile":
-      - any-glob-to-any-file: "packages/casefile/**"
+  - any-glob-to-any-file: "packages/casefile/**"

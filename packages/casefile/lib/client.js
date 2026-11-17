@@ -782,7 +782,7 @@ window.__ModuleLoader__.load({
               { className: "cf-muted", style: { marginBottom: 8 } },
               builds.length === 0
                 ? text(t, "run.empty")
-                : text(t, "run.builds") + " · " + builds.length,
+                : `${text(t, "run.builds")} · ${builds.length}`,
             ),
             builds.length === 0
               ? h(
