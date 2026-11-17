@@ -7,13 +7,13 @@
 //   pnpm smoke:btw-desktop --require
 //   pnpm smoke:btw-desktop --require --deep   —— 另跑一次真实 /btw，验证真实数据根的 history 落盘
 //
-// 桌面端（Electron）只读回归：btw 的 client 半是否真的注入、右侧抽屉能否开关/收起。
+// 桌面端（Electron）只读回归：btw 的 client 半是否真的注入、原生右侧栏 tab 能否开关/收起。
 // 覆盖（全部**只读**：只开浮层再 Esc 关闭，不提交、不发起任何模型调用）：
 //   1. client 半已加载：`style[data-plugin="@kangyishuai/dsh-btw"]`
 //   2. 输入框左侧出现 `[data-btw-toggle]` 按钮
 //   3. 点开 → 右侧 `[data-btw-panel]` 出现（role=dialog，靠右、不遮挡输入框）
 //   4. 抽屉里有标题或空状态，且没有 `[data-btw-error]`；有记录时答案按 Markdown 渲染
-//   5. 「收起」→ 右边缘侧边条；点侧边条 → 重新展开；Esc → 抽屉消失
+//   5. 宿主「收起」→ 右侧栏折叠（tab 保留）；再点「旁问」展开；「关闭」关闭 tab
 //   6. 收尾：没有遗留抽屉
 //
 // 安全前置：当前会话正在跑回合（有「停止生成」按钮）时，脚本**不交互**，只报 SKIP——
@@ -334,12 +334,12 @@ const main = async () => {
 
       // 收起右侧栏 → 再点「旁问」展开（「可以点击展开或者收起来」）
       await cdp.evaluate(
-        `(() => { const b = document.querySelector('[data-btw-collapse]'); if (b) b.click(); return true; })()`,
+        `(() => { const b = document.querySelector('[data-sidebar-right-toggle]'); if (b) b.click(); return true; })()`,
       );
       await sleep(700);
       const collapsed = await cdp.evaluate(STATE);
       check(
-        "点「收起」收起右侧栏（tab 保留）",
+        "点宿主「收起」收起右侧栏（tab 保留）",
         collapsed.rightbarCollapsed === true && collapsed.isTab === true,
         JSON.stringify(collapsed),
       );
