@@ -16,8 +16,11 @@ export const LIMITS = {
   allowedToolsMax: 8,
   /** 单条线程最多追问几轮（超过提示开新线程） */
   threadTurns: 10,
-  /** 转正草稿的最大字符数（插进 composer 前的上限） */
-  promoteChars: 4000,
+  /**
+   * 转正草稿的最大字符数。实测 4000 字会把 composer 撑满整屏（用户原话
+   * 「输入框把对话都挤没了」），收到 1200 字：够保留结论与要点。
+   */
+  promoteChars: 1200,
 };
 
 /**

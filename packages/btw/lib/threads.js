@@ -92,22 +92,58 @@ export function renderPromoteDraft(record, options = {}) {
     const found = PROMOTE_SECTIONS.find((entry) => entry.key === key);
     return found === undefined ? key : lang === "en" ? found.en : found.zh;
   };
-  const question = String(record?.question ?? "").trim();
-  const answer = String(record?.answer ?? "").trim();
+  const question = stripMarkdown(String(record?.question ?? ""));
+  const answer = stripMarkdown(String(record?.answer ?? ""));
   /** @type {string[]} */
   const lines = [
-    `## ${section("question")}`,
+    `【${section("question")}】`,
     question === "" ? "—" : question,
     "",
-    `## ${section("answer")}`,
+    `【${section("answer")}】`,
     answer === "" ? "—" : answer,
   ];
-  const details = String(options.details ?? "").trim();
-  if (details !== "") lines.push("", `## ${section("details")}`, details);
-  const unresolved = String(options.unresolved ?? "").trim();
-  if (unresolved !== "") lines.push("", `## ${section("unresolved")}`, unresolved);
+  const details = stripMarkdown(String(options.details ?? ""));
+  if (details !== "") lines.push("", `【${section("details")}】`, details);
+  const unresolved = stripMarkdown(String(options.unresolved ?? ""));
+  if (unresolved !== "") lines.push("", `【${section("unresolved")}】`, unresolved);
   const text = lines.join("\n").trim();
   return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
+}
+
+/**
+ * 去掉常见 Markdown 标记，让文本适合直接放进输入框。
+ *
+ * 为什么必须做：实测用户点「转正」后，输入框里塞进来的是 `## 我问了什么`、
+ * `**每个 PR 上实际出现的检查是 8 个**`、`|---|` 这类源码，用户原话是
+ * 「为什么给我一堆井号和竖线？」。我们没有 Markdown 渲染器（ADR 0001 不引入构建），
+ * 所以草稿必须自己变成纯文本。
+ * @param {string} text
+ * @returns {string}
+ */
+export function stripMarkdown(text) {
+  return (
+    String(text ?? "")
+      .replace(/^\s{0,3}#{1,6}\s+/gmu, "") // 标题井号
+      .replace(/^[ \t]*\|?[\s:|\t-]+\|[\s:|\t-]*$/gmu, "") // 表格分隔行 |---|---|
+      // 表格数据行 | a | b | → "a — b"（竖线对普通用户就是噪音）
+      .replace(
+        /^[ \t]*\|(.+)\|[ \t]*$/gmu,
+        (/** @type {string} */ _m, /** @type {string} */ body) =>
+          body
+            .split("|")
+            .map((cell) => cell.trim())
+            .filter((cell) => cell !== "")
+            .join(" — "),
+      )
+      .replace(/\*\*([^*\n]+)\*\*/gu, "$1") // **粗体**
+      .replace(/(?<![*\w])\*([^*\n]+)\*(?!\*)/gu, "$1") // *斜体*
+      .replace(/`{3,}[a-z]*\n?/giu, "") // ``` 代码围栏
+      .replace(/`([^`\n]+)`/gu, "$1") // `行内代码`
+      .replace(/^\s*[-*+]\s+/gmu, "· ") // 列表符号
+      .replace(/^\s*>\s?/gmu, "") // 引用
+      .replace(/\n{3,}/gu, "\n\n") // 压掉多余空行
+      .trim()
+  );
 }
 
 /**

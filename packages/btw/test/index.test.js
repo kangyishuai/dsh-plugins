@@ -32,6 +32,7 @@ import {
   parseThreadFlag,
   renderPromoteDraft,
   SCOPES,
+  stripMarkdown,
   threadHistory,
   threadOf,
 } from "../lib/threads.js";
@@ -350,19 +351,19 @@ test("threads: newThreadId 稳定且带前缀", () => {
 
 test("promote: 草稿是四节模板，只生成文本不发送", () => {
   const draft = renderPromoteDraft({ question: "配置文件叫什么？", answer: "config.json" });
-  assert.ok(draft.includes("## 我问了什么"));
+  assert.ok(draft.includes("【我问了什么】"));
   assert.ok(draft.includes("配置文件叫什么？"));
-  assert.ok(draft.includes("## 结论"));
+  assert.ok(draft.includes("【结论】"));
   assert.ok(draft.includes("config.json"));
-  assert.ok(!draft.includes("## 关键细节"), "没传 details 就不出现该节");
+  assert.ok(!draft.includes("【关键细节】"), "没传 details 就不出现该节");
   const withExtra = renderPromoteDraft(
     { question: "q", answer: "a" },
     { details: "d", unresolved: "u" },
   );
-  assert.ok(withExtra.includes("## 关键细节"));
-  assert.ok(withExtra.includes("## 仍未解决"));
+  assert.ok(withExtra.includes("【关键细节】"));
+  assert.ok(withExtra.includes("【仍未解决】"));
   const en = renderPromoteDraft({ question: "q", answer: "a" }, { lang: "en" });
-  assert.ok(en.includes("## What I asked"));
+  assert.ok(en.includes("【What I asked】"));
 });
 
 test("promote: 草稿按上限截断并加省略号", () => {
@@ -374,7 +375,7 @@ test("promote: 草稿按上限截断并加省略号", () => {
 
 test("promote: 空答案也产出可编辑骨架（不抛）", () => {
   const draft = renderPromoteDraft({});
-  assert.ok(draft.includes("## 结论"));
+  assert.ok(draft.includes("【结论】"));
   assert.ok(draft.includes("—"), "空值用破折号占位");
 });
 
@@ -445,4 +446,39 @@ test("prompts: 只有传了范围才把范围指令写进提示词", async () =>
   const scoped = JSON.stringify(buildSideQuestionPrompt("q", [], "recent"));
   assert.ok(scoped.includes("Scope requested"), "有范围才出现");
   assert.ok(scoped.includes("advisory only"), "必须写成建议，不能声称裁剪上下文");
+});
+
+test("promote: 草稿是纯文本，不含 Markdown 标记（实测用户看不懂井号和星号）", () => {
+  const draft = renderPromoteDraft({
+    question: "CI 跑什么？",
+    answer: "**8 个检查**\n\n| 名 | 说明 |\n|---|---|\n| `verify` | 主链 |\n\n- 列表项",
+  });
+  assert.ok(!draft.includes("**"), "不该出现粗体星号");
+  assert.ok(!draft.includes("##"), "不该出现标题井号");
+  assert.ok(!draft.includes("|---"), "不该出现表格分隔线");
+  assert.ok(!draft.includes("`"), "不该出现行内代码反引号");
+  assert.ok(draft.includes("8 个检查"), "内容保留");
+  assert.ok(draft.includes("verify — 主链"), "表格行转成破折号分隔");
+});
+
+test("stripMarkdown: 逐条规则", () => {
+  assert.equal(stripMarkdown("## 标题"), "标题");
+  assert.equal(stripMarkdown("**粗**"), "粗");
+  assert.equal(stripMarkdown("`code`"), "code");
+  assert.equal(stripMarkdown("- a\n- b"), "· a\n· b");
+  assert.equal(stripMarkdown("| a | b |"), "a — b");
+  assert.equal(stripMarkdown("|---|---|"), "");
+  assert.equal(stripMarkdown(""), "");
+});
+
+test("promote: 草稿长度受 promoteChars 约束（实测 4000 字撑爆输入框）", () => {
+  const draft = renderPromoteDraft(
+    { question: "q", answer: "x".repeat(5000) },
+    { maxChars: LIMITS.promoteChars },
+  );
+  assert.ok(
+    draft.length <= LIMITS.promoteChars,
+    `长度 ${draft.length} 应 <= ${LIMITS.promoteChars}`,
+  );
+  assert.equal(LIMITS.promoteChars, 1200, "默认上限收到 1200");
 });
