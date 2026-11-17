@@ -83,6 +83,9 @@ window.__ModuleLoader__.load({
       "blocker.failedObligations": "有失败的义务",
       "blocker.blockedObligations": "有阻塞的义务",
       "blocker.coverageBelow": "覆盖率不足",
+      "blocker.implementationChanged": "实现已变化",
+      "blocker.originalChanged": "原件已变化",
+      "blocker.checkStale": "检查已过期",
       "settings.section": "案卷",
       "settings.summary": "{count} 个项目",
       "settings.dataRoot": "数据根目录",
@@ -169,6 +172,9 @@ window.__ModuleLoader__.load({
       "blocker.failedObligations": "failed obligations",
       "blocker.blockedObligations": "blocked obligations",
       "blocker.coverageBelow": "coverage below target",
+      "blocker.implementationChanged": "implementation changed",
+      "blocker.originalChanged": "original changed",
+      "blocker.checkStale": "check is stale",
       "settings.section": "Casefile",
       "settings.summary": "{count} projects",
       "settings.dataRoot": "Data root",
@@ -226,6 +232,9 @@ window.__ModuleLoader__.load({
       "failed-obligations": "blocker.failedObligations",
       "blocked-obligations": "blocker.blockedObligations",
       "coverage-below": "blocker.coverageBelow",
+      "implementation-changed": "blocker.implementationChanged",
+      "original-changed": "blocker.originalChanged",
+      "check-stale": "blocker.checkStale",
     };
 
     /**
@@ -1180,7 +1189,11 @@ window.__ModuleLoader__.load({
           "div",
           { className: "cf-kv" },
           h("b", null, text(t, "settings.dataRoot")),
-          h("span", null, diagnose.dataRoot || "—"),
+          h(
+            "span",
+            { style: { minWidth: 0, overflowWrap: "anywhere", wordBreak: "break-word" } },
+            diagnose.dataRoot || "—",
+          ),
         ),
         h(
           "div",
