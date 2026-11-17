@@ -1,11 +1,13 @@
 // @ts-check
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { parseAdvice } from "../lib/prompt.js";
 import { runEvidencePass } from "../lib/twopass.js";
+import { cleanupTempDirs, tempDir } from "./temp.js";
+
+after(cleanupTempDirs);
 
 const SECOND_OK = {
   ok: true,
@@ -40,7 +42,7 @@ test("没有 needs：原样返回，不发起第二轮", async () => {
 });
 
 test("有 needs 且能读到文件：第二轮生效并记录 read / pass2", async () => {
-  const root = await mkdtemp(join(tmpdir(), "advisor-twopass-"));
+  const root = await tempDir("advisor-twopass");
   await writeFile(join(root, "package.json"), '{"version":"0.1.0"}', "utf8");
   /** @type {string[]} */
   const blocks = [];
@@ -90,7 +92,7 @@ test("文件读不到：保留第一轮结论，second 不发起", async () => {
 });
 
 test("第二轮失败或解析失败：保留第一轮结论", async () => {
-  const root = await mkdtemp(join(tmpdir(), "advisor-twopass-fail-"));
+  const root = await tempDir("advisor-twopass-fail");
   await writeFile(join(root, "a.txt"), "hi", "utf8");
   const base = {
     verdict: "reviewed",

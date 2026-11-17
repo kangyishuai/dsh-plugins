@@ -1,9 +1,7 @@
 // @ts-check
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { describe, it } from "node:test";
+import { readFile } from "node:fs/promises";
+import { after, describe, it } from "node:test";
 
 import {
   bucketOf,
@@ -15,6 +13,10 @@ import {
   summarize,
   turnFeatures,
 } from "../lib/decisions.js";
+
+import { cleanupTempDirs, tempDir } from "./temp.js";
+
+after(cleanupTempDirs);
 
 describe("classifySkip", () => {
   it("把宿主的人话原因归到稳定原因码", () => {
@@ -200,7 +202,7 @@ describe("summarize", () => {
 
 describe("createDecisionLog", () => {
   it("追加一行并可读回", async () => {
-    const home = await mkdtemp(join(tmpdir(), "advisor-decisions-"));
+    const home = await tempDir("advisor-decisions");
     const log = createDecisionLog({ home });
     await log.append({ sessionId: "s1", turn: 1, consulted: false });
     await log.append({ sessionId: "s1", turn: 2, consulted: true, outcome: null });
@@ -212,7 +214,7 @@ describe("createDecisionLog", () => {
   });
 
   it("回填 outcome 只改匹配的那一条", async () => {
-    const home = await mkdtemp(join(tmpdir(), "advisor-decisions-"));
+    const home = await tempDir("advisor-decisions");
     const log = createDecisionLog({ home });
     await log.append({ sessionId: "s1", turn: 1, consulted: true, outcome: null });
     await log.append({ sessionId: "s1", turn: 2, consulted: true, outcome: null });
@@ -224,7 +226,7 @@ describe("createDecisionLog", () => {
   });
 
   it("回填不存在的回合 → false，不写坏文件", async () => {
-    const home = await mkdtemp(join(tmpdir(), "advisor-decisions-"));
+    const home = await tempDir("advisor-decisions");
     const log = createDecisionLog({ home });
     await log.append({ sessionId: "s1", turn: 1, consulted: true, outcome: null });
     assert.equal(await log.backfillOutcome("s9", 1, "accepted"), false);

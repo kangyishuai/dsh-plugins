@@ -5,12 +5,12 @@
 // 不碰模型、不联网：handleSessionEvent 里与徵询相关的分支在这里走不到
 //（mode 默认 off → runAdvisor 直接 skip），正好用来验证「没徵询也要记一行」。
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it } from "node:test";
-
+import { after, describe, it } from "node:test";
 import { createDecisionLog, createDecisionTracker, readDecisions } from "../lib/decisions.js";
+import { cleanupTempDirs, tempDir } from "./temp.js";
+
+after(cleanupTempDirs);
 
 /**
  * 造一个只跑决策日志的跟踪器（service.js 依赖宿主包，单测环境里导入不了，
@@ -72,7 +72,7 @@ const deliver = (service, event) => service.deliver("s1", event);
 
 describe("决策日志接线", () => {
   it("一个正常回合写一行：特征被累计、未徵询带原因码", async () => {
-    const home = await mkdtemp(join(tmpdir(), "advisor-wiring-"));
+    const home = await tempDir("advisor-wiring");
     const service = makeService(home);
     deliver(service, { type: "turn/start", data: { turn: 1 } });
     deliver(service, assistantMessage("先看一下实现，再改两处。", 2));
@@ -91,7 +91,7 @@ describe("决策日志接线", () => {
   });
 
   it("中断的回合也记一行，endKind 与原因都对", async () => {
-    const home = await mkdtemp(join(tmpdir(), "advisor-wiring-"));
+    const home = await tempDir("advisor-wiring");
     const service = makeService(home);
     deliver(service, { type: "turn/start", data: { turn: 1 } });
     deliver(service, assistantMessage("做一半。", 1));
@@ -106,7 +106,7 @@ describe("决策日志接线", () => {
   });
 
   it("没有回合号时不写（避免脏行）", async () => {
-    const home = await mkdtemp(join(tmpdir(), "advisor-wiring-"));
+    const home = await tempDir("advisor-wiring");
     const service = makeService(home);
     // 没有 turn/start，也没有 turn 号：模拟事件缺失
     await service.tracker.finishTurn({ sessionId: "s1", turn: 0, endKind: "completed" });
@@ -118,7 +118,7 @@ describe("决策日志接线", () => {
   });
 
   it("徵询过的回合：outcome 由下一条用户消息回填", async () => {
-    const home = await mkdtemp(join(tmpdir(), "advisor-wiring-"));
+    const home = await tempDir("advisor-wiring");
     const service = makeService(home);
     deliver(service, { type: "turn/start", data: { turn: 1 } });
     deliver(service, assistantMessage("改动完成。", 1));
@@ -148,7 +148,7 @@ describe("决策日志接线", () => {
   });
 
   it("用户另说别的 → user-typed-other", async () => {
-    const home = await mkdtemp(join(tmpdir(), "advisor-wiring-"));
+    const home = await tempDir("advisor-wiring");
     const service = makeService(home);
     deliver(service, { type: "turn/start", data: { turn: 1 } });
     deliver(service, assistantMessage("改动完成。"));
