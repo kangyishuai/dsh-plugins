@@ -125,6 +125,8 @@ window.__ModuleLoader__.load({
       ".dsh-btw-item{padding:6px 0;border-top:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2));}",
       ".dsh-btw-q{color:var(--dsw-alias-label-secondary,GrayText);}",
       ".dsh-btw-a{white-space:pre-wrap;word-break:break-word;margin-top:2px;}",
+      ".dsh-btw-code{margin:6px 0;padding:8px 10px;border-radius:6px;background:var(--dsw-alias-bg-base,Canvas);border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2));font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:11.5px;line-height:1.5;white-space:pre;overflow-x:auto;}",
+      ".dsh-btw-link{color:var(--dsw-alias-brand-primary,#4f7cff);text-decoration:underline;word-break:break-all;}",
       ".dsh-btw-a.is-clamped{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:6;line-clamp:6;overflow:hidden;}",
       ".dsh-btw-meta{margin-top:2px;color:var(--dsw-alias-label-tertiary,GrayText);font-size:11px;}",
       ".dsh-btw-dim{color:var(--dsw-alias-label-tertiary,GrayText);padding:6px 0;}",
@@ -475,7 +477,19 @@ window.__ModuleLoader__.load({
           ]
             .filter(Boolean)
             .join(" ");
-          const line = flags === "" ? `/btw ${text}` : `/btw ${flags} ${text}`;
+          let line = flags === "" ? `/btw ${text}` : `/btw ${flags} ${text}`;
+          if (threadId !== "") {
+            // 追问：先把参数交给 host 暂存，再提交**裸 `/btw`** ——
+            // 否则 `--thread t_xxx <问题>` 会整段出现在用户输入框里（实测被抱怨
+            // 「为什么给我一堆乱码」）。host 侧处理裸命令时先查这个队列。
+            const queued = await callRemote("queueFollowUp", {
+              sessionId,
+              threadId,
+              question: text,
+              scope,
+            }).catch(() => undefined);
+            if (queued?.ok === true) line = "/btw";
+          }
           try {
             const result = await sendText(sessionId, line);
             if (result !== "ok") {
@@ -553,6 +567,92 @@ window.__ModuleLoader__.load({
         // 浮层不画按钮：按钮由 BtwTrigger 注册在 composer 工具行里。
         if (!open) return null;
 
+        /**
+         * 把 host 切好的段映射成元素：
+         * - `code` → 等宽 `<pre>`（不再把 ``` 显示给用户）
+         * - `link` → 可点 `<a>`（之前 URL 是死文本）
+         * - `text` → 原样
+         * 没有 segments（老数据 / 字段缺失）时回退纯文本。
+         * @param {any} thread
+         * @param {string} fallback
+         * @returns {any}
+         */
+        /**
+         * 回退解析：host 还没重启（或拿到老数据）时，client 自己从原始答案里切段。
+         *
+         * 为什么两处都做：`answerSegments` 是 host 侧字段，改完必须重启 DSH 才生效；
+         * client 改动刷新页面即可。为了让新渲染立刻可用，这里保留一份**行为等价**的
+         * 极简实现（切 ``` 围栏 + 认 http(s) URL）。host 版本优先 —— 它被单测覆盖。
+         * @param {string} text
+         * @returns {any[]}
+         */
+        const parseSegmentsLocal = (/** @type {string} */ text) => {
+          const raw = String(text ?? "");
+          /** @type {any[]} */
+          const out = [];
+          const fenceRe = /```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/gu;
+          let last = 0;
+          for (;;) {
+            const m = fenceRe.exec(raw);
+            if (m === null) break;
+            if (m.index > last) out.push({ kind: "text", text: raw.slice(last, m.index) });
+            out.push({ kind: "code", lang: m[1] ?? "", text: (m[2] ?? "").replace(/\n+$/u, "") });
+            last = m.index + m[0].length;
+          }
+          const tail = raw.slice(last);
+          const urlRe = /https?:\/\/[^\s<>()\u3000-\u303f\uff00-\uffef]+/gu;
+          let cursor = 0;
+          for (;;) {
+            const u = urlRe.exec(tail);
+            if (u === null) break;
+            const rawUrl = u[0];
+            const trimmed = rawUrl.replace(/[.,;:!?]+$/u, "");
+            if (u.index > cursor) out.push({ kind: "text", text: tail.slice(cursor, u.index) });
+            if (trimmed !== "") out.push({ kind: "link", text: trimmed, href: trimmed });
+            const rest = rawUrl.slice(trimmed.length);
+            if (rest !== "") out.push({ kind: "text", text: rest });
+            cursor = u.index + rawUrl.length;
+          }
+          if (cursor < tail.length) out.push({ kind: "text", text: tail.slice(cursor) });
+          return out;
+        };
+
+        const renderAnswerBody = (/** @type {any} */ thread, /** @type {string} */ _fallback) => {
+          const fromHost = Array.isArray(thread?.answerSegments) ? thread.answerSegments : null;
+          // host 字段缺失时退回本地解析（老数据 / host 未重启）。
+          const fromLocal =
+            fromHost === null && typeof thread?.answer === "string"
+              ? parseSegmentsLocal(thread.answer)
+              : null;
+          const segments = fromHost ?? fromLocal;
+          return segments.map((/** @type {any} */ seg, /** @type {number} */ i) => {
+            if (seg?.kind === "code") {
+              return h(
+                "pre",
+                { className: "dsh-btw-code", key: `c${i}`, "data-btw-code": "true" },
+                String(seg.text ?? ""),
+              );
+            }
+            if (seg?.kind === "link") {
+              const href = String(seg.href ?? "");
+              if (!/^https?:\/\//iu.test(href)) return String(seg.text ?? "");
+              return h(
+                "a",
+                {
+                  key: `l${i}`,
+                  className: "dsh-btw-link",
+                  href,
+                  target: "_blank",
+                  rel: "noreferrer noopener",
+                  "data-btw-link": "true",
+                },
+                String(seg.text ?? href),
+              );
+            }
+            return String(seg?.text ?? "");
+          });
+        };
+
         const renderThread = (/** @type {any} */ thread, /** @type {number} */ index) => {
           const expanded = activeId === thread.threadId;
           return h(
@@ -592,7 +692,7 @@ window.__ModuleLoader__.load({
                     className: `dsh-btw-a${needsClamp && !isOpen ? " is-clamped" : ""}`,
                     "data-btw-answer": "true",
                   },
-                  answerText,
+                  renderAnswerBody(thread, answerText),
                 ),
                 needsClamp
                   ? h(

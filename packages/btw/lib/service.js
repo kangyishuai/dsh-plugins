@@ -5,6 +5,7 @@
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 import { renderBadge } from "./badge.js";
 import { parseAllowedTools } from "./config.js";
+import { createFollowUpQueue } from "./followup-queue.js";
 import { appendRecord, lastRecord, listRecent } from "./history.js";
 import { clip, LIMITS } from "./limits.js";
 import { format, loadMessages, pickLanguage } from "./messages.js";
@@ -75,6 +76,8 @@ export class BtwService extends TypertRemoteService {
     this.allowedTools = this.configAllowedTools;
     this.language = pickLanguage(this.config?.language);
     this.usageBySession = observeUsage(ctx);
+    // 浮层追问借 composer 提交裸 `/btw`，真实参数从这里取（见 followup-queue.js）。
+    this.followUps = createFollowUpQueue({});
     /** @type {Record<string, string>} */
     this.messages = FALLBACK;
     // locale 加载（不阻塞激活）
@@ -131,9 +134,20 @@ export class BtwService extends TypertRemoteService {
     const file = historyFile(this.dataRoot, agent?.id ?? "");
     // 追问用 `/btw --thread <id> <问题>` 标记线程（见 threads.js 的 parseThreadFlag 说明）。
     const parsed = parseCommandArgs(String(invocation?.rawInput ?? ""));
-    const threadId = parsed.threadId;
-    const scope = parsed.scope;
-    const question = clip(parsed.question, LIMITS.questionChars);
+    let threadId = parsed.threadId;
+    let scope = parsed.scope;
+    let rawQuestion = parsed.question;
+    // 裸 `/btw`（无参数）时先看有没有浮层登记的追问：
+    // 有就当追问处理，没有才走「重开上一条」的老语义。
+    if (threadId === "" && rawQuestion === "") {
+      const queued = this.followUps.take(String(agent?.id ?? ""));
+      if (queued !== undefined) {
+        threadId = queued.threadId;
+        scope = queued.scope;
+        rawQuestion = queued.question;
+      }
+    }
+    const question = clip(rawQuestion, LIMITS.questionChars);
 
     if (question.text === "") {
       const previous = await lastRecord(file).catch(() => undefined);
@@ -304,6 +318,22 @@ export class BtwService extends TypertRemoteService {
   }
 
   /**
+   * 登记一次待处理的追问。client 在提交裸 `/btw` **之前**调用，
+   * 这样命令文本里不必出现 `--thread t_xxx`。
+   * @param {{ sessionId?: string, threadId?: string, question?: string, scope?: string } | undefined} request
+   * @returns {Promise<{ ok: boolean, size: number }>}
+   */
+  async queueFollowUp(request) {
+    const input = request ?? {};
+    this.followUps.push(String(input.sessionId ?? ""), {
+      threadId: String(input.threadId ?? ""),
+      question: String(input.question ?? ""),
+      scope: String(input.scope ?? ""),
+    });
+    return { ok: true, size: this.followUps.size() };
+  }
+
+  /**
    * 读当前设置（client 设置面板用）。
    * @param {undefined} request 参数必须存在且是单一标识符（网关 SRC 校验）。
    * @returns {Promise<any>}
@@ -359,6 +389,7 @@ export class BtwService extends TypertRemoteService {
 declareRemote(BtwService, "history");
 declareRemote(BtwService, "last");
 declareRemote(BtwService, "stats");
+declareRemote(BtwService, "queueFollowUp");
 declareRemote(BtwService, "threads");
 declareRemote(BtwService, "promote");
 declareRemote(BtwService, "settings");
