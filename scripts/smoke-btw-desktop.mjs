@@ -5,6 +5,7 @@
 //   open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1
 //   # 2) 跑（发版门禁加 --require：连不上端口时失败而不是跳过）
 //   pnpm smoke:btw-desktop --require
+//   pnpm smoke:btw-desktop --require --deep   —— 另跑一次真实 /btw，验证真实数据根的 history 落盘
 //
 // 桌面端（Electron）只读回归：btw 的 client 半是否真的注入、浮层能否开关。
 // 覆盖（全部**只读**：只开浮层再 Esc 关闭，不提交、不发起任何模型调用）：
@@ -18,8 +19,8 @@
 // 安全前置：当前会话正在跑回合（有「停止生成」按钮）时，脚本**不交互**，只报 SKIP——
 // agent 自己跑桌面回归时，它的回合就跑在同一个桌面版里（约定 §6.1 末段）。
 // 端口可用 --port 或 DSH_CDP_PORT 覆盖（默认 9222）。
-import { writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readdir, readFile, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -108,6 +109,16 @@ const STATE = `(() => {
 })()`;
 
 /**
+ * 用 CDP 往当前焦点插入文本（比逐字符按键快且不丢）。
+ * @param {Awaited<ReturnType<typeof connect>>} cdp
+ * @param {string} text
+ * @returns {Promise<void>}
+ */
+async function send_text(cdp, text) {
+  await cdp.send("Input.insertText", { text });
+}
+
+/**
  * 清空 composer 草稿。桌面回归会往输入框插转正草稿，失败路径也必须清理干净——
  * 只动 DSH 的输入框，不碰页面任何其它状态。
  * @param {Awaited<ReturnType<typeof connect>>} cdp
@@ -146,6 +157,7 @@ const main = async () => {
   const { values } = parseArgs({
     options: {
       port: { type: "string" },
+      deep: { type: "boolean", default: false },
       require: { type: "boolean", default: false },
       shots: { type: "string" },
     },
@@ -406,6 +418,127 @@ const main = async () => {
         });
       }
       await sleep(600);
+    }
+
+    // ---- --deep：真实 /btw 往返 + 真实数据根的 history 落盘 -----------------
+    // 这是 web 冒烟（临时 DSH_HOME）覆盖不到的一层：真实桌面版是否把 history 写到
+    // 用户的 ~/.dsh/btw/，record 字段是否齐全。
+    if (values.deep === true) {
+      const historyDir = join(homedir(), ".dsh", "btw");
+      /** @returns {Promise<number>} 当前 history 记录总数 */
+      const countRecords = async () => {
+        try {
+          const files = (await readdir(historyDir)).filter((f) => f.endsWith(".jsonl"));
+          let total = 0;
+          for (const file of files) {
+            const text = await readFile(join(historyDir, file), "utf8");
+            total += text.split("\n").filter((line) => line.trim() !== "").length;
+          }
+          return total;
+        } catch {
+          return 0;
+        }
+      };
+
+      const before = await countRecords();
+      // 打开浮层并填 composer（浮层里的输入框会写 /btw 前缀，这里直接走 composer 更贴近真实用法）
+      await cdp.evaluate(
+        `(() => { const t = document.querySelector('[data-btw-toggle]'); if (t) t.click(); return true; })()`,
+      );
+      await sleep(600);
+      await cdp.evaluate(
+        `(() => {
+          const el = document.querySelector('[data-composer-input]');
+          if (!el) return false;
+          el.focus();
+          const sel = window.getSelection();
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          sel.removeAllRanges();
+          sel.addRange(range);
+          return true;
+        })()`,
+      );
+      await send_text(cdp, "/btw reply with exactly OK");
+      await sleep(800);
+      // 关掉斜杠菜单（开着时 Enter 会被吃掉）
+      for (const type of ["keyDown", "keyUp"]) {
+        await cdp.send("Input.dispatchKeyEvent", {
+          type,
+          key: "Escape",
+          code: "Escape",
+          windowsVirtualKeyCode: 27,
+          nativeVirtualKeyCode: 53,
+        });
+      }
+      await sleep(400);
+      for (const type of ["keyDown", "keyUp"]) {
+        await cdp.send("Input.dispatchKeyEvent", {
+          type,
+          key: "Enter",
+          code: "Enter",
+          windowsVirtualKeyCode: 13,
+          nativeVirtualKeyCode: 36,
+        });
+      }
+      // 轮询 history 直到出现新记录（一次真实模型调用，给足时间）
+      let records = before;
+      for (let i = 0; i < 40; i += 1) {
+        await sleep(2000);
+        records = await countRecords();
+        if (records > before) break;
+      }
+      check(
+        "--deep：真实 /btw 在真实数据根落盘",
+        records > before,
+        `记录数 ${before} -> ${records}（目录 ${historyDir}）`,
+      );
+
+      if (records > before) {
+        // 读回最后一条，断言字段齐全
+        const files = (await readdir(historyDir)).filter((f) => f.endsWith(".jsonl"));
+        let lastRecord = /** @type {any} */ (undefined);
+        for (const file of files) {
+          const text = await readFile(join(historyDir, file), "utf8");
+          for (const line of text.split("\n")) {
+            if (line.trim() === "") continue;
+            try {
+              lastRecord = JSON.parse(line);
+            } catch {
+              /* 坏行跳过，与插件行为一致 */
+            }
+          }
+        }
+        check(
+          "--deep：record 状态为 done 且有答案",
+          lastRecord?.status === "done" && String(lastRecord?.answer ?? "").trim() !== "",
+          JSON.stringify({
+            status: lastRecord?.status,
+            answer: String(lastRecord?.answer ?? "").slice(0, 40),
+          }),
+        );
+        check(
+          "--deep：record 带成本与耗时",
+          Number(lastRecord?.ms) > 0 && lastRecord?.cost !== null && lastRecord?.cost !== undefined,
+          JSON.stringify({ ms: lastRecord?.ms, cost: lastRecord?.cost }),
+        );
+        check(
+          "--deep：写了 threadId（v0.3 线程字段）",
+          typeof lastRecord?.threadId === "string" && lastRecord.threadId !== "",
+          String(lastRecord?.threadId ?? ""),
+        );
+      }
+      // 关掉浮层，避免留下打开的面板
+      for (const type of ["keyDown", "keyUp"]) {
+        await cdp.send("Input.dispatchKeyEvent", {
+          type,
+          key: "Escape",
+          code: "Escape",
+          windowsVirtualKeyCode: 27,
+          nativeVirtualKeyCode: 53,
+        });
+      }
+      await sleep(400);
     }
 
     try {
