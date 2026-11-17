@@ -1,9 +1,9 @@
 // @ts-check
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { renderBadge, renderScopeInstruction } from "../lib/badge.js";
 import { parseAllowedTools } from "../lib/config.js";
 import { appendRecord, lastRecord, listRecent, readRecords } from "../lib/history.js";
@@ -39,7 +39,25 @@ import {
 const LOCALE_DIR = new URL("../locale/", import.meta.url).pathname;
 
 /** @returns {Promise<string>} */
-const tempDir = () => mkdtemp(join(tmpdir(), "dsh-btw-test-"));
+/**
+ * 建临时目录并**登记回收**。
+ *
+ * 这里必须登记：早期版本只 mkdtemp 不清理，每跑一次单测就在系统临时目录里留下若干
+ * `dsh-btw-test-*`（一个目录一个 `s.jsonl`）。实测泄漏了 720 个、约 189 MB，
+ * 是仓库里唯一有该问题的插件（其它插件都是 0）。
+ * @type {Set<string>}
+ */
+const TEMP_DIRS = new Set();
+const tempDir = async () => {
+  const dir = await mkdtemp(join(tmpdir(), "dsh-btw-test-"));
+  TEMP_DIRS.add(dir);
+  return dir;
+};
+
+after(async () => {
+  for (const dir of TEMP_DIRS) await rm(dir, { recursive: true, force: true });
+  TEMP_DIRS.clear();
+});
 
 // --- paths -----------------------------------------------------------------
 
