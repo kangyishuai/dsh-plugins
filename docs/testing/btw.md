@@ -261,3 +261,30 @@ S2 {"value":"recent",
 SKIP 桌面交互 — 当前会话有运行中的回合
 0 PASS / 1 SKIP / 0 FAIL
 ```
+
+### 桌面回归的两条安全边界（2026-11-17 加固）
+
+**1. cookie 只清 DSH 自己的**
+
+web 冒烟（`scripts/smoke-btw.mjs`）每轮开头与结尾各清一次 cookie，条件是**双重限定**：
+
+```js
+const LOOPBACK = ["127.0.0.1", "localhost", "::1"];
+const mine = found.cookies.filter(
+  (c) => LOOPBACK.includes(c.domain) && String(c.name).startsWith("dsh-auth-"),
+);
+```
+
+→ 只删回环地址上、名字以 `dsh-auth-` 开头的 cookie，**绝不触碰用户其它站点的 cookie**。
+
+桌面回归（`scripts/smoke-btw-desktop.mjs`）走 CDP 连正在运行的桌面版，不碰浏览器 cookie 存储，
+所以没有也不需要清理逻辑。
+
+**2. 不把测试草稿留在用户输入框里**
+
+桌面回归会往 composer 插转正草稿。保护分两层：
+
+- **事前快照**：进来时若输入框已有内容，跳过所有会改动输入框的断言（`skip` 并说明原因）
+- **事后兜底**：仅当进来时是空的，结束时调用 `clearComposerDraft` 清空，并断言「结束时输入框已还原为空」
+
+清理只聚焦 DSH 的 `[data-composer-input]`，不触碰页面其它状态。

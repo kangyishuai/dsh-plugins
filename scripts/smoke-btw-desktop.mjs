@@ -107,6 +107,41 @@ const STATE = `(() => {
   };
 })()`;
 
+/**
+ * 清空 composer 草稿。桌面回归会往输入框插转正草稿，失败路径也必须清理干净——
+ * 只动 DSH 的输入框，不碰页面任何其它状态。
+ * @param {Awaited<ReturnType<typeof connect>>} cdp
+ * @returns {Promise<void>}
+ */
+async function clearComposerDraft(cdp) {
+  try {
+    const ok = await cdp.evaluate(`(() => {
+      const el = document.querySelector('[data-composer-input]');
+      if (!el) return false;
+      el.focus();
+      const sel = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      return true;
+    })()`);
+    if (ok !== true) return;
+    for (const type of ["keyDown", "keyUp"]) {
+      await cdp.send("Input.dispatchKeyEvent", {
+        type,
+        key: "Backspace",
+        code: "Backspace",
+        windowsVirtualKeyCode: 8,
+        nativeVirtualKeyCode: 51,
+      });
+    }
+    await sleep(300);
+  } catch {
+    /* 清理失败不改变结论，只影响现场整洁 */
+  }
+}
+
 const main = async () => {
   const { values } = parseArgs({
     options: {
@@ -171,6 +206,11 @@ const main = async () => {
             "先 pnpm pack --pack-destination /tmp，再 dsh plugin --profile desktop add /tmp/<tgz>，然后重启桌面版",
     );
     check("输入框左侧出现 btw 按钮", initial.toggle === true, JSON.stringify(initial));
+
+    // 快照用户进来时的草稿：非空就不做任何会改动输入框的断言，走完也不清空。
+    const initialDraft = await cdp.evaluate(
+      `(() => ((document.querySelector('[data-composer-input]') || {}).innerText || '').trim())()`,
+    );
 
     if (initial.toggle !== true) {
       skip("浮层开关", "按钮未出现，后续断言无意义");
@@ -249,23 +289,8 @@ const main = async () => {
             afterFlow === beforeFlow,
             `flow ${beforeFlow} -> ${afterFlow}`,
           );
-          // 清掉草稿，避免污染用户输入框
-          await cdp.evaluate(`(() => {
-            const el = document.querySelector('[data-composer-input]');
-            if (el) { el.focus(); document.execCommand && document.execCommand('selectAll', false, null); }
-            return true;
-          })()`);
-          for (const type of ["keyDown", "keyUp"]) {
-            await cdp.send("Input.dispatchKeyEvent", {
-              type,
-              key: "Backspace",
-              code: "Backspace",
-              windowsVirtualKeyCode: 8,
-              nativeVirtualKeyCode: 51,
-              modifiers: 4,
-            });
-          }
-          await sleep(400);
+          // 清掉草稿：绝不把测试内容留在用户输入框里
+          await clearComposerDraft(cdp);
         }
       }
 
@@ -283,6 +308,17 @@ const main = async () => {
       const closed = await cdp.evaluate(STATE);
       check("Esc 后浮层消失", closed.overlay === false, JSON.stringify(closed));
       check("没有遗留浮层", closed.overlay === false, JSON.stringify(closed));
+
+      // 兜底：进来时输入框是空的，结束时也必须是空的（可能是被测脚本插入的草稿）。
+      if (initialDraft === "") {
+        await clearComposerDraft(cdp);
+        const draftNow = await cdp.evaluate(
+          `(() => ((document.querySelector('[data-composer-input]') || {}).innerText || '').trim())()`,
+        );
+        check("结束时输入框已还原为空", draftNow === "", `draft=${String(draftNow).slice(0, 40)}`);
+      } else {
+        skip("结束时输入框已还原为空", "进来时已有草稿，保持原样不做清理");
+      }
     }
 
     // ---- 设置分节（只读）--------------------------------------------
