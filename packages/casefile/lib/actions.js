@@ -4,6 +4,9 @@
 // 分工：service.js 只做「数据根解析 + Remote 声明 + 会话记忆」；本文件承载
 // 项目/证据/结论/功能/未知项/规格包的实际逻辑，tools.js 与 Remote 共用同一份实现。
 
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { buildSpecPack, redactPack, renderSpecMarkdown, writeSpecPack } from "./core/brief.js";
 import { createCheckers } from "./core/checks.js";
 import { hashTree, shortDigest } from "./core/digest.js";
@@ -19,6 +22,12 @@ import {
   nowIso,
   projectStats,
 } from "./core/model.js";
+import {
+  buildReport,
+  computeCoverage,
+  evaluateClose,
+  renderReportMarkdown,
+} from "./core/report.js";
 import {
   evaluateStop,
   findStaleObligations,
@@ -983,6 +992,102 @@ export function createActions(options) {
         reason: result.reason,
         output: result.output ?? null,
         stopped: result.reason === "idle" || result.reason === "input-required",
+      };
+    },
+
+    // ---------- 覆盖率 / 关闭 / 报告（M3 收尾） ----------
+
+    /**
+     * 项目覆盖率与关闭闸门状态（只读预览，不写状态）。
+     * @param {string} projectId
+     * @param {{ minCoverage?: number, maxCheckAgeMs?: number }} [options]
+     * @returns {Promise<Record<string, any>>}
+     */
+    async closePreview(projectId, options = {}) {
+      const project = requireProject(projectId);
+      const data = store.readAll(project.id);
+      const current = latestBuild(data.builds);
+      const verdict = evaluateClose({
+        obligations: data.obligations,
+        unknowns: data.unknowns,
+        checks: data.checks,
+        implementationDigest: current?.implementationDigest ?? null,
+        minCoverage: options.minCoverage,
+        maxCheckAgeMs: options.maxCheckAgeMs,
+      });
+      return { project: project.id, ...verdict };
+    },
+
+    /**
+     * 关闭项目（硬门不通过就拒绝，且写审计）。
+     * @param {string} projectId
+     * @param {{ minCoverage?: number, note?: string }} [options]
+     * @returns {Promise<Record<string, any>>}
+     */
+    async closeProject(projectId, options = {}) {
+      const project = requireProject(projectId);
+      if (project.state === "closed") return { project, alreadyClosed: true };
+      const preview = await this.closePreview(project.id, options);
+      if (!preview.ok) {
+        throw Object.assign(new Error(`项目还不能关闭：${preview.blockers.join("、")}`), {
+          code: "coverage-not-met",
+          blockers: preview.blockers,
+        });
+      }
+      const next = {
+        ...project,
+        state: "closed",
+        closedAt: nowIso(),
+        coverage: preview.coverage,
+        note: options?.note == null ? "" : String(options.note).slice(0, 2000),
+      };
+      store.writeJson(join(store.projectDir(project.id), "project.json"), next);
+      store.audit(project.id, {
+        actor: "agent",
+        action: "project/close",
+        target: project.id,
+        detail: { coverage: preview.coverage.ratio.toFixed(2) },
+      });
+      return { project: next, coverage: preview.coverage };
+    },
+
+    /**
+     * 导出验收报告（md + json）。
+     * @param {string} projectId
+     * @returns {Promise<Record<string, any>>}
+     */
+    async exportReport(projectId) {
+      const project = requireProject(projectId);
+      const data = store.readAll(project.id);
+      const current = latestBuild(data.builds);
+      const coverage = computeCoverage(data.obligations);
+      const stop = evaluateStop({
+        builds: data.builds,
+        checks: data.checks,
+        openObligations: coverage.open,
+      });
+      const report = buildReport({ project, data, coverage, stop });
+      const stamp = String(report.generatedAt).replace(/[:.]/g, "-");
+      const dir = join(store.projectDir(project.id), "reports", stamp);
+      const md = join(dir, "report.md");
+      const json = join(dir, "report.json");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(md, `${renderReportMarkdown(report)}\n`, "utf8");
+      writeFileSync(json, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+      store.audit(project.id, {
+        actor: "agent",
+        action: "report/export",
+        target: dir,
+        detail: {
+          coverage: coverage.ratio.toFixed(2),
+          digest: shortDigest(current?.implementationDigest),
+        },
+      });
+      return {
+        path: dir,
+        files: ["report.md", "report.json"],
+        coverage,
+        summary: `报告已写入 ${dir}（覆盖率 ${(coverage.ratio * 100).toFixed(0)}%）`,
       };
     },
 

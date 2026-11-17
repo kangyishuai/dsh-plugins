@@ -195,6 +195,9 @@ export class CasefileService extends TypertRemoteService {
       listChecks: (projectId, id) => this.actions.listChecks(projectId, id),
       closeObligation: (projectId, id, input) => this.actions.closeObligation(projectId, id, input),
       reopenObligation: (projectId, id, note) => this.actions.reopenObligation(projectId, id, note),
+      closeProject: (projectId, options) => this.actions.closeProject(projectId, options),
+      closePreview: (projectId, options) => this.actions.closePreview(projectId, options),
+      exportReport: (projectId) => this.actions.exportReport(projectId),
       advanceLoop: (projectId, input) => this.actions.advanceLoop(projectId, input),
       startBuilder: (projectId, input) => this.actions.startBuilder(projectId, input),
       awaitBuilder: (projectId, input) => this.actions.awaitBuilder(projectId, input),
@@ -431,6 +434,31 @@ export class CasefileService extends TypertRemoteService {
 
   /**
    * @param {string} projectId
+   * @param {Record<string, any>} [options]
+   * @returns {Promise<Record<string, any>>}
+   */
+  async closeProject(projectId, options) {
+    try {
+      return await this.actions.closeProject(projectId, options ?? {});
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
+   * @returns {Promise<Record<string, any>>}
+   */
+  async exportReport(projectId) {
+    try {
+      return await this.actions.exportReport(projectId);
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
    * @param {Record<string, any>} input
    * @returns {Promise<Record<string, any>>}
    */
@@ -596,6 +624,8 @@ declareRemote(CasefileService, "addCheck");
 declareRemote(CasefileService, "listChecks");
 declareRemote(CasefileService, "closeObligation");
 declareRemote(CasefileService, "reopenObligation");
+declareRemote(CasefileService, "closeProject");
+declareRemote(CasefileService, "exportReport");
 declareRemote(CasefileService, "advanceLoop");
 declareRemote(CasefileService, "startBuilder");
 declareRemote(CasefileService, "awaitBuilder");

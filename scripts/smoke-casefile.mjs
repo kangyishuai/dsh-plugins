@@ -684,6 +684,35 @@ async function main() {
       selfTestUnknown.raw.slice(0, 300),
     );
 
+    // 9.11) 覆盖率硬门 + 报告导出
+    const closeBlocked = await remote(session, "closeProject", {
+      projectId: "todo-app-smoke",
+      options: {},
+    });
+    check(
+      "还有未关闭义务/未知项时 closeProject 被拒",
+      closeBlocked.ok === false,
+      closeBlocked.raw.slice(0, 300),
+    );
+    const exportedReport = await remote(session, "exportReport", {
+      projectId: "todo-app-smoke",
+    });
+    check(
+      "exportReport 写出 report.md + report.json",
+      exportedReport.ok &&
+        (await exists(join(exportedReport.value?.path, "report.md"))) &&
+        (await exists(join(exportedReport.value?.path, "report.json"))),
+      exportedReport.raw.slice(0, 300),
+    );
+    const reportMd = await readIfExists(join(exportedReport.value?.path, "report.md"));
+    check(
+      "报告含覆盖率、义务表与 unknown 不等于通过的声明",
+      reportMd.includes("# 验收报告") &&
+        reportMd.includes("覆盖率") &&
+        reportMd.includes("unknown") &&
+        reportMd.includes("不等于通过"),
+    );
+
     // 10) 详情统计
     const detail = await remote(session, "projectDetail", { projectId: "todo-app-smoke" });
     check(

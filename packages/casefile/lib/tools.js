@@ -111,7 +111,7 @@ export function buildToolDefinitions(handlers, projectOf) {
         properties: {
           action: {
             type: "string",
-            enum: ["open", "list", "get", "update"],
+            enum: ["open", "list", "get", "update", "close", "report"],
             description: "要执行的动作",
           },
           projectId: PROJECT_ID,
@@ -130,6 +130,7 @@ export function buildToolDefinitions(handlers, projectOf) {
           authTier: { type: "string", enum: ["owned", "authorized", "research"] },
           scope: { type: "string", enum: ["all", "selected"] },
           patch: { type: "object", description: "update 时的字段（title/authTier/scope/state）" },
+          minCoverage: { type: "number", description: "close 时的覆盖率下限（默认 1）" },
         },
         required: ["action"],
       },
