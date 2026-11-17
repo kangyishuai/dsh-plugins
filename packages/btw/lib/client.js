@@ -800,7 +800,8 @@ window.__ModuleLoader__.load({
             const hadLive = liveRef.current.length > 0;
             const hasLive = runs.length > 0;
             liveRef.current = runs;
-            setLiveRuns(runs);
+            // 空闲轮询（无 run）不重复 set 空数组，省掉每秒一次无意义的重渲染。
+            if (hasLive || hadLive) setLiveRuns(runs);
             // 只在 live 结束后刷一次历史（run 进行中 threads 不会变，少传大 payload）。
             if (hadLive && !hasLive) void loadThreads(true);
             else if (!hasLive && ticks % LIVE_IDLE_REFRESH_EVERY === 0) void loadThreads(true);
