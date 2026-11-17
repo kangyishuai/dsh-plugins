@@ -5,7 +5,8 @@
 // 项目/证据/结论/功能/未知项/规格包的实际逻辑，tools.js 与 Remote 共用同一份实现。
 
 import { buildSpecPack, writeSpecPack } from "./core/brief.js";
-import { shortDigest } from "./core/digest.js";
+import { createCheckers } from "./core/checks.js";
+import { hashTree, shortDigest } from "./core/digest.js";
 import { gradeCapabilities } from "./core/manifest.js";
 import {
   CasefileInputError,
@@ -18,6 +19,14 @@ import {
   nowIso,
   projectStats,
 } from "./core/model.js";
+import {
+  evaluateStop,
+  findStaleObligations,
+  latestBuild,
+  nextRound,
+  normalizeBuildRun,
+  summarizeRuns,
+} from "./core/runs.js";
 import { CaseStoreError } from "./core/store.js";
 
 /** 业务错误：带稳定 code（由 service 映射成 RemoteError / 工具错误）。 */
@@ -39,12 +48,16 @@ export class CasefileActionError extends Error {
  *   store: import("./core/store.js").CaseStore,
  *   currentProject?: Map<string, string>,
  *   dataRoot?: string,
+ *   runner?: (command: string, options?: Record<string, any>) => Promise<Record<string, any>>,
  * }} options
  */
 export function createActions(options) {
   const store = options.store;
   const currentProject = options.currentProject ?? new Map();
   const dataRoot = options.dataRoot ?? store.rootDir;
+  const checkers = createCheckers(
+    /** @type {any} */ (options.runner ? { runner: options.runner } : {}),
+  );
 
   /**
    * @param {string} projectId
@@ -123,6 +136,8 @@ export function createActions(options) {
         features: data.features,
         unknowns: data.unknowns,
         obligations: data.obligations,
+        builds: data.builds,
+        checks: data.checks,
       };
     },
 
@@ -563,6 +578,205 @@ export function createActions(options) {
       store.touch(project.id);
       store.audit(project.id, { actor: "agent", action: "obligation/reopen", target: next.id });
       return next;
+    },
+
+    // ---------- 构建 / 验收 ----------
+
+    /**
+     * 起一轮构建：跑命令、算实现 digest、落 BuildRun，并按新 digest 重算 stale。
+     * @param {string} projectId
+     * @param {{ command: string, cwd?: string, round?: number, timeoutMs?: number }} input
+     * @returns {Promise<Record<string, any>>}
+     */
+    async startBuild(projectId, input) {
+      const project = requireProject(projectId);
+      const builds = store.readRecords(project.id, "builds");
+      const requestedRound = Number(input?.round);
+      const round =
+        Number.isInteger(requestedRound) && requestedRound > 0 ? requestedRound : nextRound(builds);
+      const startedAt = nowIso();
+      const buildChecker = checkers.get("build");
+      if (!buildChecker) throw new CasefileActionError("internal", "build checker 未注册");
+      const result = await buildChecker.run({
+        command: input?.command,
+        cwd: input?.cwd,
+        timeoutMs: input?.timeoutMs,
+      });
+      let implementationDigest = null;
+      const implementationDir = input?.cwd == null ? null : String(input.cwd);
+      if (implementationDir !== null) {
+        try {
+          implementationDigest = hashTree(implementationDir).digest;
+        } catch (error) {
+          /** @type {any} */
+          const anyError = error;
+          throw new CasefileInputError(
+            "invalid-input",
+            `无法计算实现 digest：${anyError?.message ?? String(error)}`,
+          );
+        }
+      }
+      const build = normalizeBuildRun({
+        round,
+        command: String(input.command),
+        cwd: input?.cwd ?? null,
+        status:
+          result.verdict === "pass" ? "pass" : result.verdict === "unknown" ? "error" : "fail",
+        exitCode: result.exitCode ?? null,
+        implementationDigest,
+        startedAt,
+        endedAt: result.endedAt,
+        detail: JSON.stringify(result.detail ?? {}),
+      });
+      store.appendRecord(project.id, "builds", build);
+      store.touch(project.id);
+      store.audit(project.id, {
+        actor: "agent",
+        action: "build/run",
+        target: build.id,
+        detail: {
+          round: build.round,
+          status: build.status,
+          digest: shortDigest(implementationDigest),
+        },
+      });
+      const stale = await this.refreshStaleness(project.id);
+      return { build, stale, ...summarizeRuns(this.readRunData(project.id)) };
+    },
+
+    /**
+     * 跑一条 checker 并落 CheckResult（绑定当前构建的实现 digest）。
+     * @param {string} projectId
+     * @param {{ obligationId: string, checker: string, command: string, cwd?: string, expect?: Record<string, any>, timeoutMs?: number }} input
+     * @returns {Promise<Record<string, any>>}
+     */
+    async runCheck(projectId, input) {
+      const project = requireProject(projectId);
+      const obligationId = String(input?.obligationId ?? "");
+      const obligations = store.readRecords(project.id, "obligations");
+      const obligation = obligations.find((item) => item.id === obligationId);
+      if (!obligation) throw new CaseStoreError("not-found", `义务不存在：${obligationId}`);
+      const checkerName = String(input?.checker ?? "cli");
+      const checker = checkers.get(checkerName);
+      if (!checker) {
+        throw new CasefileInputError(
+          "invalid-input",
+          `未知 checker：${checkerName}（可用：${[...checkers.keys()].join("、")}）`,
+        );
+      }
+      const builds = store.readRecords(project.id, "builds");
+      const current = latestBuild(builds);
+      if (!current) {
+        throw new CasefileInputError(
+          "invalid-input",
+          "还没有构建记录：先 case_build 起一轮构建，检查结果才能绑定实现 digest",
+        );
+      }
+      const result = await checker.run({
+        command: input?.command,
+        cwd: input?.cwd,
+        timeoutMs: input?.timeoutMs,
+        expect: input?.expect ?? {},
+      });
+      const checkedAt = nowIso();
+      const record = {
+        id: newId("check"),
+        obligationId,
+        checker: checker.name,
+        checkerVersion: checker.version,
+        verdict: result.verdict,
+        implementationDigest: current.implementationDigest ?? null,
+        originalDigest: project.capabilityHash ?? null,
+        evidenceFetchedAt: checkedAt,
+        detail: JSON.stringify(result.detail ?? {}),
+        exitCode: result.exitCode ?? null,
+        stdout: result.stdout ?? "",
+        stderr: result.stderr ?? "",
+        at: checkedAt,
+      };
+      store.appendRecord(project.id, "checks", record);
+      store.touch(project.id);
+      store.audit(project.id, {
+        actor: "agent",
+        action: "check/run",
+        target: record.id,
+        detail: { obligationId, checker: checkerName, verdict: record.verdict },
+      });
+      return { check: record, obligation: obligation.id };
+    },
+
+    /**
+     * 依据最新构建 digest 重开已失效的已关闭义务。
+     * @param {string} projectId
+     * @returns {Promise<any[]>}
+     */
+    async refreshStaleness(projectId) {
+      const project = requireProject(projectId);
+      const data = store.readAll(project.id);
+      const current = latestBuild(data.builds);
+      const stale = findStaleObligations({
+        obligations: data.obligations,
+        checks: data.checks,
+        implementationDigest: current?.implementationDigest ?? null,
+        originalDigest: project.capabilityHash ?? null,
+      });
+      /** @type {any[]} */
+      const reopened = [];
+      for (const entry of stale) {
+        const obligation = data.obligations.find(
+          (/** @type {any} */ item) => item.id === entry.obligationId,
+        );
+        if (!obligation) continue;
+        const next = {
+          ...obligation,
+          status: "open",
+          note: `stale: ${entry.reasons.join(",")}`,
+          version: Number(obligation.version ?? 1) + 1,
+        };
+        store.appendRecord(project.id, "obligations", next);
+        reopened.push({ obligationId: next.id, reasons: entry.reasons });
+        store.audit(project.id, {
+          actor: "agent",
+          action: "obligation/stale",
+          target: next.id,
+          detail: { reasons: entry.reasons },
+        });
+      }
+      if (reopened.length > 0) store.touch(project.id);
+      return reopened;
+    },
+
+    /** @param {string} projectId */
+    readRunData(projectId) {
+      const data = store.readAll(projectId);
+      return { builds: data.builds, checks: data.checks, obligations: data.obligations };
+    },
+
+    /**
+     * 循环状态：轮次、停止条件、未关闭义务。
+     * @param {string} projectId
+     * @param {Record<string, any>} [stop]
+     * @returns {Promise<Record<string, any>>}
+     */
+    async loopStatus(projectId, stop) {
+      const project = requireProject(projectId);
+      const data = store.readAll(project.id);
+      const summary = summarizeRuns({
+        builds: data.builds,
+        checks: data.checks,
+        obligations: data.obligations,
+      });
+      const verdict = evaluateStop({
+        builds: data.builds,
+        checks: data.checks,
+        openObligations: summary.obligations.open,
+        stop,
+      });
+      return {
+        ...summary,
+        stop: verdict,
+        openObligations: data.obligations.filter((item) => item.status === "open"),
+      };
     },
 
     // ---------- 规格包 ----------

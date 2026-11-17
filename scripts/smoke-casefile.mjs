@@ -370,6 +370,74 @@ async function main() {
       closed.raw.slice(0, 300),
     );
 
+    // 9.6) 构建/验收闭环（真跑命令：Node 自身当被测目标，不联网）
+    const implDir = join(work, "impl");
+    await mkdir(implDir, { recursive: true });
+    await writeFile(join(implDir, "app.mjs"), "console.log('Usage: smoke');\n", "utf8");
+    const build1 = await remote(session, "startBuild", {
+      projectId: "todo-app-smoke",
+      input: { command: `node ${join(implDir, "app.mjs")}`, cwd: implDir },
+    });
+    check(
+      "startBuild 落 BuildRun 并算出实现 digest",
+      build1.ok &&
+        build1.value?.build?.status === "pass" &&
+        /^[0-9a-f]{64}$/u.test(String(build1.value?.build?.implementationDigest)),
+      build1.raw.slice(0, 400),
+    );
+    const obligation2 = await remote(session, "addObligation", {
+      projectId: "todo-app-smoke",
+      input: { statement: "CLI 输出包含 Usage", kind: "behavior" },
+    });
+    const check2 = await remote(session, "runCheck", {
+      projectId: "todo-app-smoke",
+      input: {
+        obligationId: obligation2.value?.id,
+        checker: "cli",
+        command: `node ${join(implDir, "app.mjs")}`,
+        expect: { exitCode: 0, stdoutIncludes: ["Usage"] },
+      },
+    });
+    check(
+      "runCheck 绑定当前实现 digest 且判 pass",
+      check2.ok &&
+        check2.value?.check?.verdict === "pass" &&
+        check2.value?.check?.implementationDigest === build1.value?.build?.implementationDigest,
+      check2.raw.slice(0, 400),
+    );
+    const closed2 = await remote(session, "closeObligation", {
+      projectId: "todo-app-smoke",
+      obligationId: obligation2.value?.id,
+    });
+    check(
+      "有新鲜 PASS 检查时可关闭第二条义务",
+      closed2.ok && closed2.value?.status === "pass",
+      closed2.raw.slice(0, 300),
+    );
+
+    // 改实现 → 再构建 → 已关闭义务应被 stale 重开
+    await writeFile(join(implDir, "app.mjs"), "console.log('Usage: smoke v2');\n", "utf8");
+    const build2 = await remote(session, "startBuild", {
+      projectId: "todo-app-smoke",
+      input: { command: `node ${join(implDir, "app.mjs")}`, cwd: implDir },
+    });
+    check(
+      "实现变化后第二轮构建把已关闭义务标 stale 并重开",
+      build2.ok && Array.isArray(build2.value?.stale) && build2.value.stale.length >= 1,
+      build2.raw.slice(0, 400),
+    );
+    const obligationsAfter = await remote(session, "listObligations", {
+      projectId: "todo-app-smoke",
+    });
+    const reopened = (obligationsAfter.value || []).find(
+      (/** @type {any} */ item) => item.id === obligation2.value?.id,
+    );
+    check(
+      "stale 之后该义务状态回到 open",
+      reopened?.status === "open" && /stale/u.test(String(reopened?.note)),
+      JSON.stringify(reopened ?? null).slice(0, 300),
+    );
+
     // 10) 详情统计
     const detail = await remote(session, "projectDetail", { projectId: "todo-app-smoke" });
     check(
@@ -379,8 +447,10 @@ async function main() {
         detail.value?.stats?.claims === 1 &&
         detail.value?.stats?.features === 1 &&
         detail.value?.stats?.openUnknowns === 1 &&
-        detail.value?.stats?.obligations === 1 &&
-        detail.value?.stats?.passedObligations === 1,
+        detail.value?.stats?.obligations === 2 &&
+        // 两次构建后实现 digest 变化，两条已关闭义务都被 stale 重开
+        detail.value?.stats?.openObligations === 2 &&
+        detail.value?.stats?.passedObligations === 0,
       JSON.stringify(detail.value?.stats ?? null).slice(0, 300),
     );
 

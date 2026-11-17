@@ -6,7 +6,7 @@
 
 Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). Not affiliated with DeepSeek. It is an adapter on top of [REA](https://github.com/morluto/rea) (MIT); it ships none of REA's code and no analysis engine.
 
-> **Status: M1 (host + workbench).** Persists projects, evidence, claims, features, unknowns, obligations and check records; exports a redacted spec pack; ships a workbench page (evidence / obligations / runs), a sidebar entry and a settings section. The build/verify loop arrives in M2. Verified by 53 unit tests, a 25-assertion web end-to-end smoke on a throwaway DSH home, and a manual GUI pass in a real browser; the desktop read-only suite is written but still needs the plugin installed in the desktop profile before it can run. Treat it as young software.
+> **Status: M2 core (build → check → stale).** Persists projects, evidence, claims, features, unknowns, obligations and check records; exports a redacted spec pack; ships a workbench page (evidence / obligations / runs), a sidebar entry and a settings section. The build/check loop now runs real commands: `case_build start` records a `BuildRun` with an implementation digest, `case_check run` records a result bound to that digest, and a later build whose digest differs automatically **reopens** the obligations it had closed. Verified by 70 unit tests, a 30-assertion web end-to-end smoke on a throwaway DSH home (including the stale-reopen path), and a manual GUI pass in a real browser; the desktop read-only suite is written but still needs the plugin installed in the desktop profile before it can run. Treat it as young software.
 
 ## What it does
 
@@ -49,7 +49,7 @@ The plugin adds a **Casefile** entry to the sidebar. The page lists projects on 
 
 - **Evidence** — claims (with confidence, limits and evidence count) and the evidence records they cite;
 - **Obligations** — obligations, their status, and open unknowns. Closing an obligation needs a _fresh PASS check_; until checkers land in M2 the button explains what is missing instead of pretending;
-- **Runs** — build/verification runs (arrive in M2).
+- **Runs** — build rounds, check verdicts and the loop stop condition.
 
 A settings section shows the data root, project count and REA capability status, so "is REA actually connected" is answerable without reading logs.
 

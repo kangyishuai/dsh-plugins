@@ -151,6 +151,9 @@ export class CasefileService extends TypertRemoteService {
       listChecks: (projectId, id) => this.actions.listChecks(projectId, id),
       closeObligation: (projectId, id, input) => this.actions.closeObligation(projectId, id, input),
       reopenObligation: (projectId, id, note) => this.actions.reopenObligation(projectId, id, note),
+      startBuild: (projectId, input) => this.actions.startBuild(projectId, input),
+      runCheck: (projectId, input) => this.actions.runCheck(projectId, input),
+      loopStatus: (projectId, stop) => this.actions.loopStatus(projectId, stop),
       exportSpecPack: (projectId, options) => this.actions.exportSpecPack(projectId, options),
     };
   }
@@ -185,7 +188,8 @@ export class CasefileService extends TypertRemoteService {
   async projectDetail(projectId) {
     try {
       const detail = await this.actions.detail(projectId);
-      return { ...detail, capabilities: gradeCapabilities(this.capabilities()) };
+      const runs = await this.actions.loopStatus(projectId).catch(() => null);
+      return { ...detail, runs, capabilities: gradeCapabilities(this.capabilities()) };
     } catch (error) {
       fail(error);
     }
@@ -354,6 +358,45 @@ export class CasefileService extends TypertRemoteService {
 
   /**
    * @param {string} projectId
+   * @param {Record<string, any>} input
+   * @returns {Promise<Record<string, any>>}
+   */
+  async startBuild(projectId, input) {
+    try {
+      return await this.actions.startBuild(projectId, /** @type {any} */ (input));
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
+   * @param {Record<string, any>} input
+   * @returns {Promise<Record<string, any>>}
+   */
+  async runCheck(projectId, input) {
+    try {
+      return await this.actions.runCheck(projectId, /** @type {any} */ (input));
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
+   * @param {Record<string, any>} [stop]
+   * @returns {Promise<Record<string, any>>}
+   */
+  async loopStatus(projectId, stop) {
+    try {
+      return await this.actions.loopStatus(projectId, stop);
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
    * @param {{ redact?: boolean }} [options]
    * @returns {Promise<Record<string, any>>}
    */
@@ -467,4 +510,7 @@ declareRemote(CasefileService, "addCheck");
 declareRemote(CasefileService, "listChecks");
 declareRemote(CasefileService, "closeObligation");
 declareRemote(CasefileService, "reopenObligation");
+declareRemote(CasefileService, "startBuild");
+declareRemote(CasefileService, "runCheck");
+declareRemote(CasefileService, "loopStatus");
 declareRemote(CasefileService, "exportSpecPack");

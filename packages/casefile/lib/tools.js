@@ -17,6 +17,8 @@ export const TOOL_NAMES = /** @type {const} */ ({
   feature: "case_feature",
   unknown: "case_unknown",
   obligation: "case_obligation",
+  build: "case_build",
+  check: "case_check",
   brief: "case_brief",
 });
 
@@ -445,6 +447,108 @@ export function buildToolDefinitions(handlers, projectOf) {
           }
           const obligations = await handlers.listObligations(id);
           return { obligations, summary: `${obligations.length} 条义务` };
+        });
+      },
+    },
+
+    {
+      name: TOOL_NAMES.build,
+      description:
+        "构建：start 跑一条构建命令并落 BuildRun（算实现 digest、自动重开失效义务），status 看轮次与停止条件。",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          action: { type: "string", enum: ["start", "status"] },
+          projectId: PROJECT_ID,
+          command: { type: "string", description: "start 时必填：构建命令（shell）" },
+          cwd: { type: "string", description: "构建目录；给了才会算实现 digest" },
+          round: { type: "integer", description: "可选：指定轮次，默认自动递增" },
+          timeoutMs: { type: "integer" },
+        },
+        required: ["action"],
+      },
+      output: { schema: TOOL_OUTPUT_SCHEMA, render: renderToolResult },
+      /** @param {any} args @param {any} exec */
+      async execute(args, exec) {
+        return run(async () => {
+          const action = assertAction(args.action, ["start", "status"]);
+          const id = projectId(args, exec);
+          if (action === "start") {
+            if (typeof args.command !== "string" || args.command.trim() === "") {
+              throw Object.assign(new Error("start 需要 command"), { code: "invalid-input" });
+            }
+            const result = await handlers.startBuild(id, {
+              command: args.command,
+              cwd: args.cwd,
+              round: args.round,
+              timeoutMs: args.timeoutMs,
+            });
+            return {
+              ...result,
+              summary: `第 ${result.build.round} 轮构建：${result.build.status}（实现 ${result.build.implementationDigest ? "已算" : "未算"}，重开 ${result.stale.length} 条义务）`,
+            };
+          }
+          const status = await handlers.loopStatus(id);
+          return {
+            ...status,
+            summary: `构建 ${status.builds} 轮 / 检查 ${status.checks} / 停止条件 ${status.stop.reason}`,
+          };
+        });
+      },
+    },
+
+    {
+      name: TOOL_NAMES.check,
+      description:
+        "验收：run 跑一条 checker（build/cli）并把结果绑定到当前构建的实现 digest；list 看历史；loop 看停止条件。",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          action: { type: "string", enum: ["run", "list", "loop"] },
+          projectId: PROJECT_ID,
+          obligationId: { type: "string" },
+          checker: { type: "string", enum: ["build", "cli"] },
+          command: { type: "string" },
+          cwd: { type: "string" },
+          expect: {
+            type: "object",
+            description: "cli 期望：{ exitCode?, stdoutIncludes?, stdoutEquals?, stderrIncludes? }",
+          },
+          timeoutMs: { type: "integer" },
+        },
+        required: ["action"],
+      },
+      output: { schema: TOOL_OUTPUT_SCHEMA, render: renderToolResult },
+      /** @param {any} args @param {any} exec */
+      async execute(args, exec) {
+        return run(async () => {
+          const action = assertAction(args.action, ["run", "list", "loop"]);
+          const id = projectId(args, exec);
+          if (action === "run") {
+            const result = await handlers.runCheck(id, {
+              obligationId: args.obligationId,
+              checker: args.checker ?? "cli",
+              command: args.command,
+              cwd: args.cwd,
+              expect: args.expect,
+              timeoutMs: args.timeoutMs,
+            });
+            return {
+              ...result,
+              summary: `检查 ${result.check.id}：${result.check.verdict}`,
+            };
+          }
+          if (action === "list") {
+            const detail = await handlers.getProject(id);
+            return {
+              checks: detail.checks ?? [],
+              summary: `${(detail.checks ?? []).length} 条检查`,
+            };
+          }
+          const status = await handlers.loopStatus(id);
+          return { ...status, summary: `停止条件：${status.stop.reason}` };
         });
       },
     },
