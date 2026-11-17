@@ -145,6 +145,25 @@ export function listThreads(records) {
 }
 
 /**
+ * 线程级转正：用**首问**当「我问了什么」，用**最后一轮答案**当「结论」。
+ *
+ * 为什么不是只取最后一轮：线程追问两次后，用户说「转正」通常指整条旁问线索，
+ * 只把最后一次追问塞进草稿会丢掉原始问题（2026-11-18 可用性测试发现）。
+ * @param {any[]} records 该会话的历史记录
+ * @param {string} threadId
+ * @returns {any | undefined}
+ */
+export function promoteRecordForThread(records, threadId) {
+  const wanted = String(threadId ?? "");
+  if (wanted === "") return undefined;
+  const thread = groupThreads(records).find((entry) => entry.threadId === wanted);
+  if (thread === undefined) return undefined;
+  const first = thread.items[0];
+  const last = thread.items[thread.items.length - 1];
+  return { ...last, question: String(first?.question ?? last?.question ?? "") };
+}
+
+/**
  * 把一条旁问渲染成可插入草稿的文本（**只生成文本，绝不发送**）。
  *
  * 语义（2026-11-17 与用户确认）：转正保留 **Markdown 源码** —— 四节用 `##` 标题，

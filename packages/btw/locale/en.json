@@ -13,7 +13,8 @@
       "meta": "btw · new {newTokens} tokens · cached {cachedTokens} · {ms}",
       "reopen": "Last side question: {question}",
       "truncated": "The answer was cut off; ask again to retry.",
-      "questionHeading": "Side question: {question}"
+      "questionHeading": "Side question: {question}",
+      "panelOnly": "Side question answered; the full answer is in the side-question panel."
     },
     "error": {
       "forkUnavailable": "Side questions are unavailable right now (the subagent runtime is not loaded).",

@@ -56,6 +56,12 @@ window.__ModuleLoader__.load({
       followUp: "追问",
       followPlaceholder: "在这个线程里追问…",
       followUpLabel: "追问",
+      followSend: "追问",
+      followCancel: "取消追问",
+      followInputLabel: "追问该线程",
+      thinking: "思考中",
+      threadCount: "{count} 个线程",
+      resizeHint: "拖动右侧栏分隔条可调宽度；⌥⌘B 收起侧栏",
       turns: "轮",
       promote: "转正",
       promoted: "已插入输入框草稿（未发送）",
@@ -85,6 +91,8 @@ window.__ModuleLoader__.load({
       "settings.failed": "保存失败",
       "settings.mode": "模式",
       "settings.readOnly": "只读",
+      "settings.echo": "主对话显示完整答案",
+      "settings.echoHint": "关闭后只在旁问面板展示，/btw 命令只回一行提示。",
     };
     const en = {
       button: "btw",
@@ -103,6 +111,12 @@ window.__ModuleLoader__.load({
       followUp: "Follow up",
       followPlaceholder: "Ask a follow-up in this thread…",
       followUpLabel: "Follow-up",
+      followSend: "Follow up",
+      followCancel: "Cancel follow-up",
+      followInputLabel: "Follow up in this thread",
+      thinking: "Thinking",
+      threadCount: "{count} threads",
+      resizeHint: "Drag the sidebar divider to resize; ⌥⌘B collapses the sidebar",
       turns: "turns",
       promote: "Promote",
       promoted: "Inserted into the composer as a draft (not sent)",
@@ -133,6 +147,9 @@ window.__ModuleLoader__.load({
       "settings.failed": "Save failed",
       "settings.mode": "Mode",
       "settings.readOnly": "read-only",
+      "settings.echo": "Show full answer in the conversation",
+      "settings.echoHint":
+        "When off, the answer is only in the side-question panel; /btw returns one line.",
     };
 
     const CSS = [
@@ -459,13 +476,16 @@ window.__ModuleLoader__.load({
      * @param {any} props
      */
     function MarkdownBody(props) {
-      const { blocks, streaming, clamped } = props;
+      const { blocks, streaming, clamped, answerId } = props;
       return h(
         "div",
         {
           className: `dsh-btw-a${clamped ? " is-clamped" : ""}`,
           "data-btw-answer": "true",
           "data-btw-md": "true",
+          ...(typeof answerId === "string" && answerId !== ""
+            ? { "data-btw-answer-id": answerId }
+            : {}),
         },
         h("div", { className: "dsh-btw-md" }, ...renderBlocks(blocks, streaming === true)),
       );
@@ -750,6 +770,7 @@ window.__ModuleLoader__.load({
         const liveRef = React.useRef(/** @type {any[]} */ ([]));
         const scrollRef = React.useRef(/** @type {any} */ (null));
         const pinnedRef = React.useRef(true);
+        const questionRef = React.useRef(/** @type {any} */ (null));
 
         React.useEffect(
           () => () => {
@@ -768,6 +789,19 @@ window.__ModuleLoader__.load({
           setNotice("");
           pinnedRef.current = true;
         }, [sessionId]);
+
+        // 面板可见且没开追问输入时，自动聚焦「新旁问」输入框，省一次点击。
+        React.useEffect(() => {
+          if (!visible || sessionId === "" || activeId !== "") return undefined;
+          const timer = setTimeout(() => {
+            try {
+              questionRef.current?.focus();
+            } catch {
+              /* 忽略焦点失败 */
+            }
+          }, 0);
+          return () => clearTimeout(timer);
+        }, [visible, sessionId, activeId]);
 
         /**
          * 拉线程列表。quiet = 后台轮询：失败不把界面打红。
@@ -792,7 +826,8 @@ window.__ModuleLoader__.load({
           [sessionId],
         );
 
-        React.useEffect(() => {
+        /** 重新拉徽章（记录数/范围）。提交完成、live 结束、切范围时都要刷新，避免计数落后。 */
+        const refreshBadge = React.useCallback(() => {
           const scopeLabel =
             scope === ""
               ? ""
@@ -803,11 +838,17 @@ window.__ModuleLoader__.load({
                       ? "scopeRecent"
                       : "scopeSelection",
                 ).replace(/^范围：|^Scope:\s*/i, "");
-          callRemote("stats", { sessionId, scope: scopeLabel, lang: langOf() }).then((value) => {
-            if (!aliveRef.current) return;
-            if (value && typeof value.badge === "string") setBadge(value.badge);
-          });
-        }, [sessionId, scope]);
+          return callRemote("stats", { sessionId, scope: scopeLabel, lang: langOf() }).then(
+            (/** @type {any} */ value) => {
+              if (!aliveRef.current) return;
+              if (value && typeof value.badge === "string") setBadge(value.badge);
+            },
+          );
+        }, [sessionId, scope, t]);
+
+        React.useEffect(() => {
+          void refreshBadge();
+        }, [refreshBadge]);
 
         // 面板挂载（tab 打开 / 抽屉展开）时先读一次历史。
         React.useEffect(() => {
@@ -839,8 +880,10 @@ window.__ModuleLoader__.load({
             // 空闲轮询（无 run）不重复 set 空数组，省掉每秒一次无意义的重渲染。
             if (hasLive || hadLive) setLiveRuns(runs);
             // 只在 live 结束后刷一次历史（run 进行中 threads 不会变，少传大 payload）。
-            if (hadLive && !hasLive) void loadThreads(true);
-            else if (!hasLive && ticks % LIVE_IDLE_REFRESH_EVERY === 0) void loadThreads(true);
+            if (hadLive && !hasLive) {
+              void loadThreads(true);
+              void refreshBadge();
+            } else if (!hasLive && ticks % LIVE_IDLE_REFRESH_EVERY === 0) void loadThreads(true);
             ticks += 1;
             if (!cancelled)
               timer = setTimeout(tick, runs.length > 0 ? LIVE_ACTIVE_MS : LIVE_IDLE_MS);
@@ -850,17 +893,24 @@ window.__ModuleLoader__.load({
             cancelled = true;
             clearTimeout(timer);
           };
-        }, [sessionId, visible, loadThreads]);
+        }, [sessionId, visible, loadThreads, refreshBadge]);
 
-        // Esc 只用于回退抽屉；原生 tab 里 Esc 属于宿主，不抢。
+        // Esc 关闭面板（tab 与回退抽屉同一手感）。用捕获阶段先于宿主/菜单处理，
+        // 否则宿主会把 Esc preventDefault 掉，面板永远收不到。
         React.useEffect(() => {
-          if (mode !== "drawer") return undefined;
           const onKey = (/** @type {any} */ event) => {
-            if (event?.key === "Escape") onClose();
+            if (event?.key !== "Escape") return;
+            // 只在焦点位于面板内时才关闭：设置对话框/斜杠菜单的 Esc 归它们自己，
+            // 不会因为面板开着而被一起关掉。
+            const inPanel =
+              typeof event?.target?.closest === "function" &&
+              event.target.closest("[data-btw-panel]") !== null;
+            if (!inPanel) return;
+            onClose();
           };
-          document.addEventListener("keydown", onKey);
-          return () => document.removeEventListener("keydown", onKey);
-        }, [mode, onClose]);
+          document.addEventListener("keydown", onKey, true);
+          return () => document.removeEventListener("keydown", onKey, true);
+        }, [onClose]);
 
         // 自动滚到底：只有用户本来就在底部时才跟随（向上翻历史时不抢滚动条）。
         const onScroll = () => {
@@ -949,6 +999,7 @@ window.__ModuleLoader__.load({
                 break;
               }
             }
+            void refreshBadge();
             setNotice(refreshed ? "" : t("sentPending"));
           } finally {
             if (aliveRef.current) setBusy(false);
@@ -979,7 +1030,8 @@ window.__ModuleLoader__.load({
           }
           const result = await callRemote("promote", {
             sessionId,
-            recordId: String(thread?.lastId ?? ""),
+            // 线程级转正：host 用首问 + 最后一轮答案组四节草稿。
+            threadId: String(thread?.threadId ?? ""),
             lang: langOf(),
           });
           if (result?.ok !== true || typeof result?.text !== "string") {
@@ -998,12 +1050,51 @@ window.__ModuleLoader__.load({
           setNotice(t("promoted"));
         };
 
-        // 折叠按钮：展开/收起单条长答案。
-        const toggleAnswer = (/** @type {string} */ key) =>
+        // 折叠按钮：展开/收起单条长答案。展开后保持被点答案的视口位置，避免列表跳回顶部。
+        const answerAnchorRef = React.useRef(/** @type {any} */ (null));
+        const toggleAnswer = (/** @type {string} */ key) => {
+          const list = scrollRef.current;
+          /** @type {any} */
+          const el =
+            list === null || list === undefined
+              ? null
+              : list.querySelector(`[data-btw-answer-id="${key}"]`);
+          answerAnchorRef.current = {
+            key,
+            top: el === null || el === undefined ? null : el.getBoundingClientRect().top,
+          };
           setExpandedAnswers((/** @type {any} */ previous) => ({
             ...previous,
             [key]: !previous[key],
           }));
+        };
+        React.useLayoutEffect(() => {
+          const pending = answerAnchorRef.current;
+          if (pending === null || pending === undefined) return;
+          answerAnchorRef.current = null;
+          const list = scrollRef.current;
+          if (list === null || list === undefined || pending.top === null) return;
+          const el = list.querySelector(`[data-btw-answer-id="${pending.key}"]`);
+          if (el === null || el === undefined) return;
+          list.scrollTop += el.getBoundingClientRect().top - pending.top;
+        }, [expandedAnswers]);
+
+        /** 范围档位选择器：底部「新旁问」和线程内追问共用同一个 scope 状态。 */
+        const renderScopeSelect = (/** @type {string} */ key) =>
+          h(
+            "select",
+            {
+              key,
+              className: "dsh-btw-select",
+              "data-btw-scope": "true",
+              value: scope,
+              onChange: (/** @type {any} */ event) => setScope(String(event?.target?.value ?? "")),
+            },
+            h("option", { value: "" }, t("scopeAny")),
+            h("option", { value: "session" }, t("scopeSession")),
+            h("option", { value: "recent" }, t("scopeRecent")),
+            h("option", { value: "selection" }, t("scopeSelection")),
+          );
 
         /** @param {any} thread @param {number} index */
         const renderThread = (thread, index) => {
@@ -1035,7 +1126,12 @@ window.__ModuleLoader__.load({
                         : h("span", { className: "dsh-btw-q-label" }, t("followUpLabel")),
                       String(item.question),
                     ),
-                h(MarkdownBody, { blocks: item?.blocks, streaming: false, clamped }),
+                h(MarkdownBody, {
+                  blocks: item?.blocks,
+                  streaming: false,
+                  clamped,
+                  answerId: itemKey,
+                }),
                 clamped
                   ? h(
                       "button",
@@ -1069,7 +1165,7 @@ window.__ModuleLoader__.load({
                             setFollowQuestion("");
                           },
                         },
-                        expanded ? t("collapseAnswer") : t("followUp"),
+                        expanded ? t("followCancel") : t("followUp"),
                       ),
                       h(
                         "button",
@@ -1087,7 +1183,8 @@ window.__ModuleLoader__.load({
                 expanded && isLast
                   ? h(
                       "div",
-                      { className: "dsh-btw-row", "data-btw-thread-input": "true" },
+                      { className: "dsh-btw-composer", "data-btw-thread-input": "true" },
+                      h("span", { className: "dsh-btw-composer-label" }, t("followInputLabel")),
                       h("textarea", {
                         className: "dsh-btw-input",
                         "data-btw-input": "true",
@@ -1104,15 +1201,20 @@ window.__ModuleLoader__.load({
                         },
                       }),
                       h(
-                        "button",
-                        {
-                          type: "button",
-                          className: "dsh-btw-btn",
-                          "data-btw-send": "true",
-                          disabled: busy || followQuestion.trim() === "",
-                          onClick: () => void submit(threadId),
-                        },
-                        t("send"),
+                        "div",
+                        { className: "dsh-btw-row" },
+                        h(
+                          "button",
+                          {
+                            type: "button",
+                            className: "dsh-btw-btn",
+                            "data-btw-send": "true",
+                            disabled: busy || followQuestion.trim() === "",
+                            onClick: () => void submit(threadId),
+                          },
+                          t("followSend"),
+                        ),
+                        renderScopeSelect("follow-scope"),
                       ),
                     )
                   : null,
@@ -1162,7 +1264,9 @@ window.__ModuleLoader__.load({
             h(
               "div",
               { className: "dsh-btw-meta", "data-btw-elapsed": "true" },
-              `${t("streaming")} · ${formatDuration(run?.ms)}`,
+              `${
+                Array.isArray(run?.blocks) && run.blocks.length > 0 ? t("streaming") : t("thinking")
+              } · ${formatDuration(run?.ms)}`,
             ),
           );
         };
@@ -1202,7 +1306,7 @@ window.__ModuleLoader__.load({
               ? h(
                   "span",
                   { className: "dsh-btw-dim", "data-btw-count": "true" },
-                  String(threads.length),
+                  fmt(t("threadCount"), { count: threads.length }),
                 )
               : null,
             mode === "tab"
@@ -1256,59 +1360,56 @@ window.__ModuleLoader__.load({
                 },
                 ...(Array.isArray(list) ? list : [list]),
               ),
-          h(
-            "div",
-            { className: "dsh-btw-composer" },
-            h("span", { className: "dsh-btw-composer-label" }, t("newQuestionLabel")),
-            h("textarea", {
-              className: "dsh-btw-input",
-              "data-btw-input": "true",
-              placeholder: t("placeholder"),
-              value: question,
-              rows: 2,
-              onChange: (/** @type {any} */ event) =>
-                setQuestion(String(event?.target?.value ?? "")),
-              onKeyDown: (/** @type {any} */ event) => {
-                if (event?.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                  event.preventDefault();
-                  void submit("");
-                }
-              },
-            }),
-            h(
-              "div",
-              { className: "dsh-btw-row" },
-              h(
-                "button",
-                {
-                  type: "button",
-                  className: "dsh-btw-btn is-primary",
-                  "data-btw-send": "true",
-                  disabled: busy || question.trim() === "",
-                  onClick: () => void submit(""),
-                },
-                t("send"),
-              ),
-              h(
-                "select",
-                {
-                  className: "dsh-btw-select",
-                  "data-btw-scope": "true",
-                  value: scope,
+          activeId === ""
+            ? h(
+                "div",
+                { className: "dsh-btw-composer" },
+                h("span", { className: "dsh-btw-composer-label" }, t("newQuestionLabel")),
+                h("textarea", {
+                  className: "dsh-btw-input",
+                  "data-btw-input": "true",
+                  placeholder: t("placeholder"),
+                  value: question,
+                  rows: 2,
+                  ref: questionRef,
                   onChange: (/** @type {any} */ event) =>
-                    setScope(String(event?.target?.value ?? "")),
-                },
-                h("option", { value: "" }, t("scopeAny")),
-                h("option", { value: "session" }, t("scopeSession")),
-                h("option", { value: "recent" }, t("scopeRecent")),
-                h("option", { value: "selection" }, t("scopeSelection")),
-              ),
-            ),
-            h("div", { className: "dsh-btw-meta", "data-btw-hint": "true" }, t("submitHint")),
-            badge === ""
-              ? null
-              : h("div", { className: "dsh-btw-meta", "data-btw-badge": "true" }, badge),
-          ),
+                    setQuestion(String(event?.target?.value ?? "")),
+                  onKeyDown: (/** @type {any} */ event) => {
+                    if (event?.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                      event.preventDefault();
+                      void submit("");
+                    }
+                  },
+                }),
+                h(
+                  "div",
+                  { className: "dsh-btw-row" },
+                  h(
+                    "button",
+                    {
+                      type: "button",
+                      className: "dsh-btw-btn is-primary",
+                      "data-btw-send": "true",
+                      disabled: busy || question.trim() === "",
+                      onClick: () => void submit(""),
+                    },
+                    t("send"),
+                  ),
+                  renderScopeSelect("new-scope"),
+                ),
+              )
+            : null,
+          h("div", { className: "dsh-btw-meta", "data-btw-hint": "true" }, t("submitHint")),
+          mode === "tab"
+            ? h(
+                "div",
+                { className: "dsh-btw-meta", "data-btw-resize-hint": "true" },
+                t("resizeHint"),
+              )
+            : null,
+          badge === ""
+            ? null
+            : h("div", { className: "dsh-btw-meta", "data-btw-badge": "true" }, badge),
         );
       }
 
@@ -1388,6 +1489,7 @@ window.__ModuleLoader__.load({
         const [loaded, setLoaded] = React.useState(/** @type {any} */ (null));
         const [tools, setTools] = React.useState("");
         const [limit, setLimit] = React.useState("");
+        const [echo, setEcho] = React.useState(true);
         const [saving, setSaving] = React.useState(false);
         const [notice, setNotice] = React.useState("");
         const [expanded, setExpanded] = React.useState(false);
@@ -1397,6 +1499,7 @@ window.__ModuleLoader__.load({
           setLoaded(value);
           setTools(Array.isArray(value.allowedTools) ? value.allowedTools.join(", ") : "");
           setLimit(String(value.historyLimit ?? ""));
+          setEcho(value.echoAnswer !== false);
         }, []);
 
         React.useEffect(() => {
@@ -1408,7 +1511,8 @@ window.__ModuleLoader__.load({
         const dirty =
           loaded !== null &&
           (tools !== (loaded.allowedTools ?? []).join(", ") ||
-            limit !== String(loaded.historyLimit ?? ""));
+            limit !== String(loaded.historyLimit ?? "") ||
+            echo !== (loaded.echoAnswer !== false));
 
         const save = async () => {
           const call =
@@ -1417,7 +1521,7 @@ window.__ModuleLoader__.load({
           setSaving(true);
           setNotice("");
           const next = await Promise.resolve(
-            call({ allowedTools: tools, historyLimit: Number(limit) }),
+            call({ allowedTools: tools, historyLimit: Number(limit), echoAnswer: echo }),
           ).catch(() => undefined);
           setSaving(false);
           if (next && typeof next === "object") {
@@ -1457,6 +1561,16 @@ window.__ModuleLoader__.load({
                   ? t("settings.readOnly")
                   : `${loaded.allowedTools.length}`,
             ),
+            h("span", { className: "dsh-btw-grow" }),
+            h("input", {
+              type: "checkbox",
+              "data-btw-setting-echo": "true",
+              "aria-label": t("settings.echo"),
+              title: t("settings.echoHint"),
+              checked: echo,
+              onChange: (/** @type {any} */ event) => setEcho(event?.target?.checked === true),
+            }),
+            h("span", { className: "dsh-btw-setlabel" }, t("settings.echo")),
           ),
           row(
             t("settings.tools"),

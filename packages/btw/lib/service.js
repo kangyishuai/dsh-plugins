@@ -19,6 +19,7 @@ import {
   listThreads,
   newThreadId,
   parseCommandArgs,
+  promoteRecordForThread,
   renderPromoteDraft,
   threadHistory,
 } from "./threads.js";
@@ -57,6 +58,7 @@ const FALLBACK = {
   tooLong: "That question is too long ({length} characters, limit {max}).",
   threadFull: "This side-question thread is full ({max} turns). Start a new one.",
   meta: "btw · new {newTokens} tokens · cached {cachedTokens} · {ms}",
+  panelOnly: "Side question answered; the full answer is in the side-question panel.",
   reopen: "Last side question: {question}",
 };
 
@@ -240,6 +242,10 @@ export class BtwService extends TypertRemoteService {
       at: Date.now(),
     };
     await appendRecord(file, record).catch(() => {});
+    // 设置里关掉「主对话显示完整答案」时，只回一行提示；面板历史里仍有完整答案。
+    if (stored !== undefined && stored.echoAnswer === false) {
+      return { kind: "success", text: this.messages.panelOnly ?? FALLBACK.panelOnly };
+    }
     return { kind: "success", text: this.formatAnswer(record) };
   }
 
@@ -320,7 +326,7 @@ export class BtwService extends TypertRemoteService {
   /**
    * 生成「一键转正」草稿文本。**只返回文本，不插入、不发送**——
    * 语义已与用户确认：插入 composer 草稿，由用户自己决定发不发。
-   * @param {{ sessionId?: string, recordId?: string, lang?: string, details?: string, unresolved?: string } | undefined} request
+   * @param {{ sessionId?: string, threadId?: string, recordId?: string, lang?: string, details?: string, unresolved?: string } | undefined} request
    * @returns {Promise<{ ok: boolean, text?: string, reason?: string }>}
    */
   async promote(request) {
@@ -329,14 +335,17 @@ export class BtwService extends TypertRemoteService {
       historyFile(this.dataRoot, String(input.sessionId ?? "")),
       LIMITS.perSessionRecords,
     );
+    const threadId = String(input.threadId ?? "");
     const wanted = String(input.recordId ?? "");
     const record =
-      wanted === ""
-        ? records[records.length - 1]
-        : records
-            .slice()
-            .reverse()
-            .find((entry) => String(entry?.id ?? "") === wanted);
+      threadId !== ""
+        ? promoteRecordForThread(records, threadId)
+        : wanted === ""
+          ? records[records.length - 1]
+          : records
+              .slice()
+              .reverse()
+              .find((entry) => String(entry?.id ?? "") === wanted);
     if (record === undefined) return { ok: false, reason: "no_record" };
     const text = renderPromoteDraft(record, {
       lang: String(input.lang ?? ""),

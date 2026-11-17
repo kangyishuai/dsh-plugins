@@ -18,7 +18,7 @@ Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/de
 - **Streaming.** The drawer renders the answer as it is generated instead of waiting for the whole reply (the host buffers the child's text deltas; the panel reads them through `btw/live`).
 - **Markdown.** Headings, lists, tables, quotes, fenced code and inline styles render properly. The promote draft keeps its Markdown source, so it renders correctly once you send it.
 - **Readable numbers.** The cost badge adapts tokens to `K/M/B/T` and duration to `ms/s/m/h` (for example `new 12.3K · cached 988K · 32.5s`).
-- **Promote to draft.** Turn the latest side question into a four-section Markdown draft (question / conclusion / key details / still unresolved) and **insert it into the composer — never send it**. You decide whether to send.
+- **Promote to draft.** Turn the **whole thread** into a four-section Markdown draft (first question / latest conclusion / key details / still unresolved) and **insert it into the composer — never send it**. You decide whether to send.
 - **Native right sidebar.** The「旁问」button opens a tab in the DSH right sidebar: the conversation becomes narrower but is **never covered**.the sidebar's own collapse button (⌥⌘B) collapses the column and clicking the「旁问」button expands it again. Hosts without the sidebar service fall back to a right-edge overlay drawer.
 - **Chat order.** Threads list oldest first with every turn expanded, the newest answer at the bottom, and the view follows the latest content.
 - **Honest scope badge.** The drawer states how many side questions exist and reminds you that **the model can see the whole conversation**; a scope choice only narrows the instruction, it does not cut context.
@@ -79,12 +79,15 @@ Plugin config (set when adding the plugin to a profile):
 
 Runtime settings (editable in **Settings → Side questions**, stored in `<dataRoot>/btw/settings.json`):
 
-| Key            | Default | Meaning                                           |
-| -------------- | ------- | ------------------------------------------------- |
-| `allowedTools` | `[]`    | Overrides the plugin config above when non-empty. |
-| `historyLimit` | `50`    | Records kept per session (1–200).                 |
+| Key            | Default | Meaning                                                          |
+| -------------- | ------- | ---------------------------------------------------------------- |
+| `allowedTools` | `[]`    | Overrides the plugin config above when non-empty.                |
+| `historyLimit` | `50`    | Records kept per session (1–200).                                |
+| `echoAnswer`   | `true`  | Also show the full answer in the conversation; off = panel only. |
 
 The settings file is re-read on every use, so edits take effect without restarting the host.
+
+Panel details: the bottom「New question」input hides while a thread follow-up is open (no two similar inputs); the follow-up button reads「Follow up」/「Cancel follow-up」. `Esc` closes the panel, the input is focused when the panel opens, and expanding a long answer keeps the current reading position.
 
 ## Side effects & risks
 
