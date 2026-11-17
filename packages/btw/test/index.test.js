@@ -337,7 +337,9 @@ test("threads: listThreads 倒序且带轮数与首问", () => {
 
 test("threads: newThreadId 稳定且带前缀", () => {
   const id = newThreadId(1700000000000, () => 0.5);
-  assert.match(id, /^t_[0-9a-z]+_[0-9a-z]{4}$/);
+  // 短 id：`t_` + 时间 36 进制 + 2 位随机（浮层发问会把它带进 composer，越短越不刺眼）
+  assert.match(id, /^t_[0-9a-z]+[0-9a-z]{2}$/);
+  assert.ok(id.length <= 14, `id 应够短，实际 ${id.length}: ${id}`);
   assert.equal(
     id,
     newThreadId(1700000000000, () => 0.5),
@@ -481,4 +483,28 @@ test("promote: 草稿长度受 promoteChars 约束（实测 4000 字撑爆输入
     `长度 ${draft.length} 应 <= ${LIMITS.promoteChars}`,
   );
   assert.equal(LIMITS.promoteChars, 1200, "默认上限收到 1200");
+});
+
+test("stripMarkdown: keepCode 默认保留代码块内容（缩进与标记都不动）", () => {
+  const text = "说明：\n\n```md\n**这是文档语法**\n| 表 | 格 |\n```";
+  const kept = stripMarkdown(text);
+  assert.ok(kept.includes("**这是文档语法**"), "代码块内的粗体标记应保留");
+  assert.ok(kept.includes("| 表 | 格 |"), "代码块内的表格竖线应保留");
+  const stripped = stripMarkdown(text, { keepCode: false });
+  assert.ok(!stripped.includes("**"), "keepCode:false 时代码块内也被清理");
+});
+
+test("stripMarkdown: 代码块外的标记仍会被清理", () => {
+  const out = stripMarkdown("**重点**\n\n```js\nconst a = 1;\n```");
+  assert.ok(out.startsWith("重点"), "块外粗体被清");
+  assert.ok(out.includes("const a = 1;"), "代码内容保留");
+});
+
+test("listThreads: answerPlain 是清理后的展示文本，answer 保留原文", () => {
+  const threads = listThreads([
+    { id: "a", at: 1, question: "q", answer: "**粗体**\n\n| a | b |\n|---|---|\n| 1 | 2 |" },
+  ]);
+  assert.ok(threads[0].answer.includes("**"), "answer 保留原始 Markdown");
+  assert.ok(!threads[0].answerPlain.includes("**"), "answerPlain 去掉粗体标记");
+  assert.ok(threads[0].answerPlain.includes("1 — 2"), "表格转成破折号");
 });
