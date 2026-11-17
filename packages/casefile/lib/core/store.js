@@ -48,6 +48,8 @@ export const RECORD_FILES = /** @type {const} */ ({
   claims: "claims.jsonl",
   features: "features.jsonl",
   unknowns: "unknowns.jsonl",
+  obligations: "obligations.jsonl",
+  checks: "checks.jsonl",
 });
 
 /**
@@ -193,7 +195,7 @@ export class CaseStore {
   /**
    * 读一个项目的全部记录。
    * @param {string} projectId
-   * @returns {{ evidence: any[], claims: any[], features: any[], unknowns: any[] }}
+   * @returns {{ evidence: any[], claims: any[], features: any[], unknowns: any[], obligations: any[] }}
    */
   readAll(projectId) {
     return {
@@ -201,6 +203,7 @@ export class CaseStore {
       claims: this.readRecords(projectId, "claims"),
       features: this.readRecords(projectId, "features"),
       unknowns: this.readRecords(projectId, "unknowns"),
+      obligations: this.readRecords(projectId, "obligations"),
     };
   }
 

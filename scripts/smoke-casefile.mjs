@@ -216,8 +216,12 @@ async function main() {
     /** @type {{ port: number, cookies: string[], rpcSeq: { n: number } }} */
     const session = { port: boot.port, cookies, rpcSeq: { n: 0 } };
 
-    // 4) 空列表
-    const empty = await remote(session, "listProjects");
+    // 4) 空列表（插件可能在启动后晚一拍才 claim 端点，轮询到就绪为止）
+    let empty = await remote(session, "listProjects");
+    for (let attempt = 0; attempt < 30 && empty.status === 404; attempt += 1) {
+      await sleep(500);
+      empty = await remote(session, "listProjects");
+    }
     check(
       "listProjects 端点可用且初始为空",
       empty.ok && Array.isArray(empty.value) && empty.value.length === 0,
@@ -315,6 +319,57 @@ async function main() {
       unknown.raw.slice(0, 300),
     );
 
+    // 9.5) 义务：新增 + 无检查时拒绝关闭（硬门）
+    const obligation = await remote(session, "addObligation", {
+      projectId: "todo-app-smoke",
+      input: {
+        statement: "新增待办在 390px 下不横向滚动",
+        kind: "behavior",
+        authorityRequired: "controlled-replay",
+      },
+    });
+    check(
+      "addObligation 加义务且状态 open",
+      obligation.ok && obligation.value?.status === "open",
+      obligation.raw.slice(0, 300),
+    );
+    const blockedClose = await remote(session, "closeObligation", {
+      projectId: "todo-app-smoke",
+      obligationId: obligation.value?.id,
+    });
+    check(
+      "没有新鲜 PASS 检查时拒绝关闭义务（obligationTooTall）",
+      blockedClose.ok === false &&
+        /obligationTooTall/u.test(String(blockedClose.error?.message ?? "")),
+      blockedClose.raw.slice(0, 300),
+    );
+    // 新鲜 PASS + digest 一致 → 可以关闭
+    const check1 = await remote(session, "addCheck", {
+      projectId: "todo-app-smoke",
+      input: {
+        obligationId: obligation.value?.id,
+        checker: "manual",
+        verdict: "pass",
+        implementationDigest: "impl-smoke",
+        originalDigest: "orig-smoke",
+      },
+    });
+    check(
+      "addCheck 记录检查结果",
+      check1.ok && check1.value?.verdict === "pass",
+      check1.raw.slice(0, 300),
+    );
+    const closed = await remote(session, "closeObligation", {
+      projectId: "todo-app-smoke",
+      obligationId: obligation.value?.id,
+      input: { note: "冒烟：新鲜 PASS" },
+    });
+    check(
+      "新鲜 PASS 且 digest 一致时允许关闭",
+      closed.ok && closed.value?.status === "pass",
+      closed.raw.slice(0, 300),
+    );
+
     // 10) 详情统计
     const detail = await remote(session, "projectDetail", { projectId: "todo-app-smoke" });
     check(
@@ -323,7 +378,9 @@ async function main() {
         detail.value?.stats?.evidence === 1 &&
         detail.value?.stats?.claims === 1 &&
         detail.value?.stats?.features === 1 &&
-        detail.value?.stats?.openUnknowns === 1,
+        detail.value?.stats?.openUnknowns === 1 &&
+        detail.value?.stats?.obligations === 1 &&
+        detail.value?.stats?.passedObligations === 1,
       JSON.stringify(detail.value?.stats ?? null).slice(0, 300),
     );
 

@@ -41,15 +41,19 @@ function fakeHandlers() {
       addUnknown: record("addUnknown"),
       listUnknowns: record("listUnknowns"),
       resolveUnknown: record("resolveUnknown"),
+      addObligation: record("addObligation"),
+      listObligations: record("listObligations"),
+      closeObligation: record("closeObligation"),
+      reopenObligation: record("reopenObligation"),
       exportSpecPack: record("exportSpecPack"),
     },
   };
 }
 
-test("注册 6 个工具且名字符合约定", () => {
+test("注册 7 个工具且名字符合约定", () => {
   const { handlers } = fakeHandlers();
   const definitions = buildToolDefinitions(handlers, () => undefined);
-  assert.equal(definitions.length, 6);
+  assert.equal(definitions.length, 7);
   assert.deepEqual(
     definitions.map((item) => item.name),
     Object.values(TOOL_NAMES),

@@ -9,9 +9,11 @@ import { shortDigest } from "./core/digest.js";
 import { gradeCapabilities } from "./core/manifest.js";
 import {
   CasefileInputError,
+  newId,
   normalizeClaim,
   normalizeEvidence,
   normalizeFeature,
+  normalizeObligation,
   normalizeUnknown,
   nowIso,
   projectStats,
@@ -120,6 +122,7 @@ export function createActions(options) {
         evidence: data.evidence,
         features: data.features,
         unknowns: data.unknowns,
+        obligations: data.obligations,
       };
     },
 
@@ -378,6 +381,187 @@ export function createActions(options) {
       store.appendRecord(project.id, "unknowns", next);
       store.touch(project.id);
       store.audit(project.id, { actor: "agent", action: "unknown/resolve", target: next.id });
+      return next;
+    },
+
+    // ---------- 义务与检查 ----------
+
+    /**
+     * @param {string} projectId
+     * @param {Record<string, any>} input
+     * @returns {Promise<Record<string, any>>}
+     */
+    async addObligation(projectId, input) {
+      const project = requireProject(projectId);
+      const record = normalizeObligation(input);
+      store.appendRecord(project.id, "obligations", record);
+      store.touch(project.id);
+      store.audit(project.id, {
+        actor: "agent",
+        action: "obligation/add",
+        target: record.id,
+        detail: { kind: record.kind, authorityRequired: record.authorityRequired },
+      });
+      return record;
+    },
+
+    /**
+     * @param {string} projectId
+     * @returns {Promise<any[]>}
+     */
+    async listObligations(projectId) {
+      requireProject(projectId);
+      return store.readRecords(projectId, "obligations");
+    },
+
+    /**
+     * 记录一次检查结果（M1 只落账；执行 checkers 是 M2）。
+     * @param {string} projectId
+     * @param {Record<string, any>} input
+     * @returns {Promise<Record<string, any>>}
+     */
+    async addCheck(projectId, input) {
+      const project = requireProject(projectId);
+      const verdict = String(input?.verdict ?? "");
+      if (!["pass", "fail", "unknown"].includes(verdict)) {
+        throw new CasefileInputError(
+          "invalid-input",
+          `verdict 必须是 pass | fail | unknown，收到 ${JSON.stringify(input?.verdict)}`,
+        );
+      }
+      const record = {
+        id: newId("check"),
+        obligationId: String(input?.obligationId ?? ""),
+        checker: String(input?.checker ?? "manual"),
+        checkerVersion: String(input?.checkerVersion ?? "1"),
+        verdict,
+        implementationDigest:
+          input?.implementationDigest == null ? null : String(input.implementationDigest),
+        originalDigest: input?.originalDigest == null ? null : String(input.originalDigest),
+        evidenceFetchedAt:
+          input?.evidenceFetchedAt == null ? nowIso() : String(input.evidenceFetchedAt),
+        detail: input?.detail == null ? "" : String(input.detail).slice(0, 2000),
+        at: nowIso(),
+      };
+      store.appendRecord(project.id, "checks", record);
+      store.touch(project.id);
+      store.audit(project.id, {
+        actor: "agent",
+        action: "check/add",
+        target: record.id,
+        detail: { obligationId: record.obligationId, verdict },
+      });
+      return record;
+    },
+
+    /**
+     * @param {string} projectId
+     * @param {string} [obligationId]
+     * @returns {Promise<any[]>}
+     */
+    async listChecks(projectId, obligationId) {
+      requireProject(projectId);
+      const rows = store.readRecords(projectId, "checks");
+      return obligationId == null
+        ? rows
+        : rows.filter((item) => item.obligationId === obligationId);
+    },
+
+    /**
+     * 关闭义务的硬门（spec/03-acceptance.md §1.3）：
+     * 必须有 fresh 的 PASS 检查，且实现/原件 digest 与义务绑定的一致。
+     * @param {string} projectId
+     * @param {string} obligationId
+     * @param {{ checkId?: string, note?: string }} [input]
+     * @returns {Promise<Record<string, any>>}
+     */
+    async closeObligation(projectId, obligationId, input = {}) {
+      const project = requireProject(projectId);
+      const obligations = store.readRecords(project.id, "obligations");
+      const obligation = obligations.find((item) => item.id === obligationId);
+      if (!obligation) {
+        throw new CaseStoreError("not-found", `义务不存在：${obligationId}`);
+      }
+      if (obligation.status === "pass") return obligation;
+      const checks = store
+        .readRecords(project.id, "checks")
+        .filter((item) => item.obligationId === obligationId);
+      /** @type {string[]} */
+      const blockers = [];
+      const fresh = checks.filter((item) => {
+        const age = Date.now() - Date.parse(item.evidenceFetchedAt ?? 0);
+        return Number.isFinite(age) && age >= 0 && age <= 24 * 3600 * 1000;
+      });
+      const chosen =
+        input.checkId == null
+          ? fresh.filter((item) => item.verdict === "pass").at(-1)
+          : checks.find((item) => item.id === input.checkId);
+      if (!chosen) {
+        // 没有可用的 PASS：如果存在检查，用最近一条的结论作为原因，便于用户看懂。
+        const latest = checks.at(-1);
+        if (!latest) blockers.push("no-fresh-check");
+        else if (latest.verdict === "pass") blockers.push("stale-check");
+        else blockers.push(`check-${latest.verdict}`);
+      } else if (chosen.verdict !== "pass") {
+        blockers.push(`check-${chosen.verdict}`);
+      } else if (!fresh.includes(chosen)) {
+        blockers.push("stale-check");
+      }
+      if (chosen && obligation.ownerDigest != null) {
+        if (chosen.implementationDigest !== obligation.ownerDigest) {
+          blockers.push("implementation-mismatch");
+        }
+      }
+      if (blockers.length > 0) {
+        throw new CasefileActionError(
+          "obligationTooTall",
+          `义务 ${obligationId} 还不能关闭：${blockers.join("、")}`,
+        );
+      }
+      /** @type {any} */
+      if (!chosen) throw new CasefileActionError("obligationTooTall", "缺少可用检查");
+      /** @type {any} */
+      const next = {
+        ...obligation,
+        status: "pass",
+        checkIds: [...(obligation.checkIds ?? []), chosen.id],
+        closedBy: "agent",
+        closedAt: nowIso(),
+        note: input.note == null ? "" : String(input.note).slice(0, 2000),
+        version: Number(obligation.version ?? 1) + 1,
+      };
+      store.appendRecord(project.id, "obligations", next);
+      store.touch(project.id);
+      store.audit(project.id, {
+        actor: "agent",
+        action: "obligation/close",
+        target: next.id,
+        detail: { checkId: chosen.id },
+      });
+      return next;
+    },
+
+    /**
+     * @param {string} projectId
+     * @param {string} obligationId
+     * @param {string} [note]
+     * @returns {Promise<Record<string, any>>}
+     */
+    async reopenObligation(projectId, obligationId, note) {
+      const project = requireProject(projectId);
+      const obligations = store.readRecords(project.id, "obligations");
+      const obligation = obligations.find((item) => item.id === obligationId);
+      if (!obligation) throw new CaseStoreError("not-found", `义务不存在：${obligationId}`);
+      /** @type {any} */
+      const next = {
+        ...obligation,
+        status: "open",
+        note: note == null ? (obligation.note ?? "") : String(note).slice(0, 2000),
+        version: Number(obligation.version ?? 1) + 1,
+      };
+      store.appendRecord(project.id, "obligations", next);
+      store.touch(project.id);
+      store.audit(project.id, { actor: "agent", action: "obligation/reopen", target: next.id });
       return next;
     },
 

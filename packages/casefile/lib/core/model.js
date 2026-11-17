@@ -26,6 +26,28 @@ export const AUTHORITY = /** @type {const} */ ([
   "external",
 ]);
 
+/** 义务种类（spec/03-acceptance.md §1.2）。 */
+export const OBLIGATION_KINDS = /** @type {const} */ ([
+  "existence",
+  "structure",
+  "behavior",
+  "visual",
+  "coverage",
+  "regression",
+]);
+
+/** 义务状态。 */
+export const OBLIGATION_STATUSES = /** @type {const} */ ([
+  "open",
+  "pass",
+  "fail",
+  "blocked",
+  "out_of_scope",
+]);
+
+/** 检查结论。 */
+export const CHECK_VERDICTS = /** @type {const} */ (["pass", "fail", "unknown"]);
+
 /** 结论种类：覆盖 REA 的观察面。 */
 export const CLAIM_KINDS = /** @type {const} */ ([
   "pseudocode",
@@ -272,13 +294,46 @@ export function normalizeUnknown(input) {
 }
 
 /**
+ * 规范化一条义务。
+ * @param {Record<string, any>} input
+ * @returns {Record<string, any>}
+ */
+export function normalizeObligation(input) {
+  const statement = text(input?.statement, "statement", { max: 2000 });
+  return {
+    id: newId("obl"),
+    source: input?.source == null ? "manual" : text(input.source, "source", { max: 200 }),
+    kind: oneOf(input?.kind ?? "behavior", OBLIGATION_KINDS, "kind"),
+    statement,
+    authorityRequired: oneOf(
+      input?.authorityRequired ?? "controlled-replay",
+      ["controlled-replay", "live-observation", "external"],
+      "authorityRequired",
+    ),
+    status: "open",
+    checkIds: idList(input?.checkIds, "checkIds"),
+    evidenceIds: idList(input?.evidenceIds, "evidenceIds"),
+    ownerDigest:
+      input?.ownerDigest == null ? null : text(input.ownerDigest, "ownerDigest", { max: 128 }),
+    version: 1,
+  };
+}
+
+/**
  * 项目统计（列表/状态用）。
  * @param {Record<string, any>} project
- * @param {{ evidence: any[], claims: any[], features: any[], unknowns: any[] }} data
+ * @param {{ evidence: any[], claims: any[], features: any[], unknowns: any[], obligations?: any[] }} data
  * @returns {Record<string, any>}
  */
 export function projectStats(project, data) {
   const openUnknowns = data.unknowns.filter((item) => item.status !== "resolved").length;
+  const obligations = data.obligations ?? [];
+  const openObligations = obligations.filter(
+    (/** @type {any} */ item) => item.status === "open",
+  ).length;
+  const passedObligations = obligations.filter(
+    (/** @type {any} */ item) => item.status === "pass",
+  ).length;
   return {
     id: project.id,
     title: project.title,
@@ -292,6 +347,9 @@ export function projectStats(project, data) {
     selectedClaims: data.claims.filter((item) => item.selected).length,
     features: data.features.length,
     openUnknowns,
+    obligations: obligations.length,
+    openObligations,
+    passedObligations,
     updatedAt: project.updatedAt,
   };
 }

@@ -145,6 +145,12 @@ export class CasefileService extends TypertRemoteService {
       addUnknown: (projectId, input) => this.actions.addUnknown(projectId, input),
       listUnknowns: (projectId) => this.actions.listUnknowns(projectId),
       resolveUnknown: (projectId, id, note) => this.actions.resolveUnknown(projectId, id, note),
+      addObligation: (projectId, input) => this.actions.addObligation(projectId, input),
+      listObligations: (projectId) => this.actions.listObligations(projectId),
+      addCheck: (projectId, input) => this.actions.addCheck(projectId, input),
+      listChecks: (projectId, id) => this.actions.listChecks(projectId, id),
+      closeObligation: (projectId, id, input) => this.actions.closeObligation(projectId, id, input),
+      reopenObligation: (projectId, id, note) => this.actions.reopenObligation(projectId, id, note),
       exportSpecPack: (projectId, options) => this.actions.exportSpecPack(projectId, options),
     };
   }
@@ -358,6 +364,85 @@ export class CasefileService extends TypertRemoteService {
       fail(error);
     }
   }
+
+  /**
+   * @param {string} projectId
+   * @param {Record<string, any>} input
+   * @returns {Promise<Record<string, any>>}
+   */
+  async addObligation(projectId, input) {
+    try {
+      return await this.actions.addObligation(projectId, input);
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
+   * @returns {Promise<any[]>}
+   */
+  async listObligations(projectId) {
+    try {
+      return await this.actions.listObligations(projectId);
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
+   * @param {Record<string, any>} input
+   * @returns {Promise<Record<string, any>>}
+   */
+  async addCheck(projectId, input) {
+    try {
+      return await this.actions.addCheck(projectId, input);
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
+   * @param {string} [obligationId]
+   * @returns {Promise<any[]>}
+   */
+  async listChecks(projectId, obligationId) {
+    try {
+      return await this.actions.listChecks(projectId, obligationId);
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
+   * @param {string} obligationId
+   * @param {{ checkId?: string, note?: string }} [input]
+   * @returns {Promise<Record<string, any>>}
+   */
+  async closeObligation(projectId, obligationId, input) {
+    try {
+      return await this.actions.closeObligation(projectId, obligationId, input);
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
+   * @param {string} obligationId
+   * @param {string} [note]
+   * @returns {Promise<Record<string, any>>}
+   */
+  async reopenObligation(projectId, obligationId, note) {
+    try {
+      return await this.actions.reopenObligation(projectId, obligationId, note);
+    } catch (error) {
+      fail(error);
+    }
+  }
 }
 
 declareRemote(CasefileService, "listProjects");
@@ -376,4 +461,10 @@ declareRemote(CasefileService, "listFeatures");
 declareRemote(CasefileService, "addUnknown");
 declareRemote(CasefileService, "listUnknowns");
 declareRemote(CasefileService, "resolveUnknown");
+declareRemote(CasefileService, "addObligation");
+declareRemote(CasefileService, "listObligations");
+declareRemote(CasefileService, "addCheck");
+declareRemote(CasefileService, "listChecks");
+declareRemote(CasefileService, "closeObligation");
+declareRemote(CasefileService, "reopenObligation");
 declareRemote(CasefileService, "exportSpecPack");

@@ -60,7 +60,8 @@
     "version-packages": "changeset version && pnpm install --lockfile-only",
     "wt": "node scripts/worktree.mjs",
     "smoke:casefile": "node scripts/smoke-casefile.mjs",
-    "gate:casefile": "node scripts/gate.mjs casefile"
+    "gate:casefile": "node scripts/gate.mjs casefile",
+    "smoke:casefile-desktop": "node scripts/smoke-casefile-desktop.mjs"
   },
   "simple-git-hooks": {
     "pre-commit": "pnpm exec lint-staged && node scripts/check-public.mjs",

@@ -16,6 +16,7 @@ export const TOOL_NAMES = /** @type {const} */ ({
   claim: "case_claim",
   feature: "case_feature",
   unknown: "case_unknown",
+  obligation: "case_obligation",
   brief: "case_brief",
 });
 
@@ -378,6 +379,72 @@ export function buildToolDefinitions(handlers, projectOf) {
           }
           const unknowns = await handlers.listUnknowns(id);
           return { unknowns, summary: `${unknowns.length} 个未知项` };
+        });
+      },
+    },
+
+    {
+      name: TOOL_NAMES.obligation,
+      description:
+        "义务：add 加一条可验收义务，list 列出，close 关闭（必须有新鲜 PASS 检查，否则拒绝），reopen 重开。",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          action: { type: "string", enum: ["add", "list", "close", "reopen"] },
+          projectId: PROJECT_ID,
+          obligationId: { type: "string" },
+          checkId: { type: "string", description: "close 时可指定某条检查结果" },
+          note: { type: "string" },
+          input: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              statement: { type: "string" },
+              kind: {
+                type: "string",
+                enum: ["existence", "structure", "behavior", "visual", "coverage", "regression"],
+              },
+              source: { type: "string" },
+              authorityRequired: {
+                type: "string",
+                enum: ["controlled-replay", "live-observation", "external"],
+              },
+              ownerDigest: { type: "string" },
+              evidenceIds: { type: "array", items: { type: "string" } },
+            },
+            required: ["statement"],
+          },
+        },
+        required: ["action"],
+      },
+      output: { schema: TOOL_OUTPUT_SCHEMA, render: renderToolResult },
+      /** @param {any} args @param {any} exec */
+      async execute(args, exec) {
+        return run(async () => {
+          const action = assertAction(args.action, ["add", "list", "close", "reopen"]);
+          const id = projectId(args, exec);
+          if (action === "add") {
+            const obligation = await handlers.addObligation(id, args.input ?? {});
+            return { obligation, summary: `已加义务 ${obligation.id}` };
+          }
+          if (action === "close") {
+            const obligation = await handlers.closeObligation(id, String(args.obligationId ?? ""), {
+              checkId: args.checkId,
+              note: args.note,
+            });
+            return { obligation, summary: `义务 ${obligation.id} → ${obligation.status}` };
+          }
+          if (action === "reopen") {
+            const obligation = await handlers.reopenObligation(
+              id,
+              String(args.obligationId ?? ""),
+              args.note,
+            );
+            return { obligation, summary: `义务 ${obligation.id} → ${obligation.status}` };
+          }
+          const obligations = await handlers.listObligations(id);
+          return { obligations, summary: `${obligations.length} 条义务` };
         });
       },
     },

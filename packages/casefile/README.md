@@ -6,7 +6,7 @@
 
 Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). Not affiliated with DeepSeek. It is an adapter on top of [REA](https://github.com/morluto/rea) (MIT); it ships none of REA's code and no analysis engine.
 
-> **Status: M0 (host half only).** This version persists projects, evidence, claims, features and unknowns, and exports a redacted spec pack. The workbench UI and the build/verify loop arrive in later milestones. It has been exercised by unit tests only so far; the desktop regression suite (`pnpm smoke:casefile-desktop`) lands together with the client half. Treat it as young software.
+> **Status: M1 (host + workbench).** Persists projects, evidence, claims, features, unknowns, obligations and check records; exports a redacted spec pack; ships a workbench page (evidence / obligations / runs), a sidebar entry and a settings section. The build/verify loop arrives in M2. Verified by 53 unit tests, a 25-assertion web end-to-end smoke on a throwaway DSH home, and a manual GUI pass in a real browser; the desktop read-only suite is written but still needs the plugin installed in the desktop profile before it can run. Treat it as young software.
 
 ## What it does
 
@@ -42,6 +42,16 @@ Re-run `pnpm pack` + `add` after changing the code. Restart the DSH desktop app 
 
 - A REA MCP server registered in DSH, exposing tools named `mcp__rea__*` (REA's own `rea setup`, or any community bridge). Casefile **does not** register that row itself — it would collide with REA's `rea-mcp` entry.
 - Casefile works without REA for manual evidence entry, but capability detection will report `missing` and later milestones' checks will degrade.
+
+## Workbench
+
+The plugin adds a **Casefile** entry to the sidebar. The page lists projects on the left and shows the selected project on the right with three tabs:
+
+- **Evidence** — claims (with confidence, limits and evidence count) and the evidence records they cite;
+- **Obligations** — obligations, their status, and open unknowns. Closing an obligation needs a _fresh PASS check_; until checkers land in M2 the button explains what is missing instead of pretending;
+- **Runs** — build/verification runs (arrive in M2).
+
+A settings section shows the data root, project count and REA capability status, so "is REA actually connected" is answerable without reading logs.
 
 ## Tools
 
