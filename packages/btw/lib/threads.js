@@ -114,39 +114,38 @@ export function renderPromoteDraft(record, options = {}) {
 }
 
 /**
- * 去掉常见 Markdown 标记，让文本适合直接放进输入框。
- *
- * 为什么必须做：实测用户点「转正」后，输入框里塞进来的是 `## 我问了什么`、
- * `**每个 PR 上实际出现的检查是 8 个**`、`|---|` 这类源码，用户原话是
- * 「为什么给我一堆井号和竖线？」。我们没有 Markdown 渲染器（ADR 0001 不引入构建），
- * 所以草稿必须自己变成纯文本。
- * @param {string} text
- * @returns {string}
- */
-/**
  * 去掉常见 Markdown 标记，让文本适合直接阅读/放进输入框。
  *
  * @param {string} text
- * @param {{ keepCode?: boolean }} [options] keepCode 默认 true：``` 围栏内的内容原样保留
- *   （代码缩进有意义，清掉会毁掉可读性）。
+ * @param {{ keepCode?: boolean, keepFence?: boolean }} [options]
+ *   - keepCode 默认 true：``` 围栏内的内容原样保留（代码缩进有意义）
+ *   - keepFence 默认 false：true 时保留 ``` 围栏标记，供 client 识别代码块边界
  * @returns {string}
  */
 export function stripMarkdown(text, options = {}) {
   const raw = String(text ?? "");
   if (options.keepCode === false) return stripAllMarkdown(raw);
+  const keepFence = options.keepFence === true;
   // 先把围栏块抽出占位，避免下面的标记清理破坏代码内容。
-  /** @type {string[]} */
+  /** @type {{ lang: string, body: string }[]} */
   const fences = [];
   const parked = raw.replace(
-    /```[a-zA-Z0-9_-]*\n([\s\S]*?)```/gu,
-    (/** @type {string} */ _m, /** @type {string} */ body) => {
-      fences.push(body.replace(/\n+$/u, ""));
+    /```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/gu,
+    (/** @type {string} */ _m, /** @type {string} */ lang, /** @type {string} */ body) => {
+      const fence = body.replace(/\n+$/u, "");
+      fences.push({ lang, body: fence });
       return `@@BTWFENCE${fences.length - 1}@@`;
     },
   );
   const cleaned = stripAllMarkdown(parked).replace(
     /@@BTWFENCE(\d+)@@/gu,
-    (/** @type {string} */ _m, /** @type {string} */ i) => `\n${fences[Number(i)] ?? ""}\n`,
+    (/** @type {string} */ _m, /** @type {string} */ i) => {
+      const fence = fences[Number(i)];
+      if (fence === undefined) return "";
+      // keepFence 时保留 ``` 标记：client 靠它识别代码块边界，渲染成 <pre> 后
+      // 再把标记本身隐藏掉。默认关，转正草稿等纯文本场景不需要它。
+      return keepFence ? `\n\`\`\`${fence.lang}\n${fence.body}\n\`\`\`\n` : `\n${fence.body}\n`;
+    },
   );
   return cleaned.replace(/\n{3,}/gu, "\n\n").trim();
 }
@@ -226,7 +225,7 @@ export function parseThreadFlag(raw) {
 /**
  * 线程列表（给浮层展示）：按最后一条时间倒序，每项带条数与首问。
  * @param {any[]} records
- * @returns {{ threadId: string, turns: number, question: string, answer: string, answerPlain: string, lastId: string, cost: any, ms: number, at: number }[]}
+ * @returns {{ threadId: string, turns: number, question: string, answer: string, answerPlain: string, answerSegments: AnswerSegment[], lastId: string, cost: any, ms: number, at: number }[]}
  */
 export function listThreads(records) {
   return groupThreads(records)
@@ -238,6 +237,11 @@ export function listThreads(records) {
       // 展示用：去掉 Markdown 噪音但保留代码块（列表里显示原文的话，用户看到的是
       // `**粗体**`、`|表|格|`、`|---|`，实测被抱怨「为什么给我一堆井号和竖线」）。
       answerPlain: stripMarkdown(String(thread.last?.answer ?? "")),
+      // 渲染用：切好的段（代码块 / 链接 / 文本）。解析只在这里做一份，
+      // client 只负责把 kind 映射成元素（classic script 无法 import 这个模块）。
+      answerSegments: parseRichSegments(
+        stripMarkdown(String(thread.last?.answer ?? ""), { keepFence: true }),
+      ),
       lastId: String(thread.last?.id ?? ""),
       cost: thread.last?.cost ?? null,
       ms: Number(thread.last?.ms ?? 0),
@@ -276,4 +280,68 @@ export function parseCommandArgs(raw) {
     break;
   }
   return { threadId, scope, question: rest.trim() };
+}
+
+/**
+ * @typedef {{ kind: "text", text: string }} TextSegment
+ * @typedef {{ kind: "code", lang: string, text: string }} CodeSegment
+ * @typedef {{ kind: "link", text: string, href: string }} LinkSegment
+ * @typedef {TextSegment | CodeSegment | LinkSegment} AnswerSegment
+ */
+
+/**
+ * 把答案文本切成渲染段：代码块 / 链接 / 普通文本。
+ *
+ * 为什么需要它：`answerPlain` 保留了 ``` 围栏（`keepFence`），client 才能识别代码块边界，
+ * 把代码渲染成等宽 `<pre>` 而**不显示** ``` 本身；普通文本里的 URL 变成可点链接
+ * （之前答案里的链接是死文本）。
+ *
+ * 刻意**不做**完整 Markdown 渲染（表格/标题/粗体）：仓库不引入构建步骤（ADR 0001），
+ * 手写完整渲染器的成本与风险远大于收益。粗体/表格已由 stripMarkdown 变成可读标点。
+ * @param {string} text
+ * @returns {AnswerSegment[]}
+ */
+export function parseRichSegments(text) {
+  const raw = String(text ?? "");
+  /** @type {AnswerSegment[]} */
+  const out = [];
+  // 1) 先按围栏切出代码块
+  const fenceRe = /```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/gu;
+  let last = 0;
+  for (;;) {
+    const match = fenceRe.exec(raw);
+    if (match === null) break;
+    if (match.index > last) out.push(...splitLinks(raw.slice(last, match.index)));
+    out.push({ kind: "code", lang: match[1] ?? "", text: (match[2] ?? "").replace(/\n+$/u, "") });
+    last = match.index + match[0].length;
+  }
+  if (last < raw.length) out.push(...splitLinks(raw.slice(last)));
+  return out.length > 0 ? out : [{ kind: "text", text: raw }];
+}
+
+/**
+ * 把一段普通文本按 URL 切成 text/link 段。
+ * @param {string} text
+ * @returns {AnswerSegment[]}
+ */
+function splitLinks(text) {
+  /** @type {AnswerSegment[]} */
+  const out = [];
+  // 只认 http(s)；末尾的标点（。,;:!?)】」）不属于 URL。
+  const urlRe = /https?:\/\/[^\s<>()\u3000-\u303f\uff00-\uffef]+/gu;
+  let last = 0;
+  for (;;) {
+    const match = urlRe.exec(text);
+    if (match === null) break;
+    const raw = match[0];
+    const trimmed = raw.replace(/[.,;:!?]+$/u, "");
+    if (match.index > last) out.push({ kind: "text", text: text.slice(last, match.index) });
+    if (trimmed !== "") out.push({ kind: "link", text: trimmed, href: trimmed });
+    const rest = raw.slice(trimmed.length);
+    if (rest !== "") out.push({ kind: "text", text: rest });
+    last = match.index + raw.length;
+  }
+  if (last < text.length) out.push({ kind: "text", text: text.slice(last) });
+  if (out.length === 0 && text !== "") out.push({ kind: "text", text });
+  return out;
 }

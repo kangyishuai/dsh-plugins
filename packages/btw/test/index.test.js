@@ -29,6 +29,7 @@ import {
   listThreads,
   newThreadId,
   parseCommandArgs,
+  parseRichSegments,
   parseThreadFlag,
   renderPromoteDraft,
   SCOPES,
@@ -507,4 +508,58 @@ test("listThreads: answerPlain 是清理后的展示文本，answer 保留原文
   assert.ok(threads[0].answer.includes("**"), "answer 保留原始 Markdown");
   assert.ok(!threads[0].answerPlain.includes("**"), "answerPlain 去掉粗体标记");
   assert.ok(threads[0].answerPlain.includes("1 — 2"), "表格转成破折号");
+});
+
+test("stripMarkdown: keepFence 保留围栏标记，供 client 识别代码块", () => {
+  const text = "说明\n\n```js\nconst a = 1;\n```\n\n结束";
+  assert.ok(!stripMarkdown(text).includes("```"), "默认不保留围栏");
+  const fenced = stripMarkdown(text, { keepFence: true });
+  assert.ok(fenced.includes("```js"), "keepFence 保留语言标记");
+  assert.ok(fenced.includes("const a = 1;"), "代码内容保留");
+});
+
+test("parseRichSegments: 切出代码块与链接，普通文本原样", () => {
+  const segs = parseRichSegments("看 https://x.dev 这个\n\n```js\nconst a = 1;\n```\n\n结束");
+  assert.deepEqual(
+    segs.map((s) => s.kind),
+    ["text", "link", "text", "code", "text"],
+  );
+  const link = segs.find((s) => s.kind === "link");
+  assert.ok(link !== undefined, "应有链接段");
+  assert.equal(link?.href, "https://x.dev");
+  const code = segs.find((s) => s.kind === "code");
+  assert.ok(code !== undefined, "应有代码段");
+  assert.equal(code?.text, "const a = 1;");
+  assert.equal(code?.lang, "js");
+});
+
+test("parseRichSegments: URL 末尾的标点不算链接", () => {
+  const segs = parseRichSegments("见 https://a.dev/x。还有 https://b.dev，完");
+  const links = segs.filter((s) => s.kind === "link");
+  assert.deepEqual(
+    links.map((l) => l.href),
+    ["https://a.dev/x", "https://b.dev"],
+  );
+});
+
+test("parseRichSegments: 无围栏无链接时退化为单段文本", () => {
+  assert.deepEqual(parseRichSegments("纯文本"), [{ kind: "text", text: "纯文本" }]);
+  assert.deepEqual(parseRichSegments(""), [{ kind: "text", text: "" }]);
+});
+
+test("listThreads: answerSegments 与 answerPlain 一致可渲染", () => {
+  const threads = listThreads([
+    { id: "a", at: 1, question: "q", answer: "**看** https://x.dev\n\n```js\nconst a = 1;\n```" },
+  ]);
+  const segs = threads[0].answerSegments;
+  assert.ok(Array.isArray(segs) && segs.length > 0);
+  assert.ok(!JSON.stringify(threads[0].answerPlain).includes("**"), "answerPlain 无粗体标记");
+  assert.ok(
+    segs.some((s) => s.kind === "code"),
+    "含代码块段",
+  );
+  assert.ok(
+    segs.some((s) => s.kind === "link"),
+    "含链接段",
+  );
 });
