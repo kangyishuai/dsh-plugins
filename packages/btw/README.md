@@ -84,9 +84,11 @@ The settings file is re-read on every use, so edits take effect without restarti
 
 | Plugin | Verified on DSH |
 | ------ | --------------- |
-| 0.1.0  | 0.2.2-rc.3      |
+| 0.3.0  | 0.2.2-rc.3      |
 
-The underlying host seams (command dispatch while busy, fork cache reuse, `tools.guard`, `workspaceRegistry.archiveSession`) were verified on DSH 0.2.2-rc.3. **The plugin itself has not yet been installed into a live profile** — that end-to-end check is still pending.
+The underlying host seams (command dispatch while busy, fork cache reuse, `tools.guard`, `workspaceRegistry.archiveSession`) were verified on DSH 0.2.2-rc.3.
+
+End-to-end status: the plugin has been installed into a live desktop profile and its desktop regression suite (`pnpm smoke:btw-desktop --require`) passes 18 assertions with zero skips; a `/btw` round trip was also verified against a real model, including the on-disk history record.
 
 ## License
 

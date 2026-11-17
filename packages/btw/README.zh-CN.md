@@ -86,9 +86,11 @@ dsh plugin --profile desktop add @kangyishuai/dsh-btw
 
 | 插件  | 已在 DSH 上验证 |
 | ----- | --------------- |
-| 0.1.0 | 0.2.2-rc.3      |
+| 0.3.0 | 0.2.2-rc.3      |
 
-底层宿主 seam（busy 时命令派发、fork 缓存复用、`tools.guard`、`workspaceRegistry.archiveSession`）已在 DSH 0.2.2-rc.3 上实测。**插件本身尚未安装进真实 profile 跑过** —— 这一步端到端验证仍待完成。
+底层宿主 seam（busy 时命令派发、fork 缓存复用、`tools.guard`、`workspaceRegistry.archiveSession`）已在 DSH 0.2.2-rc.3 上实测。
+
+端到端情况：插件已装进真实桌面 profile，桌面回归（`pnpm smoke:btw-desktop --require`）18 项断言全过、零 SKIP；`/btw` 也跑过真实模型往返，并在数据根落盘了历史记录。
 
 ## 许可证
 
