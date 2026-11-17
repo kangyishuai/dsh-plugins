@@ -141,10 +141,11 @@ window.__ModuleLoader__.load({
       ".dsh-btw-btn.is-primary{background:var(--dsw-alias-button-primary-fill,#4f7cff);border-color:transparent;color:var(--dsw-alias-label-on-color,#fff);}",
       ".dsh-btw-btn.is-primary:hover{background:var(--dsw-alias-button-primary-hover,#4f7cff);color:var(--dsw-alias-label-on-color,#fff);}",
       // ---- 右侧抽屉 --------------------------------------------------------
-      // 贴右边、避开顶部会话头和底部 composer：宽屏时正好落在主对话右侧空白区，
-      // 不改变主对话宽度；窄屏时宽度自适应、仍不占用中心。
-      ".dsh-btw-panel{position:fixed;right:12px;top:72px;bottom:112px;width:min(400px,calc(100vw - 24px));display:flex;flex-direction:column;min-height:0;z-index:2147482000;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base,Canvas));color:var(--dsw-alias-label-primary,CanvasText);border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));border-radius:12px;padding:10px 12px;font-size:12px;line-height:1.55;box-shadow:0 18px 48px rgba(0,0,0,.38);}",
-      "@media (max-width:760px){.dsh-btw-panel{top:56px;bottom:96px;width:calc(100vw - 24px);}}",
+      // 贴右边、避开顶部会话头和底部 composer。注意：DSH 的对话区是整宽的，
+      // 抽屉仍会盖住主对话右侧约 400px（比居中弹窗好，但不是「完全不遮挡」）；
+      // 完全不遮挡需要 DSH 原生右侧边栏（打开时主对话变窄）。
+      ".dsh-btw-panel{position:fixed;right:12px;top:72px;bottom:140px;width:min(400px,calc(100vw - 24px));display:flex;flex-direction:column;min-height:0;z-index:2147482000;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base,Canvas));color:var(--dsw-alias-label-primary,CanvasText);border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));border-radius:12px;padding:10px 12px;font-size:12px;line-height:1.55;box-shadow:0 18px 48px rgba(0,0,0,.38);}",
+      "@media (max-width:760px){.dsh-btw-panel{top:56px;bottom:150px;width:calc(100vw - 24px);}}",
       ".dsh-btw-rail{position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:2147482000;display:flex;flex-direction:row;align-items:center;gap:6px;padding:9px 12px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));border-right:none;border-radius:10px 0 0 10px;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base,Canvas));color:var(--dsw-alias-label-secondary,GrayText);font-size:12px;cursor:pointer;box-shadow:-2px 0 10px rgba(0,0,0,.22);}",
       ".dsh-btw-rail:hover{color:var(--dsw-alias-label-primary,CanvasText);background:var(--dsw-alias-bg-layer-3,var(--dsw-alias-bg-layer-2,Canvas));}",
       ".dsh-btw-rail-count{font-size:10px;opacity:.75;font-variant-numeric:tabular-nums;}",
