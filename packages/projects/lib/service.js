@@ -23,6 +23,7 @@ import { runCommand } from "./exec.js";
 import { checkExecutable, planCommand, recoveryEvidence } from "./executor.js";
 import { appendEntry } from "./memory.js";
 import { initialView, reduce, sortRows } from "./overview.js";
+import { resolveDataRoot } from "./paths.js";
 import { buildPersona } from "./persona.js";
 import { readProjectFiles } from "./project-files.js";
 import { decideRoute } from "./routing.js";
@@ -108,19 +109,6 @@ function dirSize(dir) {
     }
   }
   return total;
-}
-
-/**
- * 数据根必须可注入：优先配置项，其次进程环境给的 DSH_HOME。
- * @param {Record<string, unknown>|undefined} config
- * @returns {string}
- */
-export function resolveDataRoot(config) {
-  const configured = config?.dataRoot;
-  if (typeof configured === "string" && configured.trim() !== "") return configured;
-  const home = process.env.DSH_HOME;
-  if (typeof home === "string" && home !== "") return `${home}/projects`;
-  throw new Error("projects: no data root; set config.dataRoot or export DSH_HOME");
 }
 
 export class ProjectsService extends TypertRemoteService {
