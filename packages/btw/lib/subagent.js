@@ -82,6 +82,7 @@ export function makeReadOnlyGuard(allowedTools) {
  *   scope?: string,
  *   workspaceRegistry?: any,
  *   now?: () => number,
+ *   onChild?: (childId: string) => void,
  * }} input
  * @returns {Promise<{ ok: boolean, text: string, status: string, childId?: string, usage?: Usage, ms: number, code?: string }>}
  */
@@ -120,6 +121,16 @@ export async function runSideQuestion(input) {
       signal: controller.signal,
       delivery: "caller",
     });
+
+    // 把子会话 id 尽早交给调用方：面板要靠它在 `llm/stream` 上旁听实时文本。
+    // 注意此时子代理的第一次模型请求通常还没开始（网络往返在后面），不会漏 chunk。
+    if (typeof input.onChild === "function") {
+      try {
+        input.onChild(String(activation?.childId ?? ""));
+      } catch {
+        /* 观察者失败不影响旁问本身 */
+      }
+    }
 
     // 只读保护挂在子代理自己的 ctx 上，随子代理释放。
     const child = ctx?.agents?.get?.(activation?.childId);

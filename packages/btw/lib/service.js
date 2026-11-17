@@ -6,8 +6,11 @@ import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 import { renderBadge } from "./badge.js";
 import { parseAllowedTools } from "./config.js";
 import { createFollowUpQueue } from "./followup-queue.js";
+import { formatDuration, formatTokens } from "./format.js";
 import { appendRecord, lastRecord, listRecent } from "./history.js";
 import { clip, LIMITS } from "./limits.js";
+import { createLiveTracker } from "./live.js";
+import { parseMarkdown } from "./markdown.js";
 import { format, loadMessages, pickLanguage } from "./messages.js";
 import { historyFile, resolveDataRoot } from "./paths.js";
 import { loadSettings, saveSettings } from "./settings.js";
@@ -53,7 +56,7 @@ const FALLBACK = {
   cancelled: "The side question was cancelled.",
   tooLong: "That question is too long ({length} characters, limit {max}).",
   threadFull: "This side-question thread is full ({max} turns). Start a new one.",
-  meta: "btw · new {newTokens} tokens · cached {cachedTokens} · {ms}ms",
+  meta: "btw · new {newTokens} tokens · cached {cachedTokens} · {ms}",
   reopen: "Last side question: {question}",
 };
 
@@ -76,7 +79,9 @@ export class BtwService extends TypertRemoteService {
     this.allowedTools = this.configAllowedTools;
     this.language = pickLanguage(this.config?.language);
     this.usageBySession = observeUsage(ctx);
-    // 浮层追问借 composer 提交裸 `/btw`，真实参数从这里取（见 followup-queue.js）。
+    // 面板流式：按 childSessionId 旁听 text-delta，`btw/live` 轮询取快照。
+    this.liveTracker = createLiveTracker(ctx);
+    // 抽屉追问借 composer 提交裸 `/btw`，真实参数从这里取（见 followup-queue.js）。
     this.followUps = createFollowUpQueue({});
     /** @type {Record<string, string>} */
     this.messages = FALLBACK;
@@ -137,7 +142,7 @@ export class BtwService extends TypertRemoteService {
     let threadId = parsed.threadId;
     let scope = parsed.scope;
     let rawQuestion = parsed.question;
-    // 裸 `/btw`（无参数）时先看有没有浮层登记的追问：
+    // 裸 `/btw`（无参数）时先看有没有抽屉登记的追问：
     // 有就当追问处理，没有才走「重开上一条」的老语义。
     if (threadId === "" && rawQuestion === "") {
       const queued = this.followUps.take(String(agent?.id ?? ""));
@@ -179,17 +184,31 @@ export class BtwService extends TypertRemoteService {
       };
     }
     const history = [...sessionHistory, ...priorThread].slice(-LIMITS.replayRecords);
-    const outcome = await runSideQuestion({
-      ctx: this.scoped,
-      workspaceRegistry: this.scoped?.workspaceRegistry,
-      agent,
+    // 线程 id 在 fork 之前就定下来：面板流式卡片和最终记录必须是同一个线程。
+    const recordThreadId = threadId === "" ? newThreadId() : threadId;
+    // 面板流式：登记这次 run；fork 拿到 childId 后 onChild 会接上实时文本。
+    const run = this.liveTracker.begin(String(agent?.id ?? ""), {
+      threadId: recordThreadId,
       question: question.text,
-      scope,
-      history,
-      allowedTools,
-      signal: invocation?.signal,
-      usageBySession: this.usageBySession,
     });
+    /** @type {Awaited<ReturnType<typeof runSideQuestion>>} */
+    let outcome;
+    try {
+      outcome = await runSideQuestion({
+        ctx: this.scoped,
+        workspaceRegistry: this.scoped?.workspaceRegistry,
+        agent,
+        question: question.text,
+        scope,
+        history,
+        allowedTools,
+        signal: invocation?.signal,
+        usageBySession: this.usageBySession,
+        onChild: (childId) => this.liveTracker.attachChild(run, childId),
+      });
+    } finally {
+      this.liveTracker.finish(run);
+    }
 
     if (outcome.code === "subagents_unavailable") {
       return { kind: "error", text: this.messages.forkUnavailable ?? FALLBACK.forkUnavailable };
@@ -209,8 +228,8 @@ export class BtwService extends TypertRemoteService {
     const recordId = `btw_${Date.now().toString(36)}`;
     const record = {
       id: recordId,
-      // 线程：追问沿用传入的 threadId；首问新开一个线程（v0.3）
-      threadId: threadId === "" ? newThreadId() : threadId,
+      // 线程：追问沿用传入的 threadId；首问用 fork 前就定下的新线程 id（v0.4 流式共用）
+      threadId: recordThreadId,
       parentSessionId: String(agent?.id ?? ""),
       childSessionId: outcome.childId ?? null,
       question: question.text,
@@ -238,7 +257,7 @@ export class BtwService extends TypertRemoteService {
   }
 
   /**
-   * 徽章数据（浮层底部展示用）：记录条数与范围说明。
+   * 徽章数据（抽屉底部展示用）：记录条数与范围说明。
    * @param {{ sessionId?: string, scope?: string, lang?: string } | undefined} request
    * @returns {Promise<{ records: number, badge: string }>}
    */
@@ -259,7 +278,7 @@ export class BtwService extends TypertRemoteService {
   }
 
   /**
-   * 线程列表（浮层展示用）。参数必须是单一标识符（网关 SRC 校验）。
+   * 线程列表（抽屉展示用）。参数必须是单一标识符（网关 SRC 校验）。
    * @param {{ sessionId?: string, limit?: number } | undefined} request
    * @returns {Promise<any[]>}
    */
@@ -274,6 +293,28 @@ export class BtwService extends TypertRemoteService {
       limit,
     );
     return listThreads(records);
+  }
+
+  /**
+   * 流式快照（面板轮询用）：该父会话里正在跑的旁问 + 已解析的 Markdown 块。
+   *
+   * 为什么走轮询而不是让 client 订阅子会话事件：子会话是 fork 出来的，
+   * 它带着父会话的全部已完成轮次作为种子；client 一旦 retain 它就会把整段历史
+   * 拉到浏览器里。旁问只需要最后几 KB 的增量文本，host 缓冲 + 短轮询更省。
+   * @param {{ sessionId?: string } | undefined} request
+   * @returns {Promise<{ runs: any[] }>}
+   */
+  async live(request) {
+    const input = request ?? {};
+    return {
+      runs: this.liveTracker.list(String(input.sessionId ?? "")).map((run) => ({
+        threadId: run.threadId,
+        question: run.question,
+        childId: run.childId,
+        ms: run.ms,
+        blocks: parseMarkdown(run.text).blocks,
+      })),
+    };
   }
 
   /**
@@ -367,9 +408,9 @@ export class BtwService extends TypertRemoteService {
   formatAnswer(record) {
     const usage = record.cost ?? {};
     const meta = format(this.messages.meta ?? FALLBACK.meta, {
-      newTokens: String(usage.inputTokens ?? 0),
-      cachedTokens: String(usage.cacheReadTokens ?? 0),
-      ms: String(record.ms ?? 0),
+      newTokens: formatTokens(usage.inputTokens),
+      cachedTokens: formatTokens(usage.cacheReadTokens),
+      ms: formatDuration(record.ms),
     });
     const lines = [record.answer, "", `— ${meta}`];
     if (record.status === "truncated")
@@ -388,6 +429,7 @@ export class BtwService extends TypertRemoteService {
 
 declareRemote(BtwService, "history");
 declareRemote(BtwService, "last");
+declareRemote(BtwService, "live");
 declareRemote(BtwService, "stats");
 declareRemote(BtwService, "queueFollowUp");
 declareRemote(BtwService, "threads");

@@ -10,6 +10,8 @@ export const LIMITS = {
   questionChars: 4000,
   /** 答案最大字符数（超出截断并标记 truncated） */
   answerChars: 8000,
+  /** 流式缓冲的最大字符数（面板展示用；答案本身另有 answerChars 上限） */
+  liveTextChars: 12_000,
   /** 旁问总超时（含排队与模型时间） */
   totalMs: 120_000,
   /** 允许的只读工具白名单上限（默认空 = 全拒） */

@@ -1,12 +1,15 @@
 // @ts-check
 // client 半：classic script，以 window.__ModuleLoader__.load 注册 factory，不能 import / JSX。
 //
-// 职责（v0.2b）：
-//   A. 输入框左侧一个「旁问」按钮，点开浮层。
-//   B. 浮层里列出本会话最近的旁问（Typert Remote `btw/history`），带成本徽章。
-//   C. 浮层里可以直接发问：把 `/btw <问题>` 塞进 composer 再提交。
+// 职责（v0.4）：
+//   A. 输入框左侧一个「旁问」按钮，点开**右侧贴边抽屉**（不居中、不遮挡主对话）。
+//   B. 抽屉里按聊天顺序（旧→新、最新在底部，自动滚到底）列出本会话的旁问线程，
+//      每条线程展开全部轮次，答案按 **Markdown** 渲染。
+//   C. 正在跑的旁问**流式**显示（host 在 `llm/stream` 上缓冲子会话文本，`btw/live` 轮询）。
+//   D. 直接发问 / 追问：把 `/btw <问题>` 塞进 composer 再提交。
 //      **必须借 composer 提交**——真实 Agent 只能在命令调用上下文里拿到
 //      （`ctx.agents.get()` 返回 undefined，见公开仓库 docs/adr/0016）。
+//   E. 一键转正：host 生成 Markdown 源码草稿，只插进输入框、绝不发送。
 //
 // 宿主调用走 ctx.connection.rpc.call("/api", "btw/<method>", { args: { request } })——
 // 无构建插件没有 typert 客户端产物（见 docs/runtime/0.2.2-rc.1.md §7）。
@@ -25,36 +28,46 @@ window.__ModuleLoader__.load({
     /** setDraft 走异步更新：轮询草稿落定（与 next-step 同参数）。 */
     const DRAFT_POLL_TRIES = 15;
     const DRAFT_POLL_INTERVAL_MS = 20;
-    /** 浮层列出的线程条数上限。 */
+    /** 抽屉列出的线程条数上限（host 还会按 perSessionRecords 再夹一次）。 */
     const LIMITS_CLIENT_THREADS = 20;
-    /** 提交后轮询历史，等新记录出现；按实测 /btw 耗时（32–40s）给足 120s 窗口。 */
+    /** 提交后轮询历史，等新记录出现；按实测 /btw 耗时（20–40s）给足 120s 窗口。 */
     const REFRESH_MAX_MS = 120_000;
-    const REFRESH_INTERVAL_MS = 1500;
+    const REFRESH_INTERVAL_MS = 1200;
+    /** 流式轮询间隔：有 run 时密一点，空闲时慢一点（只读一个内存快照，很便宜）。 */
+    const LIVE_ACTIVE_MS = 350;
+    const LIVE_IDLE_MS = 1000;
+    /** 空闲时每 N 次 live 轮询才刷一次线程列表（约 4s）。 */
+    const LIVE_IDLE_REFRESH_EVERY = 4;
 
     const zh = {
       button: "旁问",
-      title: "最近的旁问",
+      title: "旁问",
       placeholder: "提一个只读旁问…",
       send: "提问",
       empty: "本会话还没有旁问。在下面提一个，或直接用 /btw <问题>。",
       close: "关闭",
-      cost: "新增 {newTokens} · 命中缓存 {cachedTokens} · {ms}ms",
+      collapse: "收起为侧边条",
+      collapseShort: "收起",
+      expand: "展开旁问",
+      cost: "新增 {newTokens} · 命中缓存 {cachedTokens} · {ms}",
       failed: "读取旁问历史失败",
       sent: "已提交，答案会出现在对话里",
       followUp: "追问",
-      collapse: "收起",
       followPlaceholder: "在这个线程里追问…",
+      followUpLabel: "追问",
       turns: "轮",
       promote: "转正",
       promoted: "已插入输入框草稿（未发送）",
       promoteBlocked: "输入框已有内容，先清空再转正",
       promoteFailed: "生成转正草稿失败",
-      sending: "正在等待答案…（通常 20–40 秒）",
+      sending: "正在等待答案…",
+      streaming: "正在生成回答",
+      waitHint: "通常 20–40 秒",
       sentPending: "命令已提交，答案稍后出现在对话里",
       expandAnswer: "展开全文",
       collapseAnswer: "收起",
-      newQuestion: "＋ 新旁问",
       submitHint: "提交时会以 /btw 命令写入对话",
+      newQuestionLabel: "新旁问",
       scopeAny: "范围：不限",
       scopeSession: "范围：整个会话",
       scopeRecent: "范围：最近几轮",
@@ -74,28 +87,33 @@ window.__ModuleLoader__.load({
     };
     const en = {
       button: "btw",
-      title: "Recent side questions",
+      title: "Side questions",
       placeholder: "Ask a read-only side question…",
       send: "Ask",
       empty: "No side question yet. Ask one below, or use /btw <question>.",
       close: "Close",
-      cost: "new {newTokens} · cached {cachedTokens} · {ms}ms",
+      collapse: "Collapse to side rail",
+      collapseShort: "Collapse",
+      expand: "Expand side questions",
+      cost: "new {newTokens} · cached {cachedTokens} · {ms}",
       failed: "Could not read side-question history",
       sent: "Submitted; the answer appears in the conversation",
       followUp: "Follow up",
-      collapse: "Collapse",
       followPlaceholder: "Ask a follow-up in this thread…",
+      followUpLabel: "Follow-up",
       turns: "turns",
       promote: "Promote",
       promoted: "Inserted into the composer as a draft (not sent)",
       promoteBlocked: "Composer already has content; clear it before promoting",
       promoteFailed: "Could not create the promotion draft",
-      sending: "Waiting for the answer… (usually 20–40s)",
+      sending: "Waiting for the answer…",
+      streaming: "Generating the answer",
+      waitHint: "usually 20–40s",
       sentPending: "Command submitted; the answer will appear in the conversation",
       expandAnswer: "Show all",
       collapseAnswer: "Collapse",
-      newQuestion: "+ New question",
       submitHint: "Submitting writes a /btw command into the conversation",
+      newQuestionLabel: "New side question",
       scopeAny: "Scope: any",
       scopeSession: "Scope: whole session",
       scopeRecent: "Scope: recent turns",
@@ -116,29 +134,77 @@ window.__ModuleLoader__.load({
     };
 
     const CSS = [
-      ".dsh-btw-btn{height:24px;padding:0 8px;border-radius:var(--dsw-radius-sm,6px);border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));background:transparent;color:var(--dsw-alias-label-secondary,GrayText);font-size:12px;cursor:pointer;}",
+      // ---- 通用按钮 --------------------------------------------------------
+      ".dsh-btw-btn{height:24px;padding:0 8px;border-radius:var(--dsw-radius-sm,6px);border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));background:transparent;color:var(--dsw-alias-label-secondary,GrayText);font-size:12px;cursor:pointer;white-space:nowrap;}",
       ".dsh-btw-btn:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.16));color:var(--dsw-alias-label-primary,CanvasText);}",
       ".dsh-btw-btn:disabled{opacity:.5;cursor:default;}",
-      ".dsh-btw-panel{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(720px,94vw);max-height:min(74vh,680px);display:flex;flex-direction:column;min-height:0;z-index:2147482000;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base,Canvas));color:var(--dsw-alias-label-primary,CanvasText);border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));border-radius:12px;padding:12px 14px;font-size:12px;line-height:1.55;box-shadow:0 18px 48px rgba(0,0,0,.38);}",
-      ".dsh-btw-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;font-weight:600;flex:none;}",
-      ".dsh-btw-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;}",
-      ".dsh-btw-item{padding:6px 0;border-top:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2));}",
-      ".dsh-btw-q{color:var(--dsw-alias-label-secondary,GrayText);}",
-      ".dsh-btw-a{white-space:pre-wrap;word-break:break-word;margin-top:2px;}",
-      ".dsh-btw-code{margin:6px 0;padding:8px 10px;border-radius:6px;background:var(--dsw-alias-bg-base,Canvas);border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2));font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:11.5px;line-height:1.5;white-space:pre;overflow-x:auto;}",
-      ".dsh-btw-link{color:var(--dsw-alias-brand-primary,#4f7cff);text-decoration:underline;word-break:break-all;}",
-      ".dsh-btw-a.is-clamped{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:6;line-clamp:6;overflow:hidden;}",
-      ".dsh-btw-meta{margin-top:2px;color:var(--dsw-alias-label-tertiary,GrayText);font-size:11px;}",
-      ".dsh-btw-dim{color:var(--dsw-alias-label-tertiary,GrayText);padding:6px 0;}",
-      ".dsh-btw-err{color:var(--dsw-alias-state-error-primary,#d9534f);padding:6px 0;}",
-      ".dsh-btw-row{display:flex;gap:6px;margin-top:8px;}",
-      ".dsh-btw-status{position:sticky;top:-10px;z-index:2;display:flex;align-items:center;gap:6px;margin:0 0 8px;padding:5px 8px;border-radius:var(--dsw-radius-sm,6px);background:var(--dsw-alias-bg-layer-3,var(--dsw-alias-bg-layer-2,Canvas));color:var(--dsw-alias-label-secondary,GrayText);font-size:12px;box-shadow:0 1px 0 var(--dsw-alias-border-l1,rgba(128,128,128,.2));}",
+      ".dsh-btw-btn.is-primary{background:var(--dsw-alias-button-primary-fill,#4f7cff);border-color:transparent;color:var(--dsw-alias-label-on-color,#fff);}",
+      ".dsh-btw-btn.is-primary:hover{background:var(--dsw-alias-button-primary-hover,#4f7cff);color:var(--dsw-alias-label-on-color,#fff);}",
+      // ---- 右侧抽屉 --------------------------------------------------------
+      // 贴右边、避开顶部会话头和底部 composer：宽屏时正好落在主对话右侧空白区，
+      // 不改变主对话宽度；窄屏时宽度自适应、仍不占用中心。
+      ".dsh-btw-panel{position:fixed;right:12px;top:72px;bottom:112px;width:min(400px,calc(100vw - 24px));display:flex;flex-direction:column;min-height:0;z-index:2147482000;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base,Canvas));color:var(--dsw-alias-label-primary,CanvasText);border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));border-radius:12px;padding:10px 12px;font-size:12px;line-height:1.55;box-shadow:0 18px 48px rgba(0,0,0,.38);}",
+      "@media (max-width:760px){.dsh-btw-panel{top:56px;bottom:96px;width:calc(100vw - 24px);}}",
+      ".dsh-btw-rail{position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:2147482000;display:flex;flex-direction:row;align-items:center;gap:6px;padding:9px 12px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));border-right:none;border-radius:10px 0 0 10px;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base,Canvas));color:var(--dsw-alias-label-secondary,GrayText);font-size:12px;cursor:pointer;box-shadow:-2px 0 10px rgba(0,0,0,.22);}",
+      ".dsh-btw-rail:hover{color:var(--dsw-alias-label-primary,CanvasText);background:var(--dsw-alias-bg-layer-3,var(--dsw-alias-bg-layer-2,Canvas));}",
+      ".dsh-btw-rail-count{font-size:10px;opacity:.75;font-variant-numeric:tabular-nums;}",
+      // ---- 头部 / 状态 ------------------------------------------------------
+      ".dsh-btw-head{display:flex;align-items:center;gap:6px;margin-bottom:8px;font-weight:600;flex:none;}",
+      ".dsh-btw-head-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
+      ".dsh-btw-grow{flex:1 1 auto;}",
+      ".dsh-btw-status{display:flex;align-items:center;gap:6px;margin:0 0 8px;padding:5px 8px;border-radius:var(--dsw-radius-sm,6px);background:var(--dsw-alias-bg-layer-3,var(--dsw-alias-bg-layer-2,Canvas));color:var(--dsw-alias-label-secondary,GrayText);font-size:11.5px;box-shadow:0 1px 0 var(--dsw-alias-border-l1,rgba(128,128,128,.2));}",
       ".dsh-btw-status.is-busy{color:var(--dsw-alias-label-primary,CanvasText);}",
       ".dsh-btw-spinner{display:inline-block;animation:dsh-btw-spin 1s linear infinite;}",
       "@keyframes dsh-btw-spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}",
+      // ---- 列表 ------------------------------------------------------------
+      ".dsh-btw-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding-right:2px;scrollbar-gutter:stable;}",
+      ".dsh-btw-thread{padding:8px 0;border-top:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2));}",
+      ".dsh-btw-thread:first-child{border-top:none;padding-top:2px;}",
+      ".dsh-btw-turn{margin-top:6px;}",
+      ".dsh-btw-turn:first-child{margin-top:0;}",
+      ".dsh-btw-q{display:block;padding:5px 8px;border-radius:8px;background:var(--dsw-alias-bg-layer-3,var(--dsw-alias-bg-layer-2,Canvas));color:var(--dsw-alias-label-primary,CanvasText);white-space:pre-wrap;word-break:break-word;font-size:12px;}",
+      ".dsh-btw-q-label{display:block;margin-bottom:2px;color:var(--dsw-alias-label-tertiary,GrayText);font-size:10.5px;letter-spacing:.5px;}",
+      ".dsh-btw-a{margin-top:4px;word-break:break-word;}",
+      ".dsh-btw-meta{margin-top:3px;color:var(--dsw-alias-label-tertiary,GrayText);font-size:11px;font-variant-numeric:tabular-nums;}",
+      ".dsh-btw-dim{color:var(--dsw-alias-label-tertiary,GrayText);padding:6px 0;}",
+      ".dsh-btw-err{color:var(--dsw-alias-state-error-primary,#d9534f);padding:6px 0;word-break:break-word;}",
+      ".dsh-btw-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px;}",
+      // ---- Markdown --------------------------------------------------------
+      ".dsh-btw-md{overflow-wrap:anywhere;}",
+      ".dsh-btw-md p{margin:0 0 6px;}",
+      ".dsh-btw-md p:last-child{margin-bottom:0;}",
+      ".dsh-btw-md h1,.dsh-btw-md h2,.dsh-btw-md h3,.dsh-btw-md h4,.dsh-btw-md h5,.dsh-btw-md h6{margin:10px 0 5px;font-weight:600;line-height:1.35;}",
+      ".dsh-btw-md h1{font-size:15px;}",
+      ".dsh-btw-md h2{font-size:14px;}",
+      ".dsh-btw-md h3{font-size:13px;}",
+      ".dsh-btw-md h4,.dsh-btw-md h5,.dsh-btw-md h6{font-size:12.5px;}",
+      ".dsh-btw-md ul,.dsh-btw-md ol{margin:4px 0 6px;padding-left:20px;}",
+      ".dsh-btw-md li{margin:2px 0;}",
+      ".dsh-btw-md blockquote{margin:6px 0;padding:2px 0 2px 10px;border-left:2px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));color:var(--dsw-alias-label-secondary,GrayText);}",
+      ".dsh-btw-md code{padding:1px 4px;border-radius:4px;background:var(--dsw-alias-bg-base,Canvas);border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2));font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:11.5px;}",
+      ".dsh-btw-codeblock{margin:6px 0;}",
+      ".dsh-btw-codeblock-lang{color:var(--dsw-alias-label-tertiary,GrayText);font-size:10.5px;margin-bottom:2px;}",
+      ".dsh-btw-md pre{margin:0;padding:8px 10px;border-radius:6px;background:var(--dsw-alias-bg-base,Canvas);border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2));font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:11.5px;line-height:1.5;white-space:pre;overflow-x:auto;}",
+      ".dsh-btw-md pre code{padding:0;border:none;background:transparent;font-size:inherit;white-space:pre;}",
+      ".dsh-btw-tablewrap{max-width:100%;overflow-x:auto;margin:6px 0;}",
+      ".dsh-btw-md table{border-collapse:collapse;font-size:11.5px;}",
+      ".dsh-btw-md th,.dsh-btw-md td{border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));padding:4px 7px;text-align:left;vertical-align:top;}",
+      ".dsh-btw-md th{background:var(--dsw-alias-bg-layer-3,var(--dsw-alias-bg-layer-2,Canvas));font-weight:600;}",
+      ".dsh-btw-md hr{border:none;border-top:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2));margin:8px 0;}",
+      ".dsh-btw-md a,.dsh-btw-link{color:var(--dsw-alias-brand-primary,#4f7cff);text-decoration:underline;word-break:break-all;}",
+      ".dsh-btw-md strong{font-weight:600;}",
+      ".dsh-btw-md del{opacity:.65;}",
+      ".dsh-btw-caret{display:inline-block;width:6px;height:1em;margin-left:2px;vertical-align:-2px;background:currentColor;animation:dsh-btw-blink 1s steps(1) infinite;}",
+      "@keyframes dsh-btw-blink{50%{opacity:0}}",
+      ".dsh-btw-a.is-clamped .dsh-btw-md{position:relative;max-height:320px;overflow:hidden;}",
+      '.dsh-btw-a.is-clamped .dsh-btw-md::after{content:"";position:absolute;left:0;right:0;bottom:0;height:56px;background:linear-gradient(transparent,var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base,Canvas)));pointer-events:none;}',
+      // ---- composer --------------------------------------------------------
+      ".dsh-btw-composer{flex:none;display:flex;flex-direction:column;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2));}",
+      ".dsh-btw-composer-label{color:var(--dsw-alias-label-tertiary,GrayText);font-size:10.5px;letter-spacing:.5px;}",
+      ".dsh-btw-select{flex:1 1 auto;min-width:0;height:28px;padding:0 6px;border-radius:var(--dsw-radius-sm,6px);border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));background:var(--dsw-alias-bg-base,Canvas);color:var(--dsw-alias-label-primary,CanvasText);font:inherit;font-size:11.5px;}",
+      ".dsh-btw-input{flex:1 1 auto;min-width:0;resize:vertical;min-height:48px;padding:6px 8px;border-radius:var(--dsw-radius-sm,6px);border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));background:var(--dsw-alias-bg-base,Canvas);color:var(--dsw-alias-label-primary,CanvasText);font:inherit;}",
       ".dsh-btw-setrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:6px 0;}",
       ".dsh-btw-setlabel{min-width:0;color:var(--dsw-alias-label-secondary,GrayText);}",
-      ".dsh-btw-input{flex:1 1 auto;min-width:0;resize:vertical;min-height:52px;padding:6px 8px;border-radius:var(--dsw-radius-sm,6px);border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));background:var(--dsw-alias-bg-base,Canvas);color:var(--dsw-alias-label-primary,CanvasText);font:inherit;}",
     ].join("");
 
     /** @param {any} ctx @param {string} name */
@@ -162,6 +228,247 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // ---- 自适应格式化（与 lib/format.js 行为等价；client 是 classic script，无法 import）--
+    const TOKEN_UNITS = [
+      { scale: 1e3, suffix: "K" },
+      { scale: 1e6, suffix: "M" },
+      { scale: 1e9, suffix: "B" },
+      { scale: 1e12, suffix: "T" },
+    ];
+    /** @param {number} value */
+    const oneDecimal = (value) => (Math.round(value * 10) / 10).toFixed(1).replace(/\.0+$/u, "");
+    /** @param {number} value */
+    const scaledText = (value) => (value < 100 ? oneDecimal(value) : String(Math.round(value)));
+
+    /** @param {unknown} value */
+    function formatTokens(value) {
+      const number = Math.max(0, Math.round(Number(value) || 0));
+      if (number < 1000) return String(number);
+      let index = 0;
+      for (let i = 0; i < TOKEN_UNITS.length; i += 1) {
+        if (number >= TOKEN_UNITS[i].scale) index = i;
+      }
+      let unit = TOKEN_UNITS[index];
+      let scaled = number / unit.scale;
+      if (index < TOKEN_UNITS.length - 1 && scaled >= 999.5) {
+        index += 1;
+        unit = TOKEN_UNITS[index];
+        scaled = number / unit.scale;
+      }
+      return `${scaledText(scaled)}${unit.suffix}`;
+    }
+
+    /** @param {unknown} value */
+    function formatDuration(value) {
+      const ms = Math.max(0, Math.round(Number(value) || 0));
+      if (ms < 1000) return `${ms}ms`;
+      const seconds = ms / 1000;
+      if (seconds < 59.95) return `${scaledText(seconds)}s`;
+      const minutes = seconds / 60;
+      if (minutes < 59.95) return `${scaledText(minutes)}m`;
+      return `${scaledText(minutes / 60)}h`;
+    }
+
+    // ---- Markdown：host 已解析成 JSON 树，这里只做元素映射 --------------------
+    /** @param {any[]} runs @param {string} prefix @returns {any[]} */
+    function renderInlines(runs, prefix) {
+      /** @type {any[]} */
+      const out = [];
+      const list = Array.isArray(runs) ? runs : [];
+      for (let index = 0; index < list.length; index += 1) {
+        const run = list[index];
+        const key = `${prefix}i${index}`;
+        if (run?.type === "code") {
+          out.push(h("code", { key, className: "dsh-btw-inline-code" }, String(run.text ?? "")));
+          continue;
+        }
+        if (run?.type === "strong" || run?.type === "em" || run?.type === "del") {
+          const tag = run.type === "strong" ? "strong" : run.type === "em" ? "em" : "del";
+          out.push(h(tag, { key }, ...renderInlines(run.children, key)));
+          continue;
+        }
+        if (run?.type === "link") {
+          const href = String(run.href ?? "");
+          if (!/^(https?:\/\/|mailto:)/iu.test(href)) {
+            out.push(h(React.Fragment, { key }, ...renderInlines(run.children, key)));
+          } else {
+            out.push(
+              h(
+                "a",
+                {
+                  key,
+                  className: "dsh-btw-link",
+                  href,
+                  target: "_blank",
+                  rel: "noreferrer noopener",
+                  "data-btw-link": "true",
+                },
+                ...renderInlines(run.children, key),
+              ),
+            );
+          }
+          continue;
+        }
+        // 普通文本：段内换行保留成 <br>（模型答案里常靠单换行分行）。
+        const text = String(run?.text ?? "");
+        const pieces = text.split("\n");
+        for (let pieceIndex = 0; pieceIndex < pieces.length; pieceIndex += 1) {
+          if (pieceIndex > 0) out.push(h("br", { key: `${key}b${pieceIndex}` }));
+          if (pieces[pieceIndex] !== "")
+            out.push(h(React.Fragment, { key: `${key}t${pieceIndex}` }, pieces[pieceIndex]));
+        }
+      }
+      return out;
+    }
+
+    /**
+     * @param {any[]} blocks
+     * @param {boolean} streaming
+     * @param {string} [prefix]
+     * @returns {any[]}
+     */
+    function renderBlocks(blocks, streaming, prefix = "b") {
+      /** @type {any[]} */
+      const out = [];
+      const list = Array.isArray(blocks) ? blocks : [];
+      for (let index = 0; index < list.length; index += 1) {
+        const block = list[index];
+        const key = `${prefix}${index}`;
+        switch (block?.type) {
+          case "heading": {
+            const level = Math.min(6, Math.max(1, Number(block.level) || 2));
+            out.push(h(`h${level}`, { key }, ...renderInlines(block.inlines, `${key}i`)));
+            break;
+          }
+          case "paragraph":
+            out.push(h("p", { key }, ...renderInlines(block.inlines, `${key}i`)));
+            break;
+          case "code":
+            out.push(
+              h(
+                "div",
+                { key, className: "dsh-btw-codeblock", "data-btw-code": "true" },
+                block.lang
+                  ? h("div", { className: "dsh-btw-codeblock-lang" }, String(block.lang))
+                  : null,
+                h("pre", null, h("code", null, String(block.code ?? ""))),
+              ),
+            );
+            break;
+          case "list": {
+            const items = Array.isArray(block.items) ? block.items : [];
+            out.push(
+              h(
+                block.ordered ? "ol" : "ul",
+                { key, start: block.ordered ? Number(block.start) || 1 : undefined },
+                ...items.map((/** @type {any} */ item, /** @type {number} */ itemIndex) =>
+                  h(
+                    "li",
+                    { key: `${key}-${itemIndex}` },
+                    ...renderInlines(item?.inlines, `${key}-${itemIndex}i`),
+                  ),
+                ),
+              ),
+            );
+            break;
+          }
+          case "quote":
+            out.push(h("blockquote", { key }, ...renderBlocks(block.blocks, streaming, `${key}q`)));
+            break;
+          case "table": {
+            const align = Array.isArray(block.align) ? block.align : [];
+            const header = Array.isArray(block.header) ? block.header : [];
+            const rows = Array.isArray(block.rows) ? block.rows : [];
+            out.push(
+              h(
+                "div",
+                { key, className: "dsh-btw-tablewrap" },
+                h(
+                  "table",
+                  null,
+                  h(
+                    "thead",
+                    null,
+                    h(
+                      "tr",
+                      { key: `${key}h` },
+                      ...header.map((/** @type {any} */ cell, /** @type {number} */ cellIndex) =>
+                        h(
+                          "th",
+                          { key: `${key}h${cellIndex}`, style: cellStyle(align[cellIndex]) },
+                          ...renderInlines(cell, `${key}h${cellIndex}i`),
+                        ),
+                      ),
+                    ),
+                  ),
+                  h(
+                    "tbody",
+                    null,
+                    ...rows.map((/** @type {any} */ row, /** @type {number} */ rowIndex) =>
+                      h(
+                        "tr",
+                        { key: `${key}r${rowIndex}` },
+                        ...(Array.isArray(row) ? row : []).map((cell, cellIndex) =>
+                          h(
+                            "td",
+                            {
+                              key: `${key}r${rowIndex}c${cellIndex}`,
+                              style: cellStyle(align[cellIndex]),
+                            },
+                            ...renderInlines(cell, `${key}r${rowIndex}c${cellIndex}i`),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+            break;
+          }
+          case "hr":
+            out.push(h("hr", { key }));
+            break;
+          default: {
+            const text = String(block?.text ?? "");
+            if (text !== "") out.push(h("p", { key }, text));
+          }
+        }
+      }
+      if (streaming)
+        out.push(h("span", { key: "caret", className: "dsh-btw-caret", "aria-hidden": "true" }));
+      return out;
+    }
+
+    /** @param {any} align */
+    function cellStyle(align) {
+      return align === "center"
+        ? { textAlign: "center" }
+        : align === "right"
+          ? { textAlign: "right" }
+          : undefined;
+    }
+
+    /**
+     * 一条答案的 Markdown 容器；超长时折叠，点「展开全文」再放开。
+     * @param {any} props
+     */
+    function MarkdownBody(props) {
+      const { blocks, streaming, clamped } = props;
+      return h(
+        "div",
+        {
+          className: `dsh-btw-a${clamped ? " is-clamped" : ""}`,
+          "data-btw-answer": "true",
+          "data-btw-md": "true",
+        },
+        h("div", { className: "dsh-btw-md" }, ...renderBlocks(blocks, streaming === true)),
+      );
+    }
+
+    /** 一次 RPC 失败原因（诊断用，渲染进 data-btw-error）。 */
+    let lastRpcError = "";
+
     exports.inject = ["slots", "locale", "connection", "sessions"];
     /** @param {any} ctx */
     exports.apply = function apply(ctx) {
@@ -183,23 +490,23 @@ window.__ModuleLoader__.load({
       }, "btw: styles");
 
       /**
-       * 按钮（composer 工具行）与浮层（`shell.overlay`）是两个独立组件实例，
+       * 按钮（composer 工具行）与抽屉（`shell.overlay`）是两个独立组件实例，
        * 共享状态必须提升到 apply 作用域。
        *
-       * 为什么浮层改注册到 `shell.overlay`：`conversation.input.overlay` 的 slot 文档写着
-       * "fixed overlays must portal to the document body because the docked composer contains them"。
-       * 放在 composer 里会被裁剪 —— 实测提示条跑到浮层下方 302px、位置还随对话流滚动漂移。
-       * `shell.overlay` 的语义是 "frame-wide floating layer, above every column and outside
-       * their scroll containers"，换过去从根上解决，不必手写 portal。
+       * 为什么抽屉仍挂 `shell.overlay`：`conversation.input.overlay` 在 composer 内部，
+       * 会被裁剪；`shell.overlay` 是 frame-wide 浮层，定位从根上可靠，且不改变布局
+       * （不会像右侧边栏那样把主对话挤窄）。
        */
       const store = (() => {
-        /** @type {{ open: boolean, sessionId: string }} */
-        let state = { open: false, sessionId: "" };
+        /** @type {{ open: boolean, collapsed: boolean, sessionId: string }} */
+        let state = { open: false, collapsed: false, sessionId: "" };
         /** @type {Set<() => void>} */
         const listeners = new Set();
         return {
           get: () => state,
-          patch(/** @type {Partial<{ open: boolean, sessionId: string }>} */ next) {
+          patch(
+            /** @type {Partial<{ open: boolean, collapsed: boolean, sessionId: string }>} */ next,
+          ) {
             state = { ...state, ...next };
             for (const listener of listeners) listener();
           },
@@ -228,9 +535,6 @@ window.__ModuleLoader__.load({
         }
         return "zh";
       };
-
-      /** 最近一次 RPC 失败原因（诊断用，渲染进 data-btw-error）。 */
-      let lastRpcError = "";
 
       /** Typert Remote 调用；解 { ok, value } 信封，失败返回 undefined。 */
       const callRemote = (/** @type {string} */ method, /** @type {any} */ request) => {
@@ -354,7 +658,7 @@ window.__ModuleLoader__.load({
       /**
        * composer 工具行里的「旁问」按钮。
        *
-       * 它同时负责把当前 sessionId 写进 store —— 浮层注册在 root scope 的
+       * 它同时负责把当前 sessionId 写进 store —— 抽屉注册在 root scope 的
        * `shell.overlay` 上，拿不到 session props，只能由按钮转交。
        */
       function BtwTrigger(/** @type {any} */ props) {
@@ -363,6 +667,12 @@ window.__ModuleLoader__.load({
         React.useEffect(() => {
           if (shared.sessionId !== sessionId) store.patch({ sessionId });
         }, [sessionId, shared.sessionId]);
+        const toggle = () => {
+          const current = store.get();
+          if (!current.open) store.patch({ open: true, collapsed: false });
+          else if (current.collapsed) store.patch({ collapsed: false });
+          else store.patch({ open: false });
+        };
         return h(
           "button",
           {
@@ -370,29 +680,25 @@ window.__ModuleLoader__.load({
             className: "dsh-btw-btn",
             "data-btw-toggle": "true",
             title: t("button"),
-            onClick: () => store.patch({ open: !store.get().open }),
+            onClick: toggle,
           },
           t("button"),
         );
       }
 
-      /** 浮层：只读列表 + 浮层内发问。 */
+      /** 右侧抽屉：聊天式线程列表 + 流式卡片 + 发问/追问/转正。 */
       function BtwPanel(/** @type {any} */ props) {
         void props;
         const shared = useStore();
         const open = shared.open;
+        const collapsed = shared.collapsed;
         const sessionId = shared.sessionId;
-        const setOpen = (/** @type {boolean | ((prev: boolean) => boolean)} */ next) =>
-          store.patch({
-            open:
-              typeof next === "function"
-                ? /** @type {(prev: boolean) => boolean} */ (next)(store.get().open)
-                : next,
-          });
         const [threads, setThreads] = React.useState(/** @type {any[] | null} */ (null));
+        const [liveRuns, setLiveRuns] = React.useState(/** @type {any[]} */ ([]));
         const [failed, setFailed] = React.useState(false);
         const [activeId, setActiveId] = React.useState("");
         const [question, setQuestion] = React.useState("");
+        const [followQuestion, setFollowQuestion] = React.useState("");
         const [busy, setBusy] = React.useState(false);
         const [notice, setNotice] = React.useState("");
         const [badge, setBadge] = React.useState("");
@@ -400,10 +706,10 @@ window.__ModuleLoader__.load({
         const [expandedAnswers, setExpandedAnswers] = React.useState(
           /** @type {Record<string, boolean>} */ ({}),
         );
-        // 新建旁问的输入框默认收起：实测同时出现「线程内追问框 + 底部新建框」时，
-        // 用户分不清哪个是哪个（两个输入框视觉几乎一样）。
-        const [showNew, setShowNew] = React.useState(false);
         const aliveRef = React.useRef(true);
+        const liveRef = React.useRef(/** @type {any[]} */ ([]));
+        const scrollRef = React.useRef(/** @type {any} */ (null));
+        const pinnedRef = React.useRef(true);
 
         React.useEffect(
           () => () => {
@@ -412,13 +718,24 @@ window.__ModuleLoader__.load({
           [],
         );
 
+        // 切会话：清空上一会话的列表与流式现场。
+        React.useEffect(() => {
+          setThreads(null);
+          setLiveRuns([]);
+          liveRef.current = [];
+          setActiveId("");
+          setFollowQuestion("");
+          setNotice("");
+          pinnedRef.current = true;
+        }, [sessionId]);
+
         /**
-         * 拉线程列表。返回数组（成功）或 null（失败）——
-         * 调用方需要区分「线程数增加」（新问题）与「某线程轮数增加」（追问）。
+         * 拉线程列表。quiet = 后台轮询：失败不把界面打红。
+         * @param {boolean} [quiet]
          * @returns {Promise<any[] | null>}
          */
-        const load = React.useCallback(
-          () =>
+        const loadThreads = React.useCallback(
+          (quiet = false) =>
             callRemote("threads", { sessionId, limit: LIMITS_CLIENT_THREADS }).then((value) => {
               if (!aliveRef.current) return null;
               if (Array.isArray(/** @type {any} */ (value))) {
@@ -426,8 +743,10 @@ window.__ModuleLoader__.load({
                 setFailed(false);
                 return /** @type {any[]} */ (value);
               }
-              setThreads([]);
-              setFailed(true);
+              if (!quiet) {
+                setThreads([]);
+                setFailed(true);
+              }
               return null;
             }),
           [sessionId],
@@ -449,36 +768,109 @@ window.__ModuleLoader__.load({
             if (!aliveRef.current) return;
             if (value && typeof value.badge === "string") setBadge(value.badge);
           });
+          return undefined;
         }, [open, sessionId, scope]);
 
+        // 打开/切会话时先读一次历史。
         React.useEffect(() => {
           if (!open) return undefined;
-          void load();
+          void loadThreads();
+          return undefined;
+        }, [open, loadThreads]);
+
+        // 流式与后台刷新：面板打开期间常驻。有 run 时 350ms 一次、空闲 1s 一次；
+        // 空闲时每 4 次才刷一次线程列表，避免无谓 RPC。
+        React.useEffect(() => {
+          if (!open) return undefined;
+          let cancelled = false;
+          /** @type {any} */
+          let timer;
+          let ticks = 0;
+          const tick = async () => {
+            if (cancelled) return;
+            /** @type {any[]} */
+            let runs = [];
+            try {
+              const value = await callRemote("live", { sessionId });
+              if (Array.isArray(value?.runs)) runs = value.runs;
+            } catch {
+              runs = [];
+            }
+            if (cancelled) return;
+            const hadLive = liveRef.current.length > 0;
+            const hasLive = runs.length > 0;
+            liveRef.current = runs;
+            setLiveRuns(runs);
+            // 只在 live 结束后刷一次历史（run 进行中 threads 不会变，少传大 payload）。
+            if (hadLive && !hasLive) void loadThreads(true);
+            else if (!hasLive && ticks % LIVE_IDLE_REFRESH_EVERY === 0) void loadThreads(true);
+            ticks += 1;
+            if (!cancelled)
+              timer = setTimeout(tick, runs.length > 0 ? LIVE_ACTIVE_MS : LIVE_IDLE_MS);
+          };
+          timer = setTimeout(tick, 200);
+          return () => {
+            cancelled = true;
+            clearTimeout(timer);
+          };
+        }, [open, sessionId, loadThreads]);
+
+        // Esc：收起抽屉（保持「点开/收起」的手感，和原来的 Esc 关闭一致）。
+        React.useEffect(() => {
+          if (!open) return undefined;
           const onKey = (/** @type {any} */ event) => {
-            if (event?.key === "Escape") setOpen(false);
+            if (event?.key === "Escape") store.patch({ open: false });
           };
           document.addEventListener("keydown", onKey);
           return () => document.removeEventListener("keydown", onKey);
-        }, [open, load]);
+        }, [open]);
+
+        // 自动滚到底：只有用户本来就在底部时才跟随（向上翻历史时不抢滚动条）。
+        const onScroll = () => {
+          const el = scrollRef.current;
+          if (!el) return;
+          pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+        };
+        React.useEffect(() => {
+          const el = scrollRef.current;
+          if (!el || !pinnedRef.current) return;
+          el.scrollTop = el.scrollHeight;
+        }, [threads, liveRuns, open, collapsed]);
+
+        // 展开抽屉/首次打开时强制回到底部（聊天式界面最新在下面）。
+        React.useEffect(() => {
+          if (!open || collapsed) return;
+          pinnedRef.current = true;
+          const el = scrollRef.current;
+          if (el) el.scrollTop = el.scrollHeight;
+        }, [open, collapsed]);
+
+        const metaTextOf = (/** @type {any} */ cost, /** @type {number} */ ms) => {
+          if (cost && typeof cost === "object") {
+            return fmt(t("cost"), {
+              newTokens: formatTokens(cost.inputTokens),
+              cachedTokens: formatTokens(cost.cacheReadTokens),
+              ms: formatDuration(ms),
+            });
+          }
+          return ms > 0 ? formatDuration(ms) : "";
+        };
 
         /**
-         * 发问：新线程走 `/btw <q>`；追问走 `/btw --thread <id> <q>`。
-         *
-         * 2026-11-17 修复（实测用户反馈「点了没反应、按钮永久卡死」）：
-         *  1. 旧实现轮询 20×1.5s=30s，而真实 /btw 耗时 32–40s，永远等不到 → 改为按
-         *     实际耗时给足窗口（REFRESH_MAX_MS），并保留「线程数增加即提前结束」。
-         *  2. poll 的 `.then()` 没有 `.catch()`，一次 RPC 失败就断链，
-         *     `setBusy(false)` 永不执行 → 改用 try/finally 兜底，任何路径都恢复按钮。
+         * 发问 / 追问：新线程走 `/btw <q>`；追问走 `/btw --thread <id> <q>`，
+         * 并在提交前把参数登记到 host（这样 composer 里只出现裸 `/btw`）。
+         * @param {string} threadId
          */
-        const submit = async (/** @type {string} */ threadId) => {
-          const text = question.trim();
+        const submit = async (threadId) => {
+          const text = (threadId === "" ? question : followQuestion).trim();
           if (text === "" || busy) return;
           setBusy(true);
           setNotice(t("sending"));
           const beforeThreads = Array.isArray(threads) ? threads : [];
           const beforeCount = beforeThreads.length;
           const beforeTurns = Number(
-            beforeThreads.find((/** @type {any} */ t) => t?.threadId === threadId)?.turns ?? 0,
+            beforeThreads.find((/** @type {any} */ entry) => entry?.threadId === threadId)?.turns ??
+              0,
           );
           const flags = [
             threadId === "" ? "" : `--thread ${threadId}`,
@@ -488,9 +880,6 @@ window.__ModuleLoader__.load({
             .join(" ");
           let line = flags === "" ? `/btw ${text}` : `/btw ${flags} ${text}`;
           if (threadId !== "") {
-            // 追问：先把参数交给 host 暂存，再提交**裸 `/btw`** ——
-            // 否则 `--thread t_xxx <问题>` 会整段出现在用户输入框里（实测被抱怨
-            // 「为什么给我一堆乱码」）。host 侧处理裸命令时先查这个队列。
             const queued = await callRemote("queueFollowUp", {
               sessionId,
               threadId,
@@ -505,9 +894,13 @@ window.__ModuleLoader__.load({
               setNotice(t("sendFailed"));
               return;
             }
-            setQuestion("");
+            if (threadId === "") setQuestion("");
+            else {
+              setFollowQuestion("");
+              setActiveId("");
+            }
             setNotice(t("sent"));
-            // 轮询到「线程数增加」为止，最长 REFRESH_MAX_MS；单次失败不中断。
+            // 轮询到「线程数增加 / 轮数增加」为止，最长 REFRESH_MAX_MS；单次失败不中断。
             const deadline = Date.now() + REFRESH_MAX_MS;
             let refreshed = false;
             while (Date.now() < deadline && aliveRef.current) {
@@ -516,21 +909,20 @@ window.__ModuleLoader__.load({
               /** @type {any[] | null} */
               let next = null;
               try {
-                next = await load();
+                next = await loadThreads(true);
               } catch {
-                next = null; // 单次失败继续轮询，不静默卡死
+                next = null;
               }
               if (next === null) continue;
               if (threadId === "") {
-                // 新问题 → 线程数应增加
                 if (next.length > beforeCount) {
                   refreshed = true;
                   break;
                 }
               } else {
-                // 追问 → **线程数不变**，要看目标线程的轮数是否增加。
-                // （曾经只判线程数，导致追问永远等不到，按钮卡到 120s 超时。）
-                const target = next.find((/** @type {any} */ t) => t?.threadId === threadId);
+                const target = next.find(
+                  (/** @type {any} */ entry) => entry?.threadId === threadId,
+                );
                 if (Number(target?.turns ?? 0) > beforeTurns) {
                   refreshed = true;
                   break;
@@ -539,16 +931,16 @@ window.__ModuleLoader__.load({
             }
             setNotice(refreshed ? "" : t("sentPending"));
           } finally {
-            // 无论如何都要放开按钮：卡死的按钮是实测最劝退的问题。
             if (aliveRef.current) setBusy(false);
           }
         };
 
         /**
-         * 一键转正：取 host 生成的四节草稿，**只插进 composer，不发送**。
+         * 一键转正：取 host 生成的 Markdown 草稿，**只插进 composer，不发送**。
          * 输入框已有内容时拒绝，避免覆盖用户正在写的东西。
+         * @param {any} thread
          */
-        const promote = async (/** @type {any} */ thread) => {
+        const promote = async (thread) => {
           if (busy) return;
           setBusy(true);
           setNotice("");
@@ -586,249 +978,244 @@ window.__ModuleLoader__.load({
           setNotice(t("promoted"));
         };
 
-        // 浮层不画按钮：按钮由 BtwTrigger 注册在 composer 工具行里。
-        if (!open) return null;
+        // 折叠按钮：展开/收起单条长答案。
+        const toggleAnswer = (/** @type {string} */ key) =>
+          setExpandedAnswers((/** @type {any} */ previous) => ({
+            ...previous,
+            [key]: !previous[key],
+          }));
 
-        /**
-         * 把 host 切好的段映射成元素：
-         * - `code` → 等宽 `<pre>`（不再把 ``` 显示给用户）
-         * - `link` → 可点 `<a>`（之前 URL 是死文本）
-         * - `text` → 原样
-         * 没有 segments（老数据 / 字段缺失）时回退纯文本。
-         * @param {any} thread
-         * @param {string} fallback
-         * @returns {any}
-         */
-        /**
-         * 回退解析：host 还没重启（或拿到老数据）时，client 自己从原始答案里切段。
-         *
-         * 为什么两处都做：`answerSegments` 是 host 侧字段，改完必须重启 DSH 才生效；
-         * client 改动刷新页面即可。为了让新渲染立刻可用，这里保留一份**行为等价**的
-         * 极简实现（切 ``` 围栏 + 认 http(s) URL）。host 版本优先 —— 它被单测覆盖。
-         * @param {string} text
-         * @returns {any[]}
-         */
-        const parseSegmentsLocal = (/** @type {string} */ text) => {
-          const raw = String(text ?? "");
-          /** @type {any[]} */
-          const out = [];
-          const fenceRe = /```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/gu;
-          let last = 0;
-          for (;;) {
-            const m = fenceRe.exec(raw);
-            if (m === null) break;
-            if (m.index > last) out.push({ kind: "text", text: raw.slice(last, m.index) });
-            out.push({ kind: "code", lang: m[1] ?? "", text: (m[2] ?? "").replace(/\n+$/u, "") });
-            last = m.index + m[0].length;
-          }
-          const tail = raw.slice(last);
-          const urlRe = /https?:\/\/[^\s<>()\u3000-\u303f\uff00-\uffef]+/gu;
-          let cursor = 0;
-          for (;;) {
-            const u = urlRe.exec(tail);
-            if (u === null) break;
-            const rawUrl = u[0];
-            const trimmed = rawUrl.replace(/[.,;:!?]+$/u, "");
-            if (u.index > cursor) out.push({ kind: "text", text: tail.slice(cursor, u.index) });
-            if (trimmed !== "") out.push({ kind: "link", text: trimmed, href: trimmed });
-            const rest = rawUrl.slice(trimmed.length);
-            if (rest !== "") out.push({ kind: "text", text: rest });
-            cursor = u.index + rawUrl.length;
-          }
-          if (cursor < tail.length) out.push({ kind: "text", text: tail.slice(cursor) });
-          return out;
-        };
-
-        const renderAnswerBody = (/** @type {any} */ thread, /** @type {string} */ _fallback) => {
-          const fromHost = Array.isArray(thread?.answerSegments) ? thread.answerSegments : null;
-          // host 字段缺失时退回本地解析（老数据 / host 未重启）。
-          const fromLocal =
-            fromHost === null && typeof thread?.answer === "string"
-              ? parseSegmentsLocal(thread.answer)
-              : null;
-          const segments = fromHost ?? fromLocal;
-          return segments.map((/** @type {any} */ seg, /** @type {number} */ i) => {
-            if (seg?.kind === "code") {
-              return h(
-                "pre",
-                { className: "dsh-btw-code", key: `c${i}`, "data-btw-code": "true" },
-                String(seg.text ?? ""),
-              );
-            }
-            if (seg?.kind === "link") {
-              const href = String(seg.href ?? "");
-              if (!/^https?:\/\//iu.test(href)) return String(seg.text ?? "");
-              return h(
-                "a",
-                {
-                  key: `l${i}`,
-                  className: "dsh-btw-link",
-                  href,
-                  target: "_blank",
-                  rel: "noreferrer noopener",
-                  "data-btw-link": "true",
-                },
-                String(seg.text ?? href),
-              );
-            }
-            return String(seg?.text ?? "");
-          });
-        };
-
-        const renderThread = (/** @type {any} */ thread, /** @type {number} */ index) => {
-          const expanded = activeId === thread.threadId;
+        /** @param {any} thread @param {number} index */
+        const renderThread = (thread, index) => {
+          const threadId = String(thread?.threadId ?? "");
+          const items = Array.isArray(thread?.items) ? thread.items : [];
+          const expanded = activeId === threadId;
           return h(
             "div",
             {
-              className: "dsh-btw-item",
-              key: thread.threadId ?? String(index),
+              className: "dsh-btw-thread",
+              key: threadId === "" ? String(index) : threadId,
               "data-btw-thread": "true",
-              "data-btw-thread-id": String(thread.threadId ?? ""),
+              "data-btw-thread-id": threadId,
             },
-            h(
-              "div",
-              { className: "dsh-btw-q" },
-              `/btw ${String(thread.question ?? "")}`,
-              Number(thread.turns) > 1
-                ? h(
-                    "span",
-                    { className: "dsh-btw-meta" },
-                    ` · ${String(thread.turns)} ${t("turns")}`,
-                  )
-                : null,
-            ),
-            (() => {
-              // 长答案默认折叠 6 行：实测一条 3000+ 字答案会把浮层撑满，
-              // 用户只能看到答案中部、找不到成本与按钮。
-              // 优先用 host 清理过的纯文本（保留代码块）；没有就回退原文。
-              const answerText = String(thread.answerPlain ?? thread.answer ?? "");
-              const key = String(thread.threadId ?? "");
-              const isOpen = expandedAnswers[key] === true;
-              const needsClamp = answerText.length > 400;
+            ...items.map((/** @type {any} */ item, /** @type {number} */ itemIndex) => {
+              const itemKey = `${threadId}:${String(item?.id ?? itemIndex)}`;
+              const isLast = itemIndex === items.length - 1;
+              const clamped = expandedAnswers[itemKey] !== true && Number(item?.chars ?? 0) > 400;
               return h(
-                React.Fragment,
-                null,
-                h(
-                  "div",
-                  {
-                    className: `dsh-btw-a${needsClamp && !isOpen ? " is-clamped" : ""}`,
-                    "data-btw-answer": "true",
-                  },
-                  renderAnswerBody(thread, answerText),
-                ),
-                needsClamp
+                "div",
+                { className: "dsh-btw-turn", key: itemKey, "data-btw-turn": "true" },
+                String(item?.question ?? "") === ""
+                  ? null
+                  : h(
+                      "div",
+                      { className: "dsh-btw-q", "data-btw-question": "true" },
+                      itemIndex === 0
+                        ? null
+                        : h("span", { className: "dsh-btw-q-label" }, t("followUpLabel")),
+                      String(item.question),
+                    ),
+                h(MarkdownBody, { blocks: item?.blocks, streaming: false, clamped }),
+                clamped
                   ? h(
                       "button",
                       {
                         type: "button",
                         className: "dsh-btw-btn",
                         "data-btw-expand": "true",
-                        onClick: () =>
-                          setExpandedAnswers((/** @type {any} */ prev) => ({
-                            ...prev,
-                            [key]: !isOpen,
-                          })),
+                        onClick: () => toggleAnswer(itemKey),
                       },
-                      isOpen ? t("collapseAnswer") : t("expandAnswer"),
+                      t("expandAnswer"),
+                    )
+                  : null,
+                (() => {
+                  const meta = metaTextOf(item?.cost, Number(item?.ms ?? 0));
+                  return meta === ""
+                    ? null
+                    : h("div", { className: "dsh-btw-meta", "data-btw-meta": "true" }, meta);
+                })(),
+                isLast
+                  ? h(
+                      "div",
+                      { className: "dsh-btw-row" },
+                      h(
+                        "button",
+                        {
+                          type: "button",
+                          className: "dsh-btw-btn",
+                          "data-btw-followup": "true",
+                          onClick: () => {
+                            setActiveId(expanded ? "" : threadId);
+                            setFollowQuestion("");
+                          },
+                        },
+                        expanded ? t("collapseAnswer") : t("followUp"),
+                      ),
+                      h(
+                        "button",
+                        {
+                          type: "button",
+                          className: "dsh-btw-btn",
+                          "data-btw-promote": "true",
+                          disabled: busy,
+                          onClick: () => void promote(thread),
+                        },
+                        t("promote"),
+                      ),
+                    )
+                  : null,
+                expanded && isLast
+                  ? h(
+                      "div",
+                      { className: "dsh-btw-row", "data-btw-thread-input": "true" },
+                      h("textarea", {
+                        className: "dsh-btw-input",
+                        "data-btw-input": "true",
+                        placeholder: t("followPlaceholder"),
+                        value: followQuestion,
+                        rows: 2,
+                        onChange: (/** @type {any} */ event) =>
+                          setFollowQuestion(String(event?.target?.value ?? "")),
+                        onKeyDown: (/** @type {any} */ event) => {
+                          if (event?.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                            event.preventDefault();
+                            void submit(threadId);
+                          }
+                        },
+                      }),
+                      h(
+                        "button",
+                        {
+                          type: "button",
+                          className: "dsh-btw-btn",
+                          "data-btw-send": "true",
+                          disabled: busy || followQuestion.trim() === "",
+                          onClick: () => void submit(threadId),
+                        },
+                        t("send"),
+                      ),
                     )
                   : null,
               );
-            })(),
-            h(
-              "div",
-              { className: "dsh-btw-meta", "data-btw-meta": "true" },
-              fmt(t("cost"), {
-                newTokens: String(thread.cost?.inputTokens ?? 0),
-                cachedTokens: String(thread.cost?.cacheReadTokens ?? 0),
-                ms: String(thread.ms ?? 0),
-              }),
-            ),
-            h(
-              "div",
-              { className: "dsh-btw-row" },
-              h(
-                "button",
-                {
-                  type: "button",
-                  className: "dsh-btw-btn",
-                  "data-btw-followup": "true",
-                  onClick: () => setActiveId(expanded ? "" : String(thread.threadId ?? "")),
-                },
-                expanded ? t("collapse") : t("followUp"),
-              ),
-              h(
-                "button",
-                {
-                  type: "button",
-                  className: "dsh-btw-btn",
-                  "data-btw-promote": "true",
-                  disabled: busy,
-                  onClick: () => void promote(thread),
-                },
-                t("promote"),
-              ),
-            ),
-            expanded
-              ? h(
-                  "div",
-                  { className: "dsh-btw-row", "data-btw-thread-input": "true" },
-                  h("textarea", {
-                    className: "dsh-btw-input",
-                    "data-btw-input": "true",
-                    placeholder: t("followPlaceholder"),
-                    value: question,
-                    rows: 2,
-                    onChange: (/** @type {any} */ event) =>
-                      setQuestion(String(event?.target?.value ?? "")),
-                    onKeyDown: (/** @type {any} */ event) => {
-                      if (event?.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                        event.preventDefault();
-                        void submit(String(thread.threadId ?? ""));
-                      }
-                    },
-                  }),
-                  h(
-                    "button",
-                    {
-                      type: "button",
-                      className: "dsh-btw-btn",
-                      "data-btw-send": "true",
-                      disabled: busy || question.trim() === "",
-                      onClick: () => void submit(String(thread.threadId ?? "")),
-                    },
-                    t("send"),
-                  ),
-                )
-              : null,
+            }),
           );
         };
 
-        const body =
-          threads === null
+        /** 流式卡片：固定追加在列表最底部（最新一条），结束后由真实线程替换。 */
+        const renderLive = (/** @type {any} */ run) => {
+          const questionText = String(run?.question ?? "");
+          const isFollowUp = (Array.isArray(threads) ? threads : []).some(
+            (/** @type {any} */ thread) => thread?.threadId === run?.threadId,
+          );
+          return h(
+            "div",
+            {
+              className: "dsh-btw-thread dsh-btw-live",
+              key: `live:${String(run?.threadId ?? "")}`,
+              "data-btw-live": "true",
+              "data-btw-thread-id": String(run?.threadId ?? ""),
+            },
+            questionText === ""
+              ? null
+              : h(
+                  "div",
+                  { className: "dsh-btw-q", "data-btw-question": "true" },
+                  isFollowUp
+                    ? h("span", { className: "dsh-btw-q-label" }, t("followUpLabel"))
+                    : null,
+                  questionText,
+                ),
+            (() => {
+              const blocks = Array.isArray(run?.blocks) ? run.blocks : [];
+              return blocks.length === 0
+                ? h("div", { className: "dsh-btw-dim", "data-btw-stream-text": "true" }, "…")
+                : h(
+                    "div",
+                    {
+                      className: "dsh-btw-a",
+                      "data-btw-stream-text": "true",
+                      "data-btw-md": "true",
+                    },
+                    h("div", { className: "dsh-btw-md" }, ...renderBlocks(blocks, true)),
+                  );
+            })(),
+            h(
+              "div",
+              { className: "dsh-btw-meta", "data-btw-elapsed": "true" },
+              `${t("streaming")} · ${formatDuration(run?.ms)}`,
+            ),
+          );
+        };
+
+        const known = threads ?? [];
+        const list =
+          threads === null && liveRuns.length === 0
             ? h("div", { className: "dsh-btw-dim" }, "…")
-            : threads.length === 0
+            : known.length === 0 && liveRuns.length === 0
               ? h("div", { className: "dsh-btw-dim", "data-btw-empty": "true" }, t("empty"))
-              : threads.map(renderThread);
+              : [
+                  ...known.map(renderThread),
+                  ...liveRuns.map((/** @type {any} */ run) => renderLive(run)),
+                ];
+
+        if (!open) return null;
+
+        if (collapsed) {
+          return h(
+            "button",
+            {
+              type: "button",
+              className: "dsh-btw-rail",
+              "data-btw-rail": "true",
+              title: t("expand"),
+              "aria-label": t("expand"),
+              onClick: () => store.patch({ collapsed: false }),
+            },
+            h("span", null, t("button")),
+            threads !== null && threads.length > 0
+              ? h("span", { className: "dsh-btw-rail-count" }, String(threads.length))
+              : null,
+          );
+        }
+
+        // 有 live 卡片时不重复状态条：卡片里已经有「正在生成回答 · 12s」。
+        const statusBusy = busy && liveRuns.length === 0;
+        const statusText = busy ? `${t("sending")}（${t("waitHint")}）` : notice;
 
         return h(
           "span",
           { "data-btw-root": "true" },
           h(
             "div",
-            { className: "dsh-btw-panel", "data-btw-overlay": "true", role: "dialog" },
+            {
+              className: "dsh-btw-panel",
+              "data-btw-overlay": "true",
+              "data-btw-panel": "true",
+              "data-btw-drawer": "true",
+              role: "dialog",
+              "aria-label": t("title"),
+            },
             h(
               "div",
               { className: "dsh-btw-head" },
-              h("span", null, t("title")),
+              h("span", { className: "dsh-btw-head-title" }, t("title")),
+              threads !== null && threads.length > 0
+                ? h(
+                    "span",
+                    { className: "dsh-btw-dim", "data-btw-count": "true" },
+                    String(threads.length),
+                  )
+                : null,
               h(
                 "button",
                 {
                   type: "button",
                   className: "dsh-btw-btn",
-                  "data-btw-new": "true",
-                  onClick: () => setShowNew((/** @type {boolean} */ v) => !v),
+                  "data-btw-collapse": "true",
+                  title: t("collapse"),
+                  onClick: () => store.patch({ collapsed: true }),
                 },
-                showNew ? t("collapse") : t("newQuestion"),
+                t("collapseShort"),
               ),
               h(
                 "button",
@@ -836,85 +1223,91 @@ window.__ModuleLoader__.load({
                   type: "button",
                   className: "dsh-btw-btn",
                   "data-btw-close": "true",
-                  onClick: () => setOpen(false),
+                  onClick: () => store.patch({ open: false }),
                 },
                 t("close"),
               ),
             ),
-            // 提示条固定在**头部正下方**：旧实现放在浮层最底部，列表一长就被推到
-            // 滚动区外（实测浮层底 616px、提示在 918px），用户提交后完全看不到反馈。
-            notice === "" && !busy
-              ? null
-              : h(
+            statusBusy || notice !== ""
+              ? h(
                   "div",
                   {
-                    className: `dsh-btw-status${busy ? " is-busy" : ""}`,
+                    className: `dsh-btw-status${statusBusy ? " is-busy" : ""}`,
                     "data-btw-notice": "true",
                   },
-                  busy ? h("span", { className: "dsh-btw-spinner" }, "⟳") : null,
-                  h("span", null, busy ? t("sending") : notice),
-                ),
+                  statusBusy ? h("span", { className: "dsh-btw-spinner" }, "⟳") : null,
+                  h("span", null, statusText),
+                )
+              : null,
             failed
               ? h(
                   "div",
                   { className: "dsh-btw-err", "data-btw-error": "history_unavailable" },
                   `${t("failed")} — ${lastRpcError}`,
                 )
-              : h("div", { className: "dsh-btw-scroll", "data-btw-list": "true" }, body),
-            showNew
-              ? h(
+              : h(
                   "div",
-                  { className: "dsh-btw-row", "data-btw-newline": "true" },
-                  h("textarea", {
-                    className: "dsh-btw-input",
-                    "data-btw-input": "true",
-                    placeholder: t("placeholder"),
-                    value: activeId === "" ? question : "",
-                    rows: 2,
-                    onChange: (/** @type {any} */ event) =>
-                      setQuestion(String(event?.target?.value ?? "")),
-                    onKeyDown: (/** @type {any} */ event) => {
-                      if (event?.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                        event.preventDefault();
-                        void submit("");
-                      }
-                    },
-                  }),
-                  h(
-                    "button",
-                    {
-                      type: "button",
-                      className: "dsh-btw-btn",
-                      "data-btw-send": "true",
-                      disabled: busy || question.trim() === "",
-                      onClick: () => void submit(""),
-                    },
-                    t("send"),
-                  ),
-                )
-              : null,
+                  {
+                    className: "dsh-btw-scroll",
+                    "data-btw-list": "true",
+                    ref: scrollRef,
+                    onScroll,
+                  },
+                  ...(Array.isArray(list) ? list : [list]),
+                ),
             h(
               "div",
-              { className: "dsh-btw-row" },
-              h(
-                "select",
-                {
-                  className: "dsh-btw-input",
-                  "data-btw-scope": "true",
-                  value: scope,
-                  onChange: (/** @type {any} */ event) =>
-                    setScope(String(event?.target?.value ?? "")),
+              { className: "dsh-btw-composer" },
+              h("span", { className: "dsh-btw-composer-label" }, t("newQuestionLabel")),
+              h("textarea", {
+                className: "dsh-btw-input",
+                "data-btw-input": "true",
+                placeholder: t("placeholder"),
+                value: question,
+                rows: 2,
+                onChange: (/** @type {any} */ event) =>
+                  setQuestion(String(event?.target?.value ?? "")),
+                onKeyDown: (/** @type {any} */ event) => {
+                  if (event?.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                    event.preventDefault();
+                    void submit("");
+                  }
                 },
-                h("option", { value: "" }, t("scopeAny")),
-                h("option", { value: "session" }, t("scopeSession")),
-                h("option", { value: "recent" }, t("scopeRecent")),
-                h("option", { value: "selection" }, t("scopeSelection")),
+              }),
+              h(
+                "div",
+                { className: "dsh-btw-row" },
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    className: "dsh-btw-btn is-primary",
+                    "data-btw-send": "true",
+                    disabled: busy || question.trim() === "",
+                    onClick: () => void submit(""),
+                  },
+                  t("send"),
+                ),
+                h(
+                  "select",
+                  {
+                    className: "dsh-btw-select",
+                    "data-btw-scope": "true",
+                    value: scope,
+                    onChange: (/** @type {any} */ event) =>
+                      setScope(String(event?.target?.value ?? "")),
+                  },
+                  h("option", { value: "" }, t("scopeAny")),
+                  h("option", { value: "session" }, t("scopeSession")),
+                  h("option", { value: "recent" }, t("scopeRecent")),
+                  h("option", { value: "selection" }, t("scopeSelection")),
+                ),
               ),
+              h("div", { className: "dsh-btw-meta", "data-btw-hint": "true" }, t("submitHint")),
+              badge === ""
+                ? null
+                : h("div", { className: "dsh-btw-meta", "data-btw-badge": "true" }, badge),
             ),
-            h("div", { className: "dsh-btw-meta", "data-btw-hint": "true" }, t("submitHint")),
-            badge === ""
-              ? null
-              : h("div", { className: "dsh-btw-meta", "data-btw-badge": "true" }, badge),
           ),
         );
       }
@@ -1079,7 +1472,7 @@ window.__ModuleLoader__.load({
         ),
       );
 
-      // 浮层挂在 shell.overlay（frame-wide，所有列之上、滚动容器之外），不受 composer 裁剪。
+      // 抽屉挂在 shell.overlay（frame-wide，所有列之上、滚动容器之外），不受 composer 裁剪。
       ctx.slots.inject("shell.overlay", () =>
         ctx.slots.register({ name: "shell.overlay", id: "btw-panel", order: 60, locale: NS }, () =>
           h(BtwPanel, null),
