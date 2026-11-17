@@ -10,7 +10,7 @@
       "noHistory": "No side question yet in this session."
     },
     "answer": {
-      "meta": "btw · new {newTokens} tokens · cached {cachedTokens} · {ms}ms",
+      "meta": "btw · new {newTokens} tokens · cached {cachedTokens} · {ms}",
       "reopen": "Last side question: {question}",
       "truncated": "The answer was cut off; ask again to retry.",
       "questionHeading": "Side question: {question}"

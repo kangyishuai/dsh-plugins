@@ -10,7 +10,7 @@
       "noHistory": "本会话还没有旁问记录。"
     },
     "answer": {
-      "meta": "旁问 · 新增 {newTokens} tokens · 命中缓存 {cachedTokens} · {ms}ms",
+      "meta": "旁问 · 新增 {newTokens} tokens · 命中缓存 {cachedTokens} · {ms}",
       "reopen": "上一条旁问：{question}",
       "truncated": "答案被截断，可再问一次重试。",
       "questionHeading": "旁问：{question}"

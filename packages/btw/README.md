@@ -15,8 +15,13 @@ Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/de
 - **Cheap.** The fork reuses the parent conversation's prompt prefix, so the provider serves most of it from cache (measured: 57% on the first fork, 94% on a repeat). Cache writes are not billed.
 - **Kept.** Answers are written to a per-session JSONL history so you can reopen the last one with a bare `/btw`.
 - **Threads.** Follow up on a side question without losing the earlier exchange; the thread's history is replayed to the model each turn.
-- **Promote to draft.** Turn the latest side question into a four-section draft (question / conclusion / key details / still unresolved) and **insert it into the composer — never send it**. You decide whether to send.
-- **Honest scope badge.** The overlay states how many side questions exist and reminds you that **the model can see the whole conversation**; a scope choice only narrows the instruction, it does not cut context.
+- **Streaming.** The drawer renders the answer as it is generated instead of waiting for the whole reply (the host buffers the child's text deltas; the panel reads them through `btw/live`).
+- **Markdown.** Headings, lists, tables, quotes, fenced code and inline styles render properly. The promote draft keeps its Markdown source, so it renders correctly once you send it.
+- **Readable numbers.** The cost badge adapts tokens to `K/M/B/T` and duration to `ms/s/m/h` (for example `new 12.3K · cached 988K · 32.5s`).
+- **Promote to draft.** Turn the latest side question into a four-section Markdown draft (question / conclusion / key details / still unresolved) and **insert it into the composer — never send it**. You decide whether to send.
+- **Native right sidebar.** The「旁问」button opens a tab in the DSH right sidebar: the conversation becomes narrower but is **never covered**.the sidebar's own collapse button (⌥⌘B) collapses the column and clicking the「旁问」button expands it again. Hosts without the sidebar service fall back to a right-edge overlay drawer.
+- **Chat order.** Threads list oldest first with every turn expanded, the newest answer at the bottom, and the view follows the latest content.
+- **Honest scope badge.** The drawer states how many side questions exist and reminds you that **the model can see the whole conversation**; a scope choice only narrows the instruction, it does not cut context.
 
 ## How it works
 
@@ -27,6 +32,8 @@ A third-party DSH plugin cannot reach a provider adapter through `ctx.llm` (ever
 3. The child's answer is read from the activation result, the child session is archived so it does not clutter the session list, and the Q&A is appended to history.
 
 Follow-ups re-fork each turn and replay the thread's own Q&A into the prompt — a fork is single-turn, so keeping one child alive would degenerate into a full side session with its own lifecycle.
+
+Live text never leaves the host process as raw history: an `llm/stream` observer keyed by the child session keeps at most 12k characters in memory, the panel polls `btw/live`, and the buffer is dropped when the run ends. The panel deliberately does not subscribe to the child session from the client: a forked child is seeded with the parent's completed transcript, so retaining it would download that whole history into the browser just to read the tail. Markdown is parsed on the host into a JSON block tree and the client only maps it to React elements — no HTML injection, no bundler, and no import of host UI packages.
 
 Promote only **returns text** from the host and inserts it with the composer's `setDraft`; `submit` is never called. If the composer already has content the action is refused instead of overwriting what you were typing.
 
@@ -49,10 +56,16 @@ Restart the DSH desktop app afterwards.
 /btw --scope recent <q>   # hint the answer to focus (session | recent | selection)
 ```
 
-The panel opens as a **centered dialog** from the「旁问」button left of the composer
-(it lives in the frame-wide overlay layer, so it is not clipped by the composer).
-It lists threads with cost badges, lets you follow up or promote one to a draft, and shows the
-scope badge at the bottom. Use「＋ 新旁问」to reveal the new-question input.
+The panel opens from the「旁问」button left of the composer as a tab in the **native DSH right sidebar**:
+the conversation becomes narrower but the panel never covers it. Use the sidebar's own collapse button (⌥⌘B) to collapse the column (the tab is
+kept), and the「旁问」button to expand it again; close the tab with its own × or the panel's「关闭」button.
+Hosts that do not load the sidebar service fall back to a right-edge overlay drawer that collapses to a
+thin edge rail.
+
+Threads are listed oldest first with every turn expanded, and the newest answer is at the bottom —
+the view scrolls to the latest content when you open the drawer or when new content arrives. Each
+answer renders Markdown; a long answer is clamped with「Show all」. The composer at the bottom starts
+a new side question, while「Follow up」inside a thread opens that thread's own input.
 
 ## Configuration
 
@@ -84,11 +97,11 @@ The settings file is re-read on every use, so edits take effect without restarti
 
 | Plugin | Verified on DSH |
 | ------ | --------------- |
-| 0.3.0  | 0.2.2-rc.3      |
+| 0.4.0  | 0.2.2-rc.3      |
 
 The underlying host seams (command dispatch while busy, fork cache reuse, `tools.guard`, `workspaceRegistry.archiveSession`) were verified on DSH 0.2.2-rc.3.
 
-End-to-end status: the plugin has been installed into a live desktop profile and its desktop regression suite (`pnpm smoke:btw-desktop --require`) passes 18 assertions with zero skips; a `/btw` round trip was also verified against a real model, including the on-disk history record.
+End-to-end status: the web smoke (temporary `DSH_HOME`, right-sidebar tab, collapse/expand, Markdown rendering) and a real `/btw` round trip pass. The desktop regression was updated for the tab shape and must be rerun after installing this version into the live desktop profile.
 
 ## License
 

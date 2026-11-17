@@ -7,14 +7,14 @@
 //   pnpm smoke:btw-desktop --require
 //   pnpm smoke:btw-desktop --require --deep   —— 另跑一次真实 /btw，验证真实数据根的 history 落盘
 //
-// 桌面端（Electron）只读回归：btw 的 client 半是否真的注入、浮层能否开关。
+// 桌面端（Electron）只读回归：btw 的 client 半是否真的注入、原生右侧栏 tab 能否开关/收起。
 // 覆盖（全部**只读**：只开浮层再 Esc 关闭，不提交、不发起任何模型调用）：
 //   1. client 半已加载：`style[data-plugin="@kangyishuai/dsh-btw"]`
 //   2. 输入框左侧出现 `[data-btw-toggle]` 按钮
-//   3. 点开 → `[data-btw-overlay]` 出现（role=dialog）
-//   4. 浮层里有标题或空状态，且没有 `[data-btw-error]`
-//   5. Esc 关闭 → 浮层消失
-//   6. 收尾：没有遗留浮层
+//   3. 点开 → 右侧 `[data-btw-panel]` 出现（role=dialog，靠右、不遮挡输入框）
+//   4. 抽屉里有标题或空状态，且没有 `[data-btw-error]`；有记录时答案按 Markdown 渲染
+//   5. 宿主「收起」→ 右侧栏折叠（tab 保留）；再点「旁问」展开；「关闭」关闭 tab
+//   6. 收尾：没有遗留抽屉
 //
 // 安全前置：当前会话正在跑回合（有「停止生成」按钮）时，脚本**不交互**，只报 SKIP——
 // agent 自己跑桌面回归时，它的回合就跑在同一个桌面版里（约定 §6.1 末段）。
@@ -96,12 +96,24 @@ const STATE = `(() => {
   const toggle = document.querySelector('[data-btw-toggle]');
   const overlay = document.querySelector('[data-btw-overlay]');
   const err = document.querySelector('[data-btw-error]');
+  const panel = document.querySelector('[data-btw-panel]');
+  const rect = panel ? panel.getBoundingClientRect() : null;
+  const conversation = document.querySelector('[data-conversation-session]');
+  const crect = conversation ? conversation.getBoundingClientRect() : null;
+  const rightbar = document.querySelector('[data-sidebar-right-panel]');
   return {
     styleInjected: style !== null,
     pluginCount: document.querySelectorAll('style[data-plugin]').length,
     toggle: toggle !== null,
     overlay: overlay !== null,
     overlayRole: overlay ? overlay.getAttribute('role') : null,
+    isTab: panel !== null && panel.hasAttribute('data-btw-tab'),
+    noOverlap: rect !== null && crect !== null && crect.right <= rect.left + 1,
+    rightbar: rightbar !== null,
+    rightbarCollapsed: !!document.querySelector('[data-rightbar-collapsed="true"]'),
+    rail: !!document.querySelector('[data-btw-rail]'),
+    markdown: document.querySelectorAll('[data-btw-md]').length,
+    turns: document.querySelectorAll('[data-btw-turn]').length,
     error: err ? err.getAttribute('data-btw-error') : null,
     running: !!document.querySelector('button[aria-label="停止生成"]'),
     bodyLen: document.body ? document.body.innerText.length : 0,
@@ -229,7 +241,7 @@ const main = async () => {
     );
 
     if (initial.toggle !== true) {
-      skip("浮层开关", "按钮未出现，后续断言无意义");
+      skip("抽屉开关", "按钮未出现，后续断言无意义");
     } else {
       // 点开
       await cdp.evaluate(
@@ -237,9 +249,13 @@ const main = async () => {
       );
       await sleep(900);
       const opened = await cdp.evaluate(STATE);
-      check("点开后浮层出现", opened.overlay === true, JSON.stringify(opened));
-      check("浮层是 dialog", opened.overlayRole === "dialog", String(opened.overlayRole));
-      if (opened.error) skip("浮层内容", `读历史失败：${opened.error}`);
+      check(
+        "点「旁问」在原生右侧栏打开 tab",
+        opened.isTab === true && opened.overlay === false && opened.rightbar === true,
+        JSON.stringify(opened),
+      );
+      check("右侧栏 tab 不遮挡主对话", opened.noOverlap === true, JSON.stringify(opened));
+      if (opened.error) skip("tab 内容", `读历史失败：${opened.error}`);
 
       // ---- v0.3：档位选择器 / 徽章 / 追问 / 转正（全部只读）--------------
       const v03 = await cdp.evaluate(`(() => {
@@ -316,20 +332,35 @@ const main = async () => {
         }
       }
 
-      // Esc 关闭
-      for (const type of ["keyDown", "keyUp"]) {
-        await cdp.send("Input.dispatchKeyEvent", {
-          type,
-          key: "Escape",
-          code: "Escape",
-          windowsVirtualKeyCode: 27,
-          nativeVirtualKeyCode: 53,
-        });
-      }
+      // 收起右侧栏 → 再点「旁问」展开（「可以点击展开或者收起来」）
+      await cdp.evaluate(
+        `(() => { const b = document.querySelector('[data-sidebar-right-toggle]'); if (b) b.click(); return true; })()`,
+      );
+      await sleep(700);
+      const collapsed = await cdp.evaluate(STATE);
+      check(
+        "点宿主「收起」收起右侧栏（tab 保留）",
+        collapsed.rightbarCollapsed === true && collapsed.isTab === true,
+        JSON.stringify(collapsed),
+      );
+      await cdp.evaluate(
+        `(() => { document.querySelector('[data-btw-toggle]').click(); return true; })()`,
+      );
+      await sleep(800);
+      const expanded = await cdp.evaluate(STATE);
+      check(
+        "再点「旁问」重新展开右侧栏与 tab",
+        expanded.rightbarCollapsed === false && expanded.isTab === true,
+        JSON.stringify(expanded),
+      );
+
+      // 关闭 tab（只读收尾：不在用户会话里留下打开的面板）
+      await cdp.evaluate(
+        `(() => { const b = document.querySelector('[data-btw-close]'); if (b) b.click(); return true; })()`,
+      );
       await sleep(700);
       const closed = await cdp.evaluate(STATE);
-      check("Esc 后浮层消失", closed.overlay === false, JSON.stringify(closed));
-      check("没有遗留浮层", closed.overlay === false, JSON.stringify(closed));
+      check("点「关闭」关闭 tab", closed.isTab === false, JSON.stringify(closed));
 
       // 兜底：进来时输入框是空的，结束时也必须是空的（可能是被测脚本插入的草稿）。
       if (initialDraft === "") {

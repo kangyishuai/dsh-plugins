@@ -603,3 +603,85 @@ document body because the docked composer contains them**"，而浮层原本就�
 所以没有误伤它；`keepCode` 也保护了代码块内的同类字符。
 
 **这条要记住**：不要改成全局 `replace(/\*\*/g, "")` —— 会毁掉路径、正则和代码。
+
+## 0.4.0：原生右侧栏 + 流式 + Markdown（2026-11-17）
+
+用户提出 5 项体验问题：面板居中遮挡主对话、答案不流式、答案不渲染 Markdown、
+成本徽章的数字/耗时不可读、最新消息在最上面。这版逐条处理，并推翻了 0.1.1 的
+「转正草稿去 Markdown」决定（当时是因为面板不渲染 Markdown，源码落进输入框像乱码；
+现在面板渲染了，转正改为**保留源码**，发送后由 DSH 渲染）。
+
+### 设计取舍
+
+**流式：host 缓冲 + 短轮询，不让 client retain 子会话**
+
+- host 在已有的 `llm/stream` waterfall 旁听器上按 `childSessionId` 截取 `text-delta`，
+  最多留 `LIMITS.liveTextChars`（12k）字符；`btw/live` 返回 `{runs:[{threadId,question,ms,blocks}]}`，
+  面板有 run 时 350ms 轮询、空闲 1s。
+- 为什么不走「client `sessions.retain(childId)` + 订阅 `assistant/live-chunk`」：fork 子会话
+  带着父会话**全部已完成轮次**作为种子，retain 会触发历史打开，把整段父会话拉到浏览器；
+  旁问只需要最后几 KB 的增量，轮询内存快照更省，也不额外制造一个 client session scope。
+- 文本只在内存里，run 结束（`finally`）即删；不落盘，不增加历史记录。
+
+**Markdown：host 解析成 JSON 块树，client 只做元素映射**
+
+- `lib/markdown.js`：标题 / 段落 / 围栏代码（含未闭合的流式态）/ 有序无序列表 / 引用 /
+  表格 / 分隔线；行内代码、粗体、斜体、删除线、链接、裸 URL。不引依赖、不生成 HTML。
+- 为什么放 host：可被 `node --test` 覆盖；client 是 classic script 无法 import。
+  为什么不让 client `require('@deepseek-ai/dsh-client-ui-primitives')`：宿主明确禁止插件加载
+  自己的 Client 包（会随版本变、组件抛错会把 slot entry 打空）。
+- 安全：输出纯 JSON，client 建 React 元素，文本永远是文本节点，无 `innerHTML`。
+
+**位置：DSH 原生右侧栏 tab（首选），浮层抽屉作为旧宿主回退**
+
+- 先按「右侧浮层抽屉」实现并用真实构建截图验证，发现 DSH 对话区是**整宽**的：
+  1920 宽屏下 400px 抽屉仍会盖住主对话右缘约 400px（原型确认环节抓到了这点），
+  于是按用户选择改为原生右侧栏。
+- 注册 `sidebarRightTabs.register({ id, kind:'btw', title, priority:'extension' })` +
+  `sidebar.right.pane.tab` keyed body：点「旁问」调用 `sidebarRight.openTab('btw')`，
+  主对话被挤窄（当前侧栏默认 864px，可拖到 300px）但完全不遮挡。
+- 收起整栏用宿主自己的右上角收起按钮/⌥⌘B（`actions.toggleExpanded`）；点「旁问」时先显式
+  `layout.openRightbar(true,false)` 再 `openTab` —— `openTab` 对**已存在**的 tab 只会
+  focus、不会展开已收起的栏（真机踩到，已写进断言）。tab 自带 × / 面板「关闭」按钮关闭 tab。
+- 不要用 `layout.closeRightbar()` 作为收起：实测它只改 frame 轨道、不更新 dockkit 的 expanded，
+  面板会留在原地盖住已展开的主对话（已改用宿主按钮）。
+- 宿主没有 `sidebarRightTabs` / `sidebarRight` 时自动回退到 `shell.overlay` 浮层抽屉
+  （fixed 右侧、底边按 docked composer 留 140px、可收起成右边缘小条），旧版本 DSH 仍可用。
+- tab 内容限宽 820px 居中（右栏更宽时不至于把表格/代码块拉成一行）。
+
+**排序：`listThreads` 旧→新，线程内全部轮次**
+
+- 面板是聊天式：最新一条在底部，打开/新内容到达时自动滚到底（用户向上翻历史时不抢滚动条）。
+- 每条线程展开全部轮次（首问 + 每次追问），长答案保留 320px 折叠 + 「展开全文」。
+
+**数字：`lib/format.js`**
+
+- token：`999` / `1.2K` / `12.3K` / `123K` / `1.2M` / `3.4B` / `5T`，999.5K 升档成 1M。
+- 耗时：`999ms` / `1.2s` / `12.3s` / `1.5m` / `1.5h`。
+- host 用于命令结果 meta；client 有一份行为等价副本（classic script 无法 import），
+  面板徽章与流式 elapsed 用它。两处都有单测/真机冒烟覆盖。
+
+**转正：保留 Markdown 源码**
+
+- 四节改成 `## 我问了什么` / `## 结论` / …；不再 `stripMarkdown`。
+- 仍受 `LIMITS.promoteChars=1200` 约束；截断点若在代码围栏内，先补闭合，补不下就回退到围栏前，
+  避免输入框里留半段代码。
+
+### 测试与验证
+
+- 单测 **56 项全过**（新增 markdown 解析 8 项、format 2 项、live tracker 4 项，改写 threads/promote 断言）。
+- web 冒烟（`pnpm smoke:btw`，默认模式）：`11 PASS / 3 SKIP / 0 FAIL`；
+  新断言覆盖「原生右侧栏 tab」「不遮挡主对话」「收起整栏（tab 保留）」「再点展开」「关闭 tab」。
+- 真实流式观察（临时 home + ego-browser，tab 内 composer 提问）：
+  `t≈2.2s` 出现 live 卡片与 elapsed；run 结束后线程数 1→2，live 卡片被真实线程替换。
+  截图确认 Markdown 表格/代码块/引用/行内样式、折叠、成本徽章与 tab 布局均正常。
+- 桌面回归（`pnpm smoke:btw-desktop --require`）断言改为「右侧栏 tab / 不遮挡 / 收起展开 / 关闭」；
+  需先把本版本装进 desktop profile 才能跑（发版流程）。
+
+### 已知边界
+
+- **右侧栏宽度是宿主偏好**：当前默认 45% 视口（1920 下 864px），打开时主对话被挤到 776px；
+  用户拖动侧栏分隔条可以变窄（最小 300px），插件无法替用户设置宽度。
+- 浮层抽屉仍是**回退形态**：仍会盖住主对话右缘约 400px，只在宿主没有右侧栏服务时出现。
+- 流式是 350ms 轮询，不是逐 token 推送；首 token 与最后一次轮询之间最多差一个间隔。
+- 表格在窄 tab / 窄抽屉里横向滚动，不做列宽自适应。

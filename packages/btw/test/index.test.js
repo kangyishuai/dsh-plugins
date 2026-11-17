@@ -6,8 +6,10 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { renderBadge, renderScopeInstruction } from "../lib/badge.js";
 import { parseAllowedTools } from "../lib/config.js";
+import { formatDuration, formatTokens } from "../lib/format.js";
 import { appendRecord, lastRecord, listRecent, readRecords } from "../lib/history.js";
 import { clip, LIMITS } from "../lib/limits.js";
+import { inlineText, parseMarkdown, truncateMarkdown } from "../lib/markdown.js";
 import { format, loadMessages, pickLanguage } from "../lib/messages.js";
 import { btwRoot, historyFile, resolveDataRoot } from "../lib/paths.js";
 import {
@@ -29,11 +31,9 @@ import {
   listThreads,
   newThreadId,
   parseCommandArgs,
-  parseRichSegments,
   parseThreadFlag,
   renderPromoteDraft,
   SCOPES,
-  stripMarkdown,
   threadHistory,
   threadOf,
 } from "../lib/threads.js";
@@ -320,7 +320,7 @@ test("threads: parseThreadFlag 解析追问标记，普通问题原样返回", (
   assert.deepEqual(parseThreadFlag(""), { threadId: "", question: "" });
 });
 
-test("threads: listThreads 倒序且带轮数与首问", () => {
+test("threads: listThreads 旧→新且带完整轮次（panel 是聊天式，最新在下面）", () => {
   const records = [
     { id: "a", at: 10, question: "first", answer: "A1" },
     { id: "b", at: 20, threadId: "a", question: "second", answer: "A2" },
@@ -329,11 +329,18 @@ test("threads: listThreads 倒序且带轮数与首问", () => {
   const threads = listThreads(records);
   assert.deepEqual(
     threads.map((t) => t.threadId),
-    ["c", "a"],
+    ["a", "c"],
+    "旧线程在前、新线程在后",
   );
-  assert.equal(threads[1].turns, 2);
-  assert.equal(threads[1].question, "first", "首问");
-  assert.equal(threads[1].answer, "A2", "最后一条答案");
+  assert.equal(threads[0].turns, 2);
+  assert.equal(threads[0].question, "first", "首问");
+  assert.deepEqual(
+    threads[0].items.map((item) => item.question),
+    ["first", "second"],
+    "线程内全部轮次",
+  );
+  assert.equal(threads[0].lastId, "b");
+  assert.ok(Array.isArray(threads[0].items[0].blocks), "每轮带解析好的 Markdown 块");
 });
 
 test("threads: newThreadId 稳定且带前缀", () => {
@@ -352,21 +359,21 @@ test("threads: newThreadId 稳定且带前缀", () => {
   );
 });
 
-test("promote: 草稿是四节模板，只生成文本不发送", () => {
+test("promote: 草稿是四节 Markdown 模板，只生成文本不发送", () => {
   const draft = renderPromoteDraft({ question: "配置文件叫什么？", answer: "config.json" });
-  assert.ok(draft.includes("【我问了什么】"));
+  assert.ok(draft.startsWith("## 我问了什么"), "用 Markdown 标题");
   assert.ok(draft.includes("配置文件叫什么？"));
-  assert.ok(draft.includes("【结论】"));
+  assert.ok(draft.includes("## 结论"));
   assert.ok(draft.includes("config.json"));
-  assert.ok(!draft.includes("【关键细节】"), "没传 details 就不出现该节");
+  assert.ok(!draft.includes("## 关键细节"), "没传 details 就不出现该节");
   const withExtra = renderPromoteDraft(
     { question: "q", answer: "a" },
     { details: "d", unresolved: "u" },
   );
-  assert.ok(withExtra.includes("【关键细节】"));
-  assert.ok(withExtra.includes("【仍未解决】"));
+  assert.ok(withExtra.includes("## 关键细节"));
+  assert.ok(withExtra.includes("## 仍未解决"));
   const en = renderPromoteDraft({ question: "q", answer: "a" }, { lang: "en" });
-  assert.ok(en.includes("【What I asked】"));
+  assert.ok(en.startsWith("## What I asked"));
 });
 
 test("promote: 草稿按上限截断并加省略号", () => {
@@ -378,7 +385,7 @@ test("promote: 草稿按上限截断并加省略号", () => {
 
 test("promote: 空答案也产出可编辑骨架（不抛）", () => {
   const draft = renderPromoteDraft({});
-  assert.ok(draft.includes("【结论】"));
+  assert.ok(draft.includes("## 结论"));
   assert.ok(draft.includes("—"), "空值用破折号占位");
 });
 
@@ -451,27 +458,25 @@ test("prompts: 只有传了范围才把范围指令写进提示词", async () =>
   assert.ok(scoped.includes("advisory only"), "必须写成建议，不能声称裁剪上下文");
 });
 
-test("promote: 草稿是纯文本，不含 Markdown 标记（实测用户看不懂井号和星号）", () => {
+test("promote: 草稿保留 Markdown 源码（输入框里是原文，发送后由 DSH 渲染）", () => {
   const draft = renderPromoteDraft({
     question: "CI 跑什么？",
     answer: "**8 个检查**\n\n| 名 | 说明 |\n|---|---|\n| `verify` | 主链 |\n\n- 列表项",
   });
-  assert.ok(!draft.includes("**"), "不该出现粗体星号");
-  assert.ok(!draft.includes("##"), "不该出现标题井号");
-  assert.ok(!draft.includes("|---"), "不该出现表格分隔线");
-  assert.ok(!draft.includes("`"), "不该出现行内代码反引号");
-  assert.ok(draft.includes("8 个检查"), "内容保留");
-  assert.ok(draft.includes("verify — 主链"), "表格行转成破折号分隔");
+  assert.ok(draft.includes("**8 个检查**"), "粗体源码保留");
+  assert.ok(draft.includes("| 名 | 说明 |"), "表格源码保留");
+  assert.ok(draft.includes("|---|"), "表格分隔线保留");
+  assert.ok(draft.includes("`verify`"), "行内代码保留");
+  assert.ok(draft.includes("- 列表项"), "列表符号保留");
+  assert.ok(draft.startsWith("## 我问了什么"), "四节标题仍是 Markdown");
 });
 
-test("stripMarkdown: 逐条规则", () => {
-  assert.equal(stripMarkdown("## 标题"), "标题");
-  assert.equal(stripMarkdown("**粗**"), "粗");
-  assert.equal(stripMarkdown("`code`"), "code");
-  assert.equal(stripMarkdown("- a\n- b"), "· a\n· b");
-  assert.equal(stripMarkdown("| a | b |"), "a — b");
-  assert.equal(stripMarkdown("|---|---|"), "");
-  assert.equal(stripMarkdown(""), "");
+test("promote: 截断不会把代码围栏留在打开状态", () => {
+  const answer = `开头\n\n\`\`\`js\n${"const a = 1;\n".repeat(200)}\`\`\``;
+  const draft = renderPromoteDraft({ question: "q", answer }, { maxChars: 300 });
+  assert.ok(draft.length <= 300, `长度 ${draft.length} 应 <= 300`);
+  const fences = (draft.match(/```/gu) ?? []).length;
+  assert.equal(fences % 2, 0, "围栏必须成对（补闭或回退）");
 });
 
 test("promote: 草稿长度受 promoteChars 约束（实测 4000 字撑爆输入框）", () => {
@@ -486,80 +491,115 @@ test("promote: 草稿长度受 promoteChars 约束（实测 4000 字撑爆输入
   assert.equal(LIMITS.promoteChars, 1200, "默认上限收到 1200");
 });
 
-test("stripMarkdown: keepCode 默认保留代码块内容（缩进与标记都不动）", () => {
-  const text = "说明：\n\n```md\n**这是文档语法**\n| 表 | 格 |\n```";
-  const kept = stripMarkdown(text);
-  assert.ok(kept.includes("**这是文档语法**"), "代码块内的粗体标记应保留");
-  assert.ok(kept.includes("| 表 | 格 |"), "代码块内的表格竖线应保留");
-  const stripped = stripMarkdown(text, { keepCode: false });
-  assert.ok(!stripped.includes("**"), "keepCode:false 时代码块内也被清理");
+// --- Markdown 渲染树（v0.4）------------------------------------------------
+
+test("markdown: 标题/段落/粗体/行内代码/链接", () => {
+  const { blocks } = parseMarkdown("# 标题\n\n正文 **粗体** 和 `code`，见 https://x.dev/path。");
+  assert.equal(blocks[0].type, "heading");
+  assert.equal(blocks[0].level, 1);
+  assert.equal(inlineText(blocks[0].inlines), "标题");
+  assert.equal(blocks[1].type, "paragraph");
+  assert.ok(inlineText(blocks[1].inlines).includes("正文 粗体 和 code"));
+  const link = blocks[1].inlines.find((/** @type {any} */ run) => run.type === "link");
+  assert.equal(link?.href, "https://x.dev/path", "裸 URL 变链接且句号被剥掉");
 });
 
-test("stripMarkdown: 代码块外的标记仍会被清理", () => {
-  const out = stripMarkdown("**重点**\n\n```js\nconst a = 1;\n```");
-  assert.ok(out.startsWith("重点"), "块外粗体被清");
-  assert.ok(out.includes("const a = 1;"), "代码内容保留");
-});
-
-test("listThreads: answerPlain 是清理后的展示文本，answer 保留原文", () => {
-  const threads = listThreads([
-    { id: "a", at: 1, question: "q", answer: "**粗体**\n\n| a | b |\n|---|---|\n| 1 | 2 |" },
-  ]);
-  assert.ok(threads[0].answer.includes("**"), "answer 保留原始 Markdown");
-  assert.ok(!threads[0].answerPlain.includes("**"), "answerPlain 去掉粗体标记");
-  assert.ok(threads[0].answerPlain.includes("1 — 2"), "表格转成破折号");
-});
-
-test("stripMarkdown: keepFence 保留围栏标记，供 client 识别代码块", () => {
-  const text = "说明\n\n```js\nconst a = 1;\n```\n\n结束";
-  assert.ok(!stripMarkdown(text).includes("```"), "默认不保留围栏");
-  const fenced = stripMarkdown(text, { keepFence: true });
-  assert.ok(fenced.includes("```js"), "keepFence 保留语言标记");
-  assert.ok(fenced.includes("const a = 1;"), "代码内容保留");
-});
-
-test("parseRichSegments: 切出代码块与链接，普通文本原样", () => {
-  const segs = parseRichSegments("看 https://x.dev 这个\n\n```js\nconst a = 1;\n```\n\n结束");
+test("markdown: 围栏代码块与未闭合的流式态", () => {
+  const closed = parseMarkdown("说明\n\n```js\nconst a = 1;\n```\n\n结束").blocks;
   assert.deepEqual(
-    segs.map((s) => s.kind),
-    ["text", "link", "text", "code", "text"],
+    closed.map((block) => block.type),
+    ["paragraph", "code", "paragraph"],
   );
-  const link = segs.find((s) => s.kind === "link");
-  assert.ok(link !== undefined, "应有链接段");
-  assert.equal(link?.href, "https://x.dev");
-  const code = segs.find((s) => s.kind === "code");
-  assert.ok(code !== undefined, "应有代码段");
-  assert.equal(code?.text, "const a = 1;");
-  assert.equal(code?.lang, "js");
+  assert.equal(closed[1].lang, "js");
+  assert.equal(closed[1].code, "const a = 1;");
+  assert.equal(closed[1].streaming, false);
+
+  const streaming = parseMarkdown("```ts\nconst b = 2;").blocks;
+  assert.equal(streaming[0].type, "code");
+  assert.equal(streaming[0].streaming, true, "没闭合就是流式态");
+  assert.equal(streaming[0].code, "const b = 2;");
 });
 
-test("parseRichSegments: URL 末尾的标点不算链接", () => {
-  const segs = parseRichSegments("见 https://a.dev/x。还有 https://b.dev，完");
-  const links = segs.filter((s) => s.kind === "link");
-  assert.deepEqual(
-    links.map((l) => l.href),
-    ["https://a.dev/x", "https://b.dev"],
-  );
+test("markdown: 列表/引用/表格/分隔线", () => {
+  const blocks = parseMarkdown(
+    "- 一\n- 二\n\n> 引用 **粗**\n\n| 名 | 值 |\n|:---|---:|\n| a | 1 |\n\n---",
+  ).blocks;
+  assert.equal(blocks[0].type, "list");
+  assert.equal(blocks[0].ordered, false);
+  assert.equal(blocks[0].items.length, 2);
+  assert.equal(blocks[1].type, "quote");
+  assert.equal(blocks[2].type, "table");
+  assert.deepEqual(blocks[2].align, ["left", "right"]);
+  assert.equal(blocks[2].rows.length, 1);
+  assert.equal(blocks[3].type, "hr");
 });
 
-test("parseRichSegments: 无围栏无链接时退化为单段文本", () => {
-  assert.deepEqual(parseRichSegments("纯文本"), [{ kind: "text", text: "纯文本" }]);
-  assert.deepEqual(parseRichSegments(""), [{ kind: "text", text: "" }]);
+test("markdown: 有序列表保留起始号，表格内行内代码可渲染", () => {
+  const blocks = parseMarkdown(
+    "3. 第三\n4. 第四\n\n| 检查 | 说明 |\n|---|---|\n| `verify` | 主链 |",
+  ).blocks;
+  assert.equal(blocks[0].type, "list");
+  assert.equal(blocks[0].ordered, true);
+  assert.equal(blocks[0].start, 3);
+  const cell = blocks[1].rows[0][0];
+  assert.equal(cell[0].type, "code");
+  assert.equal(cell[0].text, "verify");
 });
 
-test("listThreads: answerSegments 与 answerPlain 一致可渲染", () => {
-  const threads = listThreads([
-    { id: "a", at: 1, question: "q", answer: "**看** https://x.dev\n\n```js\nconst a = 1;\n```" },
-  ]);
-  const segs = threads[0].answerSegments;
-  assert.ok(Array.isArray(segs) && segs.length > 0);
-  assert.ok(!JSON.stringify(threads[0].answerPlain).includes("**"), "answerPlain 无粗体标记");
-  assert.ok(
-    segs.some((s) => s.kind === "code"),
-    "含代码块段",
-  );
-  assert.ok(
-    segs.some((s) => s.kind === "link"),
-    "含链接段",
-  );
+test("markdown: 不支持 HTML，尖括号按文本处理", () => {
+  const blocks = parseMarkdown("<img src=x onerror=alert(1)>").blocks;
+  assert.equal(blocks[0].type, "paragraph");
+  assert.ok(inlineText(blocks[0].inlines).includes("<img"));
+});
+
+test("markdown: 转义与下划线标识符不被拆坏", () => {
+  const blocks = parseMarkdown("file_name 和 \\*literal\\*").blocks;
+  const text = inlineText(blocks[0].inlines);
+  assert.ok(text.includes("file_name"));
+  assert.ok(text.includes("*literal*"));
+});
+
+test("markdown: 空输入与纯空白不抛", () => {
+  assert.deepEqual(parseMarkdown("").blocks, []);
+  assert.deepEqual(parseMarkdown("   \n\n").blocks, []);
+  assert.deepEqual(inlineText([]), "");
+});
+
+test("markdown: truncateMarkdown 在预算内截断且围栏成对", () => {
+  const text = `开头\n\n\`\`\`js\n${"x\n".repeat(100)}\`\`\``;
+  const cut = truncateMarkdown(text, 60);
+  assert.ok(cut.length <= 60, `长度 ${cut.length}`);
+  assert.equal((cut.match(/```/gu) ?? []).length % 2, 0);
+  assert.equal(truncateMarkdown("short", 10), "short");
+});
+
+// --- 自适应数字/时长（v0.4）------------------------------------------------
+
+test("formatTokens: K/M/B/T 自适应，边界不出现 1000K", () => {
+  assert.equal(formatTokens(0), "0");
+  assert.equal(formatTokens(999), "999");
+  assert.equal(formatTokens(1000), "1K");
+  assert.equal(formatTokens(1234), "1.2K");
+  assert.equal(formatTokens(12345), "12.3K");
+  assert.equal(formatTokens(123456), "123K");
+  assert.equal(formatTokens(999999), "1M", "999.999K 升档成 1M");
+  assert.equal(formatTokens(1234567), "1.2M");
+  assert.equal(formatTokens(3.4e9), "3.4B");
+  assert.equal(formatTokens(5e12), "5T");
+  assert.equal(formatTokens(-5), "0");
+  assert.equal(formatTokens(undefined), "0");
+  assert.equal(formatTokens("abc"), "0");
+});
+
+test("formatDuration: ms/s/m/h 自适应", () => {
+  assert.equal(formatDuration(0), "0ms");
+  assert.equal(formatDuration(999), "999ms");
+  assert.equal(formatDuration(1000), "1s");
+  assert.equal(formatDuration(1234), "1.2s");
+  assert.equal(formatDuration(12_345), "12.3s");
+  assert.equal(formatDuration(59_900), "59.9s");
+  assert.equal(formatDuration(60_000), "1m");
+  assert.equal(formatDuration(90_000), "1.5m");
+  assert.equal(formatDuration(5_400_000), "1.5h");
+  assert.equal(formatDuration(-1000), "0ms");
 });
