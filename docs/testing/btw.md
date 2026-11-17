@@ -708,12 +708,20 @@ document body because the docked composer contains them**"，而浮层原本就�
 
 验证：
 
-- 单测 **57 项全过**（新增 paths/echoAnswer/线程转正断言，locale 中英齐平）。
+- 单测 **58 项全过**（新增 paths/echoAnswer/线程转正/`buildSettingsPatch` 漏字段回归断言，locale 中英齐平）。
 - web 冒烟默认：**14 PASS / 3 SKIP / 0 FAIL**（新增宽度提示、Esc 关闭）。
 - web 冒烟 `--deep`：**21 PASS / 3 SKIP / 0 FAIL**（新增：面板重开有线程且徽章有条目、追问只留一个输入框、
   转正草稿含 Markdown + 线程首问、面板提交后徽章立即 1→2、聚焦面板 Esc 关闭）。
-- 桌面回归新增断言：追问时只留一个输入框且按钮叫「追问」、转正草稿保留 `##` 源码、Esc 关闭、
-  Esc 后可再打开、设置首屏有「主对话显示完整答案」开关。装 dev build 重启后复验。
+- 桌面回归（dev build 装进真实 desktop profile、可见会话有 3 条旁问记录）：
+  **24 PASS / 0 SKIP / 0 FAIL**；新增断言：追问时只留一个输入框且按钮叫「追问」、转正草稿保留 `##` 源码、
+  Esc 关闭且可重开、设置首屏有「主对话显示完整答案」开关。
+- echo 开关真机手测：关闭并保存后从面板提问，主对话命令结果只回一行提示、完整答案在面板；
+  重新打开并保存后恢复完整答案（设置文件 `echoAnswer` 与复选框一致）。
+- `pnpm gate btw`：**PASS，4 步 40s**（verify → probe:runtime → web 冒烟 → 桌面回归）。
+
+> 已知既有问题（本次未改）：host 侧文案加载没有把 locale 的 `answer`/`error` 嵌套展平，
+> `/btw` 的命令结果实际一直用英文 FALLBACK；本次新增的 `panelOnly` 同样走 FALLBACK。
+> 面板 client 文案不受影响。
 
 ### 已知边界
 
