@@ -47,7 +47,7 @@ Restart the DSH desktop app afterwards.
 
 ## Side effects & risks
 
-- **Writes metadata** under `$DSH_HOME/projects/projects.json` (or `config.dataRoot` when set). Atomic replace via a temp file; a corrupt file is renamed aside and never deleted.
+- **Writes metadata** under `$DSH_HOME/projects/projects.json` (or `config.dataRoot` when set; a desktop app that does not export `DSH_HOME` falls back to `~/.dsh/projects`). Atomic replace via a temp file; a corrupt file is renamed aside and never deleted.
 - **Creates Git worktrees** next to your repository (never inside it and never inside `.git/`) when you create a thread for a project that has a Git directory. Archiving the thread removes the worktree again **only** when it is clean, has no unpushed commits, and is not the current session's directory; otherwise it is kept and reported.
 - **Runs `git`** through `node:child_process` for worktree create/remove and the cleanliness checks. No network, no credentials.
 - **Never touches session logs.** Detaching or archiving a project leaves every `session.v*.jsonl.zstd` untouched.

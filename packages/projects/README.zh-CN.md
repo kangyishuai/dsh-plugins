@@ -47,7 +47,7 @@ dsh plugin --profile desktop add @kangyishuai/dsh-projects
 
 ## 副作用与风险
 
-- **写元数据**到 `$DSH_HOME/projects/projects.json`（配置了 `config.dataRoot` 时写到那里）。用临时文件原子替换；文件损坏时**改名隔离**，绝不删除。
+- **写元数据**到 `$DSH_HOME/projects/projects.json`（配置了 `config.dataRoot` 时写到那里；桌面版不导出 `DSH_HOME` 时回落到 `~/.dsh/projects`）。用临时文件原子替换；文件损坏时**改名隔离**，绝不删除。
 - **会创建 Git worktree**（在仓库同级、绝不进仓库或 `.git/` 内）。归档线程时**只有**同时满足"干净、无未推送提交、不是当前会话目录"才会删除它，否则保留并报告。
 - **会调用 `git`**（`node:child_process`）做 worktree 创建/删除与干净度检查。不走网络、不读凭据。
 - **不碰会话日志。** 解绑或归档项目不会改动任何 `session.v*.jsonl.zstd`。
