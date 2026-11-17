@@ -170,3 +170,35 @@ export function listThreads(records) {
     }))
     .sort((a, b) => b.at - a.at);
 }
+
+/** 范围档位（枚举，避免自由文本带来的歧义）。 */
+export const SCOPES = ["session", "recent", "selection"];
+
+/**
+ * 解析命令参数里的全部标记：`--thread <id>` 与 `--scope <档位>`。
+ * 两者都只吃一个 token，剩下的整段是问题（问题里可以有空格）。
+ * @param {string} raw
+ * @returns {{ threadId: string, scope: string, question: string }}
+ */
+export function parseCommandArgs(raw) {
+  let rest = String(raw ?? "").trim();
+  let threadId = "";
+  let scope = "";
+  for (;;) {
+    const threadMatch = /^--thread\s+(\S+)\s*/.exec(rest);
+    if (threadMatch !== null && threadId === "") {
+      threadId = threadMatch[1];
+      rest = rest.slice(threadMatch[0].length);
+      continue;
+    }
+    const scopeMatch = /^--scope\s+(\S+)\s*/.exec(rest);
+    if (scopeMatch !== null && scope === "") {
+      const candidate = scopeMatch[1].toLowerCase();
+      if (SCOPES.includes(candidate)) scope = candidate;
+      rest = rest.slice(scopeMatch[0].length);
+      continue;
+    }
+    break;
+  }
+  return { threadId, scope, question: rest.trim() };
+}

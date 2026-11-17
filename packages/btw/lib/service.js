@@ -14,7 +14,7 @@ import { observeUsage, runSideQuestion } from "./subagent.js";
 import {
   listThreads,
   newThreadId,
-  parseThreadFlag,
+  parseCommandArgs,
   renderPromoteDraft,
   threadHistory,
 } from "./threads.js";
@@ -51,6 +51,7 @@ const FALLBACK = {
   timeout: "The side question timed out before it answered.",
   cancelled: "The side question was cancelled.",
   tooLong: "That question is too long ({length} characters, limit {max}).",
+  threadFull: "This side-question thread is full ({max} turns). Start a new one.",
   meta: "btw · new {newTokens} tokens · cached {cachedTokens} · {ms}ms",
   reopen: "Last side question: {question}",
 };
@@ -129,8 +130,9 @@ export class BtwService extends TypertRemoteService {
     const agent = invocation?.agent;
     const file = historyFile(this.dataRoot, agent?.id ?? "");
     // 追问用 `/btw --thread <id> <问题>` 标记线程（见 threads.js 的 parseThreadFlag 说明）。
-    const parsed = parseThreadFlag(String(invocation?.rawInput ?? ""));
+    const parsed = parseCommandArgs(String(invocation?.rawInput ?? ""));
     const threadId = parsed.threadId;
+    const scope = parsed.scope;
     const question = clip(parsed.question, LIMITS.questionChars);
 
     if (question.text === "") {
@@ -154,12 +156,21 @@ export class BtwService extends TypertRemoteService {
     const sessionHistory = await listRecent(file, LIMITS.replayRecords).catch(() => []);
     // 追问：把同线程的问答回放给模型（每轮重新 fork，靠上下文重建多轮语义）。
     const priorThread = threadId === "" ? [] : threadHistory(sessionHistory, threadId);
+    if (threadId !== "" && priorThread.length >= LIMITS.threadTurns) {
+      return {
+        kind: "error",
+        text: format(this.messages.threadFull ?? FALLBACK.threadFull, {
+          max: LIMITS.threadTurns,
+        }),
+      };
+    }
     const history = [...sessionHistory, ...priorThread].slice(-LIMITS.replayRecords);
     const outcome = await runSideQuestion({
       ctx: this.scoped,
       workspaceRegistry: this.scoped?.workspaceRegistry,
       agent,
       question: question.text,
+      scope,
       history,
       allowedTools,
       signal: invocation?.signal,

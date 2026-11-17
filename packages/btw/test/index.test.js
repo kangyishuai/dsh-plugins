@@ -28,8 +28,10 @@ import {
   groupThreads,
   listThreads,
   newThreadId,
+  parseCommandArgs,
   parseThreadFlag,
   renderPromoteDraft,
+  SCOPES,
   threadHistory,
   threadOf,
 } from "../lib/threads.js";
@@ -391,4 +393,38 @@ test("badge: 范围指令是建议性的，要说明可看到全部", () => {
   assert.ok(text.includes("最近 2 轮"));
   assert.equal(renderScopeInstruction(""), "");
   assert.equal(renderScopeInstruction("   "), "");
+});
+
+// --- 范围档位与轮数上限（v0.3 第 4 步收尾）--------------------------------
+
+test("scope: parseCommandArgs 解析 --thread / --scope，问题可取整段", () => {
+  assert.deepEqual(parseCommandArgs("--thread t_1 --scope recent 它在哪个目录"), {
+    threadId: "t_1",
+    scope: "recent",
+    question: "它在哪个目录",
+  });
+  assert.deepEqual(parseCommandArgs("--scope selection 只看这一段"), {
+    threadId: "",
+    scope: "selection",
+    question: "只看这一段",
+  });
+  assert.deepEqual(parseCommandArgs("普通问题"), {
+    threadId: "",
+    scope: "",
+    question: "普通问题",
+  });
+  assert.deepEqual(parseCommandArgs("--scope bogus 问题").scope, "", "非法档位被丢弃");
+  assert.equal(parseCommandArgs("").question, "");
+});
+
+test("scope: SCOPES 是封闭枚举", () => {
+  assert.deepEqual(SCOPES, ["session", "recent", "selection"]);
+});
+
+test("prompts: 只有传了范围才把范围指令写进提示词", async () => {
+  const plain = JSON.stringify(buildSideQuestionPrompt("q", []));
+  assert.ok(!plain.includes("Scope requested"), "没范围就不该出现指令");
+  const scoped = JSON.stringify(buildSideQuestionPrompt("q", [], "recent"));
+  assert.ok(scoped.includes("Scope requested"), "有范围才出现");
+  assert.ok(scoped.includes("advisory only"), "必须写成建议，不能声称裁剪上下文");
 });

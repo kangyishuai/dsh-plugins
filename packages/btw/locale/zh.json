@@ -23,5 +23,6 @@
       "cancelled": "旁问已取消。",
       "tooLong": "问题太长（{length} 字符，上限 {max}）。"
     }
-  }
+  },
+  "threadFull": "这个旁问线程已满（{max} 轮），请开新线程。"
 }

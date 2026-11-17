@@ -218,3 +218,20 @@ BADGE {"badge":"基于 1 条旁问记录 · 模型可见完整会话，范围只
 
 单测锁死了这条：`renderBadge` 的用例断言文案必须包含「模型可见完整会话」，
 `renderScopeInstruction` 必须包含 `advisory only` 与 `you can see the whole session`。
+
+### 范围档位与线程上限（v0.3 第 4 步收尾）
+
+档位选择器真机验证：
+
+```
+S1 {"hasScope":true,
+    "options":[":范围：不限","session:范围：整个会话","recent:范围：最近几轮","selection:范围：仅选中片段"],
+    "badge":"基于 1 条旁问记录 · 模型可见完整会话，范围只约束回答"}
+S2 {"value":"recent",
+    "badge":"… · 已要求只看：最近几轮"}      ← 徽章用人类可读标签，不是枚举原值
+```
+
+- 档位是**封闭枚举**（`session` / `recent` / `selection`），非法值丢弃
+- 提交时拼成 `/btw --scope <档位> <问题>`，host 用 `parseCommandArgs` 解析
+- 范围只写进提示词的 `renderScopeInstruction`（含 `advisory only`），**不裁剪上下文**
+- 单线程满 `LIMITS.threadTurns`（10）轮时返回 `threadFull` 提示，要求开新线程

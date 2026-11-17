@@ -79,6 +79,7 @@ export function makeReadOnlyGuard(allowedTools) {
  *   allowedTools?: Set<string>,
  *   signal?: AbortSignal,
  *   usageBySession: Map<string, Usage>,
+ *   scope?: string,
  *   workspaceRegistry?: any,
  *   now?: () => number,
  * }} input
@@ -114,7 +115,7 @@ export async function runSideQuestion(input) {
     activation = await subagents.startActivation({
       provider: "fork",
       label: `btw: ${clip(question, 40).text}`,
-      prompt: buildSideQuestionPrompt(question, history),
+      prompt: buildSideQuestionPrompt(question, history, String(input.scope ?? "")),
       parent: agent,
       signal: controller.signal,
       delivery: "caller",

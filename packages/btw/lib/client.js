@@ -49,6 +49,10 @@ window.__ModuleLoader__.load({
       promoted: "已插入输入框草稿（未发送）",
       promoteBlocked: "输入框已有内容，先清空再转正",
       promoteFailed: "生成转正草稿失败",
+      scopeAny: "范围：不限",
+      scopeSession: "范围：整个会话",
+      scopeRecent: "范围：最近几轮",
+      scopeSelection: "范围：仅选中片段",
       sendFailed: "提交失败（输入框不可用）",
       "settings.nav": "旁问",
       "settings.title": "旁问（只读）",
@@ -80,6 +84,10 @@ window.__ModuleLoader__.load({
       promoted: "Inserted into the composer as a draft (not sent)",
       promoteBlocked: "Composer already has content; clear it before promoting",
       promoteFailed: "Could not create the promotion draft",
+      scopeAny: "Scope: any",
+      scopeSession: "Scope: whole session",
+      scopeRecent: "Scope: recent turns",
+      scopeSelection: "Scope: selection only",
       sendFailed: "Could not submit (composer unavailable)",
       "settings.nav": "Side questions",
       "settings.title": "Side questions (read-only)",
@@ -299,6 +307,7 @@ window.__ModuleLoader__.load({
         const [busy, setBusy] = React.useState(false);
         const [notice, setNotice] = React.useState("");
         const [badge, setBadge] = React.useState("");
+        const [scope, setScope] = React.useState("");
         const aliveRef = React.useRef(true);
 
         React.useEffect(
@@ -326,11 +335,21 @@ window.__ModuleLoader__.load({
 
         React.useEffect(() => {
           if (!open) return undefined;
-          callRemote("stats", { sessionId, lang: langOf() }).then((value) => {
+          const scopeLabel =
+            scope === ""
+              ? ""
+              : t(
+                  scope === "session"
+                    ? "scopeSession"
+                    : scope === "recent"
+                      ? "scopeRecent"
+                      : "scopeSelection",
+                ).replace(/^范围：|^Scope:\s*/i, "");
+          callRemote("stats", { sessionId, scope: scopeLabel, lang: langOf() }).then((value) => {
             if (!aliveRef.current) return;
             if (value && typeof value.badge === "string") setBadge(value.badge);
           });
-        }, [open, sessionId]);
+        }, [open, sessionId, scope]);
 
         React.useEffect(() => {
           if (!open) return undefined;
@@ -349,7 +368,13 @@ window.__ModuleLoader__.load({
           setBusy(true);
           setNotice("");
           const before = Array.isArray(threads) ? threads.length : 0;
-          const line = threadId === "" ? `/btw ${text}` : `/btw --thread ${threadId} ${text}`;
+          const flags = [
+            threadId === "" ? "" : `--thread ${threadId}`,
+            scope === "" ? "" : `--scope ${scope}`,
+          ]
+            .filter(Boolean)
+            .join(" ");
+          const line = flags === "" ? `/btw ${text}` : `/btw ${flags} ${text}`;
           const result = await sendText(sessionId, line);
           if (result !== "ok") {
             setBusy(false);
@@ -594,6 +619,24 @@ window.__ModuleLoader__.load({
                   onClick: () => void submit(""),
                 },
                 t("send"),
+              ),
+            ),
+            h(
+              "div",
+              { className: "dsh-btw-row" },
+              h(
+                "select",
+                {
+                  className: "dsh-btw-input",
+                  "data-btw-scope": "true",
+                  value: scope,
+                  onChange: (/** @type {any} */ event) =>
+                    setScope(String(event?.target?.value ?? "")),
+                },
+                h("option", { value: "" }, t("scopeAny")),
+                h("option", { value: "session" }, t("scopeSession")),
+                h("option", { value: "recent" }, t("scopeRecent")),
+                h("option", { value: "selection" }, t("scopeSelection")),
               ),
             ),
             badge === ""
