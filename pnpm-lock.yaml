@@ -38,6 +38,8 @@ importers:
 
   packages/advisor: {}
 
+  packages/artifacts: {}
+
   packages/btw: {}
 
   packages/next-step: {}

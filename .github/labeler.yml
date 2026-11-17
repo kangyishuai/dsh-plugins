@@ -48,3 +48,7 @@ documentation:
 "plugin:btw":
   - changed-files:
       - any-glob-to-any-file: "packages/btw/**"
+
+"plugin:artifacts":
+  - changed-files:
+      - any-glob-to-any-file: "packages/artifacts/**"
