@@ -204,3 +204,17 @@ T3 {"before":0,
 浮层里点「追问」后提交的是 `/btw --thread <threadId> <问题>`，由 `parseThreadFlag` 解析。
 之所以用命令行标记而不是 Remote：浮层发问必须走 composer（真实 Agent 只能在命令上下文取，
 见 ADR 0016），线程 id 只能随这行文本一起传进来。host 侧再按线程回放历史给模型。
+
+### 上下文徽章（v0.3 第 4 步）
+
+```
+BADGE {"badge":"基于 1 条旁问记录 · 模型可见完整会话，范围只约束回答",
+       "hasBadge":true,"threads":1}
+```
+
+**为什么必须这样写**：fork 子代理继承父会话**全部已完成轮次**，第三方插件无法只继承一部分
+（`ctx.llm` 拿不到 adapter，见 ADR 0016）。所以「上下文范围」只能在提示词里声明，
+徽章必须如实告诉用户「模型看得到全部，范围只约束回答」——**不能**声称限制了上下文。
+
+单测锁死了这条：`renderBadge` 的用例断言文案必须包含「模型可见完整会话」，
+`renderScopeInstruction` 必须包含 `advisory only` 与 `you can see the whole session`。

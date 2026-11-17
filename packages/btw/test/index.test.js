@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { renderBadge, renderScopeInstruction } from "../lib/badge.js";
 import { parseAllowedTools } from "../lib/config.js";
 import { appendRecord, lastRecord, listRecent, readRecords } from "../lib/history.js";
 import { clip, LIMITS } from "../lib/limits.js";
@@ -361,4 +362,33 @@ test("promote: extractDetails 只挑列表项与代码围栏", () => {
   const details = extractDetails("- 一\n普通句子\n- 二\n```js\ncode\n```", 3);
   assert.deepEqual(details, ["- 一", "- 二", "```js"]);
   assert.deepEqual(extractDetails("", 3), []);
+});
+
+// --- badge（v0.3 上下文徽章）-----------------------------------------------
+
+test("badge: 必须如实写明模型可见完整会话，不能假装限制了上下文", () => {
+  const zh = renderBadge({ records: 3 });
+  assert.ok(zh.includes("基于 3 条旁问记录"));
+  assert.ok(zh.includes("模型可见完整会话"), "诚实原则：必须写明这点");
+  assert.ok(zh.includes("范围只约束回答"));
+  const en = renderBadge({ records: 1, lang: "en" });
+  assert.ok(en.includes("Based on 1 side-question record"));
+  assert.ok(en.includes("can see the whole conversation"));
+});
+
+test("badge: 空记录、范围附加、非法输入都不抛", () => {
+  assert.ok(renderBadge({ records: 0 }).includes("还没有旁问"));
+  const scoped = renderBadge({ records: 3, scope: "最近 2 轮" });
+  assert.ok(scoped.includes("已要求只看：最近 2 轮"));
+  assert.ok(renderBadge().includes("还没有旁问"), "无参数也不抛");
+  assert.ok(renderBadge({ records: -5 }).includes("还没有旁问"), "负数夹到 0");
+});
+
+test("badge: 范围指令是建议性的，要说明可看到全部", () => {
+  const text = renderScopeInstruction("最近 2 轮");
+  assert.ok(text.includes("advisory only"));
+  assert.ok(text.includes("you can see the whole session"));
+  assert.ok(text.includes("最近 2 轮"));
+  assert.equal(renderScopeInstruction(""), "");
+  assert.equal(renderScopeInstruction("   "), "");
 });

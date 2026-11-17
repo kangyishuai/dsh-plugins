@@ -298,6 +298,7 @@ window.__ModuleLoader__.load({
         const [question, setQuestion] = React.useState("");
         const [busy, setBusy] = React.useState(false);
         const [notice, setNotice] = React.useState("");
+        const [badge, setBadge] = React.useState("");
         const aliveRef = React.useRef(true);
 
         React.useEffect(
@@ -322,6 +323,14 @@ window.__ModuleLoader__.load({
             }),
           [sessionId],
         );
+
+        React.useEffect(() => {
+          if (!open) return undefined;
+          callRemote("stats", { sessionId, lang: langOf() }).then((value) => {
+            if (!aliveRef.current) return;
+            if (value && typeof value.badge === "string") setBadge(value.badge);
+          });
+        }, [open, sessionId]);
 
         React.useEffect(() => {
           if (!open) return undefined;
@@ -587,6 +596,9 @@ window.__ModuleLoader__.load({
                 t("send"),
               ),
             ),
+            badge === ""
+              ? null
+              : h("div", { className: "dsh-btw-meta", "data-btw-badge": "true" }, badge),
             notice === ""
               ? null
               : h("div", { className: "dsh-btw-dim", "data-btw-notice": "true" }, notice),

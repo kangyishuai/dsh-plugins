@@ -3,6 +3,7 @@
 // 依据 packages/next-step/lib/service.js 的既有形态（约定 §2：Remote 方法必须声明在
 // 被导出的类本人原型上，否则 /api/btw/* 会 404；运行时无装饰器语法，用 declareRemote 命令式登记）。
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
+import { renderBadge } from "./badge.js";
 import { parseAllowedTools } from "./config.js";
 import { appendRecord, lastRecord, listRecent } from "./history.js";
 import { clip, LIMITS } from "./limits.js";
@@ -212,6 +213,27 @@ export class BtwService extends TypertRemoteService {
   }
 
   /**
+   * 徽章数据（浮层底部展示用）：记录条数与范围说明。
+   * @param {{ sessionId?: string, scope?: string, lang?: string } | undefined} request
+   * @returns {Promise<{ records: number, badge: string }>}
+   */
+  async stats(request) {
+    const input = request ?? {};
+    const records = await listRecent(
+      historyFile(this.dataRoot, String(input.sessionId ?? "")),
+      LIMITS.perSessionRecords,
+    );
+    return {
+      records: records.length,
+      badge: renderBadge({
+        records: records.length,
+        scope: String(input.scope ?? ""),
+        lang: String(input.lang ?? ""),
+      }),
+    };
+  }
+
+  /**
    * 线程列表（浮层展示用）。参数必须是单一标识符（网关 SRC 校验）。
    * @param {{ sessionId?: string, limit?: number } | undefined} request
    * @returns {Promise<any[]>}
@@ -325,6 +347,7 @@ export class BtwService extends TypertRemoteService {
 
 declareRemote(BtwService, "history");
 declareRemote(BtwService, "last");
+declareRemote(BtwService, "stats");
 declareRemote(BtwService, "threads");
 declareRemote(BtwService, "promote");
 declareRemote(BtwService, "settings");
