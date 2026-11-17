@@ -235,3 +235,29 @@ S2 {"value":"recent",
 - 提交时拼成 `/btw --scope <档位> <问题>`，host 用 `parseCommandArgs` 解析
 - 范围只写进提示词的 `renderScopeInstruction`（含 `advisory only`），**不裁剪上下文**
 - 单线程满 `LIMITS.threadTurns`（10）轮时返回 `threadFull` 提示，要求开新线程
+
+### 桌面回归覆盖 v0.3（设计第 5 步）
+
+`pnpm smoke:btw-desktop --require` 新增断言（**全部只读**）：
+
+| 断言                         | 说明                                                          |
+| ---------------------------- | ------------------------------------------------------------- |
+| 档位选择器存在且有 4 个档位  | `[data-btw-scope]` 的 `options.length === 4`                  |
+| 徽章如实写明模型可见完整会话 | 正则匹配「完整会话 / whole conversation」                     |
+| 每条线程都有追问与转正按钮   | `[data-btw-followup]` / `[data-btw-promote]` 数量与线程数一致 |
+| 点追问后出现线程内输入框     | `[data-btw-thread-input]` 出现                                |
+| **转正只插草稿、不发送**     | 比较点击前后 `[data-chat-flow-kind]` 数量，必须相等           |
+| 转正后清空草稿               | Cmd+A / Backspace，避免污染用户输入框                         |
+
+无法断言时只报 SKIP 并说明原因，不制造假失败：
+
+- 当前会话没有旁问记录 → 跳过追问/转正按钮断言
+- 输入框已有内容 → 跳过转正（插件会拒绝，属预期保护）
+- 当前会话有运行中的回合 → 整个交互段 SKIP（agent 自己跑回归时会这样）
+
+上次自跑时就是最后一种情形，输出：
+
+```
+SKIP 桌面交互 — 当前会话有运行中的回合
+0 PASS / 1 SKIP / 0 FAIL
+```
