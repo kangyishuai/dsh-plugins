@@ -178,11 +178,11 @@ window.__ModuleLoader__.load({
      * @returns {Promise<any>}
      */
     function call(ctx, method, args) {
-      var rpc = ctx.connection && ctx.connection.rpc;
+      var rpc = ctx.connection?.rpc;
       if (!rpc || typeof rpc.call !== "function") {
         return Promise.reject(new Error("casefile: no connection to the host"));
       }
-      return Promise.resolve(rpc.call("/api", "casefile/" + method, { args: args || {} })).then(
+      return Promise.resolve(rpc.call("/api", `casefile/${method}`, { args: args || {} })).then(
         (/** @type {any} */ result) => {
           if (!result || typeof result !== "object") return result;
           var error;
@@ -289,7 +289,7 @@ window.__ModuleLoader__.load({
           h(
             "div",
             { className: "cf-row-meta" },
-            project.target ? project.target.kind + " · " + project.target.ref : project.id,
+            project.target ? `${project.target.kind} · ${project.target.ref}` : project.id,
           ),
           h(
             "div",
@@ -361,7 +361,7 @@ window.__ModuleLoader__.load({
           h(
             Tag,
             { t: props.t, tone: item.confidence === "observed" ? "ok" : "warn" },
-            item.confidence + " / " + item.authority,
+            `${item.confidence} / ${item.authority}`,
           ),
         ),
         h(
@@ -509,7 +509,7 @@ window.__ModuleLoader__.load({
             setError("");
           })
           .catch((/** @type {any} */ err) => {
-            setError(err && err.message ? err.message : String(err));
+            setError(err?.message ? err.message : String(err));
           })
           .finally(() => {
             setLoading(false);
@@ -525,7 +525,7 @@ window.__ModuleLoader__.load({
               setError("");
             })
             .catch((/** @type {any} */ err) => {
-              setError(err && err.message ? err.message : String(err));
+              setError(err?.message ? err.message : String(err));
             })
             .finally(() => {
               setLoading(false);
@@ -555,7 +555,7 @@ window.__ModuleLoader__.load({
             return loadList().then(() => openProject(project.id));
           })
           .catch((/** @type {any} */ err) => {
-            setError(err && err.message ? err.message : String(err));
+            setError(err?.message ? err.message : String(err));
           })
           .finally(() => {
             setBusy(false);
@@ -569,8 +569,7 @@ window.__ModuleLoader__.load({
             .then(() => openProject(detail.project.id))
             .catch((/** @type {any} */ err) => {
               setError(
-                (err && err.message ? err.message : String(err)) +
-                  (err && err.hint ? " — " + err.hint : ""),
+                (err?.message ? err.message : String(err)) + (err?.hint ? ` — ${err.hint}` : ""),
               );
             });
         },
@@ -721,7 +720,7 @@ window.__ModuleLoader__.load({
               { style: { display: "flex", gap: 8, alignItems: "baseline", marginBottom: 4 } },
               h("h3", { style: { fontSize: 14, margin: 0 } }, detail.project.title),
               h(Tag, { t: t }, detail.project.target ? detail.project.target.kind : "other"),
-              h(Tag, { t: t, tone: "warn" }, text(t, "auth." + detail.project.authTier)),
+              h(Tag, { t: t, tone: "warn" }, text(t, `auth.${detail.project.authTier}`)),
               h(Tag, { t: t }, detail.project.scope === "selected" ? "selected" : "all"),
             ),
             h(
@@ -861,7 +860,7 @@ window.__ModuleLoader__.load({
                   },
                 },
                 ["owned", "authorized", "research"].map((item) =>
-                  h("option", { key: item, value: item }, text(t, "auth." + item)),
+                  h("option", { key: item, value: item }, text(t, `auth.${item}`)),
                 ),
               ),
               h(
@@ -938,7 +937,7 @@ window.__ModuleLoader__.load({
             setError("");
           })
           .catch((/** @type {any} */ err) => {
-            setError(err && err.message ? err.message : String(err));
+            setError(err?.message ? err.message : String(err));
           });
       }, [ctx]);
 
