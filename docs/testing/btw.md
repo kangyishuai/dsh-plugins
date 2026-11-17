@@ -178,3 +178,129 @@ pnpm gate btw          # 这次不跳过第 4 步
 | `engines.dsh`                                           | 未声明（按约定 §4，预发布阶段不写范围，用 README 兼容性表代替）                                                   |
 | `dsh.client`                                            | `{ platform: "web", inject: ["@deepseek-ai/dsh-client-ui-conversation", "@deepseek-ai/dsh-client-ui-slots"] }`    |
 | `exports`                                               | `.` / `./package.json` / `./client`                                                                               |
+
+## v0.3 真机验证（2026-11-17）
+
+临时宿主 + ego-browser 驱动真实页面，验证线程视图、追问、转正三项：
+
+```
+T1 {"overlay":true,"threads":1,"promote":1,"followup":1,"err":""}   ← 线程卡片与两个按钮
+T2 {"threadInput":true}                                            ← 追问输入框展开
+T3 {"before":0,
+    "notice":"已插入输入框草稿（未发送）",
+    "draft":"## 我问了什么\n\nreply with exactly OK\n\n\n\n\n## 结论\n\nOK",
+    "flowKinds":0,                                                  ← 关键：零消息产生
+    "promoteDisabled":false}
+```
+
+**`flowKinds: 0 → 0` 是「只插草稿、不发送」语义的硬证据**：转正后对话流没有任何新节点，
+草稿落在 composer 里等用户自己决定。
+
+转正草稿是四节模板（我问了什么 / 结论 / 关键细节 / 仍未解决），
+只有传了 `details`/`unresolved` 才出现后两节。
+
+### 追问的实现方式
+
+浮层里点「追问」后提交的是 `/btw --thread <threadId> <问题>`，由 `parseThreadFlag` 解析。
+之所以用命令行标记而不是 Remote：浮层发问必须走 composer（真实 Agent 只能在命令上下文取，
+见 ADR 0016），线程 id 只能随这行文本一起传进来。host 侧再按线程回放历史给模型。
+
+### 上下文徽章（v0.3 第 4 步）
+
+```
+BADGE {"badge":"基于 1 条旁问记录 · 模型可见完整会话，范围只约束回答",
+       "hasBadge":true,"threads":1}
+```
+
+**为什么必须这样写**：fork 子代理继承父会话**全部已完成轮次**，第三方插件无法只继承一部分
+（`ctx.llm` 拿不到 adapter，见 ADR 0016）。所以「上下文范围」只能在提示词里声明，
+徽章必须如实告诉用户「模型看得到全部，范围只约束回答」——**不能**声称限制了上下文。
+
+单测锁死了这条：`renderBadge` 的用例断言文案必须包含「模型可见完整会话」，
+`renderScopeInstruction` 必须包含 `advisory only` 与 `you can see the whole session`。
+
+### 范围档位与线程上限（v0.3 第 4 步收尾）
+
+档位选择器真机验证：
+
+```
+S1 {"hasScope":true,
+    "options":[":范围：不限","session:范围：整个会话","recent:范围：最近几轮","selection:范围：仅选中片段"],
+    "badge":"基于 1 条旁问记录 · 模型可见完整会话，范围只约束回答"}
+S2 {"value":"recent",
+    "badge":"… · 已要求只看：最近几轮"}      ← 徽章用人类可读标签，不是枚举原值
+```
+
+- 档位是**封闭枚举**（`session` / `recent` / `selection`），非法值丢弃
+- 提交时拼成 `/btw --scope <档位> <问题>`，host 用 `parseCommandArgs` 解析
+- 范围只写进提示词的 `renderScopeInstruction`（含 `advisory only`），**不裁剪上下文**
+- 单线程满 `LIMITS.threadTurns`（10）轮时返回 `threadFull` 提示，要求开新线程
+
+### 桌面回归覆盖 v0.3（设计第 5 步）
+
+`pnpm smoke:btw-desktop --require` 新增断言（**全部只读**）：
+
+| 断言                         | 说明                                                          |
+| ---------------------------- | ------------------------------------------------------------- |
+| 档位选择器存在且有 4 个档位  | `[data-btw-scope]` 的 `options.length === 4`                  |
+| 徽章如实写明模型可见完整会话 | 正则匹配「完整会话 / whole conversation」                     |
+| 每条线程都有追问与转正按钮   | `[data-btw-followup]` / `[data-btw-promote]` 数量与线程数一致 |
+| 点追问后出现线程内输入框     | `[data-btw-thread-input]` 出现                                |
+| **转正只插草稿、不发送**     | 比较点击前后 `[data-chat-flow-kind]` 数量，必须相等           |
+| 转正后清空草稿               | Cmd+A / Backspace，避免污染用户输入框                         |
+
+无法断言时只报 SKIP 并说明原因，不制造假失败：
+
+- 当前会话没有旁问记录 → 跳过追问/转正按钮断言
+- 输入框已有内容 → 跳过转正（插件会拒绝，属预期保护）
+- 当前会话有运行中的回合 → 整个交互段 SKIP（agent 自己跑回归时会这样）
+
+上次自跑时就是最后一种情形，输出：
+
+```
+SKIP 桌面交互 — 当前会话有运行中的回合
+0 PASS / 1 SKIP / 0 FAIL
+```
+
+### 桌面回归的两条安全边界（2026-11-17 加固）
+
+**1. cookie 只清 DSH 自己的**
+
+web 冒烟（`scripts/smoke-btw.mjs`）每轮开头与结尾各清一次 cookie，条件是**双重限定**：
+
+```js
+const LOOPBACK = ["127.0.0.1", "localhost", "::1"];
+const mine = found.cookies.filter(
+  (c) => LOOPBACK.includes(c.domain) && String(c.name).startsWith("dsh-auth-"),
+);
+```
+
+→ 只删回环地址上、名字以 `dsh-auth-` 开头的 cookie，**绝不触碰用户其它站点的 cookie**。
+
+桌面回归（`scripts/smoke-btw-desktop.mjs`）走 CDP 连正在运行的桌面版，不碰浏览器 cookie 存储，
+所以没有也不需要清理逻辑。
+
+**2. 不把测试草稿留在用户输入框里**
+
+桌面回归会往 composer 插转正草稿。保护分两层：
+
+- **事前快照**：进来时若输入框已有内容，跳过所有会改动输入框的断言（`skip` 并说明原因）
+- **事后兜底**：仅当进来时是空的，结束时调用 `clearComposerDraft` 清空，并断言「结束时输入框已还原为空」
+
+清理只聚焦 DSH 的 `[data-composer-input]`，不触碰页面其它状态。
+
+### web 冒烟现在也覆盖 v0.3 客户端（不需要凭据）
+
+2026-11-17 补：此前 v0.3 的 client 半只被一次性探针验证过，没有进仓库的自动化测试。
+现在 `pnpm smoke:btw`（默认模式，零模型调用）也断言：
+
+```
+PASS 浮层可打开
+PASS 浮层有 4 个范围档位
+PASS 徽章写明模型可见完整会话
+SKIP 线程卡片带追问/转正按钮 — 本会话还没有旁问记录
+```
+
+→ **CI 的 web 冒烟步骤即可覆盖档位选择器与徽章诚信文案**，桌面回归只负责「真实安装环境」这一层。
+
+线程卡片断言在默认模式下 SKIP（没有旁问记录），`--deep` 或桌面回归里才会真正执行。

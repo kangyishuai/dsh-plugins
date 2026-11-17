@@ -1,0 +1,204 @@
+// @ts-check
+// 旁问线程与「一键转正」的**纯逻辑**：不 import 任何宿主包，便于 node --test 直接引用
+// （service.js 会 import 宿主 RPC 协议，在单测环境里解析不到）。
+import { LIMITS } from "./limits.js";
+
+/** 转正草稿的四节模板（用户可在插入前编辑）。 */
+export const PROMOTE_SECTIONS = [
+  { key: "question", zh: "我问了什么", en: "What I asked" },
+  { key: "answer", zh: "结论", en: "Conclusion" },
+  { key: "details", zh: "关键细节", en: "Key details" },
+  { key: "unresolved", zh: "仍未解决", en: "Still unresolved" },
+];
+
+/**
+ * 新线程 id。用时间 + 随机后缀，够本地唯一，不引入 uuid 依赖。
+ * @param {number} [now]
+ * @param {() => number} [rand]
+ * @returns {string}
+ */
+export function newThreadId(now = Date.now(), rand = Math.random) {
+  const suffix = Math.floor(rand() * 36 ** 4)
+    .toString(36)
+    .padStart(4, "0");
+  return `t_${now.toString(36)}_${suffix}`;
+}
+
+/**
+ * 取记录所属线程 id：兼容没有 threadId 的老记录（用记录自身 id 当单条线程）。
+ * @param {any} record
+ * @returns {string}
+ */
+export function threadOf(record) {
+  if (record !== null && typeof record === "object") {
+    if (typeof record.threadId === "string" && record.threadId !== "") return record.threadId;
+    if (typeof record.id === "string" && record.id !== "") return record.id;
+  }
+  return "t_unknown";
+}
+
+/**
+ * 按线程分组，线程内按时间正序。
+ * @param {any[]} records 时间正序的记录
+ * @returns {{ threadId: string, items: any[], at: number, last: any }[]} 按线程最后一条时间正序
+ */
+export function groupThreads(records) {
+  /** @type {Map<string, any[]>} */
+  const buckets = new Map();
+  for (const record of Array.isArray(records) ? records : []) {
+    const id = threadOf(record);
+    const bucket = buckets.get(id);
+    if (bucket === undefined) buckets.set(id, [record]);
+    else bucket.push(record);
+  }
+  /** @type {{ threadId: string, items: any[], at: number, last: any }[]} */
+  const out = [];
+  for (const [threadId, items] of buckets) {
+    const last = items[items.length - 1];
+    out.push({ threadId, items, at: Number(last?.at ?? 0), last });
+  }
+  out.sort((a, b) => a.at - b.at);
+  return out;
+}
+
+/**
+ * 某线程的历史（供追问时回放给模型）。
+ * @param {any[]} records
+ * @param {string} threadId
+ * @param {number} [maxTurns]
+ * @returns {any[]}
+ */
+export function threadHistory(records, threadId, maxTurns = LIMITS.threadTurns) {
+  const thread = groupThreads(records).find((entry) => entry.threadId === threadId);
+  if (thread === undefined) return [];
+  return thread.items.slice(-maxTurns);
+}
+
+/**
+ * 把一条旁问渲染成可插入草稿的文本（**只生成文本，绝不发送**）。
+ *
+ * 语义取舍（已与用户确认）：转正只插入 composer 草稿，由用户自己决定发不发。
+ * @param {any} record
+ * @param {{ lang?: string, details?: string, unresolved?: string, maxChars?: number }} [options]
+ * @returns {string}
+ */
+export function renderPromoteDraft(record, options = {}) {
+  const lang = options.lang === "en" ? "en" : "zh";
+  const maxChars = Math.min(
+    Math.max(Number(options.maxChars) || LIMITS.answerChars, 200),
+    LIMITS.answerChars,
+  );
+  const section = (/** @type {string} */ key) => {
+    const found = PROMOTE_SECTIONS.find((entry) => entry.key === key);
+    return found === undefined ? key : lang === "en" ? found.en : found.zh;
+  };
+  const question = String(record?.question ?? "").trim();
+  const answer = String(record?.answer ?? "").trim();
+  /** @type {string[]} */
+  const lines = [
+    `## ${section("question")}`,
+    question === "" ? "—" : question,
+    "",
+    `## ${section("answer")}`,
+    answer === "" ? "—" : answer,
+  ];
+  const details = String(options.details ?? "").trim();
+  if (details !== "") lines.push("", `## ${section("details")}`, details);
+  const unresolved = String(options.unresolved ?? "").trim();
+  if (unresolved !== "") lines.push("", `## ${section("unresolved")}`, unresolved);
+  const text = lines.join("\n").trim();
+  return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
+}
+
+/**
+ * 从答案里猜「关键细节」候选（列表项/代码片段），给转正确认层做默认值。
+ * @param {string} answer
+ * @param {number} [max]
+ * @returns {string[]}
+ */
+export function extractDetails(answer, max = 5) {
+  const lines = String(answer ?? "").split("\n");
+  /** @type {string[]} */
+  const out = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed === "") continue;
+    if (/^([-*+]|\d+\.)\s+/.test(trimmed) || trimmed.startsWith("```")) {
+      out.push(trimmed);
+      if (out.length >= max) break;
+    }
+  }
+  return out;
+}
+
+/** 追问时夹带的线程标记：`/btw --thread <id> <问题>`。 */
+export const THREAD_FLAG = "--thread";
+
+/**
+ * 解析命令参数里的线程标记。
+ *
+ * 为什么用「命令行标记」而不是 Remote：浮层发问必须走 composer 提交，因为真实 Agent
+ * 只能从命令上下文拿到（见 ADR 0016）。所以线程 id 只能随这行文本一起传进来。
+ * @param {string} raw
+ * @returns {{ threadId: string, question: string }}
+ */
+export function parseThreadFlag(raw) {
+  const text = String(raw ?? "").trim();
+  if (!text.startsWith(THREAD_FLAG)) return { threadId: "", question: text };
+  const rest = text.slice(THREAD_FLAG.length).trimStart();
+  const match = /^(\S+)\s*([\s\S]*)$/.exec(rest);
+  if (match === null) return { threadId: "", question: text };
+  return { threadId: match[1], question: match[2].trim() };
+}
+
+/**
+ * 线程列表（给浮层展示）：按最后一条时间倒序，每项带条数与首问。
+ * @param {any[]} records
+ * @returns {{ threadId: string, turns: number, question: string, answer: string, lastId: string, cost: any, ms: number, at: number }[]}
+ */
+export function listThreads(records) {
+  return groupThreads(records)
+    .map((thread) => ({
+      threadId: thread.threadId,
+      turns: thread.items.length,
+      question: String(thread.items[0]?.question ?? ""),
+      answer: String(thread.last?.answer ?? ""),
+      lastId: String(thread.last?.id ?? ""),
+      cost: thread.last?.cost ?? null,
+      ms: Number(thread.last?.ms ?? 0),
+      at: thread.at,
+    }))
+    .sort((a, b) => b.at - a.at);
+}
+
+/** 范围档位（枚举，避免自由文本带来的歧义）。 */
+export const SCOPES = ["session", "recent", "selection"];
+
+/**
+ * 解析命令参数里的全部标记：`--thread <id>` 与 `--scope <档位>`。
+ * 两者都只吃一个 token，剩下的整段是问题（问题里可以有空格）。
+ * @param {string} raw
+ * @returns {{ threadId: string, scope: string, question: string }}
+ */
+export function parseCommandArgs(raw) {
+  let rest = String(raw ?? "").trim();
+  let threadId = "";
+  let scope = "";
+  for (;;) {
+    const threadMatch = /^--thread\s+(\S+)\s*/.exec(rest);
+    if (threadMatch !== null && threadId === "") {
+      threadId = threadMatch[1];
+      rest = rest.slice(threadMatch[0].length);
+      continue;
+    }
+    const scopeMatch = /^--scope\s+(\S+)\s*/.exec(rest);
+    if (scopeMatch !== null && scope === "") {
+      const candidate = scopeMatch[1].toLowerCase();
+      if (SCOPES.includes(candidate)) scope = candidate;
+      rest = rest.slice(scopeMatch[0].length);
+      continue;
+    }
+    break;
+  }
+  return { threadId, scope, question: rest.trim() };
+}

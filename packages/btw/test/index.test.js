@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { renderBadge, renderScopeInstruction } from "../lib/badge.js";
 import { parseAllowedTools } from "../lib/config.js";
 import { appendRecord, lastRecord, listRecent, readRecords } from "../lib/history.js";
 import { clip, LIMITS } from "../lib/limits.js";
@@ -22,6 +23,18 @@ import {
   settingsPath,
 } from "../lib/settings.js";
 import { extractText, makeReadOnlyGuard } from "../lib/subagent.js";
+import {
+  extractDetails,
+  groupThreads,
+  listThreads,
+  newThreadId,
+  parseCommandArgs,
+  parseThreadFlag,
+  renderPromoteDraft,
+  SCOPES,
+  threadHistory,
+  threadOf,
+} from "../lib/threads.js";
 
 const LOCALE_DIR = new URL("../locale/", import.meta.url).pathname;
 
@@ -231,4 +244,187 @@ test("settings: 保存是原子替换且只合并已知字段", async () => {
   assert.equal(reread.historyLimit, 7);
   const raw = await readFile(settingsPath(dir), "utf8");
   assert.ok(raw.trim().startsWith("{"), "落盘是 JSON");
+});
+
+// --- threads / promote（v0.3 纯逻辑）---------------------------------------
+
+test("threads: 老记录没有 threadId 时用自身 id 当单条线程", () => {
+  assert.equal(threadOf({ id: "btw_1" }), "btw_1");
+  assert.equal(threadOf({ id: "btw_1", threadId: "t_x" }), "t_x");
+  assert.equal(threadOf({}), "t_unknown");
+  assert.equal(threadOf(null), "t_unknown");
+});
+
+test("threads: 分组保持线程内正序、线程间按最后时间正序", () => {
+  const records = [
+    { id: "a", at: 1 },
+    { id: "b", at: 2, threadId: "a" },
+    { id: "c", at: 3 },
+  ];
+  const groups = groupThreads(records);
+  assert.deepEqual(
+    groups.map((g) => g.threadId),
+    ["a", "c"],
+  );
+  assert.equal(groups[0].items.length, 2);
+  assert.equal(groups[0].last.id, "b");
+  assert.deepEqual(groupThreads([]), []);
+  assert.deepEqual(groupThreads(/** @type {any} */ (null)), []);
+});
+
+test("threads: threadHistory 只取本线程且受轮数上限约束", () => {
+  const records = [
+    { id: "a", at: 1, question: "q1" },
+    { id: "x", at: 2, question: "other" },
+    { id: "b", at: 3, threadId: "a", question: "q2" },
+  ];
+  assert.deepEqual(
+    threadHistory(records, "a").map((r) => r.id),
+    ["a", "b"],
+  );
+  assert.deepEqual(threadHistory(records, "missing"), []);
+  assert.equal(threadHistory(records, "a", 1).length, 1);
+});
+
+test("threads: parseThreadFlag 解析追问标记，普通问题原样返回", () => {
+  assert.deepEqual(parseThreadFlag("--thread t_abc 它在哪个目录"), {
+    threadId: "t_abc",
+    question: "它在哪个目录",
+  });
+  assert.deepEqual(parseThreadFlag("普通问题"), { threadId: "", question: "普通问题" });
+  assert.deepEqual(parseThreadFlag("  --thread   t_x   多空格  "), {
+    threadId: "t_x",
+    question: "多空格",
+  });
+  assert.deepEqual(parseThreadFlag("--thread t_only"), { threadId: "t_only", question: "" });
+  assert.deepEqual(parseThreadFlag(""), { threadId: "", question: "" });
+});
+
+test("threads: listThreads 倒序且带轮数与首问", () => {
+  const records = [
+    { id: "a", at: 10, question: "first", answer: "A1" },
+    { id: "b", at: 20, threadId: "a", question: "second", answer: "A2" },
+    { id: "c", at: 30, question: "newer", answer: "C1" },
+  ];
+  const threads = listThreads(records);
+  assert.deepEqual(
+    threads.map((t) => t.threadId),
+    ["c", "a"],
+  );
+  assert.equal(threads[1].turns, 2);
+  assert.equal(threads[1].question, "first", "首问");
+  assert.equal(threads[1].answer, "A2", "最后一条答案");
+});
+
+test("threads: newThreadId 稳定且带前缀", () => {
+  const id = newThreadId(1700000000000, () => 0.5);
+  assert.match(id, /^t_[0-9a-z]+_[0-9a-z]{4}$/);
+  assert.equal(
+    id,
+    newThreadId(1700000000000, () => 0.5),
+    "同输入同输出（可测）",
+  );
+  assert.notEqual(
+    id,
+    newThreadId(1700000000001, () => 0.5),
+  );
+});
+
+test("promote: 草稿是四节模板，只生成文本不发送", () => {
+  const draft = renderPromoteDraft({ question: "配置文件叫什么？", answer: "config.json" });
+  assert.ok(draft.includes("## 我问了什么"));
+  assert.ok(draft.includes("配置文件叫什么？"));
+  assert.ok(draft.includes("## 结论"));
+  assert.ok(draft.includes("config.json"));
+  assert.ok(!draft.includes("## 关键细节"), "没传 details 就不出现该节");
+  const withExtra = renderPromoteDraft(
+    { question: "q", answer: "a" },
+    { details: "d", unresolved: "u" },
+  );
+  assert.ok(withExtra.includes("## 关键细节"));
+  assert.ok(withExtra.includes("## 仍未解决"));
+  const en = renderPromoteDraft({ question: "q", answer: "a" }, { lang: "en" });
+  assert.ok(en.includes("## What I asked"));
+});
+
+test("promote: 草稿按上限截断并加省略号", () => {
+  const long = "x".repeat(9000);
+  const draft = renderPromoteDraft({ question: "q", answer: long }, { maxChars: 500 });
+  assert.ok(draft.length <= 500, `长度 ${draft.length} 应 <= 500`);
+  assert.ok(draft.endsWith("…"));
+});
+
+test("promote: 空答案也产出可编辑骨架（不抛）", () => {
+  const draft = renderPromoteDraft({});
+  assert.ok(draft.includes("## 结论"));
+  assert.ok(draft.includes("—"), "空值用破折号占位");
+});
+
+test("promote: extractDetails 只挑列表项与代码围栏", () => {
+  const details = extractDetails("- 一\n普通句子\n- 二\n```js\ncode\n```", 3);
+  assert.deepEqual(details, ["- 一", "- 二", "```js"]);
+  assert.deepEqual(extractDetails("", 3), []);
+});
+
+// --- badge（v0.3 上下文徽章）-----------------------------------------------
+
+test("badge: 必须如实写明模型可见完整会话，不能假装限制了上下文", () => {
+  const zh = renderBadge({ records: 3 });
+  assert.ok(zh.includes("基于 3 条旁问记录"));
+  assert.ok(zh.includes("模型可见完整会话"), "诚实原则：必须写明这点");
+  assert.ok(zh.includes("范围只约束回答"));
+  const en = renderBadge({ records: 1, lang: "en" });
+  assert.ok(en.includes("Based on 1 side-question record"));
+  assert.ok(en.includes("can see the whole conversation"));
+});
+
+test("badge: 空记录、范围附加、非法输入都不抛", () => {
+  assert.ok(renderBadge({ records: 0 }).includes("还没有旁问"));
+  const scoped = renderBadge({ records: 3, scope: "最近 2 轮" });
+  assert.ok(scoped.includes("已要求只看：最近 2 轮"));
+  assert.ok(renderBadge().includes("还没有旁问"), "无参数也不抛");
+  assert.ok(renderBadge({ records: -5 }).includes("还没有旁问"), "负数夹到 0");
+});
+
+test("badge: 范围指令是建议性的，要说明可看到全部", () => {
+  const text = renderScopeInstruction("最近 2 轮");
+  assert.ok(text.includes("advisory only"));
+  assert.ok(text.includes("you can see the whole session"));
+  assert.ok(text.includes("最近 2 轮"));
+  assert.equal(renderScopeInstruction(""), "");
+  assert.equal(renderScopeInstruction("   "), "");
+});
+
+// --- 范围档位与轮数上限（v0.3 第 4 步收尾）--------------------------------
+
+test("scope: parseCommandArgs 解析 --thread / --scope，问题可取整段", () => {
+  assert.deepEqual(parseCommandArgs("--thread t_1 --scope recent 它在哪个目录"), {
+    threadId: "t_1",
+    scope: "recent",
+    question: "它在哪个目录",
+  });
+  assert.deepEqual(parseCommandArgs("--scope selection 只看这一段"), {
+    threadId: "",
+    scope: "selection",
+    question: "只看这一段",
+  });
+  assert.deepEqual(parseCommandArgs("普通问题"), {
+    threadId: "",
+    scope: "",
+    question: "普通问题",
+  });
+  assert.deepEqual(parseCommandArgs("--scope bogus 问题").scope, "", "非法档位被丢弃");
+  assert.equal(parseCommandArgs("").question, "");
+});
+
+test("scope: SCOPES 是封闭枚举", () => {
+  assert.deepEqual(SCOPES, ["session", "recent", "selection"]);
+});
+
+test("prompts: 只有传了范围才把范围指令写进提示词", async () => {
+  const plain = JSON.stringify(buildSideQuestionPrompt("q", []));
+  assert.ok(!plain.includes("Scope requested"), "没范围就不该出现指令");
+  const scoped = JSON.stringify(buildSideQuestionPrompt("q", [], "recent"));
+  assert.ok(scoped.includes("Scope requested"), "有范围才出现");
+  assert.ok(scoped.includes("advisory only"), "必须写成建议，不能声称裁剪上下文");
 });

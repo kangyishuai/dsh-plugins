@@ -14,6 +14,10 @@ export const LIMITS = {
   totalMs: 120_000,
   /** 允许的只读工具白名单上限（默认空 = 全拒） */
   allowedToolsMax: 8,
+  /** 单条线程最多追问几轮（超过提示开新线程） */
+  threadTurns: 10,
+  /** 转正草稿的最大字符数（插进 composer 前的上限） */
+  promoteChars: 4000,
 };
 
 /**

@@ -107,6 +107,41 @@ const STATE = `(() => {
   };
 })()`;
 
+/**
+ * 清空 composer 草稿。桌面回归会往输入框插转正草稿，失败路径也必须清理干净——
+ * 只动 DSH 的输入框，不碰页面任何其它状态。
+ * @param {Awaited<ReturnType<typeof connect>>} cdp
+ * @returns {Promise<void>}
+ */
+async function clearComposerDraft(cdp) {
+  try {
+    const ok = await cdp.evaluate(`(() => {
+      const el = document.querySelector('[data-composer-input]');
+      if (!el) return false;
+      el.focus();
+      const sel = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      return true;
+    })()`);
+    if (ok !== true) return;
+    for (const type of ["keyDown", "keyUp"]) {
+      await cdp.send("Input.dispatchKeyEvent", {
+        type,
+        key: "Backspace",
+        code: "Backspace",
+        windowsVirtualKeyCode: 8,
+        nativeVirtualKeyCode: 51,
+      });
+    }
+    await sleep(300);
+  } catch {
+    /* 清理失败不改变结论，只影响现场整洁 */
+  }
+}
+
 const main = async () => {
   const { values } = parseArgs({
     options: {
@@ -172,6 +207,11 @@ const main = async () => {
     );
     check("输入框左侧出现 btw 按钮", initial.toggle === true, JSON.stringify(initial));
 
+    // 快照用户进来时的草稿：非空就不做任何会改动输入框的断言，走完也不清空。
+    const initialDraft = await cdp.evaluate(
+      `(() => ((document.querySelector('[data-composer-input]') || {}).innerText || '').trim())()`,
+    );
+
     if (initial.toggle !== true) {
       skip("浮层开关", "按钮未出现，后续断言无意义");
     } else {
@@ -184,6 +224,75 @@ const main = async () => {
       check("点开后浮层出现", opened.overlay === true, JSON.stringify(opened));
       check("浮层是 dialog", opened.overlayRole === "dialog", String(opened.overlayRole));
       if (opened.error) skip("浮层内容", `读历史失败：${opened.error}`);
+
+      // ---- v0.3：档位选择器 / 徽章 / 追问 / 转正（全部只读）--------------
+      const v03 = await cdp.evaluate(`(() => {
+        const threads = document.querySelectorAll('[data-btw-thread]');
+        const scope = document.querySelector('[data-btw-scope]');
+        return {
+          threads: threads.length,
+          scope: scope !== null,
+          scopeOptions: scope ? scope.options.length : 0,
+          badge: (document.querySelector('[data-btw-badge]') || { innerText: '' }).innerText || '',
+          followup: document.querySelectorAll('[data-btw-followup]').length,
+          promote: document.querySelectorAll('[data-btw-promote]').length,
+        };
+      })()`);
+      check(
+        "档位选择器存在且有 4 个档位",
+        v03.scope === true && v03.scopeOptions === 4,
+        JSON.stringify(v03),
+      );
+      check(
+        "徽章如实写明模型可见完整会话",
+        typeof v03.badge === "string" && /完整会话|whole conversation/.test(v03.badge),
+        String(v03.badge),
+      );
+
+      if (v03.threads === 0) {
+        skip("追问/转正按钮", "当前会话还没有旁问记录（先提一个 /btw 再跑）");
+      } else {
+        check("每条线程都有追问按钮", v03.followup === v03.threads, JSON.stringify(v03));
+        check("每条线程都有转正按钮", v03.promote === v03.threads, JSON.stringify(v03));
+        // 展开追问输入框（只展开，不提交）
+        await cdp.evaluate(
+          `(() => { const b = document.querySelector('[data-btw-followup]'); if (b) b.click(); return true; })()`,
+        );
+        await sleep(600);
+        const expanded = await cdp.evaluate(
+          `(() => ({ threadInput: !!document.querySelector('[data-btw-thread-input]') }))()`,
+        );
+        check("点追问后出现线程内输入框", expanded.threadInput === true, JSON.stringify(expanded));
+        // 转正：只插草稿，**不发送** —— 断言 composer 有内容但对话流没有新节点
+        const beforeFlow = await cdp.evaluate(
+          `(() => document.querySelectorAll('[data-chat-flow-kind]').length)()`,
+        );
+        const draftBefore = await cdp.evaluate(
+          `(() => ((document.querySelector('[data-composer-input]') || {}).innerText || '').trim())()`,
+        );
+        if (draftBefore !== "") {
+          skip("转正只插草稿", "输入框已有内容（插件会拒绝转正，属预期保护）");
+        } else {
+          await cdp.evaluate(
+            `(() => { const b = document.querySelector('[data-btw-promote]'); if (b) b.click(); return true; })()`,
+          );
+          await sleep(2000);
+          const afterFlow = await cdp.evaluate(
+            `(() => document.querySelectorAll('[data-chat-flow-kind]').length)()`,
+          );
+          const draftAfter = await cdp.evaluate(
+            `(() => ((document.querySelector('[data-composer-input]') || {}).innerText || '').trim())()`,
+          );
+          check("转正把草稿插进输入框", draftAfter.length > 0, `draft=${draftAfter.slice(0, 40)}`);
+          check(
+            "转正没有发送任何消息",
+            afterFlow === beforeFlow,
+            `flow ${beforeFlow} -> ${afterFlow}`,
+          );
+          // 清掉草稿：绝不把测试内容留在用户输入框里
+          await clearComposerDraft(cdp);
+        }
+      }
 
       // Esc 关闭
       for (const type of ["keyDown", "keyUp"]) {
@@ -199,6 +308,17 @@ const main = async () => {
       const closed = await cdp.evaluate(STATE);
       check("Esc 后浮层消失", closed.overlay === false, JSON.stringify(closed));
       check("没有遗留浮层", closed.overlay === false, JSON.stringify(closed));
+
+      // 兜底：进来时输入框是空的，结束时也必须是空的（可能是被测脚本插入的草稿）。
+      if (initialDraft === "") {
+        await clearComposerDraft(cdp);
+        const draftNow = await cdp.evaluate(
+          `(() => ((document.querySelector('[data-composer-input]') || {}).innerText || '').trim())()`,
+        );
+        check("结束时输入框已还原为空", draftNow === "", `draft=${String(draftNow).slice(0, 40)}`);
+      } else {
+        skip("结束时输入框已还原为空", "进来时已有草稿，保持原样不做清理");
+      }
     }
 
     // ---- 设置分节（只读）--------------------------------------------

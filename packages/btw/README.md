@@ -14,6 +14,9 @@ Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/de
 - **Read-only.** The side question runs in a forked child agent with **no tools**; a runtime guard denies any tool call that slips through, and `send_message` is always denied.
 - **Cheap.** The fork reuses the parent conversation's prompt prefix, so the provider serves most of it from cache (measured: 57% on the first fork, 94% on a repeat). Cache writes are not billed.
 - **Kept.** Answers are written to a per-session JSONL history so you can reopen the last one with a bare `/btw`.
+- **Threads.** Follow up on a side question without losing the earlier exchange; the thread's history is replayed to the model each turn.
+- **Promote to draft.** Turn the latest side question into a four-section draft (question / conclusion / key details / still unresolved) and **insert it into the composer — never send it**. You decide whether to send.
+- **Honest scope badge.** The overlay states how many side questions exist and reminds you that **the model can see the whole conversation**; a scope choice only narrows the instruction, it does not cut context.
 
 ## How it works
 
@@ -22,6 +25,12 @@ A third-party DSH plugin cannot reach a provider adapter through `ctx.llm` (ever
 1. `ctx.subagents.startActivation({ provider: 'fork', parent: agent, … })` — the parent `Agent` comes from the command invocation.
 2. A `ctx.tools.guard(...)` is armed on the child so the side question stays read-only.
 3. The child's answer is read from the activation result, the child session is archived so it does not clutter the session list, and the Q&A is appended to history.
+
+Follow-ups re-fork each turn and replay the thread's own Q&A into the prompt — a fork is single-turn, so keeping one child alive would degenerate into a full side session with its own lifecycle.
+
+Promote only **returns text** from the host and inserts it with the composer's `setDraft`; `submit` is never called. If the composer already has content the action is refused instead of overwriting what you were typing.
+
+Scope is deliberately **advisory**: a fork inherits every completed turn of the parent, and a plugin cannot inherit a subset. The badge says so instead of pretending the context was trimmed.
 
 ## Install
 
@@ -36,15 +45,31 @@ Restart the DSH desktop app afterwards.
 ```
 /btw what was the name of that config file again?
 /btw                      # reopen the last answer
+/btw --thread <threadId>  # continue an existing thread
+/btw --scope recent <q>   # hint the answer to focus (session | recent | selection)
 ```
 
+The overlay (button left of the composer) lists threads with cost badges, lets you follow up or
+promote one to a draft, and shows the scope badge.
+
 ## Configuration
+
+Plugin config (set when adding the plugin to a profile):
 
 | Key            | Default                | Meaning                                                                                             |
 | -------------- | ---------------------- | --------------------------------------------------------------------------------------------------- |
 | `allowedTools` | `[]`                   | Tool names the side question may use. Empty means fully read-only. `send_message` is never allowed. |
 | `language`     | `auto`                 | `en` / `zh`; `auto` follows the system locale.                                                      |
-| `dataRoot`     | `$DSH_HOME` → `~/.dsh` | Where the history file lives (`<dataRoot>/btw/<session>.jsonl`).                                    |
+| `dataRoot`     | `$DSH_HOME` → `~/.dsh` | Where history and settings live (`<dataRoot>/btw/`).                                                |
+
+Runtime settings (editable in **Settings → Side questions**, stored in `<dataRoot>/btw/settings.json`):
+
+| Key            | Default | Meaning                                           |
+| -------------- | ------- | ------------------------------------------------- |
+| `allowedTools` | `[]`    | Overrides the plugin config above when non-empty. |
+| `historyLimit` | `50`    | Records kept per session (1–200).                 |
+
+The settings file is re-read on every use, so edits take effect without restarting the host.
 
 ## Side effects & risks
 

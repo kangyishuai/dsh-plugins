@@ -1,6 +1,8 @@
 // @ts-check
 // 旁问提示词与非可信内容的消毒。文案取向参考 Claude Code 的 /btw 提示词（见 notes 调研）。
 
+import { renderScopeInstruction } from "./badge.js";
+
 /** 单轮只读旁问的系统约束。刻意保持祈使、简短、禁止承诺类措辞。 */
 const REMINDER = `<system-reminder>This is a side question from the user. You must answer this question directly in a single response.
 
@@ -55,7 +57,7 @@ export function sanitizeReplayAnswer(record) {
  * @param {Array<{ question?: unknown, answer?: unknown, status?: unknown }>} [history]
  * @returns {{ type: 'text', text: string }[]}
  */
-export function buildSideQuestionPrompt(question, history = []) {
+export function buildSideQuestionPrompt(question, history = [], scope = "") {
   /** @type {string[]} */
   const parts = [REMINDER];
   if (history.length > 0) {
@@ -67,6 +69,9 @@ export function buildSideQuestionPrompt(question, history = []) {
       `Earlier side questions in this session (for your reference only):\n\n${lines.join("\n\n")}`,
     );
   }
+  // 范围只作为**建议**写进提示词：fork 继承全部已完成轮次，插件无法裁剪上下文（ADR 0016）。
+  const scopeText = renderScopeInstruction(scope);
+  if (scopeText !== "") parts.push(scopeText);
   parts.push(`The user's side question now:\n\n${question}`);
   return [{ type: "text", text: parts.join("\n\n") }];
 }

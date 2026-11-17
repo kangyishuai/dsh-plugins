@@ -23,5 +23,6 @@
       "cancelled": "The side question was cancelled.",
       "tooLong": "That question is too long ({length} characters, limit {max})."
     }
-  }
+  },
+  "threadFull": "This side-question thread is full ({max} turns). Start a new one."
 }
