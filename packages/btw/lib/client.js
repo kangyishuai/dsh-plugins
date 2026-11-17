@@ -1171,8 +1171,10 @@ window.__ModuleLoader__.load({
         }
 
         // 有 live 卡片时不重复状态条：卡片里已经有「正在生成回答 · 12s」。
-        const statusBusy = busy && liveRuns.length === 0;
+        // 有 live 卡片时不显示状态条：卡片里已经有「正在生成回答 · 12s」，不需要重复。
+        const statusBusy = busy;
         const statusText = busy ? `${t("sending")}（${t("waitHint")}）` : notice;
+        const statusVisible = liveRuns.length === 0 && (statusBusy || notice !== "");
 
         return h(
           "span",
@@ -1220,7 +1222,7 @@ window.__ModuleLoader__.load({
                 t("close"),
               ),
             ),
-            statusBusy || notice !== ""
+            statusVisible
               ? h(
                   "div",
                   {
