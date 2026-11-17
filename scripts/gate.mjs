@@ -13,12 +13,17 @@
 //
 // 设计要点：
 //   - 第 4 步永远带 `--require`。门禁存在的意义就是「不能没跑还说通过」。
+//   - 桌面脚本**跑过但一条断言都没执行**（全 SKIP）也算失败：脚本退出码 0 不代表验证过
+//     任何东西。典型场景是 agent 在自己的会话里跑回归——可见会话有运行中的回合，
+//     脚本按设计 SKIP。这种「假绿」比红更危险，所以这里按断言计数判定。
 //   - 只有显式 --skip-desktop 才跳过桌面端，且结束时会大声提示「门禁不完整」。
 //   - 每个插件缺哪个脚本就跳过哪一步（并在输出里说明），不假装跑过。
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+
+import { isMain } from "./lib/repo.mjs";
 
 const REPO = resolve(import.meta.dirname, "..");
 
@@ -167,7 +172,7 @@ const main = async () => {
     }
     console.log("");
     console.log(`▶ [${index}/${stages.length}] ${stage.title}`);
-    const code = await run(stage.args);
+    const { code, output } = await run(stage.args);
     if (code !== 0) {
       console.error("");
       console.error(`FAIL 门禁中止：「${stage.title}」退出码 ${code}`);
@@ -180,6 +185,22 @@ const main = async () => {
       }
       process.exitCode = 1;
       return;
+    }
+    // 桌面阶段：跑过但一条断言都没执行 = 假绿（见文件头说明）。
+    const isDesktopStage = String(stage.args[0] ?? "").endsWith("-desktop");
+    if (isDesktopStage) {
+      const counts = parseCounts(output);
+      if (isVacuousPass(counts)) {
+        console.error("");
+        console.error(`FAIL 门禁中止：「${stage.title}」跑完了但**一条断言都没执行**`);
+        console.error(
+          `      计数：${counts?.pass ?? 0} PASS / ${counts?.skip ?? 0} SKIP / ${counts?.fail ?? 0} FAIL`,
+        );
+        console.error("      退出码 0 不代表验证过任何东西。常见原因：可见会话有运行中的回合");
+        console.error("      （agent 在自己会话里跑回归时），把可见会话切到空闲会话再跑。");
+        process.exitCode = 1;
+        return;
+      }
     }
     console.log(`✓ ${stage.title}`);
   }
@@ -202,12 +223,65 @@ const main = async () => {
  * @param {string[]} args
  * @returns {Promise<number>}
  */
+/**
+ * 从冒烟输出里取最后一条 `N PASS / M SKIP / K FAIL` 计数行。
+ * 冒烟脚本的约定输出格式见各 `scripts/smoke-*.mjs` 的收尾行。
+ * @param {string} output
+ * @returns {{ pass: number, skip: number, fail: number } | undefined}
+ */
+export function parseCounts(output) {
+  // 用 String.fromCharCode(27) 构造 ESC，避免在正则字面量里出现控制字符
+  // （biome 的 noControlCharactersInRegex 会拦）。
+  const esc = String.fromCharCode(27);
+  const plain = String(output ?? "")
+    .split(`${esc}[`)
+    .reduce((acc, part, at) => {
+      if (at === 0) return part;
+      // 去掉 `[0;32m` 这类 ANSI 参数与结尾的 m
+      return acc + part.replace(/^[0-9;]*m/u, "");
+    }, "");
+  /** @type {{ pass: number, skip: number, fail: number } | undefined} */
+  let last;
+  for (const match of plain.matchAll(/(\d+)\s+PASS\s*\/\s*(\d+)\s+SKIP\s*\/\s*(\d+)\s+FAIL/gu)) {
+    last = { pass: Number(match[1]), skip: Number(match[2]), fail: Number(match[3]) };
+  }
+  return last;
+}
+
+/**
+ * 桌面端阶段是否「跑过但什么都没断言」——用于识别假绿。
+ * @param {{ pass: number, skip: number, fail: number } | undefined} counts
+ * @returns {boolean}
+ */
+export function isVacuousPass(counts) {
+  return counts !== undefined && counts.pass === 0 && counts.fail === 0;
+}
+
+/**
+ * 跑一个 pnpm 脚本：输出照常透传，同时缓存下来供断言计数解析。
+ * @param {string[]} args
+ * @returns {Promise<{ code: number, output: string }>}
+ */
 function run(args) {
   return new Promise((done) => {
-    const child = spawn("pnpm", args, { cwd: REPO, stdio: "inherit", env: process.env });
-    child.on("close", (code) => done(code ?? 1));
-    child.on("error", () => done(1));
+    const child = spawn("pnpm", args, {
+      cwd: REPO,
+      stdio: ["inherit", "pipe", "pipe"],
+      env: process.env,
+    });
+    /** @type {string[]} */
+    const chunks = [];
+    child.stdout?.on("data", (chunk) => {
+      process.stdout.write(chunk);
+      chunks.push(String(chunk));
+    });
+    child.stderr?.on("data", (chunk) => {
+      process.stderr.write(chunk);
+      chunks.push(String(chunk));
+    });
+    child.on("close", (code) => done({ code: code ?? 1, output: chunks.join("") }));
+    child.on("error", () => done({ code: 1, output: chunks.join("") }));
   });
 }
 
-await main();
+if (isMain(import.meta.url)) await main();

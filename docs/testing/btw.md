@@ -339,3 +339,42 @@ exports: "." / "./package.json" / "./client"
 to become available」，实测约 8 分钟后 `registry.npmjs.org` 才能查到；期间 `npm view` 返回 404，
 但 git tag 已建、CI 全绿。判断发布是否成功要以**工作流日志里的 `+ <pkg>@<version>` 与 `Created git tags`**
 为准，别只看 npm 查询结果。
+
+## 门禁假绿修复（2026-11-17，`scripts/gate.mjs`）
+
+### 问题
+
+`pnpm gate btw` 报「4 步全绿」，但桌面回归那一步实际输出是：
+
+```
+SKIP 桌面交互 — 当前会话有运行中的回合
+0 PASS / 1 SKIP / 0 FAIL
+```
+
+**脚本退出码 0，所以门禁把它当成通过** —— 一条断言都没跑，却宣布「全绿」。
+而门禁自己的文件头写着「门禁存在的意义就是不能没跑还说通过」，这是自相矛盾的漏洞。
+
+### 修法
+
+门禁现在解析每个阶段的 `N PASS / M SKIP / K FAIL` 收尾行，**桌面阶段若 `pass === 0 && fail === 0` 直接判失败**：
+
+```
+FAIL 门禁中止：「桌面只读回归（需要调试端口）」跑完了但**一条断言都没执行**
+      计数：0 PASS / 1 SKIP / 0 FAIL
+      退出码 0 不代表验证过任何东西。常见原因：可见会话有运行中的回合
+      （agent 在自己会话里跑回归时），把可见会话切到空闲会话再跑。
+```
+
+退出码 1，`pnpm gate btw` 不再假绿。
+
+### 新增导出与单测
+
+`scripts/gate.mjs` 现在可被 import（尾部包了 `isMain`），导出：
+
+- `parseCounts(output)` → `{ pass, skip, fail } | undefined`，取**最后**一条计数行、剥 ANSI、容忍多余空白
+- `isVacuousPass(counts)` → `pass === 0 && fail === 0`
+
+`scripts/test/gate.test.js` 6 项锁住：标准收尾行、取最后一条（中间统计不算）、ANSI 剥离、
+空白容忍、无计数行返回 `undefined`、假绿判定。
+
+`pnpm verify` → EXIT 0，脚本测试 **55/55**。
