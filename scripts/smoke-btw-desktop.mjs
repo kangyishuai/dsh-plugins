@@ -98,15 +98,19 @@ const STATE = `(() => {
   const err = document.querySelector('[data-btw-error]');
   const panel = document.querySelector('[data-btw-panel]');
   const rect = panel ? panel.getBoundingClientRect() : null;
-  const composer = document.querySelector('[data-composer-card]');
+  const conversation = document.querySelector('[data-conversation-session]');
+  const crect = conversation ? conversation.getBoundingClientRect() : null;
+  const rightbar = document.querySelector('[data-sidebar-right-panel]');
   return {
     styleInjected: style !== null,
     pluginCount: document.querySelectorAll('style[data-plugin]').length,
     toggle: toggle !== null,
     overlay: overlay !== null,
     overlayRole: overlay ? overlay.getAttribute('role') : null,
-    panelRight: rect !== null && rect.right <= window.innerWidth + 1 && rect.left > window.innerWidth / 2,
-    clearsComposer: !rect || !composer || rect.bottom <= composer.getBoundingClientRect().top + 24,
+    isTab: panel !== null && panel.hasAttribute('data-btw-tab'),
+    noOverlap: rect !== null && crect !== null && crect.right <= rect.left + 1,
+    rightbar: rightbar !== null,
+    rightbarCollapsed: !!document.querySelector('[data-rightbar-collapsed="true"]'),
     rail: !!document.querySelector('[data-btw-rail]'),
     markdown: document.querySelectorAll('[data-btw-md]').length,
     turns: document.querySelectorAll('[data-btw-turn]').length,
@@ -245,14 +249,13 @@ const main = async () => {
       );
       await sleep(900);
       const opened = await cdp.evaluate(STATE);
-      check("点开后右侧抽屉出现", opened.overlay === true, JSON.stringify(opened));
-      check("抽屉是 dialog", opened.overlayRole === "dialog", String(opened.overlayRole));
       check(
-        "抽屉贴右侧且不遮挡输入框",
-        opened.panelRight === true && opened.clearsComposer === true,
+        "点「旁问」在原生右侧栏打开 tab",
+        opened.isTab === true && opened.overlay === false && opened.rightbar === true,
         JSON.stringify(opened),
       );
-      if (opened.error) skip("抽屉内容", `读历史失败：${opened.error}`);
+      check("右侧栏 tab 不遮挡主对话", opened.noOverlap === true, JSON.stringify(opened));
+      if (opened.error) skip("tab 内容", `读历史失败：${opened.error}`);
 
       // ---- v0.3：档位选择器 / 徽章 / 追问 / 转正（全部只读）--------------
       const v03 = await cdp.evaluate(`(() => {
@@ -329,42 +332,35 @@ const main = async () => {
         }
       }
 
-      // 收起为右边缘侧边条 → 再展开（「可以点击展开或者收起来」）
+      // 收起右侧栏 → 再点「旁问」展开（「可以点击展开或者收起来」）
       await cdp.evaluate(
         `(() => { const b = document.querySelector('[data-btw-collapse]'); if (b) b.click(); return true; })()`,
       );
-      await sleep(600);
+      await sleep(700);
       const collapsed = await cdp.evaluate(STATE);
       check(
-        "点「收起」变成右边缘侧边条",
-        collapsed.rail === true && collapsed.overlay === false,
+        "点「收起」收起右侧栏（tab 保留）",
+        collapsed.rightbarCollapsed === true && collapsed.isTab === true,
         JSON.stringify(collapsed),
       );
       await cdp.evaluate(
-        `(() => { const b = document.querySelector('[data-btw-rail]'); if (b) b.click(); return true; })()`,
+        `(() => { document.querySelector('[data-btw-toggle]').click(); return true; })()`,
       );
-      await sleep(700);
+      await sleep(800);
       const expanded = await cdp.evaluate(STATE);
       check(
-        "点侧边条重新展开抽屉",
-        expanded.overlay === true && expanded.rail === false,
+        "再点「旁问」重新展开右侧栏与 tab",
+        expanded.rightbarCollapsed === false && expanded.isTab === true,
         JSON.stringify(expanded),
       );
 
-      // Esc 关闭
-      for (const type of ["keyDown", "keyUp"]) {
-        await cdp.send("Input.dispatchKeyEvent", {
-          type,
-          key: "Escape",
-          code: "Escape",
-          windowsVirtualKeyCode: 27,
-          nativeVirtualKeyCode: 53,
-        });
-      }
+      // 关闭 tab（只读收尾：不在用户会话里留下打开的面板）
+      await cdp.evaluate(
+        `(() => { const b = document.querySelector('[data-btw-close]'); if (b) b.click(); return true; })()`,
+      );
       await sleep(700);
       const closed = await cdp.evaluate(STATE);
-      check("Esc 后抽屉消失", closed.overlay === false, JSON.stringify(closed));
-      check("没有遗留抽屉", closed.overlay === false, JSON.stringify(closed));
+      check("点「关闭」关闭 tab", closed.isTab === false, JSON.stringify(closed));
 
       // 兜底：进来时输入框是空的，结束时也必须是空的（可能是被测脚本插入的草稿）。
       if (initialDraft === "") {
