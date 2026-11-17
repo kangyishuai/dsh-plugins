@@ -20,7 +20,8 @@ permissions:
 
 concurrency:
   group: automerge-guard-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  # 不取消在途运行：被取消的 run 会留下 CANCELLED 的同名必需检查，卡住合并门禁。
+  cancel-in-progress: false
 
 jobs:
   guard:
