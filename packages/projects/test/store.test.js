@@ -155,3 +155,130 @@ describe("ProjectStore", () => {
     assert.equal(b.danger.autoMerge, false);
   });
 });
+
+describe("路由与人格配置", () => {
+  it("默认策略带 routing（两条默认规则 + 允许兜底）与空人格", () => {
+    const store = new ProjectStore({ root }).load();
+    const project = store.createProject("p");
+    assert.deepEqual(project.policy.routing.fallback, true);
+    assert.equal(
+      project.policy.routing.rules.length,
+      2,
+      "开箱有「问句内联 / 长任务派线程」两条规则",
+    );
+    assert.equal(project.policy.persona, "");
+  });
+
+  it("规则与 fallback 能被写入并保真读回", () => {
+    const store = new ProjectStore({ root }).load();
+    const project = store.createProject("p");
+    const rules = [{ id: "docs", when: { textMatches: "README" }, action: "reuse-thread" }];
+    store.updateProject(project.id, {
+      policy: { ...project.policy, routing: { rules, fallback: false } },
+    });
+    const saved = store.getProject(project.id);
+    assert.deepEqual(saved.policy.routing.rules, rules);
+    assert.equal(saved.policy.routing.fallback, false);
+  });
+
+  it("重新加载后仍保真（落盘 + normalize 不破坏）", () => {
+    const store = new ProjectStore({ root }).load();
+    const project = store.createProject("p");
+    store.updateProject(project.id, {
+      policy: {
+        ...project.policy,
+        routing: { rules: [{ id: "x", when: {}, action: "propose" }], fallback: true },
+      },
+      persona: "be terse",
+    });
+    store.save();
+    const reloaded = new ProjectStore({ root }).load();
+    const saved = reloaded.getProject(project.id);
+    assert.equal(saved.policy.routing.rules.length, 1);
+    assert.equal(saved.policy.persona, "be terse");
+  });
+
+  it("坏输入被收敛：routing 不是对象、rules 不是数组、fallback 非布尔", () => {
+    const store = new ProjectStore({ root }).load();
+    const project = store.createProject("p");
+    store.updateProject(project.id, {
+      policy: { ...project.policy, routing: { rules: "nope", fallback: "no" }, persona: 123 },
+    });
+    const saved = store.getProject(project.id);
+    assert.deepEqual(saved.policy.routing.rules, []);
+    assert.equal(saved.policy.routing.fallback, true);
+    assert.equal(saved.policy.persona, "");
+  });
+});
+
+describe("token 用量分桶", () => {
+  it("同一天累加，跨天自动归零", () => {
+    const store = new ProjectStore({ root }).load();
+    const project = store.createProject("p");
+    const day1 = Date.parse("2026-11-16T10:00:00+08:00");
+    const day2 = Date.parse("2026-11-17T10:00:00+08:00");
+
+    store.addTokenUsage(project.id, 100, day1);
+    store.addTokenUsage(project.id, 50, day1);
+    assert.equal(store.tokenUsageToday(project.id, day1), 150);
+
+    assert.equal(store.tokenUsageToday(project.id, day2), 0, "新的一天从 0 开始");
+    store.addTokenUsage(project.id, 30, day2);
+    assert.equal(store.tokenUsageToday(project.id, day2), 30);
+  });
+
+  it("非法 token 数按 0，不产生 NaN", () => {
+    const store = new ProjectStore({ root }).load();
+    const project = store.createProject("p");
+    const now = Date.parse("2026-11-16T10:00:00+08:00");
+    store.addTokenUsage(project.id, Number.NaN, now);
+    store.addTokenUsage(project.id, -10, now);
+    assert.equal(store.tokenUsageToday(project.id, now), 0);
+  });
+
+  it("重启后保留", () => {
+    const store = new ProjectStore({ root }).load();
+    const project = store.createProject("p");
+    const now = Date.parse("2026-11-16T10:00:00+08:00");
+    store.addTokenUsage(project.id, 42, now);
+    store.save();
+    const reloaded = new ProjectStore({ root }).load();
+    assert.equal(reloaded.tokenUsageToday(project.id, now), 42);
+  });
+});
+
+describe("审批执行的幂等保护", () => {
+  const makeApproval = (/** @type {any} */ store) => {
+    const project = store.createProject("p");
+    const { requestId } = store.appendApproval({
+      projectId: project.id,
+      action: "merge",
+      reason: "ok",
+    });
+    return { projectId: project.id, requestId };
+  };
+
+  it("第一次标记执行成功，第二次报错（不会重复执行）", () => {
+    const store = new ProjectStore({ root }).load();
+    const { requestId } = makeApproval(store);
+    store.resolveApproval(requestId, "approved");
+    const marked = store.markApprovalExecuted(requestId, { evidence: "x" });
+    assert.ok(typeof marked.executedAt === "string");
+    assert.throws(() => store.markApprovalExecuted(requestId), /already executed/u);
+    assert.equal(store.listApprovals()[0].executedAt, marked.executedAt);
+  });
+
+  it("已执行的申请不能再被改决议（防止事后改写状态）", () => {
+    const store = new ProjectStore({ root }).load();
+    const { requestId } = makeApproval(store);
+    store.resolveApproval(requestId, "approved");
+    store.markApprovalExecuted(requestId);
+    assert.throws(() => store.resolveApproval(requestId, "rejected"), /already executed/u);
+  });
+
+  it("未执行的申请仍可正常决议", () => {
+    const store = new ProjectStore({ root }).load();
+    const { requestId } = makeApproval(store);
+    assert.equal(store.resolveApproval(requestId, "rejected").status, "rejected");
+  });
+});

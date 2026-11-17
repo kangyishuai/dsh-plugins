@@ -2,19 +2,35 @@
 // host 半的 Typert Remote Service：项目 CRUD、会话归属、上下文注入的挂载点。
 // 注意（docs/runtime/0.2.1-rc.5.md §6.10）：Remote 方法必须声明在**这个被导出的类自身原型**上，
 // 否则网关不会 claim 端点，所有 /api/projects/* 返回 404。
-import { execFile as execFileCallback } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { promisify } from "node:util";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
 
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 
-import { attachProjectContext } from "./attach.js";
-import { checkThreadBudget } from "./budget.js";
+import { registerProjectContext } from "./attach.js";
+import { buildFixTask, errorSignature, shouldContinueFix } from "./autofix.js";
+import { buildPrText, nextPrAction, parsePrNumber, planPrCreate } from "./autopr.js";
+import { checkThreadBudget, checkTokenBudget, tokensOf } from "./budget.js";
+import { runCommand } from "./exec.js";
+import { checkExecutable, planCommand, recoveryEvidence } from "./executor.js";
+import { appendEntry } from "./memory.js";
 import { initialView, reduce, sortRows } from "./overview.js";
+import { buildPersona } from "./persona.js";
 import { readProjectFiles } from "./project-files.js";
+import { decideRoute } from "./routing.js";
 import { ProjectStore } from "./store.js";
 import { createIsolatedThread, reclaimThreadWorktree, reconcileWorktrees } from "./thread.js";
+import { buildCoordinatorTools, REQUESTABLE_ACTIONS } from "./tools.js";
 import { impactOf, trashDirFor } from "./trash.js";
+import { buildEnvelope, createInjectionGuard, decideWake, pendingWakes } from "./wake.js";
 
 /**
  * 运行时不支持装饰器语法，用命令式方式登记 Remote（与 advisor / next-step 同法）。
@@ -39,8 +55,6 @@ function declareRemote(Proto, method) {
   initializers[0].call(Object.create(Proto.prototype));
 }
 
-const execFile = promisify(execFileCallback);
-
 /**
  * 跑一次 git。
  * 为什么不用 ctx.subprocess：那是个策略 seam（SubprocessSpawnSpec 要 argv/stdio/graceMs，
@@ -51,17 +65,30 @@ const execFile = promisify(execFileCallback);
  * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
  */
 async function runGit(args, cwd) {
-  try {
-    const { stdout, stderr } = await execFile("git", args, { cwd, maxBuffer: 8 * 1024 * 1024 });
-    return { code: 0, stdout: String(stdout), stderr: String(stderr) };
-  } catch (error) {
-    const anyError = /** @type {any} */ (error);
-    return {
-      code: Number(anyError?.code ?? 1),
-      stdout: String(anyError?.stdout ?? ""),
-      stderr: String(anyError?.stderr ?? ""),
-    };
+  return runCommand("git", args, { cwd });
+}
+
+/**
+ * 跑一次 gh。argv 里不含 "gh" 本身（由这里补）。
+ * @param {string[]} args
+ * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
+ */
+async function runGh(args) {
+  return runCommand("gh", args);
+}
+
+/**
+ * 取一条消息里的纯文本（用于唤醒信封的 report）。
+ * @param {any} message
+ * @returns {string}
+ */
+function extractText(message) {
+  const content = Array.isArray(message?.content) ? message.content : [];
+  const parts = [];
+  for (const block of content) {
+    if (block && block.type === "text" && typeof block.text === "string") parts.push(block.text);
   }
+  return parts.join("\n").trim();
 }
 
 /**
@@ -112,6 +139,21 @@ export class ProjectsService extends TypertRemoteService {
     this.attached = new Map();
     /** 每个线程会话的状态视图（从持久事件归约，重启后可由 replay 重建）。 @type {Map<string, any>} */
     this.views = new Map();
+    /** 上下文渲染诊断计数（describe() 暴露，便于真机排查）。 @type {any} */
+    this.renderStats = {};
+    /**
+     * 信封防重：同一个 wakeId 只注入一次。
+     * lastWakeTurn 水位只能挡住"已经写回状态"的重复，挡不住两个并发的 turn/end
+     * 在写回之前同时通过检查——这个 guard 是同步的，用来闭掉那个竞态。
+     * @type {{ shouldInject: (wakeId: string) => boolean, reset: () => void, size: () => number }}
+     */
+    this.wakeGuard = createInjectionGuard();
+    /** 协调器会话的 agent（用于后续工具约束/提示）。 @type {Map<string, any>} */
+    this.coordinatorAgents = new Map();
+    /** 协调器工具注册的清理函数。 @type {Map<string, (() => void)[]>} */
+    this.coordinatorToolDisposers = new Map();
+    /** 每个线程会话最近一条 assistant 文本（唤醒信封要带它，M0 实测不带模型读不到结果）。 @type {Map<string, string>} */
+    this.lastMessages = new Map();
     /** @type {any} */
     this.agents = undefined;
     /** @type {any} */
@@ -129,6 +171,50 @@ export class ProjectsService extends TypertRemoteService {
       this.agents = scope.agents;
       this.sessionController = scope.sessionController;
       markReady();
+      // 冷会话唤醒：应用关着时线程跑完，协调器从没收到信封；启动后补一次（延迟到视图有数据时）
+      setTimeout(() => {
+        void this.reconcileWakes().catch((/** @type {any} */ error) => {
+          this.logger?.warn?.(
+            `[projects] cold-session wake skipped: ${String(error?.message ?? error).slice(0, 160)}`,
+          );
+        });
+      }, 5000);
+    });
+
+    // 项目上下文：**全局注册一个按会话求值的条目**。
+    // 依据 docs/runtime §11.18/§11.19：per-agent 注册在 agent/created 时无效；
+    // 这里的 text 是函数，宿主 refreshContext 会用 resolveContext 按当前 agent/session 求值。
+    /** @type {any} */
+    this.workspaceRegistry = undefined;
+    ctx.inject?.(["workspaceRegistry"], (/** @type {any} */ scope) => {
+      this.workspaceRegistry = scope.workspaceRegistry;
+    });
+
+    ctx.inject?.(["systemPrompt"], (/** @type {any} */ scope) => {
+      try {
+        this.disposeProjectContext = registerProjectContext({
+          getStore: () => this.store,
+          getDataRoot: () => this.dataRoot,
+          register: (definition) => scope.systemPrompt.context(definition),
+          onRender: (/** @type {string} */ sessionId, /** @type {string} */ kind) => {
+            if (!this.renderStats) this.renderStats = {};
+            const stats = this.renderStats;
+            stats[kind] = (stats[kind] ?? 0) + 1;
+            stats.lastSession = String(sessionId).slice(0, 18);
+            if (kind === "coordinator") stats.lastCoordinator = String(sessionId).slice(0, 18);
+          },
+          renderPersona: (project) =>
+            buildPersona({
+              projectName: project?.name ?? "",
+              persona: project?.policy?.persona ?? "",
+            }),
+        });
+        this.logger?.info?.("[projects] project context registered (global, per-session render)");
+      } catch (error) {
+        this.logger?.warn?.(
+          `[projects] context registration failed: ${String(/** @type {any} */ (error)?.message ?? error)}`,
+        );
+      }
     });
     ctx.inject?.(["sessionController"], (/** @type {any} */ scope) => {
       this.sessionController = scope.sessionController;
@@ -185,7 +271,29 @@ export class ProjectsService extends TypertRemoteService {
       // 只跟项目线程，其它会话零开销
       if (!this.store.projectOfSession(sessionId)) return;
       const previous = this.views.get(sessionId) ?? initialView();
-      this.views.set(sessionId, reduce(previous, event));
+      const next = reduce(previous, event);
+      this.views.set(sessionId, next);
+      if (String(event?.type) === "assistant/message") {
+        const text = extractText(event?.data?.message);
+        if (text !== "") this.lastMessages.set(sessionId, text);
+        // token 用量挂在同一条事件上（宿主无独立 usage 记录）；累计到项目当天分桶
+        const threadProject = this.store?.projectOfSession?.(sessionId);
+        const usage = event?.data?.message?.usage ?? event?.data?.usage;
+        if (threadProject && usage) {
+          const nowMs = Date.now();
+          const tokens = tokensOf({ at: new Date(nowMs).toISOString(), usage }, nowMs);
+          if (tokens > 0) {
+            this.store.addTokenUsage(threadProject.id, tokens, nowMs);
+            // 必须落盘：token 分桶的设计要求「跨重启保留」（store 单测覆盖了 save 路径，
+            // 但这里曾经只改内存不保存 —— 重启就丢，等于预算闸永远从 0 开始）。
+            this.store.save();
+            void this.enforceTokenBudget(threadProject.id, nowMs);
+          }
+        }
+      }
+      if (String(event?.type) === "turn/end") {
+        void this.maybeWakeCoordinator(sessionId, next);
+      }
     });
     ctx.effect?.(() => () => {
       for (const dispose of this.attached.values()) {
@@ -204,18 +312,209 @@ export class ProjectsService extends TypertRemoteService {
    * `Receiver must be an instance of class ProjectsService`（0.2.2-rc.3 实测）。
    * @param {any} agent
    */
-  onAgentCreated(agent) {
-    const sessionId = agent?.id;
-    if (typeof sessionId !== "string" || sessionId === "") return;
+  /**
+   * token 到线就暂停项目（只暂停一次，避免每轮重复写审计）。
+   * 「暂停」是保守且可逆的处置：不删数据、不打断正在跑的线程。
+   * @param {string} projectId
+   * @param {number} now
+   */
+  async enforceTokenBudget(projectId, now) {
     try {
-      const result = attachProjectContext(this.store, this.dataRoot, agent);
-      if (!result) return;
-      this.attached.set(sessionId, result.dispose);
-      this.logger.info?.(`[projects] project context attached to ${sessionId}`);
+      const store = this.requireStore();
+      const project = store.getProject(projectId);
+      if (!project) return;
+      const verdict = checkTokenBudget({
+        dailyTokens: project.budget?.dailyTokens,
+        usedTokens: store.tokenUsageToday(projectId, now),
+      });
+      if (verdict.ok || project.state === "paused") return;
+      store.updateProject(projectId, { state: "paused" });
+      store.appendAudit({
+        action: "budget/paused",
+        projectId,
+        reason: verdict.reason,
+        used: verdict.used,
+        limit: verdict.limit,
+      });
+      store.save();
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn?.(`[projects] context attach failed for ${sessionId}: ${message}`);
+      this.logger?.warn?.(
+        `[projects] token budget enforce failed: ${String(/** @type {any} */ (error)?.message ?? error)}`,
+      );
     }
+  }
+
+  /**
+   * 给协调器 agent 注册 project_* 工具（**agent 作用域**，不影响其它会话）。
+   * 篮子只有 4 个工具：没有 bash / 写文件 / 删除 / 推送 / 合并。
+   * @param {any} agent
+   * @param {any} project
+   */
+  attachCoordinatorTools(agent, project) {
+    try {
+      const tools = agent?.ctx?.tools;
+      if (!tools || typeof tools.register !== "function") {
+        this.auditSkip(project?.id, "tools-skip", "no-tools-service");
+        return;
+      }
+      const definitions = buildCoordinatorTools({
+        startThread: (/** @type {string} */ task) => this.createThread(project.id, task),
+        listThreads: async () => this.progress(project.id),
+        messageThread: (/** @type {string} */ sessionId, /** @type {string} */ text) =>
+          this.promptThread(sessionId, text),
+        writeMemory: async (/** @type {string} */ text) => this.appendMemory(project.id, text),
+        readMemory: async () => this.getProjectContent(project.id),
+        requestAction: async (/** @type {any} */ request) => {
+          const created = this.requireStore().appendApproval({ projectId: project.id, ...request });
+          this.requireStore().appendAudit({
+            action: "approval/requested",
+            projectId: project.id,
+            requestId: created.requestId,
+            dangerAction: request.action,
+          });
+          this.requireStore().save();
+          return created;
+        },
+      });
+      /** @type {(() => void)[]} */
+      const disposers = [];
+      for (const definition of definitions) {
+        const dispose = tools.register(definition);
+        if (typeof dispose === "function") disposers.push(dispose);
+      }
+      this.coordinatorToolDisposers?.set?.(String(agent?.id ?? ""), disposers);
+      const store = this.requireStore();
+      store.appendAudit({
+        action: "coordinator/tools",
+        projectId: project.id,
+        count: definitions.length,
+      });
+      store.save();
+    } catch (error) {
+      this.auditSkip(
+        project?.id,
+        "tools-skip",
+        String(/** @type {any} */ (error)?.message ?? error).slice(0, 200),
+      );
+    }
+  }
+
+  /**
+   * 把「装不上」记成可观测的审计，而不是只写日志（宿主默认看不到插件日志）。
+   * @param {string|undefined} projectId
+   * @param {string} action
+   * @param {string} reason
+   */
+  auditSkip(projectId, action, reason) {
+    try {
+      const store = this.requireStore();
+      store.appendAudit({ action: `coordinator/${action}`, projectId: projectId ?? null, reason });
+      store.save();
+    } catch {
+      /* 审计都写不了就只能放弃 */
+    }
+  }
+
+  /**
+   * 往项目记忆里追加一条（幂等、有上限；写盘后写审计）。
+   * @param {string} projectId
+   * @param {string} text
+   */
+  appendMemory(projectId, text) {
+    const store = this.requireStore();
+    if (!store.getProject(projectId)) throw new Error(`projects: unknown project ${projectId}`);
+    const file = join(this.dataRoot, projectId, "memory", "MEMORY.md");
+    const existing = existsSync(file) ? readFileSync(file, "utf8") : "";
+    const result = appendEntry(existing, text, { at: new Date().toISOString() });
+    if (!result.ok) {
+      store.appendAudit({ action: "memory/rejected", projectId, reason: result.reason });
+      store.save();
+      return { ok: false, reason: result.reason, added: false };
+    }
+    if (result.added) {
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, result.text, { mode: 0o600 });
+      store.appendAudit({ action: "memory/appended", projectId, chars: result.text.length });
+      store.save();
+      // 无需刷新挂载：上下文条目是函数，宿主每次请求都会重新渲染（见 attach.js）
+    }
+    return {
+      ok: true,
+      added: result.added,
+      ...(result.reason ? { reason: result.reason } : {}),
+    };
+  }
+
+  /**
+   * 给一个线程会话投递一条消息。
+   * @param {string} sessionId
+   * @param {string} text
+   */
+  async promptThread(sessionId, text) {
+    const sc = this.sessionController;
+    if (!sc) throw new Error("projects: session controller unavailable");
+    await sc.prompt(
+      {
+        requestId: `projects-thread-msg-${Date.now()}`,
+        sessionId,
+        mode: "queue",
+        content: [{ type: "text", text }],
+      },
+      new AbortController().signal,
+    );
+    return { ok: true };
+  }
+
+  /**
+   * 预热协调器会话并挂载人格。
+   * @param {string} projectId
+   * @param {string} sessionId
+   * @returns {Promise<boolean>}
+   */
+  async warmUpCoordinator(projectId, sessionId) {
+    const sc = this.sessionController;
+    if (!sc) return false;
+    try {
+      await sc.prompt(
+        {
+          requestId: `projects-coordinator-warmup-${Date.now()}`,
+          sessionId,
+          mode: "queue",
+          content: [{ type: "text", text: "（系统）协调器已就绪，等待项目事件。" }],
+        },
+        new AbortController().signal,
+      );
+    } catch {
+      /* 预热失败不影响创建；下面还会重试挂载 */
+    }
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline) {
+      const agent = this.agents?.get?.(sessionId);
+      if (agent) return true;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    const store = this.requireStore();
+    store.appendAudit({
+      action: "coordinator/persona-skip",
+      projectId,
+      sessionId,
+      reason: "agent-not-ready",
+    });
+    store.save();
+    return false;
+  }
+
+  /**
+   * agent 起来时的钩子。这里**不做任何 per-agent systemPrompt 注册**：
+   * 实测在 agent/created 里注册进不了提示词（runtime §11.18）。
+   * 项目上下文与协调器人格由构造函数里 registerProjectContext 全局注册、按会话求值（§11.20）。
+   * @param {any} agent
+   */
+  onAgentCreated(agent) {
+    const sessionId = String(agent?.id ?? "");
+    if (sessionId === "") return;
+    // 记下在线 agent，供工具注册/诊断使用
+    this.coordinatorAgents?.set?.(sessionId, agent);
   }
 
   /** @param {string|undefined} sessionId */
@@ -369,6 +668,21 @@ export class ProjectsService extends TypertRemoteService {
   }
 
   /** @param {string} id */
+  /**
+   * 取消归档：回到 active，线程归属与内容文件都还在（归档从不删数据）。
+   * @param {string} id
+   */
+  unarchiveProject(id) {
+    const store = this.requireStore();
+    const project = store.updateProject(id, { state: "active" });
+    store.appendAudit({ action: "project/unarchived", projectId: id });
+    store.save();
+    return project;
+  }
+
+  /**
+   * @param {string} id
+   */
   archiveProject(id) {
     const store = this.requireStore();
     const project = store.archiveProject(id);
@@ -486,19 +800,738 @@ export class ProjectsService extends TypertRemoteService {
     const store = this.requireStore();
     const thread = store.attachThread(sessionId, projectId);
     store.save();
-    // 会话通常先被创建、后归属：此时 agent 已经在线，补挂一次上下文，
-    // 否则上下文要等到下次 resume 才生效（实测：create 后 250ms 内 agent 已就绪）。
+    // 不需要在这里补挂上下文：项目上下文是**全局注册 + 按会话求值**的
+    // （见构造函数的 registerProjectContext），归属一落盘，下一次请求就会渲染出来。
+    return thread;
+  }
+
+  /**
+   * 冷会话唤醒：启动后补发「应用关着时欠下的」协调器信封。
+   * 为什么需要：wake 原本只在 turn/end 触发；应用关着时线程跑完，协调器永远不知道。
+   * 只处理需要人看的终态（done/failed/waiting-user），且由 decideWake 统一去重。
+   * @returns {Promise<{ scanned: number, woken: number }>}
+   */
+  async reconcileWakes() {
+    const store = this.requireStore();
+    let scanned = 0;
+    let woken = 0;
+    for (const project of store.listProjects()) {
+      if (project?.state !== "active") continue;
+      if (typeof project.coordinatorSessionId !== "string" || project.coordinatorSessionId === "")
+        continue;
+      const threads = store.listThreads(project.id);
+      scanned += threads.length;
+      /** @type {Map<string, any>} */
+      const views = new Map();
+      for (const thread of threads) {
+        const view = this.views.get(thread.sessionId);
+        if (view) views.set(thread.sessionId, view);
+      }
+      for (const pending of pendingWakes(threads, views)) {
+        await this.maybeWakeCoordinator(pending.sessionId, {
+          turn: pending.turn,
+          state: pending.state,
+        });
+        woken += 1;
+      }
+    }
+    if (woken > 0) this.logger?.info?.(`[projects] cold-session wake: ${woken}/${scanned}`);
+    return { scanned, woken };
+  }
+
+  /**
+   * 给信封用的项目上下文摘要：常设规则 + 记忆索引，拼成一段文本。
+   * 为什么放进信封：协调器会话拿不到宿主的 runtime context（runtime §11.24），
+   * 而信封这条路已被实测证明能到达协调器（§11.8）。
+   * @param {any} project
+   * @returns {string}
+   */
+  renderProjectContextFor(project) {
     try {
-      const agent = this.agents?.get?.(sessionId);
-      if (agent && !this.attached.has(sessionId)) {
-        const result = attachProjectContext(this.store, this.dataRoot, agent);
-        if (result) this.attached.set(sessionId, result.dispose);
+      const files = readProjectFiles(this.dataRoot, project.id);
+      const blocks = [];
+      if (files.instructions !== "") blocks.push(`# 项目规则\n${files.instructions}`);
+      if (files.memoryIndex !== "") blocks.push(`# 项目记忆索引\n${files.memoryIndex}`);
+      return blocks.join("\n\n");
+    } catch {
+      return "";
+    }
+  }
+
+  /**
+   * 确保项目有一个协调器会话（没有就建一个），返回会话 id。
+   * @param {string} projectId
+   */
+  async ensureCoordinator(projectId) {
+    await this.waitServices();
+    // 单飞：并发调用（面板 + 探针 + 唤醒路径）不能各建一个协调器会话。
+    // 用 per-project Promise 复用同一个在途创建；完成后清掉，失败也不留脏。
+    this.coordinatorInFlight = this.coordinatorInFlight ?? new Map();
+    const inFlight = this.coordinatorInFlight.get(projectId);
+    if (inFlight) return inFlight;
+    const task = this.createCoordinator(projectId).finally(() => {
+      this.coordinatorInFlight.delete(projectId);
+    });
+    this.coordinatorInFlight.set(projectId, task);
+    return task;
+  }
+
+  /**
+   * 真正的协调器创建逻辑（只由 ensureCoordinator 调用，保证单飞）。
+   * @param {string} projectId
+   */
+  async createCoordinator(projectId) {
+    const store = this.requireStore();
+    const project = store.getProject(projectId);
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    if (typeof project.coordinatorSessionId === "string" && project.coordinatorSessionId !== "") {
+      return { sessionId: project.coordinatorSessionId, created: false };
+    }
+    const sc = this.sessionController;
+    if (!sc) throw new Error("projects: session controller unavailable");
+    const cwd =
+      Array.isArray(project.dirs) && project.dirs.length > 0 ? project.dirs[0] : this.dataRoot;
+    const created = await sc.create({ cwd });
+    const sessionId = String(created.sessionId);
+
+    // 把协调器会话挂进对应目录的 workspace，让它成为「正常工作区会话」。
+    // 依据 runtime §11.21：裸会话拿不到运行时上下文提醒，于是项目上下文/人格都进不去。
+    // 失败不阻断（协调器仍可用，只是暂时没有上下文）。
+    try {
+      const registry = this.workspaceRegistry;
+      if (registry && typeof registry.create === "function") {
+        const ws = await registry.create(cwd, project.name);
+        if (ws && typeof ws.attachSession === "function") {
+          await ws.attachSession(sessionId);
+          store.appendAudit({
+            action: "coordinator/workspace",
+            projectId,
+            sessionId,
+            result: "attached",
+          });
+        }
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn?.(`[projects] live attach failed for ${sessionId}: ${message}`);
+      store.appendAudit({
+        action: "coordinator/workspace",
+        projectId,
+        sessionId,
+        result: "skipped",
+        reason: String(/** @type {any} */ (error)?.message ?? error).slice(0, 160),
+      });
     }
-    return thread;
+
+    store.updateProject(projectId, { coordinatorSessionId: sessionId });
+    store.appendAudit({ action: "coordinator/created", projectId, sessionId });
+    store.save();
+    // 显式挂人格：agent 是懒创建的，靠 agent/created 钩子会受时序影响。
+    // 这里主动预热一轮（轻量文本）并在几秒内重试挂载；失败只记审计，不阻断。
+    const attached = await this.warmUpCoordinator(projectId, sessionId);
+    return { sessionId, created: true, personaAttached: attached };
+  }
+
+  /**
+   * 线程一轮结束时唤醒协调器（同一轮只唤醒一次）。
+   * 失败只记日志，不影响线程本身。
+   * @param {string} sessionId
+   * @param {any} view
+   */
+  async maybeWakeCoordinator(sessionId, view) {
+    try {
+      const store = this.store;
+      if (!store) return;
+      const project = store.projectOfSession(sessionId);
+      if (!project) return;
+      const coordinatorSessionId = project.coordinatorSessionId;
+      if (typeof coordinatorSessionId !== "string" || coordinatorSessionId === "") {
+        store.appendAudit({
+          action: "wake/skipped",
+          projectId: project.id,
+          sessionId,
+          reason: "no-coordinator",
+        });
+        store.save(); // 不落盘的话，重启后「为什么没反应」就查不到了
+        return;
+      }
+      const thread = store
+        .listThreads(project.id)
+        .find((/** @type {any} */ item) => item.sessionId === sessionId);
+      if (!thread) return;
+      const turn = Number(view?.turn ?? 0);
+
+      const envelope = buildEnvelope({
+        reason: "thread-activity",
+        trust: "principal",
+        project: { id: project.id, name: project.name },
+        thread: {
+          sessionId,
+          state: view?.state ?? "done",
+          turn,
+          branch: thread.branch ?? null,
+        },
+        context: this.renderProjectContextFor(project),
+        // 人格同样走信封：宿主的 runtime-context 投递不到协调器会话（§11.24）
+        persona: buildPersona({
+          projectName: project.name,
+          persona: project.policy?.persona ?? "",
+        }),
+        report: this.lastMessages.get(sessionId) ?? "",
+        next:
+          view?.state === "failed"
+            ? "tell the user which thread failed and why, in one sentence"
+            : "tell the user the thread's result in one short sentence",
+        wakeId: `thread-activity:${sessionId}:${turn}`,
+      });
+
+      const decision = decideWake({
+        turn,
+        lastWakeTurn: Number(thread.lastWakeTurn ?? 0),
+        wakeId: envelope.wakeId,
+        guard: this.wakeGuard,
+      });
+      if (decision !== "send") {
+        store.appendAudit({
+          action: decision === "skip-dedupe" ? "wake/deduped" : "wake/skipped",
+          projectId: project.id,
+          sessionId,
+          turn,
+          wakeId: envelope.wakeId,
+          reason: decision,
+        });
+        store.save();
+        return;
+      }
+      if (this.wakeGuard.size() > 1000) this.wakeGuard.reset(); // 长跑不无限增长
+
+      const sc = this.sessionController;
+      if (!sc) return;
+      await sc.prompt(
+        {
+          requestId: `projects-wake-${envelope.wakeId}`,
+          sessionId: coordinatorSessionId,
+          mode: "queue",
+          content: [{ type: "text", text: envelope.text }],
+        },
+        new AbortController().signal,
+      );
+      store.setThreadWakeState(sessionId, turn);
+      store.appendAudit({
+        action: "wake/sent",
+        projectId: project.id,
+        sessionId,
+        turn,
+        wakeId: envelope.wakeId,
+      });
+      store.save();
+    } catch (error) {
+      this.logger?.warn?.(
+        `[projects] wake failed: ${String(/** @type {any} */ (error)?.message ?? error)}`,
+      );
+    }
+  }
+
+  /**
+   * 按规则处理一条输入：决策 → 必要时执行 → **一律写审计**。
+   * L0/L1 下「新建线程」会被拦成提议（规格 §7.4：级别只增不减地放宽，默认只提议）。
+   * @param {string} projectId
+   * @param {string} text
+   */
+  async route(projectId, text) {
+    await this.waitServices();
+    const store = this.requireStore();
+    const project = store.getProject(projectId);
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const input = String(text ?? "").trim();
+    if (input === "") throw new Error("projects: route requires text");
+
+    const decision = this.previewRoute(projectId, input);
+    /** @type {any} */
+    const record = {
+      action: "route",
+      projectId,
+      input: input.slice(0, 120),
+      decision: { by: decision.by, action: decision.action, ruleId: decision.ruleId ?? null },
+      autonomy: decision.autonomy,
+    };
+
+    if (decision.by === "blocked") {
+      store.appendAudit({ ...record, result: "blocked", reason: decision.blockedReason ?? "" });
+      store.save();
+      return { executed: false, decision, reason: decision.blockedReason ?? "" };
+    }
+
+    if (decision.action === "new-thread") {
+      try {
+        const thread = await this.createThread(projectId, input);
+        store.appendAudit({ ...record, result: "thread-created", sessionId: thread.sessionId });
+        store.save();
+        return { executed: true, decision, sessionId: thread.sessionId, isolated: thread.isolated };
+      } catch (error) {
+        store.appendAudit({
+          ...record,
+          result: "failed",
+          reason: String(/** @type {any} */ (error)?.message ?? error),
+        });
+        store.save();
+        return {
+          executed: false,
+          decision,
+          reason: String(/** @type {any} */ (error)?.message ?? error),
+        };
+      }
+    }
+
+    // answer-inline / reuse-thread / propose：执行留给调用方（面板/协调器），这里只给决策
+    store.appendAudit({
+      ...record,
+      result: decision.action === "propose" ? "proposed" : "handled-by-caller",
+    });
+    store.save();
+    return { executed: false, decision, reason: "" };
+  }
+
+  /**
+   * 申请一个危险动作（入审批队列，**不执行**）。
+   * 协调器工具走同一条路径；面板也可以直接调用。
+   * @param {string} projectId
+   * @param {{ action?: string, reason?: string, args?: any }} request
+   */
+  requestAction(projectId, request) {
+    const store = this.requireStore();
+    const project = store.getProject(projectId);
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const action = String(request?.action ?? "");
+    const reason = String(request?.reason ?? "").trim();
+    if (!REQUESTABLE_ACTIONS.includes(action)) {
+      return { ok: false, error: `action-not-requestable: ${action || "(empty)"}` };
+    }
+    if (reason === "") return { ok: false, error: "reason-required" };
+    const created = store.appendApproval({
+      projectId,
+      action,
+      args: request?.args ?? null,
+      reason,
+    });
+    store.appendAudit({
+      action: "approval/requested",
+      projectId,
+      requestId: created.requestId,
+      dangerAction: action,
+    });
+    store.save();
+    return { ok: true, requestId: created.requestId };
+  }
+
+  /**
+   * 待审批队列（面板用）。
+   * @param {string|undefined} projectId
+   */
+  listApprovals(projectId) {
+    return this.requireStore().listApprovals(projectId);
+  }
+
+  /**
+   * 根据一次 CI 失败决定要不要再修一轮；要修就给该线程投递修复任务。
+   * **不 push、不开 PR**（ADR 0003）；碰到测试文件或无进展就停。
+   * @param {string} projectId
+   * @param {{ sessionId: string, log: string, changedFiles?: string[] }} input
+   */
+  async autoFixStep(projectId, input) {
+    await this.waitServices();
+    const store = this.requireStore();
+    const project = store.getProject(projectId);
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const sessionId = String(input?.sessionId ?? "");
+    const thread = store
+      .listThreads(projectId)
+      .find((/** @type {any} */ item) => item.sessionId === sessionId);
+    if (!thread) throw new Error(`projects: unknown thread ${sessionId}`);
+
+    const signature = errorSignature(String(input?.log ?? ""));
+    const verdict = shouldContinueFix({
+      round: Number(thread.autoFixRound ?? 0),
+      changedFiles: input?.changedFiles ?? thread.autoFixChanged ?? [],
+      previousSignature: String(thread.autoFixSignature ?? ""),
+      currentSignature: signature,
+    });
+
+    if (!verdict.continue) {
+      store.appendAudit({
+        action: "autofix/stopped",
+        projectId,
+        sessionId,
+        reason: verdict.reason,
+      });
+      store.save();
+      return { continued: false, reason: verdict.reason };
+    }
+
+    const task = buildFixTask({
+      round: Number(thread.autoFixRound ?? 0),
+      signature,
+      projectName: project.name,
+    });
+    await this.promptThread(sessionId, task);
+    store.setThreadAutoFix(sessionId, {
+      round: Number(thread.autoFixRound ?? 0) + 1,
+      signature,
+      changedFiles: [],
+    });
+    store.appendAudit({
+      action: "autofix/round",
+      projectId,
+      sessionId,
+      round: Number(thread.autoFixRound ?? 0) + 1,
+    });
+    store.save();
+    return { continued: true, reason: "", round: Number(thread.autoFixRound ?? 0) + 1 };
+  }
+
+  /**
+   * 按档位给一个线程开 PR：推分支 →（需要时）gh pr create → 记录 PR 号与审计。
+   * 档位 off 时什么都不做。gh 缺失/失败只降级并写审计，不重试到天荒地老。
+   * @param {string} projectId
+   * @param {string} sessionId
+   * @param {{ tier?: string, base?: string, repo?: string, ciState?: string }} [options]
+   */
+  async openPr(projectId, sessionId, options) {
+    await this.waitServices();
+    const store = this.requireStore();
+    const project = store.getProject(projectId);
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const thread = store
+      .listThreads(projectId)
+      .find((/** @type {any} */ item) => item.sessionId === sessionId);
+    if (!thread) throw new Error(`projects: unknown thread ${sessionId}`);
+
+    const tier = String(options?.tier ?? "off");
+
+    // 线程上没有 commits 字段：直接数（base..branch），否则任何线程都会被判成"没有提交"
+    const repoRoot = Array.isArray(project.dirs) && project.dirs.length > 0 ? project.dirs[0] : "";
+    let commits = Number(thread.commits ?? 0);
+    if (repoRoot !== "" && typeof thread.branch === "string" && thread.branch !== "") {
+      const base = String(options?.base ?? "HEAD");
+      const counted = await runGit(["rev-list", "--count", `${base}..${thread.branch}`], repoRoot);
+      if (counted.code === 0) commits = Number(String(counted.stdout).trim() || "0");
+    }
+
+    const decision = nextPrAction({
+      tier,
+      thread: {
+        branch: thread.branch ?? null,
+        prNumber: thread.prNumber ?? null,
+        commits,
+        attempts: Number(thread.prAttempts ?? 0),
+        ciState: options?.ciState ?? undefined,
+      },
+    });
+
+    if (
+      decision.action === "none" ||
+      decision.action === "give-up" ||
+      decision.action === "wait-ci"
+    ) {
+      store.appendAudit({
+        action: "pr/decided",
+        projectId,
+        sessionId,
+        decision: decision.action,
+        reason: decision.reason,
+      });
+      store.save();
+      return { opened: false, decision };
+    }
+    if (decision.action === "update") {
+      store.appendAudit({
+        action: "pr/decided",
+        projectId,
+        sessionId,
+        decision: "update",
+        prNumber: thread.prNumber,
+      });
+      store.save();
+      return { opened: false, decision, prNumber: thread.prNumber ?? null };
+    }
+
+    const draft = decision.action === "open-draft";
+    const text = buildPrText({
+      projectName: project.name,
+      task: this.lastMessages.get(sessionId) ?? project.goal ?? "",
+      sessionId,
+      branch: thread.branch ?? "",
+    });
+    const planned = planPrCreate({
+      title: text.title,
+      body: text.body,
+      branch: String(thread.branch ?? ""),
+      base: options?.base,
+      repo: options?.repo,
+      draft,
+    });
+    if ("error" in planned) {
+      store.appendAudit({ action: "pr/failed", projectId, sessionId, reason: planned.error });
+      store.save();
+      return { opened: false, decision, reason: planned.error };
+    }
+
+    // 先推分支（worktree 内），再开 PR
+    const worktree =
+      typeof thread.worktree === "string" && thread.worktree !== "" ? thread.worktree : "";
+    if (worktree !== "") {
+      const pushed = await runGit(["push", "-u", "origin", String(thread.branch)], worktree);
+      if (pushed.code !== 0) {
+        store.appendAudit({ action: "pr/failed", projectId, sessionId, reason: "push-failed" });
+        store.save();
+        return { opened: false, decision, reason: "push-failed" };
+      }
+    }
+
+    const gh = await runGh(planned.argv);
+    const prNumber = gh.code === 0 ? parsePrNumber(gh.stdout) : null;
+    if (gh.code !== 0 || prNumber === null) {
+      const tryCount = Number(thread.prAttempts ?? 0) + 1;
+      store.setThreadAutoFix(sessionId, {});
+      store.appendAudit({
+        action: "pr/failed",
+        projectId,
+        sessionId,
+        reason: String(gh.stderr).split("\n")[0].slice(0, 160) || "gh-failed",
+        attempts: tryCount,
+      });
+      store.save();
+      return { opened: false, decision, reason: "gh-failed" };
+    }
+
+    store.setThreadWakeState(sessionId, Number(thread.lastWakeTurn ?? 0));
+    store.appendAudit({ action: "pr/opened", projectId, sessionId, prNumber, draft });
+    store.save();
+    return { opened: true, decision, prNumber, draft, argv: planned.argv };
+  }
+
+  /**
+   * 执行一条已批准的申请。**默认什么都不会执行**：危险开关全关。
+   * 顺序固定：已批准 → 动作在白名单 → 开关打开 → 影响面在阈值内 → 执行 → 写恢复证据。
+   * @param {string} requestId
+   */
+  async executeApproval(requestId) {
+    const store = this.requireStore();
+    const approval = store
+      .listApprovals(undefined)
+      .find((/** @type {any} */ item) => item.requestId === requestId);
+    if (!approval) throw new Error(`projects: unknown approval ${requestId}`);
+
+    // 幂等判定必须**最先**：删除类动作执行后项目已不存在，
+    // 若先查项目就会抛 "unknown project"，把「重复执行」误报成「项目丢了」。
+    if (typeof approval.executedAt === "string" && approval.executedAt !== "") {
+      store.appendAudit({
+        action: "approval/execution-refused",
+        projectId: approval.projectId,
+        requestId,
+        dangerAction: approval.action,
+        reason: "already-executed",
+      });
+      store.save();
+      return { executed: false, reason: "already-executed" };
+    }
+
+    const project = store.getProject(approval.projectId);
+    if (!project) {
+      store.appendAudit({
+        action: "approval/execution-refused",
+        projectId: approval.projectId,
+        requestId,
+        dangerAction: approval.action,
+        reason: "project-missing",
+      });
+      store.save();
+      return { executed: false, reason: "project-missing" };
+    }
+
+    const verdict = checkExecutable({
+      approval,
+      danger: project.policy?.danger ?? {},
+      limits: project.policy?.danger?.merge
+        ? {
+            maxDiffFiles: Number(project.policy.danger.merge?.maxDiffFiles ?? 20),
+            maxDiffLines: Number(project.policy.danger.merge?.maxDiffLines ?? 600),
+          }
+        : undefined,
+      impact: approval.args?.impact ?? {},
+    });
+    if (!verdict.ok) {
+      store.appendAudit({
+        action: "approval/execution-refused",
+        projectId: approval.projectId,
+        requestId,
+        dangerAction: approval.action,
+        reason: verdict.reason,
+      });
+      store.save();
+      return { executed: false, reason: verdict.reason };
+    }
+
+    // 幂等：先占位（占用失败说明已经执行过），再真正执行。
+    // 否则并发两次 executeApproval 会重复推送/重复删除。
+    try {
+      store.markApprovalExecuted(requestId, null);
+    } catch {
+      store.appendAudit({
+        action: "approval/execution-refused",
+        projectId: approval.projectId,
+        requestId,
+        dangerAction: approval.action,
+        reason: "already-executed",
+      });
+      store.save();
+      return { executed: false, reason: "already-executed" };
+    }
+
+    const planned = planCommand(approval.action, approval.args ?? {});
+    if ("error" in planned) {
+      store.appendAudit({
+        action: "approval/execution-refused",
+        projectId: approval.projectId,
+        requestId,
+        dangerAction: approval.action,
+        reason: planned.error,
+      });
+      store.save();
+      return { executed: false, reason: planned.error };
+    }
+
+    // push-branch：在工作树里跑真实 git（argv 数组，不经 shell），只推我们自己的分支
+    if (approval.action === "push-branch") {
+      const sessionId = String(approval.args?.sessionId ?? approval.args?.threadSessionId ?? "");
+      const thread = store
+        .listThreads(approval.projectId)
+        .find((/** @type {any} */ item) => item.sessionId === sessionId);
+      const worktree =
+        typeof thread?.worktree === "string" && thread.worktree !== "" ? thread.worktree : "";
+      if (worktree === "") {
+        store.appendAudit({
+          action: "approval/execution-refused",
+          projectId: approval.projectId,
+          requestId,
+          dangerAction: approval.action,
+          reason: "no-worktree",
+        });
+        store.save();
+        return { executed: false, reason: "no-worktree" };
+      }
+      const branch = String(approval.args?.branch ?? thread?.branch ?? "");
+      const pushed = await runGit(["push", "-u", "origin", branch], worktree);
+      const ok = pushed.code === 0;
+      const evidence = recoveryEvidence(approval.action, { branch }, { stdout: pushed.stdout });
+      store.appendAudit({
+        action: ok ? "approval/executed" : "approval/execution-failed",
+        projectId: approval.projectId,
+        requestId,
+        dangerAction: approval.action,
+        evidence,
+        ...(ok ? {} : { reason: String(pushed.stderr).split("\n")[0].slice(0, 200) }),
+      });
+      store.save();
+      return ok ? { executed: true, evidence } : { executed: false, reason: "push-failed" };
+    }
+
+    // merge 走 gh：需要真实远端与 PR 号，留给后续步骤（这里只回报计划）
+    if (approval.action === "delete-project") {
+      const result = this.deleteProject(approval.projectId);
+      const evidence = recoveryEvidence(approval.action, approval.args ?? {}, result);
+      store.appendAudit({
+        action: "approval/executed",
+        projectId: approval.projectId,
+        requestId,
+        dangerAction: approval.action,
+        evidence,
+      });
+      store.save();
+      return { executed: true, evidence };
+    }
+
+    // merge：走 gh pr merge（argv 里已含 --squash，不带 --admin/--force）。
+    // 只合并我们自己的 PR：planCommand 已保证 PR 号是正整数，且危险开关与阈值都过了。
+    if (approval.action === "merge") {
+      const ghArgs = planned.argv.slice(1); // 去掉 argv[0] 的 "gh"
+      const merged = await runGh(ghArgs);
+      const ok = merged.code === 0;
+      const evidence = recoveryEvidence(approval.action, approval.args ?? {}, {
+        stdout: merged.stdout,
+      });
+      store.appendAudit({
+        action: ok ? "approval/executed" : "approval/execution-failed",
+        projectId: approval.projectId,
+        requestId,
+        dangerAction: approval.action,
+        evidence,
+        ...(ok
+          ? {}
+          : { reason: String(merged.stderr).split("\n")[0].slice(0, 200) || "gh-merge-failed" }),
+      });
+      store.save();
+      return ok ? { executed: true, evidence } : { executed: false, reason: "gh-merge-failed" };
+    }
+
+    store.appendAudit({
+      action: "approval/execution-deferred",
+      projectId: approval.projectId,
+      requestId,
+      dangerAction: approval.action,
+      reason: "remote-action-not-implemented",
+      planned: planned.argv,
+    });
+    store.save();
+    return { executed: false, reason: "remote-action-not-implemented", planned: planned.argv };
+  }
+
+  /**
+   * 决议一条申请。**只改状态，不执行动作**——执行留给 M4 的受控执行器。
+   * @param {string} requestId
+   * @param {"approved"|"rejected"} status
+   */
+  resolveApproval(requestId, status) {
+    const store = this.requireStore();
+    const resolved = store.resolveApproval(
+      requestId,
+      status === "approved" ? "approved" : "rejected",
+    );
+    store.appendAudit({
+      action: "approval/resolved",
+      projectId: resolved.projectId,
+      requestId,
+      result: resolved.status,
+    });
+    store.save();
+    return resolved;
+  }
+
+  /**
+   * 路由 dry-run：给定一段输入，说清「按哪条规则、会做什么、被谁拦」。
+   * 纯决策、零副作用——真正的执行（建线程等）留给 M3 后续步骤。
+   * @param {string} projectId
+   * @param {string} text
+   */
+  previewRoute(projectId, text) {
+    const store = this.requireStore();
+    const project = store.getProject(projectId);
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const input = String(text ?? "");
+    const decision = decideRoute({
+      text: input,
+      rules: project.policy?.routing?.rules ?? [],
+      autonomy: project.policy?.autonomy ?? "L1",
+      isQuestion:
+        /[?？]\s*$/u.test(input.trim()) ||
+        /^(why|how|what|when|where|who|is|are|can|should|能否|为什么|怎么|如何)/iu.test(
+          input.trim(),
+        ),
+    });
+    return {
+      ...decision,
+      autonomy: project.policy?.autonomy ?? "L1",
+      allowFallback: project.policy?.routing?.fallback !== false,
+      inputLength: input.length,
+    };
   }
 
   /**
@@ -530,6 +1563,7 @@ export class ProjectsService extends TypertRemoteService {
         reason: budget.reason,
         used: budget.used,
         limits: project?.budget ?? null,
+        tokensToday: store.tokenUsageToday(projectId, Date.now()),
       },
       projectState: project?.state ?? "active",
     };
@@ -549,6 +1583,7 @@ export class ProjectsService extends TypertRemoteService {
       projectCount: projects.length,
       activeCount: projects.filter((p) => p.state === "active").length,
       attachedSessions: this.attached.size,
+      renderStats: this.renderStats ?? {},
     };
   }
 
@@ -563,10 +1598,22 @@ export class ProjectsService extends TypertRemoteService {
     // 预算闸：暂停/归档、每日线程数、并发数。拒绝时给可读原因，不静默降级。
     const project = store.getProject(projectId);
     if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const nowMs = Date.now();
+    const tokenVerdict = checkTokenBudget({
+      dailyTokens: project.budget?.dailyTokens,
+      usedTokens: store.tokenUsageToday(projectId, nowMs),
+    });
+    if (!tokenVerdict.ok) {
+      store.appendAudit({ action: "thread/rejected", projectId, reason: tokenVerdict.reason });
+      store.save();
+      throw new Error(
+        `projects: ${tokenVerdict.reason} (used=${tokenVerdict.used}, limit=${tokenVerdict.limit})`,
+      );
+    }
     const verdict = checkThreadBudget({
       project,
       threads: store.listThreads(projectId),
-      now: Date.now(),
+      now: nowMs,
     });
     if (!verdict.ok) {
       store.appendAudit({ action: "thread/rejected", projectId, reason: verdict.reason });
@@ -637,6 +1684,8 @@ declareRemote(ProjectsService, "updateProject");
 declareRemote(ProjectsService, "pauseProject");
 declareRemote(ProjectsService, "resumeProject");
 declareRemote(ProjectsService, "archiveProject");
+declareRemote(ProjectsService, "unarchiveProject");
+declareRemote(ProjectsService, "reconcileWakes");
 declareRemote(ProjectsService, "previewDeleteProject");
 declareRemote(ProjectsService, "deleteProject");
 declareRemote(ProjectsService, "attachThread");
@@ -644,8 +1693,18 @@ declareRemote(ProjectsService, "detachThread");
 declareRemote(ProjectsService, "createThread");
 declareRemote(ProjectsService, "reclaimThread");
 declareRemote(ProjectsService, "progress");
+declareRemote(ProjectsService, "previewRoute");
+declareRemote(ProjectsService, "route");
+declareRemote(ProjectsService, "requestAction");
+declareRemote(ProjectsService, "listApprovals");
+declareRemote(ProjectsService, "resolveApproval");
+declareRemote(ProjectsService, "executeApproval");
+declareRemote(ProjectsService, "autoFixStep");
+declareRemote(ProjectsService, "openPr");
+declareRemote(ProjectsService, "ensureCoordinator");
 declareRemote(ProjectsService, "debugAttached");
 declareRemote(ProjectsService, "detachSession");
 declareRemote(ProjectsService, "describe");
 declareRemote(ProjectsService, "getProjectContent");
+declareRemote(ProjectsService, "appendMemory");
 declareRemote(ProjectsService, "listAudit");

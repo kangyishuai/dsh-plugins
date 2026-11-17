@@ -76,6 +76,44 @@ window.__ModuleLoader__.load({
       "detail.deleteImpact": "{summary}",
       "notify.failed": "{count} 个线程失败",
       "notify.waiting": "{count} 个线程在等你",
+      "detail.routePlaceholder": "按规则派活：输入一句话，由规则决定怎么做",
+      "detail.routeDispatch": "按规则派活",
+      "detail.routeBusy": "处理中…",
+      "detail.routeDecision": "按 {by} → {action}",
+      "detail.routeExecuted": "已执行",
+      "detail.routeRejected": "被拦",
+      "detail.approvalsTitle": "待你批准的动作",
+      "detail.approve": "批准",
+      "detail.reject": "拒绝",
+      "settings.policyTitle": "项目策略（自治级别 / 人格 / 兜底）",
+      "settings.noProjects": "还没有项目",
+      "settings.autonomy": "自治级别",
+      "settings.level.L0": "只观察",
+      "settings.level.L1": "只提议（默认）",
+      "settings.level.L2": "可代办",
+      "settings.level.L3": "全权",
+      "settings.persona": "人格（留空用默认）",
+      "settings.fallback": "规则都不命中时允许模型兜底提议",
+      "settings.dangerTitle": "危险动作开关（默认全关）",
+      "settings.dangerHint": "打开任何一个开关都需要你明确同意；插件不会自行打开。",
+      "settings.danger.forcePushOwnBranch.label": "允许推送自己的 dsh/ 分支（普通推送，非强推）",
+      "settings.danger.forcePushOwnBranch.risk":
+        "会写远端仓库；只推 dsh/ 开头的分支。**强推（--force）尚未实现**，打开此开关不会产生强推。",
+      "settings.danger.pushProtectedBranch.label": "允许推送受保护分支（暂未实现）",
+      "settings.danger.pushProtectedBranch.risk":
+        "当前版本没有对应执行路径，打开也不会生效；保留此键是为了将来对齐。",
+      "settings.danger.autoMerge.label": "允许自动合并 PR",
+      "settings.danger.autoMerge.risk":
+        "合并不可逆（只能用 revert 回退）；仍受 diff 阈值与人工批准约束",
+      "settings.danger.trashAuto.label": "允许自动归档/删除到回收站",
+      "settings.danger.trashAuto.risk": "会把内容移入 trash/；可从 manifest 恢复，但不是零成本",
+      "settings.danger.purgeAfterRetention.label": "允许保留期后清理回收站（暂未实现）",
+      "settings.danger.purgeAfterRetention.risk":
+        "当前版本没有对应执行路径，打开也不会生效；回收站不会被自动清空。",
+      "settings.danger.editProfile.label": "允许修改项目策略本身",
+      "settings.danger.editProfile.risk": "协调器可能借此放宽自己的限制；风险最高",
+      "detail.archive": "归档项目",
+      "detail.unarchive": "取消归档",
     };
     var EN = {
       title: "Projects",
@@ -137,6 +175,50 @@ window.__ModuleLoader__.load({
       "detail.deleteImpact": "{summary}",
       "notify.failed": "{count} threads failed",
       "notify.waiting": "{count} threads waiting on you",
+      "detail.routePlaceholder": "Dispatch by rule: describe the task and let rules decide",
+      "detail.routeDispatch": "Dispatch by rule",
+      "detail.routeBusy": "Working…",
+      "detail.routeDecision": "by {by} → {action}",
+      "detail.routeExecuted": "executed",
+      "detail.routeRejected": "blocked",
+      "detail.approvalsTitle": "Actions waiting for your approval",
+      "detail.approve": "Approve",
+      "detail.reject": "Reject",
+      "settings.policyTitle": "Project policy (autonomy / persona / fallback)",
+      "settings.noProjects": "No projects yet",
+      "settings.autonomy": "Autonomy",
+      "settings.level.L0": "observe only",
+      "settings.level.L1": "propose only (default)",
+      "settings.level.L2": "may act",
+      "settings.level.L3": "full",
+      "settings.persona": "Persona (empty = built-in default)",
+      "settings.fallback": "Allow the model to propose when no rule matches",
+      "settings.dangerTitle": "Danger switches (all off by default)",
+      "settings.dangerHint":
+        "Every switch needs your explicit consent; the plugin never turns one on by itself.",
+      "settings.danger.forcePushOwnBranch.label":
+        "Allow pushing your own dsh/ branches (normal push, not force)",
+      "settings.danger.forcePushOwnBranch.risk":
+        "Writes to the remote; only branches starting with dsh/. **Force push (--force) is not implemented yet** — turning this on does not enable force push.",
+      "settings.danger.pushProtectedBranch.label":
+        "Allow pushing to protected branches (not implemented yet)",
+      "settings.danger.pushProtectedBranch.risk":
+        "No execution path exists in this version, so turning it on has no effect; the key is kept for future alignment.",
+      "settings.danger.autoMerge.label": "auto-merge PRs",
+      "settings.danger.autoMerge.risk":
+        "merging is irreversible (revert only); still gated by diff limits and human approval",
+      "settings.danger.trashAuto.label": "auto archive/delete into trash",
+      "settings.danger.trashAuto.risk":
+        "moves content into trash/; restorable from manifest, but not free",
+      "settings.danger.purgeAfterRetention.label":
+        "Allow purging the trash after retention (not implemented yet)",
+      "settings.danger.purgeAfterRetention.risk":
+        "No execution path exists in this version, so turning it on has no effect; the trash is never emptied automatically.",
+      "settings.danger.editProfile.label": "edit project policy itself",
+      "settings.danger.editProfile.risk":
+        "the coordinator could loosen its own limits; highest risk",
+      "detail.archive": "Archive project",
+      "detail.unarchive": "Unarchive project",
     };
     var PANEL_ID = "projects";
     var SERVICE = "projects";
@@ -472,6 +554,7 @@ window.__ModuleLoader__.load({
           call(api.ctx, "progress", { projectId: project.id }),
           call(api.ctx, "getProjectContent", { projectId: project.id }),
           call(api.ctx, "listAudit", { projectId: project.id }),
+          call(api.ctx, "listApprovals", { projectId: project.id }),
         ]).then(
           (values) => {
             setData({
@@ -482,6 +565,7 @@ window.__ModuleLoader__.load({
               projectState: values[0]?.projectState ?? project.state,
               content: values[1] || null,
               audit: Array.isArray(values[2]) ? values[2] : [],
+              approvals: Array.isArray(values[3]) ? values[3] : [],
             });
           },
           (error) => {
@@ -503,9 +587,54 @@ window.__ModuleLoader__.load({
       const busy = busyState[0];
       const setBusy = busyState[1];
 
+      const routeState = useState(null);
+      const routeResult = routeState[0];
+      const setRouteResult = routeState[1];
+      const routeInput = useState("");
+      const routeText = routeInput[0];
+      const setRouteText = routeInput[1];
+      const routeBusyState = useState(false);
+      const routeBusy = routeBusyState[0];
+      const setRouteBusy = routeBusyState[1];
+      const dispatchRoute = useCallback(() => {
+        const value = String(routeText).trim();
+        if (value === "" || routeBusy) return;
+        setRouteBusy(true);
+        call(api.ctx, "route", { projectId: project.id, text: value }).then(
+          (result) => {
+            setRouteBusy(false);
+            setRouteResult(result);
+            load();
+          },
+          (error) => {
+            setRouteBusy(false);
+            setRouteResult({
+              executed: false,
+              reason: String(error?.message ?? error),
+              decision: null,
+            });
+          },
+        );
+      }, [api, load, project.id, routeBusy, routeText, setRouteBusy, setRouteResult]);
+
       const deleteState = useState({ confirming: false, busy: false, impact: null });
       const del = deleteState[0];
       const setDel = deleteState[1];
+      const resolveApproval = useCallback(
+        (/** @type {any} */ requestId, /** @type {any} */ status) => {
+          call(api.ctx, "resolveApproval", { requestId, status }).then(
+            () => load(),
+            (error) => {
+              setData((/** @type {any} */ prev) => ({
+                ...prev,
+                error: String(error?.message ?? error),
+              }));
+            },
+          );
+        },
+        [api, load, setData],
+      );
+
       const askDelete = useCallback(() => {
         call(api.ctx, "previewDeleteProject", { id: project.id }).then(
           (preview) => setDel({ confirming: true, busy: false, impact: preview }),
@@ -592,7 +721,8 @@ window.__ModuleLoader__.load({
 
       const body = (() => {
         if (data.loading) return h("p", { style: styles.empty }, text(t, "detail.loading"));
-        if (data.error !== "") return h("p", { style: styles.error }, data.error);
+        if (data.error !== "")
+          return h("p", { style: styles.error, "data-projects-detail-error": "" }, data.error);
         if (tab === "threads") {
           const rows = data.progress?.rows ?? [];
           const counts = data.progress?.counts ?? {};
@@ -634,6 +764,59 @@ window.__ModuleLoader__.load({
                 busy ? text(t, "detail.threadCreating") : text(t, "detail.threadCreate"),
               ),
             ),
+            h(
+              "div",
+              { style: { display: "flex", gap: "8px", margin: "0 0 8px" } },
+              h("input", {
+                style: styles.input,
+                value: routeText,
+                placeholder: text(t, "detail.routePlaceholder"),
+                "data-projects-route-input": "",
+                onChange: (/** @type {any} */ event) => setRouteText(event.target.value),
+                onKeyDown: (/** @type {any} */ event) => {
+                  if (event.key === "Enter") dispatchRoute();
+                },
+                disabled: routeBusy,
+              }),
+              h(
+                "button",
+                {
+                  type: "button",
+                  style: styles.button,
+                  "data-projects-route-dispatch": "",
+                  onClick: dispatchRoute,
+                  disabled: routeBusy,
+                },
+                routeBusy ? text(t, "detail.routeBusy") : text(t, "detail.routeDispatch"),
+              ),
+            ),
+            routeResult
+              ? h(
+                  "div",
+                  {
+                    style: { ...styles.meta, margin: "0 0 8px" },
+                    "data-projects-route-result": "",
+                    "data-projects-route-executed": routeResult.executed ? "yes" : "no",
+                  },
+                  (() => {
+                    const parts = [];
+                    if (routeResult.decision) {
+                      parts.push(
+                        text(t, "detail.routeDecision", {
+                          by: String(routeResult.decision.by),
+                          action: String(routeResult.decision.action),
+                        }),
+                      );
+                      if (routeResult.decision.ruleId)
+                        parts.push(`#${routeResult.decision.ruleId}`);
+                    }
+                    if (routeResult.executed) parts.push(text(t, "detail.routeExecuted"));
+                    else if (routeResult.reason)
+                      parts.push(`${text(t, "detail.routeRejected")}: ${routeResult.reason}`);
+                    return parts.join(" · ");
+                  })(),
+                )
+              : null,
             h(
               "div",
               { style: { ...styles.meta, margin: "0 0 6px" }, "data-projects-counts": "" },
@@ -780,6 +963,30 @@ window.__ModuleLoader__.load({
             "button",
             {
               type: "button",
+              style: styles.button,
+              "data-projects-toggle-archive": "",
+              onClick: () => {
+                const next =
+                  data.projectState === "archived" ? "unarchiveProject" : "archiveProject";
+                call(api.ctx, next, { id: project.id }).then(
+                  () => load(),
+                  (error) => {
+                    setData((/** @type {any} */ prev) => ({
+                      ...prev,
+                      error: String(error?.message ?? error),
+                    }));
+                  },
+                );
+              },
+            },
+            data.projectState === "archived"
+              ? text(t, "detail.unarchive")
+              : text(t, "detail.archive"),
+          ),
+          h(
+            "button",
+            {
+              type: "button",
               style: { ...styles.button, color: T.danger, marginLeft: "auto" },
               "data-projects-delete": "",
               onClick: askDelete,
@@ -823,6 +1030,62 @@ window.__ModuleLoader__.load({
             text(t, "detail.dirSave"),
           ),
         ),
+        (data.approvals ?? []).filter((/** @type {any} */ item) => item.status === "pending")
+          .length > 0
+          ? h(
+              "div",
+              {
+                "data-projects-approvals": "",
+                style: {
+                  border: `1px solid ${T.border}`,
+                  borderRadius: "8px",
+                  padding: "8px 10px",
+                  marginTop: "8px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "6px",
+                },
+              },
+              h("div", { style: styles.name }, text(t, "detail.approvalsTitle")),
+              (data.approvals ?? [])
+                .filter((/** @type {any} */ item) => item.status === "pending")
+                .map((/** @type {any} */ item) =>
+                  h(
+                    "div",
+                    {
+                      key: item.requestId,
+                      style: { display: "flex", gap: "8px", alignItems: "center" },
+                      "data-projects-approval-row": item.requestId,
+                    },
+                    h(
+                      "span",
+                      { style: { ...styles.meta, flex: 1, minWidth: 0 } },
+                      `${item.action} · ${item.reason}`,
+                    ),
+                    h(
+                      "button",
+                      {
+                        type: "button",
+                        style: styles.button,
+                        "data-projects-approval-approve": item.requestId,
+                        onClick: () => resolveApproval(item.requestId, "approved"),
+                      },
+                      text(t, "detail.approve"),
+                    ),
+                    h(
+                      "button",
+                      {
+                        type: "button",
+                        style: { ...styles.button, color: T.danger },
+                        "data-projects-approval-reject": item.requestId,
+                        onClick: () => resolveApproval(item.requestId, "rejected"),
+                      },
+                      text(t, "detail.reject"),
+                    ),
+                  ),
+                ),
+            )
+          : null,
         del.confirming
           ? h(
               "div",
@@ -1063,6 +1326,10 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         let cancelled = false;
         const tick = () => {
+          // 页面在后台时不轮询：每 5s 一次 listProjects + 每项目 progress，
+          // 在用户没看的时候纯属浪费（而且没人能看见 toast）。
+          const doc = typeof document === "undefined" ? null : document;
+          if (doc?.hidden === true) return;
           call(api.ctx, "listProjects").then(
             (projects) => {
               if (cancelled || !Array.isArray(projects)) return;
@@ -1177,15 +1444,16 @@ window.__ModuleLoader__.load({
       return out;
     }
 
-    /** @param {any[]} items */
+    /**
+     * 只统计条数；文案由调用方用 locale 拼（client 半不应出现硬编码语言文案）。
+     * @param {any[]} items
+     */
     function summarize(items) {
       const list = Array.isArray(items) ? items : [];
-      const failed = list.filter((item) => item.kind === "failed").length;
-      const waiting = list.filter((item) => item.kind === "waiting-user").length;
-      const parts = [];
-      if (failed > 0) parts.push(`${failed} 个线程失败`);
-      if (waiting > 0) parts.push(`${waiting} 个线程在等你`);
-      return { failed, waiting, text: parts.join(" · ") };
+      return {
+        failed: list.filter((item) => item.kind === "failed").length,
+        waiting: list.filter((item) => item.kind === "waiting-user").length,
+      };
     }
 
     /** 侧栏图标入口：宿主会传 {size, active}。 */
@@ -1216,27 +1484,120 @@ window.__ModuleLoader__.load({
      * 设置分节：诊断 + 数据根。
      * @param {{api: any, t: any}} props
      */
-    function ProjectsSettings(props) {
+    /** 六个危险开关的键（与 lib/store.js 的 DEFAULT_DANGER 一致）。 */
+    var DANGER_KEYS = [
+      "forcePushOwnBranch",
+      "pushProtectedBranch",
+      "autoMerge",
+      "trashAuto",
+      "purgeAfterRetention",
+      "editProfile",
+    ];
+
+    /**
+     * 危险开关：默认全关，每项带一句风险说明。打开需要用户明确勾选。
+     * @param {{t: any, policy: any, onChange: (patch: any) => void}} props
+     */
+    function DangerSwitches(/** @type {any} */ props) {
+      const t = props.t;
+      const danger = props.policy?.danger ?? {};
+      return h(
+        "details",
+        { "data-projects-policy-danger": "" },
+        h(
+          "summary",
+          { style: { cursor: "pointer", color: T.dim } },
+          text(t, "settings.dangerTitle"),
+        ),
+        h(
+          "div",
+          { style: { display: "flex", flexDirection: "column", gap: "4px", marginTop: "4px" } },
+          h("div", { style: { color: T.faint, fontSize: "12px" } }, text(t, "settings.dangerHint")),
+          DANGER_KEYS.map((key) =>
+            h(
+              "label",
+              {
+                key: key,
+                style: { display: "flex", gap: "6px", alignItems: "flex-start", color: T.dim },
+              },
+              h("input", {
+                type: "checkbox",
+                checked: danger[key] === true,
+                "data-projects-danger-switch": key,
+                onChange: (/** @type {any} */ event) =>
+                  props.onChange({ danger: { ...danger, [key]: event.target.checked } }),
+              }),
+              h(
+                "span",
+                null,
+                text(t, `settings.danger.${key}.label`) +
+                  " — " +
+                  text(t, `settings.danger.${key}.risk`),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    function ProjectsSettings(/** @type {any} */ props) {
       var api = props.api;
       var t = props.t;
-      var state = useState({ loading: true, describe: null, error: null });
+      var state = useState({
+        loading: true,
+        describe: null,
+        error: null,
+        projects: [],
+        selectedId: "",
+      });
       var view = state[0];
       var setView = state[1];
 
-      useEffect(() => {
-        call(api.ctx, "describe").then(
-          (describe) => {
-            setView({ loading: false, describe: describe, error: null });
+      var reload = useCallback(() => {
+        Promise.all([call(api.ctx, "describe"), call(api.ctx, "listProjects")]).then(
+          (values) => {
+            var projects = Array.isArray(values[1]) ? values[1] : [];
+            setView((/** @type {any} */ prev) => ({
+              loading: false,
+              describe: values[0] || null,
+              error: null,
+              projects: projects,
+              selectedId: prev.selectedId || (projects[0] ? projects[0].id : ""),
+            }));
           },
           (error) => {
-            setView({
+            setView((/** @type {any} */ prev) => ({
+              ...prev,
               loading: false,
               describe: null,
               error: String(error?.message ?? error),
-            });
+            }));
           },
         );
-      }, [api]);
+      }, [api, setView]);
+
+      useEffect(() => {
+        reload();
+      }, [reload]);
+
+      var applyPolicy = useCallback(
+        (/** @type {any} */ patch) => {
+          var selected = view.projects.find(
+            (/** @type {any} */ project) => project.id === view.selectedId,
+          );
+          if (!selected) return;
+          var nextPolicy = { ...selected.policy, ...patch };
+          call(api.ctx, "updateProject", { id: selected.id, patch: { policy: nextPolicy } }).then(
+            () => reload(),
+            (error) =>
+              setView((/** @type {any} */ prev) => ({
+                ...prev,
+                error: String(error?.message ?? error),
+              })),
+          );
+        },
+        [api, reload, setView, view.projects, view.selectedId],
+      );
 
       var describe = view.describe;
       return h(
@@ -1258,6 +1619,125 @@ window.__ModuleLoader__.load({
             )
           : null,
         h("div", { style: { marginTop: "6px", color: T.faint } }, text(t, "settings.hint")),
+        (() => {
+          var selectedForDanger = view.projects.find(
+            (/** @type {any} */ project) => project.id === view.selectedId,
+          );
+          if (!selectedForDanger) return null;
+          return h(DangerSwitches, {
+            t: t,
+            policy: selectedForDanger.policy,
+            onChange: applyPolicy,
+          });
+        })(),
+
+        h(
+          "details",
+          { style: { marginTop: "8px" }, "data-projects-policy": "" },
+          h(
+            "summary",
+            { style: { cursor: "pointer", color: T.dim } },
+            text(t, "settings.policyTitle"),
+          ),
+          view.projects.length === 0
+            ? h("div", { style: { color: T.faint } }, text(t, "settings.noProjects"))
+            : h(
+                "div",
+                {
+                  style: { display: "flex", flexDirection: "column", gap: "6px", marginTop: "6px" },
+                },
+                h(
+                  "select",
+                  {
+                    style: styles.input,
+                    value: view.selectedId,
+                    "data-projects-policy-project": "",
+                    onChange: (/** @type {any} */ event) =>
+                      setView((/** @type {any} */ prev) => ({
+                        ...prev,
+                        selectedId: event.target.value,
+                      })),
+                  },
+                  view.projects.map((/** @type {any} */ project) =>
+                    h("option", { key: project.id, value: project.id }, project.name),
+                  ),
+                ),
+                (() => {
+                  var selected = view.projects.find(
+                    (/** @type {any} */ project) => project.id === view.selectedId,
+                  );
+                  if (!selected) return null;
+                  return h(
+                    "div",
+                    { style: { display: "flex", flexDirection: "column", gap: "6px" } },
+                    h(
+                      "label",
+                      { style: { display: "flex", gap: "8px", alignItems: "center" } },
+                      h(
+                        "span",
+                        { style: { color: T.dim, flex: "none" } },
+                        text(t, "settings.autonomy"),
+                      ),
+                      h(
+                        "select",
+                        {
+                          style: styles.input,
+                          value: selected.policy?.autonomy ?? "L1",
+                          "data-projects-policy-autonomy": "",
+                          onChange: (/** @type {any} */ event) =>
+                            applyPolicy({ autonomy: event.target.value }),
+                        },
+                        ["L0", "L1", "L2", "L3"].map((level) =>
+                          h(
+                            "option",
+                            { key: level, value: level },
+                            `${level} — ${text(t, `settings.level.${level}`)}`,
+                          ),
+                        ),
+                      ),
+                    ),
+                    h("input", {
+                      style: styles.input,
+                      value: selected.policy?.persona ?? "",
+                      placeholder: text(t, "settings.persona"),
+                      "data-projects-policy-persona": "",
+                      // 非受控输入：切换项目时必须重挂载，否则显示的是上一个项目的人格
+                      key: `persona-${selected.id}`,
+                      // 不逐字提交：每敲一个字符就写一次 projects.json，
+                      // 输入长人格时会触发几十次磁盘写。改成失焦/回车时才提交。
+                      defaultValue: selected.policy?.persona ?? "",
+                      onBlur: (/** @type {any} */ event) => {
+                        if (event.target.value !== (selected.policy?.persona ?? "")) {
+                          applyPolicy({ persona: event.target.value });
+                        }
+                      },
+                      onKeyDown: (/** @type {any} */ event) => {
+                        if (event.key === "Enter") event.target.blur();
+                      },
+                    }),
+                    h(
+                      "label",
+                      {
+                        style: { display: "flex", gap: "6px", alignItems: "center", color: T.dim },
+                      },
+                      h("input", {
+                        type: "checkbox",
+                        checked: selected.policy?.routing?.fallback !== false,
+                        "data-projects-policy-fallback": "",
+                        onChange: (/** @type {any} */ event) =>
+                          applyPolicy({
+                            routing: {
+                              ...(selected.policy?.routing ?? {}),
+                              fallback: event.target.checked,
+                            },
+                          }),
+                      }),
+                      text(t, "settings.fallback"),
+                    ),
+                  );
+                })(),
+              ),
+        ),
       );
     }
 

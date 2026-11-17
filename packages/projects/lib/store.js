@@ -7,6 +7,8 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { defaultRules } from "./routing.js";
+
 /** 当前元数据格式版本。任何不兼容变更都要 +1 并在 migrate() 里补一步。 */
 export const FORMAT_VERSION = 1;
 
@@ -15,6 +17,8 @@ export const FORMAT_VERSION = 1;
  * @property {'L0'|'L1'|'L2'|'L3'} autonomy
  * @property {readonly string[]} preapprove
  * @property {Record<string, boolean>} danger 危险动作开关，默认全 false
+ * @property {{ rules: any[], fallback: boolean }} routing 路由规则（扁平结构）与是否允许模型兜底
+ * @property {string} persona 协调器人格；空串表示用内置默认人格
  */
 
 /**
@@ -56,6 +60,50 @@ export function defaultPolicy() {
     autonomy: "L1",
     preapprove: [],
     danger: { ...DEFAULT_DANGER },
+    // 路由：扁平规则数组 + 是否允许模型兜底（兜底也只能提议，不能直接执行危险动作）
+    routing: { rules: defaultRules(), fallback: true },
+    // 协调器人格；空串表示用内置默认人格
+    persona: "",
+  };
+}
+
+/**
+ * 把任意 policy 收敛成合法形状（缺失补齐、类型纠正、危险开关默认关）。
+ * normalize() 与 updateProject() 共用，避免两套规则漂移。
+ * @param {any} raw
+ * @param {any} [fallbackPolicy] 未指定的字段从这里继承
+ */
+export function normalizePolicy(raw, fallbackPolicy) {
+  const policy = raw && typeof raw === "object" ? raw : {};
+  const previous = fallbackPolicy && typeof fallbackPolicy === "object" ? fallbackPolicy : {};
+  const routingRaw = policy.routing ?? previous.routing ?? {};
+  const levels = ["L0", "L1", "L2", "L3"];
+  return {
+    autonomy: levels.includes(policy.autonomy)
+      ? policy.autonomy
+      : levels.includes(previous.autonomy)
+        ? previous.autonomy
+        : "L1",
+    preapprove: Array.isArray(policy.preapprove)
+      ? policy.preapprove
+      : Array.isArray(previous.preapprove)
+        ? previous.preapprove
+        : [],
+    danger: {
+      ...DEFAULT_DANGER,
+      ...(previous.danger && typeof previous.danger === "object" ? previous.danger : {}),
+      ...(policy.danger && typeof policy.danger === "object" ? policy.danger : {}),
+    },
+    routing: {
+      rules: Array.isArray(routingRaw?.rules) ? routingRaw.rules : [],
+      fallback: routingRaw?.fallback !== false,
+    },
+    persona:
+      typeof policy.persona === "string"
+        ? policy.persona
+        : typeof previous.persona === "string"
+          ? previous.persona
+          : "",
   };
 }
 
@@ -72,6 +120,7 @@ function emptyState(path) {
     projects: {},
     threads: {},
     audit: [],
+    approvals: [],
   };
 }
 
@@ -105,13 +154,7 @@ export function normalize(raw, root) {
           : [],
         coordinatorSessionId:
           typeof project.coordinatorSessionId === "string" ? project.coordinatorSessionId : null,
-        policy: {
-          autonomy: ["L0", "L1", "L2", "L3"].includes(project.policy?.autonomy)
-            ? project.policy.autonomy
-            : "L1",
-          preapprove: Array.isArray(project.policy?.preapprove) ? project.policy.preapprove : [],
-          danger: { ...DEFAULT_DANGER, ...(project.policy?.danger ?? {}) },
-        },
+        policy: normalizePolicy(project.policy),
         budget: {
           dailyTokens:
             typeof project.budget?.dailyTokens === "number" ? project.budget.dailyTokens : null,
@@ -143,10 +186,17 @@ export function normalize(raw, root) {
         worktree: typeof thread.worktree === "string" ? thread.worktree : null,
         seq: Number.isInteger(thread.seq) ? thread.seq : 0,
         createdAt: typeof thread.createdAt === "string" ? thread.createdAt : iso(),
+        lastWakeTurn: Number.isInteger(thread.lastWakeTurn) ? thread.lastWakeTurn : 0,
+        autoFixRound: Number.isInteger(thread.autoFixRound) ? thread.autoFixRound : 0,
+        autoFixSignature:
+          typeof thread.autoFixSignature === "string" ? thread.autoFixSignature : "",
+        autoFixChanged: Array.isArray(thread.autoFixChanged) ? thread.autoFixChanged : [],
       };
     }
   }
   if (Array.isArray(raw.audit)) state.audit = raw.audit.slice(-5000);
+  state.approvals = Array.isArray(raw.approvals) ? raw.approvals : [];
+  state.usage = raw.usage && typeof raw.usage === "object" ? raw.usage : {};
   return state;
 }
 
@@ -245,7 +295,7 @@ export class ProjectStore {
 
   /**
    * @param {string} id
-   * @param {Partial<{name: string, goal: string, state: string, dirs: string[], coordinatorSessionId: string|null}>} patch
+   * @param {Partial<{name: string, goal: string, state: string, dirs: string[], coordinatorSessionId: string|null, policy: any, persona: string, budget: any}>} patch
    */
   updateProject(id, patch) {
     const current = this.state.projects[id];
@@ -258,6 +308,18 @@ export class ProjectStore {
       next.dirs = patch.dirs.filter((/** @type {unknown} */ d) => typeof d === "string");
     if (patch.coordinatorSessionId === null || typeof patch.coordinatorSessionId === "string") {
       next.coordinatorSessionId = patch.coordinatorSessionId;
+    }
+    if (patch.policy && typeof patch.policy === "object") {
+      next.policy = normalizePolicy(patch.policy, current.policy);
+    }
+    if (typeof patch.persona === "string") {
+      next.policy = normalizePolicy(
+        { ...(next.policy ?? current.policy), persona: patch.persona },
+        current.policy,
+      );
+    }
+    if (patch.budget && typeof patch.budget === "object") {
+      next.budget = { ...(current.budget ?? {}), ...patch.budget };
     }
     next.updatedAt = iso(this.now());
     this.state.projects[id] = next;
@@ -283,6 +345,10 @@ export class ProjectStore {
       worktree: current?.worktree ?? null,
       seq: current?.seq ?? 0,
       createdAt: current?.createdAt ?? iso(this.now()),
+      lastWakeTurn: current?.lastWakeTurn ?? 0,
+      autoFixRound: current?.autoFixRound ?? 0,
+      autoFixSignature: current?.autoFixSignature ?? "",
+      autoFixChanged: current?.autoFixChanged ?? [],
     };
     return { ...this.state.threads[sessionId] };
   }
@@ -318,6 +384,131 @@ export class ProjectStore {
       current.baseSha = patch.baseSha;
     if (typeof patch.state === "string") current.state = patch.state;
     return { ...current };
+  }
+
+  /**
+   * 累加今天的 token 花费（按项目 + 本地日期分桶，跨重启保留）。
+   * @param {string} projectId
+   * @param {number} tokens
+   * @param {number} [now]
+   * @returns {{ date: string, tokens: number }}
+   */
+  addTokenUsage(projectId, tokens, now = this.now()) {
+    const amount = Number.isFinite(tokens) ? Math.max(0, Math.trunc(Number(tokens))) : 0;
+    const date = new Date(now).toISOString().slice(0, 10);
+    this.state.usage = this.state.usage ?? {};
+    const bucket = this.state.usage[projectId] ?? { date, tokens: 0 };
+    if (bucket.date !== date) {
+      bucket.date = date;
+      bucket.tokens = 0;
+    }
+    bucket.tokens += amount;
+    this.state.usage[projectId] = bucket;
+    return { ...bucket };
+  }
+
+  /**
+   * 读今天的 token 花费（日期不同就视为 0）。
+   * @param {string} projectId
+   * @param {number} [now]
+   */
+  tokenUsageToday(projectId, now = this.now()) {
+    const date = new Date(now).toISOString().slice(0, 10);
+    const bucket = this.state.usage?.[projectId];
+    if (!bucket || bucket.date !== date) return 0;
+    return Number.isFinite(bucket.tokens) ? bucket.tokens : 0;
+  }
+
+  /**
+   * 记录 auto-fix 进度（轮次 / 上次错误签名 / 上次改动文件）。
+   * @param {string} sessionId
+   * @param {{ round?: number, signature?: string, changedFiles?: string[] }} patch
+   */
+  setThreadAutoFix(sessionId, patch) {
+    const current = this.state.threads[sessionId];
+    if (!current) throw new Error(`projects: unknown thread ${sessionId}`);
+    if (Number.isInteger(patch.round)) current.autoFixRound = patch.round;
+    if (typeof patch.signature === "string") current.autoFixSignature = patch.signature;
+    if (Array.isArray(patch.changedFiles)) current.autoFixChanged = patch.changedFiles;
+    return { ...current };
+  }
+
+  /**
+   * 记录线程已经唤醒到第几轮（避免同一轮重复唤醒协调器）。
+   * @param {string} sessionId
+   * @param {number} turn
+   */
+  setThreadWakeState(sessionId, turn) {
+    const current = this.state.threads[sessionId];
+    if (!current) throw new Error(`projects: unknown thread ${sessionId}`);
+    current.lastWakeTurn = Number.isInteger(turn) ? turn : (current.lastWakeTurn ?? 0);
+    return { ...current };
+  }
+
+  /**
+   * 记录一条待审批的危险动作申请。
+   * @param {{ projectId: string, action: string, args?: any, reason: string }} request
+   * @returns {{ requestId: string }}
+   */
+  appendApproval(request) {
+    const requestId = `apr_${this.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    this.state.approvals.push({
+      requestId,
+      projectId: String(request.projectId),
+      action: String(request.action),
+      args: request.args ?? null,
+      reason: String(request.reason ?? ""),
+      status: "pending",
+      at: iso(this.now()),
+      resolvedAt: null,
+    });
+    return { requestId };
+  }
+
+  /**
+   * @param {string} [projectId] 省略则返回全部
+   * @returns {any[]}
+   */
+  listApprovals(projectId) {
+    return this.state.approvals.filter((/** @type {any} */ item) =>
+      projectId ? item.projectId === projectId : true,
+    );
+  }
+
+  /**
+   * 标记一条申请已执行（幂等保护：同一申请不能执行两次）。
+   * @param {string} requestId
+   * @param {any} [evidence]
+   */
+  markApprovalExecuted(requestId, evidence) {
+    const found = this.state.approvals.find(
+      (/** @type {any} */ item) => item.requestId === requestId,
+    );
+    if (!found) throw new Error(`projects: unknown approval ${requestId}`);
+    if (typeof found.executedAt === "string" && found.executedAt !== "") {
+      throw new Error(`projects: approval ${requestId} already executed`);
+    }
+    found.executedAt = iso(this.now());
+    found.evidence = evidence ?? null;
+    return { ...found };
+  }
+
+  /**
+   * 决议一条申请（approved / rejected）。只改状态，**不执行**动作。
+   * @param {string} requestId
+   * @param {"approved"|"rejected"} status
+   */
+  resolveApproval(requestId, status) {
+    const found = this.state.approvals.find(
+      (/** @type {any} */ item) => item.requestId === requestId,
+    );
+    if (!found) throw new Error(`projects: unknown approval ${requestId}`);
+    if (typeof found.executedAt === "string" && found.executedAt !== "") {
+      throw new Error(`projects: approval ${requestId} already executed`);
+    }
+    found.status = status;
+    found.resolvedAt = iso(this.now());
+    return { ...found };
   }
 
   /** @param {string} sessionId */

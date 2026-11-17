@@ -60,3 +60,36 @@ export function checkThreadBudget(input) {
 
   return { ok: true, reason: "", used };
 }
+
+/**
+ * 与「今天」相关的 token 累计（宿主的 `TokenUsage` 形状：inputTokens/outputTokens/totalTokens?）。
+ * @param {{ usage?: any, at?: string }} record
+ * @param {number} now
+ * @returns {number}
+ */
+export function tokensOf(record, now) {
+  if (!isToday({ createdAt: record?.at }, now)) return 0;
+  const usage = record?.usage;
+  if (!usage || typeof usage !== "object") return 0;
+  const total = Number(usage.totalTokens);
+  if (Number.isFinite(total) && total >= 0) return total;
+  const input = Number(usage.inputTokens);
+  const output = Number(usage.outputTokens);
+  const sum = (Number.isFinite(input) ? input : 0) + (Number.isFinite(output) ? output : 0);
+  return Math.max(0, sum);
+}
+
+/**
+ * 今天的 token 花费是否已到线。
+ * 单独的判定（不与线程数混在一起）——两件事的处置不同：到 token 线应该「暂停项目」，
+ * 到线程数线只是「今天不再建」。
+ * @param {{ dailyTokens?: number|null, usedTokens: number }} input
+ * @returns {{ ok: boolean, used: number, limit: number|null, reason: string }}
+ */
+export function checkTokenBudget(input) {
+  const limit = Number.isFinite(input?.dailyTokens) ? Number(input.dailyTokens) : null;
+  const used = Number.isFinite(input?.usedTokens) ? Number(input.usedTokens) : 0;
+  if (limit === null) return { ok: true, used, limit: null, reason: "" };
+  if (used >= limit) return { ok: false, used, limit, reason: "budget/daily-tokens" };
+  return { ok: true, used, limit, reason: "" };
+}

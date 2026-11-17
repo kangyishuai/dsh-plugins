@@ -89,7 +89,35 @@ const add = (name, ok, detail) => result.checks.push({ name, ok: Boolean(ok), de
 try {
   const task = await taskSpace("smoke projects ${PROJECT_NAME_TOKEN}");
   const page = task.page("p1");
-  await page.goto(${JSON.stringify(url)});
+  // 带 token 的入口会 303 到 /（用 cookie 认证）。某些 Chromium 版本会把这次 303 当成
+  // 「无效导航响应」直接报 ERR_HTTP_RESPONSE_CODE_FAILURE。这里容错：失败就改导航到
+  // 已由 303 设好 cookie 的根路径，语义等价（token 只需要握手一次）。
+  // 清掉 127.0.0.1 上**遗留的** dsh-auth-* cookie：cookie 按主机作用域、忽略端口，
+  // 反复冒烟会堆出一批指向已死宿主的 token，服务端认错就 401（表现为导航失败）。
+  // 只删 127.0.0.1 的 dsh-auth-*，不动其它站点的登录态。
+  try {
+    const { cookies } = await page.cdp("Storage.getCookies");
+    for (const cookie of cookies ?? []) {
+      if (!String(cookie.domain ?? "").includes("127.0.0.1")) continue;
+      if (!String(cookie.name ?? "").startsWith("dsh-auth-")) continue;
+      await page.cdp("Network.deleteCookies", {
+        name: cookie.name,
+        domain: cookie.domain,
+        path: cookie.path ?? "/",
+      });
+    }
+  } catch (cleanupError) {
+    /* 清不掉也继续：下面还有容错导航 */
+  }
+
+  try {
+    await page.goto(${JSON.stringify(url)});
+  } catch (gotoError) {
+    const rawUrl = String(${JSON.stringify(url)});
+    const cut = rawUrl.indexOf("?");
+    const base = cut > 0 ? rawUrl.slice(0, cut) : rawUrl;
+    await page.goto(base);
+  }
   await page.waitForSelector("button[aria-label='项目'], button[aria-label='Projects']", { timeout: 40000 });
   add("页面已加载（导航入口出现）", true, "");
   // 通知器挂在 shell.overlay 上（全局轮询，不依赖浏览器 Notification 授权）
@@ -170,6 +198,14 @@ try {
   // 空白会话不渲染行内动作（ui-workspace 的 !row.blank 分支），所以先发一条消息让它非空白。
   // 临时 home 没有模型凭据，这一轮必然以 MISSING_CREDENTIAL 结束——正是我们要的：不花钱、但会落 user/message。
   // composer 是 contenteditable（不是 textarea）：必须聚焦后用真实键盘输入，再用 Enter 提交。
+  // 等 composer 就绪再聚焦（否则偶发 "Cannot read properties of null (reading 'focus')"）
+  let composerReady = false;
+  for (let i = 0; i < 20; i += 1) {
+    composerReady = await page.evaluate(() => Boolean(document.querySelector('[role="textbox"]')));
+    if (composerReady) break;
+    await page.waitForTimeout(400);
+  }
+  if (!composerReady) throw new Error("composer 未就绪：找不到 [role=textbox]");
   await page.evaluate(() => document.querySelector('[role="textbox"]').focus());
   await page.keyboard.type("smoke: make this session non-blank");
   await page.keyboard.press("Enter");
@@ -308,7 +344,6 @@ try {
     await page.waitForTimeout(500);
   }
   add("详情页显示预算用量", budgetText !== "", budgetText);
-
   const memoryTab = await page.evaluate(() => {
     const tab = document.querySelector('[data-projects-tab="memory"]');
     if (!tab) return "no-tab";
@@ -333,6 +368,102 @@ try {
   );
   add("审计页签可渲染（空态也算）", auditSeen === true, String(auditTab));
 
+  // 回到「线程」页签（上面的记忆/审计页签会替换掉这块 UI）
+  await page.evaluate(() => {
+    const tab = document.querySelector('[data-projects-tab="threads"]');
+    if (tab) tab.click();
+  });
+  await page.waitForTimeout(1200);
+
+  // 按规则派活：默认 L1 下长任务应被拦成「提议」，线程数不变
+  const beforeRoute = await page.evaluate(
+    () => document.querySelectorAll("[data-projects-thread-row]").length,
+  );
+  const dispatched = await page.evaluate(() => {
+    const input = document.querySelector("[data-projects-route-input]");
+    const button = document.querySelector("[data-projects-route-dispatch]");
+    if (!input || !button) return "no-controls";
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    setter.call(input, "implement the payments webhook with retries");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    button.click();
+    return "clicked";
+  });
+  let routeText = "";
+  let routeExecuted = "";
+  for (let i = 0; i < 16; i += 1) {
+    await page.waitForTimeout(500);
+    const snapshot = await page.evaluate(() => {
+      const node = document.querySelector("[data-projects-route-result]");
+      return node
+        ? { text: (node.textContent || "").trim(), executed: node.getAttribute("data-projects-route-executed") || "" }
+        : null;
+    });
+    if (snapshot) {
+      routeText = snapshot.text;
+      routeExecuted = snapshot.executed;
+      break;
+    }
+  }
+  add(
+    "按规则派活给出可读决策",
+    dispatched === "clicked" && routeText !== "" && /rule|规则|blocked|拦/u.test(routeText),
+    routeText,
+  );
+  add(
+    "L1 下长任务被拦成提议（不建线程）",
+    routeExecuted === "no" && (await page.evaluate(() => document.querySelectorAll("[data-projects-thread-row]").length)) === beforeRoute,
+    JSON.stringify({ beforeRoute, routeExecuted }),
+  );
+
+  // 归档：新建一个一次性项目来归档（不要动暂停中的那个项目，宿主侧暂停断言还要用）
+  // 创建输入在**列表页**，所以先返回列表
+  await page.evaluate(() => {
+    const back = document.querySelector("[data-projects-detail-back]");
+    if (back) back.click();
+  });
+  await page.waitForTimeout(1200);
+  await page.evaluate(() => {
+    const input = document.querySelector("[data-projects-create-input]");
+    const button = document.querySelector("[data-projects-create]");
+    if (!input || !button) return;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    setter.call(input, "smoke-to-archive");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    button.click();
+  });
+  await page.waitForTimeout(2000);
+  const openedArchiveRow = await page.evaluate(() => {
+    const row = [...document.querySelectorAll("[data-projects-row]")].find((node) =>
+      (node.textContent || "").includes("smoke-to-archive"),
+    );
+    if (!row) return "no-row";
+    row.click();
+    return "clicked";
+  });
+  await page.waitForTimeout(1500);
+  const archiveClicked = await page.evaluate(() => {
+    const button = document.querySelector("[data-projects-toggle-archive]");
+    if (!button) return "no-button";
+    button.click();
+    return "clicked";
+  });
+  await page.waitForTimeout(2500);
+  const detailError = await page.evaluate(
+    () => (document.querySelector("[data-projects-detail-error]")?.textContent || "").trim(),
+  );
+  add(
+    "详情页可归档项目（一次性项目）",
+    openedArchiveRow === "clicked" && archiveClicked === "clicked" && detailError === "",
+    JSON.stringify({ openedArchiveRow, archiveClicked }) + (detailError ? " | err: " + detailError : ""),
+  );
+
+  // 审批队列条默认不出现（没有待审批时不留空块）
+  const approvalNodes = await page.evaluate(
+    () => document.querySelectorAll("[data-projects-approval-row]").length,
+  );
+  add("无待审批时不显示审批条", approvalNodes === 0, String(approvalNodes));
+
   const backOk = await page.evaluate(() => {
     const back = document.querySelector("[data-projects-detail-back]");
     if (!back) return "no-back";
@@ -344,6 +475,13 @@ try {
   add("返回后回到项目列表", listBack === true, String(backOk));
 
   // 删除项目：两段式确认（先看影响面，再确认），ADR 0002
+  // 回到列表（README 创建输入在列表页；上面的归档流程停在详情页）
+  await page.evaluate(() => {
+    const back = document.querySelector("[data-projects-detail-back]");
+    if (back) back.click();
+  });
+  await page.waitForTimeout(1200);
+
   // 先建一个一次性项目专门用来删（不要删主项目，后面还有宿主侧断言要用它）
   const throwaway = await page.evaluate(() => {
     const input = document.querySelector("[data-projects-create-input]");
@@ -426,6 +564,64 @@ try {
     settingsSeen || openedSettings === "no-entry",
     settingsSeen ? "rendered" : "tolerated: " + openedSettings + "（设置页未启用）",
   );
+
+  // 设置里的项目策略编辑器：默认折叠，但控件应在 DOM 里。
+  // 注意：断言依赖「设置页在本机 profile 里可用」；某些 profile 把 ui-settings 关了
+  // （cordis.patch.yml 里 enabled:false，且 dsh plugin add 会重写该文件），
+  // 此时这两条按「跳过」处理，并在 detail 里写清原因——不假装覆盖过。
+  const policyUi = await page.evaluate(() => {
+    const q = (sel) => document.querySelector(sel);
+    const autonomy = q("[data-projects-policy-autonomy]");
+    return {
+      details: Boolean(q("[data-projects-policy]")),
+      autonomy: Boolean(autonomy),
+      persona: Boolean(q("[data-projects-policy-persona]")),
+      fallback: Boolean(q("[data-projects-policy-fallback]")),
+      options: autonomy ? [...autonomy.options].map((option) => option.value) : [],
+    };
+  });
+  const policyOk = policyUi.details && policyUi.autonomy && policyUi.persona && policyUi.fallback;
+  add(
+    settingsSeen ? "设置里可编辑项目策略（自治/人格/兜底）" : "设置里可编辑项目策略（设置页未启用，跳过）",
+    settingsSeen ? policyOk && policyUi.options.join(",") === "L0,L1,L2,L3" : true,
+    JSON.stringify(policyUi),
+  );
+
+  const autonomyChanged = await page.evaluate(() => {
+    const select = document.querySelector("[data-projects-policy-autonomy]");
+    if (!select) return "no-select";
+    select.value = "L2";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    return "changed";
+  });
+  add(
+    settingsSeen ? "可切换自治级别" : "可切换自治级别（设置页未启用，跳过）",
+    settingsSeen ? autonomyChanged === "changed" : true,
+    String(autonomyChanged),
+  );
+
+  // 危险开关：默认全关，且每项带风险说明（框架：动作可配置、授权来源不可伪造）
+  const dangerUi = await page.evaluate(() => {
+    const switches = [...document.querySelectorAll("[data-projects-danger-switch]")];
+    return {
+      count: switches.length,
+      keys: switches.map((node) => node.getAttribute("data-projects-danger-switch")),
+      anyOn: switches.some((node) => node.checked),
+      panel: Boolean(document.querySelector("[data-projects-policy-danger]")),
+    };
+  });
+  add(
+    settingsSeen ? "危险开关默认全关且六项齐全" : "危险开关默认全关（设置页未启用，跳过）",
+    settingsSeen
+      ? dangerUi.panel &&
+          dangerUi.count === 6 &&
+          dangerUi.anyOn === false &&
+          dangerUi.keys.join(",") ===
+            "forcePushOwnBranch,pushProtectedBranch,autoMerge,trashAuto,purgeAfterRetention,editProfile"
+      : true,
+    JSON.stringify(dangerUi),
+  );
+  await page.waitForTimeout(1200);
 
   await page.evaluate(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
   await page.waitForTimeout(600);
@@ -697,6 +893,16 @@ const main = async () => {
       name: "回收站清单写明可恢复与影响面",
       ok: manifest !== null && /可恢复/u.test(String(manifest.summary ?? "")),
       detail: String(manifest?.summary ?? "").slice(0, 120),
+    });
+    const archivedProjects = Object.values(parsed?.projects ?? {}).filter(
+      (/** @type {any} */ project) => project?.state === "archived",
+    );
+    checks.push({
+      name: "归档动作在宿主侧生效（state=archived）",
+      ok: archivedProjects.length > 0,
+      detail: JSON.stringify(
+        archivedProjects.map((/** @type {any} */ project) => project.name).slice(0, 2),
+      ),
     });
     const pausedProjects = Object.values(parsed?.projects ?? {}).filter(
       (/** @type {any} */ project) => project?.state === "paused",

@@ -2,7 +2,16 @@
 // 建「隔离线程」：先建 worktree，再建会话（cwd 建后不可变，顺序不能反），最后落归属记录。
 // 依赖通过 deps 注入，所以能用真实 git + 假 sessionController 做集成测试。
 
-import { branchName, planCreate, planRemove, shouldReclaim, worktreePath } from "./worktree.js";
+import {
+  branchName,
+  parseMergedBranches,
+  planCreate,
+  planDeleteBranch,
+  planRemove,
+  shouldDeleteBranch,
+  shouldReclaim,
+  worktreePath,
+} from "./worktree.js";
 
 /**
  * @typedef {object} ThreadDeps
@@ -186,4 +195,51 @@ export function reconcileWorktrees(store, deps) {
     }
   }
   return changes;
+}
+
+/**
+ * 回收后的分支清理：只删**已合并**的 `dsh/*` 分支，未合并的一律保留。
+ * @param {object} input
+ * @param {any} input.store
+ * @param {string} input.sessionId
+ * @param {string} input.repoRoot
+ * @param {ReclaimDeps} input.deps
+ * @returns {Promise<{ deleted: boolean, reason: string }>}
+ */
+export async function cleanupThreadBranch(input) {
+  const { store, sessionId, repoRoot, deps } = input;
+  const record = findThread(store, sessionId);
+  if (!record) return { deleted: false, reason: "unknown-thread" };
+  const branch = typeof record.branch === "string" ? record.branch : "";
+  if (branch === "") return { deleted: false, reason: "no-branch" };
+
+  const base = record.baseSha ? "HEAD" : "HEAD";
+  const merged = await safeGit(deps.runGit, ["branch", "--merged", base], repoRoot);
+  if (merged.code !== 0) return { deleted: false, reason: "merged-check-failed" };
+  const current = await safeGit(deps.runGit, ["rev-parse", "--abbrev-ref", "HEAD"], repoRoot);
+  // 只有在远端确实有这个分支时才查「未推送」；没有远端时 merged-into-HEAD 已是足够的判据
+  const remoteExists = await safeGit(
+    deps.runGit,
+    ["rev-parse", "--verify", `origin/${branch}`],
+    repoRoot,
+  );
+  const unpushed =
+    remoteExists.code === 0
+      ? await safeGit(deps.runGit, ["rev-list", "--count", `origin/${branch}..${branch}`], repoRoot)
+      : { code: 0, stdout: "0", stderr: "" };
+
+  const verdict = shouldDeleteBranch({
+    branch,
+    mergedBranches: parseMergedBranches(merged.stdout),
+    currentBranch: String(current.stdout ?? "").trim(),
+    unpushedCommits:
+      unpushed.code === 0 ? Number(String(unpushed.stdout ?? "0").trim()) : Number.NaN,
+  });
+  if (!verdict.ok) return { deleted: false, reason: verdict.reason };
+
+  const removed = await safeGit(deps.runGit, planDeleteBranch(branch), repoRoot);
+  if (removed.code !== 0)
+    return { deleted: false, reason: `delete-failed: ${firstLine(removed.stderr)}` };
+  store.setThreadWorktree(sessionId, { branch: null });
+  return { deleted: true, reason: "" };
 }

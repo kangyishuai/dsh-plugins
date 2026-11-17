@@ -7,9 +7,12 @@ import {
   BRANCH_PREFIX,
   branchName,
   isCleanStatus,
+  parseMergedBranches,
   parseWorktreeList,
   planCreate,
+  planDeleteBranch,
   planRemove,
+  shouldDeleteBranch,
   shouldReclaim,
   slug,
   WORKTREE_DIR,
@@ -182,5 +185,72 @@ describe("回收判据（ADR 0002：宁可留垃圾也不删用户东西）", ()
     assert.equal(isCleanStatus(""), true);
     assert.equal(isCleanStatus("   \n"), true);
     assert.equal(isCleanStatus("?? newfile"), false);
+  });
+});
+
+describe("分支清理（M4 §5）", () => {
+  const merged = ["main", "dsh/payments-1", "dsh/payments-2"];
+
+  it("已合并 + 是我们建的 + 非当前分支 + 无未推送 → 允许删", () => {
+    assert.deepEqual(
+      shouldDeleteBranch({
+        branch: "dsh/payments-1",
+        mergedBranches: merged,
+        currentBranch: "main",
+      }),
+      { ok: true, reason: "" },
+    );
+  });
+
+  it("未合并 → 保留（宁可留垃圾也不丢提交）", () => {
+    assert.equal(
+      shouldDeleteBranch({
+        branch: "dsh/payments-9",
+        mergedBranches: merged,
+        currentBranch: "main",
+      }).reason,
+      "not-merged",
+    );
+  });
+
+  it("不是我们的分支 → 永不删", () => {
+    for (const branch of ["main", "feature/x", ""]) {
+      const result = shouldDeleteBranch({ branch, mergedBranches: merged, currentBranch: "main" });
+      assert.equal(result.ok, false);
+      assert.ok(
+        ["branch-not-ours", "no-branch"].includes(result.reason),
+        `${branch} → ${result.reason}`,
+      );
+    }
+  });
+
+  it("当前分支 / 有未推送提交 → 保留", () => {
+    assert.equal(
+      shouldDeleteBranch({
+        branch: "dsh/payments-1",
+        mergedBranches: merged,
+        currentBranch: "dsh/payments-1",
+      }).reason,
+      "current-branch",
+    );
+    assert.equal(
+      shouldDeleteBranch({
+        branch: "dsh/payments-1",
+        mergedBranches: merged,
+        currentBranch: "main",
+        unpushedCommits: 2,
+      }).reason,
+      "unpushed-commits",
+    );
+  });
+
+  it("parseMergedBranches 去掉 * 前缀与空行", () => {
+    assert.deepEqual(parseMergedBranches("* main\n  dsh/p-1\n\n"), ["main", "dsh/p-1"]);
+    assert.deepEqual(parseMergedBranches(""), []);
+  });
+
+  it("删分支用 -d 而不是 -D（不强删）", () => {
+    assert.deepEqual(planDeleteBranch("dsh/p-1"), ["branch", "-d", "dsh/p-1"]);
+    assert.ok(!planDeleteBranch("dsh/p-1").includes("-D"));
   });
 });

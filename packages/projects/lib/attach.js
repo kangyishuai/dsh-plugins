@@ -8,39 +8,82 @@ import { readProjectFiles } from "./project-files.js";
 /** @typedef {import("./store.js").ProjectStore} ProjectStore */
 
 /**
- * 给一个 agent 装上项目上下文；返回 disposer 与渲染文本（不注册时 text 仍可用于诊断）。
- * 独立成导出函数便于单测（不依赖 Cordis）。
- * @param {ProjectStore|undefined} store
- * @param {string} dataRoot
- * @param {{id?: string, ctx?: any}} agent
- * @returns {{dispose: () => void, text: string} | undefined}
+ * 全局注册一个「按会话求值」的项目上下文条目。
+ *
+ * 为什么不是 per-agent 注册：实测（docs/runtime §11.18）在 `agent/created` 里注册不会进入提示词。
+ * 为什么是函数：`refreshContext` 用 `resolveContext`，它会调用 `text(context)`；
+ * context 里带当前 agent/session（宿主 sandbox-policy 就是这么用 context.agent?.session 的）。
+ *
+ * @param {object} deps
+ * @param {() => any} deps.getStore
+ * @param {() => string} deps.getDataRoot
+ * @param {(entry: any) => any} deps.register 实际的 systemPrompt.context 调用
+ * @param {(project: any) => string} [deps.renderPersona] 协调器会话的人格文本
+ * @param {(sessionId: string, kind: "call"|"unmatched"|"thread"|"coordinator") => void} [deps.onRender] 诊断回调
+ * @returns {() => void} disposer
  */
-export function attachProjectContext(store, dataRoot, agent) {
-  const sessionId = agent?.id;
-  if (typeof sessionId !== "string" || sessionId === "" || !store) return undefined;
-  const project = store.projectOfSession(sessionId);
-  if (project?.state !== "active") return undefined;
+export function registerProjectContext(deps) {
+  /**
+   * 一次请求渲染「项目上下文 + 协调器人格」。
+   * 三种会话都要照顾到：
+   *  - 线程会话：注入项目上下文；
+   *  - 协调器会话：注入项目上下文 + 人格（人格原来走 per-agent 注册，实测无效，见 runtime §11.18）；
+   *  - 其它会话：返回空串，绝不注入（全局条目必须按会话过滤，否则会污染所有会话）。
+   * @param {any} context
+   * @returns {string}
+   */
+  const render = (context) => {
+    try {
+      const store = deps.getStore();
+      if (!store) return "";
+      const sessionId = String(context?.agent?.session?.id ?? context?.session?.id ?? "");
+      if (sessionId === "") return "";
 
-  const files = readProjectFiles(dataRoot, project.id);
-  const text = renderProjectContext({
-    project,
-    instructions: files.instructions,
-    memoryIndex: files.memoryIndex,
-  });
-  if (text === "") return undefined;
+      deps.onRender?.(sessionId, "call");
+      const threadProject = store.projectOfSession(sessionId);
+      const coordinatorProject = store
+        .listProjects()
+        .find((/** @type {any} */ item) => item.coordinatorSessionId === sessionId);
+      const project = threadProject ?? coordinatorProject;
+      if (project?.state !== "active") {
+        deps.onRender?.(sessionId, "unmatched");
+        return "";
+      }
+      deps.onRender?.(sessionId, threadProject ? "thread" : "coordinator");
 
-  const systemPrompt = agent?.ctx?.systemPrompt;
-  if (typeof systemPrompt?.context !== "function") {
-    return { dispose: () => {}, text };
-  }
-  const dispose = systemPrompt.context({
+      const blocks = [];
+      if (threadProject) {
+        const files = readProjectFiles(deps.getDataRoot(), project.id);
+        const text = renderProjectContext({
+          project,
+          instructions: files.instructions,
+          memoryIndex: files.memoryIndex,
+        });
+        if (text !== "") blocks.push(text);
+      } else if (typeof deps.renderPersona === "function") {
+        // 协调器：项目上下文 + 人格一起给（人格里已经写明「人格不改变权限」）
+        const files = readProjectFiles(deps.getDataRoot(), project.id);
+        const text = renderProjectContext({
+          project,
+          instructions: files.instructions,
+          memoryIndex: files.memoryIndex,
+        });
+        if (text !== "") blocks.push(text);
+        const persona = deps.renderPersona(project);
+        if (typeof persona === "string" && persona !== "") blocks.push(persona);
+      }
+      return blocks.join("\n\n");
+    } catch {
+      // 渲染失败不应该让整个请求失败：退回空串，其它上下文照常
+      return "";
+    }
+  };
+  const dispose = deps.register({
     name: "projects",
     order: PROJECT_CONTEXT_ORDER,
-    text,
-    // 项目上下文是运行前提，不允许被"关闭可选上下文"静默丢掉
-    required: true,
-    // 文本里全是项目自己的措辞，不做变量插值
+    required: false,
     interpolate: false,
+    text: render,
   });
-  return { dispose: typeof dispose === "function" ? dispose : () => {}, text };
+  return typeof dispose === "function" ? dispose : () => {};
 }

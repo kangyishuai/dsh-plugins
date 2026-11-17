@@ -89,6 +89,29 @@ SMOKE_DEMO=1 pnpm smoke:session-delete   # 截图在系统临时目录的 dsh-sm
 - 描述里写 `Closes #<issue>`，按 PR 模板勾选自查清单。
 - 标签由 `actions/labeler` 按改动路径自动打（`plugin:<name>`、`area:repo`、`area:ci`、`documentation`），不用手动打。
 
+**新增插件时会同时改到几个「共享文件」**：`package.json`（脚本）、`scripts/index-meta.json`、
+`.github/labeler.yml`、`.github/ISSUE_TEMPLATE/bug_report.yml`、根目录两份 README 的插件清单表。
+每次有新插件合并进 `main`，还没合并的插件 PR 就会在这几处冲突。对齐 `main` 的推荐做法是
+「取 `main` 版本 + 精确注入自己的条目」，而不是手工拼冲突段（拼 `index-meta.json` 很容易把 JSON 弄坏）：
+
+```bash
+git rebase origin/main            # 或 git merge origin/main
+git checkout --ours <file>        # rebase 时 --ours 是 main 侧
+# 然后用脚本把自己的条目插入：JSON 用 json.load/setdefault，YAML 追加块，README 插一行后跑 pnpm format
+python3 -c "import json;json.load(open('scripts/index-meta.json'))"   # 立刻校验
+```
+
+只含格式化的提交在对齐时常常变得多余，确认后 `git rebase --skip` 比解冲突省事。
+
+**另一个容易忽略的冲突源：`docs/runtime/<版本>.md` 的章节编号。** 各插件都往同一个文件末尾
+追加「## N. 某插件勘察」，而 N 是自己数的——并行开发时必然撞号（本项目就撞过：btw 与 projects
+都写了 `## 10`）。撞号后要么把后来者整节改号（连内部 `§N.x` 引用一起改），要么把别人的章节挪走，
+两种都很费事。约定：
+
+- 追加章节前先 `grep -n "^## " docs/runtime/<版本>.md` 看当前最大号，**用最大号 + 1**；
+- 章节内小节一律 `### <章号>.<序号>`，正文引用写 `§<章号>.<序号>`，便于整节搬迁；
+- 提交前 rebase 一次 `main` 再确认号没被占（这一步比事后改号便宜得多）。
+
 ### 自动合并（automerge）分级
 
 CI 绿是**必要条件，不是充分条件**。哪类 PR 可以在 CI 绿之后自动 squash 合并，按「改动面 + 是否机器生成 + 能否机检」分三档（决策见 [ADR 0014](docs/adr/0014-automerge-tiers.md)）：

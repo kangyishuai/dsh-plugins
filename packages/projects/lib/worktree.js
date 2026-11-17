@@ -120,3 +120,42 @@ export function shouldReclaim(input) {
   if (!Number.isFinite(unpushed) || unpushed > 0) return { ok: false, reason: "unpushed-commits" };
   return { ok: true, reason: "" };
 }
+
+/**
+ * 解析 `git branch --merged <base>` 的输出（每行一个分支，可能带 `*` 前缀）。
+ * @param {string} text
+ * @returns {string[]}
+ */
+export function parseMergedBranches(text) {
+  return String(text ?? "")
+    .split("\n")
+    .map((line) => line.replace(/^\*\s*/u, "").trim())
+    .filter((line) => line !== "");
+}
+
+/**
+ * 是否允许删除一个本地分支。
+ * 四条都要满足：是我们建的、已合并、不是当前分支、没有未推送提交。
+ * @param {{ branch: string, mergedBranches: string[], currentBranch: string, unpushedCommits?: number }} input
+ * @returns {{ ok: boolean, reason: string }}
+ */
+export function shouldDeleteBranch(input) {
+  const branch = String(input?.branch ?? "").trim();
+  if (branch === "") return { ok: false, reason: "no-branch" };
+  if (!branch.startsWith(`${BRANCH_PREFIX}/`)) return { ok: false, reason: "branch-not-ours" };
+  if (String(input?.currentBranch ?? "") === branch) return { ok: false, reason: "current-branch" };
+  const unpushed = Number(input?.unpushedCommits ?? 0);
+  if (!Number.isFinite(unpushed) || unpushed > 0) return { ok: false, reason: "unpushed-commits" };
+  const merged = Array.isArray(input?.mergedBranches) ? input.mergedBranches : [];
+  if (!merged.includes(branch)) return { ok: false, reason: "not-merged" };
+  return { ok: true, reason: "" };
+}
+
+/**
+ * 生成删分支的参数（默认 `-d`，**不用 `-D`**：宁可失败也不强删未合并内容）。
+ * @param {string} branch
+ * @returns {string[]}
+ */
+export function planDeleteBranch(branch) {
+  return ["branch", "-d", String(branch)];
+}

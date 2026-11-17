@@ -11,9 +11,11 @@
 // 默认**只读**：只切会话、开关对话框/面板，不执行破坏性操作，因此可以直接跑在真实 profile 上。
 // 需要写东西的流程请单独开一个 --deep 模式，并要求显式传入专用目录。
 //
-// 待办（删掉本段前请把两处 TODO 换成真实断言）：
-//   - TODO: 断言插件的入口在真实 UI 里可见（按钮/菜单/页脚，取决于你的 client 半）
-//   - TODO: 断言核心交互（打开面板、切换页签、Esc 关闭）不会崩
+// 断言覆盖（11 项，全部只读）：
+//   插件 client 半已加载 / 首启对话框处理 / 侧栏「项目」入口 / 面板渲染 / data-projects-status 形状 /
+//   无渲染崩溃 / 摘要已本地化 / 新建控件存在（不提交）/ 设置分节（设置页被禁用时容忍跳过）/
+//   Esc 关闭后界面仍可用 / 截图落盘。
+// 未装进 live profile 时默认 SKIP（门禁加 --require 则失败）。
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
