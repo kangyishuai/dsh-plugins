@@ -558,3 +558,48 @@ PASS btw 门禁全绿（4 步，33s）  18 PASS / 0 SKIP / 0 FAIL
 ```
 
 对照修复前：`## 我问了什么` + `**底部输入框...**` + `|---|---|` + 撑满整屏。
+
+## 0.2.0：层叠来源与 answerPlain 验证（2026-11-17 重启后）
+
+### 发版
+
+```
+npm   @kangyishuai/dsh-btw@0.2.0（latest）
+tag   @kangyishuai/dsh-btw@0.2.0
+验证  pnpm smoke:btw --npm → 7 PASS / 3 SKIP / 0 FAIL（npm 已发布版本）
+```
+
+### 浮层改 `shell.overlay`（修裁剪根因）
+
+`conversation.input.overlay` 的 slot 文档明确写着 "**fixed overlays must portal to the
+document body because the docked composer contains them**"，而浮层原本就挂在这个 composer
+内部 slot 上 —— 这就是「提示条跑到浮层外 302px」「位置随对话流滚动漂移」的根因。
+
+改挂 `shell.overlay`（frame-wide，所有列之上、滚动容器之外）后：
+
+- `position: fixed` 居中，`display: flex`：标题栏固定、列表 `flex:1; overflow-y:auto`、
+  底部档位/说明/徽章常驻可见
+- 按钮仍留在 `conversation.input.left`，两者通过 apply 作用域的 store 共享状态
+
+### answerPlain：答案按纯文本显示
+
+重启后实测（同一批历史记录，只是展示层变了）：
+
+| 修复前                                                                | 修复后                                                    |
+| --------------------------------------------------------------------- | --------------------------------------------------------- |
+| `1. **底部输入框左侧那一排里的小按钮「旁问」**（挨着 `` `+` `` ...）` | `1. 底部输入框左侧那一排里的小按钮「旁问」（挨着 + ...）` |
+| `\| 检查名 \| 说明 \|` + `\|---\|`                                    | `检查名 — 说明`                                           |
+| ``\| `verify (node 22.19)` \| 主验证链...``                           | `verify (node 22.19) — 主验证链...`                       |
+
+### 边界案例：glob 路径里的 `**` 必须保留
+
+程序化检查发现「某条答案里仍有 `**`」，追查是：
+
+```
+· test = node --test "scripts/test/**/*.test.js" && pnpm -r --if-present test
+```
+
+这是 **glob 模式**，不是 Markdown 粗体。`stripMarkdown` 的粗体规则要求成对 `**...**`，
+所以没有误伤它；`keepCode` 也保护了代码块内的同类字符。
+
+**这条要记住**：不要改成全局 `replace(/\*\*/g, "")` —— 会毁掉路径、正则和代码。
