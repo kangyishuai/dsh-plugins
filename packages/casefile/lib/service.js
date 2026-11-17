@@ -57,7 +57,20 @@ function fail(error) {
   const anyError = /** @type {any} */ (error);
   const code = typeof anyError?.code === "string" ? anyError.code : "internal";
   const message = String(anyError?.message ?? error ?? "unknown error");
-  if (code === "invalid-input" || code === "bad-project-id" || code === "nothing-selected") {
+  // 业务拒绝（能说清「卡在哪」的）走 bad-request，保留原始消息；
+  // 只有真正意料之外的错误才用 internal + [code] 前缀。
+  const BUSINESS_CODES = new Set([
+    "invalid-input",
+    "bad-project-id",
+    "nothing-selected",
+    "project-exists",
+    "not-found",
+    "project-not-found",
+    "obligationTooTall",
+    "coverage-not-met",
+    "builder-unavailable",
+  ]);
+  if (BUSINESS_CODES.has(code)) {
     throw new RemoteError("gateway/bad-request", message, {});
   }
   throw new RemoteError("gateway/internal", `[${code}] ${message}`, {});

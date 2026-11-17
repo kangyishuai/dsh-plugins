@@ -50,7 +50,7 @@ The plugin adds a **Casefile** entry to the sidebar. The page lists projects on 
 - **Evidence** — claims (with confidence, limits and evidence count) and the evidence records they cite;
 - **Obligations** — obligations, their status, and open unknowns. Closing an obligation needs a _fresh PASS check_; until checkers land in M2 the button explains what is missing instead of pretending;
   The list view opens with an **overview strip**: project count, breakdown by target kind and state, obligation pass/total, and unresolved unknowns across every project. `case_project overview` returns the same data as JSON.
-- **Runs** — build rounds, check verdicts and the loop stop condition.
+- **Runs** — build rounds (status, implementation digest, command) and check verdicts bound to each digest.
 
 A settings section shows the data root, project count and REA capability status, so "is REA actually connected" is answerable without reading logs.
 

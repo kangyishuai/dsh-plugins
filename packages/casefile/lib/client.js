@@ -60,9 +60,29 @@ window.__ModuleLoader__.load({
       "obligation.unknownEmpty": "没有未解决的未知项。",
       "obligation.close": "关闭",
       "obligation.closing": "关闭中…",
-      "obligation.blockedReason": "还不能关闭：缺新鲜 PASS 检查（checker 在 M2 落地）",
+      "obligation.blockedReason": "还不能关闭：缺新鲜 PASS 检查",
       "run.title": "构建与验收",
-      "run.empty": "M2 才有 build / check 运行记录。现在只有证据与义务的静态账本。",
+      "run.empty": "还没有构建记录。用 case_build 起一轮构建。",
+      "run.builds": "构建轮次",
+      "run.checks": "检查结论",
+      "run.round": "第 {round} 轮",
+      "run.digest": "实现",
+      "run.command": "命令",
+      "run.noChecks": "还没有检查记录。",
+      "blocker.noFreshCheck": "没有新鲜检查",
+      "blocker.staleCheck": "检查已过期",
+      "blocker.checkFail": "检查未通过",
+      "blocker.checkUnknown": "检查无法判定",
+      "blocker.implementationMismatch": "实现已变化",
+      "blocker.ownerDigestMismatch": "原件已变化",
+      "blocker.missingCheck": "缺少检查记录",
+      "blocker.noObligations": "还没有义务",
+      "blocker.noChecks": "还没有检查",
+      "blocker.openObligations": "还有未关闭义务",
+      "blocker.openUnknowns": "还有未解决未知项",
+      "blocker.failedObligations": "有失败的义务",
+      "blocker.blockedObligations": "有阻塞的义务",
+      "blocker.coverageBelow": "覆盖率不足",
       "settings.section": "案卷",
       "settings.summary": "{count} 个项目",
       "settings.dataRoot": "数据根目录",
@@ -126,10 +146,29 @@ window.__ModuleLoader__.load({
       "obligation.unknownEmpty": "No open unknowns.",
       "obligation.close": "Close",
       "obligation.closing": "Closing…",
-      "obligation.blockedReason": "Cannot close yet: no fresh PASS check (checkers land in M2)",
+      "obligation.blockedReason": "Cannot close yet: needs a fresh PASS check",
       "run.title": "Build & verification",
-      "run.empty":
-        "Run records arrive in M2. For now this is the static evidence/obligation ledger.",
+      "run.empty": "No builds yet. Start one with case_build.",
+      "run.builds": "Build rounds",
+      "run.checks": "Check verdicts",
+      "run.round": "Round {round}",
+      "run.digest": "implementation",
+      "run.command": "command",
+      "run.noChecks": "No checks recorded yet.",
+      "blocker.noFreshCheck": "no fresh check",
+      "blocker.staleCheck": "check is stale",
+      "blocker.checkFail": "check failed",
+      "blocker.checkUnknown": "check cannot judge",
+      "blocker.implementationMismatch": "implementation changed",
+      "blocker.ownerDigestMismatch": "original changed",
+      "blocker.missingCheck": "no check recorded",
+      "blocker.noObligations": "no obligations yet",
+      "blocker.noChecks": "no checks yet",
+      "blocker.openObligations": "obligations still open",
+      "blocker.openUnknowns": "unresolved unknowns",
+      "blocker.failedObligations": "failed obligations",
+      "blocker.blockedObligations": "blocked obligations",
+      "blocker.coverageBelow": "coverage below target",
       "settings.section": "Casefile",
       "settings.summary": "{count} projects",
       "settings.dataRoot": "Data root",
@@ -168,6 +207,50 @@ window.__ModuleLoader__.load({
       return String(raw).replace(/\{(\w+)\}/g, (_, name) =>
         vars[name] === undefined || vars[name] === null ? "—" : String(vars[name]),
       );
+    }
+
+    // 业务拒绝里的 blocker 令牌 → 文案 key（与 actions 产出的字符串一一对应）。
+    var BLOCKER_KEYS = {
+      "no-fresh-check": "blocker.noFreshCheck",
+      "stale-check": "blocker.staleCheck",
+      "check-fail": "blocker.checkFail",
+      "check-unknown": "blocker.checkUnknown",
+      "implementation-mismatch": "blocker.implementationMismatch",
+      "owner-digest-mismatch": "blocker.ownerDigestMismatch",
+      "missing-check": "blocker.missingCheck",
+      "no-obligations": "blocker.noObligations",
+      "no-checks": "blocker.noChecks",
+      "stale-checks": "blocker.staleCheck",
+      "open-obligations": "blocker.openObligations",
+      "open-unknowns": "blocker.openUnknowns",
+      "failed-obligations": "blocker.failedObligations",
+      "blocked-obligations": "blocker.blockedObligations",
+      "coverage-below": "blocker.coverageBelow",
+    };
+
+    /**
+     * 把宿主返回的错误变成人能读的一句话：去掉 `[code]` 前缀，
+     * 把 `：a、b:2` 里的 blocker 令牌翻成文案。
+     * @param {any} err
+     * @param {any} t
+     * @returns {string}
+     */
+    function humanizeError(err, t) {
+      var message = err?.message ? String(err.message) : String(err);
+      message = message.replace(/^\[[a-zA-Z]+\]\s*/, "");
+      var colon = message.lastIndexOf("：");
+      if (colon < 0) return message;
+      var head = message.slice(0, colon);
+      var parts = message
+        .slice(colon + 1)
+        .split("、")
+        .map((/** @type {string} */ token) => {
+          var bits = token.split(":");
+          var key = /** @type {Record<string, string>} */ (BLOCKER_KEYS)[bits[0]];
+          if (!key) return token;
+          return bits[1] ? `${text(t, key)}（${bits[1]}）` : text(t, key);
+        });
+      return `${head}：${parts.join("；")}`;
     }
 
     /**
@@ -572,9 +655,7 @@ window.__ModuleLoader__.load({
           return call(ctx, "closeObligation", { projectId: detail.project.id, obligationId: id })
             .then(() => openProject(detail.project.id))
             .catch((/** @type {any} */ err) => {
-              setError(
-                (err?.message ? err.message : String(err)) + (err?.hint ? ` — ${err.hint}` : ""),
-              );
+              setError(humanizeError(err, t));
             });
         },
         [ctx, detail, openProject],
@@ -589,6 +670,8 @@ window.__ModuleLoader__.load({
       var obligations;
       var unknowns;
       var openUnknowns;
+      var builds;
+      var checks;
       var tabs;
       if (detail) {
         stats = detail.stats || {};
@@ -680,10 +763,113 @@ window.__ModuleLoader__.load({
                 ),
           );
         } else {
+          builds = detail.builds || [];
+          checks = detail.checks || [];
           content = h(
             "div",
-            { className: "cf-empty", "data-casefile-empty": "runs" },
-            text(t, "run.empty"),
+            null,
+            h(
+              "div",
+              { className: "cf-muted", style: { marginBottom: 8 } },
+              builds.length === 0
+                ? text(t, "run.empty")
+                : text(t, "run.builds") + " · " + builds.length,
+            ),
+            builds.length === 0
+              ? h(
+                  "div",
+                  { className: "cf-empty", "data-casefile-empty": "runs" },
+                  text(t, "run.empty"),
+                )
+              : builds
+                  .slice()
+                  .sort(
+                    (/** @type {any} */ a, /** @type {any} */ b) => (b.round || 0) - (a.round || 0),
+                  )
+                  .map((/** @type {any} */ build) =>
+                    h(
+                      "div",
+                      { key: build.id, className: "cf-card", "data-casefile-build": build.id },
+                      h(
+                        "div",
+                        {
+                          style: {
+                            display: "flex",
+                            gap: 8,
+                            alignItems: "baseline",
+                            flexWrap: "wrap",
+                          },
+                        },
+                        h(
+                          Tag,
+                          {
+                            t: t,
+                            tone:
+                              build.status === "pass"
+                                ? "ok"
+                                : build.status === "fail"
+                                  ? "err"
+                                  : "warn",
+                          },
+                          build.status,
+                        ),
+                        h("span", null, text(t, "run.round", { round: build.round })),
+                        build.implementationDigest
+                          ? h(
+                              "span",
+                              { className: "cf-muted", style: { fontSize: 11 } },
+                              text(t, "run.digest") +
+                                " " +
+                                String(build.implementationDigest).slice(0, 12),
+                            )
+                          : null,
+                      ),
+                      h(
+                        "div",
+                        {
+                          className: "cf-muted",
+                          style: { fontSize: 11, marginTop: 4, wordBreak: "break-all" },
+                        },
+                        String(build.command || "").slice(0, 160),
+                      ),
+                    ),
+                  ),
+            h("h3", { style: { fontSize: 13, margin: "16px 0 8px" } }, text(t, "run.checks")),
+            checks.length === 0
+              ? h(
+                  "div",
+                  { className: "cf-muted", "data-casefile-empty": "checks" },
+                  text(t, "run.noChecks"),
+                )
+              : checks
+                  .slice()
+                  .reverse()
+                  .map((/** @type {any} */ check) =>
+                    h(
+                      "div",
+                      { key: check.id, className: "cf-kv", "data-casefile-check": check.id },
+                      h(
+                        Tag,
+                        {
+                          t: t,
+                          tone:
+                            check.verdict === "pass"
+                              ? "ok"
+                              : check.verdict === "fail"
+                                ? "err"
+                                : "warn",
+                        },
+                        check.verdict,
+                      ),
+                      h(
+                        "span",
+                        null,
+                        (check.checker || "?") +
+                          " · " +
+                          String(check.implementationDigest || "—").slice(0, 12),
+                      ),
+                    ),
+                  ),
           );
         }
         body = h(

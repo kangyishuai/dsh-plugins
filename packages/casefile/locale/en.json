@@ -14,6 +14,20 @@
     "settings.hint": "Project data stays on this machine; nothing is uploaded.",
     "error.reaMissing": "No REA tools detected (mcp__rea__*).",
     "error.projectNotFound": "Project not found.",
-    "error.nothingSelected": "No claims selected yet."
+    "error.nothingSelected": "No claims selected yet.",
+    "blocker.noFreshCheck": "no fresh check",
+    "blocker.staleCheck": "check is stale",
+    "blocker.checkFail": "check failed",
+    "blocker.checkUnknown": "check cannot judge",
+    "blocker.implementationMismatch": "implementation changed",
+    "blocker.ownerDigestMismatch": "original changed",
+    "blocker.missingCheck": "no check recorded",
+    "blocker.noObligations": "no obligations yet",
+    "blocker.noChecks": "no checks yet",
+    "blocker.openObligations": "obligations still open",
+    "blocker.openUnknowns": "unresolved unknowns",
+    "blocker.failedObligations": "failed obligations",
+    "blocker.blockedObligations": "blocked obligations",
+    "blocker.coverageBelow": "coverage below target"
   }
 }
