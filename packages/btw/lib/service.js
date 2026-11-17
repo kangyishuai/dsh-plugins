@@ -10,6 +10,13 @@ import { format, loadMessages, pickLanguage } from "./messages.js";
 import { historyFile, resolveDataRoot } from "./paths.js";
 import { loadSettings, saveSettings } from "./settings.js";
 import { observeUsage, runSideQuestion } from "./subagent.js";
+import {
+  listThreads,
+  newThreadId,
+  parseThreadFlag,
+  renderPromoteDraft,
+  threadHistory,
+} from "./threads.js";
 
 /**
  * 命令式登记 Remote 方法（运行时没有装饰器语法）。
@@ -119,8 +126,11 @@ export class BtwService extends TypertRemoteService {
    */
   async handle(invocation) {
     const agent = invocation?.agent;
-    const question = clip(String(invocation?.rawInput ?? "").trim(), LIMITS.questionChars);
     const file = historyFile(this.dataRoot, agent?.id ?? "");
+    // 追问用 `/btw --thread <id> <问题>` 标记线程（见 threads.js 的 parseThreadFlag 说明）。
+    const parsed = parseThreadFlag(String(invocation?.rawInput ?? ""));
+    const threadId = parsed.threadId;
+    const question = clip(parsed.question, LIMITS.questionChars);
 
     if (question.text === "") {
       const previous = await lastRecord(file).catch(() => undefined);
@@ -140,7 +150,10 @@ export class BtwService extends TypertRemoteService {
 
     const stored = await loadSettings(this.dataRoot).catch(() => undefined);
     const allowedTools = stored === undefined ? this.allowedTools : new Set(stored.allowedTools);
-    const history = await listRecent(file, LIMITS.replayRecords).catch(() => []);
+    const sessionHistory = await listRecent(file, LIMITS.replayRecords).catch(() => []);
+    // 追问：把同线程的问答回放给模型（每轮重新 fork，靠上下文重建多轮语义）。
+    const priorThread = threadId === "" ? [] : threadHistory(sessionHistory, threadId);
+    const history = [...sessionHistory, ...priorThread].slice(-LIMITS.replayRecords);
     const outcome = await runSideQuestion({
       ctx: this.scoped,
       workspaceRegistry: this.scoped?.workspaceRegistry,
@@ -167,8 +180,11 @@ export class BtwService extends TypertRemoteService {
       return { kind: "error", text: this.messages[key] ?? FALLBACK[key] ?? FALLBACK.forkFailed };
     }
 
+    const recordId = `btw_${Date.now().toString(36)}`;
     const record = {
-      id: `btw_${Date.now().toString(36)}`,
+      id: recordId,
+      // 线程：追问沿用传入的 threadId；首问新开一个线程（v0.3）
+      threadId: threadId === "" ? newThreadId() : threadId,
       parentSessionId: String(agent?.id ?? ""),
       childSessionId: outcome.childId ?? null,
       question: question.text,
@@ -193,6 +209,55 @@ export class BtwService extends TypertRemoteService {
     const input = request ?? {};
     const limit = Math.min(Number(input.limit) || LIMITS.replayRecords, LIMITS.perSessionRecords);
     return listRecent(historyFile(this.dataRoot, String(input.sessionId ?? "")), limit);
+  }
+
+  /**
+   * 线程列表（浮层展示用）。参数必须是单一标识符（网关 SRC 校验）。
+   * @param {{ sessionId?: string, limit?: number } | undefined} request
+   * @returns {Promise<any[]>}
+   */
+  async threads(request) {
+    const input = request ?? {};
+    const limit = Math.min(
+      Number(input.limit) || LIMITS.perSessionRecords,
+      LIMITS.perSessionRecords,
+    );
+    const records = await listRecent(
+      historyFile(this.dataRoot, String(input.sessionId ?? "")),
+      limit,
+    );
+    return listThreads(records);
+  }
+
+  /**
+   * 生成「一键转正」草稿文本。**只返回文本，不插入、不发送**——
+   * 语义已与用户确认：插入 composer 草稿，由用户自己决定发不发。
+   * @param {{ sessionId?: string, recordId?: string, lang?: string, details?: string, unresolved?: string } | undefined} request
+   * @returns {Promise<{ ok: boolean, text?: string, reason?: string }>}
+   */
+  async promote(request) {
+    const input = request ?? {};
+    const records = await listRecent(
+      historyFile(this.dataRoot, String(input.sessionId ?? "")),
+      LIMITS.perSessionRecords,
+    );
+    const wanted = String(input.recordId ?? "");
+    const record =
+      wanted === ""
+        ? records[records.length - 1]
+        : records
+            .slice()
+            .reverse()
+            .find((entry) => String(entry?.id ?? "") === wanted);
+    if (record === undefined) return { ok: false, reason: "no_record" };
+    const text = renderPromoteDraft(record, {
+      lang: String(input.lang ?? ""),
+      details: String(input.details ?? ""),
+      unresolved: String(input.unresolved ?? ""),
+      maxChars: LIMITS.promoteChars,
+    }).slice(0, LIMITS.promoteChars);
+    if (text.trim() === "") return { ok: false, reason: "empty" };
+    return { ok: true, text };
   }
 
   /**
@@ -260,5 +325,7 @@ export class BtwService extends TypertRemoteService {
 
 declareRemote(BtwService, "history");
 declareRemote(BtwService, "last");
+declareRemote(BtwService, "threads");
+declareRemote(BtwService, "promote");
 declareRemote(BtwService, "settings");
 declareRemote(BtwService, "updateSettings");
