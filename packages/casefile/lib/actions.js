@@ -657,6 +657,7 @@ export function createActions(options) {
      *   obligationId: string, checker: string, command?: string, cwd?: string,
      *   expect?: Record<string, any>, timeoutMs?: number,
      *   reference?: string, candidate?: string, minSimilarity?: number, allowSizeMismatch?: boolean,
+     *   jsonPath?: string,
      * }} input
      * @returns {Promise<Record<string, any>>}
      */
@@ -691,6 +692,7 @@ export function createActions(options) {
         candidate: input?.candidate,
         minSimilarity: input?.minSimilarity,
         allowSizeMismatch: input?.allowSizeMismatch,
+        jsonPath: input?.jsonPath,
       });
       const checkedAt = nowIso();
       const record = {

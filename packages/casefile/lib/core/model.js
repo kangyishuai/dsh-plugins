@@ -304,7 +304,11 @@ export function normalizeObligation(input) {
   let check = null;
   if (input?.check != null) {
     const raw = input.check;
-    const checker = oneOf(raw?.checker ?? "cli", ["build", "cli", "web"], "check.checker");
+    const checker = oneOf(
+      raw?.checker ?? "cli",
+      ["build", "cli", "web", "process", "selfTest"],
+      "check.checker",
+    );
     if (checker === "web") {
       check = {
         checker,
@@ -316,6 +320,9 @@ export function normalizeObligation(input) {
       if (raw?.allowSizeMismatch != null) check.allowSizeMismatch = raw.allowSizeMismatch === true;
     } else {
       check = { checker, command: text(raw?.command, "check.command", { max: 2000 }) };
+      if (checker === "selfTest" && raw?.jsonPath != null) {
+        check.jsonPath = text(raw.jsonPath, "check.jsonPath", { max: 2000 });
+      }
     }
     if (raw?.expect != null) {
       if (typeof raw.expect !== "object" || Array.isArray(raw.expect)) {

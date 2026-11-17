@@ -601,6 +601,89 @@ async function main() {
       webUnknown.raw.slice(0, 300),
     );
 
+    // 9.10) process checker（退出码 + 文件副作用）与 selfTest checker（JSON 契约）
+    const procDir = join(work, "proc");
+    await mkdir(procDir, { recursive: true });
+    const procOut = join(procDir, "out.txt");
+    await remote(session, "createProject", {
+      input: { title: "Proc Check", target: { kind: "app", ref: "node" } },
+    });
+    const procClaim = await remote(session, "addClaim", {
+      projectId: "proc-check",
+      input: { text: "运行后写出 out.txt 内容为 ok" },
+    });
+    await remote(session, "selectClaims", {
+      projectId: "proc-check",
+      claimIds: [procClaim.value?.id],
+      selected: true,
+    });
+    await remote(session, "startBuild", {
+      projectId: "proc-check",
+      input: { command: `node -e "0"`, cwd: procDir },
+    });
+    const procPass = await remote(session, "runCheck", {
+      projectId: "proc-check",
+      input: {
+        obligationId: (
+          await remote(session, "addObligation", {
+            projectId: "proc-check",
+            input: { statement: "写出 out.txt", kind: "behavior" },
+          })
+        ).value?.id,
+        checker: "process",
+        command: `node -e "require('node:fs').writeFileSync('${procOut}','ok')"`,
+        cwd: procDir,
+        expect: { exitCode: 0, files: [{ path: procOut, exists: true }] },
+      },
+    });
+    check(
+      "process checker：退出码 + 文件副作用判 pass",
+      procPass.ok && procPass.value?.check?.verdict === "pass",
+      procPass.raw.slice(0, 400),
+    );
+    const procFail = await remote(session, "runCheck", {
+      projectId: "proc-check",
+      input: {
+        obligationId: procPass.value?.check?.obligationId,
+        checker: "process",
+        command: `node -e "process.exit(4)"`,
+        cwd: procDir,
+        expect: { exitCode: 0 },
+      },
+    });
+    check(
+      "process checker：退出码不符判 fail",
+      procFail.ok && procFail.value?.check?.verdict === "fail",
+      procFail.raw.slice(0, 300),
+    );
+
+    const selfTestPass = await remote(session, "runCheck", {
+      projectId: "proc-check",
+      input: {
+        obligationId: procPass.value?.check?.obligationId,
+        checker: "selfTest",
+        command: `node -e "console.log(JSON.stringify({ok:true,checks:[{name:'a',ok:true}]}))"`,
+      },
+    });
+    check(
+      "selfTest checker：全绿 JSON 报告判 pass",
+      selfTestPass.ok && selfTestPass.value?.check?.verdict === "pass",
+      selfTestPass.raw.slice(0, 300),
+    );
+    const selfTestUnknown = await remote(session, "runCheck", {
+      projectId: "proc-check",
+      input: {
+        obligationId: procPass.value?.check?.obligationId,
+        checker: "selfTest",
+        command: `node -e "console.log('not json')"`,
+      },
+    });
+    check(
+      "selfTest checker：非 JSON 报告判 unknown（不吞成 pass）",
+      selfTestUnknown.ok && selfTestUnknown.value?.check?.verdict === "unknown",
+      selfTestUnknown.raw.slice(0, 300),
+    );
+
     // 10) 详情统计
     const detail = await remote(session, "projectDetail", { projectId: "todo-app-smoke" });
     check(
