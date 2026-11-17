@@ -304,3 +304,38 @@ SKIP 线程卡片带追问/转正按钮 — 本会话还没有旁问记录
 → **CI 的 web 冒烟步骤即可覆盖档位选择器与徽章诚信文案**，桌面回归只负责「真实安装环境」这一层。
 
 线程卡片断言在默认模式下 SKIP（没有旁问记录），`--deep` 或桌面回归里才会真正执行。
+
+## 发版后验证：从 npm 装已发布版本（`--npm`）
+
+`pnpm smoke:btw --npm` 不打包本地源码，改从 registry 安装**当前 package.json 版本**对应的已发布包。
+
+2026-11-17 首次发版实测（`@kangyishuai/dsh-btw@0.1.0`）：
+
+```
+从 npm 安装：@kangyishuai/dsh-btw@0.1.0
+宿主已启动：127.0.0.1:59946
+PASS 页面可交互且有输入框
+PASS 过掉预览版说明
+PASS 能新建会话
+PASS 斜杠菜单出现并列出 btw
+PASS 浮层可打开
+PASS 浮层有 4 个范围档位
+PASS 徽章写明模型可见完整会话
+7 PASS / 3 SKIP / 0 FAIL（默认，未发起模型调用）（npm 已发布版本）
+```
+
+→ 证明**发布出来的产物**（而不是工作区源码）能正常激活：命令注册、client 半注入、v0.3 的档位与徽章都工作。
+
+发布产物核对：
+
+```
+20 个文件 / 30K，含 lib/threads.js 与 lib/badge.js（v0.3 新模块）
+dependencies: none
+dsh.client: { platform: "web", inject: [...] }
+exports: "." / "./package.json" / "./client"
+```
+
+**新包首次发布有注册延迟**：npm 提示「Your package is being processed and may take a few minutes
+to become available」，实测约 8 分钟后 `registry.npmjs.org` 才能查到；期间 `npm view` 返回 404，
+但 git tag 已建、CI 全绿。判断发布是否成功要以**工作流日志里的 `+ <pkg>@<version>` 与 `Created git tags`**
+为准，别只看 npm 查询结果。

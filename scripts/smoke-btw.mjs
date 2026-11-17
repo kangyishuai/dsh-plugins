@@ -2,6 +2,7 @@
 // @ts-check
 // 用法：pnpm smoke:btw
 //       pnpm smoke:btw --deep     —— 需要模型凭据（DEEPSEEK_API_KEY 或 DSH_HOME 里的凭据）
+//       pnpm smoke:btw --npm      —— 不打包本地源码，改从 npm 装已发布版本（发版后验证用）
 //       SMOKE_KEEP=1 pnpm smoke:btw
 //
 // web 端到端冒烟：mkdtemp 出来的临时 DSH_HOME 里启动**真实宿主**，装当前源码打出的包，
@@ -23,6 +24,10 @@ const PROFILE = "btwsmoke";
 const WORKSPACE_ID = "11111111-2222-4333-8444-555555555555";
 const WORKSPACE_TITLE = "btw-smoke";
 const DEEP = process.argv.includes("--deep");
+/** 从 npm 装已发布版本，而不是打包本地源码。发版后用它验证「发布出来的包」。 */
+const FROM_NPM = process.argv.includes("--npm");
+/** npm 安装时的版本范围；默认取本地 package.json 的版本，锁定到已发布的那个。 */
+const NPM_SPEC = `@kangyishuai/dsh-btw@${JSON.parse(await readFile(join(PKG_DIR, "package.json"), "utf8")).version}`;
 const sleep = (/** @type {number} */ ms) => new Promise((r) => setTimeout(r, ms));
 
 /** @param {string} message */
@@ -357,11 +362,17 @@ const main = async () => {
       "utf8",
     );
 
-    await run("pnpm", ["pack", "--pack-destination", work], { cwd: PKG_DIR });
-    const tgz = (await readdir(work)).find((name) => name.endsWith(".tgz"));
-    if (!tgz) throw new Error("pnpm pack 没有产出 tgz");
     await run("dsh", ["plugin", "--profile", PROFILE, "install"], { env }).catch(() => {});
-    await run("dsh", ["plugin", "--profile", PROFILE, "add", join(work, tgz)], { env });
+    if (FROM_NPM) {
+      // 发版后验证：装 registry 上真正发布的那个版本，而不是本地源码。
+      console.log(`从 npm 安装：${NPM_SPEC}`);
+      await run("dsh", ["plugin", "--profile", PROFILE, "add", NPM_SPEC], { env });
+    } else {
+      await run("pnpm", ["pack", "--pack-destination", work], { cwd: PKG_DIR });
+      const tgz = (await readdir(work)).find((name) => name.endsWith(".tgz"));
+      if (!tgz) throw new Error("pnpm pack 没有产出 tgz");
+      await run("dsh", ["plugin", "--profile", PROFILE, "add", join(work, tgz)], { env });
+    }
 
     host = spawn("dsh", ["--profile", PROFILE, "--port", "0", "--no-open"], {
       env,
@@ -428,7 +439,7 @@ const main = async () => {
       }
     }
     console.log(
-      `\n${passed} PASS / ${skipped} SKIP / ${failed} FAIL${DEEP ? "（--deep）" : "（默认，未发起模型调用）"}`,
+      `\n${passed} PASS / ${skipped} SKIP / ${failed} FAIL${DEEP ? "（--deep）" : "（默认，未发起模型调用）"}${FROM_NPM ? "（npm 已发布版本）" : ""}`,
     );
     ok = failed === 0;
 
