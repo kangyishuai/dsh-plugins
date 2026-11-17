@@ -26,7 +26,7 @@ TODO: list every file it reads/writes and every destructive action. Write "None"
 
 | Plugin | Verified on DSH |
 | ------ | --------------- |
-| 0.0.0  | 0.2.1-rc.5      |
+| 0.0.0  | 0.2.2-rc.3      |
 
 ## License
 
