@@ -6,7 +6,7 @@
 
 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 的非官方插件，与 DeepSeek 无关。它是 [REA](https://github.com/morluto/rea)（MIT）之上的适配层：不包含 REA 的代码，也不带分析引擎。
 
-> **状态：M3 完成（五类 checker + 自动循环 + near-miss + 覆盖率硬门 + 报告）。** 落盘「项目 / 证据 / 结论 / 功能 / 未知项 / 义务 / 检查记录」，能导出去原始化的规格包，并提供工作台页（证据 / 义务 / 运行）、侧栏入口与设置分节。现在可以从项目里起一个 **builder 会话**：casefile 建子会话、只投喂规格包（不投原件），返回 sessionId；`awaitBuilder` 报它为什么停下。`case_build loop` 一次跑完一轮：构建 → 按义务自带的检查配方逐个检查 → 通过的关闭 → 命中停止条件就停。构建/检查循环真的跑命令：`case_build start` 落 `BuildRun` 并算实现 digest，`case_check run` 记录绑定该 digest 的检查结果；之后再构建若 digest 变了，**自动重开**已被它关闭的义务。已通过 70 项单元测试、临时 DSH_HOME 上的 30 项 web 端到端冒烟（含 stale 重开路径），以及真实浏览器里的一轮手工 GUI 检查；桌面只读回归脚本已写好，但仍需先把插件装进桌面 profile 才能跑。请按早期软件对待。
+> **状态：M3 完成（五类 checker + 一次调用闭环 + near-miss + 覆盖率硬门 + 报告）。** 落盘「项目 / 证据 / 结论 / 功能 / 未知项 / 义务 / 检查记录」，能导出去原始化的规格包，并提供工作台页（证据 / 义务 / 运行）、侧栏入口与设置分节。现在可以从项目里起一个 **builder 会话**：casefile 建子会话、只投喂规格包（不投原件），返回 sessionId；`awaitBuilder` 报它为什么停下。`case_build loop` 一次跑完一轮：构建 → 按义务自带的检查配方逐个检查 → 通过的关闭 → 命中停止条件就停。构建/检查循环真的跑命令：`case_build start` 落 `BuildRun` 并算实现 digest，`case_check run` 记录绑定该 digest 的检查结果；之后再构建若 digest 变了，**自动重开**已被它关闭的义务。已通过 70 项单元测试、临时 DSH_HOME 上的 30 项 web 端到端冒烟（含 stale 重开路径），以及真实浏览器里的一轮手工 GUI 检查；桌面只读回归脚本已写好，但仍需先把插件装进桌面 profile 才能跑。请按早期软件对待。
 
 ## 它解决什么
 

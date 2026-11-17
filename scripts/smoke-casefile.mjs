@@ -713,6 +713,43 @@ async function main() {
         reportMd.includes("不等于通过"),
     );
 
+    // 9.12) runCycle：一次调用跑完「构建 → 检查 → 关闭」
+    await remote(session, "createProject", {
+      input: { title: "Cycle Smoke", target: { kind: "binary", ref: "node" } },
+    });
+    const cycleClaim = await remote(session, "addClaim", {
+      projectId: "cycle-smoke",
+      input: { text: "输出含 Usage: cycle" },
+    });
+    await remote(session, "selectClaims", {
+      projectId: "cycle-smoke",
+      claimIds: [cycleClaim.value?.id],
+      selected: true,
+    });
+    const cycleApp = join(work, "cycle-app.mjs");
+    await writeFile(cycleApp, "console.log('Usage: cycle');\n", "utf8");
+    await remote(session, "addObligation", {
+      projectId: "cycle-smoke",
+      input: {
+        statement: "输出包含 Usage: cycle",
+        kind: "behavior",
+        check: {
+          checker: "cli",
+          command: `node ${cycleApp}`,
+          expect: { stdoutIncludes: ["Usage: cycle"] },
+        },
+      },
+    });
+    const cycle = await remote(session, "runCycle", {
+      projectId: "cycle-smoke",
+      input: { command: 'node -e "0"', cwd: work, maxRounds: 2 },
+    });
+    check(
+      "runCycle 一次调用完成构建→检查→关闭",
+      cycle.ok && cycle.value?.loop?.closed === 1 && cycle.value?.loop?.open === 0,
+      cycle.raw.slice(0, 400),
+    );
+
     // 10) 详情统计
     const detail = await remote(session, "projectDetail", { projectId: "todo-app-smoke" });
     check(

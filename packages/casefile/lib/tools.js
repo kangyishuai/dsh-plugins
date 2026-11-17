@@ -455,12 +455,12 @@ export function buildToolDefinitions(handlers, projectOf) {
     {
       name: TOOL_NAMES.build,
       description:
-        "构建：start 跑命令并落 BuildRun（算实现 digest、自动重开失效义务）；agent 起 builder 会话（只投喂规格包）或 await 等它停下；status 看轮次与停止条件。",
+        "构建：cycle 跑端到端一轮（可选 builder → 构建 → 检查 → 关闭）；start 跑命令并落 BuildRun；agent 起 builder 会话或 await 等它停下；loop 多轮自动循环；status 看轮次与停止条件。",
       parameters: {
         type: "object",
         additionalProperties: false,
         properties: {
-          action: { type: "string", enum: ["start", "status", "agent", "loop"] },
+          action: { type: "string", enum: ["start", "status", "agent", "loop", "cycle"] },
           projectId: PROJECT_ID,
           prompt: { type: "string", description: "agent 时可选：给 builder 的额外指令" },
           featureIds: { type: "array", items: { type: "string" } },
@@ -477,8 +477,26 @@ export function buildToolDefinitions(handlers, projectOf) {
       /** @param {any} args @param {any} exec */
       async execute(args, exec) {
         return run(async () => {
-          const action = assertAction(args.action, ["start", "status", "agent", "loop"]);
+          const action = assertAction(args.action, ["start", "status", "agent", "loop", "cycle"]);
           const id = projectId(args, exec);
+          if (action === "cycle") {
+            const result = await handlers.runCycle(id, {
+              builder:
+                args.prompt === undefined && args.featureIds === undefined && args.cwd === undefined
+                  ? undefined
+                  : {
+                      cwd: args.cwd,
+                      prompt: args.prompt,
+                      featureIds: args.featureIds,
+                      timeoutMs: args.timeoutMs,
+                    },
+              command: args.command,
+              cwd: args.cwd,
+              maxRounds: args.maxRounds,
+              timeoutMs: args.timeoutMs,
+            });
+            return result;
+          }
           if (action === "loop") {
             const result = await handlers.advanceLoop(id, {
               command: args.command,

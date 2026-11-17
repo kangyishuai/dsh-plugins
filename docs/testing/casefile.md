@@ -20,7 +20,7 @@ SMOKE_DEBUG=1 pnpm smoke:casefile   # 打印每次请求/响应
 SMOKE_KEEP=1 pnpm smoke:casefile    # 成功也保留现场
 ```
 
-它验证的 45 条断言包括：
+它验证的 46 条断言包括：
 - 插件安装进临时 profile、宿主持久化启动、没有未激活插件、数据根被创建；
 - 鉴权（`GET /?token=` → 303 → `dsh-auth-*` cookie）后，`listProjects` 可用；
 - 建项目 / 非法授权档被拒（`gateway/bad-request`）/ 记证据 / 写结论 / 勾选 / 建功能 / 记未知项；
@@ -28,6 +28,7 @@ SMOKE_KEEP=1 pnpm smoke:casefile    # 成功也保留现场
 - 规格包写出 `spec.json` + `brief.md`，只含选中结论，**本机路径被脱敏**，未知项随包；
 - 审计日志含 `project/create`、`evidence/add`、`claim/add`、`spec/export`；
 - **构建/验收闭环**：`startBuild` 落 `BuildRun` 并算出 64 位实现 digest；`runCheck` 绑定该 digest 判 pass；义务可关闭；**改实现后再构建 → 已关闭义务被 stale 重开**；`loopStatus` 给出停止条件；
+- **一次调用闭环**：`runCycle` 在同一调用里完成构建→检查→关闭（带 builder 时先起会话并等停）；
 - **覆盖率硬门与报告**：有未关闭义务/未知项时 `closeProject` 被拒；`exportReport` 写出 md+json，报告含覆盖率、义务表与「unknown 不等于通过」声明；
 - **process / selfTest checker**：进程退出码与文件副作用（pass/fail）；自测 JSON 报告全绿 pass、非 JSON → unknown；
 - **web checker**：相同截图判 pass（相似度 1）；不同颜色判 fail；缺图判 unknown（不吞成 pass）；

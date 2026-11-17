@@ -995,6 +995,56 @@ export function createActions(options) {
       };
     },
 
+    /**
+     * 端到端一轮：起 builder（可选）→ 等它停 → 构建 → 检查 → 关闭 → 报告停止条件。
+     * 这是 spec 里「builder 停下 → 自动 build → 自动 check」的落点。
+     * @param {string} projectId
+     * @param {{
+     *   builder?: { cwd: string, prompt?: string, featureIds?: string[], timeoutMs?: number },
+     *   command?: string, cwd?: string, maxRounds?: number, timeoutMs?: number,
+     *   stop?: Record<string, any>,
+     * }} input
+     * @returns {Promise<Record<string, any>>}
+     */
+    async runCycle(projectId, input) {
+      const project = requireProject(projectId);
+      /** @type {Record<string, any> | null} */
+      let builder = null;
+      if (input?.builder != null) {
+        const started = await this.startBuilder(project.id, {
+          cwd: input.builder.cwd,
+          prompt: input.builder.prompt,
+          featureIds: input.builder.featureIds,
+        });
+        const awaited = await this.awaitBuilder(project.id, {
+          sessionId: started.builder.sessionId,
+          timeoutMs: input.builder.timeoutMs ?? 120_000,
+        });
+        builder = {
+          sessionId: started.builder.sessionId,
+          claims: started.builder.claims,
+          reason: awaited.reason,
+        };
+      }
+      const command = input?.command;
+      if (typeof command !== "string" || command.trim() === "") {
+        throw new CasefileInputError("invalid-input", "runCycle 需要 command（构建命令）");
+      }
+      const loop = await this.advanceLoop(project.id, {
+        command,
+        cwd: input?.cwd,
+        maxRounds: input?.maxRounds,
+        timeoutMs: input?.timeoutMs,
+        stop: input?.stop,
+      });
+      return {
+        builder,
+        loop,
+        stop: loop.stop,
+        summary: `${builder ? `builder ${builder.reason}；` : ""}${loop.summary}`,
+      };
+    },
+
     // ---------- 覆盖率 / 关闭 / 报告（M3 收尾） ----------
 
     /**
