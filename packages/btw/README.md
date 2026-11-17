@@ -19,7 +19,7 @@ Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/de
 - **Markdown.** Headings, lists, tables, quotes, fenced code and inline styles render properly. The promote draft keeps its Markdown source, so it renders correctly once you send it.
 - **Readable numbers.** The cost badge adapts tokens to `K/M/B/T` and duration to `ms/s/m/h` (for example `new 12.3K · cached 988K · 32.5s`).
 - **Promote to draft.** Turn the latest side question into a four-section Markdown draft (question / conclusion / key details / still unresolved) and **insert it into the composer — never send it**. You decide whether to send.
-- **Right-side drawer.** The panel docks against the right edge above the composer instead of covering the middle of the conversation; collapse it to a thin edge rail and click the rail to bring it back.
+- **Native right sidebar.** The「旁问」button opens a tab in the DSH right sidebar: the conversation becomes narrower but is **never covered**.「收起」collapses the column and clicking the button expands it again. Hosts without the sidebar service fall back to a right-edge overlay drawer.
 - **Chat order.** Threads list oldest first with every turn expanded, the newest answer at the bottom, and the view follows the latest content.
 - **Honest scope badge.** The drawer states how many side questions exist and reminds you that **the model can see the whole conversation**; a scope choice only narrows the instruction, it does not cut context.
 
@@ -56,10 +56,11 @@ Restart the DSH desktop app afterwards.
 /btw --scope recent <q>   # hint the answer to focus (session | recent | selection)
 ```
 
-The panel opens as a **right-side drawer** from the「旁问」button left of the composer (it lives in
-the frame-wide overlay layer, so it is not clipped by the composer). It sits against the right edge,
-above the composer, and never covers the middle of the conversation. Click「收起」to collapse it to a
-thin rail at the right edge; click the rail to expand it again; `Esc` closes it.
+The panel opens from the「旁问」button left of the composer as a tab in the **native DSH right sidebar**:
+the conversation becomes narrower but the panel never covers it. Click「收起」to collapse the column (the
+tab is kept) and the「旁问」button to expand it again; close the tab with its own × or the「关闭」button.
+Hosts that do not load the sidebar service fall back to a right-edge overlay drawer that collapses to a
+thin edge rail.
 
 Threads are listed oldest first with every turn expanded, and the newest answer is at the bottom —
 the view scrolls to the latest content when you open the drawer or when new content arrives. Each
@@ -100,7 +101,7 @@ The settings file is re-read on every use, so edits take effect without restarti
 
 The underlying host seams (command dispatch while busy, fork cache reuse, `tools.guard`, `workspaceRegistry.archiveSession`) were verified on DSH 0.2.2-rc.3.
 
-End-to-end status: verified with the web smoke (temporary `DSH_HOME`, drawer geometry, collapse rail, Markdown rendering) and the desktop regression suite (`pnpm smoke:btw-desktop --require`) against the live desktop app; a `/btw` round trip was also verified against a real model, including the on-disk history record.
+End-to-end status: the web smoke (temporary `DSH_HOME`, right-sidebar tab, collapse/expand, Markdown rendering) and a real `/btw` round trip pass. The desktop regression was updated for the tab shape and must be rerun after installing this version into the live desktop profile.
 
 ## License
 

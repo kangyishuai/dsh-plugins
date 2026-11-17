@@ -604,7 +604,7 @@ document body because the docked composer contains them**"，而浮层原本就�
 
 **这条要记住**：不要改成全局 `replace(/\*\*/g, "")` —— 会毁掉路径、正则和代码。
 
-## 0.4.0：右侧抽屉 + 流式 + Markdown（2026-11-17）
+## 0.4.0：原生右侧栏 + 流式 + Markdown（2026-11-17）
 
 用户提出 5 项体验问题：面板居中遮挡主对话、答案不流式、答案不渲染 Markdown、
 成本徽章的数字/耗时不可读、最新消息在最上面。这版逐条处理，并推翻了 0.1.1 的
@@ -632,15 +632,20 @@ document body because the docked composer contains them**"，而浮层原本就�
   自己的 Client 包（会随版本变、组件抛错会把 slot entry 打空）。
 - 安全：输出纯 JSON，client 建 React 元素，文本永远是文本节点，无 `innerHTML`。
 
-**抽屉位置：`shell.overlay` + fixed right，底边避开 composer**
+**位置：DSH 原生右侧栏 tab（首选），浮层抽屉作为旧宿主回退**
 
-- `position:fixed; right:12px; top:72px; bottom:112px; width:min(400px,100vw-24px)`。
-  底边 112px 是按真实会话里 composer 卡（约 90px 高 + 外边距）留的；桌面 1050px 高实测
-  抽屉底 938、composer 顶 945，不重叠。
-- 收起时不渲染抽屉，改为右边缘小条 `[data-btw-rail]`（横排「旁问 N」，点击展开）；`[data-btw-collapse]`
-  收起、`[data-btw-close]` 关闭、Esc 关闭。
-- 为什么不做原生右侧边栏 tab：当前右侧栏 push 模式默认宽 864px，打开会把主对话挤窄；
-  抽屉不改变布局宽度，改动面也小。后续若想要原生栏，可再评估。
+- 先按「右侧浮层抽屉」实现并用真实构建截图验证，发现 DSH 对话区是**整宽**的：
+  1920 宽屏下 400px 抽屉仍会盖住主对话右缘约 400px（原型确认环节抓到了这点），
+  于是按用户选择改为原生右侧栏。
+- 注册 `sidebarRightTabs.register({ id, kind:'btw', title, priority:'extension' })` +
+  `sidebar.right.pane.tab` keyed body：点「旁问」调用 `sidebarRight.openTab('btw')`，
+  主对话被挤窄（当前侧栏默认 864px，可拖到 300px）但完全不遮挡。
+- 「收起」= `layout.closeRightbar()` 收起整栏（tab 保留）；再点「旁问」时先显式
+  `layout.openRightbar(true,false)` 再 `openTab` —— `openTab` 对**已存在**的 tab 只会
+  focus、不会展开已收起的栏（真机踩到，已写进断言）。tab 自带 × /「关闭」按钮关闭 tab。
+- 宿主没有 `sidebarRightTabs` / `sidebarRight` 时自动回退到 `shell.overlay` 浮层抽屉
+  （fixed 右侧、底边按 docked composer 留 140px、可收起成右边缘小条），旧版本 DSH 仍可用。
+- tab 内容限宽 820px 居中（右栏更宽时不至于把表格/代码块拉成一行）。
 
 **排序：`listThreads` 旧→新，线程内全部轮次**
 
@@ -663,21 +668,18 @@ document body because the docked composer contains them**"，而浮层原本就�
 ### 测试与验证
 
 - 单测 **56 项全过**（新增 markdown 解析 8 项、format 2 项、live tracker 4 项，改写 threads/promote 断言）。
-- web 冒烟（`pnpm smoke:btw --deep`，真实模型一次）：
-  `13 PASS / 4 SKIP / 0 FAIL`；真实 history 落盘 `status=done`；
-  新断言覆盖「抽屉贴右侧」「收起为侧边条 / 点细条展开」；空白会话的 composer 居中（hero 态），
-  「不遮挡 docked 输入框」按 SKIP 处理，由桌面回归覆盖。
-- 真实流式观察（临时 home + ego-browser，面板 composer 提问）：
-  `t≈1.2s` 出现 live 卡片、elapsed `968ms`；`t≈3.7s` 流式正文 604 字且已按 Markdown 渲染；
-  `t≈8.7s` run 结束、线程数 1→2，live 卡片被真实线程替换。截图确认标题/列表/表格/代码块/引用/
-  行内样式、折叠渐变与「展开全文」、「收起」小条均正常。
-- 桌面回归（`pnpm smoke:btw-desktop --require`）新增「抽屉贴右侧且不遮挡输入框」「收起/展开」断言；
+- web 冒烟（`pnpm smoke:btw`，默认模式）：`11 PASS / 3 SKIP / 0 FAIL`；
+  新断言覆盖「原生右侧栏 tab」「不遮挡主对话」「收起整栏（tab 保留）」「再点展开」「关闭 tab」。
+- 真实流式观察（临时 home + ego-browser，tab 内 composer 提问）：
+  `t≈2.2s` 出现 live 卡片与 elapsed；run 结束后线程数 1→2，live 卡片被真实线程替换。
+  截图确认 Markdown 表格/代码块/引用/行内样式、折叠、成本徽章与 tab 布局均正常。
+- 桌面回归（`pnpm smoke:btw-desktop --require`）断言改为「右侧栏 tab / 不遮挡 / 收起展开 / 关闭」；
   需先把本版本装进 desktop profile 才能跑（发版流程）。
 
 ### 已知边界
 
-- **空白会话（hero 态）**：composer 居中而不是 docked，抽屉底边 112px 的预留位置对不上，
-  会盖住 composer 右缘约 90px。只影响「新会话里立刻开旁问」的场景，真实会话不受影响。
-- 抽屉宽度固定（外层 426px），窄窗口（≤760px）退化为整宽；拖拽/记忆宽度没做。
+- **右侧栏宽度是宿主偏好**：当前默认 45% 视口（1920 下 864px），打开时主对话被挤到 776px；
+  用户拖动侧栏分隔条可以变窄（最小 300px），插件无法替用户设置宽度。
+- 浮层抽屉仍是**回退形态**：仍会盖住主对话右缘约 400px，只在宿主没有右侧栏服务时出现。
 - 流式是 350ms 轮询，不是逐 token 推送；首 token 与最后一次轮询之间最多差一个间隔。
-- 表格在窄抽屉里横向滚动，不做列宽自适应。
+- 表格在窄 tab / 窄抽屉里横向滚动，不做列宽自适应。
