@@ -395,7 +395,7 @@ window.__ModuleLoader__.load({
             recordId: String(thread?.lastId ?? ""),
             lang: langOf(),
           });
-          if (!result || result.ok !== true || typeof result.text !== "string") {
+          if (result?.ok !== true || typeof result?.text !== "string") {
             setBusy(false);
             setNotice(t("promoteFailed"));
             return;
