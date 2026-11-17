@@ -19,7 +19,7 @@ Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/de
 - **Markdown.** Headings, lists, tables, quotes, fenced code and inline styles render properly. The promote draft keeps its Markdown source, so it renders correctly once you send it.
 - **Readable numbers.** The cost badge adapts tokens to `K/M/B/T` and duration to `ms/s/m/h` (for example `new 12.3K · cached 988K · 32.5s`).
 - **Promote to draft.** Turn the latest side question into a four-section Markdown draft (question / conclusion / key details / still unresolved) and **insert it into the composer — never send it**. You decide whether to send.
-- **Native right sidebar.** The「旁问」button opens a tab in the DSH right sidebar: the conversation becomes narrower but is **never covered**.「收起」collapses the column and clicking the button expands it again. Hosts without the sidebar service fall back to a right-edge overlay drawer.
+- **Native right sidebar.** The「旁问」button opens a tab in the DSH right sidebar: the conversation becomes narrower but is **never covered**.the sidebar's own collapse button (⌥⌘B) collapses the column and clicking the「旁问」button expands it again. Hosts without the sidebar service fall back to a right-edge overlay drawer.
 - **Chat order.** Threads list oldest first with every turn expanded, the newest answer at the bottom, and the view follows the latest content.
 - **Honest scope badge.** The drawer states how many side questions exist and reminds you that **the model can see the whole conversation**; a scope choice only narrows the instruction, it does not cut context.
 
@@ -57,8 +57,8 @@ Restart the DSH desktop app afterwards.
 ```
 
 The panel opens from the「旁问」button left of the composer as a tab in the **native DSH right sidebar**:
-the conversation becomes narrower but the panel never covers it. Click「收起」to collapse the column (the
-tab is kept) and the「旁问」button to expand it again; close the tab with its own × or the「关闭」button.
+the conversation becomes narrower but the panel never covers it. Use the sidebar's own collapse button (⌥⌘B) to collapse the column (the tab is
+kept), and the「旁问」button to expand it again; close the tab with its own × or the panel's「关闭」button.
 Hosts that do not load the sidebar service fall back to a right-edge overlay drawer that collapses to a
 thin edge rail.
 

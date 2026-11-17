@@ -640,9 +640,11 @@ document body because the docked composer contains them**"，而浮层原本就�
 - 注册 `sidebarRightTabs.register({ id, kind:'btw', title, priority:'extension' })` +
   `sidebar.right.pane.tab` keyed body：点「旁问」调用 `sidebarRight.openTab('btw')`，
   主对话被挤窄（当前侧栏默认 864px，可拖到 300px）但完全不遮挡。
-- 「收起」= `layout.closeRightbar()` 收起整栏（tab 保留）；再点「旁问」时先显式
+- 收起整栏用宿主自己的右上角收起按钮/⌥⌘B（`actions.toggleExpanded`）；点「旁问」时先显式
   `layout.openRightbar(true,false)` 再 `openTab` —— `openTab` 对**已存在**的 tab 只会
-  focus、不会展开已收起的栏（真机踩到，已写进断言）。tab 自带 × /「关闭」按钮关闭 tab。
+  focus、不会展开已收起的栏（真机踩到，已写进断言）。tab 自带 × / 面板「关闭」按钮关闭 tab。
+- 不要用 `layout.closeRightbar()` 作为收起：实测它只改 frame 轨道、不更新 dockkit 的 expanded，
+  面板会留在原地盖住已展开的主对话（已改用宿主按钮）。
 - 宿主没有 `sidebarRightTabs` / `sidebarRight` 时自动回退到 `shell.overlay` 浮层抽屉
   （fixed 右侧、底边按 docked composer 留 140px、可收起成右边缘小条），旧版本 DSH 仍可用。
 - tab 内容限宽 820px 居中（右栏更宽时不至于把表格/代码块拉成一行）。
