@@ -52,7 +52,9 @@ dsh plugin --profile desktop add @kangyishuai/dsh-btw
 /btw --scope recent <问题> # 提示回答聚焦的范围（session | recent | selection）
 ```
 
-浮层（输入框左侧按钮）列出各线程与成本徽章，可追问、可转正，并显示范围徽章。
+面板点输入框左侧的「旁问」按钮打开，以**居中弹窗**呈现（挂在 frame-wide 的 overlay 层，
+不会被输入框容器裁剪）。里面列出各线程与成本徽章，可追问、可转正，底部显示范围徽章；
+新建旁问要点标题栏的「＋ 新旁问」。
 
 ## 配置
 
