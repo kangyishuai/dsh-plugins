@@ -75,3 +75,24 @@ DSH_HOME="$H" dsh web --port 0 --no-open    # 打印 http://127.0.0.1:<port>/?to
 - **Remote 参数是「命名位置参数」**：`createProject(input)` → `payload.args.input`；平铺字段会被网关拒（`gateway/arguments-invalid`）。
 - **业务错误走 HTTP 200 + `result.ok=false`**，不是 4xx/5xx。
 - **`dsh web` 启动的是内置 `web` profile**，插件必须装进 `--profile web`。
+
+## 发版前体检记录（v0.1.0 草稿）
+
+| 项                                | 结果                                                                                                                       |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm pack` 产物                  | 24 个文件 / 63 KB；只含 `cordis.patch.yml`、`lib/**`、`locale/**`、三份文档、LICENSE；**不含** test/、node_modules、notes/ |
+| 依赖边界                          | `dependencies` / `peerDependencies` / `engines` 全为空；唯一宿主导入是 `@deepseek-ai/dsh-typert-protocol`                  |
+| `publishConfig.access`            | `public`                                                                                                                   |
+| `dsh.bundle.patch` / `dsh.client` | 均在，client 注入 `dsh-client-ui-workspace` + `dsh-client-ui-slots`                                                        |
+| `pnpm probe:runtime`              | **72/72 PASS**（0 WARN / 0 FAIL）                                                                                          |
+| `pnpm verify`                     | 通过（121 项单测）                                                                                                         |
+| web 冒烟                          | 47/47                                                                                                                      |
+| 桌面只读回归                      | **未运行**（前置：装进 desktop profile + 9222 重启）                                                                       |
+
+### 桌面回归结果（由用户回填）
+
+- 日期：
+- DSH 版本 / 系统：
+- `pnpm smoke:casefile-desktop --require` 结果：
+- 截图目录：
+- 备注：
