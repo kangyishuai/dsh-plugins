@@ -301,6 +301,18 @@ const main = async () => {
           if (expanded.threadInput === true) break;
         }
         check("点追问后出现线程内输入框", expanded.threadInput === true, JSON.stringify(expanded));
+        const followUi = await cdp.evaluate(`(() => ({
+          visibleTextareas: [...document.querySelectorAll('[data-btw-panel] textarea')].filter((el) => el.offsetParent !== null).length,
+          sendText: ((document.querySelector('[data-btw-thread-input] [data-btw-send]') || {}).innerText || '').trim(),
+          scope: !!document.querySelector('[data-btw-thread-input] [data-btw-scope]'),
+        }))()`);
+        check(
+          "追问时只保留一个输入框且按钮叫「追问」",
+          followUi.visibleTextareas === 1 &&
+            followUi.scope === true &&
+            !/提问$/.test(followUi.sendText),
+          JSON.stringify(followUi),
+        );
         // 转正：只插草稿，**不发送** —— 断言 composer 有内容但对话流没有新节点
         const beforeFlow = await cdp.evaluate(
           `(() => document.querySelectorAll('[data-chat-flow-kind]').length)()`,
@@ -322,6 +334,11 @@ const main = async () => {
             `(() => ((document.querySelector('[data-composer-input]') || {}).innerText || '').trim())()`,
           );
           check("转正把草稿插进输入框", draftAfter.length > 0, `draft=${draftAfter.slice(0, 40)}`);
+          check(
+            "转正草稿保留 Markdown 源码",
+            /^##\s/m.test(draftAfter),
+            `draft=${draftAfter.slice(0, 60)}`,
+          );
           check(
             "转正没有发送任何消息",
             afterFlow === beforeFlow,
@@ -352,6 +369,34 @@ const main = async () => {
         "再点「旁问」重新展开右侧栏与 tab",
         expanded.rightbarCollapsed === false && expanded.isTab === true,
         JSON.stringify(expanded),
+      );
+
+      // Esc 关闭 tab（先聚焦面板输入框，焦点不在面板时 Esc 留给宿主/设置）。
+      await cdp.evaluate(
+        `(() => { const el = document.querySelector('[data-btw-panel] textarea[data-btw-input]'); if (el) el.focus(); return true; })()`,
+      );
+      await sleep(300);
+      for (const type of ["keyDown", "keyUp"]) {
+        await cdp.send("Input.dispatchKeyEvent", {
+          type,
+          key: "Escape",
+          code: "Escape",
+          windowsVirtualKeyCode: 27,
+          nativeVirtualKeyCode: 27,
+        });
+      }
+      await sleep(700);
+      const escClosed = await cdp.evaluate(STATE);
+      check("按 Esc 关闭 tab", escClosed.isTab === false, JSON.stringify(escClosed));
+      await cdp.evaluate(
+        `(() => { document.querySelector('[data-btw-toggle]')?.click(); return true; })()`,
+      );
+      await sleep(800);
+      const reopened = await cdp.evaluate(STATE);
+      check(
+        "Esc 后可再次打开 tab",
+        reopened.isTab === true && reopened.rightbarCollapsed === false,
+        JSON.stringify(reopened),
       );
 
       // 关闭 tab（只读收尾：不在用户会话里留下打开的面板）
@@ -425,6 +470,7 @@ const main = async () => {
       const section = await cdp.evaluate(`(() => ({
         hasSection: !!document.querySelector('[data-btw-settings]'),
         hasTools: !!document.querySelector('[data-btw-setting-tools]'),
+        hasEcho: !!document.querySelector('[data-btw-setting-echo]'),
         hasSave: !!document.querySelector('[data-btw-settings-save]'),
         saveDisabled: (document.querySelector('[data-btw-settings-save]') || {}).disabled ?? null,
         hasMore: !!document.querySelector('[data-btw-settings-more]'),
@@ -435,6 +481,11 @@ const main = async () => {
       } else {
         check("设置分节渲染", section.hasSection === true, JSON.stringify(section));
         check("首屏有工具白名单输入", section.hasTools === true, JSON.stringify(section));
+        check(
+          "首屏有「主对话显示完整答案」开关",
+          section.hasEcho === true,
+          JSON.stringify(section),
+        );
         check("无改动时保存按钮禁用", section.saveDisabled === true, JSON.stringify(section));
         check("「更多设置」默认折叠", section.extraVisible === false, JSON.stringify(section));
       }

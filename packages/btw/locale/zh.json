@@ -13,7 +13,8 @@
       "meta": "旁问 · 新增 {newTokens} tokens · 命中缓存 {cachedTokens} · {ms}",
       "reopen": "上一条旁问：{question}",
       "truncated": "答案被截断，可再问一次重试。",
-      "questionHeading": "旁问：{question}"
+      "questionHeading": "旁问：{question}",
+      "panelOnly": "旁问已完成，完整答案见旁问面板。"
     },
     "error": {
       "forkUnavailable": "暂时无法旁问（子代理运行时未加载）。",

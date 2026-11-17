@@ -18,6 +18,7 @@ import {
   sanitizeReplayAnswer,
 } from "../lib/prompts.js";
 import {
+  buildSettingsPatch,
   DEFAULT_SETTINGS,
   loadSettings,
   sanitizeSettings,
@@ -32,6 +33,7 @@ import {
   newThreadId,
   parseCommandArgs,
   parseThreadFlag,
+  promoteRecordForThread,
   renderPromoteDraft,
   SCOPES,
   threadHistory,
@@ -228,6 +230,7 @@ test("settings: 默认值、夹紧与非法输入", () => {
     schemaVersion: 1,
     allowedTools: [],
     historyLimit: DEFAULT_SETTINGS.historyLimit,
+    echoAnswer: true,
   });
   const clamped = sanitizeSettings({
     allowedTools: "read, send_message ,read ,grep",
@@ -236,6 +239,8 @@ test("settings: 默认值、夹紧与非法输入", () => {
   assert.deepEqual(clamped.allowedTools, ["read", "grep"], "去空、去重、拒绝 send_message");
   assert.equal(clamped.historyLimit, 200, "上限夹到 200");
   assert.equal(sanitizeSettings({ historyLimit: 0 }).historyLimit, 1, "下限夹到 1");
+  assert.equal(sanitizeSettings({ echoAnswer: false }).echoAnswer, false, "显式关闭");
+  assert.equal(sanitizeSettings({ echoAnswer: "false" }).echoAnswer, true, "非布尔值不轻信");
   assert.deepEqual(sanitizeSettings(null).allowedTools, []);
   assert.deepEqual(
     sanitizeSettings({ allowedTools: ["a", "b", "c", "d", "e", "f", "g", "h", "i"] }).allowedTools
@@ -253,15 +258,32 @@ test("settings: 文件缺失返回默认，坏 JSON 静默回落", async () => {
   assert.deepEqual((await loadSettings(dir)).allowedTools, []);
 });
 
+test("settings: updateSettings 的补丁包含 echoAnswer（真机漏字段回归）", () => {
+  assert.deepEqual(buildSettingsPatch({ echoAnswer: false }), { echoAnswer: false });
+  assert.deepEqual(buildSettingsPatch({ echoAnswer: true, unknown: 1 }), { echoAnswer: true });
+  assert.deepEqual(buildSettingsPatch({ allowedTools: ["read"], historyLimit: 7 }), {
+    allowedTools: ["read"],
+    historyLimit: 7,
+  });
+  assert.deepEqual(buildSettingsPatch(undefined), {});
+});
+
 test("settings: 保存是原子替换且只合并已知字段", async () => {
   const dir = await tempDir();
-  const saved = await saveSettings(dir, { allowedTools: ["read"], historyLimit: 7, unknown: "x" });
+  const saved = await saveSettings(dir, {
+    allowedTools: ["read"],
+    historyLimit: 7,
+    echoAnswer: false,
+    unknown: "x",
+  });
   assert.deepEqual(saved.allowedTools, ["read"]);
   assert.equal(saved.historyLimit, 7);
+  assert.equal(saved.echoAnswer, false);
   assert.ok(!("unknown" in saved), "未知字段被丢弃");
   const reread = await loadSettings(dir);
   assert.deepEqual(reread.allowedTools, ["read"]);
   assert.equal(reread.historyLimit, 7);
+  assert.equal(reread.echoAnswer, false);
   const raw = await readFile(settingsPath(dir), "utf8");
   assert.ok(raw.trim().startsWith("{"), "落盘是 JSON");
 });
@@ -357,6 +379,18 @@ test("threads: newThreadId 稳定且带前缀", () => {
     id,
     newThreadId(1700000000001, () => 0.5),
   );
+});
+
+test("promote: 线程级转正用首问 + 最后一轮答案", () => {
+  const records = [
+    { id: "a", at: 1, threadId: "t_x", question: "first", answer: "A1" },
+    { id: "b", at: 2, threadId: "t_x", question: "second", answer: "A2" },
+  ];
+  const record = promoteRecordForThread(records, "t_x");
+  assert.equal(record?.question, "first", "标题保留线程首问");
+  assert.equal(record?.answer, "A2", "结论取最后一轮答案");
+  assert.equal(promoteRecordForThread(records, "missing"), undefined);
+  assert.equal(promoteRecordForThread(records, ""), undefined);
 });
 
 test("promote: 草稿是四节 Markdown 模板，只生成文本不发送", () => {
