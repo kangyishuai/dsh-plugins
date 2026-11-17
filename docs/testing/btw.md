@@ -442,3 +442,45 @@ cost:     {"inputTokens":809,"cacheReadTokens":365056,"outputTokens":3,"totalTok
 ```
 
 顺带证明**缓存命中 365056 tokens ≈ 97%** —— 比早期实测的 84–87% 更高（会话越长，复用比例越高）。
+
+## 桌面 `--deep` 写文件端到端（2026-11-17 新增）
+
+`pnpm smoke:btw-desktop --require --deep` / `pnpm gate btw --deep`：
+
+```
+PASS --deep：真实 /btw 在真实数据根落盘
+PASS --deep：record 状态为 done 且有答案
+PASS --deep：record 带成本与耗时
+PASS --deep：写了 threadId（v0.3 线程字段）
+
+22 PASS / 0 SKIP / 0 FAIL
+PASS btw 门禁全绿（5 步，70s）
+```
+
+### 这层补的是什么
+
+web 冒烟跑在**临时 `DSH_HOME`** 里，验证不了「真实桌面版是否把 history 写到用户的 `~/.dsh/btw/`」。
+btw 没有 `--workspace` 概念（它写的是数据根，不是工作区），所以桌面 `--deep` 的职责就是
+**真实 app + 真实数据根的完整往返**：
+
+1. 记录跑前的 history 条数（`~/.dsh/btw/*.jsonl` 的行数）
+2. 经 composer 提交 `/btw reply with exactly OK`（一次真实模型调用）
+3. 轮询直到出现新记录（最多 80s）
+4. 读回最后一条，断言 `status === "done"`、`answer` 非空、`ms > 0`、`cost` 存在、`threadId` 非空
+
+实测记录：
+
+```
+question: reply with exactly OK
+answer:   OK
+status:   done | ms: 31950
+threadId: t_mwkej6qi_46xv
+cost:     {"inputTokens":859,"cacheReadTokens":393984,"outputTokens":3,"totalTokens":394846}
+```
+
+**缓存命中 393984 / 394846 ≈ 99.8%** —— 会话越长，前缀复用比例越高（早期实测 57%→84%→97%→99.8%）。
+
+### 注意
+
+`--deep` 会**真实花费一次模型调用**，并往用户 data root 写一条 history 记录（记录本身是正常使用产物，不清理）。
+所以默认不跑，只有 `pnpm gate btw --deep` 才执行。
