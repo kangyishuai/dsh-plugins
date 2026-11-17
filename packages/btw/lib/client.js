@@ -732,6 +732,7 @@ window.__ModuleLoader__.load({
         const mode = props?.mode === "tab" ? "tab" : "drawer";
         const onCollapse = typeof props?.onCollapse === "function" ? props.onCollapse : () => {};
         const onClose = typeof props?.onClose === "function" ? props.onClose : onCollapse;
+        const visible = props?.visible !== false;
         const [threads, setThreads] = React.useState(/** @type {any[] | null} */ (null));
         const [liveRuns, setLiveRuns] = React.useState(/** @type {any[]} */ ([]));
         const [failed, setFailed] = React.useState(false);
@@ -816,7 +817,7 @@ window.__ModuleLoader__.load({
         // 流式与后台刷新：面板打开期间常驻。有 run 时 350ms 一次、空闲 1s 一次；
         // 空闲时每 4 次才刷一次线程列表，避免无谓 RPC。
         React.useEffect(() => {
-          if (sessionId === "") return undefined;
+          if (sessionId === "" || !visible) return undefined;
           let cancelled = false;
           /** @type {any} */
           let timer;
@@ -849,7 +850,7 @@ window.__ModuleLoader__.load({
             cancelled = true;
             clearTimeout(timer);
           };
-        }, [sessionId, loadThreads]);
+        }, [sessionId, visible, loadThreads]);
 
         // Esc 只用于回退抽屉；原生 tab 里 Esc 属于宿主，不抢。
         React.useEffect(() => {
@@ -1204,17 +1205,19 @@ window.__ModuleLoader__.load({
                   String(threads.length),
                 )
               : null,
-            h(
-              "button",
-              {
-                type: "button",
-                className: "dsh-btw-btn",
-                "data-btw-collapse": "true",
-                title: t("collapse"),
-                onClick: () => onCollapse(),
-              },
-              t("collapseShort"),
-            ),
+            mode === "tab"
+              ? null
+              : h(
+                  "button",
+                  {
+                    type: "button",
+                    className: "dsh-btw-btn",
+                    "data-btw-collapse": "true",
+                    title: t("collapse"),
+                    onClick: () => onCollapse(),
+                  },
+                  t("collapseShort"),
+                ),
             h(
               "button",
               {
@@ -1369,24 +1372,13 @@ window.__ModuleLoader__.load({
             /* 关不上也保持可见 */
           }
         };
-        // 「收起」= 收起右侧栏（保留 tab 与状态）；再点输入框旁的「旁问」即可展开。
-        const collapseSidebar = () => {
-          const layout = serviceOf(ctx, "layout");
-          if (layout && typeof layout.closeRightbar === "function") {
-            try {
-              layout.closeRightbar();
-              return;
-            } catch {
-              /* 退到关 tab */
-            }
-          }
-          closeTab();
-        };
+        // 收起整栏交给宿主右上角的收起按钮/快捷键；这里只负责关闭 tab。
         return h(BtwBody, {
           sessionId,
           mode: "tab",
-          onCollapse: collapseSidebar,
+          onCollapse: closeTab,
           onClose: closeTab,
+          visible: info?.tab?.visible !== false,
         });
       }
 
