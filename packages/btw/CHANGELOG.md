@@ -1,5 +1,11 @@
 # @kangyishuai/dsh-btw
 
+## 0.5.0
+
+### Minor Changes
+
+- [#177](https://github.com/kangyishuai/dsh-plugins/pull/177) [`9f2f22c`](https://github.com/kangyishuai/dsh-plugins/commit/9f2f22c9bd9e8ed11eab15f1318fe38c787e02cf) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 按三画像桌面可用性测试修复：徽章记录数在提交后立即刷新；展开全文保持滚动位置；追问输入打开时隐藏重复的「新旁问」输入并把按钮改为「追问 / 取消追问」；线程级转正用首问 + 最后一轮答案；新增「主对话是否回显完整答案」设置（`echoAnswer`，默认开）；`Esc` 关闭面板、面板可见时自动聚焦、header 显示「N 个线程」、流式推理阶段显示「思考中」。
+
 ## 0.4.0
 
 ### Minor Changes
