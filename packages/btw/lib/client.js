@@ -53,6 +53,8 @@ window.__ModuleLoader__.load({
       sentPending: "命令已提交，答案稍后出现在对话里",
       expandAnswer: "展开全文",
       collapseAnswer: "收起",
+      newQuestion: "＋ 新旁问",
+      submitHint: "提交时会以 /btw 命令写入对话",
       scopeAny: "范围：不限",
       scopeSession: "范围：整个会话",
       scopeRecent: "范围：最近几轮",
@@ -92,6 +94,8 @@ window.__ModuleLoader__.load({
       sentPending: "Command submitted; the answer will appear in the conversation",
       expandAnswer: "Show all",
       collapseAnswer: "Collapse",
+      newQuestion: "+ New question",
+      submitHint: "Submitting writes a /btw command into the conversation",
       scopeAny: "Scope: any",
       scopeSession: "Scope: whole session",
       scopeRecent: "Scope: recent turns",
@@ -115,8 +119,9 @@ window.__ModuleLoader__.load({
       ".dsh-btw-btn{height:24px;padding:0 8px;border-radius:var(--dsw-radius-sm,6px);border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));background:transparent;color:var(--dsw-alias-label-secondary,GrayText);font-size:12px;cursor:pointer;}",
       ".dsh-btw-btn:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.16));color:var(--dsw-alias-label-primary,CanvasText);}",
       ".dsh-btw-btn:disabled{opacity:.5;cursor:default;}",
-      ".dsh-btw-panel{position:absolute;left:0;right:0;bottom:100%;margin-bottom:6px;max-height:46vh;overflow:auto;z-index:30;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base,Canvas));color:var(--dsw-alias-label-primary,CanvasText);border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));border-radius:10px;padding:10px 12px;font-size:12px;line-height:1.55;box-shadow:0 12px 32px rgba(0,0,0,.28);}",
-      ".dsh-btw-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;font-weight:600;}",
+      ".dsh-btw-panel{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(720px,94vw);max-height:min(74vh,680px);display:flex;flex-direction:column;min-height:0;z-index:2147482000;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base,Canvas));color:var(--dsw-alias-label-primary,CanvasText);border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));border-radius:12px;padding:12px 14px;font-size:12px;line-height:1.55;box-shadow:0 18px 48px rgba(0,0,0,.38);}",
+      ".dsh-btw-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;font-weight:600;flex:none;}",
+      ".dsh-btw-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;}",
       ".dsh-btw-item{padding:6px 0;border-top:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2));}",
       ".dsh-btw-q{color:var(--dsw-alias-label-secondary,GrayText);}",
       ".dsh-btw-a{white-space:pre-wrap;word-break:break-word;margin-top:2px;}",
@@ -174,6 +179,41 @@ window.__ModuleLoader__.load({
         document.head.appendChild(style);
         return () => style.remove();
       }, "btw: styles");
+
+      /**
+       * 按钮（composer 工具行）与浮层（`shell.overlay`）是两个独立组件实例，
+       * 共享状态必须提升到 apply 作用域。
+       *
+       * 为什么浮层改注册到 `shell.overlay`：`conversation.input.overlay` 的 slot 文档写着
+       * "fixed overlays must portal to the document body because the docked composer contains them"。
+       * 放在 composer 里会被裁剪 —— 实测提示条跑到浮层下方 302px、位置还随对话流滚动漂移。
+       * `shell.overlay` 的语义是 "frame-wide floating layer, above every column and outside
+       * their scroll containers"，换过去从根上解决，不必手写 portal。
+       */
+      const store = (() => {
+        /** @type {{ open: boolean, sessionId: string }} */
+        let state = { open: false, sessionId: "" };
+        /** @type {Set<() => void>} */
+        const listeners = new Set();
+        return {
+          get: () => state,
+          patch(/** @type {Partial<{ open: boolean, sessionId: string }>} */ next) {
+            state = { ...state, ...next };
+            for (const listener of listeners) listener();
+          },
+          subscribe(/** @type {() => void} */ listener) {
+            listeners.add(listener);
+            return () => listeners.delete(listener);
+          },
+        };
+      })();
+
+      /** 订阅 store 的极简 hook。 */
+      const useStore = () => {
+        const [, force] = React.useState(0);
+        React.useEffect(() => store.subscribe(() => force((/** @type {number} */ n) => n + 1)), []);
+        return store.get();
+      };
 
       /** 当前界面语言（转正草稿用）。取不到默认 zh。 */
       const langOf = () => {
@@ -309,10 +349,44 @@ window.__ModuleLoader__.load({
         return "ok";
       };
 
+      /**
+       * composer 工具行里的「旁问」按钮。
+       *
+       * 它同时负责把当前 sessionId 写进 store —— 浮层注册在 root scope 的
+       * `shell.overlay` 上，拿不到 session props，只能由按钮转交。
+       */
+      function BtwTrigger(/** @type {any} */ props) {
+        const sessionId = typeof props?.sessionId === "string" ? props.sessionId : "";
+        const shared = useStore();
+        React.useEffect(() => {
+          if (shared.sessionId !== sessionId) store.patch({ sessionId });
+        }, [sessionId, shared.sessionId]);
+        return h(
+          "button",
+          {
+            type: "button",
+            className: "dsh-btw-btn",
+            "data-btw-toggle": "true",
+            title: t("button"),
+            onClick: () => store.patch({ open: !store.get().open }),
+          },
+          t("button"),
+        );
+      }
+
       /** 浮层：只读列表 + 浮层内发问。 */
       function BtwPanel(/** @type {any} */ props) {
-        const sessionId = typeof props?.sessionId === "string" ? props.sessionId : "";
-        const [open, setOpen] = React.useState(false);
+        void props;
+        const shared = useStore();
+        const open = shared.open;
+        const sessionId = shared.sessionId;
+        const setOpen = (/** @type {boolean | ((prev: boolean) => boolean)} */ next) =>
+          store.patch({
+            open:
+              typeof next === "function"
+                ? /** @type {(prev: boolean) => boolean} */ (next)(store.get().open)
+                : next,
+          });
         const [threads, setThreads] = React.useState(/** @type {any[] | null} */ (null));
         const [failed, setFailed] = React.useState(false);
         const [activeId, setActiveId] = React.useState("");
@@ -324,6 +398,9 @@ window.__ModuleLoader__.load({
         const [expandedAnswers, setExpandedAnswers] = React.useState(
           /** @type {Record<string, boolean>} */ ({}),
         );
+        // 新建旁问的输入框默认收起：实测同时出现「线程内追问框 + 底部新建框」时，
+        // 用户分不清哪个是哪个（两个输入框视觉几乎一样）。
+        const [showNew, setShowNew] = React.useState(false);
         const aliveRef = React.useRef(true);
 
         React.useEffect(
@@ -473,19 +550,8 @@ window.__ModuleLoader__.load({
           setNotice(t("promoted"));
         };
 
-        const button = h(
-          "button",
-          {
-            type: "button",
-            className: "dsh-btw-btn",
-            "data-btw-toggle": "true",
-            title: t("button"),
-            onClick: () => setOpen((/** @type {boolean} */ value) => !value),
-          },
-          t("button"),
-        );
-
-        if (!open) return h("span", { "data-btw-root": "true" }, button);
+        // 浮层不画按钮：按钮由 BtwTrigger 注册在 composer 工具行里。
+        if (!open) return null;
 
         const renderThread = (/** @type {any} */ thread, /** @type {number} */ index) => {
           const expanded = activeId === thread.threadId;
@@ -512,7 +578,8 @@ window.__ModuleLoader__.load({
             (() => {
               // 长答案默认折叠 6 行：实测一条 3000+ 字答案会把浮层撑满，
               // 用户只能看到答案中部、找不到成本与按钮。
-              const answerText = String(thread.answer ?? "");
+              // 优先用 host 清理过的纯文本（保留代码块）；没有就回退原文。
+              const answerText = String(thread.answerPlain ?? thread.answer ?? "");
               const key = String(thread.threadId ?? "");
               const isOpen = expandedAnswers[key] === true;
               const needsClamp = answerText.length > 400;
@@ -624,7 +691,6 @@ window.__ModuleLoader__.load({
         return h(
           "span",
           { "data-btw-root": "true" },
-          button,
           h(
             "div",
             { className: "dsh-btw-panel", "data-btw-overlay": "true", role: "dialog" },
@@ -632,6 +698,16 @@ window.__ModuleLoader__.load({
               "div",
               { className: "dsh-btw-head" },
               h("span", null, t("title")),
+              h(
+                "button",
+                {
+                  type: "button",
+                  className: "dsh-btw-btn",
+                  "data-btw-new": "true",
+                  onClick: () => setShowNew((/** @type {boolean} */ v) => !v),
+                },
+                showNew ? t("collapse") : t("newQuestion"),
+              ),
               h(
                 "button",
                 {
@@ -662,37 +738,39 @@ window.__ModuleLoader__.load({
                   { className: "dsh-btw-err", "data-btw-error": "history_unavailable" },
                   `${t("failed")} — ${lastRpcError}`,
                 )
-              : body,
-            h(
-              "div",
-              { className: "dsh-btw-row", "data-btw-newline": "true" },
-              h("textarea", {
-                className: "dsh-btw-input",
-                "data-btw-input": "true",
-                placeholder: t("placeholder"),
-                value: activeId === "" ? question : "",
-                rows: 2,
-                onChange: (/** @type {any} */ event) =>
-                  setQuestion(String(event?.target?.value ?? "")),
-                onKeyDown: (/** @type {any} */ event) => {
-                  if (event?.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                    event.preventDefault();
-                    void submit("");
-                  }
-                },
-              }),
-              h(
-                "button",
-                {
-                  type: "button",
-                  className: "dsh-btw-btn",
-                  "data-btw-send": "true",
-                  disabled: busy || question.trim() === "",
-                  onClick: () => void submit(""),
-                },
-                t("send"),
-              ),
-            ),
+              : h("div", { className: "dsh-btw-scroll", "data-btw-list": "true" }, body),
+            showNew
+              ? h(
+                  "div",
+                  { className: "dsh-btw-row", "data-btw-newline": "true" },
+                  h("textarea", {
+                    className: "dsh-btw-input",
+                    "data-btw-input": "true",
+                    placeholder: t("placeholder"),
+                    value: activeId === "" ? question : "",
+                    rows: 2,
+                    onChange: (/** @type {any} */ event) =>
+                      setQuestion(String(event?.target?.value ?? "")),
+                    onKeyDown: (/** @type {any} */ event) => {
+                      if (event?.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                        event.preventDefault();
+                        void submit("");
+                      }
+                    },
+                  }),
+                  h(
+                    "button",
+                    {
+                      type: "button",
+                      className: "dsh-btw-btn",
+                      "data-btw-send": "true",
+                      disabled: busy || question.trim() === "",
+                      onClick: () => void submit(""),
+                    },
+                    t("send"),
+                  ),
+                )
+              : null,
             h(
               "div",
               { className: "dsh-btw-row" },
@@ -711,6 +789,7 @@ window.__ModuleLoader__.load({
                 h("option", { value: "selection" }, t("scopeSelection")),
               ),
             ),
+            h("div", { className: "dsh-btw-meta", "data-btw-hint": "true" }, t("submitHint")),
             badge === ""
               ? null
               : h("div", { className: "dsh-btw-meta", "data-btw-badge": "true" }, badge),
@@ -874,7 +953,14 @@ window.__ModuleLoader__.load({
       ctx.slots.inject("conversation.input.left", () =>
         ctx.slots.register(
           { name: "conversation.input.left", id: "btw-toggle", order: 40, locale: NS },
-          (/** @type {any} */ props) => h(BtwPanel, props),
+          (/** @type {any} */ props) => h(BtwTrigger, props),
+        ),
+      );
+
+      // 浮层挂在 shell.overlay（frame-wide，所有列之上、滚动容器之外），不受 composer 裁剪。
+      ctx.slots.inject("shell.overlay", () =>
+        ctx.slots.register({ name: "shell.overlay", id: "btw-panel", order: 60, locale: NS }, () =>
+          h(BtwPanel, null),
         ),
       );
     };

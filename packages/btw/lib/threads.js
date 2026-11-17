@@ -18,10 +18,13 @@ export const PROMOTE_SECTIONS = [
  * @returns {string}
  */
 export function newThreadId(now = Date.now(), rand = Math.random) {
-  const suffix = Math.floor(rand() * 36 ** 4)
+  // 短 id：浮层发问要走 composer，命令文本（`/btw --thread <id> ...`）会短暂出现在
+  // 用户输入框里，id 越短越不刺眼。实测 16 字符的 `t_mwkfmjk1_qrb3` 太显眼。
+  // 单机单会话内冲突概率可忽略（时间 36 进制 + 2 位随机）。
+  const suffix = Math.floor(rand() * 36 ** 2)
     .toString(36)
-    .padStart(4, "0");
-  return `t_${now.toString(36)}_${suffix}`;
+    .padStart(2, "0");
+  return `t_${now.toString(36)}${suffix}`;
 }
 
 /**
@@ -120,7 +123,40 @@ export function renderPromoteDraft(record, options = {}) {
  * @param {string} text
  * @returns {string}
  */
-export function stripMarkdown(text) {
+/**
+ * 去掉常见 Markdown 标记，让文本适合直接阅读/放进输入框。
+ *
+ * @param {string} text
+ * @param {{ keepCode?: boolean }} [options] keepCode 默认 true：``` 围栏内的内容原样保留
+ *   （代码缩进有意义，清掉会毁掉可读性）。
+ * @returns {string}
+ */
+export function stripMarkdown(text, options = {}) {
+  const raw = String(text ?? "");
+  if (options.keepCode === false) return stripAllMarkdown(raw);
+  // 先把围栏块抽出占位，避免下面的标记清理破坏代码内容。
+  /** @type {string[]} */
+  const fences = [];
+  const parked = raw.replace(
+    /```[a-zA-Z0-9_-]*\n([\s\S]*?)```/gu,
+    (/** @type {string} */ _m, /** @type {string} */ body) => {
+      fences.push(body.replace(/\n+$/u, ""));
+      return `@@BTWFENCE${fences.length - 1}@@`;
+    },
+  );
+  const cleaned = stripAllMarkdown(parked).replace(
+    /@@BTWFENCE(\d+)@@/gu,
+    (/** @type {string} */ _m, /** @type {string} */ i) => `\n${fences[Number(i)] ?? ""}\n`,
+  );
+  return cleaned.replace(/\n{3,}/gu, "\n\n").trim();
+}
+
+/**
+ * 纯标记清理（条目级，不含代码块保护）。
+ * @param {string} text
+ * @returns {string}
+ */
+function stripAllMarkdown(text) {
   return (
     String(text ?? "")
       .replace(/^\s{0,3}#{1,6}\s+/gmu, "") // 标题井号
@@ -190,7 +226,7 @@ export function parseThreadFlag(raw) {
 /**
  * 线程列表（给浮层展示）：按最后一条时间倒序，每项带条数与首问。
  * @param {any[]} records
- * @returns {{ threadId: string, turns: number, question: string, answer: string, lastId: string, cost: any, ms: number, at: number }[]}
+ * @returns {{ threadId: string, turns: number, question: string, answer: string, answerPlain: string, lastId: string, cost: any, ms: number, at: number }[]}
  */
 export function listThreads(records) {
   return groupThreads(records)
@@ -199,6 +235,9 @@ export function listThreads(records) {
       turns: thread.items.length,
       question: String(thread.items[0]?.question ?? ""),
       answer: String(thread.last?.answer ?? ""),
+      // 展示用：去掉 Markdown 噪音但保留代码块（列表里显示原文的话，用户看到的是
+      // `**粗体**`、`|表|格|`、`|---|`，实测被抱怨「为什么给我一堆井号和竖线」）。
+      answerPlain: stripMarkdown(String(thread.last?.answer ?? "")),
       lastId: String(thread.last?.id ?? ""),
       cost: thread.last?.cost ?? null,
       ms: Number(thread.last?.ms ?? 0),
