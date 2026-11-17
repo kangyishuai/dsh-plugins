@@ -532,7 +532,29 @@ cost:     {"inputTokens":859,"cacheReadTokens":393984,"outputTokens":3,"totalTok
   注意力留在浮层。
 - **两个相似输入框**（线程内追问 / 底部新建）：文案有区分，但视觉相近。
 
-### host 侧改动需重启
+### host 侧改动需重启（2026-11-17 重启后已实测）
 
 `stripMarkdown` / `promoteChars` 在 host 半（`lib/threads.js`、`lib/limits.js`），
 **刷新页面不会生效，必须重启 DSH**。client 侧改动（状态条、折叠、轮询）刷新即可。
+
+重启后装 0.1.1 实测：
+
+```
+draftLen: 206
+hasHashHeading: false   ← 没有 ## 
+hasBold: false          ← 没有 **
+hasTableSep: false      ← 没有 |---|
+hasBracketHeading: true ← 用 【】
+
+【我问了什么】
+用一句话说明这个插件的入口在哪
+
+【结论】
+入口有两个，都在输入框区域：
+1. 底部输入框左侧那一排里的小按钮「旁问」...
+2. /btw 斜杠命令 —— 直接在输入框敲 /btw 你的问题...
+
+PASS btw 门禁全绿（4 步，33s）  18 PASS / 0 SKIP / 0 FAIL
+```
+
+对照修复前：`## 我问了什么` + `**底部输入框...**` + `|---|---|` + 撑满整屏。
