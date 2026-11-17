@@ -1,10 +1,12 @@
 // @ts-check
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { buildVerificationBlock, collectEvidence, isInside } from "../lib/verifier.js";
+import { cleanupTempDirs, tempDir } from "./temp.js";
+
+after(cleanupTempDirs);
 
 test("isInside：`../` 与绝对路径都被挡住", () => {
   assert.equal(isInside("/work", "src/a.ts"), true);
@@ -15,7 +17,7 @@ test("isInside：`../` 与绝对路径都被挡住", () => {
 });
 
 test("collectEvidence：读工作目录内的文件，越界与缺失分别记录", async () => {
-  const root = await mkdtemp(join(tmpdir(), "advisor-verifier-"));
+  const root = await tempDir("advisor-verifier");
   await mkdir(join(root, "src"), { recursive: true });
   await writeFile(join(root, "src", "a.ts"), "export const x = 1;\n", "utf8");
 
@@ -37,7 +39,7 @@ test("collectEvidence：读工作目录内的文件，越界与缺失分别记�
 });
 
 test("collectEvidence：超过上限就截断并留痕", async () => {
-  const root = await mkdtemp(join(tmpdir(), "advisor-verifier-big-"));
+  const root = await tempDir("advisor-verifier-big");
   await writeFile(join(root, "big.txt"), "x".repeat(200), "utf8");
   const result = await collectEvidence({
     root,
@@ -49,7 +51,7 @@ test("collectEvidence：超过上限就截断并留痕", async () => {
 });
 
 test("collectEvidence：一次最多读 maxFiles 个", async () => {
-  const root = await mkdtemp(join(tmpdir(), "advisor-verifier-many-"));
+  const root = await tempDir("advisor-verifier-many");
   for (const name of ["a", "b", "c"]) await writeFile(join(root, name), "hi", "utf8");
   const result = await collectEvidence({
     root,

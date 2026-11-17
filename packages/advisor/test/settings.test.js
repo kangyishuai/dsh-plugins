@@ -1,9 +1,8 @@
 // @ts-check
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import {
   DEFAULT_SETTINGS,
   isConfigured,
@@ -14,6 +13,10 @@ import {
   saveSettings,
   settingsPath,
 } from "../lib/settings.js";
+
+import { cleanupTempDirs, tempDir } from "./temp.js";
+
+after(cleanupTempDirs);
 
 test("默认设置：默认关闭、没有配置顾问", () => {
   assert.equal(DEFAULT_SETTINGS.mode, "off");
@@ -130,7 +133,7 @@ test("normalizeTiers 只保留合法档位", () => {
 });
 
 test("saveSettings 原子写 + loadSettings 读回一致", async () => {
-  const home = await mkdtemp(join(tmpdir(), "advisor-settings-"));
+  const home = await tempDir("advisor-settings");
   const saved = await saveSettings({
     home,
     settings: normalizeSettings({ mode: "advisory", provider: "deepseek", model: "deepseek-chat" }),
@@ -145,7 +148,7 @@ test("saveSettings 原子写 + loadSettings 读回一致", async () => {
 });
 
 test("loadSettings 遇到坏文件回落到默认值而不是抛错", async () => {
-  const home = await mkdtemp(join(tmpdir(), "advisor-settings-bad-"));
+  const home = await tempDir("advisor-settings-bad");
   await writeFile(settingsPath(home), "{not json", "utf8");
   const loaded = await loadSettings({ home });
   assert.equal(loaded.mode, "off");
