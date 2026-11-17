@@ -101,7 +101,7 @@ The settings file is re-read on every use, so edits take effect without restarti
 
 The underlying host seams (command dispatch while busy, fork cache reuse, `tools.guard`, `workspaceRegistry.archiveSession`) were verified on DSH 0.2.2-rc.3.
 
-End-to-end status: the web smoke (temporary `DSH_HOME`, right-sidebar tab, collapse/expand, Markdown rendering) and a real `/btw` round trip pass. The desktop regression was updated for the tab shape and must be rerun after installing this version into the live desktop profile.
+End-to-end status: the web smoke (temporary `DSH_HOME`, right-sidebar tab, collapse/expand, Markdown rendering) and a real `/btw` round trip pass. The desktop regression was rerun against the installed 0.4.0 in the live desktop profile: 14 PASS / 1 SKIP / 0 FAIL (the SKIP is a visible session with no side-question records yet).
 
 ## License
 

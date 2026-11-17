@@ -676,7 +676,20 @@ document body because the docked composer contains them**"，而浮层原本就�
   `t≈2.2s` 出现 live 卡片与 elapsed；run 结束后线程数 1→2，live 卡片被真实线程替换。
   截图确认 Markdown 表格/代码块/引用/行内样式、折叠、成本徽章与 tab 布局均正常。
 - 桌面回归（`pnpm smoke:btw-desktop --require`）断言改为「右侧栏 tab / 不遮挡 / 收起展开 / 关闭」；
-  需先把本版本装进 desktop profile 才能跑（发版流程）。
+  0.4.0 装进 desktop profile 后已在真机跑过，结果见下。
+
+### 0.4.0 发版与发版后验证（2026-11-17）
+
+- 合并：#172（squash `885eae6`）→ Version Packages #173（`5c37082`）；npm 已发布
+  `@kangyishuai/dsh-btw@0.4.0`（tag / Release 已建），插件索引重建后 btw 为 0.4.0。
+- `pnpm smoke:btw --npm`（从 npm 装发布包，临时 `DSH_HOME`）：**11 PASS / 3 SKIP / 0 FAIL**。
+- `pnpm smoke:btw --npm --deep`（真实模型一次）：**14 PASS / 3 SKIP / 0 FAIL**，history `status=done`。
+- `pnpm smoke:btw-desktop --require`（发布版装进真实 desktop profile、重启后）：
+  **14 PASS / 1 SKIP / 0 FAIL**；SKIP 是「当前可见会话没有旁问记录」，
+  线程按钮断言需要先提一个 `/btw` 再跑。
+- `pnpm gate btw`：**PASS，4 步 35s**（verify → probe:runtime → web 冒烟 → 桌面回归）。
+- 跑桌面回归前把可见会话切到空闲会话、跑完切回：agent 自己的回合会让脚本按只读保护全部 SKIP，
+  门禁会把「一条断言都没执行」判成假绿。
 
 ### 已知边界
 
