@@ -105,7 +105,7 @@ dsh plugin --profile desktop add @kangyishuai/dsh-btw
 
 底层宿主 seam（busy 时命令派发、fork 缓存复用、`tools.guard`、`workspaceRegistry.archiveSession`）已在 DSH 0.2.2-rc.3 上实测。
 
-端到端情况：web 冒烟（临时 `DSH_HOME`，覆盖右侧栏 tab、收起/展开、Markdown 渲染）与真实模型往返都通过；桌面回归（`pnpm smoke:btw-desktop --require`）已更新为 tab 断言，需把本版本装进 desktop profile 后重跑。
+端到端情况：web 冒烟（临时 `DSH_HOME`，覆盖右侧栏 tab、收起/展开、Markdown 渲染）与真实模型往返都通过；桌面回归（`pnpm smoke:btw-desktop --require`）已在真实 desktop profile 的 0.4.0 上重跑：**14 PASS / 1 SKIP / 0 FAIL**（SKIP 是当前会话还没有旁问记录）。
 
 ## 许可证
 
