@@ -520,6 +520,87 @@ async function main() {
       loopBad.raw.slice(0, 400),
     );
 
+    // 9.9) web checker：截图相似度（自造 PNG，不联网）
+    const shotDir = join(work, "shots");
+    await mkdir(shotDir, { recursive: true });
+    const refShot = join(shotDir, "ref.png");
+    const sameShot = join(shotDir, "same.png");
+    const diffShot = join(shotDir, "diff.png");
+    const png = await import("./casefile-png-fixture.mjs");
+    await writeFile(refShot, png.solidPng(8, 8, [20, 40, 60]));
+    await writeFile(sameShot, png.solidPng(8, 8, [20, 40, 60]));
+    await writeFile(diffShot, png.solidPng(8, 8, [240, 40, 60]));
+    await remote(session, "createProject", {
+      input: { title: "Shot Compare", target: { kind: "web", ref: "about:blank" } },
+    });
+    const shotClaim = await remote(session, "addClaim", {
+      projectId: "shot-compare",
+      input: { text: "首屏主色 rgb(20,40,60)" },
+    });
+    await remote(session, "selectClaims", {
+      projectId: "shot-compare",
+      claimIds: [shotClaim.value?.id],
+      selected: true,
+    });
+    const webObligation = await remote(session, "addObligation", {
+      projectId: "shot-compare",
+      input: {
+        statement: "首屏截图与原件相似度 ≥ 0.98",
+        kind: "visual",
+        check: { checker: "web", reference: refShot, candidate: sameShot, minSimilarity: 0.98 },
+      },
+    });
+    await remote(session, "startBuild", {
+      projectId: "shot-compare",
+      input: { command: `node -e "0"`, cwd: implDir },
+    });
+    const webPass = await remote(session, "runCheck", {
+      projectId: "shot-compare",
+      input: {
+        obligationId: webObligation.value?.id,
+        checker: "web",
+        reference: refShot,
+        candidate: sameShot,
+        minSimilarity: 0.98,
+      },
+    });
+    check(
+      "web checker：相同截图判 pass 且相似度为 1",
+      webPass.ok &&
+        webPass.value?.check?.verdict === "pass" &&
+        JSON.parse(String(webPass.value?.check?.detail ?? "{}")).similarity === 1,
+      webPass.raw.slice(0, 400),
+    );
+    const webFail = await remote(session, "runCheck", {
+      projectId: "shot-compare",
+      input: {
+        obligationId: webObligation.value?.id,
+        checker: "web",
+        reference: refShot,
+        candidate: diffShot,
+        minSimilarity: 0.98,
+      },
+    });
+    check(
+      "web checker：颜色不同的截图判 fail（不靠模糊相似度蒙混）",
+      webFail.ok && webFail.value?.check?.verdict === "fail",
+      webFail.raw.slice(0, 400),
+    );
+    const webUnknown = await remote(session, "runCheck", {
+      projectId: "shot-compare",
+      input: {
+        obligationId: webObligation.value?.id,
+        checker: "web",
+        reference: refShot,
+        candidate: join(shotDir, "missing.png"),
+      },
+    });
+    check(
+      "web checker：截图缺失返回 unknown（不是 pass）",
+      webUnknown.ok && webUnknown.value?.check?.verdict === "unknown",
+      webUnknown.raw.slice(0, 300),
+    );
+
     // 10) 详情统计
     const detail = await remote(session, "projectDetail", { projectId: "todo-app-smoke" });
     check(

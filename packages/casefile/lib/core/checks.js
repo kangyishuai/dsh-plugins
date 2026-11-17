@@ -7,7 +7,10 @@
 //   - 失败必须留 detail，便于下一轮只修失败项。
 
 import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { promisify } from "node:util";
+
+import { comparePng } from "./png.js";
 
 /**
  * @typedef {{ name: string, version: string, run: (input: any) => Promise<any> }} Checker
@@ -163,11 +166,94 @@ export function createCliChecker(options = {}) {
 }
 
 /**
+ * web checker：比较两张截图（原件 vs 候选）的相似度与尺寸。
+ * 采集（截图）由 REA / 浏览器完成；本 checker 只做「判」。
+ * @param {any} [options]
+ * @returns {Checker}
+ */
+export function createWebChecker(options = {}) {
+  const read = options.readFile ?? ((/** @type {string} */ path) => readFileSync(path));
+  return {
+    name: "web",
+    version: "1",
+    /**
+     * @param {{
+     *   reference: string, candidate: string, minSimilarity?: number,
+     *   allowSizeMismatch?: boolean,
+     * }} input
+     */
+    async run(input) {
+      const startedAt = new Date().toISOString();
+      const minSimilarity = typeof input.minSimilarity === "number" ? input.minSimilarity : 0.98;
+      /** @type {Buffer} */
+      let reference;
+      /** @type {Buffer} */
+      let candidate;
+      try {
+        reference = read(String(input.reference));
+        candidate = read(String(input.candidate));
+      } catch (error) {
+        return {
+          verdict: "unknown",
+          detail: { reason: "screenshot-missing", message: String(error) },
+          startedAt,
+          endedAt: new Date().toISOString(),
+          exitCode: null,
+          stdout: "",
+          stderr: "",
+        };
+      }
+      /** @type {ReturnType<typeof comparePng>} */
+      let compared;
+      try {
+        compared = comparePng(reference, candidate);
+      } catch (error) {
+        return {
+          verdict: "unknown",
+          detail: { reason: "screenshot-invalid", message: String(error) },
+          startedAt,
+          endedAt: new Date().toISOString(),
+          exitCode: null,
+          stdout: "",
+          stderr: "",
+        };
+      }
+      const sizeOk = !compared.sizeMismatch || input.allowSizeMismatch === true;
+      const pass = sizeOk && compared.similarity >= minSimilarity;
+      /** @type {string[]} */
+      const reasons = [];
+      if (compared.sizeMismatch && input.allowSizeMismatch !== true) reasons.push("size-mismatch");
+      if (compared.similarity < minSimilarity) reasons.push("below-threshold");
+      return {
+        verdict: pass ? "pass" : "fail",
+        detail: {
+          reasons,
+          similarity: Number(compared.similarity.toFixed(4)),
+          minSimilarity,
+          meanAbsDiff: Number(compared.meanAbsDiff.toFixed(2)),
+          diffPixels: compared.diffPixels,
+          totalPixels: compared.totalPixels,
+        },
+        startedAt,
+        endedAt: new Date().toISOString(),
+        exitCode: null,
+        stdout: JSON.stringify(compared),
+        stderr: "",
+      };
+    },
+  };
+}
+
+/**
  * checker 注册表。
  * @param {{ runner?: typeof defaultRunner }} [options]
  * @returns {Map<string, Checker>}
  */
 export function createCheckers(options = {}) {
-  const checkers = [createBuildChecker(options), createCliChecker(options)];
+  const checkers = [
+    createBuildChecker(options),
+    createCliChecker(options),
+    createWebChecker(options),
+  ];
   return new Map(checkers.map((item) => [item.name, item]));
 }

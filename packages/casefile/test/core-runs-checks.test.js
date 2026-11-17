@@ -94,9 +94,9 @@ test("cli checker 走注入 runner 并按期望判定", async () => {
   assert.match(fail.detail.reasons[0], /stdout-missing/u);
 });
 
-test("createCheckers 暴露 build 与 cli", () => {
+test("createCheckers 暴露 build / cli / web", () => {
   const checkers = createCheckers({ runner: fakeRunner({}) });
-  assert.deepEqual([...checkers.keys()], ["build", "cli"]);
+  assert.deepEqual([...checkers.keys()], ["build", "cli", "web"]);
   assert.equal(checkers.get("build")?.version, "1");
 });
 

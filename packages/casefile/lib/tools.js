@@ -532,7 +532,7 @@ export function buildToolDefinitions(handlers, projectOf) {
     {
       name: TOOL_NAMES.check,
       description:
-        "验收：run 跑一条 checker（build/cli）并把结果绑定到当前构建的实现 digest；list 看历史；loop 看停止条件。",
+        "验收：run 跑一条 checker（build/cli/web）并把结果绑定到当前构建的实现 digest；list 看历史；loop 看停止条件。",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -540,7 +540,11 @@ export function buildToolDefinitions(handlers, projectOf) {
           action: { type: "string", enum: ["run", "list", "loop"] },
           projectId: PROJECT_ID,
           obligationId: { type: "string" },
-          checker: { type: "string", enum: ["build", "cli"] },
+          checker: { type: "string", enum: ["build", "cli", "web"] },
+          reference: { type: "string", description: "web：原件截图路径" },
+          candidate: { type: "string", description: "web：候选截图路径" },
+          minSimilarity: { type: "number", description: "web：相似度阈值（默认 0.98）" },
+          allowSizeMismatch: { type: "boolean" },
           command: { type: "string" },
           cwd: { type: "string" },
           expect: {
@@ -565,6 +569,10 @@ export function buildToolDefinitions(handlers, projectOf) {
               cwd: args.cwd,
               expect: args.expect,
               timeoutMs: args.timeoutMs,
+              reference: args.reference,
+              candidate: args.candidate,
+              minSimilarity: args.minSimilarity,
+              allowSizeMismatch: args.allowSizeMismatch,
             });
             return {
               ...result,

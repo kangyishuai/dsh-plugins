@@ -6,7 +6,7 @@
 
 Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). Not affiliated with DeepSeek. It is an adapter on top of [REA](https://github.com/morluto/rea) (MIT); it ships none of REA's code and no analysis engine.
 
-> **Status: M3 core (auto loop + near-miss proof).** Persists projects, evidence, claims, features, unknowns, obligations and check records; exports a redacted spec pack; ships a workbench page (evidence / obligations / runs), a sidebar entry and a settings section. A **builder session** can be started from a project: casefile creates a child session, feeds it only the spec pack (never the original target), and returns the session id; `awaitBuilder` reports why it stopped. The build/check loop runs real commands: `case_build start` records a `BuildRun` with an implementation digest, `case_check run` records a result bound to that digest, and a later build whose digest differs automatically **reopens** the obligations it had closed. Verified by 70 unit tests, a 30-assertion web end-to-end smoke on a throwaway DSH home (including the stale-reopen path), and a manual GUI pass in a real browser; the desktop read-only suite is written but still needs the plugin installed in the desktop profile before it can run. Treat it as young software.
+> **Status: M3 (auto loop + near-miss + web checker).** Persists projects, evidence, claims, features, unknowns, obligations and check records; exports a redacted spec pack; ships a workbench page (evidence / obligations / runs), a sidebar entry and a settings section. A **builder session** can be started from a project: casefile creates a child session, feeds it only the spec pack (never the original target), and returns the session id; `awaitBuilder` reports why it stopped. The build/check loop runs real commands: `case_build start` records a `BuildRun` with an implementation digest, `case_check run` records a result bound to that digest, and a later build whose digest differs automatically **reopens** the obligations it had closed. Verified by 70 unit tests, a 30-assertion web end-to-end smoke on a throwaway DSH home (including the stale-reopen path), and a manual GUI pass in a real browser; the desktop read-only suite is written but still needs the plugin installed in the desktop profile before it can run. Treat it as young software.
 
 ## What it does
 
@@ -65,6 +65,16 @@ A settings section shows the data root, project count and REA capability status,
 | `case_brief`    | `export`                          | Write the redacted spec pack (`spec.json` + `brief.md`)                         |
 
 Every tool returns `{ ok, data?, error?{code,message,hint}, summary }`; errors carry a stable code, so the model can correct itself instead of guessing.
+
+## Checkers
+
+| Checker | What it judges                                                                 | Verdicts                                      |
+| ------- | ------------------------------------------------------------------------------ | --------------------------------------------- |
+| `build` | a shell build command: exit code + configured output paths                     | pass / fail / unknown(timeout)                |
+| `cli`   | a command against `{ exitCode, stdoutIncludes, stdoutEquals, stderrIncludes }` | pass / fail / unknown(timeout)                |
+| `web`   | two PNG screenshots: similarity = 1 − mean-abs-diff/255, plus a size check     | pass / fail / unknown(missing or invalid PNG) |
+
+Screenshots are captured elsewhere (REA's browser tools or any tool the user prefers); the `web` checker only judges. The PNG decoder is in-repo (`lib/core/png.js`, no third-party dependency) and supports 8-bit RGB/RGBA, non-interlaced.
 
 ## Anti-false-green
 

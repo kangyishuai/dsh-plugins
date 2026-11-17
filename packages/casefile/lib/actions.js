@@ -653,7 +653,11 @@ export function createActions(options) {
     /**
      * 跑一条 checker 并落 CheckResult（绑定当前构建的实现 digest）。
      * @param {string} projectId
-     * @param {{ obligationId: string, checker: string, command: string, cwd?: string, expect?: Record<string, any>, timeoutMs?: number }} input
+     * @param {{
+     *   obligationId: string, checker: string, command?: string, cwd?: string,
+     *   expect?: Record<string, any>, timeoutMs?: number,
+     *   reference?: string, candidate?: string, minSimilarity?: number, allowSizeMismatch?: boolean,
+     * }} input
      * @returns {Promise<Record<string, any>>}
      */
     async runCheck(projectId, input) {
@@ -683,6 +687,10 @@ export function createActions(options) {
         cwd: input?.cwd,
         timeoutMs: input?.timeoutMs,
         expect: input?.expect ?? {},
+        reference: input?.reference,
+        candidate: input?.candidate,
+        minSimilarity: input?.minSimilarity,
+        allowSizeMismatch: input?.allowSizeMismatch,
       });
       const checkedAt = nowIso();
       const record = {

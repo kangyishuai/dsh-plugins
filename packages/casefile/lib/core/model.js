@@ -304,9 +304,19 @@ export function normalizeObligation(input) {
   let check = null;
   if (input?.check != null) {
     const raw = input.check;
-    const checker = oneOf(raw?.checker ?? "cli", ["build", "cli"], "check.checker");
-    const command = text(raw?.command, "check.command", { max: 2000 });
-    check = { checker, command };
+    const checker = oneOf(raw?.checker ?? "cli", ["build", "cli", "web"], "check.checker");
+    if (checker === "web") {
+      check = {
+        checker,
+        command: "",
+        reference: text(raw?.reference, "check.reference", { max: 2000 }),
+        candidate: text(raw?.candidate, "check.candidate", { max: 2000 }),
+      };
+      if (raw?.minSimilarity != null) check.minSimilarity = Number(raw.minSimilarity);
+      if (raw?.allowSizeMismatch != null) check.allowSizeMismatch = raw.allowSizeMismatch === true;
+    } else {
+      check = { checker, command: text(raw?.command, "check.command", { max: 2000 }) };
+    }
     if (raw?.expect != null) {
       if (typeof raw.expect !== "object" || Array.isArray(raw.expect)) {
         throw new CasefileInputError("invalid-input", "check.expect 必须是对象");
