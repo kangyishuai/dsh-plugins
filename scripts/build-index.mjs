@@ -443,6 +443,39 @@ export async function fetchPackument(
   );
 }
 
+/**
+ * 找出「manifest 声明了、但 registry 上还看不到」的版本。
+ *
+ * 为什么需要单独一个函数：`fetchPackument` 的重试只在 **404**（包完全不存在）时生效；
+ * 而发版后更常见的情况是 packument **返回 200、内容还是旧版本**。
+ * 2026-11-17 实测：release 工作流发布 0.1.1 / 0.2.0 / 0.3.0 后，index.yml 各失败一次，
+ * 全部是这个原因（`@kangyishuai/dsh-btw@0.3.0 还没有发布到 npm（registry 上是 0.2.0）`），
+ * 导致线上索引从 btw 0.1.0 起就没再更新过。
+ * @param {{ name: string, version: string }[]} manifests
+ * @param {Map<string, any>} packuments
+ * @returns {{ name: string, version: string, latest: string }[]}
+ */
+export function missingPublishedVersions(manifests, packuments) {
+  /** @type {{ name: string, version: string, latest: string }[]} */
+  const missing = [];
+  for (const manifest of manifests) {
+    const packument = packuments.get(manifest.name);
+    if (!packument) {
+      missing.push({ name: manifest.name, version: manifest.version, latest: "(无数据)" });
+      continue;
+    }
+    const versions = stableVersions(packument);
+    if (!versions.some((item) => item.version === manifest.version)) {
+      missing.push({
+        name: manifest.name,
+        version: manifest.version,
+        latest: versions[0]?.version ?? "(无正式版本)",
+      });
+    }
+  }
+  return missing;
+}
+
 /** @param {string} path */
 async function readMetaFile(path) {
   return JSON.parse(await readFile(path, "utf8"));
@@ -489,6 +522,31 @@ export async function main(argv = process.argv.slice(2)) {
   const packuments = new Map();
   for (const manifest of manifests)
     packuments.set(manifest.name, await fetchPackument(manifest.name, { registry }));
+
+  // 等每个包声明的版本都出现在 registry 上（发版后传播需要时间，见 missingPublishedVersions 的注释）。
+  const waitAttempts = Number(process.env.INDEX_VERSION_ATTEMPTS ?? 12);
+  const waitDelayMs = Number(process.env.INDEX_VERSION_DELAY_MS ?? 20_000);
+  for (let attempt = 1; ; attempt += 1) {
+    const missing = missingPublishedVersions(manifests, packuments);
+    if (missing.length === 0) break;
+    if (attempt >= waitAttempts) {
+      throw new Error(
+        `等不到这些版本出现在 npm（重试 ${waitAttempts} 次后）：${missing
+          .map((item) => `${item.name}@${item.version}（registry 上是 ${item.latest}）`)
+          .join("、")}`,
+      );
+    }
+    console.log(
+      `等待 registry 传播（第 ${attempt}/${waitAttempts - 1} 次）：${missing
+        .map((item) => `${item.name}@${item.version}`)
+        .join("、")}`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, waitDelayMs));
+    for (const item of missing) {
+      packuments.set(item.name, await fetchPackument(item.name, { registry }));
+    }
+  }
+
   const index = buildIndex({ manifests, meta, packuments });
   await mkdir(join(out, ".."), { recursive: true });
   // 压缩成一行：宿主读取有 15 秒预算，缩进纯属浪费带宽。
