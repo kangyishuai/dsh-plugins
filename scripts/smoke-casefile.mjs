@@ -828,6 +828,26 @@ async function main() {
       researchBuilder.raw.slice(0, 300),
     );
 
+    // 9.16) 净室 attestation（真实宿主里建 builder 后应落一条可核对记录）
+    const attDetail = await remote(session, "projectDetail", { projectId: "todo-app-smoke" });
+    const attestations = attDetail.value?.attestations ?? [];
+    check(
+      "startBuilder 落了净室 attestation（含 prompt 摘要与净室指令标记）",
+      attestations.length >= 1 &&
+        /^[0-9a-f]{64}$/u.test(String(attestations.at(-1)?.promptDigest)) &&
+        attestations.at(-1)?.cleanRoomInstruction === true,
+      JSON.stringify(attestations.at(-1) ?? null).slice(0, 300),
+    );
+    const attReport = await remote(session, "exportReport", { projectId: "todo-app-smoke" });
+    const attMd = await readIfExists(join(attReport.value?.path, "report.md"));
+    check(
+      "报告里写明净室要求与「工具面未隔离」的边界",
+      attMd.includes("净室 attestation") &&
+        attMd.includes("净室指令写入 prompt：是") &&
+        attMd.includes("工具面隔离：none"),
+      attMd.slice(0, 200),
+    );
+
     // 10) 详情统计
     const detail = await remote(session, "projectDetail", { projectId: "todo-app-smoke" });
     check(

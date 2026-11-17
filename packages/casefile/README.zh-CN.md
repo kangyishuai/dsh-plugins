@@ -89,6 +89,12 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-casefile-*.tgz
 
 `case_project report` 写出 `reports/<时间戳>/report.md` + `report.json`：全局覆盖率、**按功能覆盖率**、义务表、带实现 digest 的检查表、未知项、循环状态，以及「`unknown` 不等于通过」的声明。
 
+## 净室 attestation
+
+每次 builder 会话都会写一条 **attestation**（`attestations.jsonl`）：prompt 摘要、规格包摘要、投喂了多少条结论/证据、授权档与是否 research 覆盖，以及「不要读取原始目标」这条指令**是否真的**在 prompt 里。报告里渲染成 `## 净室 attestation` 小节。
+
+这条声明刻意写清边界：DSH 没有按 agent 的工具白名单（见 `docs/runtime/0.2.2-rc.3.md` §12.7），所以隔离是**信息流层面**的。声明里明说这一点，而不是声称「净室认证」。
+
 ## 防假绿灯
 
 测试里有 **near-miss 注入**：同一个义务在正确实现上关闭后，只改一个字符，下一轮必须判定失败并把义务重开；构建失败时直接跳过检查，不产生误导性的 pass。见 `packages/casefile/test/near-miss.test.js`。

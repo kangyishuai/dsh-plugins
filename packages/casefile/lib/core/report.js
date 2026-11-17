@@ -6,6 +6,7 @@
 //   - 关闭项目的硬门：没有 open / fail 义务、没有未解决未知项、覆盖率达标、检查不过期；
 //   - 报告必须写清「这一版对应哪个实现 digest、什么时候采的证据」。
 
+import { attestationSummary } from "./attestation.js";
 import { shortDigest } from "./digest.js";
 import { nowIso } from "./model.js";
 
@@ -148,6 +149,7 @@ export function buildReport(input) {
     },
     coverage,
     coverageByFeature: computeCoverageByFeature(obligations, data.features ?? []),
+    cleanRoom: attestationSummary(data.attestations ?? []),
     counts: {
       evidence: (data.evidence ?? []).length,
       claims: (data.claims ?? []).length,
@@ -285,12 +287,30 @@ export function renderReportMarkdown(report) {
     const detail = report.stop.detail ?? {};
     lines.push(`- 轮次：${detail.rounds ?? "—"} / 失败：${detail.failures ?? "—"}`);
   }
+  if (report.cleanRoom) {
+    lines.push("");
+    lines.push("## 净室 attestation");
+    lines.push("");
+    const cr = report.cleanRoom;
+    lines.push(`- 时间：${cr.at}`);
+    lines.push(`- builder 会话：\`${cr.builderSession}\``);
+    lines.push(
+      `- 授权档：${cr.authTier}${cr.researchOverride ? "（research 档，已显式覆盖）" : ""}`,
+    );
+    lines.push(`- 投喂规格：${cr.claimCount} 条结论 / ${cr.evidenceCount} 条证据`);
+    lines.push(
+      `- 净室指令写入 prompt：${cr.cleanRoomInstruction ? "是" : "**否**（本次投喂未包含该要求）"}`,
+    );
+    lines.push(`- prompt 摘要：\`${cr.promptDigest}\``);
+    lines.push(`- 工具面隔离：${cr.toolIsolation}`);
+    lines.push("");
+    lines.push(`> ${cr.statement}`);
+  }
   lines.push("");
   lines.push("## 声明");
   lines.push("");
   lines.push("- 本报告对应上面「最近构建」的实现 digest；实现或原件变化后，旧结论不再有效。");
   lines.push("- 检查结论来自 casefile 的 checker，`unknown` 表示无法判定，不等于通过。");
-  lines.push("- builder 会话只收到规格包；其工具面由 DSH 默认预设决定，未做工具白名单隔离。");
   lines.push("");
   return lines.join("\n");
 }

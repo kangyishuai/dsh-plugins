@@ -89,6 +89,12 @@ A project carries `authTier`: `owned`, `authorized`, or `research`. Starting a *
 
 `case_project report` writes `reports/<timestamp>/report.md` + `report.json`: coverage (global and per feature), obligation table, check table with implementation digests, unknowns, loop state, and a declaration that `unknown` never means pass.
 
+## Clean-room attestation
+
+Every builder session writes an **attestation** (`attestations.jsonl`): the prompt digest, the spec digest, how many claims/evidence items were fed, the auth tier and any research override, and whether the "do not read the original target" clause was actually in the prompt. The report renders it as a `## 净室 attestation` section.
+
+The attestation is deliberately honest about its limits: DSH has no per-agent tool whitelist (see `docs/runtime/0.2.2-rc.3.md` §12.7), so isolation is **information-flow only**. The statement says so instead of claiming clean-room certification.
+
 ## Anti-false-green
 
 The suite includes **near-miss injection** tests: an obligation is closed against a correct implementation, then one character of the output is changed, and the next round must fail that obligation and reopen it. A failed build also skips checks entirely instead of producing a misleading pass. See `packages/casefile/test/near-miss.test.js`.

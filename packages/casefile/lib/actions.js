@@ -6,7 +6,7 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-
+import { buildAttestation } from "./core/attestation.js";
 import { buildSpecPack, redactPack, renderSpecMarkdown, writeSpecPack } from "./core/brief.js";
 import { createCheckers } from "./core/checks.js";
 import { hashTree, shortDigest } from "./core/digest.js";
@@ -154,6 +154,7 @@ export function createActions(options) {
         obligations: data.obligations,
         builds: data.builds,
         checks: data.checks,
+        attestations: data.attestations,
       };
     },
 
@@ -992,14 +993,37 @@ export function createActions(options) {
         artifacts: [],
         builderSessionId: sessionId,
       });
+      const attestation = buildAttestation({
+        project,
+        prompt,
+        pack,
+        sessionId,
+        builderId: record.id,
+        override: input?.allowResearchTier === true,
+        reason: input?.reason,
+      });
+      store.appendRecord(project.id, "attestations", attestation);
       store.touch(project.id);
       store.audit(project.id, {
         actor: "agent",
         action: "builder/start",
         target: sessionId,
-        detail: { round: record.round, claims: pack.claims.length },
+        detail: {
+          round: record.round,
+          claims: pack.claims.length,
+          cleanRoomInstruction: attestation.cleanRoomInstruction,
+          promptDigest: attestation.shortPromptDigest,
+        },
       });
-      return { builder: record, promptLength: prompt.length };
+      return {
+        builder: record,
+        promptLength: prompt.length,
+        attestation: {
+          promptDigest: attestation.shortPromptDigest,
+          cleanRoomInstruction: attestation.cleanRoomInstruction,
+          toolIsolation: attestation.toolIsolation,
+        },
+      };
     },
 
     /**
