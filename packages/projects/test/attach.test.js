@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
-import { attachProjectContext } from "../lib/attach.js";
+import { registerProjectContext } from "../lib/attach.js";
 import { MAX_FILE_CHARS, readProjectFiles } from "../lib/project-files.js";
 import { ProjectStore } from "../lib/store.js";
 
@@ -26,27 +26,6 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
-
-/** 造一个最小的假 agent：只要 id 与 ctx.systemPrompt.context。 */
-function fakeAgent(/** @type {string} */ id) {
-  /** @type {any[]} */
-  const registered = [];
-  return {
-    agent: {
-      id,
-      ctx: {
-        systemPrompt: {
-          /** @param {any} definition */
-          context: (definition) => {
-            registered.push(definition);
-            return () => registered.splice(0, registered.length);
-          },
-        },
-      },
-    },
-    registered,
-  };
-}
 
 describe("readProjectFiles", () => {
   it("文件缺失时返回空串，不抛错", () => {
@@ -81,58 +60,83 @@ describe("readProjectFiles", () => {
   });
 });
 
-describe("attachProjectContext", () => {
-  it("归属该项目的会话会被注入上下文", () => {
-    store.attachThread("session-a", project.id);
-    const { agent, registered } = fakeAgent("session-a");
-    const result = attachProjectContext(store, root, agent);
-    assert.ok(result);
-    assert.match(result.text, /当前项目：payments/u);
-    assert.equal(registered.length, 1);
-    assert.equal(registered[0].name, "projects");
-    assert.equal(registered[0].required, true);
-    assert.equal(registered[0].interpolate, false);
+describe("registerProjectContext（全局注册 + 按会话求值）", () => {
+  it("只对归属且 active 的会话渲染；其它会话返回空串", () => {
+    store.attachThread("session-in", project.id);
+    /** @type {any} */
+    let entry = null;
+    registerProjectContext({
+      getStore: () => store,
+      getDataRoot: () => root,
+      register: (definition) => {
+        entry = definition;
+        return () => {};
+      },
+    });
+    assert.equal(typeof entry.text, "function");
+    assert.equal(entry.name, "projects");
+    assert.equal(entry.required, false);
+    assert.equal(entry.interpolate, false);
+
+    // 未归属的会话 → 空串
+    assert.equal(entry.text({ agent: { session: { id: "session-other" } } }), "");
+    // 归属会话 → 渲染内容（含项目名）
+    const rendered = entry.text({ agent: { session: { id: "session-in" } } });
+    assert.ok(rendered.includes("payments"));
   });
 
-  it("未归属任何项目的会话不注入（零开销）", () => {
-    const { agent, registered } = fakeAgent("session-b");
-    assert.equal(attachProjectContext(store, root, agent), undefined);
-    assert.equal(registered.length, 0);
-  });
-
-  it("归档项目的会话不注入", () => {
-    store.attachThread("session-c", project.id);
+  it("归档项目不渲染", () => {
+    store.attachThread("session-arch", project.id);
     store.archiveProject(project.id);
-    const { agent, registered } = fakeAgent("session-c");
-    assert.equal(attachProjectContext(store, root, agent), undefined);
-    assert.equal(registered.length, 0);
+    /** @type {any} */
+    let entry = null;
+    registerProjectContext({
+      getStore: () => store,
+      getDataRoot: () => root,
+      register: (definition) => {
+        entry = definition;
+        return () => {};
+      },
+    });
+    assert.equal(entry.text({ agent: { session: { id: "session-arch" } } }), "");
   });
 
-  it("release 后 disposer 可用（不抛错）", () => {
-    store.attachThread("session-d", project.id);
-    const { agent } = fakeAgent("session-d");
-    const result = attachProjectContext(store, root, agent);
-    assert.ok(result);
-    assert.doesNotThrow(() => result.dispose());
+  it("渲染抛错时返回空串而不是让请求失败", () => {
+    /** @type {any} */
+    let entry = null;
+    registerProjectContext({
+      getStore: () => {
+        throw new Error("boom");
+      },
+      getDataRoot: () => root,
+      register: (definition) => {
+        entry = definition;
+        return () => {};
+      },
+    });
+    assert.equal(entry.text({ agent: { session: { id: "x" } } }), "");
   });
 
-  it("agent 没有 systemPrompt 时降级：返回文本但不注册", () => {
-    store.attachThread("session-e", project.id);
-    const result = attachProjectContext(store, root, { id: "session-e", ctx: {} });
-    assert.ok(result);
-    assert.match(result.text, /当前项目：payments/u);
-    assert.doesNotThrow(() => result.dispose());
-  });
-
-  it("项目有规则与记忆时，两者都进文本", () => {
-    store.attachThread("session-f", project.id);
+  it("每次求值都重新读盘（记忆写入后立即可见）", () => {
+    store.attachThread("session-live", project.id);
+    /** @type {any} */
+    let entry = null;
+    registerProjectContext({
+      getStore: () => store,
+      getDataRoot: () => root,
+      register: (definition) => {
+        entry = definition;
+        return () => {};
+      },
+    });
+    const ctx = { agent: { session: { id: "session-live" } } };
+    assert.ok(!entry.text(ctx).includes("缓存层"));
     mkdirSync(join(root, project.id, "memory"), { recursive: true });
-    writeFileSync(join(root, project.id, "instructions.md"), "只改 tests/", "utf8");
-    writeFileSync(join(root, project.id, "memory", "MEMORY.md"), "- 已知坑：时区", "utf8");
-    const { agent } = fakeAgent("session-f");
-    const result = attachProjectContext(store, root, agent);
-    assert.ok(result);
-    assert.match(result.text, /只改 tests\//u);
-    assert.match(result.text, /已知坑：时区/u);
+    writeFileSync(
+      join(root, project.id, "memory", "MEMORY.md"),
+      "- 缓存层在 src/cache.ts\n",
+      "utf8",
+    );
+    assert.ok(entry.text(ctx).includes("缓存层"));
   });
 });

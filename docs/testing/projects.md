@@ -34,17 +34,30 @@ pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体�
 
 `packages/projects/test/` 覆盖：
 
-| 文件               | 证明什么                                                                                      |
-| ------------------ | --------------------------------------------------------------------------------------------- |
-| `store.test.js`    | 仓储：原子写、损坏文件**改名隔离不删除**、未来格式拒绝、旧字段补齐、默认策略 L1               |
-| `context.test.js`  | 渲染：16k 预算的裁剪顺序、记忆索引裁剪、**不与宿主已加载的 AGENTS.md 重复**                   |
-| `attach.test.js`   | 挂载：只有归属且 active 的会话被注入；归档不注入；agent 无 `systemPrompt` 时降级              |
-| `overview.test.js` | 状态机：五态迁移、`turn/start` 清失败、**失败从 `assistant/attempt` 判**、`replay` 重建、排序 |
-| `worktree.test.js` | 命名与路径（**防目录穿越**）、命令计划（默认不加 `--force`）、porcelain 解析、回收三重判据    |
-| `thread.test.js`   | **真 git 集成**：建隔离线程、非 git 降级、建失败降级、脏工作区拒绝回收、启动对账              |
-| `index.test.js`    | 清单自检：`dsh.bundle.patch` 存在、`files` 白名单逐项存在、**不把宿主包声明成依赖**           |
+| 文件                | 证明什么                                                                                      |
+| ------------------- | --------------------------------------------------------------------------------------------- |
+| `store.test.js`     | 仓储：原子写、损坏文件**改名隔离不删除**、未来格式拒绝、旧字段补齐、默认策略 L1               |
+| `context.test.js`   | 渲染：16k 预算的裁剪顺序、记忆索引裁剪、**不与宿主已加载的 AGENTS.md 重复**                   |
+| `attach.test.js`    | 注册：全局注册一次、按 context 里的 agent/session 求值；未归属/归档返回空串；渲染异常不炸请求 |
+| `overview.test.js`  | 状态机：五态迁移、`turn/start` 清失败、**失败从 `assistant/attempt` 判**、`replay` 重建、排序 |
+| `worktree.test.js`  | 命名与路径（**防目录穿越**）、命令计划（默认不加 `--force`）、porcelain 解析、回收三重判据    |
+| `thread.test.js`    | **真 git 集成**：建隔离线程、非 git 降级、建失败降级、脏工作区拒绝回收、启动对账              |
+| `index.test.js`     | 清单自检：`dsh.bundle.patch` 存在、`files` 白名单逐项存在、**不把宿主包声明成依赖**           |
+| `budget.test.js`    | 预算闸：暂停/归档优先、每日线程数、并发数、token 分桶（缺 `usage` 时不误判）                  |
+| `trash.test.js`     | 删除安全：回收站路径（防穿越）、影响面四件事、`removeProject` 不动会话日志                    |
+| `notify.test.js`    | 通知：只提醒**新出现**的失败/等待，不重复弹；线程消失不提醒                                   |
+| `wake.test.js`      | 信封：必带线程结果、信任判定、注入去重、非 principal 的 report 被包成数据                     |
+| `routing.test.js`   | 路由：规则优先、坏正则不炸、自治矩阵（L0/L1 不能建线程）                                      |
+| `persona.test.js`   | 人格：默认三条准则、明确声明不改权限、不与项目指令重复                                        |
+| `tools.test.js`     | 工具篮子：6 个 `project_*`（含记忆读写）、无 shell/写/删/推/合并、危险动作只能申请            |
+| `executor.test.js`  | 执行器：批准≠可执行、**动作↔开关显式映射**、阈值、argv 无 shell、恢复证据                     |
+| `autopr.test.js`    | auto PR 四档：默认关、只碰 `dsh/` 分支、幂等、CI 条件、重试上限                               |
+| `autofix.test.js`   | auto-fix：轮数上限、无进展、同错两次、**碰测试文件即停**、错误签名稳定性                      |
+| `untrusted.test.js` | 不可信输入：未知来源一律 `relay`、围栏不可被提前闭合、控制字符过滤                            |
+| `memory.test.js`    | 记忆写入：幂等、单条与总量上限、时间戳注释、被拒时给出原因                                    |
+| `exec.test.js`      | 子进程封装：参数原样传递、失败返回 code 不抛、cwd 生效、命令不存在也不抛                      |
 
-## 2. web 端到端冒烟（43 项）
+## 2. web 端到端冒烟（51 项）
 
 `pnpm smoke:projects` 在临时 home 里种子一个**真实 git 仓库**作为工作区，然后：
 
@@ -56,6 +69,7 @@ pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体�
    `branch` 形如 `dsh/…`、**worktree 目录真实存在且在主工作树之外**
 6. **暂停/恢复**项目 → 断言详情页有按钮、预算用量可见、宿主侧 `state=paused`
 7. **删除**一个一次性项目 → 断言影响面文案、确认后项目从列表消失、回收站有 `manifest.json` 且写明可恢复
+   7.5 **归档 / 取消归档**：用一次性项目归档 → 宿主侧断言 `state=archived`（归档不删数据，取消归档回到 active）
 8. **通知器**挂载在 `shell.overlay`（全局轮询，不依赖浏览器 Notification 授权）
 9. 宿主侧断言：`projects.json` 合法 JSON、`format=1`、默认策略 L1、无 `.tmp` 残留、
    `threads` 有归属、worktree 目录真实存在且在主工作树之外、回收站清单存在、截图落盘
@@ -88,13 +102,122 @@ pnpm smoke:projects-desktop --require
 
 | 坑                                         | 现象                                     | 处理                                           |
 | ------------------------------------------ | ---------------------------------------- | ---------------------------------------------- |
-| `main` 用 `key`、其他 slot 用 `id`         | 面板永远不出现                           | 见 `docs/runtime/0.2.2-rc.3.md` §10.4          |
+| `main` 用 `key`、其他 slot 用 `id`         | 面板永远不出现                           | 见 `docs/runtime/0.2.2-rc.3.md` §11.4          |
 | RPC 回执包在 `value` 里                    | `.map is not a function` / 白屏          | 解包 `"value" in result`                       |
 | SRC 模式禁止默认参数                       | `must use unique identifier parameters…` | Remote 方法不带默认值/解构/rest                |
 | 运行时字典只在 `locale/*.json`             | 界面显示 `panel.title`                   | 必须在 client 半 `locale.register`             |
 | 首启「预览版说明」对话框                   | 输入框收不到键盘（其余内容 `inert`）     | 冒烟先点掉它                                   |
 | **空白会话没有行内动作**                   | 会话行找不到「…」                        | 冒烟先发一条消息让它非空白                     |
 | **composer 是 `contenteditable`**          | 设 `value` 无效、消息发不出              | 聚焦 + 真实键盘 + Enter                        |
-| `ctx.inject` 回调是异步的                  | 服务刚构造就被调用 → "unavailable"       | 就绪 Promise + 超时（§10.5）                   |
-| 失败在 `assistant/attempt` 而非 `turn/end` | 失败被当成功                             | 记住本轮 attempt 再在 `turn/end` 合并（§10.6） |
-| 归档不是 session 事件                      | 监听不到                                 | 用 `workspace/session-archived`（§10.7）       |
+| `ctx.inject` 回调是异步的                  | 服务刚构造就被调用 → "unavailable"       | 就绪 Promise + 超时（§11.5）                   |
+| 失败在 `assistant/attempt` 而非 `turn/end` | 失败被当成功                             | 记住本轮 attempt 再在 `turn/end` 合并（§11.6） |
+| 归档不是 session 事件                      | 监听不到                                 | 用 `workspace/session-archived`（§11.7）       |
+
+## 6. 设置分节的已知局限
+
+`settings.section` 的断言依赖「设置页在本机 profile 里可用」。有些 profile 在
+`cordis.patch.yml` 里把 `ui-settings` 关掉（`config.enabled: false`），此时冒烟里的
+「设置里可编辑项目策略」「可切换自治级别」两条会**按跳过处理**，并在 detail 里写明原因。
+
+尝试过的做法与其失败原因（别重复踩）：
+
+- 在临时 home 的 profile 副本里把 `enabled` 改成 `true` → **无效**：
+  `dsh plugin ... add` 会重写 `cordis.patch.yml`；即使放在 add 之后写，
+  设置页的导航入口也不出现（导航入口由该插件自己的 slot 注册产生，插件被关就不注册）。
+- 因此这两条的**权威覆盖**在「设置页可用的 profile」上做；默认 profile 上如实跳过。
+
+## 7. 冒烟为什么会「导航失败」：cookie 按主机作用域
+
+反复用临时 `DSH_HOME` 跑冒烟时，**同一个浏览器 profile 会在 `127.0.0.1` 上堆出一批
+`dsh-auth-*` cookie**——它们指向早已退出的临时宿主。
+
+关键点：**cookie 的作用域是主机，不含端口**。于是新宿主起来后，浏览器会把这些过期 token
+一起发过去，服务端认错就 401，Chromium 表现为
+`page.goto failed: net::ERR_HTTP_RESPONSE_CODE_FAILURE`（看起来像页面坏了，其实是鉴权失败）。
+
+处理（`scripts/smoke-projects.mjs` 里已实现）：
+
+```js
+const { cookies } = await page.cdp("Storage.getCookies");
+for (const cookie of cookies ?? []) {
+  if (!String(cookie.domain ?? "").includes("127.0.0.1")) continue;
+  if (!String(cookie.name ?? "").startsWith("dsh-auth-")) continue;
+  await page.cdp("Network.deleteCookies", {
+    name: cookie.name,
+    domain: cookie.domain,
+    path: cookie.path ?? "/",
+  });
+}
+```
+
+**只删 `127.0.0.1` 的 `dsh-auth-*`**：不要用 `Network.clearBrowserCookies`，
+那会把用户所有站点的登录态一起清掉。
+
+另外冒烟保留了容错导航（token 入口 303 失败时改导航到已设好 cookie 的根路径），
+但**根因是 cookie 堆积**，容错只是兜底。
+
+## 8. 零网络验证远端写入
+
+开 PR / 合并需要 GitHub，但链路本身可以在本机验证：
+
+- **远端**：`git init --bare /tmp/remote.git` + `git remote add origin /tmp/remote.git` 顶替；
+  推完用 `git -C /tmp/remote.git branch --list` 断言分支真的到了远端。
+- **gh**：在临时目录放一个同名可执行脚本（记录 argv、回显假 PR URL），把该目录放到 `PATH` 最前面。
+
+两个反复踩到的坑：
+
+1. **陈旧 tarball**：`pnpm pack` 只重打了探针却没重打插件时，跑的还是旧代码（症状是"改了没生效"）。
+   每次验证前把**插件和探针两个包都重打**，或直接检查安装目录里的代码是否含最新改动。
+2. **分支撞名**：线程分支名按项目名生成，同名项目重复创建会让 `git worktree add -b` 失败并降级共享目录，
+   于是"没有 worktree → 没有可推分支"。验证时给项目名加唯一后缀。
+
+## 9. 合并后清单（人工执行）
+
+PR 合并只是开始。下列步骤需要真实环境，按顺序做一遍，把「已验证」补齐：
+
+### 9.1 合并三个 PR
+
+```bash
+gh pr merge 143 --squash --delete-branch          # M1
+gh pr edit 144 --base main && gh pr merge 144 --squash --delete-branch
+gh pr edit 146 --base main && gh pr merge 146 --squash --delete-branch
+```
+
+`feat(<plugin>)` 属 C 档，**只能人工合并**（见 CONTRIBUTING §自动合并分级），不要打 `automerge`。
+
+### 9.2 发版
+
+合并后 Changesets 会开一个 `chore(release): version packages` PR，合并它即发布 `0.1.0`。
+可用 `gh pr list --search "version packages" --state open` 找到。
+
+### 9.3 桌面只读回归（唯一还没绿的门禁项）
+
+```bash
+# 1) 装进 live profile（打包，不要用 link:）
+cd packages/projects && pnpm pack --pack-destination /tmp
+dsh plugin --profile desktop add /tmp/kangyishuai-dsh-projects-0.1.0.tgz
+
+# 2) 带调试端口重启桌面版
+open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1
+
+# 3) 跑（--require：跑不起来就算失败，而不是跳过）
+pnpm smoke:projects-desktop --require
+```
+
+预期：`PASS 全部 11 项桌面回归断言通过`。在此之前它一直输出
+`SKIP 插件未装进当前 live profile`。
+
+### 9.4 真实 GitHub 上的远端写入
+
+本地验证用的是 bare 远端 + 桩 `gh`（§8）。真机确认只需一次：
+
+1. 在一个**测试仓库**上建项目与线程；
+2. 打开「自动开 PR」到 `draft` 档，跑一轮让线程产出提交；
+3. 检查 GitHub 上出现的是 **draft PR**、分支名形如 `dsh/<project>-<n>`、标题以 `dsh:` 开头；
+4. 打开 `autoMerge` 开关、走一次审批队列 → 确认合并命令是 `pr merge <n> --squash`，
+   且合并**只**在开关打开 + 审批通过后发生。
+
+### 9.5 发版后回到这里补一行
+
+在 §4「手工验证」的表格里记下本次 DSH 版本与结果，
+并把 README 状态行里的「真实 GitHub 上的效果还需发版后确认一次」改掉。

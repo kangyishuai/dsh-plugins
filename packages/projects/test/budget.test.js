@@ -3,7 +3,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { checkThreadBudget, DAY_MS, isToday, startOfDay } from "../lib/budget.js";
+import {
+  checkThreadBudget,
+  checkTokenBudget,
+  DAY_MS,
+  isToday,
+  startOfDay,
+  tokensOf,
+} from "../lib/budget.js";
 
 const base = Date.parse("2026-11-16T10:00:00+08:00");
 const dayStart = startOfDay(base);
@@ -111,3 +118,54 @@ describe("checkThreadBudget", () => {
 function result_reason(value) {
   return value.reason;
 }
+
+// ---- token 维度 ----
+
+describe("tokensOf", () => {
+  const now = Date.parse("2026-11-16T10:00:00+08:00");
+  const today = new Date(startOfDay(now) + 60_000).toISOString();
+
+  it("优先用 totalTokens", () => {
+    assert.equal(
+      tokensOf({ at: today, usage: { inputTokens: 10, outputTokens: 5, totalTokens: 99 } }, now),
+      99,
+    );
+  });
+
+  it("没有 totalTokens 时用 input+output", () => {
+    assert.equal(tokensOf({ at: today, usage: { inputTokens: 10, outputTokens: 5 } }, now), 15);
+  });
+
+  it("不是今天的记录不计入", () => {
+    const yesterday = new Date(startOfDay(now) - 1000).toISOString();
+    assert.equal(tokensOf({ at: yesterday, usage: { totalTokens: 99 } }, now), 0);
+  });
+
+  it("缺 usage / 非法数字按 0（不抛错、不产生 NaN 累计）", () => {
+    assert.equal(tokensOf({ at: today }, now), 0);
+    assert.equal(tokensOf({ at: today, usage: {} }, now), 0);
+    assert.equal(tokensOf({ at: today, usage: { inputTokens: "x" } }, now), 0);
+    assert.equal(tokensOf({ at: today, usage: { inputTokens: -5, outputTokens: -5 } }, now), 0);
+  });
+});
+
+describe("checkTokenBudget", () => {
+  it("未设上限时永远放行", () => {
+    assert.deepEqual(checkTokenBudget({ dailyTokens: null, usedTokens: 10_000 }), {
+      ok: true,
+      used: 10_000,
+      limit: null,
+      reason: "",
+    });
+  });
+
+  it("到线拒绝并给出原因（与线程数原因分开）", () => {
+    const hit = checkTokenBudget({ dailyTokens: 1000, usedTokens: 1000 });
+    assert.equal(hit.ok, false);
+    assert.equal(hit.reason, "budget/daily-tokens");
+  });
+
+  it("未到线放行", () => {
+    assert.equal(checkTokenBudget({ dailyTokens: 1000, usedTokens: 999 }).ok, true);
+  });
+});

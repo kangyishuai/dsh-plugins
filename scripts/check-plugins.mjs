@@ -140,6 +140,55 @@ export function checkRepo(root = REPO_ROOT) {
     if (pkg.engines?.dsh)
       report("warn", "声明了 engines.dsh：预发布版本下 semver 不可靠，确认已验证过");
 
+    // 冒烟脚本里用到的 data-* 锚点必须真的在 client 半里定义，
+    // 否则选择器写错了断言会"空转通过"（拿到 null 也能被写成宽容断言）。
+    const clientFile = join(base, "lib", "client.js");
+    if (existsSync(clientFile)) {
+      const clientSrc = readFileSync(clientFile, "utf8");
+      for (const smokeName of [`smoke-${dir}.mjs`, `smoke-${dir}-desktop.mjs`]) {
+        const smokePath = join(root, "scripts", smokeName);
+        if (!existsSync(smokePath)) continue;
+        const smokeSrc = readFileSync(smokePath, "utf8");
+        const anchors = new Set(
+          [
+            ...smokeSrc.matchAll(new RegExp(`data-${dir.replace(/-/g, "\\-")}-[a-z0-9-]+`, "g")),
+          ].map((m) => m[0]),
+        );
+        for (const anchorName of anchors) {
+          if (!clientSrc.includes(anchorName)) {
+            report("error", `${smokeName} 里的锚点 ${anchorName} 在 lib/client.js 中不存在`);
+          }
+        }
+      }
+    }
+
+    // Remote 方法签名必须是裸标识符：typert 的 SRC 生成器会把行内类型注释当成
+    // 解构/复杂参数而拒绝注册端点，表现为运行时 404（单测与 verify 都发现不了）。
+    const serviceFile = join(base, "lib", "service.js");
+    if (existsSync(serviceFile)) {
+      const serviceSrc = readFileSync(serviceFile, "utf8");
+      const serviceLines = serviceSrc.split("\n");
+      const remotes = [...serviceSrc.matchAll(/declareRemote\(\w+,\s*"([\w$]+)"\)/g)].map(
+        (m) => m[1],
+      );
+      for (const name of remotes) {
+        const idx = serviceLines.findIndex((line) =>
+          new RegExp(`^\\s*(async\\s+)?${name.replace(/\$/g, "\\$")}\\s*\\(`).test(line),
+        );
+        if (idx < 0) continue;
+        const signature = serviceLines[idx];
+        if (signature.includes("/**")) {
+          report(
+            "error",
+            `Remote 方法 ${name} 的参数表里不能有行内类型注释（SRC 网关会拒绝注册）；请改用上方 JSDoc @param`,
+          );
+        }
+        if (/\(\s*\{/.test(signature) || /=\s*[^,)]/.test(signature) || /\.\.\./.test(signature)) {
+          report("error", `Remote 方法 ${name} 不能有解构/默认值/rest 参数（SRC 网关限制）`);
+        }
+      }
+    }
+
     // host 半接线
     const patch = pkg.dsh?.bundle?.patch;
     if (!patch) {

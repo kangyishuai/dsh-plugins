@@ -9,7 +9,12 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { promisify } from "node:util";
 
 import { ProjectStore } from "../lib/store.js";
-import { createIsolatedThread, reclaimThreadWorktree, reconcileWorktrees } from "../lib/thread.js";
+import {
+  cleanupThreadBranch,
+  createIsolatedThread,
+  reclaimThreadWorktree,
+  reconcileWorktrees,
+} from "../lib/thread.js";
 
 const exec = promisify(execFile);
 
@@ -268,5 +273,70 @@ describe("reconcileWorktrees（启动对账）", () => {
     const project = store.createProject("plain", { dirs: [repo] });
     store.attachThread("session-c", project.id);
     assert.deepEqual(reconcileWorktrees(store, { exists: () => false }), []);
+  });
+});
+
+describe("cleanupThreadBranch（M4 §5）", () => {
+  it("已合并的 dsh/ 分支被删除", async () => {
+    const store = new ProjectStore({ root: join(root, "data") }).load();
+    const project = store.createProject("payments", { dirs: [repo] });
+    const deps = { runGit, createSession: fakeSessions().createSession };
+    const thread = await createIsolatedThread({
+      store,
+      dataRoot: join(root, "data"),
+      projectId: project.id,
+      deps,
+    });
+    // 顺序贴近真实：先回收 worktree（git 不允许 merge 一个仍被别的 worktree 检出的分支），
+    // 再把它合回 main（模拟 PR 已合并），最后清理分支。
+    await reclaimThreadWorktree({ store, sessionId: thread.sessionId, deps: { runGit } });
+    // 把该分支合并回 main（模拟 PR 已合并）
+    await runGit(
+      [
+        "-c",
+        "user.email=t@local",
+        "-c",
+        "user.name=t",
+        "merge",
+        "--no-ff",
+        "-m",
+        "merge",
+        String(thread.branch),
+      ],
+      repo,
+    );
+
+    const result = await cleanupThreadBranch({
+      store,
+      sessionId: thread.sessionId,
+      repoRoot: repo,
+      deps: { runGit },
+    });
+    assert.deepEqual(result, { deleted: true, reason: "" });
+    const branches = await runGit(["branch", "--list"], repo);
+    assert.ok(!String(branches.stdout).includes("dsh/payments-1"), "分支应已删除");
+  });
+
+  it("未合并的分支保留（宁可留垃圾也不丢提交）", async () => {
+    const store = new ProjectStore({ root: join(root, "data") }).load();
+    const project = store.createProject("payments", { dirs: [repo] });
+    const deps = { runGit, createSession: fakeSessions().createSession };
+    const thread = await createIsolatedThread({
+      store,
+      dataRoot: join(root, "data"),
+      projectId: project.id,
+      deps,
+    });
+
+    const result = await cleanupThreadBranch({
+      store,
+      sessionId: thread.sessionId,
+      repoRoot: repo,
+      deps: { runGit },
+    });
+    assert.equal(result.deleted, false);
+    assert.ok(["not-merged", "unpushed-commits"].includes(result.reason), result.reason);
+    const branches = await runGit(["branch", "--list"], repo);
+    assert.ok(String(branches.stdout).includes("dsh/payments-1"), "分支必须还在");
   });
 });

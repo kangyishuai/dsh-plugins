@@ -22,5 +22,9 @@
 | [0015](0015-plugin-index-source.md)                   | 自建插件索引源：发版后用 npm 数据包 + jsDelivr 发布   | 已接受 |
 | [0016](0016-artifacts-local-first.md)                 | artifacts：本地优先，发布目标可插拔                   | 已接受 |
 | [0017](0017-artifacts-update-mechanism.md)            | artifacts：摘要行 + 右栏面板 + 元数据封面             | 已接受 |
+| [0018](0018-projects-defer-liveshare-sharing.md)      | projects：项目共享推迟到宿主提供稳定 LiveShare 接口   | 已接受 |
+| [0019](0019-projects-authorization-model.md)          | projects：危险动作可配置，授权来源不可伪造            | 已接受 |
+| [0020](0020-projects-no-cloud-execution.md)           | projects：不做云端执行 / 多租户 / 多设备同步          | 已接受 |
+| [0021](0021-projects-auto-fix-boundary.md)            | projects：auto-fix 只改实现、不碰测试                 | 已接受 |
 
 新建：复制 [0000-template.md](0000-template.md)。
