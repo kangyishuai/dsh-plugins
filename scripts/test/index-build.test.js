@@ -10,6 +10,7 @@ import {
   compareVersions,
   fetchPackument,
   IndexError,
+  missingPublishedVersions,
   normalizeRepositoryUrl,
   retryDelayMs,
   stableVersions,
@@ -374,4 +375,43 @@ test("retryDelayMs：递增并封顶", () => {
   assert.equal(retryDelayMs(2, 20_000), 40_000);
   assert.equal(retryDelayMs(3, 20_000), 60_000);
   assert.equal(retryDelayMs(10, 20_000), 60_000, "封顶 60s");
+});
+
+// --- 发版后「版本还没传播」的等待（2026-11-17 线上事故回归）--------------------
+//
+// 事故：release 发布 0.1.1 / 0.2.0 / 0.3.0 后，index.yml 各失败一次，错误都是
+// 「还没有发布到 npm（registry 上是旧版本）」。原因不是 404（fetchPackument 的重试
+// 覆盖那种情况），而是 packument 返回 200 但内容还是旧的。
+
+/** 造一个只含指定版本的 packument。 */
+const packumentWith = (/** @type {string} */ name, /** @type {string[]} */ versions) => ({
+  name,
+  // stableVersions 要求 dist.tarball 是字符串、time 可解析，否则视为不可列出。
+  versions: Object.fromEntries(
+    versions.map((v) => [
+      v,
+      { version: v, dist: { tarball: `https://example.test/${name}-${v}.tgz` } },
+    ]),
+  ),
+  time: Object.fromEntries(versions.map((v) => [v, "2026-11-17T00:00:00.000Z"])),
+});
+
+test("missingPublishedVersions：registry 落后时指出具体包与当前最新版", () => {
+  const manifests = [{ name: "@x/btw", version: "0.3.0" }];
+  const packuments = new Map([["@x/btw", packumentWith("@x/btw", ["0.1.0", "0.2.0"])]]);
+  assert.deepEqual(missingPublishedVersions(manifests, packuments), [
+    { name: "@x/btw", version: "0.3.0", latest: "0.2.0" },
+  ]);
+});
+
+test("missingPublishedVersions：版本已出现时返回空（不误报）", () => {
+  const manifests = [{ name: "@x/btw", version: "0.3.0" }];
+  const packuments = new Map([["@x/btw", packumentWith("@x/btw", ["0.2.0", "0.3.0"])]]);
+  assert.deepEqual(missingPublishedVersions(manifests, packuments), []);
+});
+
+test("missingPublishedVersions：packument 完全没有也算缺失", () => {
+  const missing = missingPublishedVersions([{ name: "@x/y", version: "1.0.0" }], new Map());
+  assert.equal(missing.length, 1);
+  assert.equal(missing[0].latest, "(无数据)");
 });
