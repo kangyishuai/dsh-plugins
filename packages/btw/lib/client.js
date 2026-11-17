@@ -412,18 +412,23 @@ window.__ModuleLoader__.load({
           [],
         );
 
+        /**
+         * 拉线程列表。返回数组（成功）或 null（失败）——
+         * 调用方需要区分「线程数增加」（新问题）与「某线程轮数增加」（追问）。
+         * @returns {Promise<any[] | null>}
+         */
         const load = React.useCallback(
           () =>
             callRemote("threads", { sessionId, limit: LIMITS_CLIENT_THREADS }).then((value) => {
-              if (!aliveRef.current) return 0;
+              if (!aliveRef.current) return null;
               if (Array.isArray(/** @type {any} */ (value))) {
                 setThreads(value);
                 setFailed(false);
-                return value.length;
+                return /** @type {any[]} */ (value);
               }
               setThreads([]);
               setFailed(true);
-              return 0;
+              return null;
             }),
           [sessionId],
         );
@@ -470,7 +475,11 @@ window.__ModuleLoader__.load({
           if (text === "" || busy) return;
           setBusy(true);
           setNotice(t("sending"));
-          const before = Array.isArray(threads) ? threads.length : 0;
+          const beforeThreads = Array.isArray(threads) ? threads : [];
+          const beforeCount = beforeThreads.length;
+          const beforeTurns = Number(
+            beforeThreads.find((/** @type {any} */ t) => t?.threadId === threadId)?.turns ?? 0,
+          );
           const flags = [
             threadId === "" ? "" : `--thread ${threadId}`,
             scope === "" ? "" : `--scope ${scope}`,
@@ -504,15 +513,28 @@ window.__ModuleLoader__.load({
             while (Date.now() < deadline && aliveRef.current) {
               await new Promise((resolve) => setTimeout(resolve, REFRESH_INTERVAL_MS));
               if (!aliveRef.current) break;
-              let count = before;
+              /** @type {any[] | null} */
+              let next = null;
               try {
-                count = await load();
+                next = await load();
               } catch {
-                count = before; // 单次失败继续轮询，不静默卡死
+                next = null; // 单次失败继续轮询，不静默卡死
               }
-              if (count > before) {
-                refreshed = true;
-                break;
+              if (next === null) continue;
+              if (threadId === "") {
+                // 新问题 → 线程数应增加
+                if (next.length > beforeCount) {
+                  refreshed = true;
+                  break;
+                }
+              } else {
+                // 追问 → **线程数不变**，要看目标线程的轮数是否增加。
+                // （曾经只判线程数，导致追问永远等不到，按钮卡到 120s 超时。）
+                const target = next.find((/** @type {any} */ t) => t?.threadId === threadId);
+                if (Number(target?.turns ?? 0) > beforeTurns) {
+                  refreshed = true;
+                  break;
+                }
               }
             }
             setNotice(refreshed ? "" : t("sentPending"));
