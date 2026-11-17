@@ -27,8 +27,8 @@ window.__ModuleLoader__.load({
     const DRAFT_POLL_INTERVAL_MS = 20;
     /** 浮层列出的线程条数上限。 */
     const LIMITS_CLIENT_THREADS = 20;
-    /** 提交后轮询历史，等新记录出现。 */
-    const REFRESH_TRIES = 20;
+    /** 提交后轮询历史，等新记录出现；按实测 /btw 耗时（32–40s）给足 120s 窗口。 */
+    const REFRESH_MAX_MS = 120_000;
     const REFRESH_INTERVAL_MS = 1500;
 
     const zh = {
@@ -49,6 +49,10 @@ window.__ModuleLoader__.load({
       promoted: "已插入输入框草稿（未发送）",
       promoteBlocked: "输入框已有内容，先清空再转正",
       promoteFailed: "生成转正草稿失败",
+      sending: "正在等待答案…（通常 20–40 秒）",
+      sentPending: "命令已提交，答案稍后出现在对话里",
+      expandAnswer: "展开全文",
+      collapseAnswer: "收起",
       scopeAny: "范围：不限",
       scopeSession: "范围：整个会话",
       scopeRecent: "范围：最近几轮",
@@ -84,6 +88,10 @@ window.__ModuleLoader__.load({
       promoted: "Inserted into the composer as a draft (not sent)",
       promoteBlocked: "Composer already has content; clear it before promoting",
       promoteFailed: "Could not create the promotion draft",
+      sending: "Waiting for the answer… (usually 20–40s)",
+      sentPending: "Command submitted; the answer will appear in the conversation",
+      expandAnswer: "Show all",
+      collapseAnswer: "Collapse",
       scopeAny: "Scope: any",
       scopeSession: "Scope: whole session",
       scopeRecent: "Scope: recent turns",
@@ -112,10 +120,15 @@ window.__ModuleLoader__.load({
       ".dsh-btw-item{padding:6px 0;border-top:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2));}",
       ".dsh-btw-q{color:var(--dsw-alias-label-secondary,GrayText);}",
       ".dsh-btw-a{white-space:pre-wrap;word-break:break-word;margin-top:2px;}",
+      ".dsh-btw-a.is-clamped{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:6;line-clamp:6;overflow:hidden;}",
       ".dsh-btw-meta{margin-top:2px;color:var(--dsw-alias-label-tertiary,GrayText);font-size:11px;}",
       ".dsh-btw-dim{color:var(--dsw-alias-label-tertiary,GrayText);padding:6px 0;}",
       ".dsh-btw-err{color:var(--dsw-alias-state-error-primary,#d9534f);padding:6px 0;}",
       ".dsh-btw-row{display:flex;gap:6px;margin-top:8px;}",
+      ".dsh-btw-status{position:sticky;top:-10px;z-index:2;display:flex;align-items:center;gap:6px;margin:0 0 8px;padding:5px 8px;border-radius:var(--dsw-radius-sm,6px);background:var(--dsw-alias-bg-layer-3,var(--dsw-alias-bg-layer-2,Canvas));color:var(--dsw-alias-label-secondary,GrayText);font-size:12px;box-shadow:0 1px 0 var(--dsw-alias-border-l1,rgba(128,128,128,.2));}",
+      ".dsh-btw-status.is-busy{color:var(--dsw-alias-label-primary,CanvasText);}",
+      ".dsh-btw-spinner{display:inline-block;animation:dsh-btw-spin 1s linear infinite;}",
+      "@keyframes dsh-btw-spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}",
       ".dsh-btw-setrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:6px 0;}",
       ".dsh-btw-setlabel{min-width:0;color:var(--dsw-alias-label-secondary,GrayText);}",
       ".dsh-btw-input{flex:1 1 auto;min-width:0;resize:vertical;min-height:52px;padding:6px 8px;border-radius:var(--dsw-radius-sm,6px);border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));background:var(--dsw-alias-bg-base,Canvas);color:var(--dsw-alias-label-primary,CanvasText);font:inherit;}",
@@ -308,6 +321,9 @@ window.__ModuleLoader__.load({
         const [notice, setNotice] = React.useState("");
         const [badge, setBadge] = React.useState("");
         const [scope, setScope] = React.useState("");
+        const [expandedAnswers, setExpandedAnswers] = React.useState(
+          /** @type {Record<string, boolean>} */ ({}),
+        );
         const aliveRef = React.useRef(true);
 
         React.useEffect(
@@ -361,12 +377,20 @@ window.__ModuleLoader__.load({
           return () => document.removeEventListener("keydown", onKey);
         }, [open, load]);
 
-        /** 发问：新线程走 `/btw <q>`；追问走 `/btw --thread <id> <q>`。 */
+        /**
+         * 发问：新线程走 `/btw <q>`；追问走 `/btw --thread <id> <q>`。
+         *
+         * 2026-11-17 修复（实测用户反馈「点了没反应、按钮永久卡死」）：
+         *  1. 旧实现轮询 20×1.5s=30s，而真实 /btw 耗时 32–40s，永远等不到 → 改为按
+         *     实际耗时给足窗口（REFRESH_MAX_MS），并保留「线程数增加即提前结束」。
+         *  2. poll 的 `.then()` 没有 `.catch()`，一次 RPC 失败就断链，
+         *     `setBusy(false)` 永不执行 → 改用 try/finally 兜底，任何路径都恢复按钮。
+         */
         const submit = async (/** @type {string} */ threadId) => {
           const text = question.trim();
           if (text === "" || busy) return;
           setBusy(true);
-          setNotice("");
+          setNotice(t("sending"));
           const before = Array.isArray(threads) ? threads.length : 0;
           const flags = [
             threadId === "" ? "" : `--thread ${threadId}`,
@@ -375,32 +399,36 @@ window.__ModuleLoader__.load({
             .filter(Boolean)
             .join(" ");
           const line = flags === "" ? `/btw ${text}` : `/btw ${flags} ${text}`;
-          const result = await sendText(sessionId, line);
-          if (result !== "ok") {
-            setBusy(false);
-            setNotice(t("sendFailed"));
-            return;
-          }
-          setQuestion("");
-          setNotice(t("sent"));
-          let tries = 0;
-          const poll = () => {
-            load().then((/** @type {number} */ count) => {
-              if (!aliveRef.current) return;
+          try {
+            const result = await sendText(sessionId, line);
+            if (result !== "ok") {
+              setNotice(t("sendFailed"));
+              return;
+            }
+            setQuestion("");
+            setNotice(t("sent"));
+            // 轮询到「线程数增加」为止，最长 REFRESH_MAX_MS；单次失败不中断。
+            const deadline = Date.now() + REFRESH_MAX_MS;
+            let refreshed = false;
+            while (Date.now() < deadline && aliveRef.current) {
+              await new Promise((resolve) => setTimeout(resolve, REFRESH_INTERVAL_MS));
+              if (!aliveRef.current) break;
+              let count = before;
+              try {
+                count = await load();
+              } catch {
+                count = before; // 单次失败继续轮询，不静默卡死
+              }
               if (count > before) {
-                setBusy(false);
-                setNotice("");
-                return;
+                refreshed = true;
+                break;
               }
-              tries += 1;
-              if (tries >= REFRESH_TRIES) {
-                setBusy(false);
-                return;
-              }
-              setTimeout(poll, REFRESH_INTERVAL_MS);
-            });
-          };
-          setTimeout(poll, REFRESH_INTERVAL_MS);
+            }
+            setNotice(refreshed ? "" : t("sentPending"));
+          } finally {
+            // 无论如何都要放开按钮：卡死的按钮是实测最劝退的问题。
+            if (aliveRef.current) setBusy(false);
+          }
         };
 
         /**
@@ -481,11 +509,42 @@ window.__ModuleLoader__.load({
                   )
                 : null,
             ),
-            h(
-              "div",
-              { className: "dsh-btw-a", "data-btw-answer": "true" },
-              String(thread.answer ?? ""),
-            ),
+            (() => {
+              // 长答案默认折叠 6 行：实测一条 3000+ 字答案会把浮层撑满，
+              // 用户只能看到答案中部、找不到成本与按钮。
+              const answerText = String(thread.answer ?? "");
+              const key = String(thread.threadId ?? "");
+              const isOpen = expandedAnswers[key] === true;
+              const needsClamp = answerText.length > 400;
+              return h(
+                React.Fragment,
+                null,
+                h(
+                  "div",
+                  {
+                    className: `dsh-btw-a${needsClamp && !isOpen ? " is-clamped" : ""}`,
+                    "data-btw-answer": "true",
+                  },
+                  answerText,
+                ),
+                needsClamp
+                  ? h(
+                      "button",
+                      {
+                        type: "button",
+                        className: "dsh-btw-btn",
+                        "data-btw-expand": "true",
+                        onClick: () =>
+                          setExpandedAnswers((/** @type {any} */ prev) => ({
+                            ...prev,
+                            [key]: !isOpen,
+                          })),
+                      },
+                      isOpen ? t("collapseAnswer") : t("expandAnswer"),
+                    )
+                  : null,
+              );
+            })(),
             h(
               "div",
               { className: "dsh-btw-meta", "data-btw-meta": "true" },
@@ -584,6 +643,19 @@ window.__ModuleLoader__.load({
                 t("close"),
               ),
             ),
+            // 提示条固定在**头部正下方**：旧实现放在浮层最底部，列表一长就被推到
+            // 滚动区外（实测浮层底 616px、提示在 918px），用户提交后完全看不到反馈。
+            notice === "" && !busy
+              ? null
+              : h(
+                  "div",
+                  {
+                    className: `dsh-btw-status${busy ? " is-busy" : ""}`,
+                    "data-btw-notice": "true",
+                  },
+                  busy ? h("span", { className: "dsh-btw-spinner" }, "⟳") : null,
+                  h("span", null, busy ? t("sending") : notice),
+                ),
             failed
               ? h(
                   "div",
@@ -642,9 +714,6 @@ window.__ModuleLoader__.load({
             badge === ""
               ? null
               : h("div", { className: "dsh-btw-meta", "data-btw-badge": "true" }, badge),
-            notice === ""
-              ? null
-              : h("div", { className: "dsh-btw-dim", "data-btw-notice": "true" }, notice),
           ),
         );
       }
