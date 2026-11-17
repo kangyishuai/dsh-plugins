@@ -868,10 +868,11 @@ window.__ModuleLoader__.load({
           setBusy(true);
           setNotice(t("sending"));
           const beforeThreads = Array.isArray(threads) ? threads : [];
-          const beforeCount = beforeThreads.length;
-          const beforeTurns = Number(
-            beforeThreads.find((/** @type {any} */ entry) => entry?.threadId === threadId)?.turns ??
-              0,
+          // 用「最近一条记录的时间」判断完成，而不是线程数：
+          // 线程数受 20 条上限约束，满额时新问题不会让数量增加，旧逻辑会白等到 120s。
+          const beforeAt = beforeThreads.reduce(
+            (latest, /** @type {any} */ entry) => Math.max(latest, Number(entry?.at ?? 0)),
+            0,
           );
           const flags = [
             threadId === "" ? "" : `--thread ${threadId}`,
@@ -915,19 +916,9 @@ window.__ModuleLoader__.load({
                 next = null;
               }
               if (next === null) continue;
-              if (threadId === "") {
-                if (next.length > beforeCount) {
-                  refreshed = true;
-                  break;
-                }
-              } else {
-                const target = next.find(
-                  (/** @type {any} */ entry) => entry?.threadId === threadId,
-                );
-                if (Number(target?.turns ?? 0) > beforeTurns) {
-                  refreshed = true;
-                  break;
-                }
+              if (next.some((/** @type {any} */ entry) => Number(entry?.at ?? 0) > beforeAt)) {
+                refreshed = true;
+                break;
               }
             }
             setNotice(refreshed ? "" : t("sentPending"));
