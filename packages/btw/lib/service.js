@@ -13,7 +13,7 @@ import { createLiveTracker } from "./live.js";
 import { parseMarkdown } from "./markdown.js";
 import { format, loadMessages, pickLanguage } from "./messages.js";
 import { historyFile, resolveDataRoot } from "./paths.js";
-import { loadSettings, saveSettings } from "./settings.js";
+import { buildSettingsPatch, loadSettings, saveSettings } from "./settings.js";
 import { observeUsage, runSideQuestion } from "./subagent.js";
 import {
   listThreads,
@@ -405,10 +405,7 @@ export class BtwService extends TypertRemoteService {
    */
   async updateSettings(request) {
     const input = request ?? {};
-    const saved = await saveSettings(this.dataRoot, {
-      ...(input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools }),
-      ...(input.historyLimit === undefined ? {} : { historyLimit: input.historyLimit }),
-    });
+    const saved = await saveSettings(this.dataRoot, buildSettingsPatch(input));
     this.allowedTools = new Set(saved.allowedTools);
     return { ...saved, readOnly: saved.allowedTools.length === 0 };
   }

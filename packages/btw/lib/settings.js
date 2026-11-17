@@ -57,6 +57,23 @@ export function sanitizeSettings(raw) {
 }
 
 /**
+ * 把 updateSettings 的入参收敛成「只含已知字段」的补丁。
+ * **单独抽出来**是为了单测能直接断言 `echoAnswer` 没被漏掉（2026-11-18 真机踩到：
+ * updateSettings 手写 spread 时漏了这个新字段，设置保存后又被默认值覆盖）。
+ * @param {any} input
+ * @returns {Record<string, unknown>}
+ */
+export function buildSettingsPatch(input) {
+  const source = input !== null && typeof input === "object" ? input : {};
+  /** @type {Record<string, unknown>} */
+  const patch = {};
+  if (source.allowedTools !== undefined) patch.allowedTools = source.allowedTools;
+  if (source.historyLimit !== undefined) patch.historyLimit = source.historyLimit;
+  if (source.echoAnswer !== undefined) patch.echoAnswer = source.echoAnswer;
+  return patch;
+}
+
+/**
  * 读设置；文件缺失、坏 JSON、坏字段一律静默回落到默认值。
  * @param {string} dataRoot
  * @returns {Promise<{ schemaVersion: number, allowedTools: string[], historyLimit: number, echoAnswer: boolean }>}

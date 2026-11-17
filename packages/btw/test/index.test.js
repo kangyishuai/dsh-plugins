@@ -18,6 +18,7 @@ import {
   sanitizeReplayAnswer,
 } from "../lib/prompts.js";
 import {
+  buildSettingsPatch,
   DEFAULT_SETTINGS,
   loadSettings,
   sanitizeSettings,
@@ -255,6 +256,16 @@ test("settings: 文件缺失返回默认，坏 JSON 静默回落", async () => {
   await mkdir(join(dir, "btw"), { recursive: true });
   await writeFile(settingsPath(dir), "{not json", "utf8");
   assert.deepEqual((await loadSettings(dir)).allowedTools, []);
+});
+
+test("settings: updateSettings 的补丁包含 echoAnswer（真机漏字段回归）", () => {
+  assert.deepEqual(buildSettingsPatch({ echoAnswer: false }), { echoAnswer: false });
+  assert.deepEqual(buildSettingsPatch({ echoAnswer: true, unknown: 1 }), { echoAnswer: true });
+  assert.deepEqual(buildSettingsPatch({ allowedTools: ["read"], historyLimit: 7 }), {
+    allowedTools: ["read"],
+    historyLimit: 7,
+  });
+  assert.deepEqual(buildSettingsPatch(undefined), {});
 });
 
 test("settings: 保存是原子替换且只合并已知字段", async () => {
