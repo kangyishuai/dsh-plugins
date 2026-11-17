@@ -258,14 +258,20 @@ const main = async () => {
       } else {
         check("每条线程都有追问按钮", v03.followup === v03.threads, JSON.stringify(v03));
         check("每条线程都有转正按钮", v03.promote === v03.threads, JSON.stringify(v03));
-        // 展开追问输入框（只展开，不提交）
-        await cdp.evaluate(
-          `(() => { const b = document.querySelector('[data-btw-followup]'); if (b) b.click(); return true; })()`,
-        );
-        await sleep(600);
-        const expanded = await cdp.evaluate(
-          `(() => ({ threadInput: !!document.querySelector('[data-btw-thread-input]') }))()`,
-        );
+        // 展开追问输入框（只展开，不提交）。
+        // 点一次不生效就再点一次——这是约定 §6.1 说的「手势断言加一次不降低断言的重试」：
+        // 面板刚渲染完时 React 可能还在处理上一帧，第一次点击会被吞（实测 2 次里偶发 1 次）。
+        let expanded = { threadInput: false };
+        for (let attempt = 1; attempt <= 2; attempt += 1) {
+          await cdp.evaluate(
+            `(() => { const b = document.querySelector('[data-btw-followup]'); if (b) b.click(); return true; })()`,
+          );
+          await sleep(600);
+          expanded = await cdp.evaluate(
+            `(() => ({ threadInput: !!document.querySelector('[data-btw-thread-input]') }))()`,
+          );
+          if (expanded.threadInput === true) break;
+        }
         check("点追问后出现线程内输入框", expanded.threadInput === true, JSON.stringify(expanded));
         // 转正：只插草稿，**不发送** —— 断言 composer 有内容但对话流没有新节点
         const beforeFlow = await cdp.evaluate(
@@ -274,12 +280,7 @@ const main = async () => {
         const draftBefore = await cdp.evaluate(
           `(() => ((document.querySelector('[data-composer-input]') || {}).innerText || '').trim())()`,
         );
-        if (initial.running) {
-          skip(
-            "转正只插草稿",
-            "会改动 composer 草稿，需要空闲会话；当前回合在跑（agent 自跑时必然如此）",
-          );
-        } else if (draftBefore !== "") {
+        if (draftBefore !== "") {
           skip("转正只插草稿", "输入框已有内容（插件会拒绝转正，属预期保护）");
         } else {
           await cdp.evaluate(
@@ -319,7 +320,7 @@ const main = async () => {
       check("没有遗留浮层", closed.overlay === false, JSON.stringify(closed));
 
       // 兜底：进来时输入框是空的，结束时也必须是空的（可能是被测脚本插入的草稿）。
-      if (initialDraft === "" && !initial.running) {
+      if (initialDraft === "") {
         await clearComposerDraft(cdp);
         const draftNow = await cdp.evaluate(
           `(() => ((document.querySelector('[data-composer-input]') || {}).innerText || '').trim())()`,
@@ -343,7 +344,13 @@ const main = async () => {
     await sleep(900);
     const clickedSettings = await cdp.evaluate(`(() => {
       const label = (b) => ((b.getAttribute('aria-label') || '') + ' ' + (b.textContent || '')).trim();
-      const item = [...document.querySelectorAll('button,[role=menuitem]')].find((b) => /^设置$|^Settings$/i.test(label(b)));
+      // 账号菜单里的菜单项 textContent 会带快捷键标记（"设置⌘,"），不能用 ^...$ 精确匹配。
+      // 用「以设置开头」并排除明显不是设置的长文案。
+      const item = [...document.querySelectorAll('[role="menuitem"],button')].find((b) => {
+        const text = label(b);
+        if (/意见反馈|退出登录|feedback|sign out/i.test(text)) return false;
+        return /^设置|^Settings\b/i.test(text);
+      });
       if (!item) return false;
       item.click();
       return true;
