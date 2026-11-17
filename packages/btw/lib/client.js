@@ -42,6 +42,7 @@ window.__ModuleLoader__.load({
     const zh = {
       button: "旁问",
       title: "旁问",
+      subtitle: "最近的旁问",
       placeholder: "提一个只读旁问…",
       send: "提问",
       empty: "本会话还没有旁问。在下面提一个，或直接用 /btw <问题>。",
@@ -88,6 +89,7 @@ window.__ModuleLoader__.load({
     const en = {
       button: "btw",
       title: "Side questions",
+      subtitle: "Recent side questions",
       placeholder: "Ask a read-only side question…",
       send: "Ask",
       empty: "No side question yet. Ask one below, or use /btw <question>.",
@@ -146,6 +148,8 @@ window.__ModuleLoader__.load({
       // 完全不遮挡需要 DSH 原生右侧边栏（打开时主对话变窄）。
       ".dsh-btw-panel{position:fixed;right:12px;top:72px;bottom:140px;width:min(400px,calc(100vw - 24px));display:flex;flex-direction:column;min-height:0;z-index:2147482000;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base,Canvas));color:var(--dsw-alias-label-primary,CanvasText);border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));border-radius:12px;padding:10px 12px;font-size:12px;line-height:1.55;box-shadow:0 18px 48px rgba(0,0,0,.38);}",
       "@media (max-width:760px){.dsh-btw-panel{top:56px;bottom:150px;width:calc(100vw - 24px);}}",
+      // 原生右侧栏 tab：填满 pane，不再 fixed / 不再自带卡片外壳（由右侧栏提供）。
+      ".dsh-btw-panel.is-tab{position:static;inset:auto;width:100%;max-width:820px;margin:0 auto;height:100%;min-height:0;max-height:none;border:none;border-radius:0;box-shadow:none;padding:12px 14px;background:transparent;}",
       ".dsh-btw-rail{position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:2147482000;display:flex;flex-direction:row;align-items:center;gap:6px;padding:9px 12px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));border-right:none;border-radius:10px 0 0 10px;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base,Canvas));color:var(--dsw-alias-label-secondary,GrayText);font-size:12px;cursor:pointer;box-shadow:-2px 0 10px rgba(0,0,0,.22);}",
       ".dsh-btw-rail:hover{color:var(--dsw-alias-label-primary,CanvasText);background:var(--dsw-alias-bg-layer-3,var(--dsw-alias-bg-layer-2,Canvas));}",
       ".dsh-btw-rail-count{font-size:10px;opacity:.75;font-variant-numeric:tabular-nums;}",
@@ -518,6 +522,12 @@ window.__ModuleLoader__.load({
         };
       })();
 
+      /**
+       * 原生右侧栏是否可用：注册成功后才走 tab 形态，否则回退到浮层抽屉。
+       * 这样同一份 client 能同时兼容「右侧栏服务在」与「只有 shell.overlay」的宿主。
+       */
+      let tabReady = false;
+
       /** 订阅 store 的极简 hook。 */
       const useStore = () => {
         const [, force] = React.useState(0);
@@ -659,8 +669,9 @@ window.__ModuleLoader__.load({
       /**
        * composer 工具行里的「旁问」按钮。
        *
-       * 它同时负责把当前 sessionId 写进 store —— 抽屉注册在 root scope 的
-       * `shell.overlay` 上，拿不到 session props，只能由按钮转交。
+       * 首选打开 DSH 原生右侧栏的「旁问」tab（不遮挡主对话）；宿主没有右侧栏
+       * 服务时回退到 `shell.overlay` 浮层抽屉。回退形态拿不到 session props，
+       * 所以按钮同时负责把 sessionId 写进 store。
        */
       function BtwTrigger(/** @type {any} */ props) {
         const sessionId = typeof props?.sessionId === "string" ? props.sessionId : "";
@@ -668,7 +679,32 @@ window.__ModuleLoader__.load({
         React.useEffect(() => {
           if (shared.sessionId !== sessionId) store.patch({ sessionId });
         }, [sessionId, shared.sessionId]);
+        /** 首选形态：在 DSH 原生右侧栏打开「旁问」tab（不遮挡主对话）。 */
+        const openSidebarTab = () => {
+          if (!tabReady) return false;
+          const sidebarRight = serviceOf(ctx, "sidebarRight");
+          if (!sidebarRight || typeof sidebarRight.openTab !== "function") return false;
+          try {
+            // 侧栏已被收起时，openTab 只会 focus 已存在的 tab、不会展开栏，
+            // 所以先显式展开（track=true、非 fullscreen），再打开/聚焦 tab。
+            const layout = serviceOf(ctx, "layout");
+            if (layout && typeof layout.openRightbar === "function") {
+              try {
+                layout.openRightbar(true, false);
+              } catch {
+                /* 展开失败不阻塞打开 */
+              }
+            }
+            sidebarRight.openTab("btw");
+            // 若之前用过回退抽屉，打开 tab 时把它收掉，避免两套面板同时在场。
+            store.patch({ open: false, collapsed: false });
+            return true;
+          } catch {
+            return false;
+          }
+        };
         const toggle = () => {
+          if (openSidebarTab()) return;
           const current = store.get();
           if (!current.open) store.patch({ open: true, collapsed: false });
           else if (current.collapsed) store.patch({ collapsed: false });
@@ -687,13 +723,15 @@ window.__ModuleLoader__.load({
         );
       }
 
-      /** 右侧抽屉：聊天式线程列表 + 流式卡片 + 发问/追问/转正。 */
-      function BtwPanel(/** @type {any} */ props) {
-        void props;
-        const shared = useStore();
-        const open = shared.open;
-        const collapsed = shared.collapsed;
-        const sessionId = shared.sessionId;
+      /**
+       * 面板主体：原生右侧栏 tab 与回退抽屉共用。
+       * @param {any} props `{ sessionId, mode: 'tab'|'drawer', onCollapse, onClose }`
+       */
+      function BtwBody(/** @type {any} */ props) {
+        const sessionId = typeof props?.sessionId === "string" ? props.sessionId : "";
+        const mode = props?.mode === "tab" ? "tab" : "drawer";
+        const onCollapse = typeof props?.onCollapse === "function" ? props.onCollapse : () => {};
+        const onClose = typeof props?.onClose === "function" ? props.onClose : onCollapse;
         const [threads, setThreads] = React.useState(/** @type {any[] | null} */ (null));
         const [liveRuns, setLiveRuns] = React.useState(/** @type {any[]} */ ([]));
         const [failed, setFailed] = React.useState(false);
@@ -754,7 +792,6 @@ window.__ModuleLoader__.load({
         );
 
         React.useEffect(() => {
-          if (!open) return undefined;
           const scopeLabel =
             scope === ""
               ? ""
@@ -769,20 +806,17 @@ window.__ModuleLoader__.load({
             if (!aliveRef.current) return;
             if (value && typeof value.badge === "string") setBadge(value.badge);
           });
-          return undefined;
-        }, [open, sessionId, scope]);
+        }, [sessionId, scope]);
 
-        // 打开/切会话时先读一次历史。
+        // 面板挂载（tab 打开 / 抽屉展开）时先读一次历史。
         React.useEffect(() => {
-          if (!open) return undefined;
           void loadThreads();
-          return undefined;
-        }, [open, loadThreads]);
+        }, [loadThreads]);
 
         // 流式与后台刷新：面板打开期间常驻。有 run 时 350ms 一次、空闲 1s 一次；
         // 空闲时每 4 次才刷一次线程列表，避免无谓 RPC。
         React.useEffect(() => {
-          if (!open) return undefined;
+          if (sessionId === "") return undefined;
           let cancelled = false;
           /** @type {any} */
           let timer;
@@ -815,17 +849,17 @@ window.__ModuleLoader__.load({
             cancelled = true;
             clearTimeout(timer);
           };
-        }, [open, sessionId, loadThreads]);
+        }, [sessionId, loadThreads]);
 
-        // Esc：收起抽屉（保持「点开/收起」的手感，和原来的 Esc 关闭一致）。
+        // Esc 只用于回退抽屉；原生 tab 里 Esc 属于宿主，不抢。
         React.useEffect(() => {
-          if (!open) return undefined;
+          if (mode !== "drawer") return undefined;
           const onKey = (/** @type {any} */ event) => {
-            if (event?.key === "Escape") store.patch({ open: false });
+            if (event?.key === "Escape") onClose();
           };
           document.addEventListener("keydown", onKey);
           return () => document.removeEventListener("keydown", onKey);
-        }, [open]);
+        }, [mode, onClose]);
 
         // 自动滚到底：只有用户本来就在底部时才跟随（向上翻历史时不抢滚动条）。
         const onScroll = () => {
@@ -837,15 +871,7 @@ window.__ModuleLoader__.load({
           const el = scrollRef.current;
           if (!el || !pinnedRef.current) return;
           el.scrollTop = el.scrollHeight;
-        }, [threads, liveRuns, open, collapsed]);
-
-        // 展开抽屉/首次打开时强制回到底部（聊天式界面最新在下面）。
-        React.useEffect(() => {
-          if (!open || collapsed) return;
-          pinnedRef.current = true;
-          const el = scrollRef.current;
-          if (el) el.scrollTop = el.scrollHeight;
-        }, [open, collapsed]);
+        }, [threads, liveRuns]);
 
         const metaTextOf = (/** @type {any} */ cost, /** @type {number} */ ms) => {
           if (cost && typeof cost === "object") {
@@ -1151,9 +1177,144 @@ window.__ModuleLoader__.load({
                   ...liveRuns.map((/** @type {any} */ run) => renderLive(run)),
                 ];
 
-        if (!open) return null;
+        // 有 live 卡片时不显示状态条：卡片里已经有「正在生成回答 · 12s」，不需要重复。
+        const statusBusy = busy;
+        const statusText = busy ? `${t("sending")}（${t("waitHint")}）` : notice;
+        const statusVisible = liveRuns.length === 0 && (statusBusy || notice !== "");
 
-        if (collapsed) {
+        return h(
+          "div",
+          {
+            className: `dsh-btw-panel${mode === "tab" ? " is-tab" : ""}`,
+            "data-btw-panel": "true",
+            ...(mode === "tab"
+              ? { "data-btw-tab": "true" }
+              : { "data-btw-overlay": "true", "data-btw-drawer": "true" }),
+            role: mode === "tab" ? "region" : "dialog",
+            "aria-label": t("title"),
+          },
+          h(
+            "div",
+            { className: "dsh-btw-head" },
+            h("span", { className: "dsh-btw-head-title" }, t("subtitle")),
+            threads !== null && threads.length > 0
+              ? h(
+                  "span",
+                  { className: "dsh-btw-dim", "data-btw-count": "true" },
+                  String(threads.length),
+                )
+              : null,
+            h(
+              "button",
+              {
+                type: "button",
+                className: "dsh-btw-btn",
+                "data-btw-collapse": "true",
+                title: t("collapse"),
+                onClick: () => onCollapse(),
+              },
+              t("collapseShort"),
+            ),
+            h(
+              "button",
+              {
+                type: "button",
+                className: "dsh-btw-btn",
+                "data-btw-close": "true",
+                onClick: () => onClose(),
+              },
+              t("close"),
+            ),
+          ),
+          statusVisible
+            ? h(
+                "div",
+                {
+                  className: `dsh-btw-status${statusBusy ? " is-busy" : ""}`,
+                  "data-btw-notice": "true",
+                },
+                statusBusy ? h("span", { className: "dsh-btw-spinner" }, "⟳") : null,
+                h("span", null, statusText),
+              )
+            : null,
+          failed
+            ? h(
+                "div",
+                { className: "dsh-btw-err", "data-btw-error": "history_unavailable" },
+                `${t("failed")} — ${lastRpcError}`,
+              )
+            : h(
+                "div",
+                {
+                  className: "dsh-btw-scroll",
+                  "data-btw-list": "true",
+                  ref: scrollRef,
+                  onScroll,
+                },
+                ...(Array.isArray(list) ? list : [list]),
+              ),
+          h(
+            "div",
+            { className: "dsh-btw-composer" },
+            h("span", { className: "dsh-btw-composer-label" }, t("newQuestionLabel")),
+            h("textarea", {
+              className: "dsh-btw-input",
+              "data-btw-input": "true",
+              placeholder: t("placeholder"),
+              value: question,
+              rows: 2,
+              onChange: (/** @type {any} */ event) =>
+                setQuestion(String(event?.target?.value ?? "")),
+              onKeyDown: (/** @type {any} */ event) => {
+                if (event?.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                  event.preventDefault();
+                  void submit("");
+                }
+              },
+            }),
+            h(
+              "div",
+              { className: "dsh-btw-row" },
+              h(
+                "button",
+                {
+                  type: "button",
+                  className: "dsh-btw-btn is-primary",
+                  "data-btw-send": "true",
+                  disabled: busy || question.trim() === "",
+                  onClick: () => void submit(""),
+                },
+                t("send"),
+              ),
+              h(
+                "select",
+                {
+                  className: "dsh-btw-select",
+                  "data-btw-scope": "true",
+                  value: scope,
+                  onChange: (/** @type {any} */ event) =>
+                    setScope(String(event?.target?.value ?? "")),
+                },
+                h("option", { value: "" }, t("scopeAny")),
+                h("option", { value: "session" }, t("scopeSession")),
+                h("option", { value: "recent" }, t("scopeRecent")),
+                h("option", { value: "selection" }, t("scopeSelection")),
+              ),
+            ),
+            h("div", { className: "dsh-btw-meta", "data-btw-hint": "true" }, t("submitHint")),
+            badge === ""
+              ? null
+              : h("div", { className: "dsh-btw-meta", "data-btw-badge": "true" }, badge),
+          ),
+        );
+      }
+
+      /** 回退形态：`shell.overlay` 里的右侧抽屉（宿主没有右侧栏服务时）。 */
+      function BtwDrawer(/** @type {any} */ props) {
+        void props;
+        const shared = useStore();
+        if (!shared.open) return null;
+        if (shared.collapsed) {
           return h(
             "button",
             {
@@ -1165,146 +1326,68 @@ window.__ModuleLoader__.load({
               onClick: () => store.patch({ collapsed: false }),
             },
             h("span", null, t("button")),
-            threads !== null && threads.length > 0
-              ? h("span", { className: "dsh-btw-rail-count" }, String(threads.length))
-              : null,
           );
         }
+        return h(BtwBody, {
+          sessionId: shared.sessionId,
+          mode: "drawer",
+          onCollapse: () => store.patch({ collapsed: true }),
+          onClose: () => store.patch({ open: false }),
+        });
+      }
 
-        // 有 live 卡片时不重复状态条：卡片里已经有「正在生成回答 · 12s」。
-        // 有 live 卡片时不显示状态条：卡片里已经有「正在生成回答 · 12s」，不需要重复。
-        const statusBusy = busy;
-        const statusText = busy ? `${t("sending")}（${t("waitHint")}）` : notice;
-        const statusVisible = liveRuns.length === 0 && (statusBusy || notice !== "");
-
-        return h(
-          "span",
-          { "data-btw-root": "true" },
-          h(
-            "div",
-            {
-              className: "dsh-btw-panel",
-              "data-btw-overlay": "true",
-              "data-btw-panel": "true",
-              "data-btw-drawer": "true",
-              role: "dialog",
-              "aria-label": t("title"),
-            },
-            h(
-              "div",
-              { className: "dsh-btw-head" },
-              h("span", { className: "dsh-btw-head-title" }, t("title")),
-              threads !== null && threads.length > 0
-                ? h(
-                    "span",
-                    { className: "dsh-btw-dim", "data-btw-count": "true" },
-                    String(threads.length),
-                  )
-                : null,
-              h(
-                "button",
-                {
-                  type: "button",
-                  className: "dsh-btw-btn",
-                  "data-btw-collapse": "true",
-                  title: t("collapse"),
-                  onClick: () => store.patch({ collapsed: true }),
-                },
-                t("collapseShort"),
-              ),
-              h(
-                "button",
-                {
-                  type: "button",
-                  className: "dsh-btw-btn",
-                  "data-btw-close": "true",
-                  onClick: () => store.patch({ open: false }),
-                },
-                t("close"),
-              ),
-            ),
-            statusVisible
-              ? h(
-                  "div",
-                  {
-                    className: `dsh-btw-status${statusBusy ? " is-busy" : ""}`,
-                    "data-btw-notice": "true",
-                  },
-                  statusBusy ? h("span", { className: "dsh-btw-spinner" }, "⟳") : null,
-                  h("span", null, statusText),
-                )
-              : null,
-            failed
-              ? h(
-                  "div",
-                  { className: "dsh-btw-err", "data-btw-error": "history_unavailable" },
-                  `${t("failed")} — ${lastRpcError}`,
-                )
-              : h(
-                  "div",
-                  {
-                    className: "dsh-btw-scroll",
-                    "data-btw-list": "true",
-                    ref: scrollRef,
-                    onScroll,
-                  },
-                  ...(Array.isArray(list) ? list : [list]),
-                ),
-            h(
-              "div",
-              { className: "dsh-btw-composer" },
-              h("span", { className: "dsh-btw-composer-label" }, t("newQuestionLabel")),
-              h("textarea", {
-                className: "dsh-btw-input",
-                "data-btw-input": "true",
-                placeholder: t("placeholder"),
-                value: question,
-                rows: 2,
-                onChange: (/** @type {any} */ event) =>
-                  setQuestion(String(event?.target?.value ?? "")),
-                onKeyDown: (/** @type {any} */ event) => {
-                  if (event?.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                    event.preventDefault();
-                    void submit("");
-                  }
-                },
-              }),
-              h(
-                "div",
-                { className: "dsh-btw-row" },
-                h(
-                  "button",
-                  {
-                    type: "button",
-                    className: "dsh-btw-btn is-primary",
-                    "data-btw-send": "true",
-                    disabled: busy || question.trim() === "",
-                    onClick: () => void submit(""),
-                  },
-                  t("send"),
-                ),
-                h(
-                  "select",
-                  {
-                    className: "dsh-btw-select",
-                    "data-btw-scope": "true",
-                    value: scope,
-                    onChange: (/** @type {any} */ event) =>
-                      setScope(String(event?.target?.value ?? "")),
-                  },
-                  h("option", { value: "" }, t("scopeAny")),
-                  h("option", { value: "session" }, t("scopeSession")),
-                  h("option", { value: "recent" }, t("scopeRecent")),
-                  h("option", { value: "selection" }, t("scopeSelection")),
-                ),
-              ),
-              h("div", { className: "dsh-btw-meta", "data-btw-hint": "true" }, t("submitHint")),
-              badge === ""
-                ? null
-                : h("div", { className: "dsh-btw-meta", "data-btw-badge": "true" }, badge),
-            ),
-          ),
-        );
+      /**
+       * 首选形态：DSH 原生右侧栏里的「旁问」tab。
+       * 收起 = 关闭 tab（再点输入框旁的「旁问」按钮打开）。
+       */
+      function BtwTab(/** @type {any} */ props) {
+        const sessionId = typeof props?.sessionId === "string" ? props.sessionId : "";
+        const useTabInfo =
+          typeof props?.useTabInfo === "function" ? props.useTabInfo : () => undefined;
+        const info = useTabInfo();
+        const closeTab = () => {
+          try {
+            const actions = info?.tab?.actions;
+            if (typeof actions?.close === "function") {
+              actions.close();
+              return;
+            }
+          } catch {
+            /* 退到 closeIn */
+          }
+          try {
+            const sidebarRight = serviceOf(ctx, "sidebarRight");
+            const tabId = info?.tab?.id;
+            if (
+              sidebarRight !== undefined &&
+              typeof sidebarRight.closeIn === "function" &&
+              tabId !== undefined
+            ) {
+              sidebarRight.closeIn(sessionId, tabId);
+            }
+          } catch {
+            /* 关不上也保持可见 */
+          }
+        };
+        // 「收起」= 收起右侧栏（保留 tab 与状态）；再点输入框旁的「旁问」即可展开。
+        const collapseSidebar = () => {
+          const layout = serviceOf(ctx, "layout");
+          if (layout && typeof layout.closeRightbar === "function") {
+            try {
+              layout.closeRightbar();
+              return;
+            } catch {
+              /* 退到关 tab */
+            }
+          }
+          closeTab();
+        };
+        return h(BtwBody, {
+          sessionId,
+          mode: "tab",
+          onCollapse: collapseSidebar,
+          onClose: closeTab,
+        });
       }
 
       /** 设置分节（约定 §7.2：首屏 ≤3 行、可直改、无改动时禁用保存）。 */
@@ -1467,10 +1550,42 @@ window.__ModuleLoader__.load({
         ),
       );
 
-      // 抽屉挂在 shell.overlay（frame-wide，所有列之上、滚动容器之外），不受 composer 裁剪。
+      // 首选：DSH 原生右侧栏 tab（打开时主对话变窄但不被遮挡）。
+      if (typeof ctx.inject === "function") {
+        ctx.inject(["sidebarRightTabs"], (/** @type {any} */ scope) => {
+          const tabs = scope?.sidebarRightTabs;
+          ctx.effect(() => {
+            if (!tabs || typeof tabs.register !== "function") return undefined;
+            try {
+              const dispose = tabs.register({
+                id: PLUGIN_ID,
+                kind: "btw",
+                title: () => t("title"),
+                priority: "extension",
+              });
+              tabReady = true;
+              return () => {
+                tabReady = false;
+                dispose();
+              };
+            } catch {
+              // 注册失败就保持 tabReady=false，按钮自动回退到浮层抽屉。
+              return undefined;
+            }
+          }, "btw: sidebar tab type");
+        });
+      }
+      ctx.slots.inject("sidebar.right.pane.tab", () =>
+        ctx.slots.register(
+          { name: "sidebar.right.pane.tab", key: PLUGIN_ID, locale: NS },
+          (/** @type {any} */ slotProps) => h(BtwTab, slotProps),
+        ),
+      );
+
+      // 回退：右侧浮层抽屉，挂在 shell.overlay（frame-wide，不受 composer 裁剪）。
       ctx.slots.inject("shell.overlay", () =>
         ctx.slots.register({ name: "shell.overlay", id: "btw-panel", order: 60, locale: NS }, () =>
-          h(BtwPanel, null),
+          h(BtwDrawer, null),
         ),
       );
     };
