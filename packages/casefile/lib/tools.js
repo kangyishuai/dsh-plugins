@@ -454,13 +454,16 @@ export function buildToolDefinitions(handlers, projectOf) {
     {
       name: TOOL_NAMES.build,
       description:
-        "构建：start 跑一条构建命令并落 BuildRun（算实现 digest、自动重开失效义务），status 看轮次与停止条件。",
+        "构建：start 跑命令并落 BuildRun（算实现 digest、自动重开失效义务）；agent 起 builder 会话（只投喂规格包）或 await 等它停下；status 看轮次与停止条件。",
       parameters: {
         type: "object",
         additionalProperties: false,
         properties: {
-          action: { type: "string", enum: ["start", "status"] },
+          action: { type: "string", enum: ["start", "status", "agent"] },
           projectId: PROJECT_ID,
+          prompt: { type: "string", description: "agent 时可选：给 builder 的额外指令" },
+          featureIds: { type: "array", items: { type: "string" } },
+          sessionId: { type: "string", description: "await 用：builder 会话 id" },
           command: { type: "string", description: "start 时必填：构建命令（shell）" },
           cwd: { type: "string", description: "构建目录；给了才会算实现 digest" },
           round: { type: "integer", description: "可选：指定轮次，默认自动递增" },
@@ -472,8 +475,26 @@ export function buildToolDefinitions(handlers, projectOf) {
       /** @param {any} args @param {any} exec */
       async execute(args, exec) {
         return run(async () => {
-          const action = assertAction(args.action, ["start", "status"]);
+          const action = assertAction(args.action, ["start", "status", "agent"]);
           const id = projectId(args, exec);
+          if (action === "agent") {
+            if (args.sessionId) {
+              const awaited = await handlers.awaitBuilder(id, {
+                sessionId: args.sessionId,
+                timeoutMs: args.timeoutMs,
+              });
+              return { ...awaited, summary: `builder ${awaited.reason}` };
+            }
+            const started = await handlers.startBuilder(id, {
+              cwd: args.cwd,
+              prompt: args.prompt,
+              featureIds: args.featureIds,
+            });
+            return {
+              ...started,
+              summary: `已起 builder 会话 ${started.builder.sessionId}（投喂 ${started.builder.claims} 条结论）`,
+            };
+          }
           if (action === "start") {
             if (typeof args.command !== "string" || args.command.trim() === "") {
               throw Object.assign(new Error("start 需要 command"), { code: "invalid-input" });

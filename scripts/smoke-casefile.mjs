@@ -438,6 +438,32 @@ async function main() {
       JSON.stringify(reopened ?? null).slice(0, 300),
     );
 
+    // 9.7) builder 会话（真实宿主里创建会话 + 投喂规格 + 等待）
+    const builder = await remote(session, "startBuilder", {
+      projectId: "todo-app-smoke",
+      input: { cwd: implDir, timeoutMs: 15000 },
+    });
+    check(
+      "startBuilder 在真实宿主里创建会话并投喂规格",
+      builder.ok &&
+        typeof builder.value?.builder?.sessionId === "string" &&
+        String(builder.value.builder.sessionId).startsWith("session-") &&
+        builder.value?.builder?.claims === 1,
+      builder.raw.slice(0, 400),
+    );
+    const awaited = await remote(session, "awaitBuilder", {
+      projectId: "todo-app-smoke",
+      input: { sessionId: builder.value?.builder?.sessionId, timeoutMs: 15000 },
+    });
+    check(
+      "awaitBuilder 返回合法的停止原因（idle / input-required / timeout）",
+      awaited.ok && ["idle", "input-required", "timeout"].includes(String(awaited.value?.reason)),
+      awaited.raw.slice(0, 400),
+    );
+    // 宿主没有崩（插件没有把宿主搞挂）
+    const stillAlive = await remote(session, "diagnose");
+    check("builder 会话之后宿主仍可用", stillAlive.ok === true, stillAlive.raw.slice(0, 200));
+
     // 10) 详情统计
     const detail = await remote(session, "projectDetail", { projectId: "todo-app-smoke" });
     check(

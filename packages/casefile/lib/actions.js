@@ -4,7 +4,7 @@
 // 分工：service.js 只做「数据根解析 + Remote 声明 + 会话记忆」；本文件承载
 // 项目/证据/结论/功能/未知项/规格包的实际逻辑，tools.js 与 Remote 共用同一份实现。
 
-import { buildSpecPack, writeSpecPack } from "./core/brief.js";
+import { buildSpecPack, redactPack, renderSpecMarkdown, writeSpecPack } from "./core/brief.js";
 import { createCheckers } from "./core/checks.js";
 import { hashTree, shortDigest } from "./core/digest.js";
 import { gradeCapabilities } from "./core/manifest.js";
@@ -49,12 +49,18 @@ export class CasefileActionError extends Error {
  *   currentProject?: Map<string, string>,
  *   dataRoot?: string,
  *   runner?: (command: string, options?: Record<string, any>) => Promise<Record<string, any>>,
+ *   sessions?: {
+ *     create(input: { cwd: string }): Promise<{ sessionId: string }>,
+ *     prompt(input: { sessionId: string, text: string }): Promise<void>,
+ *     wait(input: { sessionId: string, timeoutMs?: number }): Promise<{ reason: string, output?: any }>,
+ *   },
  * }} options
  */
 export function createActions(options) {
   const store = options.store;
   const currentProject = options.currentProject ?? new Map();
   const dataRoot = options.dataRoot ?? store.rootDir;
+  const sessions = options.sessions;
   const checkers = createCheckers(
     /** @type {any} */ (options.runner ? { runner: options.runner } : {}),
   );
@@ -776,6 +782,116 @@ export function createActions(options) {
         ...summary,
         stop: verdict,
         openObligations: data.obligations.filter((item) => item.status === "open"),
+      };
+    },
+
+    // ---------- builder 会话（M2.5） ----------
+
+    /**
+     * 起一个 builder 会话：只把 spec pack 投喂给它，不让它拿到原件工具。
+     * 说明：DSH 的 agent preset 目前无法用 bundle 名组合（见 runtime §10.7），
+     * 因此这里用「独立会话 + 只投喂规格」做信息流隔离，而不是工具白名单。
+     * @param {string} projectId
+     * @param {{ cwd: string, prompt?: string, featureIds?: string[], timeoutMs?: number }} input
+     * @returns {Promise<Record<string, any>>}
+     */
+    async startBuilder(projectId, input) {
+      const project = requireProject(projectId);
+      if (!sessions) {
+        throw new CasefileActionError(
+          "builder-unavailable",
+          "会话服务不可用：宿主里没有 sessionController（headless 组合可能没有）",
+        );
+      }
+      const cwd = String(input?.cwd ?? "").trim();
+      if (cwd === "") throw new CasefileInputError("invalid-input", "cwd 不能为空");
+      const data = store.readAll(project.id);
+      const pack = buildSpecPack({
+        project,
+        ...data,
+        ...(Array.isArray(input?.featureIds) && input.featureIds.length > 0
+          ? {
+              claims: data.claims.filter((item) =>
+                input.featureIds?.some((id) => (item.featureIds ?? []).includes(id)),
+              ),
+            }
+          : {}),
+      });
+      if (pack.claims.length === 0) {
+        throw new CasefileActionError(
+          "nothing-selected",
+          "没有选中的结论：builder 需要至少一条规格，先勾选结论",
+        );
+      }
+      const prompt =
+        typeof input?.prompt === "string" && input.prompt.trim() !== ""
+          ? input.prompt
+          : [
+              "你在做一次「按规格复刻」的构建任务。",
+              "",
+              "只允许依据下面的规格包实现，不要读取或寻找原始目标；规格里没写的不要臆测。",
+              "",
+              "```markdown",
+              renderSpecMarkdown(redactPack(pack)),
+              "```",
+              "",
+              "完成后简述你实现了哪些功能、哪些做不到（以 UNKNOWN 记录原因）。",
+            ].join("\n");
+      const created = await sessions.create({ cwd });
+      const sessionId = String(created.sessionId);
+      await sessions.prompt({ sessionId, text: prompt });
+      const record = {
+        id: newId("builder"),
+        sessionId,
+        cwd,
+        round: nextRound(store.readRecords(project.id, "builds")),
+        startedAt: nowIso(),
+        featureIds: Array.isArray(input?.featureIds) ? input.featureIds.map(String) : [],
+        claims: pack.claims.length,
+      };
+      store.appendRecord(project.id, "builds", {
+        id: `builder-${record.id}`,
+        round: record.round,
+        command: `builder-session:${sessionId}`,
+        cwd,
+        status: "running",
+        exitCode: null,
+        implementationDigest: null,
+        startedAt: record.startedAt,
+        endedAt: null,
+        detail: `投喂 ${pack.claims.length} 条结论`,
+        artifacts: [],
+        builderSessionId: sessionId,
+      });
+      store.touch(project.id);
+      store.audit(project.id, {
+        actor: "agent",
+        action: "builder/start",
+        target: sessionId,
+        detail: { round: record.round, claims: pack.claims.length },
+      });
+      return { builder: record, promptLength: prompt.length };
+    },
+
+    /**
+     * 等 builder 会话停下（idle / 需要输入 / 超时）。
+     * @param {string} projectId
+     * @param {{ sessionId: string, timeoutMs?: number }} input
+     * @returns {Promise<Record<string, any>>}
+     */
+    async awaitBuilder(projectId, input) {
+      requireProject(projectId);
+      if (!sessions) {
+        throw new CasefileActionError("builder-unavailable", "会话服务不可用");
+      }
+      const sessionId = String(input?.sessionId ?? "");
+      if (sessionId === "") throw new CasefileInputError("invalid-input", "sessionId 不能为空");
+      const result = await sessions.wait({ sessionId, timeoutMs: input?.timeoutMs });
+      return {
+        sessionId,
+        reason: result.reason,
+        output: result.output ?? null,
+        stopped: result.reason === "idle" || result.reason === "input-required",
       };
     },
 

@@ -45,6 +45,8 @@ function fakeHandlers() {
       listObligations: record("listObligations"),
       closeObligation: record("closeObligation"),
       reopenObligation: record("reopenObligation"),
+      startBuilder: record("startBuilder"),
+      awaitBuilder: record("awaitBuilder"),
       startBuild: record("startBuild"),
       runCheck: record("runCheck"),
       loopStatus: record("loopStatus"),

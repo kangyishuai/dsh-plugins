@@ -82,6 +82,7 @@ export class CasefileService extends TypertRemoteService {
       currentProject: this.currentProject,
       dataRoot: this.dataRoot,
     });
+    this.installSessions();
     this.installTools();
     this.logger.info?.(`[casefile] loaded, dataRoot=${this.dataRoot}`);
   }
@@ -99,6 +100,49 @@ export class CasefileService extends TypertRemoteService {
       );
     } catch {
       return diffCapabilities([]);
+    }
+  }
+
+  /**
+   * 拿到会话服务后重建 actions（builder 需要 create/prompt/wait）。
+   */
+  installSessions() {
+    try {
+      this.ctx.inject?.(/** @type {any} */ (["sessionController"]), (/** @type {any} */ scope) => {
+        const controller = scope.sessionController;
+        if (!controller) return;
+        this.actions = createActions({
+          store: this.store,
+          currentProject: this.currentProject,
+          dataRoot: this.dataRoot,
+          sessions: {
+            create: async (input) => {
+              const created = await controller.create({ cwd: input.cwd });
+              return { sessionId: String(created.sessionId) };
+            },
+            prompt: async (input) => {
+              await controller.prompt(
+                {
+                  requestId: `casefile-${Date.now()}`,
+                  sessionId: input.sessionId,
+                  mode: "queue",
+                  content: [{ type: "text", text: input.text }],
+                },
+                new AbortController().signal,
+              );
+            },
+            wait: async (input) => {
+              const value = await controller.wait(
+                { sessionId: input.sessionId, timeoutMs: input.timeoutMs ?? 120_000 },
+                new AbortController().signal,
+              );
+              return { reason: value.reason, output: value.output ?? null };
+            },
+          },
+        });
+      });
+    } catch (error) {
+      this.logger.warn?.(`[casefile] 会话服务不可用（builder 将禁用）：${String(error)}`);
     }
   }
 
@@ -151,6 +195,8 @@ export class CasefileService extends TypertRemoteService {
       listChecks: (projectId, id) => this.actions.listChecks(projectId, id),
       closeObligation: (projectId, id, input) => this.actions.closeObligation(projectId, id, input),
       reopenObligation: (projectId, id, note) => this.actions.reopenObligation(projectId, id, note),
+      startBuilder: (projectId, input) => this.actions.startBuilder(projectId, input),
+      awaitBuilder: (projectId, input) => this.actions.awaitBuilder(projectId, input),
       startBuild: (projectId, input) => this.actions.startBuild(projectId, input),
       runCheck: (projectId, input) => this.actions.runCheck(projectId, input),
       loopStatus: (projectId, stop) => this.actions.loopStatus(projectId, stop),
@@ -384,6 +430,32 @@ export class CasefileService extends TypertRemoteService {
 
   /**
    * @param {string} projectId
+   * @param {Record<string, any>} input
+   * @returns {Promise<Record<string, any>>}
+   */
+  async startBuilder(projectId, input) {
+    try {
+      return await this.actions.startBuilder(projectId, /** @type {any} */ (input));
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
+   * @param {Record<string, any>} input
+   * @returns {Promise<Record<string, any>>}
+   */
+  async awaitBuilder(projectId, input) {
+    try {
+      return await this.actions.awaitBuilder(projectId, /** @type {any} */ (input));
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
    * @param {Record<string, any>} [stop]
    * @returns {Promise<Record<string, any>>}
    */
@@ -510,6 +582,8 @@ declareRemote(CasefileService, "addCheck");
 declareRemote(CasefileService, "listChecks");
 declareRemote(CasefileService, "closeObligation");
 declareRemote(CasefileService, "reopenObligation");
+declareRemote(CasefileService, "startBuilder");
+declareRemote(CasefileService, "awaitBuilder");
 declareRemote(CasefileService, "startBuild");
 declareRemote(CasefileService, "runCheck");
 declareRemote(CasefileService, "loopStatus");

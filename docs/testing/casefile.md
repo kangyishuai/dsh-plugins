@@ -20,7 +20,7 @@ SMOKE_DEBUG=1 pnpm smoke:casefile   # 打印每次请求/响应
 SMOKE_KEEP=1 pnpm smoke:casefile    # 成功也保留现场
 ```
 
-它验证的 30 条断言包括：
+它验证的 33 条断言包括：
 - 插件安装进临时 profile、宿主持久化启动、没有未激活插件、数据根被创建；
 - 鉴权（`GET /?token=` → 303 → `dsh-auth-*` cookie）后，`listProjects` 可用；
 - 建项目 / 非法授权档被拒（`gateway/bad-request`）/ 记证据 / 写结论 / 勾选 / 建功能 / 记未知项；
@@ -28,6 +28,7 @@ SMOKE_KEEP=1 pnpm smoke:casefile    # 成功也保留现场
 - 规格包写出 `spec.json` + `brief.md`，只含选中结论，**本机路径被脱敏**，未知项随包；
 - 审计日志含 `project/create`、`evidence/add`、`claim/add`、`spec/export`；
 - **构建/验收闭环**：`startBuild` 落 `BuildRun` 并算出 64 位实现 digest；`runCheck` 绑定该 digest 判 pass；义务可关闭；**改实现后再构建 → 已关闭义务被 stale 重开**；`loopStatus` 给出停止条件；
+- **builder 会话**：`startBuilder` 在真实宿主里创建 `session-*` 子会话并投喂规格包；`awaitBuilder` 返回合法停止原因；之后宿主仍可用；
 - 无 REA 时 `diagnose` 报 `missing`（不假装正常）；
 - 仓库工作目录没有被污染。
 
