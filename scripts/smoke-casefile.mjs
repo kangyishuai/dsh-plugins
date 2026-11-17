@@ -338,9 +338,10 @@ async function main() {
       obligationId: obligation.value?.id,
     });
     check(
-      "没有新鲜 PASS 检查时拒绝关闭义务（obligationTooTall）",
+      "没有新鲜 PASS 检查时拒绝关闭义务（点名 no-fresh-check）",
       blockedClose.ok === false &&
-        /obligationTooTall/u.test(String(blockedClose.error?.message ?? "")),
+        blockedClose.error?.code === "gateway/bad-request" &&
+        /no-fresh-check/u.test(String(blockedClose.error?.message ?? "")),
       blockedClose.raw.slice(0, 300),
     );
     // 新鲜 PASS + digest 一致 → 可以关闭
