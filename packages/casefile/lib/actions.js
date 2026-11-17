@@ -22,6 +22,7 @@ import {
   nowIso,
   projectStats,
 } from "./core/model.js";
+import { buildOverview, summarizeOverview } from "./core/overview.js";
 import {
   buildReport,
   computeCoverage,
@@ -1043,6 +1044,23 @@ export function createActions(options) {
         stop: loop.stop,
         summary: `${builder ? `builder ${builder.reason}；` : ""}${loop.summary}`,
       };
+    },
+
+    // ---------- 跨项目总览（M4） ----------
+
+    /**
+     * 所有项目的只读总览。
+     * @returns {Promise<Record<string, any>>}
+     */
+    async overview() {
+      const projects = store.listProjects();
+      /** @type {Record<string, any>} */
+      const dataById = {};
+      for (const project of projects) {
+        dataById[project.id] = store.readAll(project.id);
+      }
+      const overview = buildOverview(projects, dataById);
+      return { ...overview, summary: summarizeOverview(overview) };
     },
 
     // ---------- 覆盖率 / 关闭 / 报告（M3 收尾） ----------

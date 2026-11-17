@@ -46,6 +46,7 @@ function fakeHandlers() {
       closeObligation: record("closeObligation"),
       reopenObligation: record("reopenObligation"),
       advanceLoop: record("advanceLoop"),
+      overview: record("overview"),
       runCycle: record("runCycle"),
       closePreview: record("closePreview"),
       closeProject: record("closeProject"),

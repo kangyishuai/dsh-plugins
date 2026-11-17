@@ -750,6 +750,17 @@ async function main() {
       cycle.raw.slice(0, 400),
     );
 
+    // 9.13) 跨项目总览
+    const overview = await remote(session, "overview");
+    check(
+      "overview 聚合多项目与义务/未知项",
+      overview.ok &&
+        (overview.value?.projects ?? 0) >= 4 &&
+        typeof overview.value?.byKind === "object" &&
+        (overview.value?.obligations?.total ?? 0) >= 2,
+      overview.raw.slice(0, 400),
+    );
+
     // 10) 详情统计
     const detail = await remote(session, "projectDetail", { projectId: "todo-app-smoke" });
     check(

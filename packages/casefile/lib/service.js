@@ -195,6 +195,7 @@ export class CasefileService extends TypertRemoteService {
       listChecks: (projectId, id) => this.actions.listChecks(projectId, id),
       closeObligation: (projectId, id, input) => this.actions.closeObligation(projectId, id, input),
       reopenObligation: (projectId, id, note) => this.actions.reopenObligation(projectId, id, note),
+      overview: () => this.actions.overview(),
       runCycle: (projectId, input) => this.actions.runCycle(projectId, input),
       closeProject: (projectId, options) => this.actions.closeProject(projectId, options),
       closePreview: (projectId, options) => this.actions.closePreview(projectId, options),
@@ -433,6 +434,15 @@ export class CasefileService extends TypertRemoteService {
     }
   }
 
+  /** @returns {Promise<Record<string, any>>} */
+  async overview() {
+    try {
+      return await this.actions.overview();
+    } catch (error) {
+      fail(error);
+    }
+  }
+
   /**
    * @param {string} projectId
    * @param {Record<string, any>} input
@@ -638,6 +648,7 @@ declareRemote(CasefileService, "addCheck");
 declareRemote(CasefileService, "listChecks");
 declareRemote(CasefileService, "closeObligation");
 declareRemote(CasefileService, "reopenObligation");
+declareRemote(CasefileService, "overview");
 declareRemote(CasefileService, "runCycle");
 declareRemote(CasefileService, "closeProject");
 declareRemote(CasefileService, "exportReport");

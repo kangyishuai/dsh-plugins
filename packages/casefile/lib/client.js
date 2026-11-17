@@ -470,6 +470,9 @@ window.__ModuleLoader__.load({
       var projectsState = useState([]);
       var projects = projectsState[0];
       var setProjects = projectsState[1];
+      var overviewState = useState(null);
+      var overview = overviewState[0];
+      var setOverview = overviewState[1];
       var detailState = useState(null);
       var detail = detailState[0];
       var setDetail = detailState[1];
@@ -503,9 +506,10 @@ window.__ModuleLoader__.load({
 
       var loadList = useCallback(() => {
         setLoading(true);
-        return call(ctx, "listProjects")
-          .then((rows) => {
-            setProjects(rows || []);
+        return Promise.all([call(ctx, "listProjects"), call(ctx, "overview").catch(() => null)])
+          .then((values) => {
+            setProjects(values[0] || []);
+            setOverview(values[1] || null);
             setError("");
           })
           .catch((/** @type {any} */ err) => {
@@ -760,6 +764,26 @@ window.__ModuleLoader__.load({
           h(
             "div",
             { className: "cf-detail" },
+            overview?.summary
+              ? h(
+                  "div",
+                  {
+                    className: "cf-card",
+                    "data-casefile-overview": "1",
+                    style: { display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" },
+                  },
+                  h("span", null, overview.summary),
+                  Object.entries(overview.byKind || {})
+                    .sort((a, b) => b[1] - a[1])
+                    .map((entry) =>
+                      h(
+                        "span",
+                        { key: entry[0], className: "cf-tag" },
+                        `${entry[0]} × ${entry[1]}`,
+                      ),
+                    ),
+                )
+              : null,
             projects.length === 0
               ? h(
                   "div",

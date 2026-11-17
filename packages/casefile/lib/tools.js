@@ -111,7 +111,7 @@ export function buildToolDefinitions(handlers, projectOf) {
         properties: {
           action: {
             type: "string",
-            enum: ["open", "list", "get", "update", "close", "report"],
+            enum: ["open", "list", "get", "update", "close", "report", "overview"],
             description: "要执行的动作",
           },
           projectId: PROJECT_ID,
@@ -158,6 +158,10 @@ export function buildToolDefinitions(handlers, projectOf) {
             case "list": {
               const projects = await handlers.listProjects();
               return { projects, summary: `${projects.length} 个项目` };
+            }
+            case "overview": {
+              const overview = await handlers.overview();
+              return overview;
             }
             case "get": {
               const project = await handlers.getProject(projectId(args, exec));
