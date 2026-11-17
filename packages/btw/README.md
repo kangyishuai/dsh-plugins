@@ -49,8 +49,10 @@ Restart the DSH desktop app afterwards.
 /btw --scope recent <q>   # hint the answer to focus (session | recent | selection)
 ```
 
-The overlay (button left of the composer) lists threads with cost badges, lets you follow up or
-promote one to a draft, and shows the scope badge.
+The panel opens as a **centered dialog** from the「旁问」button left of the composer
+(it lives in the frame-wide overlay layer, so it is not clipped by the composer).
+It lists threads with cost badges, lets you follow up or promote one to a draft, and shows the
+scope badge at the bottom. Use「＋ 新旁问」to reveal the new-question input.
 
 ## Configuration
 
