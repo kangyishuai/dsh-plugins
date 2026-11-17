@@ -2,11 +2,19 @@
 // host 半的 Typert Remote Service：项目 CRUD、会话归属、上下文注入的挂载点。
 // 注意（docs/runtime/0.2.1-rc.5.md §6.10）：Remote 方法必须声明在**这个被导出的类自身原型**上，
 // 否则网关不会 claim 端点，所有 /api/projects/* 返回 404。
+import { execFile as execFileCallback } from "node:child_process";
+import { existsSync, mkdirSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { promisify } from "node:util";
+
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 
 import { attachProjectContext } from "./attach.js";
+import { checkThreadBudget } from "./budget.js";
+import { initialView, reduce, sortRows } from "./overview.js";
 import { readProjectFiles } from "./project-files.js";
 import { ProjectStore } from "./store.js";
+import { createIsolatedThread, reclaimThreadWorktree, reconcileWorktrees } from "./thread.js";
+import { impactOf, trashDirFor } from "./trash.js";
 
 /**
  * 运行时不支持装饰器语法，用命令式方式登记 Remote（与 advisor / next-step 同法）。
@@ -29,6 +37,50 @@ function declareRemote(Proto, method) {
     throw new Error(`projects: cannot declare Remote method ${method}`);
   }
   initializers[0].call(Object.create(Proto.prototype));
+}
+
+const execFile = promisify(execFileCallback);
+
+/**
+ * 跑一次 git。
+ * 为什么不用 ctx.subprocess：那是个策略 seam（SubprocessSpawnSpec 要 argv/stdio/graceMs，
+ * 返回的是带采集上限的句柄），而这里只需要一次短命令的 stdout/exit code。
+ * 插件本身就跑在宿主 Node 进程里，node:child_process 总是可用；git 的失败一律由调用方降级。
+ * @param {string[]} args
+ * @param {string} cwd
+ * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
+ */
+async function runGit(args, cwd) {
+  try {
+    const { stdout, stderr } = await execFile("git", args, { cwd, maxBuffer: 8 * 1024 * 1024 });
+    return { code: 0, stdout: String(stdout), stderr: String(stderr) };
+  } catch (error) {
+    const anyError = /** @type {any} */ (error);
+    return {
+      code: Number(anyError?.code ?? 1),
+      stdout: String(anyError?.stdout ?? ""),
+      stderr: String(anyError?.stderr ?? ""),
+    };
+  }
+}
+
+/**
+ * 递归统计目录体积（只用于影响面展示，不追求精确到字节）。
+ * @param {string} dir
+ * @returns {number}
+ */
+function dirSize(dir) {
+  let total = 0;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = `${dir}/${entry.name}`;
+    try {
+      if (entry.isDirectory()) total += dirSize(path);
+      else if (entry.isFile()) total += statSync(path).size;
+    } catch {
+      /* 读不到就跳过，不因为统计失败阻断删除 */
+    }
+  }
+  return total;
 }
 
 /**
@@ -58,12 +110,28 @@ export class ProjectsService extends TypertRemoteService {
     this.dataRoot = "";
     /** @type {Map<string, () => void>} */
     this.attached = new Map();
+    /** 每个线程会话的状态视图（从持久事件归约，重启后可由 replay 重建）。 @type {Map<string, any>} */
+    this.views = new Map();
     /** @type {any} */
     this.agents = undefined;
+    /** @type {any} */
+    this.sessionController = undefined;
 
     // Cordis 里未 inject 的服务属性访问会抛错（0.2.2-rc.3 实测），必须显式 inject。
-    ctx.inject?.(["agents"], (/** @type {any} */ scope) => {
+    // inject 回调是异步的：外部可能在本服务刚构造、回调还没跑时就调 createThread。
+    // 用一个就绪 Promise 兜住这个时序（配上超时，避免依赖缺失时永久挂起）。
+    /** @type {() => void} */
+    let markReady = () => {};
+    this.servicesReady = new Promise((resolve) => {
+      markReady = () => resolve(undefined);
+    });
+    ctx.inject?.(["agents", "sessionController"], (/** @type {any} */ scope) => {
       this.agents = scope.agents;
+      this.sessionController = scope.sessionController;
+      markReady();
+    });
+    ctx.inject?.(["sessionController"], (/** @type {any} */ scope) => {
+      this.sessionController = scope.sessionController;
     });
 
     try {
@@ -81,6 +149,44 @@ export class ProjectsService extends TypertRemoteService {
     ctx.on?.("agent/disposed", (/** @type {any} */ payload) =>
       this.onAgentDisposed(payload?.agent?.id),
     );
+    // 启动对账：记录有、磁盘没的 worktree 直接清掉记录（反向不删，只报告）
+    try {
+      if (this.store) {
+        const changes = reconcileWorktrees(this.store, { exists: (path) => existsSync(path) });
+        if (changes.length > 0) {
+          for (const change of changes) {
+            this.store.appendAudit({
+              action: "worktree/missing",
+              projectId: null,
+              sessionId: change.sessionId,
+            });
+          }
+          this.store.save();
+          this.logger.info?.(`[projects] reconciled ${changes.length} missing worktree(s)`);
+        }
+      }
+    } catch (error) {
+      this.logger.warn?.(
+        `[projects] reconcile failed: ${String(/** @type {any} */ (error)?.message ?? error)}`,
+      );
+    }
+
+    // 归档一个会话 → 尽力回收它的 worktree（脏/未推送/当前会话会被拒绝）
+    ctx.on?.("workspace/session-archived", (/** @type {any} */ request) => {
+      const sessionId = String(request?.sessionId ?? "");
+      if (sessionId === "") return undefined;
+      void this.onSessionArchived(sessionId);
+      return undefined;
+    });
+
+    ctx.on?.("session/event", (/** @type {any} */ session, /** @type {any} */ event) => {
+      const sessionId = String(session?.id ?? "");
+      if (sessionId === "" || !this.store) return;
+      // 只跟项目线程，其它会话零开销
+      if (!this.store.projectOfSession(sessionId)) return;
+      const previous = this.views.get(sessionId) ?? initialView();
+      this.views.set(sessionId, reduce(previous, event));
+    });
     ctx.effect?.(() => () => {
       for (const dispose of this.attached.values()) {
         try {
@@ -122,6 +228,41 @@ export class ProjectsService extends TypertRemoteService {
     } catch {
       /* ignore */
     }
+  }
+
+  /**
+   * 会话归档后的回收钩子：不抛错（归档已经成功，回收失败只记录）。
+   * @param {string} sessionId
+   */
+  async onSessionArchived(sessionId) {
+    try {
+      const store = this.requireStore();
+      if (!store.projectOfSession(sessionId)) return;
+      const result = await reclaimThreadWorktree({
+        store,
+        sessionId,
+        deps: { runGit },
+      });
+      store.appendAudit({
+        action: "worktree/reclaim",
+        projectId: null,
+        sessionId,
+        result: result.reason || "ok",
+      });
+      store.save();
+      if (!result.reclaimed) {
+        this.logger.info?.(`[projects] kept worktree for ${sessionId}: ${result.reason}`);
+      }
+    } catch (error) {
+      this.logger.warn?.(
+        `[projects] archive reclaim failed for ${sessionId}: ${String(/** @type {any} */ (error)?.message ?? error)}`,
+      );
+    }
+  }
+
+  /** 等注入就绪（最多 5s）；超时视为依赖缺失，由调用方报错。 */
+  async waitServices() {
+    await Promise.race([this.servicesReady, new Promise((resolve) => setTimeout(resolve, 5000))]);
   }
 
   /** @returns {any} */
@@ -205,6 +346,28 @@ export class ProjectsService extends TypertRemoteService {
     return project;
   }
 
+  /**
+   * 暂停项目：不再能建新线程，已有线程不受影响（可逆）。
+   * @param {string} id
+   */
+  pauseProject(id) {
+    const store = this.requireStore();
+    const project = store.updateProject(id, { state: "paused" });
+    store.save();
+    return project;
+  }
+
+  /**
+   * 恢复项目。
+   * @param {string} id
+   */
+  resumeProject(id) {
+    const store = this.requireStore();
+    const project = store.updateProject(id, { state: "active" });
+    store.save();
+    return project;
+  }
+
   /** @param {string} id */
   archiveProject(id) {
     const store = this.requireStore();
@@ -215,6 +378,88 @@ export class ProjectsService extends TypertRemoteService {
       this.detachSession(thread.sessionId);
     }
     return project;
+  }
+
+  /**
+   * dry-run：删除这个项目会影响什么（数量/体积/是否在跑/能否恢复）。
+   * @param {string} id
+   */
+  previewDeleteProject(id) {
+    const store = this.requireStore();
+    const project = store.getProject(id);
+    if (!project) throw new Error(`projects: unknown project ${id}`);
+    const threads = store.listThreads(id);
+    const contentDir = `${this.dataRoot}/${id}`;
+    let contentBytes = 0;
+    let hasContentDir = false;
+    try {
+      if (existsSync(contentDir)) {
+        hasContentDir = true;
+        contentBytes = dirSize(contentDir);
+      }
+    } catch {
+      hasContentDir = false;
+    }
+    return {
+      projectId: id,
+      name: project.name,
+      impact: impactOf({ threads, contentBytes, hasContentDir, name: project.name }),
+      threads: threads.map((/** @type {any} */ thread) => ({
+        sessionId: thread.sessionId,
+        state: thread.state,
+      })),
+      contentDir,
+    };
+  }
+
+  /**
+   * 删除项目：记录与内容文件移入回收站（会话日志不动），写审计。
+   * 调用方应先跑 previewDeleteProject 把影响面展示给用户。
+   * @param {string} id
+   */
+  deleteProject(id) {
+    const store = this.requireStore();
+    const preview = this.previewDeleteProject(id);
+    const trashDir = trashDirFor({ dataRoot: this.dataRoot, projectId: id });
+    mkdirSync(trashDir, { recursive: true, mode: 0o700 });
+    const removed = store.removeProject(id);
+    // 内容文件（如果有）整体搬进回收站；搬不动就把元数据留在回收站里并报错
+    if (preview.impact.hasContentDir && existsSync(preview.contentDir)) {
+      try {
+        renameSync(preview.contentDir, `${trashDir}/content`);
+      } catch (error) {
+        writeFileSync(
+          `${trashDir}/manifest.json`,
+          `${JSON.stringify({ project: removed.project, threads: removed.threads, contentDir: preview.contentDir, moved: false }, null, 2)}\n`,
+          { mode: 0o600 },
+        );
+        store.save();
+        throw new Error(
+          `projects: content move failed (${String(/** @type {any} */ (error)?.message ?? error)})`,
+        );
+      }
+    }
+    writeFileSync(
+      `${trashDir}/manifest.json`,
+      `${JSON.stringify(
+        {
+          format: 1,
+          deletedAt: new Date().toISOString(),
+          project: removed.project,
+          threads: removed.threads,
+          contentDir: preview.contentDir,
+          moved: preview.impact.hasContentDir,
+          summary: preview.impact.summary,
+        },
+        null,
+        2,
+      )}\n`,
+      { mode: 0o600 },
+    );
+    for (const thread of removed.threads) this.detachSession(thread.sessionId);
+    store.appendAudit({ action: "project/deleted", projectId: id, reason: "trash", trashDir });
+    store.save();
+    return { deleted: true, trashDir, summary: preview.impact.summary };
   }
 
   /**
@@ -256,6 +501,40 @@ export class ProjectsService extends TypertRemoteService {
     return thread;
   }
 
+  /**
+   * 线程进度（面板用）：状态由持久事件归约，按「需要我」优先排序。
+   * @param {string} projectId
+   */
+  progress(projectId) {
+    const store = this.requireStore();
+    const threads = store.listThreads(projectId);
+    const rows = threads.map((/** @type {any} */ thread) => ({
+      sessionId: thread.sessionId,
+      branch: thread.branch ?? null,
+      worktree: thread.worktree ?? null,
+      view: this.views.get(thread.sessionId) ?? initialView(),
+    }));
+    const sorted = sortRows(rows);
+    /** @type {Record<string, number>} */
+    const counts = { "waiting-user": 0, failed: 0, working: 0, done: 0, idle: 0 };
+    for (const row of rows) counts[row.view.state] = (counts[row.view.state] ?? 0) + 1;
+    const project = store.getProject(projectId);
+    const budget = checkThreadBudget({ project, threads, now: Date.now() });
+    return {
+      rows: sorted,
+      counts,
+      total: rows.length,
+      attention: counts["waiting-user"] + counts.failed,
+      budget: {
+        ok: budget.ok,
+        reason: budget.reason,
+        used: budget.used,
+        limits: project?.budget ?? null,
+      },
+      projectState: project?.state ?? "active",
+    };
+  }
+
   /** 诊断：哪些会话已挂上项目上下文（只读，供冒烟/排障）。 */
   debugAttached() {
     return [...this.attached.keys()];
@@ -273,6 +552,73 @@ export class ProjectsService extends TypertRemoteService {
     };
   }
 
+  /**
+   * 建一个线程（尽力隔离到独立 worktree）。
+   * @param {string} projectId
+   * @param {string} task
+   */
+  async createThread(projectId, task) {
+    await this.waitServices();
+    const store = this.requireStore();
+    // 预算闸：暂停/归档、每日线程数、并发数。拒绝时给可读原因，不静默降级。
+    const project = store.getProject(projectId);
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const verdict = checkThreadBudget({
+      project,
+      threads: store.listThreads(projectId),
+      now: Date.now(),
+    });
+    if (!verdict.ok) {
+      store.appendAudit({ action: "thread/rejected", projectId, reason: verdict.reason });
+      store.save();
+      throw new Error(
+        `projects: ${verdict.reason} (today=${verdict.used.today}, running=${verdict.used.running})`,
+      );
+    }
+    const sc = this.sessionController;
+    if (!sc) throw new Error("projects: session controller unavailable");
+    const thread = await createIsolatedThread({
+      store,
+      dataRoot: this.dataRoot,
+      projectId,
+      deps: {
+        runGit: runGit,
+        createSession: async (/** @type {{cwd: string}} */ request) => {
+          const created = await sc.create({ cwd: request.cwd });
+          return { sessionId: String(created.sessionId) };
+        },
+      },
+    });
+    store.save();
+    if (typeof task === "string" && task.trim() !== "") {
+      try {
+        await sc.prompt(
+          {
+            requestId: `projects-thread-${Date.now()}`,
+            sessionId: thread.sessionId,
+            mode: "queue",
+            content: [{ type: "text", text: task }],
+          },
+          new AbortController().signal,
+        );
+      } catch {
+        /* 投递失败不影响线程本身；面板会显示 idle */
+      }
+    }
+    return thread;
+  }
+
+  /**
+   * 回收一个线程的 worktree（三重判据不满足就拒绝）。
+   * @param {string} sessionId
+   */
+  async reclaimThread(sessionId) {
+    const store = this.requireStore();
+    const result = await reclaimThreadWorktree({ store, sessionId, deps: { runGit } });
+    store.save();
+    return result;
+  }
+
   /** @param {string} sessionId */
   detachThread(sessionId) {
     const store = this.requireStore();
@@ -288,9 +634,16 @@ declareRemote(ProjectsService, "listThreads");
 declareRemote(ProjectsService, "projectOfSession");
 declareRemote(ProjectsService, "createProject");
 declareRemote(ProjectsService, "updateProject");
+declareRemote(ProjectsService, "pauseProject");
+declareRemote(ProjectsService, "resumeProject");
 declareRemote(ProjectsService, "archiveProject");
+declareRemote(ProjectsService, "previewDeleteProject");
+declareRemote(ProjectsService, "deleteProject");
 declareRemote(ProjectsService, "attachThread");
 declareRemote(ProjectsService, "detachThread");
+declareRemote(ProjectsService, "createThread");
+declareRemote(ProjectsService, "reclaimThread");
+declareRemote(ProjectsService, "progress");
 declareRemote(ProjectsService, "debugAttached");
 declareRemote(ProjectsService, "detachSession");
 declareRemote(ProjectsService, "describe");

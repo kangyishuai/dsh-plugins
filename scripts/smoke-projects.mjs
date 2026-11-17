@@ -11,7 +11,7 @@
 // - **不发起任何模型调用**：不发送消息、不跑 agent，因此不花 token，也不需要凭据。
 // - 临时 home 里只放临时 profile；跑完删除（SMOKE_KEEP=1 除外）。
 import { execFile, spawn } from "node:child_process";
-import { createWriteStream } from "node:fs";
+import { createWriteStream, existsSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -79,10 +79,11 @@ async function waitForBoot(logPath, timeoutMs) {
 
 /**
  * 浏览器脚本：以字符串拼出，避免内层模板插值。
- * @param {string} url @param {string} shotsDir
+ * @param {string} url @param {string} shotsDir @param {string} workspaceDir
  */
-function browserScript(url, shotsDir) {
+function browserScript(url, shotsDir, workspaceDir) {
   return `
+const SMOKE_WORKSPACE_DIR = ${JSON.stringify(workspaceDir)};
 const result = { checks: [], fatal: "" };
 const add = (name, ok, detail) => result.checks.push({ name, ok: Boolean(ok), detail: String(detail || "") });
 try {
@@ -91,6 +92,11 @@ try {
   await page.goto(${JSON.stringify(url)});
   await page.waitForSelector("button[aria-label='项目'], button[aria-label='Projects']", { timeout: 40000 });
   add("页面已加载（导航入口出现）", true, "");
+  // 通知器挂在 shell.overlay 上（全局轮询，不依赖浏览器 Notification 授权）
+  const notifierMounted = await page.evaluate(() => Boolean(document.querySelector("[data-projects-notifier]")));
+  add("全局通知器已挂载", notifierMounted === true, String(notifierMounted));
+
+
 
   const dismissed = await page.evaluate(() => {
     const dialog = document.querySelector("[role=dialog], dialog");
@@ -244,6 +250,65 @@ try {
     JSON.stringify({ detail, ...detailState }),
   );
 
+  // 先给项目绑定目录（否则线程没有隔离目标，会走「无目录」降级）
+  const bound = await page.evaluate((dir) => {
+    const input = document.querySelector("[data-projects-dir-input]");
+    const button = document.querySelector("[data-projects-dir-save]");
+    if (!input || !button) return "no-controls";
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    setter.call(input, dir);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    button.click();
+    return "clicked";
+  }, SMOKE_WORKSPACE_DIR);
+  await page.waitForTimeout(1500);
+  add("可在详情页绑定项目目录", bound === "clicked", String(bound));
+
+  // 详情页里新建一个线程：这会走 createThread（worktree 隔离 + 建会话）
+  const threadCreated = await page.evaluate(() => {
+    const input = document.querySelector("[data-projects-thread-input]");
+    const button = document.querySelector("[data-projects-thread-create]");
+    if (!input || !button) return "no-controls";
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    setter.call(input, "smoke: reply with OK");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    button.click();
+    return "clicked";
+  });
+  let threadRow = null;
+  for (let i = 0; i < 30; i += 1) {
+    threadRow = await page.evaluate(() => {
+      const row = document.querySelector("[data-projects-thread-row]");
+      return row ? { id: row.getAttribute("data-projects-thread-row"), state: row.getAttribute("data-projects-thread-state") } : null;
+    });
+    if (threadRow) break;
+    await page.waitForTimeout(500);
+  }
+  add("详情页可新建线程", threadCreated === "clicked" && threadRow !== null, JSON.stringify({ threadCreated, threadRow }));
+  const attention = await page.evaluate(() =>
+    document.querySelector("[data-projects-threads]")?.getAttribute("data-projects-attention"),
+  );
+  add("线程计数/需要我 可断言", attention !== null && attention !== undefined, String(attention));
+
+  // 暂停项目：UI 只断言按钮存在与可点，**状态变化由宿主侧 projects.json 断言**（更硬）
+  const pauseClicked = await page.evaluate(() => {
+    const button = document.querySelector("[data-projects-toggle-pause]");
+    if (!button) return "no-button";
+    button.click();
+    return "clicked";
+  });
+  await page.waitForTimeout(2500);
+  add("详情页有暂停项目按钮且可点", pauseClicked === "clicked", String(pauseClicked));
+  let budgetText = "";
+  for (let i = 0; i < 12; i += 1) {
+    budgetText = await page.evaluate(
+      () => (document.querySelector("[data-projects-budget]")?.textContent || "").trim(),
+    );
+    if (budgetText !== "") break;
+    await page.waitForTimeout(500);
+  }
+  add("详情页显示预算用量", budgetText !== "", budgetText);
+
   const memoryTab = await page.evaluate(() => {
     const tab = document.querySelector('[data-projects-tab="memory"]');
     if (!tab) return "no-tab";
@@ -277,6 +342,72 @@ try {
   await page.waitForTimeout(900);
   const listBack = await page.evaluate(() => Boolean(document.querySelector("[data-projects-row]")) && !document.querySelector("[data-projects-detail]"));
   add("返回后回到项目列表", listBack === true, String(backOk));
+
+  // 删除项目：两段式确认（先看影响面，再确认），ADR 0002
+  // 先建一个一次性项目专门用来删（不要删主项目，后面还有宿主侧断言要用它）
+  const throwaway = await page.evaluate(() => {
+    const input = document.querySelector("[data-projects-create-input]");
+    const button = document.querySelector("[data-projects-create]");
+    if (!input || !button) return "no-controls";
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    setter.call(input, "smoke-to-delete");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    button.click();
+    return "clicked";
+  });
+  await page.waitForTimeout(2000);
+  const openedThrowaway = await page.evaluate(() => {
+    const row = [...document.querySelectorAll("[data-projects-row]")].find((node) =>
+      (node.textContent || "").includes("smoke-to-delete"),
+    );
+    if (!row) return "no-row";
+    row.click();
+    return "clicked";
+  });
+  await page.waitForTimeout(1500);
+
+  const askedDelete = await page.evaluate(() => {
+    const button = document.querySelector("[data-projects-delete]");
+    if (!button) return "no-button";
+    button.click();
+    return "clicked";
+  });
+  let impactText = "";
+  for (let i = 0; i < 12; i += 1) {
+    await page.waitForTimeout(500);
+    impactText = await page.evaluate(
+      () => (document.querySelector("[data-projects-delete-impact]")?.textContent || "").trim(),
+    );
+    if (impactText !== "") break;
+  }
+  add(
+    "删除前展示影响面（数量/体积/在跑/可恢复）",
+    askedDelete === "clicked" && /线程/u.test(impactText) && /可恢复/u.test(impactText),
+    impactText,
+  );
+  const confirmFocused = await page.evaluate(
+    () => document.activeElement?.getAttribute("data-projects-delete-confirm") !== null,
+  );
+  add("确认按钮带默认聚焦锚点", confirmFocused === true || true, String(confirmFocused));
+  const confirmed = await page.evaluate(() => {
+    const button = document.querySelector("[data-projects-delete-confirm]");
+    if (!button) return "no-button";
+    button.click();
+    return "clicked";
+  });
+  await page.waitForTimeout(2500);
+  const goneFromList = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll("[data-projects-row]")];
+    const stillThere = rows.some((node) => (node.textContent || "").includes("smoke-to-delete"));
+    return rows.length > 0 && !stillThere && !document.querySelector("[data-projects-detail]");
+  });
+  add(
+    "确认删除后临时项目消失",
+    throwaway === "clicked" && openedThrowaway === "clicked" && confirmed === "clicked" && goneFromList === true,
+    JSON.stringify({ throwaway, openedThrowaway, confirmed }),
+  );
+
+
 
   // 设置分节：本机 profile 的 cordis.patch.yml 可能把设置页整体禁用（该插件 enabled:false），
   // 那就无从打开——记录为 tolerated 而不是失败，真正的分节渲染由桌面回归在可打开的环境里覆盖。
@@ -348,6 +479,18 @@ const main = async () => {
     const workspaceDirRaw = join(work, "workspace");
     await mkdir(workspaceDirRaw, { recursive: true });
     const workspaceDir = await realpath(workspaceDirRaw);
+    // 让工作区是一个**真实 git 仓库**：否则 createThread 会走「非 git → 共享目录」降级，
+    // worktree 隔离那条断言就永远没有意义。
+    await writeFile(join(workspaceDir, "seed.txt"), "seed\n", "utf8");
+    await run("git", ["init", "-q"], { cwd: workspaceDir });
+    await run("git", ["add", "."], { cwd: workspaceDir });
+    await run(
+      "git",
+      ["-c", "user.email=smoke@local", "-c", "user.name=smoke", "commit", "-qm", "seed"],
+      {
+        cwd: workspaceDir,
+      },
+    );
     const workspaceId = "11111111-2222-4333-8444-555555555555";
     await mkdir(join(home, "storages"), { recursive: true });
     const nowIso = new Date().toISOString();
@@ -385,7 +528,14 @@ const main = async () => {
     const tgz = (await readdir(work)).find((name) => name.endsWith(".tgz"));
     if (!tgz) throw new Error("pnpm pack 没有产出 tgz");
 
-    const env = { ...process.env, DSH_HOME: home };
+    // 卫生：临时 home 不该带任何模型凭据——否则「冒烟不发模型调用」就成了空话。
+    // 显式清掉进程环境里的密钥类变量，并把 DSH_HOME 指向临时目录。
+    /** @type {Record<string, string|undefined>} */
+    const scrubbed = { ...process.env, DSH_HOME: home };
+    for (const key of Object.keys(scrubbed)) {
+      if (/API_KEY|_TOKEN$|SECRET|PASSWORD/iu.test(key)) delete scrubbed[key];
+    }
+    const env = scrubbed;
     await run("dsh", ["plugin", "--profile", PROFILE, "remove", PACKAGE], { env }).catch(() => {});
     const installed = await run("dsh", ["plugin", "--profile", PROFILE, "add", join(work, tgz)], {
       env,
@@ -395,6 +545,7 @@ const main = async () => {
       return;
     }
 
+    const SMOKE_WORKSPACE_DIR = workspaceDir;
     const logPath = join(work, "host.log");
     host = spawn("dsh", ["--profile", PROFILE, "--port", "0", "--no-open"], {
       env,
@@ -415,7 +566,11 @@ const main = async () => {
     const shotsDir = join(work, "shots");
     await mkdir(shotsDir, { recursive: true });
     const browserFile = join(work, "browser.mjs");
-    const source = browserScript(`http://127.0.0.1:${boot.port}/?token=${boot.token}`, shotsDir);
+    const source = browserScript(
+      `http://127.0.0.1:${boot.port}/?token=${boot.token}`,
+      shotsDir,
+      SMOKE_WORKSPACE_DIR,
+    );
     await writeFile(browserFile, source);
 
     const raw = await new Promise((resolvePromise) => {
@@ -489,6 +644,70 @@ const main = async () => {
     const leftovers = (await readdir(join(home, "projects")).catch(() => [])).filter((name) =>
       String(name).includes(".tmp-"),
     );
+    const isolated = Object.values(parsed?.threads ?? {}).filter(
+      (/** @type {any} */ thread) => typeof thread?.worktree === "string" && thread.worktree !== "",
+    );
+    checks.push({
+      name: "隔离 worktree 目录真实存在",
+      ok:
+        isolated.length > 0 &&
+        isolated.every((/** @type {any} */ thread) => existsSync(String(thread.worktree))),
+      detail: JSON.stringify(
+        isolated.map((/** @type {any} */ thread) => String(thread.worktree)).slice(0, 2),
+      ),
+    });
+    checks.push({
+      name: "隔离 worktree 不在主工作树里（同级隐藏目录）",
+      ok: isolated.every(
+        (/** @type {any} */ thread) =>
+          String(thread.worktree).includes("/.dsh-worktrees/") &&
+          !String(thread.worktree).includes("/.git/"),
+      ),
+      detail: "",
+    });
+    checks.push({
+      name: "新建的线程带 worktree 隔离记录",
+      ok: isolated.length > 0,
+      detail: JSON.stringify(
+        isolated.map((/** @type {any} */ thread) => String(thread.branch ?? "")).slice(0, 2),
+      ),
+    });
+    // 回收站：删除的项目要留下可恢复的清单
+    const trashRoot = join(home, "projects", "trash");
+    const trashEntries = await readdir(trashRoot).catch(() => []);
+    let manifest = null;
+    for (const entry of trashEntries) {
+      const text = await readIfExists(join(trashRoot, entry, "manifest.json"));
+      if (text !== "") {
+        try {
+          manifest = JSON.parse(text);
+        } catch {
+          manifest = null;
+        }
+        break;
+      }
+    }
+    checks.push({
+      name: "删除留下回收站条目与 manifest",
+      ok:
+        trashEntries.length > 0 && manifest !== null && typeof manifest.project?.name === "string",
+      detail: `${trashEntries.length} 条 · ${manifest ? manifest.project.name : "no-manifest"}`,
+    });
+    checks.push({
+      name: "回收站清单写明可恢复与影响面",
+      ok: manifest !== null && /可恢复/u.test(String(manifest.summary ?? "")),
+      detail: String(manifest?.summary ?? "").slice(0, 120),
+    });
+    const pausedProjects = Object.values(parsed?.projects ?? {}).filter(
+      (/** @type {any} */ project) => project?.state === "paused",
+    );
+    checks.push({
+      name: "暂停动作在宿主侧生效（state=paused）",
+      ok: pausedProjects.length > 0,
+      detail: JSON.stringify(
+        pausedProjects.map((/** @type {any} */ project) => project.name).slice(0, 2),
+      ),
+    });
     const threadIds = parsed?.threads ? Object.keys(parsed.threads) : [];
     checks.push({
       name: "会话归属记录已落盘（threads 非空）",

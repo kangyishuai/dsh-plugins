@@ -142,6 +142,7 @@ export function normalize(raw, root) {
         branch: typeof thread.branch === "string" ? thread.branch : null,
         worktree: typeof thread.worktree === "string" ? thread.worktree : null,
         seq: Number.isInteger(thread.seq) ? thread.seq : 0,
+        createdAt: typeof thread.createdAt === "string" ? thread.createdAt : iso(),
       };
     }
   }
@@ -220,7 +221,12 @@ export class ProjectStore {
       dirs: Array.isArray(input.dirs) ? input.dirs.filter((d) => typeof d === "string") : [],
       coordinatorSessionId: null,
       policy: defaultPolicy(),
-      budget: { dailyTokens: null, maxThreadsPerDay: null, maxStepsPerThread: null },
+      budget: {
+        dailyTokens: null,
+        maxThreadsPerDay: null,
+        maxStepsPerThread: null,
+        maxConcurrent: null,
+      },
       createdAt: stamp,
       updatedAt: stamp,
     };
@@ -276,8 +282,42 @@ export class ProjectStore {
       branch: current?.branch ?? null,
       worktree: current?.worktree ?? null,
       seq: current?.seq ?? 0,
+      createdAt: current?.createdAt ?? iso(this.now()),
     };
     return { ...this.state.threads[sessionId] };
+  }
+
+  /**
+   * 删除一个项目记录，并摘掉它的线程归属（**不动会话日志**）。
+   * 返回被删内容，供调用方写进回收站清单。
+   * @param {string} id
+   */
+  removeProject(id) {
+    const project = this.state.projects[id];
+    if (!project) throw new Error(`projects: unknown project ${id}`);
+    const threads = Object.entries(this.state.threads)
+      .filter(([, thread]) => /** @type {any} */ (thread).projectId === id)
+      .map(([sessionId, thread]) => ({ sessionId, .../** @type {any} */ (thread) }));
+    delete this.state.projects[id];
+    for (const thread of threads) delete this.state.threads[thread.sessionId];
+    return { project: { ...project }, threads };
+  }
+
+  /**
+   * 记录线程的 worktree 归属（建 worktree 成功后调用）。
+   * @param {string} sessionId
+   * @param {{ branch?: string|null, worktree?: string|null, baseSha?: string|null, state?: string }} patch
+   */
+  setThreadWorktree(sessionId, patch) {
+    const current = this.state.threads[sessionId];
+    if (!current) throw new Error(`projects: unknown thread ${sessionId}`);
+    if (typeof patch.branch === "string" || patch.branch === null) current.branch = patch.branch;
+    if (typeof patch.worktree === "string" || patch.worktree === null)
+      current.worktree = patch.worktree;
+    if (typeof patch.baseSha === "string" || patch.baseSha === null)
+      current.baseSha = patch.baseSha;
+    if (typeof patch.state === "string") current.state = patch.state;
+    return { ...current };
   }
 
   /** @param {string} sessionId */

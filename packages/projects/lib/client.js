@@ -54,6 +54,28 @@ window.__ModuleLoader__.load({
       "detail.memoryIndex": "记忆索引（MEMORY.md）",
       "detail.emptyFile": "（空）",
       "detail.auditEmpty": "还没有审计记录。",
+      "detail.state.waiting-user": "待你处理",
+      "detail.state.failed": "失败",
+      "detail.state.working": "进行中",
+      "detail.state.done": "已完成",
+      "detail.state.idle": "空闲",
+      "detail.threadPlaceholder": "给这个线程一个任务，回车即建",
+      "detail.threadCreate": "新建线程",
+      "detail.threadCreating": "正在建…",
+      "detail.dirLabel": "项目目录",
+      "detail.dirPlaceholder": "绝对路径；线程会在这里建 worktree",
+      "detail.dirSave": "绑定",
+      "detail.pause": "暂停项目",
+      "detail.resume": "恢复项目",
+      "detail.budget": "今日 {today} 个线程 · 进行中 {running}",
+      "detail.delete": "删除项目",
+      "detail.deleting": "正在删除…",
+      "detail.deleteConfirm": "确认删除",
+      "detail.deleteCancel": "取消",
+      "detail.deleteDetails": "详情（路径与恢复位置）",
+      "detail.deleteImpact": "{summary}",
+      "notify.failed": "{count} 个线程失败",
+      "notify.waiting": "{count} 个线程在等你",
     };
     var EN = {
       title: "Projects",
@@ -93,6 +115,28 @@ window.__ModuleLoader__.load({
       "detail.memoryIndex": "Memory index (MEMORY.md)",
       "detail.emptyFile": "(empty)",
       "detail.auditEmpty": "No audit entries yet.",
+      "detail.state.waiting-user": "Waiting on you",
+      "detail.state.failed": "Failed",
+      "detail.state.working": "Working",
+      "detail.state.done": "Done",
+      "detail.state.idle": "Idle",
+      "detail.threadPlaceholder": "Describe a task for a new thread (Enter to create)",
+      "detail.threadCreate": "New thread",
+      "detail.threadCreating": "Creating…",
+      "detail.dirLabel": "Project dir",
+      "detail.dirPlaceholder": "Absolute path; threads create worktrees here",
+      "detail.dirSave": "Bind",
+      "detail.pause": "Pause project",
+      "detail.resume": "Resume project",
+      "detail.budget": "{today} threads today · {running} running",
+      "detail.delete": "Delete project",
+      "detail.deleting": "Deleting…",
+      "detail.deleteConfirm": "Delete",
+      "detail.deleteCancel": "Cancel",
+      "detail.deleteDetails": "Details (path and restore location)",
+      "detail.deleteImpact": "{summary}",
+      "notify.failed": "{count} threads failed",
+      "notify.waiting": "{count} threads waiting on you",
     };
     var PANEL_ID = "projects";
     var SERVICE = "projects";
@@ -351,6 +395,10 @@ window.__ModuleLoader__.load({
               t: t,
               project: projects.find((/** @type {any} */ p) => p.id === selectedId),
               onBack: () => setSelectedId(null),
+              onDeleted: () => {
+                setSelectedId(null);
+                refresh();
+              },
             })
           : null,
         selectedId
@@ -399,7 +447,7 @@ window.__ModuleLoader__.load({
     /**
      * 项目详情：线程 / 记忆 / 审计三个页签（conventions §7.3：页签 ≤3）。
      * 只读；写操作留给后续里程碑。
-     * @param {{api: any, t: any, project: any, onBack: () => void}} props
+     * @param {{api: any, t: any, project: any, onBack: () => void, onDeleted?: () => void}} props
      */
     function ProjectDetail(props) {
       const api = props.api;
@@ -421,7 +469,7 @@ window.__ModuleLoader__.load({
       const load = useCallback(() => {
         setData((/** @type {any} */ prev) => ({ ...prev, loading: true, error: "" }));
         Promise.all([
-          call(api.ctx, "listThreads", { projectId: project.id }),
+          call(api.ctx, "progress", { projectId: project.id }),
           call(api.ctx, "getProjectContent", { projectId: project.id }),
           call(api.ctx, "listAudit", { projectId: project.id }),
         ]).then(
@@ -429,7 +477,9 @@ window.__ModuleLoader__.load({
             setData({
               loading: false,
               error: "",
-              threads: Array.isArray(values[0]) ? values[0] : [],
+              threads: Array.isArray(values[0]?.rows) ? values[0].rows : [],
+              progress: values[0] || null,
+              projectState: values[0]?.projectState ?? project.state,
               content: values[1] || null,
               audit: Array.isArray(values[2]) ? values[2] : [],
             });
@@ -446,12 +496,96 @@ window.__ModuleLoader__.load({
         );
       }, [api, project.id]);
 
+      const draftState = useState("");
+      const draft = draftState[0];
+      const setDraft = draftState[1];
+      const busyState = useState(false);
+      const busy = busyState[0];
+      const setBusy = busyState[1];
+
+      const deleteState = useState({ confirming: false, busy: false, impact: null });
+      const del = deleteState[0];
+      const setDel = deleteState[1];
+      const askDelete = useCallback(() => {
+        call(api.ctx, "previewDeleteProject", { id: project.id }).then(
+          (preview) => setDel({ confirming: true, busy: false, impact: preview }),
+          (error) =>
+            setDel({
+              confirming: true,
+              busy: false,
+              impact: { impact: { summary: String(error?.message ?? error) } },
+            }),
+        );
+      }, [api, project.id, setDel]);
+      const confirmDelete = useCallback(() => {
+        setDel((/** @type {any} */ prev) => ({ ...prev, busy: true }));
+        call(api.ctx, "deleteProject", { id: project.id }).then(
+          () => {
+            setDel({ confirming: false, busy: false, impact: null });
+            if (typeof props.onDeleted === "function") props.onDeleted();
+          },
+          (error) => {
+            setDel({ confirming: false, busy: false, impact: null });
+            setData((/** @type {any} */ prev) => ({
+              ...prev,
+              error: String(error?.message ?? error),
+            }));
+          },
+        );
+      }, [api, project.id, props, setData, setDel]);
+
+      const dirState = useState(
+        project.dirs && project.dirs.length > 0 ? String(project.dirs[0]) : "",
+      );
+      const dirDraft = dirState[0];
+      const setDirDraft = dirState[1];
+      const saveDir = useCallback(() => {
+        const value = String(dirDraft).trim();
+        call(api.ctx, "updateProject", {
+          id: project.id,
+          patch: { dirs: value === "" ? [] : [value] },
+        }).then(
+          () => load(),
+          (error) => {
+            setData((/** @type {any} */ prev) => ({
+              ...prev,
+              error: String(error?.message ?? error),
+            }));
+          },
+        );
+      }, [api, dirDraft, load, project.id, setData]);
+
+      const createThread = useCallback(() => {
+        const task = String(draft).trim();
+        if (task === "" || busy) return;
+        setBusy(true);
+        call(api.ctx, "createThread", { projectId: project.id, task }).then(
+          () => {
+            setDraft("");
+            setBusy(false);
+            load();
+          },
+          (error) => {
+            setBusy(false);
+            setData((/** @type {any} */ prev) => ({
+              ...prev,
+              error: String(error?.message ?? error),
+            }));
+          },
+        );
+      }, [api, busy, draft, load, project.id, setBusy, setDraft, setData]);
+
       useEffect(() => {
         load();
       }, [load]);
 
       const tabs = [
-        { id: "threads", label: text(t, "detail.tab.threads", { count: data.threads.length }) },
+        {
+          id: "threads",
+          label: text(t, "detail.tab.threads", {
+            count: data.progress?.total ?? data.threads.length,
+          }),
+        },
         { id: "memory", label: text(t, "detail.tab.memory") },
         { id: "audit", label: text(t, "detail.tab.audit") },
       ];
@@ -460,7 +594,9 @@ window.__ModuleLoader__.load({
         if (data.loading) return h("p", { style: styles.empty }, text(t, "detail.loading"));
         if (data.error !== "") return h("p", { style: styles.error }, data.error);
         if (tab === "threads") {
-          if (data.threads.length === 0)
+          const rows = data.progress?.rows ?? [];
+          const counts = data.progress?.counts ?? {};
+          if (rows.length === 0)
             return h(
               "p",
               { style: styles.empty, "data-projects-threads-empty": "" },
@@ -468,23 +604,70 @@ window.__ModuleLoader__.load({
             );
           return h(
             "div",
-            { "data-projects-threads": "" },
-            data.threads.map((/** @type {any} */ thread) =>
+            {
+              "data-projects-threads": "",
+              "data-projects-attention": String(data.progress?.attention ?? 0),
+            },
+            h(
+              "div",
+              { style: { display: "flex", gap: "8px", margin: "0 0 8px" } },
+              h("input", {
+                style: styles.input,
+                value: draft,
+                placeholder: text(t, "detail.threadPlaceholder"),
+                "data-projects-thread-input": "",
+                onChange: (/** @type {any} */ event) => setDraft(event.target.value),
+                onKeyDown: (/** @type {any} */ event) => {
+                  if (event.key === "Enter") createThread();
+                },
+                disabled: busy,
+              }),
+              h(
+                "button",
+                {
+                  type: "button",
+                  style: styles.button,
+                  "data-projects-thread-create": "",
+                  onClick: createThread,
+                  disabled: busy,
+                },
+                busy ? text(t, "detail.threadCreating") : text(t, "detail.threadCreate"),
+              ),
+            ),
+            h(
+              "div",
+              { style: { ...styles.meta, margin: "0 0 6px" }, "data-projects-counts": "" },
+              ["waiting-user", "failed", "working", "done", "idle"]
+                .filter((state) => (counts[state] ?? 0) > 0)
+                .map((state) => `${text(t, `detail.state.${state}`)} ${counts[state]}`)
+                .join(" · "),
+            ),
+            rows.map((/** @type {any} */ row) =>
               h(
                 "div",
                 {
-                  key: thread.sessionId,
+                  key: row.sessionId,
                   style: styles.row,
-                  "data-projects-thread-row": thread.sessionId,
+                  "data-projects-thread-row": row.sessionId,
+                  "data-projects-thread-state": row.view.state,
                 },
                 h(
                   "div",
                   { style: styles.rowMain },
-                  h("span", { style: styles.name }, String(thread.sessionId).slice(0, 20)),
+                  h(
+                    "span",
+                    { style: styles.name },
+                    `${String(row.sessionId).slice(0, 20)} · ${text(t, `detail.state.${row.view.state}`)}`,
+                  ),
                   h(
                     "span",
                     { style: styles.meta },
-                    text(t, "detail.threadState", { state: thread.state }),
+                    [
+                      row.view.turn > 0 ? `turn ${row.view.turn}` : "",
+                      row.branch ? String(row.branch) : "",
+                    ]
+                      .filter((part) => part !== "")
+                      .join(" · ") || "—",
                   ),
                 ),
               ),
@@ -566,6 +749,140 @@ window.__ModuleLoader__.load({
             project.goal || text(t, "panel.goalEmpty"),
           ),
         ),
+        h(
+          "div",
+          {
+            style: { display: "flex", gap: "6px", marginTop: "6px" },
+            "data-projects-state-actions": "",
+          },
+          h(
+            "button",
+            {
+              type: "button",
+              style: styles.button,
+              "data-projects-toggle-pause": "",
+              onClick: () => {
+                const next = data.projectState === "paused" ? "resumeProject" : "pauseProject";
+                call(api.ctx, next, { id: project.id }).then(
+                  () => load(),
+                  (error) => {
+                    setData((/** @type {any} */ prev) => ({
+                      ...prev,
+                      error: String(error?.message ?? error),
+                    }));
+                  },
+                );
+              },
+            },
+            data.projectState === "paused" ? text(t, "detail.resume") : text(t, "detail.pause"),
+          ),
+          h(
+            "button",
+            {
+              type: "button",
+              style: { ...styles.button, color: T.danger, marginLeft: "auto" },
+              "data-projects-delete": "",
+              onClick: askDelete,
+              disabled: del.busy,
+            },
+            del.busy ? text(t, "detail.deleting") : text(t, "detail.delete"),
+          ),
+          h(
+            "span",
+            { style: styles.meta, "data-projects-budget": "" },
+            data.progress?.budget
+              ? text(t, "detail.budget", {
+                  today: data.progress.budget.used?.today ?? 0,
+                  running: data.progress.budget.used?.running ?? 0,
+                })
+              : "",
+          ),
+        ),
+        h(
+          "div",
+          { style: { display: "flex", gap: "8px", alignItems: "center", marginTop: "6px" } },
+          h("span", { style: { ...styles.meta, flex: "none" } }, text(t, "detail.dirLabel")),
+          h("input", {
+            style: styles.input,
+            value: dirDraft,
+            placeholder: text(t, "detail.dirPlaceholder"),
+            "data-projects-dir-input": "",
+            onChange: (/** @type {any} */ event) => setDirDraft(event.target.value),
+            onKeyDown: (/** @type {any} */ event) => {
+              if (event.key === "Enter") saveDir();
+            },
+          }),
+          h(
+            "button",
+            {
+              type: "button",
+              style: styles.button,
+              "data-projects-dir-save": "",
+              onClick: saveDir,
+            },
+            text(t, "detail.dirSave"),
+          ),
+        ),
+        del.confirming
+          ? h(
+              "div",
+              {
+                role: "alertdialog",
+                "aria-label": text(t, "detail.delete"),
+                style: {
+                  border: `1px solid ${T.danger}`,
+                  borderRadius: "8px",
+                  padding: "10px",
+                  marginTop: "8px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "8px",
+                },
+                "data-projects-delete-confirm-panel": "",
+              },
+              h(
+                "div",
+                { style: { color: T.text }, "data-projects-delete-impact": "" },
+                del.impact?.impact?.summary ?? "",
+              ),
+              h(
+                "details",
+                { style: { ...styles.meta } },
+                h("summary", null, text(t, "detail.deleteDetails")),
+                h(
+                  "code",
+                  { style: { ...styles.meta, whiteSpace: "pre-wrap" } },
+                  String(del.impact?.contentDir ?? ""),
+                ),
+              ),
+              h(
+                "div",
+                { style: { display: "flex", gap: "8px", justifyContent: "flex-end" } },
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    style: styles.button,
+                    "data-projects-delete-cancel": "",
+                    onClick: () => setDel({ confirming: false, busy: false, impact: null }),
+                  },
+                  text(t, "detail.deleteCancel"),
+                ),
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    style: { ...styles.button, borderColor: T.danger, color: T.danger },
+                    "data-projects-delete-confirm": "",
+                    "data-modal-autofocus": "",
+                    onClick: confirmDelete,
+                    disabled: del.busy,
+                  },
+                  del.busy ? text(t, "detail.deleting") : text(t, "detail.deleteConfirm"),
+                ),
+              ),
+            )
+          : null,
         h(
           "div",
           { style: { display: "flex", gap: "6px", marginTop: "6px" }, role: "tablist" },
@@ -730,6 +1047,147 @@ window.__ModuleLoader__.load({
       );
     }
 
+    /**
+     * 全局通知：轮询各活跃项目的线程状态，新出现「失败 / 等你」时弹一条应用内 toast。
+     * 不依赖浏览器 Notification（那条需要用户手势授权，默认不开）。
+     * @param {{api: any, t: any, onOpen?: () => void}} props
+     */
+    function ProjectsNotifier(props) {
+      const api = props.api;
+      const t = props.t;
+      const state = useState(null);
+      const notice = state[0];
+      const setNotice = state[1];
+      const previous = React.useRef({ threads: {}, projects: [] });
+
+      useEffect(() => {
+        let cancelled = false;
+        const tick = () => {
+          call(api.ctx, "listProjects").then(
+            (projects) => {
+              if (cancelled || !Array.isArray(projects)) return;
+              const active = projects.filter(
+                (/** @type {any} */ project) => project.state === "active",
+              );
+              Promise.all(
+                active.map((/** @type {any} */ project) =>
+                  call(api.ctx, "progress", { projectId: project.id }).then(
+                    (value) => ({ projectId: project.id, value }),
+                    () => null,
+                  ),
+                ),
+              ).then((results) => {
+                if (cancelled) return;
+                /** @type {Record<string, {state: string, projectId?: string}>} */
+                const threads = {};
+                for (const result of results) {
+                  if (!result?.value) continue;
+                  for (const row of result.value.rows ?? []) {
+                    threads[row.sessionId] = {
+                      state: row.view?.state ?? "idle",
+                      projectId: result.projectId,
+                    };
+                  }
+                }
+                const next = {
+                  threads,
+                  projects: active.map((/** @type {any} */ project) => project.id),
+                };
+                const items = diffAttention(previous.current, next);
+                previous.current = next;
+                const counts = summarize(items);
+                const parts = [];
+                if (counts.failed > 0)
+                  parts.push(text(t, "notify.failed", { count: counts.failed }));
+                if (counts.waiting > 0)
+                  parts.push(text(t, "notify.waiting", { count: counts.waiting }));
+                const line = parts.join(" · ");
+                if (line !== "") setNotice({ text: line, at: Date.now() });
+              });
+            },
+            () => {},
+          );
+        };
+        tick();
+        const timer = setInterval(tick, 5000);
+        return () => {
+          cancelled = true;
+          clearInterval(timer);
+        };
+      }, [api]);
+
+      useEffect(() => {
+        if (!notice) return undefined;
+        const timer = setTimeout(() => setNotice(null), 8000);
+        return () => clearTimeout(timer);
+      }, [notice]);
+
+      return h(
+        "div",
+        { "data-projects-notifier": "", style: { display: "contents" } },
+        notice
+          ? h(
+              "div",
+              {
+                role: "status",
+                "data-projects-toast": "",
+                style: {
+                  position: "fixed",
+                  right: "16px",
+                  bottom: "16px",
+                  zIndex: 60,
+                  maxWidth: "320px",
+                  padding: "10px 12px",
+                  borderRadius: "8px",
+                  border: `1px solid ${T.border}`,
+                  background: T.bg,
+                  color: T.text,
+                  boxShadow: "0 6px 20px rgba(0,0,0,0.18)",
+                  fontSize: "13px",
+                  cursor: "pointer",
+                },
+                onClick: () => {
+                  setNotice(null);
+                  if (typeof props.onOpen === "function") props.onOpen();
+                },
+              },
+              notice.text,
+            )
+          : null,
+      );
+    }
+
+    /** 与 lib/notify.js 同源的实现（client 半不能 import，逻辑保持逐行一致）。 */
+    /**
+     * @param {any} previous @param {any} next
+     */
+    function diffAttention(previous, next) {
+      const before = previous?.threads ?? {};
+      const after = next?.threads ?? {};
+      const out = [];
+      for (const sessionId of Object.keys(after)) {
+        const entry = after[sessionId];
+        const was = before[sessionId]?.state;
+        if (entry.state === "failed" && was !== "failed") {
+          out.push({ kind: "failed", projectId: String(entry.projectId || ""), sessionId });
+        } else if (entry.state === "waiting-user" && was !== "waiting-user") {
+          out.push({ kind: "waiting-user", projectId: String(entry.projectId || ""), sessionId });
+        }
+      }
+      return out;
+    }
+
+    /** @param {any[]} items */
+    function summarize(items) {
+      const list = Array.isArray(items) ? items : [];
+      const failed = list.filter((item) => item.kind === "failed").length;
+      const waiting = list.filter((item) => item.kind === "waiting-user").length;
+      const parts = [];
+      if (failed > 0) parts.push(`${failed} 个线程失败`);
+      if (waiting > 0) parts.push(`${waiting} 个线程在等你`);
+      return { failed, waiting, text: parts.join(" · ") };
+    }
+
     /** 侧栏图标入口：宿主会传 {size, active}。 */
     /** @param {any} props */
     function ProjectsPanelIcon(props) {
@@ -860,6 +1318,23 @@ window.__ModuleLoader__.load({
             ),
           ),
         "projects: session menu",
+      );
+
+      c.effect(
+        () =>
+          c.slots.inject("shell.overlay", () =>
+            c.slots.register(
+              {
+                name: "shell.overlay",
+                id: "projects-notifier",
+                order: 60,
+                locale: NS,
+                inject: () => ({ api: api, t: t, onOpen: () => c.selectPanel(PANEL_ID) }),
+              },
+              ProjectsNotifier,
+            ),
+          ),
+        "projects: notifier",
       );
 
       c.effect(
