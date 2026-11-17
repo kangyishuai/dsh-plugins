@@ -190,21 +190,25 @@ const main = async () => {
     await sleep(1200);
     const initial = await cdp.evaluate(STATE);
 
-    // 安全前置：正在跑的回合属于 agent 自己，不交互
-    if (initial.running) {
-      skip("桌面交互", "当前会话有运行中的回合（agent 自己跑回归时会这样）；切到空闲会话再跑");
-      console.log(`\n${passed} PASS / ${skipped} SKIP / ${failed} FAIL`);
-      return;
-    }
-
+    // 先判断插件是否装上：这是纯只读检测，与回合状态无关。
+    // 顺序很重要——如果先做「忙就 SKIP」，会把「没装」误报成「忙」，
+    // 让真问题（没装进当前 profile）永远藏着（2026-11-17 实测踩中）。
     check(
       "client 半已注入（style[data-plugin]）",
       initial.styleInjected === true,
       initial.styleInjected === true
         ? ""
-        : `页面有 ${initial.pluginCount} 个插件样式，但没有 btw —— 多半是没装进 desktop profile：` +
-            "先 pnpm pack --pack-destination /tmp，再 dsh plugin --profile desktop add /tmp/<tgz>，然后重启桌面版",
+        : `页面有 ${initial.pluginCount} 个插件样式，但没有 btw —— 没装进**当前运行的 profile**。` +
+            "先确认实例用的是哪个 profile（进程参数里的 --profile），再 dsh plugin --profile <name> add @kangyishuai/dsh-btw，然后重启桌面版",
     );
+    if (initial.styleInjected !== true) {
+      console.log(`\n${passed} PASS / ${skipped} SKIP / ${failed} FAIL`);
+      return;
+    }
+
+    // 只读断言无条件执行：它们不改动任何状态，与回合是否在跑无关。
+    // 只有**会碰 composer 草稿**的断言（转正）需要空闲会话——见文件末尾的 running 判断。
+    // 早期版本「忙就全 SKIP」，导致 agent 自己跑时 0 断言执行，正好是门禁要防的假绿。
     check("输入框左侧出现 btw 按钮", initial.toggle === true, JSON.stringify(initial));
 
     // 快照用户进来时的草稿：非空就不做任何会改动输入框的断言，走完也不清空。
@@ -254,14 +258,20 @@ const main = async () => {
       } else {
         check("每条线程都有追问按钮", v03.followup === v03.threads, JSON.stringify(v03));
         check("每条线程都有转正按钮", v03.promote === v03.threads, JSON.stringify(v03));
-        // 展开追问输入框（只展开，不提交）
-        await cdp.evaluate(
-          `(() => { const b = document.querySelector('[data-btw-followup]'); if (b) b.click(); return true; })()`,
-        );
-        await sleep(600);
-        const expanded = await cdp.evaluate(
-          `(() => ({ threadInput: !!document.querySelector('[data-btw-thread-input]') }))()`,
-        );
+        // 展开追问输入框（只展开，不提交）。
+        // 点一次不生效就再点一次——这是约定 §6.1 说的「手势断言加一次不降低断言的重试」：
+        // 面板刚渲染完时 React 可能还在处理上一帧，第一次点击会被吞（实测 2 次里偶发 1 次）。
+        let expanded = { threadInput: false };
+        for (let attempt = 1; attempt <= 2; attempt += 1) {
+          await cdp.evaluate(
+            `(() => { const b = document.querySelector('[data-btw-followup]'); if (b) b.click(); return true; })()`,
+          );
+          await sleep(600);
+          expanded = await cdp.evaluate(
+            `(() => ({ threadInput: !!document.querySelector('[data-btw-thread-input]') }))()`,
+          );
+          if (expanded.threadInput === true) break;
+        }
         check("点追问后出现线程内输入框", expanded.threadInput === true, JSON.stringify(expanded));
         // 转正：只插草稿，**不发送** —— 断言 composer 有内容但对话流没有新节点
         const beforeFlow = await cdp.evaluate(
@@ -334,7 +344,13 @@ const main = async () => {
     await sleep(900);
     const clickedSettings = await cdp.evaluate(`(() => {
       const label = (b) => ((b.getAttribute('aria-label') || '') + ' ' + (b.textContent || '')).trim();
-      const item = [...document.querySelectorAll('button,[role=menuitem]')].find((b) => /^设置$|^Settings$/i.test(label(b)));
+      // 账号菜单里的菜单项 textContent 会带快捷键标记（"设置⌘,"），不能用 ^...$ 精确匹配。
+      // 用「以设置开头」并排除明显不是设置的长文案。
+      const item = [...document.querySelectorAll('[role="menuitem"],button')].find((b) => {
+        const text = label(b);
+        if (/意见反馈|退出登录|feedback|sign out/i.test(text)) return false;
+        return /^设置|^Settings\b/i.test(text);
+      });
       if (!item) return false;
       item.click();
       return true;

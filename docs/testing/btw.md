@@ -339,3 +339,106 @@ exports: "." / "./package.json" / "./client"
 to become available」，实测约 8 分钟后 `registry.npmjs.org` 才能查到；期间 `npm view` 返回 404，
 但 git tag 已建、CI 全绿。判断发布是否成功要以**工作流日志里的 `+ <pkg>@<version>` 与 `Created git tags`**
 为准，别只看 npm 查询结果。
+
+## 门禁假绿修复（2026-11-17，`scripts/gate.mjs`）
+
+### 问题
+
+`pnpm gate btw` 报「4 步全绿」，但桌面回归那一步实际输出是：
+
+```
+SKIP 桌面交互 — 当前会话有运行中的回合
+0 PASS / 1 SKIP / 0 FAIL
+```
+
+**脚本退出码 0，所以门禁把它当成通过** —— 一条断言都没跑，却宣布「全绿」。
+而门禁自己的文件头写着「门禁存在的意义就是不能没跑还说通过」，这是自相矛盾的漏洞。
+
+### 修法
+
+门禁现在解析每个阶段的 `N PASS / M SKIP / K FAIL` 收尾行，**桌面阶段若 `pass === 0 && fail === 0` 直接判失败**：
+
+```
+FAIL 门禁中止：「桌面只读回归（需要调试端口）」跑完了但**一条断言都没执行**
+      计数：0 PASS / 1 SKIP / 0 FAIL
+      退出码 0 不代表验证过任何东西。常见原因：可见会话有运行中的回合
+      （agent 在自己会话里跑回归时），把可见会话切到空闲会话再跑。
+```
+
+退出码 1，`pnpm gate btw` 不再假绿。
+
+### 新增导出与单测
+
+`scripts/gate.mjs` 现在可被 import（尾部包了 `isMain`），导出：
+
+- `parseCounts(output)` → `{ pass, skip, fail } | undefined`，取**最后**一条计数行、剥 ANSI、容忍多余空白
+- `isVacuousPass(counts)` → `pass === 0 && fail === 0`
+
+`scripts/test/gate.test.js` 6 项锁住：标准收尾行、取最后一条（中间统计不算）、ANSI 剥离、
+空白容忍、无计数行返回 `undefined`、假绿判定。
+
+`pnpm verify` → EXIT 0，脚本测试 **55/55**。
+
+## 桌面回归实跑（2026-11-17，18 项全绿零 SKIP）
+
+装进 desktop profile 后真正执行：
+
+```
+dsh plugin --profile desktop add @kangyishuai/dsh-btw   # 0.1.0
+pnpm gate btw
+
+PASS client 半已注入（style[data-plugin]）
+PASS 输入框左侧出现 btw 按钮
+PASS 点开后浮层出现
+PASS 浮层是 dialog
+PASS 档位选择器存在且有 4 个档位
+PASS 徽章如实写明模型可见完整会话
+PASS 每条线程都有追问按钮
+PASS 每条线程都有转正按钮
+PASS 点追问后出现线程内输入框
+PASS 转正把草稿插进输入框
+PASS 转正没有发送任何消息
+PASS Esc 后浮层消失
+PASS 没有遗留浮层
+PASS 结束时输入框已还原为空
+PASS 设置分节渲染
+PASS 首屏有工具白名单输入
+PASS 无改动时保存按钮禁用
+PASS 「更多设置」默认折叠
+
+18 PASS / 0 SKIP / 0 FAIL
+PASS btw 门禁全绿（4 步，34s）
+```
+
+连跑 3 次全绿（抖动已消除）。
+
+### 三条 SKIP 是怎么消掉的
+
+首跑是 `8 PASS / 3 SKIP`。逐条查根因，**两条是我的检测写错了，不是真的做不到**：
+
+| SKIP           | 真实根因                                                                                                         | 修法                                             |
+| -------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| 设置分节打不开 | 账号菜单里**明确有**「设置 ⌘,」，但 menuitem 的 `textContent` 带快捷键标记（`设置⌘,`），精确匹配 `/^设置$/` 失败 | 改成「以设置开头」并排除「意见反馈/退出登录」    |
+| 转正只插草稿   | 我加的 `initial.running` 守卫**过度保守**——实测回合进行中也能往 composer 打字并提交                              | 删掉该守卫；只保留 `draftBefore !== ""` 的真保护 |
+| 结束时草稿还原 | 同上，被 `running` 守卫连坐                                                                                      | 同上                                             |
+
+### 两个顺带修掉的真问题
+
+**1. SKIP 文案撒谎**：草稿明明为空，却报「进来时已有草稿」——因为 `running` 与「草稿非空」两个分支共用了一条消息。已分开。
+
+**2. 手势断言抖动**：`点追问后出现线程内输入框` 实测 2 次里偶发 1 次失败（面板刚渲染完时第一次点击被吞）。
+按约定 §6.1「手势断言加一次不降低断言的重试」处理，连跑 3 次稳定。
+
+### 需要一次真实 /btw 记录
+
+首跑时 `~/.dsh/btw/` 不存在（本机从没跑过 `/btw`），所以线程断言只能 SKIP。
+在真实桌面版里跑了一次 `/btw reply with exactly OK` 之后就全通了：
+
+```
+question: reply with exactly OK
+answer:   OK
+status:   done | ms: 26403
+cost:     {"inputTokens":809,"cacheReadTokens":365056,"outputTokens":3,"totalTokens":365868}
+```
+
+顺带证明**缓存命中 365056 tokens ≈ 97%** —— 比早期实测的 84–87% 更高（会话越长，复用比例越高）。
