@@ -2,13 +2,13 @@
 // 覆盖率硬门与报告导出（M3 收尾）。
 // 重点：没有义务 / 有 open 义务 / 有未知项 / 检查过期 / 实现不一致 —— 都必须拒绝关闭。
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 
 import { createActions } from "../lib/actions.js";
-import { computeCoverage, evaluateClose } from "../lib/core/report.js";
+import { computeCoverage, computeCoverageByFeature, evaluateClose } from "../lib/core/report.js";
 import { CaseStore } from "../lib/core/store.js";
 
 /** @type {string[]} */
@@ -19,9 +19,17 @@ after(() => {
 
 /** @returns {ReturnType<typeof createActions>} */
 function makeActions() {
+  return makeActionsWithRoot().actions;
+}
+
+/** @returns {{ actions: ReturnType<typeof createActions>, root: string }} */
+function makeActionsWithRoot() {
   const root = mkdtempSync(join(tmpdir(), "casefile-report-"));
   dirs.push(root);
-  return createActions({ store: new CaseStore({ dataRoot: root }), dataRoot: root });
+  return {
+    actions: createActions({ store: new CaseStore({ dataRoot: root }), dataRoot: root }),
+    root,
+  };
 }
 
 const BUILD_OK = 'node -e "0"';
@@ -154,4 +162,51 @@ test("exportReport：写出 report.md / report.json，含覆盖率与声明", as
   assert.equal(json.coverage.ratio, 1);
   assert.equal(json.counts.obligations, 1);
   assert.ok(json.latestBuild);
+});
+
+test("computeCoverageByFeature：只统计挂在该功能上的义务", () => {
+  const obligations = [
+    { status: "pass", featureIds: ["f1"] },
+    { status: "open", featureIds: ["f1"] },
+    { status: "pass", featureIds: ["f2"] },
+    { status: "pass", featureIds: [] },
+  ];
+  const byFeature = computeCoverageByFeature(obligations, [
+    { id: "f1", name: "登录" },
+    { id: "f2", name: "导出" },
+    { id: "f3", name: "未被验收" },
+  ]);
+  const f1 = byFeature.find((item) => item.featureId === "f1") ?? {
+    pass: 0,
+    total: 0,
+    open: 0,
+    ratio: 0,
+  };
+  const f2 = byFeature.find((item) => item.featureId === "f2") ?? { pass: 0, total: 0, ratio: 0 };
+  const f3 = byFeature.find((item) => item.featureId === "f3") ?? { total: 0, ratio: 0 };
+  assert.deepEqual([f1.pass, f1.total, f1.open], [1, 2, 1]);
+  assert.equal(f1.ratio, 0.5);
+  assert.deepEqual([f2.pass, f2.total], [1, 1]);
+  assert.deepEqual([f3.total, f3.ratio], [0, 0]);
+});
+
+test("报告包含按功能覆盖率表", async () => {
+  const { actions, root } = makeActionsWithRoot();
+  const project = await actions.openProject({ title: "Feature Coverage" });
+  const feature = await actions.addFeature(project.id, { name: "登录" });
+  const app = join(root, "app.mjs");
+  writeFileSync(app, "console.log('Usage: app');\n", "utf8");
+  await actions.addObligation(project.id, {
+    statement: "输出含 Usage",
+    featureIds: [feature.id],
+    check: { checker: "cli", command: `node ${app}`, expect: { stdoutIncludes: ["Usage"] } },
+  });
+  await actions.advanceLoop(project.id, { command: 'node -e "0"' });
+  await actions.closeProject(project.id);
+  const exported = await actions.exportReport(project.id);
+  const md = readFileSync(join(exported.path, "report.md"), "utf8");
+  assert.match(md, /## 按功能覆盖率/u);
+  assert.match(md, /\| 登录 \| 100% \| 1\/1 \|/u);
+  const json = JSON.parse(readFileSync(join(exported.path, "report.json"), "utf8"));
+  assert.equal(json.coverageByFeature[0].ratio, 1);
 });

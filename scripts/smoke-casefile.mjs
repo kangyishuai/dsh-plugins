@@ -762,6 +762,37 @@ async function main() {
       overview.raw.slice(0, 400),
     );
 
+    // 9.14) 按功能覆盖率（feature-scoped 复刻的证据）
+    const featureRow = await remote(session, "addFeature", {
+      projectId: "tiny-loop",
+      input: { name: "启动输出" },
+    });
+    await remote(session, "addObligation", {
+      projectId: "tiny-loop",
+      input: {
+        statement: "启动输出包含 Usage",
+        kind: "behavior",
+        featureIds: [featureRow.value?.id],
+        check: {
+          checker: "cli",
+          command: `node ${tinyApp}`,
+          expect: { stdoutIncludes: ["Usage"] },
+        },
+      },
+    });
+    const featureReport = await remote(session, "exportReport", { projectId: "tiny-loop" });
+    check(
+      "报告包含覆盖率与按功能覆盖率",
+      featureReport.ok && (featureReport.value?.coverage?.total ?? 0) >= 1,
+      featureReport.raw.slice(0, 300),
+    );
+    const featureReportMd = await readIfExists(join(featureReport.value?.path, "report.md"));
+    check(
+      "报告 md 里有按功能覆盖率表且该功能 0% 或 100% 有据可查",
+      featureReportMd.includes("按功能覆盖率") && featureReportMd.includes("启动输出"),
+      featureReportMd.slice(0, 200),
+    );
+
     // 10) 详情统计
     const detail = await remote(session, "projectDetail", { projectId: "todo-app-smoke" });
     check(

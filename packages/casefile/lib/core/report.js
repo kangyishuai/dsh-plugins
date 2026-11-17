@@ -38,6 +38,29 @@ export function computeCoverage(obligations) {
 }
 
 /**
+ * 按功能算覆盖率：只统计「显式挂在某功能上的义务」，未挂功能的义务只计入全局。
+ * @param {Array<Record<string, any>>} obligations
+ * @param {Array<Record<string, any>>} features
+ * @returns {Array<{ featureId: string, name: string, total: number, pass: number, open: number, ratio: number }>}
+ */
+export function computeCoverageByFeature(obligations, features) {
+  return (features ?? []).map((/** @type {any} */ feature) => {
+    const mine = (obligations ?? []).filter((/** @type {any} */ item) =>
+      (item.featureIds ?? []).includes(feature.id),
+    );
+    const coverage = computeCoverage(mine);
+    return {
+      featureId: feature.id,
+      name: feature.name,
+      total: coverage.total,
+      pass: coverage.pass,
+      open: coverage.open,
+      ratio: coverage.ratio,
+    };
+  });
+}
+
+/**
  * 关闭闸门：返回能不能关闭，以及卡在哪。
  * @param {{
  *   obligations: Array<Record<string, any>>,
@@ -124,6 +147,7 @@ export function buildReport(input) {
       reaVersion: input.project.reaVersion,
     },
     coverage,
+    coverageByFeature: computeCoverageByFeature(obligations, data.features ?? []),
     counts: {
       evidence: (data.evidence ?? []).length,
       claims: (data.claims ?? []).length,
@@ -206,6 +230,18 @@ export function renderReportMarkdown(report) {
     lines.push(`| ${key} | ${value} |`);
   }
   lines.push("");
+  if ((report.coverageByFeature ?? []).length > 0) {
+    lines.push("## 按功能覆盖率");
+    lines.push("");
+    lines.push("| 功能 | 覆盖率 | 已关闭/总数 |");
+    lines.push("| --- | --- | --- |");
+    for (const item of report.coverageByFeature) {
+      lines.push(
+        `| ${item.name} | ${(item.ratio * 100).toFixed(0)}% | ${item.pass}/${item.total} |`,
+      );
+    }
+    lines.push("");
+  }
   lines.push("## 义务");
   lines.push("");
   if ((report.obligations ?? []).length === 0) {

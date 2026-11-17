@@ -346,6 +346,7 @@ export function normalizeObligation(input) {
     status: "open",
     checkIds: idList(input?.checkIds, "checkIds"),
     evidenceIds: idList(input?.evidenceIds, "evidenceIds"),
+    featureIds: idList(input?.featureIds, "featureIds"),
     ownerDigest:
       input?.ownerDigest == null ? null : text(input.ownerDigest, "ownerDigest", { max: 128 }),
     check,

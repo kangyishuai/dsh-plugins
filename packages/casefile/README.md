@@ -67,6 +67,8 @@ A settings section shows the data root, project count and REA capability status,
 
 Every tool returns `{ ok, data?, error?{code,message,hint}, summary }`; errors carry a stable code, so the model can correct itself instead of guessing.
 
+Obligations may carry `featureIds`, so a **scoped replica** can report coverage per feature: an obligation tagged with a feature only counts toward that feature's ratio; untagged ones count only globally.
+
 ## Checkers
 
 | Checker | What it judges                                                                 | Verdicts                                      |
@@ -81,7 +83,7 @@ Screenshots are captured elsewhere (REA's browser tools or any tool the user pre
 
 `case_project close` refuses until the project is actually done. The gate checks, in order: at least one obligation; no `open`/`fail`/`blocked` obligations; coverage ≥ `minCoverage` (default 100%); no unresolved unknowns; a fresh check whose implementation digest matches the current build. Each blocker is reported by name, so you know what to fix.
 
-`case_project report` writes `reports/<timestamp>/report.md` + `report.json`: coverage, obligation table, check table with implementation digests, unknowns, loop state, and a declaration that `unknown` never means pass.
+`case_project report` writes `reports/<timestamp>/report.md` + `report.json`: coverage (global and per feature), obligation table, check table with implementation digests, unknowns, loop state, and a declaration that `unknown` never means pass.
 
 ## Anti-false-green
 

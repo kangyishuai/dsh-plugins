@@ -419,6 +419,11 @@ export function buildToolDefinitions(handlers, projectOf) {
               },
               ownerDigest: { type: "string" },
               evidenceIds: { type: "array", items: { type: "string" } },
+              featureIds: {
+                type: "array",
+                items: { type: "string" },
+                description: "挂到哪些功能上（用于按功能覆盖率）",
+              },
             },
             required: ["statement"],
           },

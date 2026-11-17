@@ -67,6 +67,8 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-casefile-*.tgz
 
 所有工具统一返回 `{ ok, data?, error?{code,message,hint}, summary }`；错误带稳定 code，模型能自行纠正而不是猜。
 
+义务可以带 `featureIds`，这样**只复刻选定功能**时能报出每个功能的覆盖率：挂在某功能上的义务只计入该功能，未挂的只计入全局。
+
 ## Checker
 
 | Checker | 判什么                                                                | 三态                             |
@@ -81,7 +83,7 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-casefile-*.tgz
 
 `case_project close` 在项目真的做完之前会一直拒绝。闸门按顺序检查：至少一条义务；没有 `open`/`fail`/`blocked` 义务；覆盖率 ≥ `minCoverage`（默认 100%）；没有未解决未知项；存在一条新鲜的、实现 digest 与当前构建一致的检查。每个卡点都按名字报出来，知道该修什么。
 
-`case_project report` 写出 `reports/<时间戳>/report.md` + `report.json`：覆盖率、义务表、带实现 digest 的检查表、未知项、循环状态，以及「`unknown` 不等于通过」的声明。
+`case_project report` 写出 `reports/<时间戳>/report.md` + `report.json`：全局覆盖率、**按功能覆盖率**、义务表、带实现 digest 的检查表、未知项、循环状态，以及「`unknown` 不等于通过」的声明。
 
 ## 防假绿灯
 
