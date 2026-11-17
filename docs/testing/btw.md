@@ -52,3 +52,129 @@ PASS btw 门禁全绿（3 步，19s）
 
 第 4 步被跳过是**预期行为**：v0.1 没有 client 半，按约定 §6.1 不强制桌面回归。
 加 client 半（v0.2）后这一步会自动变成必需。
+
+## 桌面回归的前置（v0.2 起，有 client 半之后）
+
+`pnpm gate btw` 的第 4 步会跑 `pnpm smoke:btw-desktop --require`，它**驱动的是用户真实的桌面版**，
+所以插件必须**先装进 desktop profile 并重启**，否则 client 半不会注入，门禁按设计变红：
+
+```
+FAIL client 半已注入（style[data-plugin]） — 页面有 196 个插件样式，但没有 btw
+      —— 多半是没装进 desktop profile
+```
+
+装法：
+
+```bash
+cd packages/btw && pnpm pack --pack-destination /tmp
+dsh plugin --profile desktop add /tmp/kangyishuai-dsh-btw-0.<x>.tgz
+# 重启桌面版（host 半改动也必须重启；只改 client 半刷新页面即可）
+```
+
+另外一条**agent 自己跑会撞上的前置**：脚本检测到「停止生成」按钮（当前会话正在跑回合）时只报 SKIP，
+因为 agent 的回合就跑在同一个桌面版里。做法是把可见会话切到一个空闲会话再跑。
+
+## v0.2 client 半端到端实测（2026-11-16，分支 `spike/btw-service`）
+
+在临时宿主 + ego-browser 里驱动真实页面，走完整链路（浮层内发问）：
+
+```
+BEFORE: {"overlay":true,"input":true,"send":true,"items":1}
+TYPED:  "reply with exactly OK"
+POLL2:  {"items":2,
+         "meta":"新增 2429 · 命中缓存 8192 · 1815ms",
+         "answer":"OK","err":""}
+```
+
+→ 浮层打开、输入、提交（经 composer façade 的 `setDraft` + `submit`）、
+host fork 作答、历史自动刷新、成本徽章渲染，全部工作。
+缓存命中 `8192/(2429+8192) ≈ 77%`，与 host-only 时期的 84–87% 同量级。
+
+**为什么发问必须借 composer**：真实 `Agent` 只能从命令/工具调用上下文取（`ctx.agents.get()` 返回
+`undefined`，见 ADR 0016），所以浮层把 `/btw <问题>` 塞进输入框再提交，而不是直接调 Remote。
+
+## 冒烟脚本的 cookie 卫生（约定 §6.3，必须做）
+
+多次跑 web 冒烟后出现过 `net::ERR_HTTP_RESPONSE_CODE_FAILURE` —— 这是约定 §6.3 记录的 **431 坑**：
+ego 与用户共用浏览器，宿主每轮用新 token 生成 `dsh-auth-<hash>` cookie，累积后请求头超限。
+
+修法（已实现在 `scripts/smoke-btw.mjs`）：**只删回环地址上的 `dsh-auth-*`**，且每轮开头与结尾各清一次；
+绝不动用户自己的其它 cookie。
+
+## 设置分节（v0.2）的验证状态
+
+**已验证（单测，17 项）**：
+
+- `sanitizeSettings`：默认值、上下限夹紧（1–200）、去空/去重、**拒绝 `send_message`**、白名单条数上限
+- `loadSettings`：文件缺失返回默认；坏 JSON 静默回落（不让插件因设置损坏而不可用）
+- `saveSettings`：原子替换（临时文件 + rename）、只合并已知字段、未知字段丢弃
+
+**未验证（如实标注）**：`settings.section` 的**渲染与交互**还没在真机上看过。
+在临时 profile 里点「设置」会先弹「开始使用 / 添加 API Key」门禁，拿不到真正的设置对话框；
+换到已登录的桌面版即可验证（v0.2 发版前的待办）。
+
+对应的 `data-*` 锚点已就位，桌面回归可直接断言：
+`data-btw-settings`、`data-btw-setting-tools`、`data-btw-setting-limit`、
+`data-btw-settings-more`、`data-btw-settings-extra`、`data-btw-settings-save`。
+
+### 桌面回归现在覆盖设置分节
+
+`pnpm smoke:btw-desktop --require` 新增一段：账号菜单 → 设置 → 点「旁问」nav →
+断言 `[data-btw-settings]`、工具白名单输入、**无改动时保存按钮禁用**、「更多设置」默认折叠 → Esc 关闭。
+
+三种无法断言的情形都只报 **SKIP 并说明原因**，不制造假失败：
+
+| 情形                     | SKIP 文案                                                               |
+| ------------------------ | ----------------------------------------------------------------------- |
+| 找不到账号/设置入口      | `打不开设置入口（account=…, settings=…）`                               |
+| 设置对话框被登录门禁挡住 | `设置对话框被「开始使用 / 添加 API Key」门禁挡住（需要已登录的桌面版）` |
+| 设置里没有「旁问」nav    | `设置对话框里没有「旁问」nav（可见：…）`                                |
+
+这样一旦把插件装进已登录的 desktop profile，一条命令即可验证设置 UI（当前在临时
+profile 里无法验证，因为有登录门禁）。
+
+## v0.2 发版就绪度（2026-11-17，变基到合并后的 main 之后重验）
+
+```
+pnpm gate btw --skip-desktop   → PASS btw 门禁全绿（3 步，20s）
+pnpm smoke:btw --deep          → 7 PASS / 2 SKIP / 0 FAIL
+  history status=done cost={"inputTokens":2400,"cacheReadTokens":8192,"outputTokens":2,"totalTokens":10594}
+```
+
+结论：变基没有让 host 路径回归（`status=done`、缓存命中 77%、写缓存 0）。
+**唯一未完成的是桌面回归**，它要求先把包装进已登录的 desktop profile 并重启：
+
+```bash
+cd packages/btw && pnpm pack --pack-destination /tmp
+dsh plugin --profile desktop add /tmp/kangyishuai-dsh-btw-0.<x>.tgz
+open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1
+pnpm gate btw          # 这次不跳过第 4 步
+```
+
+桌面回归会断言：client 半注入、浮层开关、设置分节（`data-btw-settings` 等）。
+不满足前置时会打印可操作的安装提示，而不是裸 FAIL。
+
+## 发布包体检（2026-11-17）
+
+`cd packages/btw && pnpm pack --pack-destination /tmp` 后检查 tarball：
+
+```
+18 个文件 / 22K：
+  cordis.patch.yml
+  lib/{index,service,subagent,history,prompts,limits,messages,paths,config,settings}.js
+  lib/client.js
+  locale/{en,zh}.json
+  LICENSE / README.md / README.zh-CN.md / package.json
+```
+
+`test/` 未进包（`files` 白名单生效）。
+
+依赖检查（约定 §1）：
+
+| 项                                                      | 结果                                                                                                              |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `dependencies` / `peerDependencies` / `devDependencies` | 全空                                                                                                              |
+| 是否把 `@deepseek-ai/*` 写进依赖                        | **没有**（`lib/service.js` 里 `import "@deepseek-ai/dsh-typert-protocol"` 是运行时由宿主解析，与 next-step 同形） |
+| `engines.dsh`                                           | 未声明（按约定 §4，预发布阶段不写范围，用 README 兼容性表代替）                                                   |
+| `dsh.client`                                            | `{ platform: "web", inject: ["@deepseek-ai/dsh-client-ui-conversation", "@deepseek-ai/dsh-client-ui-slots"] }`    |
+| `exports`                                               | `.` / `./package.json` / `./client`                                                                               |

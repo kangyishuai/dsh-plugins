@@ -67,6 +67,20 @@ function browserScript(url, deep) {
   const lines = [
     'const task = await taskSpace("dsh btw smoke");',
     'const page = task.page("p1");',
+    "// cookie 卫生（约定 §6.3）：ego 浏览器与用户共用，宿主每轮用新 token 生成 dsh-auth-<hash>，",
+    "// 累积后请求头超过上限会让页面直接 431（ERR_HTTP_RESPONSE_CODE_FAILURE）。",
+    "// 只删回环地址上的 dsh-auth-*，绝不动用户的其它 cookie。",
+    "const clearAuthCookies = async () => {",
+    "  const LOOPBACK = ['127.0.0.1', 'localhost', '::1'];",
+    "  try {",
+    "    const found = await page.cdp('Storage.getCookies', {});",
+    "    const mine = (found.cookies || []).filter((c) => LOOPBACK.includes(c.domain) && String(c.name).startsWith('dsh-auth-'));",
+    "    for (const c of mine) await page.cdp('Network.deleteCookies', { name: c.name, domain: c.domain, path: c.path });",
+    "    return mine.length;",
+    "  } catch { return -1; }",
+    "};",
+    "const clearedBefore = await clearAuthCookies();",
+    'console.log("cleared auth cookies before: " + clearedBefore);',
     `await page.goto(${JSON.stringify(url)}, { waitUntil: "domcontentloaded" });`,
     "await page.waitForTimeout(2500);",
     "const results = [];",
@@ -227,6 +241,7 @@ function browserScript(url, deep) {
     "  }",
     "}",
     'console.log("SMOKE_RESULTS:" + JSON.stringify(results));',
+    "await clearAuthCookies();",
     "await task.finish({ keep: [] });",
   ];
   return lines.join("\n");
