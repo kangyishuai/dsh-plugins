@@ -368,24 +368,74 @@ export function collectPackages(root) {
  * 拉一个包的 packument。
  * @param {string} name @param {{ registry?: string, attempts?: number, fetchImpl?: typeof fetch }} [options]
  */
+/**
+ * 重试节奏：**404 与其它错误分开**。
+ *
+ * 404 通常意味着「包刚发布、registry 还没传播完」——npm 对新包会提示
+ * "Your package is being processed and may take a few minutes"，实测约 8 分钟才可查。
+ * 2026-11-17 首次发版时索引工作流在 release 后 22 秒启动，只用 4 秒的重试窗口直接失败。
+ * 所以 404 走**长退避**（默认 12 次、间隔 20s 起、封顶 60s，合计约 10 分钟），
+ * 其它错误（网络抖动、5xx）仍快速失败，避免把真问题拖成十分钟。
+ *
+ * 两者都可用环境变量覆盖，便于 CI 调参或本地快速失败：
+ *   INDEX_404_ATTEMPTS / INDEX_404_DELAY_MS / INDEX_ATTEMPTS
+ * @param {number} attempt 第几次重试（1 起）
+ * @param {number} baseMs
+ * @returns {number}
+ */
+export function retryDelayMs(attempt, baseMs = 20_000) {
+  return Math.min(attempt * baseMs, 60_000);
+}
+
+/**
+ * 从 registry 取 packument，带分级重试。
+ * @param {string} name
+ * @param {{
+ *   registry?: string,
+ *   attempts?: number,
+ *   notFoundAttempts?: number,
+ *   notFoundDelayMs?: number,
+ *   fetchImpl?: typeof fetch,
+ *   sleepImpl?: (ms: number) => Promise<unknown>,
+ * }} [options]
+ * @returns {Promise<any>}
+ */
 export async function fetchPackument(
   name,
-  { registry = DEFAULT_REGISTRY, attempts = 3, fetchImpl = fetch } = {},
+  {
+    registry = DEFAULT_REGISTRY,
+    attempts = Number(process.env.INDEX_ATTEMPTS ?? 3),
+    notFoundAttempts = Number(process.env.INDEX_404_ATTEMPTS ?? 12),
+    notFoundDelayMs = Number(process.env.INDEX_404_DELAY_MS ?? 20_000),
+    fetchImpl = fetch,
+    sleepImpl = (ms) => new Promise((r) => setTimeout(r, ms)),
+  } = {},
 ) {
   const url = `${registry.replace(/\/$/u, "")}/${encodeURIComponent(name)}`;
   let lastError;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+  let notFoundSeen = 0;
+  let otherAttempts = 0;
+  for (;;) {
     try {
       const response = await fetchImpl(url, {
         headers: { accept: "application/json", "user-agent": "kangyishuai-dsh-plugins-index" },
         signal: AbortSignal.timeout(15000),
       });
+      if (response.status === 404) {
+        notFoundSeen += 1;
+        if (notFoundSeen >= notFoundAttempts) throw new Error(`HTTP 404 ${url}`);
+        await sleepImpl(retryDelayMs(notFoundSeen, notFoundDelayMs));
+        continue;
+      }
       if (!response.ok) throw new Error(`HTTP ${response.status} ${url}`);
       return await response.json();
     } catch (error) {
       lastError = error;
-      // 发布后 registry 需要几秒才可见，按 1s / 3s 退避重试。
-      if (attempt < attempts) await new Promise((r) => setTimeout(r, attempt * 1000));
+      // 404 已在上面单独处理（含长退避），这里只处理其它错误。
+      if (String(/** @type {Error} */ (error)?.message ?? "").startsWith("HTTP 404")) break;
+      otherAttempts += 1;
+      if (otherAttempts >= attempts) break;
+      await sleepImpl(otherAttempts * 1000);
     }
   }
   throw new Error(

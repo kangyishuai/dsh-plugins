@@ -8,8 +8,10 @@ import {
   buildIndex,
   checkMeta,
   compareVersions,
+  fetchPackument,
   IndexError,
   normalizeRepositoryUrl,
+  retryDelayMs,
   stableVersions,
   validateIndex,
 } from "../build-index.mjs";
@@ -286,4 +288,90 @@ test("validateIndex：宿主会拒的形态在这里也拒", () => {
   })();
   assert.ok(error instanceof IndexError);
   assert.equal(/** @type {IndexError} */ (error).path, "$.plugins[0].versions[0].version");
+});
+
+// --- fetchPackument：新包 404 的长退避（2026-11-17 发版事故回归）----------------
+//
+// 事故：首次发布新包后，index.yml 在 release 后 22 秒启动，registry 对新包还没传播完
+// （npm 提示 "being processed and may take a few minutes"，实测约 8 分钟），
+// 当时只用 4 秒的重试窗口 → 索引构建硬失败。这里锁住「404 走长退避」的行为。
+
+/** 造一个按脚本回应 status 的假 fetch，并记录调用次数。 */
+const fakeFetch = (/** @type {number[]} */ statuses) => {
+  let index = 0;
+  /** @type {number[]} */
+  const calls = [];
+  const impl = async () => {
+    calls.push(index);
+    const status = statuses[Math.min(index, statuses.length - 1)];
+    index += 1;
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      json: async () => ({ name: "x", versions: {} }),
+    };
+  };
+  return { impl, calls };
+};
+
+test("fetchPackument：404 持续重试直到 registry 传播完（长退避）", async () => {
+  const { impl, calls } = fakeFetch([404, 404, 404, 200]);
+  /** @type {number[]} */
+  const sleeps = [];
+  const packument = await fetchPackument("@x/y", {
+    fetchImpl: /** @type {any} */ (impl),
+    sleepImpl: async (ms) => {
+      sleeps.push(ms);
+    },
+    notFoundAttempts: 12,
+    notFoundDelayMs: 20_000,
+    registry: "https://registry.example",
+  });
+  assert.equal(packument.name, "x");
+  assert.equal(calls.length, 4, "3 次 404 后第 4 次成功");
+  assert.deepEqual(sleeps, [20_000, 40_000, 60_000], "退避递增并封顶 60s");
+});
+
+test("fetchPackument：404 超过上限才失败，且错误信息带 HTTP 404", async () => {
+  const { impl, calls } = fakeFetch([404]);
+  await assert.rejects(
+    () =>
+      fetchPackument("@x/y", {
+        fetchImpl: /** @type {any} */ (impl),
+        sleepImpl: async () => {},
+        notFoundAttempts: 3,
+        notFoundDelayMs: 1000,
+        registry: "https://registry.example",
+      }),
+    /HTTP 404/,
+  );
+  assert.equal(calls.length, 3, "达到上限即停");
+});
+
+test("fetchPackument：非 404 错误快速失败（不拖十分钟）", async () => {
+  const { impl, calls } = fakeFetch([500]);
+  /** @type {number[]} */
+  const sleeps = [];
+  await assert.rejects(
+    () =>
+      fetchPackument("@x/y", {
+        fetchImpl: /** @type {any} */ (impl),
+        sleepImpl: async (ms) => {
+          sleeps.push(ms);
+        },
+        attempts: 3,
+        notFoundAttempts: 99,
+        registry: "https://registry.example",
+      }),
+    /HTTP 500/,
+  );
+  assert.equal(calls.length, 3, "非 404 只试 attempts 次");
+  assert.deepEqual(sleeps, [1000, 2000], "非 404 的退避是秒级");
+});
+
+test("retryDelayMs：递增并封顶", () => {
+  assert.equal(retryDelayMs(1, 20_000), 20_000);
+  assert.equal(retryDelayMs(2, 20_000), 40_000);
+  assert.equal(retryDelayMs(3, 20_000), 60_000);
+  assert.equal(retryDelayMs(10, 20_000), 60_000, "封顶 60s");
 });
