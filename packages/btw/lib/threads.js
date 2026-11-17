@@ -154,7 +154,7 @@ export function parseThreadFlag(raw) {
 /**
  * 线程列表（给浮层展示）：按最后一条时间倒序，每项带条数与首问。
  * @param {any[]} records
- * @returns {{ threadId: string, turns: number, question: string, answer: string, at: number }[]}
+ * @returns {{ threadId: string, turns: number, question: string, answer: string, lastId: string, cost: any, ms: number, at: number }[]}
  */
 export function listThreads(records) {
   return groupThreads(records)
@@ -163,6 +163,9 @@ export function listThreads(records) {
       turns: thread.items.length,
       question: String(thread.items[0]?.question ?? ""),
       answer: String(thread.last?.answer ?? ""),
+      lastId: String(thread.last?.id ?? ""),
+      cost: thread.last?.cost ?? null,
+      ms: Number(thread.last?.ms ?? 0),
       at: thread.at,
     }))
     .sort((a, b) => b.at - a.at);

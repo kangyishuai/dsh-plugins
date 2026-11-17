@@ -25,6 +25,8 @@ window.__ModuleLoader__.load({
     /** setDraft 走异步更新：轮询草稿落定（与 next-step 同参数）。 */
     const DRAFT_POLL_TRIES = 15;
     const DRAFT_POLL_INTERVAL_MS = 20;
+    /** 浮层列出的线程条数上限。 */
+    const LIMITS_CLIENT_THREADS = 20;
     /** 提交后轮询历史，等新记录出现。 */
     const REFRESH_TRIES = 20;
     const REFRESH_INTERVAL_MS = 1500;
@@ -39,6 +41,14 @@ window.__ModuleLoader__.load({
       cost: "新增 {newTokens} · 命中缓存 {cachedTokens} · {ms}ms",
       failed: "读取旁问历史失败",
       sent: "已提交，答案会出现在对话里",
+      followUp: "追问",
+      collapse: "收起",
+      followPlaceholder: "在这个线程里追问…",
+      turns: "轮",
+      promote: "转正",
+      promoted: "已插入输入框草稿（未发送）",
+      promoteBlocked: "输入框已有内容，先清空再转正",
+      promoteFailed: "生成转正草稿失败",
       sendFailed: "提交失败（输入框不可用）",
       "settings.nav": "旁问",
       "settings.title": "旁问（只读）",
@@ -62,6 +72,14 @@ window.__ModuleLoader__.load({
       cost: "new {newTokens} · cached {cachedTokens} · {ms}ms",
       failed: "Could not read side-question history",
       sent: "Submitted; the answer appears in the conversation",
+      followUp: "Follow up",
+      collapse: "Collapse",
+      followPlaceholder: "Ask a follow-up in this thread…",
+      turns: "turns",
+      promote: "Promote",
+      promoted: "Inserted into the composer as a draft (not sent)",
+      promoteBlocked: "Composer already has content; clear it before promoting",
+      promoteFailed: "Could not create the promotion draft",
       sendFailed: "Could not submit (composer unavailable)",
       "settings.nav": "Side questions",
       "settings.title": "Side questions (read-only)",
@@ -135,6 +153,18 @@ window.__ModuleLoader__.load({
         document.head.appendChild(style);
         return () => style.remove();
       }, "btw: styles");
+
+      /** 当前界面语言（转正草稿用）。取不到默认 zh。 */
+      const langOf = () => {
+        try {
+          const docLang = String(document?.documentElement?.lang ?? "").toLowerCase();
+          if (docLang.startsWith("en")) return "en";
+          if (docLang.startsWith("zh")) return "zh";
+        } catch {
+          /* 忽略 */
+        }
+        return "zh";
+      };
 
       /** 最近一次 RPC 失败原因（诊断用，渲染进 data-btw-error）。 */
       let lastRpcError = "";
@@ -262,8 +292,9 @@ window.__ModuleLoader__.load({
       function BtwPanel(/** @type {any} */ props) {
         const sessionId = typeof props?.sessionId === "string" ? props.sessionId : "";
         const [open, setOpen] = React.useState(false);
-        const [items, setItems] = React.useState(/** @type {any[] | null} */ (null));
+        const [threads, setThreads] = React.useState(/** @type {any[] | null} */ (null));
         const [failed, setFailed] = React.useState(false);
+        const [activeId, setActiveId] = React.useState("");
         const [question, setQuestion] = React.useState("");
         const [busy, setBusy] = React.useState(false);
         const [notice, setNotice] = React.useState("");
@@ -278,14 +309,14 @@ window.__ModuleLoader__.load({
 
         const load = React.useCallback(
           () =>
-            callRemote("history", { sessionId, limit: 5 }).then((value) => {
+            callRemote("threads", { sessionId, limit: LIMITS_CLIENT_THREADS }).then((value) => {
               if (!aliveRef.current) return 0;
               if (Array.isArray(/** @type {any} */ (value))) {
-                setItems(value.slice().reverse());
+                setThreads(value);
                 setFailed(false);
                 return value.length;
               }
-              setItems([]);
+              setThreads([]);
               setFailed(true);
               return 0;
             }),
@@ -302,13 +333,14 @@ window.__ModuleLoader__.load({
           return () => document.removeEventListener("keydown", onKey);
         }, [open, load]);
 
-        const submit = async () => {
+        /** 发问：新线程走 `/btw <q>`；追问走 `/btw --thread <id> <q>`。 */
+        const submit = async (/** @type {string} */ threadId) => {
           const text = question.trim();
           if (text === "" || busy) return;
           setBusy(true);
           setNotice("");
-          const before = Array.isArray(items) ? items.length : 0;
-          const line = `/btw ${text}`;
+          const before = Array.isArray(threads) ? threads.length : 0;
+          const line = threadId === "" ? `/btw ${text}` : `/btw --thread ${threadId} ${text}`;
           const result = await sendText(sessionId, line);
           if (result !== "ok") {
             setBusy(false);
@@ -317,7 +349,6 @@ window.__ModuleLoader__.load({
           }
           setQuestion("");
           setNotice(t("sent"));
-          // 轮询历史，等新记录出现（命令走 fork，答案进 history）
           let tries = 0;
           const poll = () => {
             load().then((/** @type {number} */ count) => {
@@ -338,6 +369,48 @@ window.__ModuleLoader__.load({
           setTimeout(poll, REFRESH_INTERVAL_MS);
         };
 
+        /**
+         * 一键转正：取 host 生成的四节草稿，**只插进 composer，不发送**。
+         * 输入框已有内容时拒绝，避免覆盖用户正在写的东西。
+         */
+        const promote = async (/** @type {any} */ thread) => {
+          if (busy) return;
+          setBusy(true);
+          setNotice("");
+          const shell = shellOf(sessionId);
+          const actions = shell?.actions;
+          if (!actions || typeof actions.setDraft !== "function") {
+            setBusy(false);
+            setNotice(t("sendFailed"));
+            return;
+          }
+          const existing = shellDraftOf(shell);
+          if (typeof existing === "string" && existing.trim() !== "") {
+            setBusy(false);
+            setNotice(t("promoteBlocked"));
+            return;
+          }
+          const result = await callRemote("promote", {
+            sessionId,
+            recordId: String(thread?.lastId ?? ""),
+            lang: langOf(),
+          });
+          if (!result || result.ok !== true || typeof result.text !== "string") {
+            setBusy(false);
+            setNotice(t("promoteFailed"));
+            return;
+          }
+          try {
+            actions.setDraft(result.text);
+          } catch {
+            setBusy(false);
+            setNotice(t("promoteFailed"));
+            return;
+          }
+          setBusy(false);
+          setNotice(t("promoted"));
+        };
+
         const button = h(
           "button",
           {
@@ -352,36 +425,108 @@ window.__ModuleLoader__.load({
 
         if (!open) return h("span", { "data-btw-root": "true" }, button);
 
-        const body =
-          items === null
-            ? h("div", { className: "dsh-btw-dim" }, "…")
-            : items.length === 0
-              ? h("div", { className: "dsh-btw-dim", "data-btw-empty": "true" }, t("empty"))
-              : items.map((/** @type {any} */ item, /** @type {number} */ index) =>
-                  h(
-                    "div",
-                    {
-                      className: "dsh-btw-item",
-                      key: item?.id ?? String(index),
-                      "data-btw-item": "true",
+        const renderThread = (/** @type {any} */ thread, /** @type {number} */ index) => {
+          const expanded = activeId === thread.threadId;
+          return h(
+            "div",
+            {
+              className: "dsh-btw-item",
+              key: thread.threadId ?? String(index),
+              "data-btw-thread": "true",
+              "data-btw-thread-id": String(thread.threadId ?? ""),
+            },
+            h(
+              "div",
+              { className: "dsh-btw-q" },
+              `/btw ${String(thread.question ?? "")}`,
+              Number(thread.turns) > 1
+                ? h(
+                    "span",
+                    { className: "dsh-btw-meta" },
+                    ` · ${String(thread.turns)} ${t("turns")}`,
+                  )
+                : null,
+            ),
+            h(
+              "div",
+              { className: "dsh-btw-a", "data-btw-answer": "true" },
+              String(thread.answer ?? ""),
+            ),
+            h(
+              "div",
+              { className: "dsh-btw-meta", "data-btw-meta": "true" },
+              fmt(t("cost"), {
+                newTokens: String(thread.cost?.inputTokens ?? 0),
+                cachedTokens: String(thread.cost?.cacheReadTokens ?? 0),
+                ms: String(thread.ms ?? 0),
+              }),
+            ),
+            h(
+              "div",
+              { className: "dsh-btw-row" },
+              h(
+                "button",
+                {
+                  type: "button",
+                  className: "dsh-btw-btn",
+                  "data-btw-followup": "true",
+                  onClick: () => setActiveId(expanded ? "" : String(thread.threadId ?? "")),
+                },
+                expanded ? t("collapse") : t("followUp"),
+              ),
+              h(
+                "button",
+                {
+                  type: "button",
+                  className: "dsh-btw-btn",
+                  "data-btw-promote": "true",
+                  disabled: busy,
+                  onClick: () => void promote(thread),
+                },
+                t("promote"),
+              ),
+            ),
+            expanded
+              ? h(
+                  "div",
+                  { className: "dsh-btw-row", "data-btw-thread-input": "true" },
+                  h("textarea", {
+                    className: "dsh-btw-input",
+                    "data-btw-input": "true",
+                    placeholder: t("followPlaceholder"),
+                    value: question,
+                    rows: 2,
+                    onChange: (/** @type {any} */ event) =>
+                      setQuestion(String(event?.target?.value ?? "")),
+                    onKeyDown: (/** @type {any} */ event) => {
+                      if (event?.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                        event.preventDefault();
+                        void submit(String(thread.threadId ?? ""));
+                      }
                     },
-                    h("div", { className: "dsh-btw-q" }, `/btw ${String(item?.question ?? "")}`),
-                    h(
-                      "div",
-                      { className: "dsh-btw-a", "data-btw-answer": "true" },
-                      String(item?.answer ?? ""),
-                    ),
-                    h(
-                      "div",
-                      { className: "dsh-btw-meta", "data-btw-meta": "true" },
-                      fmt(t("cost"), {
-                        newTokens: String(item?.cost?.inputTokens ?? 0),
-                        cachedTokens: String(item?.cost?.cacheReadTokens ?? 0),
-                        ms: String(item?.ms ?? 0),
-                      }),
-                    ),
+                  }),
+                  h(
+                    "button",
+                    {
+                      type: "button",
+                      className: "dsh-btw-btn",
+                      "data-btw-send": "true",
+                      disabled: busy || question.trim() === "",
+                      onClick: () => void submit(String(thread.threadId ?? "")),
+                    },
+                    t("send"),
                   ),
-                );
+                )
+              : null,
+          );
+        };
+
+        const body =
+          threads === null
+            ? h("div", { className: "dsh-btw-dim" }, "…")
+            : threads.length === 0
+              ? h("div", { className: "dsh-btw-dim", "data-btw-empty": "true" }, t("empty"))
+              : threads.map(renderThread);
 
         return h(
           "span",
@@ -414,19 +559,19 @@ window.__ModuleLoader__.load({
               : body,
             h(
               "div",
-              { className: "dsh-btw-row" },
+              { className: "dsh-btw-row", "data-btw-newline": "true" },
               h("textarea", {
                 className: "dsh-btw-input",
                 "data-btw-input": "true",
                 placeholder: t("placeholder"),
-                value: question,
+                value: activeId === "" ? question : "",
                 rows: 2,
                 onChange: (/** @type {any} */ event) =>
                   setQuestion(String(event?.target?.value ?? "")),
                 onKeyDown: (/** @type {any} */ event) => {
                   if (event?.key === "Enter" && (event.metaKey || event.ctrlKey)) {
                     event.preventDefault();
-                    void submit();
+                    void submit("");
                   }
                 },
               }),
@@ -437,7 +582,7 @@ window.__ModuleLoader__.load({
                   className: "dsh-btw-btn",
                   "data-btw-send": "true",
                   disabled: busy || question.trim() === "",
-                  onClick: () => void submit(),
+                  onClick: () => void submit(""),
                 },
                 t("send"),
               ),

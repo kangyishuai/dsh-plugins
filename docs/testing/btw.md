@@ -178,3 +178,29 @@ pnpm gate btw          # 这次不跳过第 4 步
 | `engines.dsh`                                           | 未声明（按约定 §4，预发布阶段不写范围，用 README 兼容性表代替）                                                   |
 | `dsh.client`                                            | `{ platform: "web", inject: ["@deepseek-ai/dsh-client-ui-conversation", "@deepseek-ai/dsh-client-ui-slots"] }`    |
 | `exports`                                               | `.` / `./package.json` / `./client`                                                                               |
+
+## v0.3 真机验证（2026-11-17）
+
+临时宿主 + ego-browser 驱动真实页面，验证线程视图、追问、转正三项：
+
+```
+T1 {"overlay":true,"threads":1,"promote":1,"followup":1,"err":""}   ← 线程卡片与两个按钮
+T2 {"threadInput":true}                                            ← 追问输入框展开
+T3 {"before":0,
+    "notice":"已插入输入框草稿（未发送）",
+    "draft":"## 我问了什么\n\nreply with exactly OK\n\n\n\n\n## 结论\n\nOK",
+    "flowKinds":0,                                                  ← 关键：零消息产生
+    "promoteDisabled":false}
+```
+
+**`flowKinds: 0 → 0` 是「只插草稿、不发送」语义的硬证据**：转正后对话流没有任何新节点，
+草稿落在 composer 里等用户自己决定。
+
+转正草稿是四节模板（我问了什么 / 结论 / 关键细节 / 仍未解决），
+只有传了 `details`/`unresolved` 才出现后两节。
+
+### 追问的实现方式
+
+浮层里点「追问」后提交的是 `/btw --thread <threadId> <问题>`，由 `parseThreadFlag` 解析。
+之所以用命令行标记而不是 Remote：浮层发问必须走 composer（真实 Agent 只能在命令上下文取，
+见 ADR 0016），线程 id 只能随这行文本一起传进来。host 侧再按线程回放历史给模型。
