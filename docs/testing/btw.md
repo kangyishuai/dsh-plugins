@@ -378,3 +378,52 @@ FAIL 门禁中止：「桌面只读回归（需要调试端口）」跑完了但
 空白容忍、无计数行返回 `undefined`、假绿判定。
 
 `pnpm verify` → EXIT 0，脚本测试 **55/55**。
+
+## 桌面回归实跑（2026-11-17，首次）
+
+装进 desktop profile 后首次真正执行（此前只有 web 冒烟）：
+
+```
+dsh plugin --profile desktop add @kangyishuai/dsh-btw   # 0.1.0
+
+PASS client 半已注入（style[data-plugin]）
+PASS 输入框左侧出现 btw 按钮
+PASS 点开后浮层出现
+PASS 浮层是 dialog
+PASS 档位选择器存在且有 4 个档位
+PASS 徽章如实写明模型可见完整会话
+SKIP 追问/转正按钮 — 当前会话还没有旁问记录（先提一个 /btw 再跑）
+PASS Esc 后浮层消失
+PASS 没有遗留浮层
+SKIP 结束时输入框已还原为空 — 进来时已有草稿，保持原样不做清理
+SKIP 设置分节 — 打不开设置入口（account=clicked, settings=false）
+
+8 PASS / 3 SKIP / 0 FAIL
+```
+
+→ **真实 Electron 渲染进程里**确认了 client 半注入、slot 挂载、浮层契约、档位与徽章。
+
+### 为了能跑，先修了脚本的两个设计缺陷
+
+**1. 「忙就全 SKIP」= 假绿**
+
+原来脚本开头是：
+
+```js
+if (initial.running) { skip("桌面交互", "当前会话有运行中的回合"); return; }
+```
+
+agent 自己的回合就跑在同一个桌面版里，所以它自跑时 **0 条断言执行**，退出码 0 —— 正是门禁要防的假绿。
+
+改为：**只读断言无条件执行**（不改动任何状态），只有**会碰 composer 草稿**的转正断言需要空闲会话。
+
+**2. 插件检测排在忙检测之后**
+
+原来先判「忙」再判「装了没」，导致「没装进当前 profile」被误报成「忙」，真问题永远藏着。
+现在先做纯只读的插件检测，没装就直接 FAIL 并提示怎么装。
+
+### 当前 build 的一个已知限制
+
+**回合进行中无法切换可见会话**（`element.click()`、真实鼠标事件 `Input.dispatchMouseEvent`、
+聚焦后按 Enter 都试过，导航不触发）。约定 §6.1 说「切到空闲会话再跑」，在这个 build 上做不到，
+所以 agent 自跑时转正断言只能 SKIP。人工在空闲会话里跑可以补上。

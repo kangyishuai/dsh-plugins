@@ -190,21 +190,25 @@ const main = async () => {
     await sleep(1200);
     const initial = await cdp.evaluate(STATE);
 
-    // 安全前置：正在跑的回合属于 agent 自己，不交互
-    if (initial.running) {
-      skip("桌面交互", "当前会话有运行中的回合（agent 自己跑回归时会这样）；切到空闲会话再跑");
-      console.log(`\n${passed} PASS / ${skipped} SKIP / ${failed} FAIL`);
-      return;
-    }
-
+    // 先判断插件是否装上：这是纯只读检测，与回合状态无关。
+    // 顺序很重要——如果先做「忙就 SKIP」，会把「没装」误报成「忙」，
+    // 让真问题（没装进当前 profile）永远藏着（2026-11-17 实测踩中）。
     check(
       "client 半已注入（style[data-plugin]）",
       initial.styleInjected === true,
       initial.styleInjected === true
         ? ""
-        : `页面有 ${initial.pluginCount} 个插件样式，但没有 btw —— 多半是没装进 desktop profile：` +
-            "先 pnpm pack --pack-destination /tmp，再 dsh plugin --profile desktop add /tmp/<tgz>，然后重启桌面版",
+        : `页面有 ${initial.pluginCount} 个插件样式，但没有 btw —— 没装进**当前运行的 profile**。` +
+            "先确认实例用的是哪个 profile（进程参数里的 --profile），再 dsh plugin --profile <name> add @kangyishuai/dsh-btw，然后重启桌面版",
     );
+    if (initial.styleInjected !== true) {
+      console.log(`\n${passed} PASS / ${skipped} SKIP / ${failed} FAIL`);
+      return;
+    }
+
+    // 只读断言无条件执行：它们不改动任何状态，与回合是否在跑无关。
+    // 只有**会碰 composer 草稿**的断言（转正）需要空闲会话——见文件末尾的 running 判断。
+    // 早期版本「忙就全 SKIP」，导致 agent 自己跑时 0 断言执行，正好是门禁要防的假绿。
     check("输入框左侧出现 btw 按钮", initial.toggle === true, JSON.stringify(initial));
 
     // 快照用户进来时的草稿：非空就不做任何会改动输入框的断言，走完也不清空。
@@ -270,7 +274,12 @@ const main = async () => {
         const draftBefore = await cdp.evaluate(
           `(() => ((document.querySelector('[data-composer-input]') || {}).innerText || '').trim())()`,
         );
-        if (draftBefore !== "") {
+        if (initial.running) {
+          skip(
+            "转正只插草稿",
+            "会改动 composer 草稿，需要空闲会话；当前回合在跑（agent 自跑时必然如此）",
+          );
+        } else if (draftBefore !== "") {
           skip("转正只插草稿", "输入框已有内容（插件会拒绝转正，属预期保护）");
         } else {
           await cdp.evaluate(
@@ -310,7 +319,7 @@ const main = async () => {
       check("没有遗留浮层", closed.overlay === false, JSON.stringify(closed));
 
       // 兜底：进来时输入框是空的，结束时也必须是空的（可能是被测脚本插入的草稿）。
-      if (initialDraft === "") {
+      if (initialDraft === "" && !initial.running) {
         await clearComposerDraft(cdp);
         const draftNow = await cdp.evaluate(
           `(() => ((document.querySelector('[data-composer-input]') || {}).innerText || '').trim())()`,
