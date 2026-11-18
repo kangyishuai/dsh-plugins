@@ -746,6 +746,7 @@ document body because the docked composer contains them**"，而浮层原本就�
 - 0.6.0 发布：Version Packages #180 → `@kangyishuai/dsh-btw@0.6.0`（npm latest / tag / Release 已建），
   插件索引已更新到 0.6.0。
 - 发布版冒烟（`--npm`）：默认 **15 PASS / 3 SKIP / 0 FAIL**；`--npm --deep` **23 PASS / 3 SKIP / 0 FAIL**。
+- 发布版桌面复验（安装 0.6.0、重启桌面后）：`pnpm gate btw` **PASS，4 步 42s**，桌面回归 **25 PASS / 0 SKIP / 0 FAIL**。
 - 真机手测：
   - 多轮线程转正草稿出现 `## 关键细节`，含「追问 1」的 Q/A。
   - 长答案「展开全文 → 收起」往返，答案视口 top 保持 220px，`scrollTop` 229→235→229。
