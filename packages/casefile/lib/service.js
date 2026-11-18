@@ -211,6 +211,8 @@ export class CasefileService extends TypertRemoteService {
       reopenObligation: (projectId, id, note) => this.actions.reopenObligation(projectId, id, note),
       overview: () => this.actions.overview(),
       runCycle: (projectId, input) => this.actions.runCycle(projectId, input),
+      isBuilderSession: (sessionId) =>
+        this.store.listBuilderSessions().has(String(sessionId ?? "")),
       closeProject: (projectId, options) => this.actions.closeProject(projectId, options),
       closePreview: (projectId, options) => this.actions.closePreview(projectId, options),
       exportReport: (projectId) => this.actions.exportReport(projectId),

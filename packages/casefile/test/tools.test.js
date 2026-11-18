@@ -171,3 +171,41 @@ test("cycle 只给 cwd 时不再起 builder（cwd 是构建目录）", async () 
     "显式 prompt 才起 builder",
   );
 });
+
+test("builder 会话不能写账本（builder-readonly）", async () => {
+  /** @type {any[]} */
+  const calls = [];
+  const handlers = {
+    listProjects: async () => {
+      calls.push("list");
+      return [];
+    },
+    openProject: async () => {
+      calls.push("open");
+      return { id: "p" };
+    },
+    isBuilderSession: (/** @type {any} */ id) => id === "session-builder-1",
+    getProject: async () => ({ project: { id: "p" } }),
+  };
+  const definitions = buildToolDefinitions(handlers, () => "p");
+  const project = definitions.find((item) => item.name === "case_project");
+  const asBuilder = { agent: { id: "session-builder-1" } };
+  const asOwner = { agent: { id: "session-owner" } };
+
+  const denied = await project.execute({ action: "open", title: "X" }, asBuilder);
+  assert.equal(denied.ok, false);
+  assert.equal(denied.error.code, "builder-readonly");
+  assert.equal(calls.includes("open"), false, "被拒时不应真的建项目");
+
+  const allowed = await project.execute({ action: "open", title: "X" }, asOwner);
+  assert.equal(allowed.ok, true);
+  assert.equal(calls.includes("open"), true);
+});
+
+test("没有 isBuilderSession 实现时守卫不误伤", async () => {
+  const handlers = { listProjects: async () => [], openProject: async () => ({ id: "p" }) };
+  const definitions = buildToolDefinitions(handlers, () => "p");
+  const project = definitions.find((item) => item.name === "case_project");
+  const result = await project.execute({ action: "open", title: "X" }, { agent: { id: "s1" } });
+  assert.equal(result.ok, true);
+});

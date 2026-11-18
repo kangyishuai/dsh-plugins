@@ -89,6 +89,35 @@ export function buildToolDefinitions(handlers, projectOf) {
    * @param {any} exec
    * @returns {string}
    */
+  /**
+   * builder 子会话只该收到规格包，不得写账本。
+   * 写类工具在开跑前统一过这道门：exec.agent.id 命中 builder 登记就拒绝。
+   * @param {any} exec
+   * @returns {Promise<void>}
+   */
+  /**
+   * builder 子会话只该收到规格包，不得写账本。
+   * @param {any} exec
+   * @returns {Promise<void>}
+   */
+  const assertWriter = async (exec) => {
+    const sessionId = exec?.agent?.id;
+    if (typeof sessionId !== "string" || sessionId === "") return;
+    const lookup = handlers.isBuilderSession;
+    if (typeof lookup !== "function") return;
+    if (await lookup(sessionId)) {
+      throw Object.assign(
+        new Error("builder 会话不能写案卷：它只该收到规格包。写证据/结论/义务请在主线会话里做。"),
+        { code: "builder-readonly" },
+      );
+    }
+  };
+
+  /**
+   * @param {any} args
+   * @param {any} exec
+   * @returns {string}
+   */
   const projectId = (args, exec) => {
     const explicit = typeof args.projectId === "string" && args.projectId !== "";
     const id = explicit ? args.projectId : projectOf(exec);
@@ -138,6 +167,7 @@ export function buildToolDefinitions(handlers, projectOf) {
       /** @param {any} args @param {any} exec */
       async execute(args, exec) {
         return run(async () => {
+          await assertWriter(exec);
           switch (args.action) {
             case "open": {
               if (typeof args.title !== "string" || args.title.trim() === "") {
@@ -262,6 +292,7 @@ export function buildToolDefinitions(handlers, projectOf) {
       /** @param {any} args @param {any} exec */
       async execute(args, exec) {
         return run(async () => {
+          await assertWriter(exec);
           const action = assertAction(args.action, ["add", "list", "show"]);
           const id = projectId(args, exec);
           if (action === "add") {
@@ -320,6 +351,7 @@ export function buildToolDefinitions(handlers, projectOf) {
       /** @param {any} args @param {any} exec */
       async execute(args, exec) {
         return run(async () => {
+          await assertWriter(exec);
           const action = assertAction(args.action, ["add", "list", "search", "select"]);
           const id = projectId(args, exec);
           if (action === "add") {
@@ -372,6 +404,7 @@ export function buildToolDefinitions(handlers, projectOf) {
       /** @param {any} args @param {any} exec */
       async execute(args, exec) {
         return run(async () => {
+          await assertWriter(exec);
           const action = assertAction(args.action, ["add", "list"]);
           const id = projectId(args, exec);
           if (action === "add") {
@@ -411,6 +444,7 @@ export function buildToolDefinitions(handlers, projectOf) {
       /** @param {any} args @param {any} exec */
       async execute(args, exec) {
         return run(async () => {
+          await assertWriter(exec);
           const action = assertAction(args.action, ["add", "list", "resolve"]);
           const id = projectId(args, exec);
           if (action === "add") {
@@ -475,6 +509,7 @@ export function buildToolDefinitions(handlers, projectOf) {
       /** @param {any} args @param {any} exec */
       async execute(args, exec) {
         return run(async () => {
+          await assertWriter(exec);
           const action = assertAction(args.action, ["add", "list", "close", "reopen"]);
           const id = projectId(args, exec);
           if (action === "add") {
@@ -532,6 +567,7 @@ export function buildToolDefinitions(handlers, projectOf) {
       /** @param {any} args @param {any} exec */
       async execute(args, exec) {
         return run(async () => {
+          await assertWriter(exec);
           const action = assertAction(args.action, ["start", "status", "agent", "loop", "cycle"]);
           const id = projectId(args, exec);
           if (action === "cycle") {
@@ -638,6 +674,7 @@ export function buildToolDefinitions(handlers, projectOf) {
       /** @param {any} args @param {any} exec */
       async execute(args, exec) {
         return run(async () => {
+          await assertWriter(exec);
           const action = assertAction(args.action, ["run", "list", "loop"]);
           const id = projectId(args, exec);
           if (action === "run") {

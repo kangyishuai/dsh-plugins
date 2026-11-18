@@ -12,6 +12,7 @@
 //   - 所有路径从 dataRoot 派生，不写死 ~/.dsh（可在临时目录里测）。
 
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -361,6 +362,44 @@ export class CaseStore {
       n += 1;
     }
     return candidate;
+  }
+
+  /**
+   * 记录一个 builder 子会话 id（数据根级，不分项目）。
+   * builder 只该收到规格包，不该写账本——写类工具遇到它会拒绝。
+   * @param {string} sessionId
+   */
+  recordBuilderSession(sessionId) {
+    const id = String(sessionId ?? "").trim();
+    if (id === "") return;
+    const file = join(this.dataRoot, "builder-sessions.jsonl");
+    appendFileSync(
+      file,
+      `${JSON.stringify({ sessionId: id, at: new Date().toISOString() })}\n`,
+      "utf8",
+    );
+  }
+
+  /**
+   * 读 builder 会话 id 集合。
+   * @returns {Set<string>}
+   */
+  listBuilderSessions() {
+    const file = join(this.dataRoot, "builder-sessions.jsonl");
+    if (!existsSync(file)) return new Set();
+    /** @type {Set<string>} */
+    const out = new Set();
+    for (const line of readFileSync(file, "utf8").split("\n")) {
+      const text = line.trim();
+      if (text === "") continue;
+      try {
+        const record = JSON.parse(text);
+        if (typeof record?.sessionId === "string") out.add(record.sessionId);
+      } catch {
+        // 坏行跳过：这份索引是"宁可少拦"的辅助数据，坏了不影响主记录。
+      }
+    }
+    return out;
   }
 
   /**
