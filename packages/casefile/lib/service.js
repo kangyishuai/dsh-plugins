@@ -210,6 +210,7 @@ export class CasefileService extends TypertRemoteService {
       closeObligation: (projectId, id, input) => this.actions.closeObligation(projectId, id, input),
       reopenObligation: (projectId, id, note) => this.actions.reopenObligation(projectId, id, note),
       overview: () => this.actions.overview(),
+      awaitLogin: (projectId, input) => this.actions.awaitLogin(projectId, input),
       runCycle: (projectId, input) => this.actions.runCycle(projectId, input),
       isBuilderSession: (sessionId) =>
         this.store.listBuilderSessions().has(String(sessionId ?? "")),
@@ -464,6 +465,19 @@ export class CasefileService extends TypertRemoteService {
    * @param {Record<string, any>} input
    * @returns {Promise<Record<string, any>>}
    */
+  async awaitLogin(projectId, input) {
+    try {
+      return await this.actions.awaitLogin(projectId, /** @type {any} */ (input));
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
+   * @param {Record<string, any>} input
+   * @returns {Promise<Record<string, any>>}
+   */
   async runCycle(projectId, input) {
     try {
       return await this.actions.runCycle(projectId, /** @type {any} */ (input));
@@ -665,6 +679,7 @@ declareRemote(CasefileService, "listChecks");
 declareRemote(CasefileService, "closeObligation");
 declareRemote(CasefileService, "reopenObligation");
 declareRemote(CasefileService, "overview");
+declareRemote(CasefileService, "awaitLogin");
 declareRemote(CasefileService, "runCycle");
 declareRemote(CasefileService, "closeProject");
 declareRemote(CasefileService, "exportReport");

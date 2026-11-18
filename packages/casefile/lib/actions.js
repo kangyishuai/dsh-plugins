@@ -10,6 +10,7 @@ import { buildAttestation } from "./core/attestation.js";
 import { buildSpecPack, redactPack, renderSpecMarkdown, writeSpecPack } from "./core/brief.js";
 import { createCheckers } from "./core/checks.js";
 import { hashTree, shortDigest } from "./core/digest.js";
+import { awaitLogin } from "./core/login-wait.js";
 import { gradeCapabilities } from "./core/manifest.js";
 import {
   CasefileInputError,
@@ -206,8 +207,14 @@ export function createActions(options) {
      */
     async addEvidence(projectId, input, exec) {
       const project = requireProject(projectId);
+      // 产物接管：/tmp 里的东西会被清理，清了 sha256 就无法复算，项目只能停在 investigating。
+      const archived =
+        typeof input?.artifactPath === "string" && input.artifactPath.trim() !== ""
+          ? store.archiveArtifact(project.id, input.artifactPath)
+          : null;
       const record = normalizeEvidence({
         ...input,
+        artifact: archived,
         sessionId: input?.sessionId ?? sessionOf(exec) ?? null,
       });
       store.appendRecord(project.id, "evidence", record);
@@ -1120,6 +1127,42 @@ export function createActions(options) {
       }
       const overview = buildOverview(projects, dataById);
       return { ...overview, summary: summarizeOverview(overview) };
+    },
+
+    // ---------- 等登录（人机协作） ----------
+
+    /**
+     * 轮询等用户完成登录。带超时，不假装成功。
+     * @param {string} projectId
+     * @param {{
+     *   endpoint: string, urlPrefix?: string, readyJs?: string,
+     *   pollMs?: number, timeoutMs?: number,
+     * }} input
+     * @returns {Promise<Record<string, any>>}
+     */
+    async awaitLogin(projectId, input) {
+      const project = requireProject(projectId);
+      const endpoint = String(input?.endpoint ?? "").trim();
+      if (endpoint === "") {
+        throw new CasefileInputError(
+          "invalid-input",
+          "endpoint 不能为空（形如 http://127.0.0.1:9223）",
+        );
+      }
+      const result = await awaitLogin({
+        endpoint,
+        urlPrefix: input?.urlPrefix,
+        readyJs: input?.readyJs,
+        pollMs: input?.pollMs,
+        timeoutMs: input?.timeoutMs,
+      });
+      store.audit(project.id, {
+        actor: "agent",
+        action: "access/await-login",
+        target: endpoint,
+        detail: { status: result.status, attempts: result.attempts, waitedMs: result.waitedMs },
+      });
+      return result;
     },
 
     // ---------- 覆盖率 / 关闭 / 报告（M3 收尾） ----------

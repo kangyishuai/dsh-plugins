@@ -220,11 +220,6 @@ export function normalizeProjectInput(input) {
 }
 
 /**
- * 规范化一条证据（只投影 REA 的结论）。
- * @param {Record<string, any>} input
- * @returns {Record<string, any>}
- */
-/**
  * 外部生产者（谁采的、用什么方式采的、用户是否明示确认过）。
  * casefile 自己不采集：它只记录产出者，责任与合法性归操作者。
  * @param {any} raw
@@ -263,6 +258,34 @@ export function normalizeProducer(raw) {
  * @param {Record<string, any>} input
  * @returns {Record<string, any>}
  */
+/**
+ * 归档产物元信息（由 store.archiveArtifact 产出，这里只做形状校验）。
+ * @param {any} raw
+ * @returns {Record<string, any> | null}
+ */
+export function normalizeArtifact(raw) {
+  if (raw == null) return null;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new CasefileInputError("invalid-input", "artifact 必须是对象");
+  }
+  const sha256 = text(raw.sha256, "artifact.sha256", { max: 128 });
+  const file = text(raw.file, "artifact.file", { max: 400 });
+  return {
+    sha256,
+    bytes: Number.isInteger(raw.bytes) && raw.bytes >= 0 ? raw.bytes : 0,
+    file,
+    originalName:
+      raw.originalName == null
+        ? null
+        : text(raw.originalName, "artifact.originalName", { max: 200 }),
+  };
+}
+
+/**
+ * 规范化一条证据（只投影 REA 的结论）。
+ * @param {Record<string, any>} input
+ * @returns {Record<string, any>}
+ */
 export function normalizeEvidence(input) {
   return {
     id: newId("ev"),
@@ -278,6 +301,7 @@ export function normalizeEvidence(input) {
     summary: text(input?.summary, "summary", { max: 4000 }),
     refs: textList(input?.refs, "refs"),
     producer: normalizeProducer(input?.producer),
+    artifact: normalizeArtifact(input?.artifact),
     claimIds: idList(input?.claimIds, "claimIds"),
   };
 }

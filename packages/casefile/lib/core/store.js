@@ -11,6 +11,7 @@
 //   - JSONL append-only，修改用新记录 + supersedes（M0 先只追加）；
 //   - 所有路径从 dataRoot 派生，不写死 ~/.dsh（可在临时目录里测）。
 
+import { createHash } from "node:crypto";
 import {
   appendFileSync,
   existsSync,
@@ -18,9 +19,10 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, extname, join } from "node:path";
 import {
   CasefileInputError,
   ID_RE,
@@ -362,6 +364,35 @@ export class CaseStore {
       n += 1;
     }
     return candidate;
+  }
+
+  /**
+   * 把外部采集产物归档进项目目录，返回归档后的元信息。
+   * 目的：/tmp 里的产物会被清理，清了就无法复算 sha256，项目只能停在 investigating。
+   * @param {string} projectId
+   * @param {string} sourcePath 绝对路径的现成产物
+   * @returns {{ sha256: string, bytes: number, file: string, originalName: string }}
+   */
+  archiveArtifact(projectId, sourcePath) {
+    const source = String(sourcePath ?? "").trim();
+    if (source === "" || !existsSync(source)) {
+      throw new CasefileInputError("invalid-input", `产物不存在：${source || "(空)"}`);
+    }
+    const stat = statSync(source);
+    if (!stat.isFile()) {
+      throw new CasefileInputError("invalid-input", `不是普通文件：${source}`);
+    }
+    const bytes = readFileSync(source);
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    const dir = join(this.projectDir(projectId), "artifacts");
+    mkdirSync(dir, { recursive: true });
+    const name = basename(source);
+    const ext = extname(name);
+    const file = join("artifacts", `${digest.slice(0, 16)}${ext}`);
+    const target = join(this.projectDir(projectId), file);
+    // 同样的内容只存一份：同一 sha256 已存在就直接复用
+    if (!existsSync(target)) writeFileSync(target, bytes);
+    return { sha256: digest, bytes: bytes.length, file, originalName: name };
   }
 
   /**

@@ -17,6 +17,7 @@ export const TOOL_NAMES = /** @type {const} */ ({
   feature: "case_feature",
   unknown: "case_unknown",
   obligation: "case_obligation",
+  access: "case_access",
   build: "case_build",
   check: "case_check",
   brief: "case_brief",
@@ -250,6 +251,11 @@ export function buildToolDefinitions(handlers, projectOf) {
                 type: "string",
                 description:
                   "产出该证据的工具标识（REA 工具名，或外部工具如 scrapling/StealthyFetcher）",
+              },
+              artifactPath: {
+                type: "string",
+                description:
+                  "可选：把外部采集产物（HTML/HAR/截图）归档进项目目录并记录 sha256；/tmp 产物会被清理，归档后才能长期复算",
               },
               producer: {
                 type: "object",
@@ -533,6 +539,52 @@ export function buildToolDefinitions(handlers, projectOf) {
           }
           const obligations = await handlers.listObligations(id);
           return { obligations, summary: `${obligations.length} 条义务` };
+        });
+      },
+    },
+
+    {
+      name: TOOL_NAMES.access,
+      description:
+        "访问协助：await-login 轮询等人完成登录（带超时，就绪/超时/错误三态，不假装成功）。用于登录态页面采集前。",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          action: { type: "string", enum: ["await-login"] },
+          projectId: PROJECT_ID,
+          endpoint: { type: "string", description: "CDP 端点，形如 http://127.0.0.1:9223" },
+          urlPrefix: { type: "string", description: "只选 URL 以它开头的页面" },
+          readyJs: {
+            type: "string",
+            description: "就绪判据（返回 boolean 的 JS 表达式），默认「页面里没有密码输入框」",
+          },
+          pollMs: { type: "integer", description: "轮询间隔，默认 2000" },
+          timeoutMs: { type: "integer", description: "最长等待，默认 180000（3 分钟）" },
+        },
+        required: ["action"],
+      },
+      output: { schema: TOOL_OUTPUT_SCHEMA, render: renderToolResult },
+      /** @param {any} args @param {any} exec */
+      async execute(args, exec) {
+        return run(async () => {
+          await assertWriter(exec);
+          assertAction(args.action, ["await-login"]);
+          const id = projectId(args, exec);
+          const result = await handlers.awaitLogin(id, {
+            endpoint: args.endpoint,
+            urlPrefix: args.urlPrefix,
+            readyJs: args.readyJs,
+            pollMs: args.pollMs,
+            timeoutMs: args.timeoutMs,
+          });
+          return {
+            ...result,
+            summary:
+              result.status === "ready"
+                ? `已就绪（等了 ${result.waitedMs}ms，${result.attempts} 次探测）`
+                : `${result.status}：${result.hint}`,
+          };
         });
       },
     },
