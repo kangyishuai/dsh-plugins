@@ -969,6 +969,8 @@ export function createActions(options) {
             ].join("\n");
       const created = await sessions.create({ cwd });
       const sessionId = String(created.sessionId);
+      // builder 只该收到规格包：把它登记为"只读会话"，写类工具会拒绝它。
+      store.recordBuilderSession(sessionId);
       await sessions.prompt({ sessionId, text: prompt });
       const record = {
         id: newId("builder"),
