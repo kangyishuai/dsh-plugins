@@ -1,6 +1,6 @@
 {
   "name": "@kangyishuai/dsh-btw",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Read-only side questions that do not interrupt the main task",
   "keywords": [
     "dsh",

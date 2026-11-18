@@ -1,5 +1,11 @@
 # @kangyishuai/dsh-btw
 
+## 0.6.0
+
+### Minor Changes
+
+- [#179](https://github.com/kangyishuai/dsh-plugins/pull/179) [`5970b35`](https://github.com/kangyishuai/dsh-plugins/commit/5970b354edff528139b3d195c04321a6c4fe5853) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 第二轮可用性修复：转正草稿把每轮追问的 Q/A 写进「关键细节」（避免首问标题 + 末答结论语义错位）；长答案支持「收起」并保持阅读位置；面板底部新增「只在旁问面板显示答案」开关（等同 `echoAnswer`，零先验用户不用进设置）；`Esc` 在焦点位于主输入框时也关闭面板（设置对话框拥有焦点时不抢）；底部提示合并为一行，减少信息密度。
+
 ## 0.5.0
 
 ### Minor Changes
