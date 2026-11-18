@@ -268,6 +268,7 @@ const main = async () => {
           badge: (document.querySelector('[data-btw-badge]') || { innerText: '' }).innerText || '',
           followup: document.querySelectorAll('[data-btw-followup]').length,
           promote: document.querySelectorAll('[data-btw-promote]').length,
+          echoToggle: !!document.querySelector('[data-btw-echo-toggle]'),
         };
       })()`);
       check(
@@ -280,6 +281,7 @@ const main = async () => {
         typeof v03.badge === "string" && /完整会话|whole conversation/.test(v03.badge),
         String(v03.badge),
       );
+      check("面板底部有「只在面板显示答案」开关", v03.echoToggle === true, JSON.stringify(v03));
 
       if (v03.threads === 0) {
         skip("追问/转正按钮", "当前会话还没有旁问记录（先提一个 /btw 再跑）");

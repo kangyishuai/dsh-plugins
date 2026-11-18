@@ -21,6 +21,7 @@ import {
   parseCommandArgs,
   promoteRecordForThread,
   renderPromoteDraft,
+  renderThreadDetails,
   threadHistory,
 } from "./threads.js";
 
@@ -347,9 +348,14 @@ export class BtwService extends TypertRemoteService {
               .reverse()
               .find((entry) => String(entry?.id ?? "") === wanted);
     if (record === undefined) return { ok: false, reason: "no_record" };
+    // 线程级转正：把每一轮追问的 Q/A 放进「关键细节」，避免首问标题 + 末答结论语义错位。
+    const threadDetails =
+      threadId === "" ? "" : renderThreadDetails(records, threadId, String(input.lang ?? ""));
+    const requestedDetails = String(input.details ?? "").trim();
+    const details = [threadDetails, requestedDetails].filter((part) => part !== "").join("\n\n");
     const text = renderPromoteDraft(record, {
       lang: String(input.lang ?? ""),
-      details: String(input.details ?? ""),
+      details,
       unresolved: String(input.unresolved ?? ""),
       maxChars: LIMITS.promoteChars,
     }).slice(0, LIMITS.promoteChars);
