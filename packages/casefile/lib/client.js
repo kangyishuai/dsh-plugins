@@ -83,6 +83,9 @@ window.__ModuleLoader__.load({
       "blocker.failedObligations": "有失败的义务",
       "blocker.blockedObligations": "有阻塞的义务",
       "blocker.coverageBelow": "覆盖率不足",
+      "wait.title": "案卷：等待登录",
+      "wait.hint": "请在弹出的浏览器窗口里完成登录；就绪后会自动继续。",
+      "wait.elapsed": "已等待 {seconds}s",
       "blocker.implementationChanged": "实现已变化",
       "blocker.originalChanged": "原件已变化",
       "blocker.checkStale": "检查已过期",
@@ -172,6 +175,10 @@ window.__ModuleLoader__.load({
       "blocker.failedObligations": "failed obligations",
       "blocker.blockedObligations": "blocked obligations",
       "blocker.coverageBelow": "coverage below target",
+      "wait.title": "Casefile: waiting for sign-in",
+      "wait.hint":
+        "Finish signing in in the browser window; it continues automatically once ready.",
+      "wait.elapsed": "waiting {seconds}s",
       "blocker.implementationChanged": "implementation changed",
       "blocker.originalChanged": "original changed",
       "blocker.checkStale": "check is stale",
@@ -548,6 +555,81 @@ window.__ModuleLoader__.load({
           props.unknown.severity,
         ),
         h("span", null, props.unknown.text),
+      );
+    }
+
+    /**
+     * 等待登录横幅：轮询 host 的 accessState。
+     * 只在"正在等"时出现，不阻塞任何操作——这是提醒，不是模态框。
+     */
+    /** @param {{ api: any, t: any }} props */
+    function LoginWaitOverlay(props) {
+      var ctx = props.api.ctx;
+      var t = props.t;
+      var state = useState(null);
+      var wait = state[0];
+      var setWait = state[1];
+      var tickState = useState(0);
+      var setTick = tickState[1];
+
+      useEffect(() => {
+        var alive = true;
+        var poll = () => {
+          call(ctx, "accessState")
+            .then((value) => {
+              if (alive) setWait(value && value.active === true ? value : null);
+            })
+            .catch(() => {
+              if (alive) setWait(null);
+            });
+        };
+        poll();
+        var timer = setInterval(() => {
+          poll();
+          setTick((/** @type {number} */ n) => n + 1);
+        }, 2000);
+        return () => {
+          alive = false;
+          clearInterval(timer);
+        };
+      }, [ctx]);
+
+      var seconds = 0;
+      var started = NaN;
+      if (!wait) return null;
+      if (typeof wait.startedAt === "string") {
+        started = Date.parse(wait.startedAt);
+        if (Number.isFinite(started))
+          seconds = Math.max(0, Math.round((Date.now() - started) / 1000));
+      }
+      return h(
+        "div",
+        {
+          className: "cf-loginwait",
+          "data-casefile-loginwait": wait.projectId || "1",
+          "data-casefile-loginwait-seconds": String(seconds),
+          style: {
+            position: "fixed",
+            right: 20,
+            bottom: 20,
+            zIndex: 40,
+            maxWidth: 380,
+            padding: "10px 14px",
+            borderRadius: 10,
+            background: "var(--dsw-alias-toast-bg)",
+            color: "var(--dsw-alias-toast-label)",
+            fontSize: 12,
+            lineHeight: 1.55,
+            boxShadow: "0 6px 24px rgba(0,0,0,.28)",
+          },
+        },
+        h("div", { style: { fontWeight: 600, marginBottom: 2 } }, text(t, "wait.title")),
+        h("div", null, wait.hint || text(t, "wait.hint")),
+        h(
+          "div",
+          { style: { marginTop: 4, opacity: 0.72 } },
+          text(t, "wait.elapsed", { seconds: seconds }),
+        ),
       );
     }
 
@@ -1267,6 +1349,19 @@ window.__ModuleLoader__.load({
             ),
           ),
         "casefile: settings section",
+      );
+
+      c.effect(
+        () =>
+          c.slots.inject("shell.overlay", () =>
+            c.slots.register(
+              { name: "shell.overlay", id: "casefile-loginwait", order: 880, locale: NS },
+              function CasefileLoginWaitOverlay(/** @type {any} */ props) {
+                return h(LoginWaitOverlay, Object.assign({}, props, { api: api, t: t }));
+              },
+            ),
+          ),
+        "casefile: login wait overlay",
       );
     };
 

@@ -141,7 +141,17 @@ export function buildToolDefinitions(handlers, projectOf) {
         properties: {
           action: {
             type: "string",
-            enum: ["open", "list", "get", "update", "close", "report", "overview"],
+            enum: [
+              "open",
+              "list",
+              "get",
+              "update",
+              "close",
+              "report",
+              "overview",
+              "archive",
+              "drop",
+            ],
             description: "要执行的动作",
           },
           projectId: PROJECT_ID,
@@ -161,6 +171,11 @@ export function buildToolDefinitions(handlers, projectOf) {
           scope: { type: "string", enum: ["all", "selected"] },
           patch: { type: "object", description: "update 时的字段（title/authTier/scope/state）" },
           minCoverage: { type: "number", description: "close 时的覆盖率下限（默认 1）" },
+          reason: { type: "string", description: "archive 时的原因（进审计）" },
+          confirm: {
+            type: "boolean",
+            description: "drop 时必须传 true：把整个项目目录移进 trash（可手动移回）",
+          },
         },
         required: ["action"],
       },
@@ -217,6 +232,21 @@ export function buildToolDefinitions(handlers, projectOf) {
                 closed: closed.project,
                 coverage: preview.coverage,
                 summary: `项目已关闭（覆盖率 ${(preview.coverage.ratio * 100).toFixed(0)}%）`,
+              };
+            }
+            case "archive": {
+              const archived = await handlers.archiveProject(projectId(args, exec), {
+                reason: args.reason,
+              });
+              return { project: archived.project, summary: `项目已归档：${archived.project.id}` };
+            }
+            case "drop": {
+              const dropped = await handlers.dropProject(projectId(args, exec), {
+                confirm: args.confirm,
+              });
+              return {
+                trashedTo: dropped.trashedTo,
+                summary: `项目已移入 trash：${dropped.trashedTo}`,
               };
             }
             case "report": {

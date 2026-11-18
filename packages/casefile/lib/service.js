@@ -65,6 +65,7 @@ function fail(error) {
     "nothing-selected",
     "project-exists",
     "not-found",
+    "confirm-required",
     "project-not-found",
     "obligationTooTall",
     "coverage-not-met",
@@ -91,10 +92,14 @@ export class CasefileService extends TypertRemoteService {
     this.store = new CaseStore({ dataRoot: this.dataRoot, logger: this.logger });
     /** 会话 → 最近打开的项目（工具省略 projectId 时用）。 @type {Map<string, string>} */
     this.currentProject = new Map();
+    this.accessWait = null;
     this.actions = createActions({
       store: this.store,
       currentProject: this.currentProject,
       dataRoot: this.dataRoot,
+      onWaitChange: (state) => {
+        this.accessWait = state;
+      },
     });
     this.installSessions();
     this.installTools();
@@ -211,6 +216,9 @@ export class CasefileService extends TypertRemoteService {
       reopenObligation: (projectId, id, note) => this.actions.reopenObligation(projectId, id, note),
       overview: () => this.actions.overview(),
       awaitLogin: (projectId, input) => this.actions.awaitLogin(projectId, input),
+      accessState: () => this.accessState(),
+      archiveProject: (projectId, options) => this.actions.archiveProject(projectId, options),
+      dropProject: (projectId, options) => this.actions.dropProject(projectId, options),
       runCycle: (projectId, input) => this.actions.runCycle(projectId, input),
       isBuilderSession: (sessionId) =>
         this.store.listBuilderSessions().has(String(sessionId ?? "")),
@@ -460,6 +468,37 @@ export class CasefileService extends TypertRemoteService {
     }
   }
 
+  /** @returns {Promise<Record<string, any>>} */
+  async accessState() {
+    return this.accessWait == null ? { active: false } : { ...this.accessWait };
+  }
+
+  /**
+   * @param {string} projectId
+   * @param {Record<string, any>} [options]
+   * @returns {Promise<Record<string, any>>}
+   */
+  async archiveProject(projectId, options) {
+    try {
+      return await this.actions.archiveProject(projectId, options ?? {});
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
+   * @param {Record<string, any>} [options]
+   * @returns {Promise<Record<string, any>>}
+   */
+  async dropProject(projectId, options) {
+    try {
+      return await this.actions.dropProject(projectId, options ?? {});
+    } catch (error) {
+      fail(error);
+    }
+  }
+
   /**
    * @param {string} projectId
    * @param {Record<string, any>} input
@@ -679,6 +718,9 @@ declareRemote(CasefileService, "listChecks");
 declareRemote(CasefileService, "closeObligation");
 declareRemote(CasefileService, "reopenObligation");
 declareRemote(CasefileService, "overview");
+declareRemote(CasefileService, "accessState");
+declareRemote(CasefileService, "archiveProject");
+declareRemote(CasefileService, "dropProject");
 declareRemote(CasefileService, "awaitLogin");
 declareRemote(CasefileService, "runCycle");
 declareRemote(CasefileService, "closeProject");
