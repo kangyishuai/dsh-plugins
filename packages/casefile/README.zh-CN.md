@@ -89,6 +89,12 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-casefile-*.tgz
 
 `case_project report` 写出 `reports/<时间戳>/report.md` + `report.json`：全局覆盖率、**按功能覆盖率**、义务表、带实现 digest 的检查表、未知项、循环状态，以及「`unknown` 不等于通过」的声明。
 
+## 采集：只摄入，不采集
+
+casefile 自己不去抓任何内容。每条证据带一份 **`producer`** 记录——工具、版本、获取方式（`headful` / `headless` / `api` / `archive` / `manual` / `stealth` / `unknown`）、产物类型，以及你是否**明示确认**过这种获取方式。报告会渲染一张生产者表，外加一句声明：采集方式由操作者选择与执行。
+
+这就是它能吃下任何东西的原因：REA 的采集、你自己代理录的 HAR、Scrapling 抓的 HTML 快照，或者你手动截的图。Tier 1（人类等价浏览、官方 API、公开归档）直接支持；Tier 2（你自己的会话，或你标为 `stealth` 的方式）只记录不背书；Tier 3（打码、指纹伪造、代理轮换、高频批量抓取）不提供、也不会加——见 [DISCLAIMER.md](DISCLAIMER.md#acquisition-boundary-three-tiers--采集边界三段式)。
+
 ## 净室 attestation
 
 每次 builder 会话都会写一条 **attestation**（`attestations.jsonl`）：prompt 摘要、规格包摘要、投喂了多少条结论/证据、授权档与是否 research 覆盖，以及「不要读取原始目标」这条指令**是否真的**在 prompt 里。报告里渲染成 `## 净室 attestation` 小节。

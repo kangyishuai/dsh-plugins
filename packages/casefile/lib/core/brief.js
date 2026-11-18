@@ -113,6 +113,7 @@ export function buildSpecPack(input) {
         id: item.id,
         kind: item.kind,
         sourceTool: item.sourceTool,
+        producer: item.producer ?? null,
         observedAt: item.observedAt,
         confidence: item.confidence,
         authority: item.authority,

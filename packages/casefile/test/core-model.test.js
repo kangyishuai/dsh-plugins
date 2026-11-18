@@ -107,3 +107,39 @@ test("projectStats 统计选中结论与未解决未知项", () => {
   assert.equal(stats.selectedClaims, 1);
   assert.equal(stats.openUnknowns, 1);
 });
+
+test("producer：记录外部生产者，且只接受已知 mode", () => {
+  const ok = normalizeEvidence({
+    summary: "外部工具抓的页面快照",
+    producer: {
+      tool: "scrapling/StealthyFetcher",
+      version: "0.3.0",
+      mode: "headful",
+      outputKind: "html",
+      accessConfirmedByUser: true,
+      confirmationNote: "本人确认该站点允许我访问",
+    },
+  });
+  assert.equal(ok.producer?.tool, "scrapling/StealthyFetcher");
+  assert.equal(ok.producer?.mode, "headful");
+  assert.equal(ok.producer?.accessConfirmedByUser, true);
+  assert.match(String(ok.producer?.confirmationNote), /确认/u);
+
+  assert.throws(
+    () => normalizeEvidence({ summary: "x", producer: { mode: "telepathy" } }),
+    (error) => /** @type {any} */ (error).code === "invalid-input",
+  );
+  assert.throws(
+    () => normalizeEvidence({ summary: "x", producer: "scrapling" }),
+    (error) => /** @type {any} */ (error).code === "invalid-input",
+  );
+  assert.equal(normalizeEvidence({ summary: "x" }).producer, null);
+});
+
+test("producer：未声明用户确认时不会凭空补 true", () => {
+  const evidence = normalizeEvidence({
+    summary: "x",
+    producer: { tool: "manual", mode: "manual", accessConfirmedByUser: false },
+  });
+  assert.equal(evidence.producer?.accessConfirmedByUser, undefined);
+});

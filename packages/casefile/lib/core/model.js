@@ -224,6 +224,45 @@ export function normalizeProjectInput(input) {
  * @param {Record<string, any>} input
  * @returns {Record<string, any>}
  */
+/**
+ * 外部生产者（谁采的、用什么方式采的、用户是否明示确认过）。
+ * casefile 自己不采集：它只记录产出者，责任与合法性归操作者。
+ * @param {any} raw
+ * @returns {Record<string, any> | null}
+ */
+export function normalizeProducer(raw) {
+  if (raw == null) return null;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new CasefileInputError("invalid-input", "producer 必须是对象");
+  }
+  /** @type {Record<string, any>} */
+  const producer = {};
+  if (raw.tool != null) producer.tool = text(raw.tool, "producer.tool", { max: 200 });
+  if (raw.version != null) producer.version = text(raw.version, "producer.version", { max: 64 });
+  if (raw.mode != null) {
+    producer.mode = oneOf(
+      raw.mode,
+      ["headful", "headless", "api", "archive", "manual", "stealth", "unknown"],
+      "producer.mode",
+    );
+  }
+  if (raw.outputKind != null)
+    producer.outputKind = text(raw.outputKind, "producer.outputKind", { max: 64 });
+  if (raw.accessConfirmedByUser === true) {
+    producer.accessConfirmedByUser = true;
+    producer.confirmationNote =
+      raw.confirmationNote == null
+        ? null
+        : text(raw.confirmationNote, "producer.confirmationNote", { max: 1000 });
+  }
+  return Object.keys(producer).length === 0 ? null : producer;
+}
+
+/**
+ * 规范化一条证据（只投影 REA 的结论）。
+ * @param {Record<string, any>} input
+ * @returns {Record<string, any>}
+ */
 export function normalizeEvidence(input) {
   return {
     id: newId("ev"),
@@ -238,6 +277,7 @@ export function normalizeEvidence(input) {
     integrity: input?.integrity == null ? null : text(input.integrity, "integrity", { max: 256 }),
     summary: text(input?.summary, "summary", { max: 4000 }),
     refs: textList(input?.refs, "refs"),
+    producer: normalizeProducer(input?.producer),
     claimIds: idList(input?.claimIds, "claimIds"),
   };
 }

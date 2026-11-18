@@ -116,6 +116,35 @@ export function evaluateClose(input) {
 }
 
 /**
+ * 汇总证据的生产者（去重，按工具+模式）。
+ * @param {Array<Record<string, any>>} evidence
+ * @returns {Array<Record<string, any>>}
+ */
+export function summarizeProducers(evidence) {
+  /** @type {Map<string, Record<string, any>>} */
+  const seen = new Map();
+  for (const item of evidence) {
+    const producer = item.producer;
+    if (!producer || typeof producer !== "object") continue;
+    const key = [producer.tool ?? "?", producer.mode ?? "?", producer.outputKind ?? "?"].join("|");
+    if (seen.has(key)) {
+      const existing = seen.get(key);
+      if (existing) existing.count += 1;
+      continue;
+    }
+    seen.set(key, {
+      tool: producer.tool ?? "?",
+      version: producer.version ?? null,
+      mode: producer.mode ?? null,
+      outputKind: producer.outputKind ?? null,
+      accessConfirmedByUser: producer.accessConfirmedByUser === true,
+      count: 1,
+    });
+  }
+  return [...seen.values()];
+}
+
+/**
  * 组装报告对象。
  * @param {{
  *   project: Record<string, any>,
@@ -150,6 +179,7 @@ export function buildReport(input) {
     coverage,
     coverageByFeature: computeCoverageByFeature(obligations, data.features ?? []),
     cleanRoom: attestationSummary(data.attestations ?? []),
+    producers: summarizeProducers(data.evidence ?? []),
     counts: {
       evidence: (data.evidence ?? []).length,
       claims: (data.claims ?? []).length,
@@ -286,6 +316,20 @@ export function renderReportMarkdown(report) {
     lines.push(`- 停止条件：${report.stop.reason ?? "unknown"}`);
     const detail = report.stop.detail ?? {};
     lines.push(`- 轮次：${detail.rounds ?? "—"} / 失败：${detail.failures ?? "—"}`);
+  }
+  if ((report.producers ?? []).length > 0) {
+    lines.push("");
+    lines.push("## 证据生产者");
+    lines.push("");
+    lines.push("| 工具 | 版本 | 获取方式 | 产物 | 用户已确认 |");
+    lines.push("| --- | --- | --- | --- | --- |");
+    for (const item of report.producers) {
+      lines.push(
+        `| ${item.tool} | ${item.version ?? "—"} | ${item.mode ?? "—"} | ${item.outputKind ?? "—"} | ${item.accessConfirmedByUser ? "是" : "否"} |`,
+      );
+    }
+    lines.push("");
+    lines.push("> casefile 不采集、不规避访问控制：以上生产者由操作者选择并执行，责任归操作者。");
   }
   if (report.cleanRoom) {
     lines.push("");
