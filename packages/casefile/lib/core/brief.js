@@ -207,6 +207,16 @@ export function renderSpecMarkdown(pack) {
   for (const item of pack.evidence) {
     lines.push("");
     lines.push(`- \`${item.id}\` · ${item.kind} · ${item.confidence} / ${item.authority}`);
+    if (item.producer && typeof item.producer === "object") {
+      const producer = item.producer;
+      const bits = [
+        producer.tool == null ? "工具未知" : `工具 ${producer.tool}`,
+        producer.version == null ? null : `v${producer.version}`,
+        producer.mode == null ? null : `方式 ${producer.mode}`,
+        producer.accessConfirmedByUser === true ? "用户已确认" : "用户未确认",
+      ].filter((value) => value != null);
+      lines.push(`  - 生产者：${bits.join(" · ")}`);
+    }
     if (item.summary) lines.push(`  - ${item.summary}`);
     if (item.limitations.length > 0) lines.push(`  - 局限：${item.limitations.join("；")}`);
     if (item.refs.length > 0) lines.push(`  - 引用：${item.refs.join("、")}`);

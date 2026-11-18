@@ -163,3 +163,85 @@ test("writeSpecPack 落盘 spec.json 与 brief.md", () => {
   assert.equal(spec.claims.length, 1);
   assert.match(readFileSync(join(written.dir, "brief.md"), "utf8"), /# 规格包/);
 });
+
+test("brief 渲染证据的生产者（工具/版本/方式/确认）", () => {
+  const pack = buildSpecPack({
+    project: {
+      id: "p",
+      title: "P",
+      target: { kind: "web", ref: "u" },
+      authTier: "authorized",
+      scope: "all",
+    },
+    claims: [
+      {
+        id: "c1",
+        text: "结论",
+        kind: "structure",
+        status: "observed",
+        selected: true,
+        evidenceIds: ["e1"],
+        limitations: [],
+      },
+    ],
+    evidence: [
+      {
+        id: "e1",
+        kind: "structure",
+        confidence: "observed",
+        authority: "external",
+        summary: "外部采集",
+        limitations: [],
+        refs: [],
+        producer: {
+          tool: "scrapling/StealthyFetcher",
+          version: "0.5",
+          mode: "stealth",
+          accessConfirmedByUser: true,
+        },
+      },
+    ],
+    features: [],
+    unknowns: [],
+  });
+  const md = renderSpecMarkdown(redactPack(pack));
+  assert.match(md, /生产者：工具 scrapling\/StealthyFetcher · v0\.5 · 方式 stealth · 用户已确认/u);
+});
+
+test("brief 对没有 producer 的证据不输出生产者行", () => {
+  const pack = buildSpecPack({
+    project: {
+      id: "p",
+      title: "P",
+      target: { kind: "other", ref: "u" },
+      authTier: "owned",
+      scope: "all",
+    },
+    claims: [
+      {
+        id: "c1",
+        text: "结论",
+        kind: "structure",
+        status: "observed",
+        selected: true,
+        evidenceIds: ["e1"],
+        limitations: [],
+      },
+    ],
+    evidence: [
+      {
+        id: "e1",
+        kind: "structure",
+        confidence: "observed",
+        authority: "shipped-artifact",
+        summary: "内部采集",
+        limitations: [],
+        refs: [],
+      },
+    ],
+    features: [],
+    unknowns: [],
+  });
+  const md = renderSpecMarkdown(redactPack(pack));
+  assert.equal(md.includes("生产者："), false);
+});
