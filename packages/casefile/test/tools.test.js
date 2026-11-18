@@ -8,6 +8,7 @@ import { buildToolDefinitions, TOOL_NAMES, toToolError } from "../lib/tools.js";
 /** 记录调用的假 handlers。 */
 function fakeHandlers() {
   /** @type {Array<[string, any[]]>} */
+  /** @type {any[]} */
   const calls = [];
   /** @type {(name: string) => (...args: any[]) => any} */
   const record =
@@ -133,4 +134,40 @@ test("select 传空数组时由 actions 报错（工具层不吞）", async () =
   const result = await claim.execute({ action: "select", claimIds: [] }, {});
   assert.equal(result.ok, false);
   assert.equal(result.error.code, "invalid-input");
+});
+
+test("cycle 只给 cwd 时不再起 builder（cwd 是构建目录）", async () => {
+  /** @type {any[]} */
+  const calls = [];
+  const handlers = {
+    getProject: async () => ({ project: { id: "p" }, capabilities: {} }),
+    runCycle: async (/** @type {any} */ _id, /** @type {any} */ input) => {
+      calls.push(input);
+      return { loop: { closed: 0, open: 0, rounds: [] }, summary: "ok" };
+    },
+    listProjects: async () => [],
+    diagnose: async () => ({}),
+  };
+  const definitions = buildToolDefinitions(handlers, () => "p");
+  const build = definitions.find((item) => item.name === "case_build");
+  await build.execute(
+    { action: "cycle", projectId: "p", command: 'node -e "0"', cwd: "/tmp/impl" },
+    {},
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].builder, undefined, "只给 cwd 不应该起 builder");
+  await build.execute(
+    {
+      action: "cycle",
+      projectId: "p",
+      command: 'node -e "0"',
+      cwd: "/tmp/impl",
+      prompt: "写个 demo",
+    },
+    {},
+  );
+  assert.ok(
+    calls[1].builder && calls[1].builder.prompt === "写个 demo",
+    "显式 prompt 才起 builder",
+  );
 });
