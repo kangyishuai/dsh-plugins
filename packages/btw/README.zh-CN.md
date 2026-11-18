@@ -105,11 +105,11 @@ dsh plugin --profile desktop add @kangyishuai/dsh-btw
 
 | 插件  | 已在 DSH 上验证 |
 | ----- | --------------- |
-| 0.4.0 | 0.2.2-rc.3      |
+| 0.6.0 | 0.2.2-rc.3      |
 
 底层宿主 seam（busy 时命令派发、fork 缓存复用、`tools.guard`、`workspaceRegistry.archiveSession`）已在 DSH 0.2.2-rc.3 上实测。
 
-端到端情况：web 冒烟（临时 `DSH_HOME`，覆盖右侧栏 tab、收起/展开、Markdown 渲染）与真实模型往返都通过；桌面回归（`pnpm smoke:btw-desktop --require`）已在真实 desktop profile 的 0.4.0 上重跑：**14 PASS / 1 SKIP / 0 FAIL**（SKIP 是当前会话还没有旁问记录）。
+端到端情况：发布版 0.6.0 的 web 冒烟 **15 PASS / 3 SKIP / 0 FAIL**、真实模型 `--deep` 冒烟 **23 PASS / 3 SKIP / 0 FAIL**；桌面回归（修复版，内容与 0.6.0 一致）**25 PASS / 0 SKIP / 0 FAIL**。
 
 ## 许可证
 
