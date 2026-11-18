@@ -693,7 +693,7 @@ document body because the docked composer contains them**"，而浮层原本就�
 
 ### 0.5.0 可用性修复（2026-11-18）
 
-依据三画像桌面可用性测试（`notes/btw/usability-0.4.0.md`，9 张截图）按 P1/P2/P3 修复：
+依据三画像桌面可用性测试（私有 notes 的可用性报告与 9 张截图，不公开）按 P1/P2/P3 修复：
 
 - **P1 徽章刷新**：提交完成 / live 结束后重拉 `stats`，不再出现「已有 3 条记录但徽章写 2」。
 - **P1 展开锚点**：展开全文时记录答案元素视口位置，`useLayoutEffect` 里补偿 `scrollTop`，不再跳回顶部。
@@ -759,3 +759,7 @@ document body because the docked composer contains them**"，而浮层原本就�
 - 浮层抽屉仍是**回退形态**：仍会盖住主对话右缘约 400px，只在宿主没有右侧栏服务时出现。
 - 流式是 350ms 轮询，不是逐 token 推送；首 token 与最后一次轮询之间最多差一个间隔。
 - 表格在窄 tab / 窄抽屉里横向滚动，不做列宽自适应。
+- **转正草稿会把主 composer 撑高**：DSH composer 随内容自动增高，插件没有高度 API；草稿最长 1200 字符，
+  发送前需要用户自己滚动/收起输入框。
+- **host 命令结果文案未本地化（既有问题）**：host 加载 locale 时没有把 `answer`/`error` 嵌套展平，
+  `/btw` 的命令结果一直走英文 FALLBACK；面板 client 文案不受影响。
