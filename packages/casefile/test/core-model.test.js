@@ -18,8 +18,13 @@ import {
 test("slugify 生成 kebab-case", () => {
   assert.equal(slugify("Hello World"), "hello-world");
   assert.equal(slugify("  A/B Test  "), "a-b-test");
-  assert.equal(slugify("中文标题"), `project-${""}`.slice(0, 8) + slugify("中文标题").slice(8));
-  assert.match(slugify("中文"), ID_RE);
+  // 无法拉丁化的标题会回落到 project-<时间戳>，因此**不能**比较两次调用的结果（跨毫秒会不等）
+  const fallback = slugify("中文标题");
+  assert.ok(fallback.startsWith("project-"), fallback);
+  assert.match(fallback, ID_RE);
+  const again = slugify("中文");
+  assert.ok(again.startsWith("project-"), again);
+  assert.match(again, ID_RE);
 });
 
 test("normalizeProjectInput 缺省值", () => {
