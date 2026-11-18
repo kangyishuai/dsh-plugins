@@ -89,6 +89,12 @@ A project carries `authTier`: `owned`, `authorized`, or `research`. Starting a *
 
 `case_project report` writes `reports/<timestamp>/report.md` + `report.json`: coverage (global and per feature), obligation table, check table with implementation digests, unknowns, loop state, and a declaration that `unknown` never means pass.
 
+## Acquisition: ingest, don't acquire
+
+casefile never fetches content itself. Evidence carries a **`producer`** record — tool, version, access mode (`headful` / `headless` / `api` / `archive` / `manual` / `stealth` / `unknown`), output kind, and whether you explicitly confirmed the access method. Reports render a producer table plus one statement: the operator chose and executed the acquisition.
+
+That is what lets you feed it anything: REA's captures, a HAR from your proxy, an HTML snapshot from Scrapling, or a screenshot you took by hand. Tier 1 (human-equivalent browsing, official APIs, public archives) is supported as-is; Tier 2 (your own session, or a mode you label `stealth`) is recorded but not endorsed; Tier 3 (CAPTCHA solving, fingerprint forgery, proxy rotation, bulk high-rate scraping) is not provided and will not be — see [DISCLAIMER.md](DISCLAIMER.md#acquisition-boundary-three-tiers--采集边界三段式).
+
 ## Clean-room attestation
 
 Every builder session writes an **attestation** (`attestations.jsonl`): the prompt digest, the spec digest, how many claims/evidence items were fed, the auth tier and any research override, and whether the "do not read the original target" clause was actually in the prompt. The report renders it as a `## 净室 attestation` section.

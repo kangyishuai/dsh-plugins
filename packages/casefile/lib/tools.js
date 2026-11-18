@@ -216,7 +216,28 @@ export function buildToolDefinitions(handlers, projectOf) {
             additionalProperties: false,
             properties: {
               kind: { type: "string" },
-              sourceTool: { type: "string", description: "产出该证据的 REA 工具名" },
+              sourceTool: {
+                type: "string",
+                description:
+                  "产出该证据的工具标识（REA 工具名，或外部工具如 scrapling/StealthyFetcher）",
+              },
+              producer: {
+                type: "object",
+                additionalProperties: false,
+                description:
+                  "外部证据的生产者：谁采的、什么方式采的。casefile 不采集也不规避访问控制，责任归操作者。",
+                properties: {
+                  tool: { type: "string" },
+                  version: { type: "string" },
+                  mode: {
+                    type: "string",
+                    enum: ["headful", "headless", "api", "archive", "manual", "stealth", "unknown"],
+                  },
+                  outputKind: { type: "string" },
+                  accessConfirmedByUser: { type: "boolean" },
+                  confirmationNote: { type: "string" },
+                },
+              },
               summary: { type: "string", description: "一句话结论" },
               confidence: { type: "string", enum: ["observed", "derived", "inferred"] },
               authority: {
