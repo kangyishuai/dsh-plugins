@@ -60,6 +60,7 @@ export class CasefileActionError extends Error {
  *   currentProject?: Map<string, string>,
  *   dataRoot?: string,
  *   runner?: (command: string, options?: Record<string, any>) => Promise<Record<string, any>>,
+ *   onWaitChange?: (state: Record<string, any> | null) => void,
  *   sessions?: {
  *     create(input: { cwd: string }): Promise<{ sessionId: string }>,
  *     prompt(input: { sessionId: string, text: string }): Promise<void>,
@@ -72,6 +73,7 @@ export function createActions(options) {
   const currentProject = options.currentProject ?? new Map();
   const dataRoot = options.dataRoot ?? store.rootDir;
   const sessions = options.sessions;
+  const onWaitChange = options.onWaitChange;
   const checkers = createCheckers(
     /** @type {any} */ (options.runner ? { runner: options.runner } : {}),
   );
@@ -1142,6 +1144,7 @@ export function createActions(options) {
      */
     async awaitLogin(projectId, input) {
       const project = requireProject(projectId);
+      const startedAt = nowIso();
       const endpoint = String(input?.endpoint ?? "").trim();
       if (endpoint === "") {
         throw new CasefileInputError(
@@ -1149,13 +1152,25 @@ export function createActions(options) {
           "endpoint 不能为空（形如 http://127.0.0.1:9223）",
         );
       }
-      const result = await awaitLogin({
+      onWaitChange?.({
+        active: true,
+        projectId: project.id,
         endpoint,
-        urlPrefix: input?.urlPrefix,
-        readyJs: input?.readyJs,
-        pollMs: input?.pollMs,
-        timeoutMs: input?.timeoutMs,
+        startedAt,
+        hint: "请在弹出的浏览器窗口里完成登录；就绪后会自动继续。",
       });
+      let result;
+      try {
+        result = await awaitLogin({
+          endpoint,
+          urlPrefix: input?.urlPrefix,
+          readyJs: input?.readyJs,
+          pollMs: input?.pollMs,
+          timeoutMs: input?.timeoutMs,
+        });
+      } finally {
+        onWaitChange?.(null);
+      }
       store.audit(project.id, {
         actor: "agent",
         action: "access/await-login",
@@ -1166,6 +1181,42 @@ export function createActions(options) {
     },
 
     // ---------- 覆盖率 / 关闭 / 报告（M3 收尾） ----------
+
+    /**
+     * 归档项目（非破坏性）：误建或暂存的项目收起来，文件都在。
+     * @param {string} projectId
+     * @param {{ reason?: string }} [options]
+     * @returns {Promise<Record<string, any>>}
+     */
+    async archiveProject(projectId, options = {}) {
+      const project = store.archiveProject(projectId, options?.reason);
+      store.audit(project.id, {
+        actor: "agent",
+        action: "project/archive",
+        target: project.id,
+        detail: { reason: String(options?.reason ?? "").slice(0, 200) },
+      });
+      return { project };
+    },
+
+    /**
+     * 丢弃项目：整个目录移进 dataRoot/trash（可手动移回）。
+     * 破坏性，必须 confirm。
+     * @param {string} projectId
+     * @param {{ confirm?: boolean }} [options]
+     * @returns {Promise<Record<string, any>>}
+     */
+    async dropProject(projectId, options = {}) {
+      const project = requireProject(projectId);
+      if (options?.confirm !== true) {
+        throw new CasefileActionError(
+          "confirm-required",
+          `丢弃项目会把 projects/${project.id} 整个移进 trash（可手动移回）。确认请传 confirm: true。`,
+        );
+      }
+      const result = store.dropProject(project.id);
+      return { trashedTo: result.trashedTo, project: result.project };
+    },
 
     /**
      * 项目覆盖率与关闭闸门状态（只读预览，不写状态）。

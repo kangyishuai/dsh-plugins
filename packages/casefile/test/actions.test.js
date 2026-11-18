@@ -151,3 +151,44 @@ test("更新项目：授权档与范围", async () => {
     (error) => /** @type {any} */ (error).code === "invalid-input",
   );
 });
+
+test("archiveProject：状态转 archived、文件保留、写审计", async () => {
+  const { actions } = makeActions();
+  const project = await actions.openProject({ title: "Mis Created" });
+  const archived = await actions.archiveProject(project.id, { reason: "误建" });
+  assert.equal(archived.project.state, "archived");
+  assert.equal(archived.project.archiveReason, "误建");
+  assert.match(String(archived.project.archivedAt), /^\d{4}-/u);
+  const audit = await actions.readAudit(project.id);
+  assert.ok(audit.some((entry) => entry.action === "project/archive"));
+  const detail = await actions.detail(project.id);
+  assert.equal(detail.project.state, "archived");
+});
+
+test("dropProject：没传 confirm 被拒（confirm-required）", async () => {
+  const { actions } = makeActions();
+  const project = await actions.openProject({ title: "Drop Me" });
+  await assert.rejects(
+    () => actions.dropProject(project.id, {}),
+    (error) => /** @type {any} */ (error).code === "confirm-required",
+  );
+  const still = await actions.listProjects();
+  assert.ok(
+    still.some((item) => item.id === project.id),
+    "被拒时项目不该消失",
+  );
+});
+
+test("dropProject：confirm 后移入 trash，列表里不再出现", async () => {
+  const { actions, root } = makeActions();
+  const project = await actions.openProject({ title: "Drop Me" });
+  const dropped = await actions.dropProject(project.id, { confirm: true });
+  assert.match(dropped.trashedTo, /trash/u);
+  assert.equal(existsSync(dropped.trashedTo), true, "trash 目录应存在");
+  assert.equal(existsSync(join(root, "projects", project.id)), false, "原目录应已移走");
+  const list = await actions.listProjects();
+  assert.equal(
+    list.some((item) => item.id === project.id),
+    false,
+  );
+});

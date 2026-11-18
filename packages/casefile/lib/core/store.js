@@ -307,6 +307,48 @@ export class CaseStore {
    * @param {Record<string, any>} patch
    * @returns {Record<string, any>}
    */
+  /**
+   * 归档：状态改为 archived，文件保留。误建/待整理的项目用它收起来。
+   * @param {string} projectId
+   * @param {string} [reason]
+   * @returns {Record<string, any>}
+   */
+  archiveProject(projectId, reason) {
+    const project = this.getProject(projectId);
+    if (!project) throw new CaseStoreError("project-not-found", `项目不存在：${projectId}`);
+    const next = {
+      ...project,
+      state: "archived",
+      archivedAt: new Date().toISOString(),
+      archiveReason: reason == null ? "" : String(reason).slice(0, 500),
+    };
+    this.writeJson(join(this.projectDir(projectId), "project.json"), next);
+    return next;
+  }
+
+  /**
+   * 丢弃：把整个项目目录移进 `<dataRoot>/trash/`，可手动移回。
+   * 破坏性操作，必须显式 confirm。
+   * @param {string} projectId
+   * @returns {{ trashedTo: string, project: Record<string, any> }}
+   */
+  dropProject(projectId) {
+    const project = this.getProject(projectId);
+    if (!project) throw new CaseStoreError("project-not-found", `项目不存在：${projectId}`);
+    const trashRoot = join(this.dataRoot, "trash");
+    mkdirSync(trashRoot, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const target = join(trashRoot, `${stamp}-${projectId}`);
+    renameSync(this.projectDir(projectId), target);
+    return { trashedTo: target, project };
+  }
+
+  /**
+   * 局部更新项目字段。
+   * @param {string} projectId
+   * @param {Record<string, any>} patch
+   * @returns {Record<string, any>}
+   */
   updateProject(projectId, patch) {
     const project = this.getProject(projectId);
     if (!project) throw new CaseStoreError("project-not-found", `项目不存在：${projectId}`);

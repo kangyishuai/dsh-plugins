@@ -71,6 +71,7 @@ export const PROJECT_STATES = /** @type {const} */ ([
   "reconstructing",
   "verifying",
   "closed",
+  "archived",
 ]);
 
 /** 项目 id：小写字母数字与连字符，1–64。 */
