@@ -1,5 +1,13 @@
 # @kangyishuai/dsh-casefile
 
+## 0.2.1
+
+### Patch Changes
+
+- [#196](https://github.com/kangyishuai/dsh-plugins/pull/196) [`ed7d12f`](https://github.com/kangyishuai/dsh-plugins/commit/ed7d12ff6352ad40a5f7035cabf644fe74204b21) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 规格包 `brief.md` 的证据段现在显示**生产者**（工具 · 版本 · 获取方式 · 用户是否确认）。此前只写进 `spec.json`，人类可读的那份看不到"谁采的"——外部工具（Scrapling 等）摄入时就少了一环可核对信息。
+
+- [#194](https://github.com/kangyishuai/dsh-plugins/pull/194) [`a315193`](https://github.com/kangyishuai/dsh-plugins/commit/a3151931e0ff48b6bb42715a9e2dea997505d645) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 补「证据生产者」的报告层测试：`summarizeProducers` 的去重与"未声明不补 true"，以及 `report.md` 里的生产者表 + 责任声明。此前只有模型层测试，报告渲染无覆盖。
+
 ## 0.2.0
 
 ### Minor Changes
