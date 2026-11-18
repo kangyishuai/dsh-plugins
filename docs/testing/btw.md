@@ -740,8 +740,13 @@ document body because the docked composer contains them**"，而浮层原本就�
 - 单测 **59 项全过**（新增多轮线程「关键细节」断言）。
 - web 冒烟默认：**15 PASS / 3 SKIP / 0 FAIL**（新增 echo 开关、主输入框 Esc）。
 - web 冒烟 `--deep`：**23 PASS / 3 SKIP / 0 FAIL**。
-- 桌面回归（`pnpm smoke:btw-desktop --require`）：新增「只在面板显示答案」开关断言；
-  装 dev build 重启后跑，结果补到本节。
+- 桌面回归（dev build 装进真实 desktop profile、重启后，可见会话有 3 条旁问记录）：
+  **25 PASS / 0 SKIP / 0 FAIL**（新增「只在面板显示答案」开关断言）。
+- `pnpm gate btw`：**PASS，4 步 42s**。
+- 真机手测：
+  - 多轮线程转正草稿出现 `## 关键细节`，含「追问 1」的 Q/A。
+  - 长答案「展开全文 → 收起」往返，答案视口 top 保持 220px，`scrollTop` 229→235→229。
+  - 面板底部 echo 开关关闭后提问：主对话命令结果只回一行提示、完整答案在面板；重新打开后恢复完整答案。
 
 ### 已知边界
 
