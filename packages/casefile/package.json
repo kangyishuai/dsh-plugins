@@ -1,6 +1,6 @@
 {
   "name": "@kangyishuai/dsh-casefile",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "循证逆向工作台：把 REA 的观察变成可引用的证据与可复算的验收",
   "keywords": [
     "dsh",
