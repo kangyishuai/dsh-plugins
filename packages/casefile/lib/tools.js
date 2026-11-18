@@ -171,6 +171,26 @@ export function buildToolDefinitions(handlers, projectOf) {
               const project = await handlers.updateProject(projectId(args, exec), args.patch ?? {});
               return { project, summary: `已更新项目 ${project.id}` };
             }
+            case "close": {
+              const id = projectId(args, exec);
+              // 先给只读预览再关：被闸门拒绝时把卡点原样带回去，别只说"失败"
+              const preview = await handlers.closePreview(id, { minCoverage: args.minCoverage });
+              if (preview.ok !== true) {
+                throw Object.assign(new Error(`项目还不能关闭：${preview.blockers.join("、")}`), {
+                  code: "coverage-not-met",
+                  blockers: preview.blockers,
+                });
+              }
+              const closed = await handlers.closeProject(id, { minCoverage: args.minCoverage });
+              return {
+                closed: closed.project,
+                coverage: preview.coverage,
+                summary: `项目已关闭（覆盖率 ${(preview.coverage.ratio * 100).toFixed(0)}%）`,
+              };
+            }
+            case "report": {
+              return handlers.exportReport(projectId(args, exec));
+            }
             default:
               throw Object.assign(new Error(`未知 action：${String(args.action)}`), {
                 code: "invalid-input",
@@ -494,16 +514,18 @@ export function buildToolDefinitions(handlers, projectOf) {
           const action = assertAction(args.action, ["start", "status", "agent", "loop", "cycle"]);
           const id = projectId(args, exec);
           if (action === "cycle") {
+            // 只有显式要求 builder（prompt 或 featureIds）才起会话；
+            // cwd 是构建目录，单独给 cwd 不应该顺手启动一个 builder 子会话。
+            const wantsBuilder = args.prompt !== undefined || args.featureIds !== undefined;
             const result = await handlers.runCycle(id, {
-              builder:
-                args.prompt === undefined && args.featureIds === undefined && args.cwd === undefined
-                  ? undefined
-                  : {
-                      cwd: args.cwd,
-                      prompt: args.prompt,
-                      featureIds: args.featureIds,
-                      timeoutMs: args.timeoutMs,
-                    },
+              builder: wantsBuilder
+                ? {
+                    cwd: args.cwd,
+                    prompt: args.prompt,
+                    featureIds: args.featureIds,
+                    timeoutMs: args.timeoutMs,
+                  }
+                : undefined,
               command: args.command,
               cwd: args.cwd,
               maxRounds: args.maxRounds,

@@ -37,7 +37,7 @@ export const OPTIONAL_REA_TOOLS = /** @type {const} */ ([
   "build_reconstruction_obligation_ledger",
   "evaluate_reconstruction_coverage",
   "verify_reconstruction",
-  "screen_judge",
+  "check_build_task",
   "inspect_playwright_trace",
 ]);
 
