@@ -100,11 +100,11 @@ Panel details: the bottom「New question」input hides while a thread follow-up 
 
 | Plugin | Verified on DSH |
 | ------ | --------------- |
-| 0.4.0  | 0.2.2-rc.3      |
+| 0.6.0  | 0.2.2-rc.3      |
 
 The underlying host seams (command dispatch while busy, fork cache reuse, `tools.guard`, `workspaceRegistry.archiveSession`) were verified on DSH 0.2.2-rc.3.
 
-End-to-end status: the web smoke (temporary `DSH_HOME`, right-sidebar tab, collapse/expand, Markdown rendering) and a real `/btw` round trip pass. The desktop regression was rerun against the installed 0.4.0 in the live desktop profile: 14 PASS / 1 SKIP / 0 FAIL (the SKIP is a visible session with no side-question records yet).
+End-to-end status: for the published 0.6.0, the web smoke passes **15 PASS / 3 SKIP / 0 FAIL** and the deep smoke (one real model call) passes **23 PASS / 3 SKIP / 0 FAIL**. The desktop regression against the fixed build (same content as 0.6.0) passes **25 PASS / 0 SKIP / 0 FAIL**.
 
 ## License
 
