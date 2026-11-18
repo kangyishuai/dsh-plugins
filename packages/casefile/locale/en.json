@@ -1,0 +1,30 @@
+{
+  "casefile": {
+    "title": "Casefile: evidence-first workbench for REA",
+    "description": "Turn REA observations into citable evidence, handoff-ready spec packs, and recomputable acceptance.",
+    "panel.title": "Casefile",
+    "panel.empty": "No projects yet. Create one and collect targets, evidence, and claims.",
+    "panel.new": "New project",
+    "panel.refresh": "Refresh",
+    "panel.loading": "Loading…",
+    "panel.error": "Failed to load: {reason}",
+    "settings.section": "Casefile",
+    "settings.summary": "{count} projects",
+    "settings.dataRoot": "Data root",
+    "settings.hint": "Project data stays on this machine; nothing is uploaded.",
+    "blocker.noFreshCheck": "no fresh check",
+    "blocker.staleCheck": "check is stale",
+    "blocker.checkFail": "check failed",
+    "blocker.checkUnknown": "check cannot judge",
+    "blocker.implementationMismatch": "implementation changed",
+    "blocker.ownerDigestMismatch": "original changed",
+    "blocker.missingCheck": "no check recorded",
+    "blocker.noObligations": "no obligations yet",
+    "blocker.noChecks": "no checks yet",
+    "blocker.openObligations": "obligations still open",
+    "blocker.openUnknowns": "unresolved unknowns",
+    "blocker.failedObligations": "failed obligations",
+    "blocker.blockedObligations": "blocked obligations",
+    "blocker.coverageBelow": "coverage below target"
+  }
+}
