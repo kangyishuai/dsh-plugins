@@ -164,6 +164,35 @@ export function promoteRecordForThread(records, threadId) {
 }
 
 /**
+ * 线程追问的问答明细（转正草稿的「关键细节」节）。
+ *
+ * 只用首问 + 末答会语义错位：首问问 A，最后一轮追问问 B，结论回答的是 B。
+ * 把每一轮追问的 Q/A 追加进草稿，读者能看到上下文（2026-11-18 复测发现）。
+ * @param {any[]} records
+ * @param {string} threadId
+ * @param {string} [lang]
+ * @returns {string}
+ */
+export function renderThreadDetails(records, threadId, lang = "zh") {
+  const wanted = String(threadId ?? "");
+  if (wanted === "") return "";
+  const thread = groupThreads(records).find((entry) => entry.threadId === wanted);
+  if (thread === undefined || thread.items.length <= 1) return "";
+  const en = lang === "en";
+  const heading = en ? "Follow-up" : "追问";
+  const qLabel = en ? "Q" : "问";
+  const aLabel = en ? "A" : "答";
+  return thread.items
+    .slice(1)
+    .map((item, index) => {
+      const question = String(item?.question ?? "").trim();
+      const answer = String(item?.answer ?? "").trim();
+      return `### ${heading} ${index + 1}\n\n**${qLabel}**：${question}\n\n**${aLabel}**：${answer}`;
+    })
+    .join("\n\n");
+}
+
+/**
  * 把一条旁问渲染成可插入草稿的文本（**只生成文本，绝不发送**）。
  *
  * 语义（2026-11-17 与用户确认）：转正保留 **Markdown 源码** —— 四节用 `##` 标题，

@@ -62,6 +62,8 @@ window.__ModuleLoader__.load({
       thinking: "思考中",
       threadCount: "{count} 个线程",
       resizeHint: "拖动右侧栏分隔条可调宽度；⌥⌘B 收起侧栏",
+      panelOnlyToggle: "只在旁问面板显示答案",
+      echoFailed: "保存失败，请重试",
       turns: "轮",
       promote: "转正",
       promoted: "已插入输入框草稿（未发送）",
@@ -117,6 +119,8 @@ window.__ModuleLoader__.load({
       thinking: "Thinking",
       threadCount: "{count} threads",
       resizeHint: "Drag the sidebar divider to resize; ⌥⌘B collapses the sidebar",
+      panelOnlyToggle: "Answer only in this panel",
+      echoFailed: "Save failed; try again",
       turns: "turns",
       promote: "Promote",
       promoted: "Inserted into the composer as a draft (not sent)",
@@ -174,6 +178,8 @@ window.__ModuleLoader__.load({
       ".dsh-btw-head{display:flex;align-items:center;gap:6px;margin-bottom:8px;font-weight:600;flex:none;}",
       ".dsh-btw-head-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
       ".dsh-btw-grow{flex:1 1 auto;}",
+      ".dsh-btw-footer{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;}",
+      ".dsh-btw-echo{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--dsw-alias-label-secondary,GrayText);cursor:pointer;}",
       ".dsh-btw-status{display:flex;align-items:center;gap:6px;margin:0 0 8px;padding:5px 8px;border-radius:var(--dsw-radius-sm,6px);background:var(--dsw-alias-bg-layer-3,var(--dsw-alias-bg-layer-2,Canvas));color:var(--dsw-alias-label-secondary,GrayText);font-size:11.5px;box-shadow:0 1px 0 var(--dsw-alias-border-l1,rgba(128,128,128,.2));}",
       ".dsh-btw-status.is-busy{color:var(--dsw-alias-label-primary,CanvasText);}",
       ".dsh-btw-spinner{display:inline-block;animation:dsh-btw-spin 1s linear infinite;}",
@@ -762,6 +768,8 @@ window.__ModuleLoader__.load({
         const [busy, setBusy] = React.useState(false);
         const [notice, setNotice] = React.useState("");
         const [badge, setBadge] = React.useState("");
+        const [echoAnswer, setEchoAnswer] = React.useState(true);
+        const [echoSaving, setEchoSaving] = React.useState(false);
         const [scope, setScope] = React.useState("");
         const [expandedAnswers, setExpandedAnswers] = React.useState(
           /** @type {Record<string, boolean>} */ ({}),
@@ -778,6 +786,30 @@ window.__ModuleLoader__.load({
           },
           [],
         );
+
+        // 面板底部直接暴露「只在面板显示答案」开关：不用进设置页，减少主对话重复答案。
+        React.useEffect(() => {
+          callRemote("settings", undefined)
+            .then((/** @type {any} */ value) => {
+              if (aliveRef.current && value) setEchoAnswer(value.echoAnswer !== false);
+            })
+            .catch(() => {});
+        }, []);
+
+        const toggleEcho = async (/** @type {boolean} */ checked) => {
+          if (echoSaving) return;
+          setEchoSaving(true);
+          setNotice("");
+          try {
+            const saved = await callRemote("updateSettings", { echoAnswer: !checked });
+            if (!aliveRef.current) return;
+            setEchoAnswer(saved?.echoAnswer !== false);
+          } catch {
+            if (aliveRef.current) setNotice(t("echoFailed"));
+          } finally {
+            if (aliveRef.current) setEchoSaving(false);
+          }
+        };
 
         // 切会话：清空上一会话的列表与流式现场。
         React.useEffect(() => {
@@ -900,12 +932,14 @@ window.__ModuleLoader__.load({
         React.useEffect(() => {
           const onKey = (/** @type {any} */ event) => {
             if (event?.key !== "Escape") return;
-            // 只在焦点位于面板内时才关闭：设置对话框/斜杠菜单的 Esc 归它们自己，
-            // 不会因为面板开着而被一起关掉。
-            const inPanel =
-              typeof event?.target?.closest === "function" &&
-              event.target.closest("[data-btw-panel]") !== null;
-            if (!inPanel) return;
+            // 焦点在面板或主输入框时都关闭；设置对话框拥有焦点时不抢它的 Esc。
+            const active = document.activeElement;
+            const inSettings =
+              active !== null &&
+              typeof active.closest === "function" &&
+              active.closest('[role="dialog"]') !== null &&
+              active.closest("[data-btw-panel]") === null;
+            if (inSettings) return;
             onClose();
           };
           document.addEventListener("keydown", onKey, true);
@@ -1112,7 +1146,9 @@ window.__ModuleLoader__.load({
             ...items.map((/** @type {any} */ item, /** @type {number} */ itemIndex) => {
               const itemKey = `${threadId}:${String(item?.id ?? itemIndex)}`;
               const isLast = itemIndex === items.length - 1;
-              const clamped = expandedAnswers[itemKey] !== true && Number(item?.chars ?? 0) > 400;
+              const longAnswer = Number(item?.chars ?? 0) > 400;
+              const isExpanded = expandedAnswers[itemKey] === true;
+              const clamped = !isExpanded && longAnswer;
               return h(
                 "div",
                 { className: "dsh-btw-turn", key: itemKey, "data-btw-turn": "true" },
@@ -1132,16 +1168,17 @@ window.__ModuleLoader__.load({
                   clamped,
                   answerId: itemKey,
                 }),
-                clamped
+                longAnswer || isExpanded
                   ? h(
                       "button",
                       {
                         type: "button",
                         className: "dsh-btw-btn",
                         "data-btw-expand": "true",
+                        ...(isExpanded ? { "data-btw-collapse": "true" } : {}),
                         onClick: () => toggleAnswer(itemKey),
                       },
-                      t("expandAnswer"),
+                      isExpanded ? t("collapseAnswer") : t("expandAnswer"),
                     )
                   : null,
                 (() => {
@@ -1399,14 +1436,29 @@ window.__ModuleLoader__.load({
                 ),
               )
             : null,
-          h("div", { className: "dsh-btw-meta", "data-btw-hint": "true" }, t("submitHint")),
-          mode === "tab"
-            ? h(
-                "div",
-                { className: "dsh-btw-meta", "data-btw-resize-hint": "true" },
-                t("resizeHint"),
-              )
-            : null,
+          h(
+            "div",
+            { className: "dsh-btw-footer", "data-btw-hint": "true" },
+            h(
+              "label",
+              { className: "dsh-btw-echo", "data-btw-echo-toggle": "true" },
+              h("input", {
+                type: "checkbox",
+                checked: !echoAnswer,
+                disabled: echoSaving,
+                onChange: (/** @type {any} */ event) =>
+                  void toggleEcho(event?.target?.checked === true),
+              }),
+              t("panelOnlyToggle"),
+            ),
+            mode === "tab"
+              ? h(
+                  "span",
+                  { className: "dsh-btw-meta", "data-btw-resize-hint": "true" },
+                  t("resizeHint"),
+                )
+              : null,
+          ),
           badge === ""
             ? null
             : h("div", { className: "dsh-btw-meta", "data-btw-badge": "true" }, badge),

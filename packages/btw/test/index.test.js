@@ -35,6 +35,7 @@ import {
   parseThreadFlag,
   promoteRecordForThread,
   renderPromoteDraft,
+  renderThreadDetails,
   SCOPES,
   threadHistory,
   threadOf,
@@ -391,6 +392,27 @@ test("promote: 线程级转正用首问 + 最后一轮答案", () => {
   assert.equal(record?.answer, "A2", "结论取最后一轮答案");
   assert.equal(promoteRecordForThread(records, "missing"), undefined);
   assert.equal(promoteRecordForThread(records, ""), undefined);
+});
+
+test("promote: 多轮线程把追问明细放进「关键细节」", () => {
+  const records = [
+    { id: "a", at: 1, threadId: "t_x", question: "首问", answer: "首答" },
+    { id: "b", at: 2, threadId: "t_x", question: "追问一", answer: "追答一" },
+    { id: "c", at: 3, threadId: "t_x", question: "追问二", answer: "追答二" },
+  ];
+  const details = renderThreadDetails(records, "t_x");
+  assert.match(details, /### 追问 1/u);
+  assert.match(details, /追问一/u);
+  assert.match(details, /追答一/u);
+  assert.match(details, /### 追问 2/u);
+  const record = promoteRecordForThread(records, "t_x");
+  assert.equal(record?.question, "首问");
+  assert.equal(record?.answer, "追答二");
+  const draft = renderPromoteDraft(record, { details, maxChars: 1200 });
+  assert.match(draft, /## 关键细节/u);
+  assert.match(draft, /追问一/u);
+  // 单轮线程没有明细，不会伪造空节
+  assert.equal(renderThreadDetails(records.slice(0, 1), "t_x"), "");
 });
 
 test("promote: 草稿是四节 Markdown 模板，只生成文本不发送", () => {
