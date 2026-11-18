@@ -97,19 +97,30 @@ DSH_HOME="$H" dsh web --port 0 --no-open    # 打印 http://127.0.0.1:<port>/?to
 
 | 项                                | 结果                                                                                                                       |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm pack` 产物                  | 24 个文件 / 63 KB；只含 `cordis.patch.yml`、`lib/**`、`locale/**`、三份文档、LICENSE；**不含** test/、node_modules、notes/ |
+| `pnpm pack` 产物                  | 25 个文件 / 69 KB；只含 `cordis.patch.yml`、`lib/**`、`locale/**`、三份文档、LICENSE；**不含** test/、node_modules、notes/ |
 | 依赖边界                          | `dependencies` / `peerDependencies` / `engines` 全为空；唯一宿主导入是 `@deepseek-ai/dsh-typert-protocol`                  |
 | `publishConfig.access`            | `public`                                                                                                                   |
 | `dsh.bundle.patch` / `dsh.client` | 均在，client 注入 `dsh-client-ui-workspace` + `dsh-client-ui-slots`                                                        |
 | `pnpm probe:runtime`              | **72/72 PASS**（0 WARN / 0 FAIL）                                                                                          |
-| `pnpm verify`                     | 通过（121 项单测）                                                                                                         |
-| web 冒烟                          | 47/47                                                                                                                      |
-| 桌面只读回归                      | **未运行**（前置：装进 desktop profile + 9222 重启）                                                                       |
+| `pnpm verify`                     | 通过（138 项单测）                                                                                                         |
+| web 冒烟                          | 52/52                                                                                                                      |
+| 桌面只读回归                      | **14 PASS / 0 FAIL**（真实 Electron 渲染进程，CDP 9222，2026-11-18）                                                       |
 
-### 桌面回归结果（由用户回填）
+### 桌面回归结果（2026-11-18 实测）
 
-- 日期：
-- DSH 版本 / 系统：
-- `pnpm smoke:casefile-desktop --require` 结果：
-- 截图目录：
-- 备注：
+- 日期：2026-11-18
+- DSH 版本 / 系统：桌面版 0.2.2-rc.3 / macOS（Chrome 152.0.7977.130，CDP `127.0.0.1:9222`）
+- 前置：`dsh plugin --profile desktop add /tmp/cf-desktop/kangyishuai-dsh-casefile-0.0.0.tgz` 后带调试端口重启
+- `pnpm smoke:casefile-desktop --require` 结果：**14 PASS / 0 FAIL**
+- `pnpm gate casefile`（不跳过桌面）：**4 步全绿**
+- 截图目录：`$TMPDIR/dsh-casefile-desktop-shots`（`panel.png`、`settings.png`）
+- 备注：首跑 4 PASS / 8 FAIL，全部是**脚本选择器**问题，产品本身正常；修法见下节「桌面脚本的两个坑」
+
+### 桌面脚本的两个坑（2026-11-18 实修）
+
+1. **固定 `sleep` 等不到真实渲染**：工作台首次挂载要打两个 RPC（`listProjects` + `overview`），`sleep(500)` 不够。
+   改成轮询 `waitFor(selector)`（150ms 一次，最长 8s）。
+2. **设置分节不能用全文匹配点「案卷」**：侧栏入口与设置导航项同名，`clickByText("案卷")` 总是先命中侧栏入口。
+   改成「`clickAria("账号菜单")` → 在 `body` 里点「设置」→ 在 `[role="dialog"]` 里点「案卷」」。
+3. 同理，`[data-casefile-settings]` 在 **loading 骨架**阶段就已存在，REA 行要等 `diagnose` 返回；
+   断言 REA 前必须先 `waitFor("[data-casefile-rea]")`。

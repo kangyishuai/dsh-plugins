@@ -132,9 +132,9 @@ Config is read from the `casefile` row in `cordis.patch.yml`. Do not edit the pr
 
 ## Compatibility
 
-| Plugin | Verified on DSH                   | What was run                                                                                                                                                                                                                                                                                                                           |
-| ------ | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0.1.x  | 0.2.2-rc.3 (macOS, desktop + web) | 121 unit tests; 47-assertion web end-to-end smoke on a throwaway DSH home; manual GUI pass in a real browser; `pnpm probe:runtime` 72/72. **Desktop read-only suite not yet run** — it needs the plugin installed in the `desktop` profile and the app restarted with `--remote-debugging-port=9222` (see `docs/testing/casefile.md`). |
+| Plugin | Verified on DSH                   | What was run                                                                                                                                                                                      |
+| ------ | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.1.x  | 0.2.2-rc.3 (macOS, desktop + web) | 138 unit tests; 52-assertion web end-to-end smoke on a throwaway DSH home; **14-assertion desktop read-only regression on a real Electron renderer (CDP)**; `pnpm gate casefile` 4/4 steps green. |
 
 Host APIs used here were verified by runtime inspection; the findings are recorded in `docs/runtime/0.2.2-rc.3.md` §10 (including two pitfalls: a missed `declareRemote` silently 404s only that endpoint, and `agentPresets` cannot be composed from bundle names).
 

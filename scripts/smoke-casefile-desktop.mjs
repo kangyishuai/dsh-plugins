@@ -96,23 +96,51 @@ function check(name, ok, detail = "") {
 }
 
 /**
- * 在页面里按可见文本找可点击元素并点击；返回是否找到。
+ * 轮询直到选择器出现（比固定 sleep 稳）。
+ * @param {any} page
+ * @param {string} selector
+ * @param {number} [timeoutMs]
+ */
+async function waitFor(page, selector, timeoutMs = 8000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if ((await exists(page, selector)) === true) return true;
+    await sleep(150);
+  }
+  return false;
+}
+
+/**
+ * 按 aria-label 点按钮（侧栏入口、账号菜单这类最稳的定位方式）。
  * @param {any} page
  * @param {string} label
- * @param {string} [scopeSelector]
  */
-async function clickByText(page, label, scopeSelector = "body") {
-  const expression = `(() => {
-    const scope = document.querySelector(${JSON.stringify(scopeSelector)}) || document.body;
-    const wanted = ${JSON.stringify(label)};
-    const nodes = Array.from(scope.querySelectorAll('button,[role="button"],a,div,span'));
-    const hit = nodes.find((node) => (node.textContent || '').trim() === wanted);
-    if (!hit) return false;
-    const target = hit.closest('button,[role="button"],a') || hit;
-    target.click();
+async function clickAria(page, label) {
+  return page.evaluate(`(() => {
+    const btn = Array.from(document.querySelectorAll('button,[role="button"]'))
+      .find((node) => (node.getAttribute('aria-label') || '') === ${JSON.stringify(label)});
+    if (!btn) return false;
+    btn.click();
     return true;
-  })()`;
-  return page.evaluate(expression);
+  })()`);
+}
+
+/**
+ * 在指定容器内按文本点（避免撞到侧栏同名入口）。
+ * @param {any} page
+ * @param {string} label
+ * @param {string} scopeSelector
+ */
+async function clickTextScoped(page, label, scopeSelector) {
+  return page.evaluate(`(() => {
+    const scope = document.querySelector(${JSON.stringify(scopeSelector)});
+    if (!scope) return false;
+    const nodes = Array.from(scope.querySelectorAll('button,[role="button"],a,div,span'));
+    const hit = nodes.find((node) => (node.textContent || '').trim() === ${JSON.stringify(label)});
+    if (!hit) return false;
+    (hit.closest('button,[role="button"],a') || hit).click();
+    return true;
+  })()`);
 }
 
 /** @param {any} page @param {string} selector */
@@ -169,25 +197,23 @@ async function main() {
     check("桌面页面可访问", ready === true);
     await sleep(600);
 
-    // 1) 侧栏入口存在（标签或图标能点到）
-    const navHit = await clickByText(page, "案卷");
+    // 1) 侧栏入口：优先按 aria-label 点（与真实用户点的是同一个按钮）
+    const navHit = await clickAria(page, "案卷");
     check("侧栏出现「案卷」入口并可点击", navHit === true);
-    await sleep(500);
 
-    // 2) 工作台页渲染
-    const pageMounted = await exists(page, "[data-casefile-page]");
+    // 2) 工作台页渲染（首次挂载要等两个 RPC，轮询而不是固定 sleep）
+    const pageMounted = await waitFor(page, "[data-casefile-page]");
     check("工作台主面板渲染（data-casefile-page）", pageMounted === true);
     await screenshot(page, "panel");
 
     // 3) 新建表单可打开/取消（不提交）
-    const newHit = await clickByText(page, "新建项目");
+    const newHit = await clickTextScoped(page, "新建项目", "[data-casefile-page]");
     check("「新建项目」按钮可点击", newHit === true);
-    await sleep(300);
-    const formMounted = await exists(page, "[data-casefile-create]");
+    const formMounted = await waitFor(page, "[data-casefile-create]", 3000);
     check("新建表单渲染（data-casefile-create）", formMounted === true);
-    const cancelHit = await clickByText(page, "取消");
+    const cancelHit = await clickTextScoped(page, "取消", "[data-casefile-create]");
     check("「取消」能收起表单", cancelHit === true);
-    await sleep(200);
+    await sleep(300);
 
     // 4) 空状态或项目行至少有一个可见（两种情况都算正常）
     const hasRows = await exists(page, "[data-casefile-project-row]");
@@ -198,17 +224,20 @@ async function main() {
       `rows=${hasRows} empty=${hasEmpty}`,
     );
 
-    // 5) 设置分节：打开设置，找「案卷」分节
-    const settingsHit = await clickByText(page, "设置");
-    const opened =
-      settingsHit === true ? true : await exists(page, "[data-settings-page], [data-settings]");
-    check("能打开设置页", opened === true);
+    // 5) 设置分节：账号菜单 → 设置 → 在设置面板内点「案卷」
+    const menuHit = await clickAria(page, "账号菜单");
+    check("能打开账号菜单", menuHit === true);
     await sleep(600);
-    const sectionHit = await clickByText(page, "案卷");
+    const settingsHit = await clickTextScoped(page, "设置", "body");
+    check("能打开设置页", settingsHit === true);
+    const dialogOpen = await waitFor(page, '[role="dialog"]', 4000);
+    check("设置面板已出现", dialogOpen === true);
+    const sectionHit = await clickTextScoped(page, "案卷", '[role="dialog"]');
     check("设置里出现「案卷」分节", sectionHit === true);
-    await sleep(500);
-    const settingsMounted = await exists(page, "[data-casefile-settings]");
+    const settingsMounted = await waitFor(page, "[data-casefile-settings]", 4000);
     check("设置分节渲染（data-casefile-settings）", settingsMounted === true);
+    // 分节先渲染骨架（loading），REA 行要等 diagnose 回来才有
+    await waitFor(page, "[data-casefile-rea]", 4000);
     const reaLine = await textOf(page, "[data-casefile-rea]");
     check(
       "设置里显示 REA 能力状态",
