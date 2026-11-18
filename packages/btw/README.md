@@ -104,7 +104,7 @@ Panel details: the bottom「New question」input hides while a thread follow-up 
 
 The underlying host seams (command dispatch while busy, fork cache reuse, `tools.guard`, `workspaceRegistry.archiveSession`) were verified on DSH 0.2.2-rc.3.
 
-End-to-end status: for the published 0.6.0, the web smoke passes **15 PASS / 3 SKIP / 0 FAIL** and the deep smoke (one real model call) passes **23 PASS / 3 SKIP / 0 FAIL**. The desktop regression against the fixed build (same content as 0.6.0) passes **25 PASS / 0 SKIP / 0 FAIL**.
+End-to-end status: for the published 0.6.0, the web smoke passes **15 PASS / 3 SKIP / 0 FAIL** and the deep smoke (one real model call) passes **23 PASS / 3 SKIP / 0 FAIL**. The desktop regression against the **installed 0.6.0** (real desktop profile, after restart) passes **25 PASS / 0 SKIP / 0 FAIL**, and `pnpm gate btw` passes the full 4-step gate.
 
 ## License
 

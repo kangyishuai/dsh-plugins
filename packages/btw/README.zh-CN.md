@@ -109,7 +109,7 @@ dsh plugin --profile desktop add @kangyishuai/dsh-btw
 
 底层宿主 seam（busy 时命令派发、fork 缓存复用、`tools.guard`、`workspaceRegistry.archiveSession`）已在 DSH 0.2.2-rc.3 上实测。
 
-端到端情况：发布版 0.6.0 的 web 冒烟 **15 PASS / 3 SKIP / 0 FAIL**、真实模型 `--deep` 冒烟 **23 PASS / 3 SKIP / 0 FAIL**；桌面回归（修复版，内容与 0.6.0 一致）**25 PASS / 0 SKIP / 0 FAIL**。
+端到端情况：发布版 0.6.0 的 web 冒烟 **15 PASS / 3 SKIP / 0 FAIL**、真实模型 `--deep` 冒烟 **23 PASS / 3 SKIP / 0 FAIL**；桌面回归在**已安装的 0.6.0**（真实 desktop profile、重启后）上 **25 PASS / 0 SKIP / 0 FAIL**，`pnpm gate btw` 4 步门禁全绿。
 
 ## 许可证
 
