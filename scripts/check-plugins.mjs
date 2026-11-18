@@ -288,6 +288,8 @@ export function checkRepo(root = REPO_ROOT) {
   // 仓库级登记：PR 自动打标签、bug 报告下拉（pnpm new 会自动写入，手建的插件容易漏）
   const labeler = join(root, ".github", "labeler.yml");
   const bug = join(root, ".github", "ISSUE_TEMPLATE", "bug_report.yml");
+  const readmeEn = join(root, "README.md");
+  const readmeZh = join(root, "README.zh-CN.md");
   for (const dir of listPluginDirs(root)) {
     if (existsSync(labeler) && !readFileSync(labeler, "utf8").includes(`"plugin:${dir}"`)) {
       issues.push({
@@ -298,6 +300,28 @@ export function checkRepo(root = REPO_ROOT) {
     }
     if (existsSync(bug) && !readFileSync(bug, "utf8").includes(`"${PREFIX}${dir}"`)) {
       issues.push({ level: "warn", plugin: dir, message: "bug_report.yml 的插件下拉缺少本插件" });
+    }
+    // 根 README 双语的插件清单（AGENTS.md 开发流程第 6 条）。
+    // 用 error 而不是 warn：这份清单是用户找插件的唯一入口，漏了等于插件不存在。
+    if (
+      existsSync(readmeEn) &&
+      !readFileSync(readmeEn, "utf8").includes(`packages/${dir}#readme`)
+    ) {
+      issues.push({
+        level: "error",
+        plugin: dir,
+        message: "根 README.md 的插件清单缺少本插件（AGENTS.md 开发流程第 6 条）",
+      });
+    }
+    if (
+      existsSync(readmeZh) &&
+      !readFileSync(readmeZh, "utf8").includes(`packages/${dir}/README.zh-CN.md`)
+    ) {
+      issues.push({
+        level: "error",
+        plugin: dir,
+        message: "根 README.zh-CN.md 的插件清单缺少本插件（AGENTS.md 开发流程第 6 条）",
+      });
     }
   }
   return issues;
