@@ -8,7 +8,13 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 
 import { createActions } from "../lib/actions.js";
-import { computeCoverage, computeCoverageByFeature, evaluateClose } from "../lib/core/report.js";
+import {
+  computeCoverage,
+  computeCoverageByFeature,
+  evaluateClose,
+  renderReportMarkdown,
+  summarizeProducers,
+} from "../lib/core/report.js";
 import { CaseStore } from "../lib/core/store.js";
 
 /** @type {string[]} */
@@ -209,4 +215,64 @@ test("报告包含按功能覆盖率表", async () => {
   assert.match(md, /\| 登录 \| 100% \| 1\/1 \|/u);
   const json = JSON.parse(readFileSync(join(exported.path, "report.json"), "utf8"));
   assert.equal(json.coverageByFeature[0].ratio, 1);
+});
+
+test("summarizeProducers：按工具+模式去重，未声明确认不会补 true", () => {
+  const list = summarizeProducers([
+    { producer: { tool: "scrapling/StealthyFetcher", mode: "stealth", outputKind: "html" } },
+    { producer: { tool: "scrapling/StealthyFetcher", mode: "stealth", outputKind: "html" } },
+    {
+      producer: {
+        tool: "rea/capture_browser_scenario",
+        mode: "headful",
+        outputKind: "accessibility",
+        accessConfirmedByUser: true,
+      },
+    },
+    {},
+  ]);
+  assert.equal(list.length, 2);
+  const stealth = list.find((item) => item.tool === "scrapling/StealthyFetcher");
+  const rea = list.find((item) => item.tool.startsWith("rea/"));
+  assert.equal(stealth?.count, 2);
+  assert.equal(stealth?.accessConfirmedByUser, false);
+  assert.equal(rea?.accessConfirmedByUser, true);
+  assert.equal(summarizeProducers([]).length, 0);
+});
+
+test("报告 md 渲染「证据生产者」表并带责任声明", () => {
+  const report = {
+    version: 1,
+    generatedAt: "2026-11-18T00:00:00.000Z",
+    project: {
+      id: "p",
+      title: "P",
+      state: "investigating",
+      target: { kind: "web", ref: "u" },
+      authTier: "owned",
+    },
+    coverage: { total: 0, pass: 0, open: 0, fail: 0, blocked: 0, outOfScope: 0, ratio: 0 },
+    coverageByFeature: [],
+    counts: {},
+    producers: [
+      {
+        tool: "scrapling/StealthyFetcher",
+        version: "0.5",
+        mode: "stealth",
+        outputKind: "html",
+        accessConfirmedByUser: true,
+        count: 1,
+      },
+    ],
+    obligations: [],
+    checks: [],
+    unknowns: [],
+    cleanRoom: null,
+    latestBuild: null,
+    stop: null,
+  };
+  const md = renderReportMarkdown(report);
+  assert.match(md, /## 证据生产者/u);
+  assert.match(md, /scrapling\/StealthyFetcher/u);
+  assert.match(md, /责任归操作者/u);
 });
