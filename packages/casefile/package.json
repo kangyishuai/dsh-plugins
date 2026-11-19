@@ -1,6 +1,6 @@
 {
   "name": "@kangyishuai/dsh-casefile",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Evidence-first reverse-engineering workbench on top of REA: observations become citable evidence, a handoff spec pack, and recomputable acceptance checks. No bridge, no engine.",
   "keywords": [
     "dsh",
