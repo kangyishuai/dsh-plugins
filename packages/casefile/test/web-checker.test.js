@@ -107,8 +107,8 @@ test("web checker：相同截图判 pass", async () => {
 test("web checker：轻微差异（低于阈值）判 fail", async () => {
   const checker = createWebChecker();
   const { reference, candidate } = fixtures(
-    () => [0, 0, 0],
-    () => [40, 0, 0],
+    (x, y) => [x * 8, y * 8, 40],
+    (x, y) => [x * 8, y * 8, 90],
   );
   const result = await checker.run({ reference, candidate, minSimilarity: 0.98 });
   assert.equal(result.verdict, "fail");
@@ -123,11 +123,11 @@ test("web checker：尺寸不一致判 fail（除非 allowSizeMismatch）", asyn
   const candidate = join(dir, "cand.png");
   writeFileSync(
     reference,
-    encodePng(4, 4, () => [0, 0, 0]),
+    encodePng(4, 4, (x, y) => [x * 30, y * 30, 20]),
   );
   writeFileSync(
     candidate,
-    encodePng(6, 4, () => [0, 0, 0]),
+    encodePng(6, 4, (x, y) => [x * 30, y * 30, 20]),
   );
   const strict = await checker.run({ reference, candidate });
   assert.equal(strict.verdict, "fail");
@@ -163,4 +163,65 @@ test("web checker：坏 PNG 返回 unknown", async () => {
   const result = await checker.run({ reference, candidate });
   assert.equal(result.verdict, "unknown");
   assert.equal(result.detail.reason, "screenshot-invalid");
+});
+
+// ---------- 空白/纯色截图必须 fail（spec 假成功防护清单第 5 条）----------
+
+test("纯白图对纯白图 → fail（不再被 1.0 相似度骗成 pass）", async () => {
+  const { reference, candidate } = fixtures(
+    () => [255, 255, 255],
+    () => [255, 255, 255],
+    16,
+  );
+  const result = await createWebChecker().run({ reference, candidate });
+  assert.equal(result.verdict, "fail");
+  assert.equal(result.detail.reason, "blank-image");
+  assert.equal(result.detail.side, "reference");
+});
+
+test("纯色（非白）同样判 fail", async () => {
+  const { reference, candidate } = fixtures(
+    () => [20, 60, 200],
+    () => [20, 60, 200],
+    16,
+  );
+  const result = await createWebChecker().run({ reference, candidate });
+  assert.equal(result.verdict, "fail");
+  assert.equal(result.detail.reason, "blank-image");
+});
+
+test("一边正常、一边空白 → fail 并指出是哪一边", async () => {
+  const { reference, candidate } = fixtures(
+    (x, y) => [x * 8, y * 8, 40],
+    () => [255, 255, 255],
+    16,
+  );
+  const result = await createWebChecker().run({ reference, candidate });
+  assert.equal(result.verdict, "fail");
+  assert.equal(result.detail.reason, "blank-image");
+  assert.equal(result.detail.side, "candidate");
+  assert.equal(result.detail.reference.blank, false);
+  assert.equal(result.detail.candidate.blank, true);
+});
+
+test("有真实内容的图不受影响（颜色多、主色占比低）", async () => {
+  const { reference, candidate } = fixtures(
+    (x, y) => [x * 8, (y * 8) % 256, (x * y) % 256],
+    (x, y) => [x * 8, (y * 8) % 256, (x * y) % 256],
+    16,
+  );
+  const result = await createWebChecker().run({ reference, candidate });
+  assert.equal(result.verdict, "pass", "内容丰富的图仍应判 pass");
+  assert.equal(result.detail.similarity, 1);
+});
+
+test("少量颜色但主色占比不到阈值 → 仍算正常（保守阈值不误伤）", async () => {
+  // 两种颜色各占一半：颜色种类少，但主色占比 50% 远低于 99.5%
+  const { reference, candidate } = fixtures(
+    (x) => (x % 2 === 0 ? [0, 0, 0] : [255, 255, 255]),
+    (x) => (x % 2 === 0 ? [0, 0, 0] : [255, 255, 255]),
+    16,
+  );
+  const result = await createWebChecker().run({ reference, candidate });
+  assert.equal(result.verdict, "pass");
 });
