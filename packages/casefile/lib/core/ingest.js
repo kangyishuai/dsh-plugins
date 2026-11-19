@@ -18,13 +18,19 @@
 /** 摄入契约版本；形状变化时递增。 */
 export const INGEST_VERSION = 1;
 
+// 必须与 core/model.js 的 evidence kind 枚举**完全一致**，否则摄入会被模型层拒绝。
+// （这个不一致是真机跑出来的：Craft 的 capture.network 被映射成 network → invalid-input）
 const EVIDENCE_KINDS = [
+  "pseudocode",
+  "assembly",
+  "string",
+  "xref",
+  "callgraph",
+  "har",
+  "process",
+  "screen",
   "structure",
   "behavior",
-  "string",
-  "screen",
-  "network",
-  "artifact",
   "other",
 ];
 const CLAIM_KINDS = ["structure", "behavior", "string", "other"];
