@@ -139,7 +139,7 @@ test("inspectAppBundle 用 plutil 把 XML Info.plist 转成 JSON（真实踩到�
     "utf8",
   );
 
-  const runner = async (command) => {
+  const runner = async (/** @type {string} */ command) => {
     // 用真实 plutil 转换，模拟宿主里的 runner
     const { execFileSync } = await import("node:child_process");
     const match = command.match(/plutil -convert json -o - "(.+)"/u);

@@ -106,7 +106,7 @@ export function createActions(options) {
    * @param {string} plistPath
    * @returns {Promise<Record<string, any>>}
    */
-  const readPlistAsJson = async (plistPath) => {
+  const readPlistAsJson = async (/** @type {string} */ plistPath) => {
     if (runner != null) {
       const result = await runner(`plutil -convert json -o - ${JSON.stringify(plistPath)}`);
       const text = String(result?.stdout ?? "").trim();
