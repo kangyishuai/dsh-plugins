@@ -329,6 +329,7 @@ export class CasefileService extends TypertRemoteService {
       closeProject: (projectId, options) => this.actions.closeProject(projectId, options),
       closePreview: (projectId, options) => this.actions.closePreview(projectId, options),
       exportReport: (projectId, options) => this.actions.exportReport(projectId, options),
+      exportBundle: (projectId, options) => this.actions.exportBundle(projectId, options),
       advanceLoop: (projectId, input) => this.actions.advanceLoop(projectId, input),
       startBuilder: (projectId, input) => this.actions.startBuilder(projectId, input),
       awaitBuilder: (projectId, input) => this.actions.awaitBuilder(projectId, input),
@@ -644,6 +645,19 @@ export class CasefileService extends TypertRemoteService {
 
   /**
    * @param {string} projectId
+   * @param {{ redact?: boolean }} [options]
+   * @returns {Promise<Record<string, any>>}
+   */
+  async exportBundle(projectId, options) {
+    try {
+      return await this.actions.exportBundle(projectId, options ?? {});
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
    * @param {{ format?: "md" | "html" | "both" }} [options]
    * @returns {Promise<Record<string, any>>}
    */
@@ -832,6 +846,7 @@ declareRemote(CasefileService, "awaitLogin");
 declareRemote(CasefileService, "runCycle");
 declareRemote(CasefileService, "closeProject");
 declareRemote(CasefileService, "exportReport");
+declareRemote(CasefileService, "exportBundle");
 declareRemote(CasefileService, "advanceLoop");
 declareRemote(CasefileService, "startBuilder");
 declareRemote(CasefileService, "awaitBuilder");

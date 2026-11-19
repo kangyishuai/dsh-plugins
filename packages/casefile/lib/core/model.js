@@ -412,6 +412,8 @@ export function normalizeObligation(input) {
     checkIds: idList(input?.checkIds, "checkIds"),
     evidenceIds: idList(input?.evidenceIds, "evidenceIds"),
     featureIds: idList(input?.featureIds, "featureIds"),
+    // 义务验证的是哪条结论：交接给别的 agent 时，「哪条结论还没人验」是最常被问的问题。
+    claimIds: idList(input?.claimIds, "claimIds"),
     ownerDigest:
       input?.ownerDigest == null ? null : text(input.ownerDigest, "ownerDigest", { max: 128 }),
     check,
