@@ -1106,12 +1106,11 @@ window.__ModuleLoader__.load({
             "span",
             {
               className: "cf-muted",
-              "data-casefile-autonomy":
-                (detail && detail.autonomy && detail.autonomy.level) || "L2",
+              "data-casefile-autonomy": detail?.autonomy?.level || "L2",
               title: text(t, "autonomy.hint"),
               style: { marginRight: 8 },
             },
-            `${text(t, "autonomy.label")} ${(detail && detail.autonomy && detail.autonomy.level) || "L2"}`,
+            `${text(t, "autonomy.label")} ${detail?.autonomy?.level || "L2"}`,
           ),
           h(
             "button",
