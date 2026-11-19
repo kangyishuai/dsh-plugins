@@ -137,16 +137,28 @@ profile 里无法验证，因为有登录门禁）。
 
 插件代码没有改动；只验证「宿主升级后仍成立」。本插件用到的 seam（busy 时命令派发、fork 缓存复用、`tools.guard`、`workspaceRegistry.archiveSession`）在 rc.3→rc.5 的 43 包逐包 diff 里**一个都没动**（[runtime rc.5](../runtime/0.2.2-rc.5.md) §1.1）。
 
-| 层                                 | 结果                                                                                       |
-| ---------------------------------- | ------------------------------------------------------------------------------------------ |
-| `node --test`（包内）              | **59 pass / 0 fail**                                                                       |
-| `pnpm probe:runtime`               | **72/72 PASS**                                                                             |
-| `pnpm smoke:btw`（web）            | **15 PASS / 3 SKIP / 0 FAIL**（3 条 SKIP：本会话无旁问记录、无凭据时宿主拒收 `/btw` 提交） |
-| `pnpm smoke:btw-desktop --require` | **18 PASS / 1 SKIP / 0 FAIL**（SKIP：当前会话还没有旁问记录）                              |
+| 层                                       | 结果                                                                                       |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `node --test`（包内）                    | **59 pass / 0 fail**                                                                       |
+| `pnpm probe:runtime`                     | **72/72 PASS**                                                                             |
+| `pnpm smoke:btw`（web，默认）            | **15 PASS / 3 SKIP / 0 FAIL**（3 条 SKIP：本会话无旁问记录、无凭据时宿主拒收 `/btw` 提交） |
+| `pnpm smoke:btw --deep`（web，真实模型） | **23 PASS / 3 SKIP / 0 FAIL**（见下；真实花费一次模型调用）                                |
+| `pnpm smoke:btw-desktop --require`       | **18 PASS / 1 SKIP / 0 FAIL**（SKIP：当前会话还没有旁问记录）                              |
 
 **首跑假红**：接着 casefile 的桌面回归跑，页面还停在「案卷」面板，没有 composer，于是 `FAIL 输入框左侧出现 btw 按钮`；先点回任一会话再跑即 18 PASS / 1 SKIP。不是插件问题。
 
-结论：**rc.5 上 btw 无回归**；`--deep`（真实 `/btw` 提交）本轮没跑，`DEEPSEEK_API_KEY` 可用时按 [发布包体检](#发布包体检2026-11-17) 一节补。
+### `--deep` 补跑（2026-11-19，本机凭据）
+
+```
+23 PASS / 3 SKIP / 0 FAIL（--deep）
+PASS history 文件已生成（session-59cea0aa-…）
+  record status=done answerLen=2 cost={"inputTokens":8669,"cacheReadTokens":2048,"outputTokens":2,"totalTokens":10719}
+```
+
+- 3 条 SKIP 与默认模式同性质：提交前线程卡片还不存在；web 冒烟的临时新会话不接受 composer 提交（这条一直由桌面端覆盖）。真正的 `/btw` 往返走通了——面板线程、追问、转正草稿、徽章更新、Esc 收起全部 PASS，且临时 `DSH_HOME` 里落下了 history 记录（`status=done`、`answer` 非空、带 cost）。
+- 这次缓存命中只有 2048 / 10719 ≈ 19%：临时会话极短，与之前 97% 以上的长会话不是同一前提，别把两个数字直接比。
+
+结论：**rc.5 上 btw 无回归**；默认、`--deep`、桌面三条通道都已覆盖。
 
 
 ## v0.2 发版就绪度（2026-11-17，变基到合并后的 main 之后重验）
