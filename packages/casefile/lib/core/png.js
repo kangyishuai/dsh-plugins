@@ -144,6 +144,39 @@ export function compareImages(a, b) {
 }
 
 /**
+ * 判一张图「有没有信息量」——用来挡"截图空白/纯色却判通过"的假成功。
+ *
+ * 判定：颜色种类很少 **且** 单一颜色占比极高 → 视为空白。
+ * 阈值刻意保守（0.995 / 8 色），因为误判正常截图的代价比漏判高：
+ * 一个带小图标的页面会有几十种颜色、主色占比也不会到 99.5%。
+ *
+ * @param {ReturnType<typeof decodePng>} image
+ * @returns {{ blank: boolean, uniqueColors: number, dominantRatio: number }}
+ */
+export function assessPngInformation(image) {
+  const pixels = image.width * image.height;
+  if (pixels <= 0) return { blank: true, uniqueColors: 0, dominantRatio: 1 };
+  /** @type {Map<number, number>} */
+  const counts = new Map();
+  for (let i = 0; i < pixels; i += 1) {
+    const at = i * image.channels;
+    // 只按 RGB 归并（忽略 alpha），避免同一颜色因 alpha 差异被当成多色
+    const key =
+      ((image.data[at] ?? 0) << 16) | ((image.data[at + 1] ?? 0) << 8) | (image.data[at + 2] ?? 0);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  let dominant = 0;
+  for (const value of counts.values()) if (value > dominant) dominant = value;
+  const dominantRatio = dominant / pixels;
+  const uniqueColors = counts.size;
+  return {
+    blank: dominantRatio >= 0.995 && uniqueColors <= 8,
+    uniqueColors,
+    dominantRatio,
+  };
+}
+
+/**
  * 比较两个 PNG 文件的内容（Buffer 入参，便于测试与调用方复用）。
  * @param {Buffer} reference
  * @param {Buffer} candidate

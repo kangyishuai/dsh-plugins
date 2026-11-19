@@ -11,7 +11,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { promisify } from "node:util";
 
-import { comparePng } from "./png.js";
+import { assessPngInformation, comparePng, decodePng } from "./png.js";
 
 /**
  * @typedef {{ name: string, version: string, run: (input: any) => Promise<any> }} Checker
@@ -371,6 +371,39 @@ export function createWebChecker(options = {}) {
         return {
           verdict: "unknown",
           detail: { reason: "screenshot-missing", message: String(error) },
+          startedAt,
+          endedAt: new Date().toISOString(),
+          exitCode: null,
+          stdout: "",
+          stderr: "",
+        };
+      }
+      // 先判"图有没有信息量"：空白/纯色截图即使两张一模一样也必须 fail，
+      // 否则"渲染失败输出白图"会拿到 1.0 相似度而绿灯（spec 假成功防护清单第 5 条）。
+      /** @type {{ blank: boolean, uniqueColors: number, dominantRatio: number } | null} */
+      let referenceInfo = null;
+      /** @type {{ blank: boolean, uniqueColors: number, dominantRatio: number } | null} */
+      let candidateInfo = null;
+      try {
+        // 必须两张都解码成功才做空白判定：否则「候选图是坏 PNG」会被
+        // 误报成 blank-image，而正确结论是 unknown（无法判定）。
+        const referenceImage = decodePng(reference);
+        const candidateImage = decodePng(candidate);
+        referenceInfo = assessPngInformation(referenceImage);
+        candidateInfo = assessPngInformation(candidateImage);
+      } catch {
+        // 解码失败交给下面的 comparePng 统一报 screenshot-invalid
+      }
+      if (referenceInfo?.blank === true || candidateInfo?.blank === true) {
+        const side = referenceInfo?.blank === true ? "reference" : "candidate";
+        return {
+          verdict: "fail",
+          detail: {
+            reason: "blank-image",
+            side,
+            reference: referenceInfo,
+            candidate: candidateInfo,
+          },
           startedAt,
           endedAt: new Date().toISOString(),
           exitCode: null,
