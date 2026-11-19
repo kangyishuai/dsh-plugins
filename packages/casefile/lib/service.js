@@ -350,6 +350,8 @@ export class CasefileService extends TypertRemoteService {
       closePreview: (projectId, options) => this.actions.closePreview(projectId, options),
       exportReport: (projectId, options) => this.actions.exportReport(projectId, options),
       exportBundle: (projectId, options) => this.actions.exportBundle(projectId, options),
+      ingestReport: (projectId, payload, options) =>
+        this.actions.ingestReport(projectId, payload, options),
       setAutonomy: (projectId, input) => this.actions.setAutonomy(projectId, input),
       autonomyStatus: (projectId) => this.actions.autonomyStatus(projectId),
       advanceLoop: (projectId, input) => this.actions.advanceLoop(projectId, input),
@@ -667,6 +669,20 @@ export class CasefileService extends TypertRemoteService {
 
   /**
    * @param {string} projectId
+   * @param {any} payload
+   * @param {{ dryRun?: boolean }} [options]
+   * @returns {Promise<Record<string, any>>}
+   */
+  async ingestReport(projectId, payload, options) {
+    try {
+      return await this.actions.ingestReport(projectId, payload, options ?? {});
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
    * @param {{ level?: string, budget?: Record<string, any> | null }} input
    * @returns {Promise<Record<string, any>>}
    */
@@ -894,6 +910,7 @@ declareRemote(CasefileService, "runCycle");
 declareRemote(CasefileService, "closeProject");
 declareRemote(CasefileService, "exportReport");
 declareRemote(CasefileService, "exportBundle");
+declareRemote(CasefileService, "ingestReport");
 declareRemote(CasefileService, "setAutonomy");
 declareRemote(CasefileService, "autonomyStatus");
 declareRemote(CasefileService, "advanceLoop");

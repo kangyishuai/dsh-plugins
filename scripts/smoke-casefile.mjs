@@ -931,6 +931,71 @@ async function main() {
     const stray = (await readdir(REPO)).filter(
       (name) => name.startsWith("casefile-") || name === "spec",
     );
+    // 9.10) 外部报告摄入契约：dryRun 不写盘；真摄入后 producer 记外部来源且"不背书"
+    await remote(session, "createProject", {
+      input: { title: "Ingest E2E", target: { kind: "artifact", ref: "rea-bundle.json" } },
+    });
+    const ingestPayload = {
+      version: 1,
+      source: {
+        tool: "rea/evidence-bundle",
+        version: "test",
+        mode: "archive",
+        reportPath: refShot,
+      },
+      evidence: [
+        {
+          summary: "外部报告：首屏主色 rgb(20,40,60)",
+          kind: "structure",
+          limitations: ["未在真机复核"],
+        },
+      ],
+      claims: [
+        {
+          text: "首屏主色为 rgb(20,40,60)",
+          kind: "structure",
+          status: "observed",
+          evidenceIds: [0],
+        },
+      ],
+      unknowns: [{ text: "该结论未在真机复核", severity: "medium" }],
+    };
+    const dryIn = await remote(session, "ingestReport", {
+      projectId: "ingest-e2e",
+      payload: ingestPayload,
+      options: { dryRun: true },
+    });
+    check(
+      "摄入 dryRun 只预演不写盘",
+      dryIn.value?.dryRun === true && dryIn.value?.wouldCreate?.evidence === 1,
+      JSON.stringify(dryIn.value),
+    );
+    const beforeIn = await remote(session, "projectDetail", { projectId: "ingest-e2e" });
+    check(
+      "dryRun 后证据数仍为 0",
+      beforeIn.value?.evidence?.length === 0,
+      JSON.stringify(beforeIn.value?.evidence?.length ?? "detail 不可用"),
+    );
+
+    const realIn = await remote(session, "ingestReport", {
+      projectId: "ingest-e2e",
+      payload: ingestPayload,
+    });
+    check(
+      "摄入写入证据/结论/未知项并归档报告",
+      realIn.value?.evidenceIds?.length === 1 &&
+        realIn.value?.claimIds?.length === 1 &&
+        /^artifacts\//.test(String(realIn.value?.artifact?.file ?? "")),
+      JSON.stringify(realIn.value?.artifact ?? null),
+    );
+    const afterIn = await remote(session, "projectDetail", { projectId: "ingest-e2e" });
+    check(
+      "摄入后 producer 记外部来源且注明不背书",
+      afterIn.value?.evidence?.[0]?.producer?.tool === "rea/evidence-bundle" &&
+        /不背书/.test(String(afterIn.value?.evidence?.[0]?.producer?.confirmationNote ?? "")),
+      JSON.stringify(afterIn.value?.evidence?.[0]?.producer ?? null),
+    );
+
     check("没有写进仓库工作目录", stray.length === 0, stray.join(","));
   } catch (error) {
     failed += 1;
