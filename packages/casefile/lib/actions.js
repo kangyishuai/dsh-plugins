@@ -29,6 +29,7 @@ import {
   buildReport,
   computeCoverage,
   evaluateClose,
+  renderReportHtml,
   renderReportMarkdown,
 } from "./core/report.js";
 import {
@@ -1369,7 +1370,17 @@ export function createActions(options) {
      * @param {string} projectId
      * @returns {Promise<Record<string, any>>}
      */
-    async exportReport(projectId) {
+    /**
+     * 导出报告。
+     * @param {string} projectId
+     * @param {{ format?: "md" | "html" | "both" }} [options]
+     * @returns {Promise<Record<string, any>>}
+     */
+    async exportReport(projectId, options = {}) {
+      const format = options?.format ?? "md";
+      if (!["md", "html", "both"].includes(format)) {
+        throw new CasefileInputError("invalid-input", `format 只能是 md / html / both：${format}`);
+      }
       const project = requireProject(projectId);
       const data = store.readAll(project.id);
       const current = latestBuild(data.builds);
@@ -1382,11 +1393,21 @@ export function createActions(options) {
       const report = buildReport({ project, data, coverage, stop });
       const stamp = String(report.generatedAt).replace(/[:.]/g, "-");
       const dir = join(store.projectDir(project.id), "reports", stamp);
-      const md = join(dir, "report.md");
-      const json = join(dir, "report.json");
       mkdirSync(dir, { recursive: true });
-      writeFileSync(md, `${renderReportMarkdown(report)}\n`, "utf8");
-      writeFileSync(json, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+      /** @type {string[]} */
+      const files = [];
+      if (format === "md" || format === "both") {
+        writeFileSync(join(dir, "report.md"), `${renderReportMarkdown(report)}\n`, "utf8");
+        files.push("report.md");
+      }
+      if (format === "html" || format === "both") {
+        writeFileSync(join(dir, "report.html"), `${renderReportHtml(report)}\n`, "utf8");
+        files.push("report.html");
+      } else {
+        // md 模式保持旧行为：仍然写 report.json 供程序消费
+      }
+      writeFileSync(join(dir, "report.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
+      files.push("report.json");
       store.audit(project.id, {
         actor: "agent",
         action: "report/export",
@@ -1398,7 +1419,7 @@ export function createActions(options) {
       });
       return {
         path: dir,
-        files: ["report.md", "report.json"],
+        files,
         coverage,
         summary: `报告已写入 ${dir}（覆盖率 ${(coverage.ratio * 100).toFixed(0)}%）`,
       };

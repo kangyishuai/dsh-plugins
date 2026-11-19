@@ -328,7 +328,7 @@ export class CasefileService extends TypertRemoteService {
         this.store.listBuilderSessions().has(String(sessionId ?? "")),
       closeProject: (projectId, options) => this.actions.closeProject(projectId, options),
       closePreview: (projectId, options) => this.actions.closePreview(projectId, options),
-      exportReport: (projectId) => this.actions.exportReport(projectId),
+      exportReport: (projectId, options) => this.actions.exportReport(projectId, options),
       advanceLoop: (projectId, input) => this.actions.advanceLoop(projectId, input),
       startBuilder: (projectId, input) => this.actions.startBuilder(projectId, input),
       awaitBuilder: (projectId, input) => this.actions.awaitBuilder(projectId, input),
@@ -644,11 +644,12 @@ export class CasefileService extends TypertRemoteService {
 
   /**
    * @param {string} projectId
+   * @param {{ format?: "md" | "html" | "both" }} [options]
    * @returns {Promise<Record<string, any>>}
    */
-  async exportReport(projectId) {
+  async exportReport(projectId, options) {
     try {
-      return await this.actions.exportReport(projectId);
+      return await this.actions.exportReport(projectId, options);
     } catch (error) {
       fail(error);
     }

@@ -358,3 +358,145 @@ export function renderReportMarkdown(report) {
   lines.push("");
   return lines.join("\n");
 }
+
+/**
+ * HTML 转义。报告内容来自用户输入（标题、义务文本、路径），必须转义。
+ * @param {unknown} value
+ * @returns {string}
+ */
+export function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+/**
+ * 把报告渲染成**单文件 HTML**（内联样式、零外部资源），用于外发与存档。
+ * 样式刻意简单：归档件十年后打开也应该是这个样子，不依赖任何 CDN。
+ * @param {Record<string, any>} report
+ * @returns {string}
+ */
+export function renderReportHtml(report) {
+  const r = report ?? {};
+  const project = r.project ?? {};
+  const counts = r.counts ?? {};
+  const coverage = r.coverage ?? {};
+  const e = escapeHtml;
+  /**
+   * @param {unknown[]} cells
+   * @param {string} [tag]
+   * @returns {string}
+   */
+  const row = (cells, tag = "td") =>
+    `<tr>${cells.map((cell) => `<${tag}>${cell}</${tag}>`).join("")}</tr>`;
+  /**
+   * @param {string} title
+   * @param {string} body
+   * @returns {string}
+   */
+  const section = (title, body) =>
+    body === "" ? "" : `<section><h2>${e(title)}</h2>${body}</section>`;
+
+  const summary = `
+    <dl>
+      <dt>项目</dt><dd>${e(project.title ?? project.id)} <span class="muted">(${e(project.id)})</span></dd>
+      <dt>目标</dt><dd>${e(project.target?.ref ?? "")} <span class="muted">${e(project.target?.kind ?? "")}</span></dd>
+      <dt>授权档</dt><dd>${e(project.authTier ?? "")}</dd>
+      <dt>状态</dt><dd>${e(project.state ?? "")}</dd>
+      <dt>覆盖率</dt><dd><strong>${(Number(coverage.ratio ?? 0) * 100).toFixed(0)}%</strong> <span class="muted">(${e(coverage.pass ?? 0)}/${e(coverage.total ?? 0)})</span></dd>
+      <dt>生成时间</dt><dd>${e(r.generatedAt ?? "")}</dd>
+    </dl>`;
+
+  const countsTable = `<table><thead><tr><th>项</th><th>数量</th></tr></thead><tbody>${Object.entries(
+    counts,
+  )
+    .map(([key, value]) => row([e(key), e(value)]))
+    .join("")}</tbody></table>`;
+
+  const obligations = Array.isArray(r.obligations)
+    ? `<table><thead><tr><th>状态</th><th>义务</th><th>种类</th><th>检查数</th></tr></thead><tbody>${r.obligations
+        .map((item) =>
+          row([e(item.status), e(item.statement), e(item.kind), e(item.checkIds?.length ?? 0)]),
+        )
+        .join("")}</tbody></table>`
+    : "";
+
+  const checks = Array.isArray(r.checks)
+    ? `<table><thead><tr><th>结论</th><th>checker</th><th>实现</th><th>时间</th></tr></thead><tbody>${r.checks
+        .map((item) =>
+          row([e(item.verdict), e(item.checker), e(item.implementationDigest), e(item.createdAt)]),
+        )
+        .join("")}</tbody></table>`
+    : "";
+
+  const producers =
+    Array.isArray(r.producers) && r.producers.length > 0
+      ? `<table><thead><tr><th>工具</th><th>版本</th><th>获取方式</th><th>产物</th><th>用户已确认</th></tr></thead><tbody>${r.producers
+          .map((item) =>
+            row([
+              e(item.tool ?? "未知"),
+              e(item.version ?? "—"),
+              e(item.mode ?? "—"),
+              e(item.outputKind ?? "—"),
+              e(item.accessConfirmedByUser === true ? "是" : "未记录"),
+            ]),
+          )
+          .join(
+            "",
+          )}</tbody></table><p class="note">casefile 不采集、不规避访问控制：以上生产者由操作者选择并执行，责任归操作者。</p>`
+      : "";
+
+  const unknowns =
+    Array.isArray(r.unknowns) && r.unknowns.length > 0
+      ? `<ul>${r.unknowns.map((item) => `<li>${e(item.text ?? item)}</li>`).join("")}</ul>`
+      : '<p class="muted">没有未解决的未知项。</p>';
+
+  const stop = r.stop
+    ? `<p>停止条件：<strong>${e(r.stop.reason ?? "")}</strong>${r.stop.stop === true ? "（已停止）" : ""}</p>`
+    : "";
+
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>案卷报告 · ${e(project.title ?? project.id ?? "")}</title>
+<style>
+  :root { color-scheme: light; }
+  body { margin: 0; padding: 32px 20px 64px; background: #faf9f6; color: #1c1c1e;
+         font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; }
+  .wrap { max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 1px solid #e6e3dc; }
+  .sub { color: #6b6b70; font-size: 12px; margin-bottom: 24px; }
+  .muted { color: #6b6b70; font-size: 12px; }
+  .note { color: #6b6b70; font-size: 12px; margin-top: 6px; }
+  dl { display: grid; grid-template-columns: 96px 1fr; gap: 6px 12px; margin: 0; padding: 16px;
+       background: #fff; border: 1px solid #e6e3dc; border-radius: 10px; }
+  dt { color: #6b6b70; }
+  dd { margin: 0; }
+  table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e6e3dc;
+          border-radius: 10px; overflow: hidden; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #f0ede7; vertical-align: top; }
+  th { background: #f4f1ea; font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+  ul { margin: 0; padding-left: 20px; }
+  footer { margin-top: 32px; color: #6b6b70; font-size: 12px; }
+</style>
+</head>
+<body><div class="wrap">
+  <h1>案卷报告 · ${e(project.title ?? project.id ?? "")}</h1>
+  <p class="sub">casefile 生成的只读归档件；数据来自项目记录，不重新采集。</p>
+  ${section("概览", summary)}
+  ${section("计数", countsTable)}
+  ${section("义务", obligations)}
+  ${section("检查", checks)}
+  ${section("证据生产者", producers)}
+  ${section("未知项", unknowns)}
+  ${section("循环状态", stop)}
+  <footer>本报告不评估目标安全性；只陈述静态分析与验收记录。<br>生成器：@kangyishuai/dsh-casefile</footer>
+</div></body></html>`;
+}
