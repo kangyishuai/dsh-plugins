@@ -18,6 +18,7 @@ export const TOOL_NAMES = /** @type {const} */ ({
   unknown: "case_unknown",
   obligation: "case_obligation",
   access: "case_access",
+  app: "case_app",
   build: "case_build",
   check: "case_check",
   brief: "case_brief",
@@ -614,6 +615,72 @@ export function buildToolDefinitions(handlers, projectOf) {
               result.status === "ready"
                 ? `已就绪（等了 ${result.waitedMs}ms，${result.attempts} 次探测）`
                 : `${result.status}：${result.hint}`,
+          };
+        });
+      },
+    },
+
+    {
+      name: TOOL_NAMES.app,
+      description:
+        "应用勘察第一跳：inspect 读 macOS .app 的 Info.plist 与可执行架构，一次给出一屏摘要（bundle id/版本/沙盒/ATS/URL scheme/UTI 归属），并可选写入一条证据。",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          action: { type: "string", enum: ["inspect"] },
+          projectId: PROJECT_ID,
+          path: { type: "string", description: "绝对路径，形如 /Applications/Foo.app" },
+          record: {
+            type: "boolean",
+            description: "默认 true：把摘要写成一条结构证据（authority=shipped-artifact）",
+          },
+        },
+        required: ["action"],
+      },
+      output: { schema: TOOL_OUTPUT_SCHEMA, render: renderToolResult },
+      /** @param {any} args @param {any} exec */
+      async execute(args, exec) {
+        return run(async () => {
+          await assertWriter(exec);
+          assertAction(args.action, ["inspect"]);
+          if (typeof args.path !== "string" || args.path.trim() === "") {
+            throw Object.assign(new Error("inspect 需要 path（形如 /Applications/Foo.app）"), {
+              code: "invalid-input",
+            });
+          }
+          const summary = await handlers.inspectApp({ path: args.path });
+          const id = args.record === false ? null : projectId(args, exec);
+          let evidence = null;
+          if (id != null) {
+            evidence = await handlers.addEvidence(
+              id,
+              {
+                kind: "structure",
+                authority: "shipped-artifact",
+                confidence: "observed",
+                summary: `应用包摘要（${summary.bundleId ?? "未知 bundle id"}）：版本 ${summary.shortVersion ?? "?"}（build ${summary.buildVersion ?? "?"}）、架构 ${(summary.architectures ?? []).join("/") || "未知"}、沙盒 ${summary.sandboxed === true ? "是" : summary.sandboxed === false ? "否" : "未声明"}、ATS 任意加载 ${summary.allowsArbitraryLoads === true ? "开启" : "关闭/未声明"}、UTI 域一致性 ${summary.domainConsistency?.consistent === true ? "一致" : summary.domainConsistency?.consistent === false ? "不一致" : "无法判断"}`,
+                limitations: [
+                  "只读 Info.plist 与可执行架构；plist 声明不等于运行时行为",
+                  "未校验签名有效性，未进入二进制本体",
+                ],
+                refs: [String(args.path)],
+                producer: {
+                  tool: "casefile/app-bundle",
+                  version: "1",
+                  mode: "archive",
+                  outputKind: "json-summary",
+                  accessConfirmedByUser: true,
+                  confirmationNote: "读取本机已安装应用包的静态信息（plutil/lipo），未执行该应用",
+                },
+              },
+              exec,
+            );
+          }
+          return {
+            summary: `应用：${summary.bundleId ?? "?"} · ${summary.shortVersion ?? "?"} · ${(summary.architectures ?? []).join("/") || "架构未知"}`,
+            app: summary,
+            evidenceId: evidence?.id ?? null,
           };
         });
       },

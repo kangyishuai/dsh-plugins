@@ -4,8 +4,9 @@
 // 分工：service.js 只做「数据根解析 + Remote 声明 + 会话记忆」；本文件承载
 // 项目/证据/结论/功能/未知项/规格包的实际逻辑，tools.js 与 Remote 共用同一份实现。
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { parseArchitectures, summarizeAppBundle } from "./core/app-bundle.js";
 import { buildAttestation } from "./core/attestation.js";
 import { buildSpecPack, redactPack, renderSpecMarkdown, writeSpecPack } from "./core/brief.js";
 import { createCheckers } from "./core/checks.js";
@@ -61,6 +62,7 @@ export class CasefileActionError extends Error {
  *   dataRoot?: string,
  *   runner?: (command: string, options?: Record<string, any>) => Promise<Record<string, any>>,
  *   onWaitChange?: (state: Record<string, any> | null) => void,
+ *   provenance?: () => { reaVersion?: string | null, capabilityHash?: string | null, toolNames?: readonly string[] } | null,
  *   sessions?: {
  *     create(input: { cwd: string }): Promise<{ sessionId: string }>,
  *     prompt(input: { sessionId: string, text: string }): Promise<void>,
@@ -74,9 +76,26 @@ export function createActions(options) {
   const dataRoot = options.dataRoot ?? store.rootDir;
   const sessions = options.sessions;
   const onWaitChange = options.onWaitChange;
-  const checkers = createCheckers(
-    /** @type {any} */ (options.runner ? { runner: options.runner } : {}),
-  );
+  const runner = options.runner ?? null;
+  const provenance = options.provenance ?? null;
+  // checker 需要固定形状的 runner；外层 runner 更宽松，这里做一次归一。
+  const checkerRunner =
+    runner == null
+      ? undefined
+      : async (/** @type {string} */ command, /** @type {any} */ runOptions) => {
+          const result = await runner(command, runOptions);
+          return {
+            exitCode:
+              typeof result?.exitCode === "number"
+                ? result.exitCode
+                : typeof result?.code === "number"
+                  ? result.code
+                  : 0,
+            stdout: String(result?.stdout ?? ""),
+            stderr: String(result?.stderr ?? ""),
+          };
+        };
+  const checkers = createCheckers({ runner: checkerRunner });
 
   /**
    * @param {string} projectId
@@ -136,8 +155,16 @@ export function createActions(options) {
      */
     async openProject(input, exec) {
       const project = store.createProject(input ?? {});
+      // 把"当时用的哪套工具"锚进项目：REA 版本 + 工具面哈希。
+      const probe = typeof provenance === "function" ? provenance() : null;
+      const anchored = probe
+        ? store.updateProject(project.id, {
+            reaVersion: probe.reaVersion ?? undefined,
+            capabilityHash: probe.capabilityHash,
+          })
+        : project;
       if (exec) this.remember(exec, project.id);
-      return project;
+      return anchored;
     },
 
     /**
@@ -1181,6 +1208,50 @@ export function createActions(options) {
     },
 
     // ---------- 覆盖率 / 关闭 / 报告（M3 收尾） ----------
+
+    /**
+     * macOS .app 勘察第一跳：读 Info.plist + 可执行架构，给一屏摘要。
+     * 依赖 runner 调 plutil / lipo（都是系统自带）；拿不到就标 null，不猜。
+     * @param {{ path: string }} input
+     * @returns {Promise<Record<string, any>>}
+     */
+    async inspectAppBundle(input) {
+      const appPath = String(input?.path ?? "").trim();
+      if (appPath === "") {
+        throw new CasefileInputError(
+          "invalid-input",
+          "path 不能为空（形如 /Applications/Foo.app）",
+        );
+      }
+      const plistPath = join(appPath, "Contents", "Info.plist");
+      if (!existsSync(plistPath)) {
+        throw new CasefileInputError("invalid-input", `不是 macOS 应用包：缺 ${plistPath}`);
+      }
+      /** @type {Record<string, any>} */
+      const plist = JSON.parse(readFileSync(plistPath, "utf8"));
+      const executableName =
+        typeof plist.CFBundleExecutable === "string" ? plist.CFBundleExecutable : null;
+      const executablePath =
+        executableName == null ? null : join(appPath, "Contents", "MacOS", executableName);
+      /** @type {string[]} */
+      let architectures = [];
+      if (executablePath != null && runner != null && existsSync(executablePath)) {
+        try {
+          const result = await runner(`lipo -archs ${JSON.stringify(executablePath)}`, {
+            timeoutMs: 15000,
+          });
+          const out = typeof result?.stdout === "string" ? result.stdout : "";
+          architectures = parseArchitectures(out);
+        } catch {
+          architectures = [];
+        }
+      }
+      return summarizeAppBundle(plist, {
+        architectures,
+        executablePath: executablePath ?? undefined,
+        infoPlistPath: plistPath,
+      });
+    },
 
     /**
      * 归档项目（非破坏性）：误建或暂存的项目收起来，文件都在。
