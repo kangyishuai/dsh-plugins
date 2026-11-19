@@ -106,23 +106,6 @@ DSH_HOME="$H" dsh web --port 0 --no-open    # 打印 http://127.0.0.1:<port>/?to
 | web 冒烟                          | 52/52                                                                                                                      |
 | 桌面只读回归                      | **14 PASS / 0 FAIL**（真实 Electron 渲染进程，CDP 9222，2026-11-18）                                                       |
 
-## 0.8.1 在 0.2.2-rc.5 上的复核记录（2026-11-19，DSH 0.2.2-rc.5）
-
-插件代码没有改动；这一版只验证「升级后仍然成立」。宿主的 client 构建产物、REA 依赖的包与服务与 rc.3 逐字节相同（[runtime rc.5](../runtime/0.2.2-rc.5.md) §1.1）。
-
-| 层                                      | 结果                                                         |
-| --------------------------------------- | ------------------------------------------------------------ |
-| `node --test`（包内）                   | **216 pass / 0 fail**                                        |
-| `pnpm verify`                           | 通过（lint / typecheck / check / check:docs / check:public） |
-| `pnpm probe:runtime`                    | **72/72 PASS**                                               |
-| `pnpm smoke:casefile`（web）            | **56 PASS / 0 FAIL**                                         |
-| `pnpm smoke:casefile-desktop --require` | **15 PASS / 0 FAIL**，收尾打印 `15 PASS / 0 SKIP / 0 FAIL`   |
-
-**串行注意**：这条桌面回归结束时页面停在「案卷」主面板（Esc 只关内层对话框）。接着跑别的插件的桌面回归会因为没有 composer 而误报（本轮 btw 首跑就因此 1 FAIL，切回会话后 18 PASS / 1 SKIP）——多条桌面回归之间先点回任一会话。
-
-结论：**rc.5 上 casefile 无回归**。
-
-
 ### 桌面回归结果（2026-11-18 实测）
 
 - 日期：2026-11-18
@@ -175,3 +158,19 @@ await page.evaluate(`(() => { ... })()`);
 
 改为真实存在的 `projectDetail`，并让断言失败时打印真实值。
 **凡在断言里写 `x?.a ?? []`，先确认 `x` 本身可能不存在时会不会把问题掩盖掉。**
+
+## 0.8.1 在 0.2.2-rc.5 上的复核记录（2026-11-19，DSH 0.2.2-rc.5）
+
+插件代码没有改动；这一版只验证「升级后仍然成立」。宿主的 client 构建产物、REA 依赖的包与服务与 rc.3 逐字节相同（[runtime rc.5](../runtime/0.2.2-rc.5.md) §1.1）。
+
+| 层                                      | 结果                                                         |
+| --------------------------------------- | ------------------------------------------------------------ |
+| `node --test`（包内）                   | **216 pass / 0 fail**                                        |
+| `pnpm verify`                           | 通过（lint / typecheck / check / check:docs / check:public） |
+| `pnpm probe:runtime`                    | **72/72 PASS**                                               |
+| `pnpm smoke:casefile`（web）            | **56 PASS / 0 FAIL**                                         |
+| `pnpm smoke:casefile-desktop --require` | **15 PASS / 0 FAIL**，收尾打印 `15 PASS / 0 SKIP / 0 FAIL`   |
+
+**串行注意**：这条桌面回归结束时页面停在「案卷」主面板（Esc 只关内层对话框）。接着跑别的插件的桌面回归会因为没有 composer 而误报（本轮 btw 首跑就因此 1 FAIL，切回会话后 18 PASS / 1 SKIP）——多条桌面回归之间先点回任一会话。
+
+结论：**rc.5 上 casefile 无回归**。
