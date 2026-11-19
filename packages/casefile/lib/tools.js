@@ -173,6 +173,11 @@ export function buildToolDefinitions(handlers, projectOf) {
           patch: { type: "object", description: "update 时的字段（title/authTier/scope/state）" },
           minCoverage: { type: "number", description: "close 时的覆盖率下限（默认 1）" },
           reason: { type: "string", description: "archive 时的原因（进审计）" },
+          format: {
+            type: "string",
+            enum: ["md", "html", "both"],
+            description: "report 时的输出格式：md（默认）/ html（单文件、可外发归档）/ both",
+          },
           confirm: {
             type: "boolean",
             description: "drop 时必须传 true：把整个项目目录移进 trash（可手动移回）",
@@ -251,7 +256,13 @@ export function buildToolDefinitions(handlers, projectOf) {
               };
             }
             case "report": {
-              return handlers.exportReport(projectId(args, exec));
+              const exported = await handlers.exportReport(projectId(args, exec), {
+                format: args.format,
+              });
+              return {
+                ...exported,
+                summary: `报告已写入 ${exported.path}（${(exported.files ?? []).join(" / ")}）`,
+              };
             }
             default:
               throw Object.assign(new Error(`未知 action：${String(args.action)}`), {
