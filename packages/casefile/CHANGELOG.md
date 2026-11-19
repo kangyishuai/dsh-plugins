@@ -1,5 +1,62 @@
 # @kangyishuai/dsh-casefile
 
+## 0.6.0
+
+### Minor Changes
+
+- [#214](https://github.com/kangyishuai/dsh-plugins/pull/214) [`460b2f1`](https://github.com/kangyishuai/dsh-plugins/commit/460b2f1f78dfc0366e065fe7453cfe2b8c45f37e) Thanks [@kangyishuai](https://github.com/kangyishuai)! - `case_project report` 支持 HTML 输出：`format: "md" | "html" | "both"`（默认 `md`，行为不变）。
+  
+  HTML 是**单文件归档件**：内联样式、零外部资源（无脚本、无 CDN、无字体外链），十年后离线打开仍是这个样子。内容含概览、计数、义务、检查、证据生产者（带责任声明）、未知项、循环状态。
+  
+  安全：所有插值经 `escapeHtml`（`& < > " '`）。真浏览器验证过——标题里塞 `<b>加粗</b>` 会被当**字面文本**显示，不会渲染，因此可以放心发给别人。
+  
+  零依赖，符合 ADR 0001（无打包器）。
+
+- [#216](https://github.com/kangyishuai/dsh-plugins/pull/216) [`567ec25`](https://github.com/kangyishuai/dsh-plugins/commit/567ec25236f436a2ee385988184344c2bceeab2e) Thanks [@kangyishuai](https://github.com/kangyishuai)! - **L3 无人值守**（用户已批准的范围）+ 两个由冒烟暴露的真实缺陷。
+  
+  ### L3 无人值守
+  `case_project autonomy`：查看当前级别（不带 `level`）或设置级别（带 `level`）。
+  
+  **硬条件**（不可配置放宽，不满足就返回 `autonomy-blocked` 并列出 blocker）：
+  - 只有 `scope: "selected"` 的项目能升 L3；
+  - 只有 `existence` / `structure` / `behavior` / `visual` 四类义务允许 L3；`coverage`（覆盖率硬门）与 `regression`（回归门）**永远人工复核**；
+  - 每条义务必须有可执行的检查配方（`check`），否则"没人验"会被自动跑成绿灯；
+  - 必须有预算上限（默认 5 轮 / 20 次 build / 30 分钟），预算耗尽或**任一轮 fail/unknown 立即停**。
+  
+  解锁与停止都写审计（`autonomy/unlock` / `autonomy/stop`）；**降级永远允许且立即生效**——这是"停"的开关。面板顶部显示当前级别（`data-casefile-autonomy`）。
+  
+  ### 顺带修掉两个冒烟暴露的真缺陷
+  1. **`process` checker 遇到非零退出报 internal**：`service.runner` 在"非零退出且无输出"时直接 reject，checker 拿不到退出码，本该判 `fail` 的变成了 internal 错误。现在 runner 只对"命令根本没跑起来"（`exec` 的 127/126 且无输出，注意它是**数字**不是 `ENOENT` 字符串）reject，其余一律返回 `exitCode`。
+  2. **命令不存在应判 `unknown` 而不是 `fail`**：checker 对 runner 抛错做兜底 → `verdict: "unknown"`、`reason: "runner-error"`，避免把"没跑起来"误报成"构建失败"。
+  
+  ### 冒烟夹具
+  `casefile-png-fixture.mjs` 新增 `texturedPng`（渐变+棋盘）；`web` checker 冒烟改用有纹理的图——**纯色图现在会被 blank-image 规则直接拦下**（那是另一条断言的事）。web 端到端重回 **52 PASS / 0 FAIL**。
+
+- [#215](https://github.com/kangyishuai/dsh-plugins/pull/215) [`3e677a4`](https://github.com/kangyishuai/dsh-plugins/commit/3e677a439fb578dba5aeb28aef1d7c7992f5653d) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 新增**机器可读证据包**：`case_project bundle`（`redact` 默认 true）→ `bundles/<时间戳>/bundle.json`。
+  
+  与规格包的分工：
+  - **spec pack**（`case_brief`）= 只含被选中的结论，面向"交给编码 agent 去复刻"；
+  - **bundle** = 全量账本（证据/结论/义务/检查/未知项/产物清单），面向"整段交接给另一个 agent，或几个月后自己回看"。
+  
+  硬要求是**确定性**：
+  - `generatedAt` 取自数据自身的最大时间戳，**不是** `Date.now()`；
+  - 键排序规范化后写入，同一份数据导出两次**字节一致**（有测试断言）；
+  - 自带 `integrity = { algorithm, canonical, digest }`，接收方可去掉 `integrity` 后独立重算校验（已用一个不依赖 casefile 代码的独立消费者脚本验证通过）。
+  
+  顺带补上 `case_obligation` 的 `claimIds`：义务可以声明"我验证的是哪条结论"，这样 bundle 接收方能直接回答**「哪条结论还没人验」**——这是交接时最常被问的问题。
+
+### Patch Changes
+
+- [#211](https://github.com/kangyishuai/dsh-plugins/pull/211) [`50028ea`](https://github.com/kangyishuai/dsh-plugins/commit/50028ea382386db5ba5ae1148a82d9854f7e8792) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 修一个**假成功防护缺口**（`spec/03-acceptance.md` 防护清单第 5 条，代码此前缺失）：
+  
+  **空白/纯色截图会被判 pass。** 实测两张纯白图（各 64×64）走 `web` checker 得到相似度 1.0 → 判 `pass`。也就是说：如果页面渲染失败、截图输出一张白图，而原件恰好也是白图（或对比的两次都白），验收会**绿灯**。
+  
+  现在 `web` checker 在比较前先判「图有没有信息量」：主色占比 ≥ 99.5% **且** 颜色种类 ≤ 8 → `fail`，`detail.reason = "blank-image"` 并指出是哪一边（`reference` / `candidate`）。
+  
+  阈值刻意保守：带小图标的真实页面颜色种类远多于 8、主色占比也到不了 99.5%，不会被误伤（有测试覆盖「两色各半 → 仍 pass」）。
+  
+  实现顺序上的一个细节：**必须两张图都解码成功才做空白判定**，否则「候选图是坏 PNG」会被误报成 blank-image，而正确结论是 `unknown`（有对应测试）。
+
 ## 0.5.1
 
 ### Patch Changes
