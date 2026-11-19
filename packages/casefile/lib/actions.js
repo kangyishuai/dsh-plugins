@@ -98,10 +98,6 @@ export function createActions(options) {
   const checkers = createCheckers({ runner: checkerRunner });
 
   /**
-   * @param {string} projectId
-   * @returns {Record<string, any>}
-   */
-  /**
    * 把 Info.plist（XML 或二进制）转成 JSON 对象。
    * @param {string} plistPath
    * @returns {Promise<Record<string, any>>}
@@ -121,6 +117,10 @@ export function createActions(options) {
     );
   };
 
+  /**
+   * @param {string} projectId
+   * @returns {Record<string, any>}
+   */
   const requireProject = (projectId) => {
     const id = String(projectId ?? "");
     const project = store.getProject(id);
