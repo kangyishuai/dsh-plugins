@@ -1073,6 +1073,8 @@ const main = async () => {
   } else {
     console.log(`PASS 全部 ${checks.length} 项桌面回归断言通过`);
   }
+  // 门禁靠这一行判定「跑过但一条断言都没执行」（见 docs/plugin-conventions.md §6.1）。
+  console.log(`${checks.length - skipped} PASS / ${skipped} SKIP / ${failed} FAIL`);
 };
 
 await main();
