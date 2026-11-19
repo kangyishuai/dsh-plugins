@@ -212,7 +212,7 @@ test("同一产物被多条证据引用时，artifacts 清单按 sha256 去重�
     unknowns: [],
   });
   assert.deepEqual(
-    bundle.artifacts.map((item) => item.sha256),
+    bundle.artifacts.map((/** @type {any} */ item) => item.sha256),
     ["aa", "bb"],
   );
   assert.equal(bundle.artifacts.length, 2, "清单是「有哪些产物」，不是「被引用几次」");
