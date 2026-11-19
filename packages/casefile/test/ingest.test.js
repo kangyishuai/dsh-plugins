@@ -167,7 +167,7 @@ test("mapCraftReport：operation → kind、limitations 保留并注明未复核
   });
   assert.equal(mapped.evidence.length, 2);
   assert.equal(mapped.evidence[0].kind, "structure");
-  assert.equal(mapped.evidence[1].kind, "network");
+  assert.equal(mapped.evidence[1].kind, "har", "capture.network 必须映射成模型允许的 har");
   assert.equal(mapped.evidence[0].refs.length, 1);
   assert.match(String(mapped.evidence[0].limitations.at(-1)), /未复核/u);
   assert.equal(mapped.unknowns[0].severity, "medium");
@@ -195,4 +195,47 @@ test("ingestReport：传 Craft 形状会自动映射后摄入（producer 仍是�
   const detail = await actions.detail(project.id);
   assert.equal(detail.evidence[0].producer.tool, "craft-anything");
   assert.match(String(detail.evidence[0].producer.confirmationNote), /不背书/u);
+});
+
+test("适配器产出的 kind 必须被模型接受（真机踩到的枚举错配）", async () => {
+  const { mapCraftReport } = await import("../lib/core/ingest-craft.js");
+  const { validateIngestPayload } = await import("../lib/core/ingest.js");
+  const { normalizeEvidence } = await import("../lib/core/model.js");
+
+  // 覆盖适配器可能产出的所有 operation 家族，逐个过契约校验 + 模型校验。
+  const operations = [
+    "disasm.functions",
+    "analysis.triage",
+    "parse.elf",
+    "string.scan",
+    "js.bundle",
+    "capture.network",
+    "screenshot.page",
+    "plist.read",
+    "signature.read",
+    "entitlements.read",
+    "unknown.op",
+  ];
+  const mapped = mapCraftReport({
+    evidence: operations.map((operation) => ({
+      operation,
+      subject: { name: "x" },
+      result: {},
+      limitations: [],
+      locations: [],
+    })),
+  });
+  const normalized = validateIngestPayload(mapped);
+  for (const item of normalized.evidence) {
+    // 这一步会抛错，如果 kind 不在 model 的枚举里
+    const record = normalizeEvidence({
+      summary: item.summary,
+      kind: item.kind,
+      authority: item.authority,
+      confidence: "observed",
+      limitations: item.limitations,
+      refs: item.refs,
+    });
+    assert.equal(typeof record.kind, "string");
+  }
 });
