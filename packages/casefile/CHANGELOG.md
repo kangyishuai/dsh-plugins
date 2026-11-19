@@ -1,5 +1,15 @@
 # @kangyishuai/dsh-casefile
 
+## 0.7.1
+
+### Patch Changes
+
+- [#220](https://github.com/kangyishuai/dsh-plugins/pull/220) [`778d281`](https://github.com/kangyishuai/dsh-plugins/commit/778d2814d0465e4be64d32e722e1b2c24a802963) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 修 bundle 里的一处真实缺陷：**同一产物被多条证据引用时，`artifacts` 清单会重复列出同一条**。
+  
+  实测触发：用 REA 导出的证据包做外部摄入时，一份报告被挂到 2 条证据上 → bundle 的 `artifacts` 出现两次 `5568fd27e50f`（各 14,138 字节）。
+  
+  清单的语义是「有哪些产物」，不是「被引用了几次」，所以现在按 `sha256` 去重。有测试固定；反证过（去掉去重该测试立刻红）。
+
 ## 0.7.0
 
 ### Minor Changes
