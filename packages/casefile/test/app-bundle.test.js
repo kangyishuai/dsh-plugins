@@ -139,19 +139,22 @@ test("inspectAppBundle 用 plutil 把 XML Info.plist 转成 JSON（真实踩到�
     "utf8",
   );
 
+  // plutil 只在 macOS 上有，CI 跑 Linux。注入假 runner：既跨平台，
+  // 又精确守住"必须走 plutil 转换、不能直接 JSON.parse"这条路径。
+  const seenCommands = [];
   const runner = async (/** @type {string} */ command) => {
-    // 用真实 plutil 转换，模拟宿主里的 runner
-    const { execFileSync } = await import("node:child_process");
-    const match = command.match(/plutil -convert json -o - "(.+)"/u);
-    const path = match ? match[1] : "";
-    try {
-      const out = execFileSync("/usr/bin/plutil", ["-convert", "json", "-o", "-", path], {
-        encoding: "utf8",
-      });
-      return { exitCode: 0, stdout: out, stderr: "" };
-    } catch {
-      return { exitCode: 1, stdout: "", stderr: "plutil failed" };
-    }
+    seenCommands.push(command);
+    assert.match(command, /plutil -convert json -o -/u);
+    return {
+      exitCode: 0,
+      stdout: JSON.stringify({
+        CFBundleIdentifier: "com.demo.app",
+        CFBundleExecutable: "Demo",
+        CFBundleShortVersionString: "9.9.9",
+        LSUIElement: true,
+      }),
+      stderr: "",
+    };
   };
 
   const actions = createActions({
@@ -163,4 +166,5 @@ test("inspectAppBundle 用 plutil 把 XML Info.plist 转成 JSON（真实踩到�
   assert.equal(summary.bundleId, "com.demo.app");
   assert.equal(summary.shortVersion, "9.9.9");
   assert.equal(summary.uiElement, true);
+  assert.equal(seenCommands.length >= 1, true);
 });
