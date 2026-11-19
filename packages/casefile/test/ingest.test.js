@@ -129,3 +129,70 @@ test("describeIngestSchema：给出形状与三条规则（供其他 agent 读�
   assert.ok(Array.isArray(schema.rules) && schema.rules.length >= 3);
   assert.ok(schema.shape.claims[0].evidenceIds);
 });
+
+// ---------- Craft 适配器（按官方文档字段映射；本机未装 Craft，未用真实样例验证）----------
+
+test("looksLikeCraftReport：只有「证据账本」形状才被识别", async () => {
+  const { looksLikeCraftReport } = await import("../lib/core/ingest-craft.js");
+  assert.equal(
+    looksLikeCraftReport({ evidence: [{ operation: "disasm.functions", subject: { name: "x" } }] }),
+    true,
+  );
+  assert.equal(looksLikeCraftReport({ evidence: [{ summary: "普通证据" }] }), false);
+  assert.equal(looksLikeCraftReport(PAYLOAD), false, "已符合契约的 payload 不会被误判");
+});
+
+test("mapCraftReport：operation → kind、limitations 保留并注明未复核、locations → refs", async () => {
+  const { mapCraftReport } = await import("../lib/core/ingest-craft.js");
+  const mapped = mapCraftReport({
+    version: "0.4.0",
+    generatedAt: "2026-11-19T00:00:00.000Z",
+    evidence: [
+      {
+        operation: "disasm.functions",
+        subject: { name: "Bob" },
+        result: { count: 70044 },
+        limitations: ["未执行目标"],
+        locations: [{ path: "/Applications/Bob.app/Contents/MacOS/Bob" }],
+      },
+      {
+        operation: "capture.network",
+        subject: { id: "t1" },
+        result: "3 requests",
+        limitations: [],
+        locations: [],
+      },
+    ],
+    unknowns: [{ text: "端点是否启用未确认", severity: "medium" }],
+  });
+  assert.equal(mapped.evidence.length, 2);
+  assert.equal(mapped.evidence[0].kind, "structure");
+  assert.equal(mapped.evidence[1].kind, "network");
+  assert.equal(mapped.evidence[0].refs.length, 1);
+  assert.match(String(mapped.evidence[0].limitations.at(-1)), /未复核/u);
+  assert.equal(mapped.unknowns[0].severity, "medium");
+  assert.equal(mapped.source.tool, "craft-anything");
+});
+
+test("ingestReport：传 Craft 形状会自动映射后摄入（producer 仍是外部来源）", async () => {
+  const { actions } = makeActions();
+  const project = await actions.openProject({ title: "Craft Adapter", authTier: "research" });
+  const result = await actions.ingestReport(project.id, {
+    version: "0.4.0",
+    evidence: [
+      {
+        operation: "triage.first_look",
+        subject: { name: "sample.bin" },
+        result: { format: "pe" },
+        limitations: ["clean-room 模式"],
+        locations: [],
+      },
+    ],
+    unknowns: [{ text: "未取深层探针", severity: "low" }],
+  });
+  assert.equal(result.evidenceIds.length, 1);
+  assert.equal(result.source.tool, "craft-anything");
+  const detail = await actions.detail(project.id);
+  assert.equal(detail.evidence[0].producer.tool, "craft-anything");
+  assert.match(String(detail.evidence[0].producer.confirmationNote), /不背书/u);
+});
