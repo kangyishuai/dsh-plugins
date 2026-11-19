@@ -192,3 +192,27 @@ test("dropProject：confirm 后移入 trash，列表里不再出现", async () =
     false,
   );
 });
+
+test("awaitLogin 会通过 onWaitChange 上报等待态，并在结束时清空", async () => {
+  /** @type {any[]} */
+  const states = [];
+  const root = mkdtempSync(join(tmpdir(), "casefile-wait-"));
+  dirs.push(root);
+  const actions = createActions({
+    store: new CaseStore({ dataRoot: root }),
+    dataRoot: root,
+    onWaitChange: (state) => states.push(state),
+  });
+  const project = await actions.openProject({ title: "Wait" });
+  // 指向一个必然不可达的端点：短时间内超时，但上报/清空必须发生
+  const result = await actions.awaitLogin(project.id, {
+    endpoint: "http://127.0.0.1:9",
+    pollMs: 10,
+    timeoutMs: 60,
+  });
+  assert.equal(result.status, "timeout");
+  assert.equal(states.length, 2, "应有一次上报 + 一次清空");
+  assert.equal(states[0]?.active, true);
+  assert.equal(states[0]?.projectId, project.id);
+  assert.equal(states[1], null);
+});

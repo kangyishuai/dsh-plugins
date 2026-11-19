@@ -93,14 +93,7 @@ export class CasefileService extends TypertRemoteService {
     /** 会话 → 最近打开的项目（工具省略 projectId 时用）。 @type {Map<string, string>} */
     this.currentProject = new Map();
     this.accessWait = null;
-    this.actions = createActions({
-      store: this.store,
-      currentProject: this.currentProject,
-      dataRoot: this.dataRoot,
-      onWaitChange: (state) => {
-        this.accessWait = state;
-      },
-    });
+    this.actions = createActions(this.actionOptions());
     this.installSessions();
     this.installTools();
     this.logger.info?.(`[casefile] loaded, dataRoot=${this.dataRoot}`);
@@ -125,15 +118,30 @@ export class CasefileService extends TypertRemoteService {
   /**
    * 拿到会话服务后重建 actions（builder 需要 create/prompt/wait）。
    */
+  /**
+   * createActions 的公共选项（构造函数与 installSessions 必须共用）。
+   * @returns {Parameters<typeof createActions>[0]}
+   */
+  actionOptions() {
+    return {
+      store: this.store,
+      currentProject: this.currentProject,
+      dataRoot: this.dataRoot,
+      onWaitChange: (/** @type {any} */ state) => {
+        this.accessWait = state;
+      },
+    };
+  }
+
   installSessions() {
     try {
       this.ctx.inject?.(/** @type {any} */ (["sessionController"]), (/** @type {any} */ scope) => {
         const controller = scope.sessionController;
         if (!controller) return;
+        // 注意：这里必须和构造函数用同一份选项——漏掉 onWaitChange 会让
+        // 等待登录状态永远不生效（实测踩过：await-login 期间 accessState 恒为 false）。
         this.actions = createActions({
-          store: this.store,
-          currentProject: this.currentProject,
-          dataRoot: this.dataRoot,
+          ...this.actionOptions(),
           sessions: {
             create: async (input) => {
               const created = await controller.create({ cwd: input.cwd });
