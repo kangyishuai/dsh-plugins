@@ -18,6 +18,7 @@ import { buildSpecPack, redactPack, renderSpecMarkdown, writeSpecPack } from "./
 import { buildBundle } from "./core/bundle.js";
 import { createCheckers } from "./core/checks.js";
 import { hashTree, shortDigest } from "./core/digest.js";
+import { validateIngestPayload } from "./core/ingest.js";
 import { awaitLogin } from "./core/login-wait.js";
 import { gradeCapabilities } from "./core/manifest.js";
 import {
@@ -273,7 +274,8 @@ export function createActions(options) {
           : null;
       const record = normalizeEvidence({
         ...input,
-        artifact: archived,
+        // 外部摄入时，同一份报告可以同时是多条证据的出处：允许直接传入已归档对象。
+        artifact: archived ?? input?.artifact ?? null,
         sessionId: input?.sessionId ?? sessionOf(exec) ?? null,
       });
       store.appendRecord(project.id, "evidence", record);
@@ -1212,6 +1214,115 @@ export function createActions(options) {
       }
       const overview = buildOverview(projects, dataById);
       return { ...overview, summary: summarizeOverview(overview) };
+    },
+
+    // ---------- 外部报告摄入 ----------
+
+    /**
+     * 摄入外部 agent 的产出（通用契约）。只记录、不背书：authority=external。
+     * @param {string} projectId
+     * @param {any} payload
+     * @param {{ dryRun?: boolean }} [options]
+     * @returns {Promise<Record<string, any>>}
+     */
+    async ingestReport(projectId, payload, options = {}) {
+      const project = requireProject(projectId);
+      const normalized = validateIngestPayload(payload);
+      const dryRun = options?.dryRun === true;
+
+      // 报告本体若有路径，归档进项目目录（/tmp 会过期，过期就没法复算）
+      const archived =
+        normalized.source.reportPath == null
+          ? null
+          : store.archiveArtifact(project.id, normalized.source.reportPath);
+
+      if (dryRun) {
+        return {
+          dryRun: true,
+          source: normalized.source,
+          wouldCreate: {
+            evidence: normalized.evidence.length,
+            claims: normalized.claims.length,
+            unknowns: normalized.unknowns.length,
+            artifact: archived,
+          },
+          summary: `预演：将写入 ${normalized.evidence.length} 证据 / ${normalized.claims.length} 结论 / ${normalized.unknowns.length} 未知项`,
+        };
+      }
+
+      const producer = {
+        tool: normalized.source.tool,
+        version: normalized.source.version,
+        mode: normalized.source.mode,
+        outputKind: "external-report",
+        accessConfirmedByUser: true,
+        confirmationNote: "外部 agent 产出，casefile 只记录与引用；其判断归原工具，casefile 不背书",
+      };
+
+      /** @type {string[]} */
+      const evidenceIds = [];
+      for (const item of normalized.evidence) {
+        const record = await this.addEvidence(project.id, {
+          summary: item.summary,
+          kind: item.kind,
+          authority: item.authority,
+          confidence: "observed",
+          limitations: item.limitations,
+          refs: item.refs,
+          ...(item.artifactPath == null ? {} : { artifactPath: item.artifactPath }),
+          ...(archived == null ? {} : { artifact: archived }),
+          producer,
+        });
+        evidenceIds.push(record.id);
+      }
+
+      /** @type {string[]} */
+      const claimIds = [];
+      for (const item of normalized.claims) {
+        const record = await this.addClaim(project.id, {
+          text: item.text,
+          kind: item.kind,
+          status: item.status,
+          limitations: item.limitations,
+          evidenceIds: item.evidenceIndexes.map(
+            (/** @type {number} */ index) => evidenceIds[index],
+          ),
+        });
+        claimIds.push(record.id);
+      }
+
+      /** @type {string[]} */
+      const unknownIds = [];
+      for (const item of normalized.unknowns) {
+        const record = await this.addUnknown(project.id, {
+          text: item.text,
+          severity: item.severity,
+        });
+        unknownIds.push(record.id);
+      }
+
+      store.audit(project.id, {
+        actor: "agent",
+        action: "ingest/external-report",
+        target: project.id,
+        detail: {
+          tool: producer.tool,
+          version: producer.version,
+          evidence: evidenceIds.length,
+          claims: claimIds.length,
+          unknowns: unknownIds.length,
+          artifactDigest: archived?.sha256 ?? null,
+        },
+      });
+
+      return {
+        source: normalized.source,
+        evidenceIds,
+        claimIds,
+        unknownIds: unknownIds.filter((item) => item !== ""),
+        artifact: archived,
+        summary: `已摄入 ${evidenceIds.length} 证据 / ${claimIds.length} 结论 / ${unknownIds.length} 未知项（来源 ${producer.tool}）`,
+      };
     },
 
     // ---------- 自主性阶梯 ----------

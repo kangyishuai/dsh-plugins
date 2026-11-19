@@ -7,6 +7,7 @@
 //     让模型读到稳定错误码并自行纠正；
 //   - 每个工具都接受 projectId；省略时用「本会话最近打开的项目」（由 service 维护）。
 
+import { describeIngestSchema } from "./core/ingest.js";
 import { renderToolResult, TOOL_OUTPUT_SCHEMA } from "./tool-schema.js";
 
 /** 六个工具名（文档、测试、冒烟共用）。 */
@@ -19,6 +20,7 @@ export const TOOL_NAMES = /** @type {const} */ ({
   obligation: "case_obligation",
   access: "case_access",
   app: "case_app",
+  ingest: "case_ingest",
   build: "case_build",
   check: "case_check",
   brief: "case_brief",
@@ -742,6 +744,46 @@ export function buildToolDefinitions(handlers, projectOf) {
             app: summary,
             evidenceId: evidence?.id ?? null,
           };
+        });
+      },
+    },
+
+    {
+      name: TOOL_NAMES.ingest,
+      description:
+        "外部报告摄入：ingest 把别的 agent（如 Craft）产出的报告按通用契约写进案卷（只记录、不背书）；schema 返回契约说明，便于对方生成正确格式。",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          action: { type: "string", enum: ["ingest", "schema"] },
+          projectId: PROJECT_ID,
+          dryRun: { type: "boolean", description: "ingest 时只预演，不写盘" },
+          payload: {
+            type: "object",
+            description:
+              "契约见 action=schema 的返回；claims.evidenceIds 用本次 evidence 的数组下标",
+          },
+        },
+        required: ["action"],
+      },
+      output: { schema: TOOL_OUTPUT_SCHEMA, render: renderToolResult },
+      /** @param {any} args @param {any} exec */
+      async execute(args, exec) {
+        return run(async () => {
+          await assertWriter(exec);
+          const action = assertAction(args.action, ["ingest", "schema"]);
+          if (action === "schema") {
+            return { schema: describeIngestSchema(), summary: "摄入契约 v1（见 schema 字段）" };
+          }
+          if (args.payload == null) {
+            throw Object.assign(new Error("ingest 需要 payload（契约见 action=schema）"), {
+              code: "invalid-input",
+            });
+          }
+          return await handlers.ingestReport(projectId(args, exec), args.payload, {
+            dryRun: args.dryRun,
+          });
         });
       },
     },
