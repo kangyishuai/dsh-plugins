@@ -178,6 +178,10 @@ export function buildToolDefinitions(handlers, projectOf) {
             enum: ["md", "html", "both"],
             description: "report 时的输出格式：md（默认）/ html（单文件、可外发归档）/ both",
           },
+          redact: {
+            type: "boolean",
+            description: "bundle 时是否脱敏（默认 true）",
+          },
           confirm: {
             type: "boolean",
             description: "drop 时必须传 true：把整个项目目录移进 trash（可手动移回）",
@@ -239,6 +243,12 @@ export function buildToolDefinitions(handlers, projectOf) {
                 coverage: preview.coverage,
                 summary: `项目已关闭（覆盖率 ${(preview.coverage.ratio * 100).toFixed(0)}%）`,
               };
+            }
+            case "bundle": {
+              const bundle = await handlers.exportBundle(projectId(args, exec), {
+                redact: args.redact,
+              });
+              return bundle;
             }
             case "archive": {
               const archived = await handlers.archiveProject(projectId(args, exec), {
@@ -546,6 +556,12 @@ export function buildToolDefinitions(handlers, projectOf) {
                 type: "array",
                 items: { type: "string" },
                 description: "挂到哪些功能上（用于按功能覆盖率）",
+              },
+              claimIds: {
+                type: "array",
+                items: { type: "string" },
+                description:
+                  "这条义务验证的是哪些结论（交接给其他 agent 时用来判断「哪条结论还没人验」）",
               },
             },
             required: ["statement"],

@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { parseArchitectures, summarizeAppBundle } from "./core/app-bundle.js";
 import { buildAttestation } from "./core/attestation.js";
 import { buildSpecPack, redactPack, renderSpecMarkdown, writeSpecPack } from "./core/brief.js";
+import { buildBundle } from "./core/bundle.js";
 import { createCheckers } from "./core/checks.js";
 import { hashTree, shortDigest } from "./core/digest.js";
 import { awaitLogin } from "./core/login-wait.js";
@@ -1422,6 +1423,56 @@ export function createActions(options) {
         files,
         coverage,
         summary: `报告已写入 ${dir}（覆盖率 ${(coverage.ratio * 100).toFixed(0)}%）`,
+      };
+    },
+
+    /**
+     * 导出机器可读证据包（全量账本，确定性、可校验）。
+     * @param {string} projectId
+     * @param {{ redact?: boolean }} [options]
+     * @returns {Promise<Record<string, any>>}
+     */
+    async exportBundle(projectId, options = {}) {
+      const project = requireProject(projectId);
+      const data = store.readAll(project.id);
+      const coverage = computeCoverage(data.obligations);
+      const build = buildBundle({
+        project,
+        evidence: data.evidence,
+        claims: data.claims,
+        obligations: data.obligations,
+        checks: data.checks,
+        unknowns: data.unknowns,
+        coverage,
+        counts: {
+          evidence: data.evidence.length,
+          claims: data.claims.length,
+          obligations: data.obligations.length,
+          checks: data.checks.length,
+          unknowns: data.unknowns.length,
+        },
+        redact: options?.redact !== false,
+      });
+      const stamp = String(build.generatedAt).replace(/[:.]/g, "-");
+      const dir = join(store.projectDir(project.id), "bundles", stamp);
+      mkdirSync(dir, { recursive: true });
+      const file = join(dir, "bundle.json");
+      writeFileSync(file, `${JSON.stringify(build, null, 2)}\n`, "utf8");
+      store.audit(project.id, {
+        actor: "agent",
+        action: "bundle/export",
+        target: dir,
+        detail: {
+          digest: build.integrity.digest.slice(0, 16),
+          redacted: options?.redact !== false,
+        },
+      });
+      return {
+        path: dir,
+        files: ["bundle.json"],
+        integrity: build.integrity.digest,
+        generatedAt: build.generatedAt,
+        summary: `证据包已写入 ${dir}（integrity ${build.integrity.digest.slice(0, 16)}）`,
       };
     },
 
