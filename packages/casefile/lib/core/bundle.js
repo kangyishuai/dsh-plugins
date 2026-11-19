@@ -87,9 +87,17 @@ export function buildBundle(input) {
   const generatedAt =
     latestTimestamp(all) ?? input.project?.updatedAt ?? "1970-01-01T00:00:00.000Z";
 
-  const artifacts = input.evidence
-    .map((item) => item.artifact)
-    .filter((item) => item && typeof item === "object")
+  // 同一份产物可能被多条证据引用（例如一份外部报告是整组结论的出处）。
+  // 清单是"有哪些产物"，不是"被引用了几次"，所以按 sha256 去重。
+  /** @type {Map<string, Record<string, any>>} */
+  const artifactByDigest = new Map();
+  for (const item of input.evidence) {
+    const artifact = item?.artifact;
+    if (!artifact || typeof artifact !== "object") continue;
+    if (!artifactByDigest.has(String(artifact.sha256)))
+      artifactByDigest.set(String(artifact.sha256), artifact);
+  }
+  const artifacts = [...artifactByDigest.values()]
     .map((item) => ({
       sha256: item.sha256,
       file: item.file,

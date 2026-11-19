@@ -184,3 +184,36 @@ test("义务可挂 claimIds，bundle 里能回答「哪条结论还没人验」"
   assert.equal(covered.has(verified.id), true);
   assert.equal(covered.has(unverified.id), false);
 });
+
+test("同一产物被多条证据引用时，artifacts 清单按 sha256 去重（真实踩到）", () => {
+  const bundle = buildBundle({
+    project: {
+      id: "p",
+      title: "T",
+      authTier: "owned",
+      scope: "all",
+      state: "closed",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    },
+    evidence: [
+      {
+        id: "e1",
+        artifact: { sha256: "aa", file: "artifacts/aa.json", bytes: 10, originalName: "r.json" },
+      },
+      {
+        id: "e2",
+        artifact: { sha256: "aa", file: "artifacts/aa.json", bytes: 10, originalName: "r.json" },
+      },
+      { id: "e3", artifact: { sha256: "bb", file: "artifacts/bb.json", bytes: 20 } },
+    ],
+    claims: [],
+    obligations: [],
+    checks: [],
+    unknowns: [],
+  });
+  assert.deepEqual(
+    bundle.artifacts.map((item) => item.sha256),
+    ["aa", "bb"],
+  );
+  assert.equal(bundle.artifacts.length, 2, "清单是「有哪些产物」，不是「被引用几次」");
+});
