@@ -48,9 +48,10 @@ Re-run `pnpm pack` + `add` after changing the code. Restart the DSH desktop app 
 The plugin adds a **Casefile** entry to the sidebar. The page lists projects on the left and shows the selected project on the right with three tabs:
 
 - **Evidence** — claims (with confidence, limits and evidence count) and the evidence records they cite;
-- **Obligations** — obligations, their status, and open unknowns. Closing an obligation needs a _fresh PASS check_; until checkers land in M2 the button explains what is missing instead of pretending;
-  The list view opens with an **overview strip**: project count, breakdown by target kind and state, obligation pass/total, and unresolved unknowns across every project. `case_project overview` returns the same data as JSON.
+- **Obligations** — obligations, their status, and open unknowns. Closing an obligation needs a _fresh PASS check bound to the current implementation digest_; otherwise the button names the exact blocker (`no-fresh-check`, `coverage-below`, `open-unknowns`, …) instead of pretending.
 - **Runs** — build rounds (status, implementation digest, command) and check verdicts bound to each digest.
+
+The list view opens with an **overview strip** (project count, breakdown by target kind and state, obligation pass/total, unresolved unknowns across projects); `case_project overview` returns the same data as JSON. The panel header shows the selected project's **autonomy level** (L0–L3); the badge's tooltip explains that L3 only applies to `scope=selected` projects whose obligations all carry check recipes.
 
 A settings section shows the data root, project count and REA capability status, so "is REA actually connected" is answerable without reading logs.
 
