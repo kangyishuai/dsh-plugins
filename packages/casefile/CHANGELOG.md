@@ -1,5 +1,16 @@
 # @kangyishuai/dsh-casefile
 
+## 0.4.1
+
+### Patch Changes
+
+- [#204](https://github.com/kangyishuai/dsh-plugins/pull/204) [`7d018c3`](https://github.com/kangyishuai/dsh-plugins/commit/7d018c343af4a3d0f5f598b896a33f4aab984a0d) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 修等待登录横幅不出现的根因：`installSessions()` 重建 actions 时**漏了 `onWaitChange`**，于是 `await-login` 期间 host 的等待状态从未被设置，`accessState` 恒为 `{active:false}`，client 覆盖层自然不渲染。
+  
+  - 抽出 `actionOptions()`，构造函数与 `installSessions()` 共用同一份选项（含 `onWaitChange`）；
+  - 新增单测：`await-login` 必须上报一次等待态（`active:true`）并在结束时清空（`null`）。
+  
+  实测证据：重启后跑真实 `await-login`（18s 超时路径），DSH 窗口里连采 18 次、`active` 全为 false、横幅 0 次出现 —— 定位到 host 侧状态根本没设。
+
 ## 0.4.0
 
 ### Minor Changes
