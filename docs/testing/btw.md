@@ -133,6 +133,22 @@ ego 与用户共用浏览器，宿主每轮用新 token 生成 `dsh-auth-<hash>`
 这样一旦把插件装进已登录的 desktop profile，一条命令即可验证设置 UI（当前在临时
 profile 里无法验证，因为有登录门禁）。
 
+## 0.2.2-rc.5 升级复核（2026-11-19）
+
+插件代码没有改动；只验证「宿主升级后仍成立」。本插件用到的 seam（busy 时命令派发、fork 缓存复用、`tools.guard`、`workspaceRegistry.archiveSession`）在 rc.3→rc.5 的 43 包逐包 diff 里**一个都没动**（[runtime rc.5](../runtime/0.2.2-rc.5.md) §1.1）。
+
+| 层                                 | 结果                                                                                       |
+| ---------------------------------- | ------------------------------------------------------------------------------------------ |
+| `node --test`（包内）              | **59 pass / 0 fail**                                                                       |
+| `pnpm probe:runtime`               | **72/72 PASS**                                                                             |
+| `pnpm smoke:btw`（web）            | **15 PASS / 3 SKIP / 0 FAIL**（3 条 SKIP：本会话无旁问记录、无凭据时宿主拒收 `/btw` 提交） |
+| `pnpm smoke:btw-desktop --require` | **18 PASS / 1 SKIP / 0 FAIL**（SKIP：当前会话还没有旁问记录）                              |
+
+**首跑假红**：接着 casefile 的桌面回归跑，页面还停在「案卷」面板，没有 composer，于是 `FAIL 输入框左侧出现 btw 按钮`；先点回任一会话再跑即 18 PASS / 1 SKIP。不是插件问题。
+
+结论：**rc.5 上 btw 无回归**；`--deep`（真实 `/btw` 提交）本轮没跑，`DEEPSEEK_API_KEY` 可用时按 [发布包体检](#发布包体检2026-11-17) 一节补。
+
+
 ## v0.2 发版就绪度（2026-11-17，变基到合并后的 main 之后重验）
 
 ```
