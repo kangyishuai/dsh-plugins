@@ -56,14 +56,22 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-casefile-*.tgz
 
 ## 工具
 
-| 工具            | 动作                                 | 用途                                          |
-| --------------- | ------------------------------------ | --------------------------------------------- |
-| `case_project`  | `open` / `list` / `get` / `update`   | 新建/打开项目、列表、详情、改授权档/范围/状态 |
-| `case_evidence` | `add` / `list` / `show`              | 把 REA 观察写成证据；过滤；看单条             |
-| `case_claim`    | `add` / `list` / `search` / `select` | 写可引用结论；搜索；勾选进入规格包            |
-| `case_feature`  | `add` / `list`                       | 把结论归到功能，写边界与非目标                |
-| `case_unknown`  | `add` / `list` / `resolve`           | 记录未知项；带备注标记已解决                  |
-| `case_brief`    | `export`                             | 写出脱敏的规格包（`spec.json` + `brief.md`）  |
+| 工具              | 动作                                            | 用途                                                                 |
+| ----------------- | ----------------------------------------------- | -------------------------------------------------------------------- |
+| `case_project`    | `open` / `list` / `get` / `update`              | 新建/打开项目、列表、详情、改授权档/范围/状态                        |
+| `case_evidence`   | `add` / `list` / `show`                         | 把 REA 观察写成证据；过滤；看单条                                    |
+| `case_claim`      | `add` / `list` / `search` / `select`            | 写可引用结论；搜索；勾选进入规格包                                   |
+| `case_feature`    | `add` / `list`                                  | 把结论归到功能，写边界与非目标                                       |
+| `case_unknown`    | `add` / `list` / `resolve`                      | 记录未知项；带备注标记已解决                                         |
+| `case_obligation` | `add` / `list` / `close` / `reopen`             | 可验收义务；`close` 必须有新鲜的通过检查                             |
+| `case_build`      | `start` / `agent` / `status` / `loop` / `cycle` | 构建运行、builder 会话、构建→检查→关闭的循环                         |
+| `case_check`      | `run` / `list` / `loop`                         | 跑一个 checker，并把结果绑定到当前实现 digest                        |
+| `case_access`     | `await-login`                                   | 轮询 CDP 页面直到登录判据成立（就绪/超时/错误）                      |
+| `case_app`        | `inspect`                                       | macOS `.app` 一屏摘要（bundle id、版本、沙盒、ATS、UTI 归属域）      |
+| `case_brief`      | `export`                                        | 写出脱敏的规格包（`spec.json` + `brief.md`）                         |
+| `case_ingest`     | `ingest` / `schema`                             | 按稳定契约摄入外部 agent 的报告（只记录、不背书）；`schema` 打印契约 |
+
+`case_project` 另有 `close`、`report`（`format: md / html / both`）、`bundle`（机器可读、确定性）、`overview`、`archive`、`drop`、`autonomy`（L0–L3 分级）。
 
 所有工具统一返回 `{ ok, data?, error?{code,message,hint}, summary }`；错误带稳定 code，模型能自行纠正而不是猜。
 

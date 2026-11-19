@@ -56,14 +56,22 @@ A settings section shows the data root, project count and REA capability status,
 
 ## Tools
 
-| Tool            | Actions                           | Purpose                                                                         |
-| --------------- | --------------------------------- | ------------------------------------------------------------------------------- |
-| `case_project`  | `open`, `list`, `get`, `update`   | Create/open a project, list, inspect, change authorization tier / scope / state |
-| `case_evidence` | `add`, `list`, `show`             | Store an REA observation as evidence; filter; read one                          |
-| `case_claim`    | `add`, `list`, `search`, `select` | Store a citable conclusion; search; select it for export                        |
-| `case_feature`  | `add`, `list`                     | Group claims into a feature with boundaries and non-goals                       |
-| `case_unknown`  | `add`, `list`, `resolve`          | Record unknowns; mark one resolved with a note                                  |
-| `case_brief`    | `export`                          | Write the redacted spec pack (`spec.json` + `brief.md`)                         |
+| Tool              | Actions                                     | Purpose                                                                                                          |
+| ----------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `case_project`    | `open`, `list`, `get`, `update`             | Create/open a project, list, inspect, change authorization tier / scope / state                                  |
+| `case_evidence`   | `add`, `list`, `show`                       | Store an REA observation as evidence; filter; read one                                                           |
+| `case_claim`      | `add`, `list`, `search`, `select`           | Store a citable conclusion; search; select it for export                                                         |
+| `case_feature`    | `add`, `list`                               | Group claims into a feature with boundaries and non-goals                                                        |
+| `case_unknown`    | `add`, `list`, `resolve`                    | Record unknowns; mark one resolved with a note                                                                   |
+| `case_obligation` | `add`, `list`, `close`, `reopen`            | Acceptance obligations; `close` needs a fresh passing check                                                      |
+| `case_build`      | `start`, `agent`, `status`, `loop`, `cycle` | Build runs, builder sessions, and the build→check→close loop                                                     |
+| `case_check`      | `run`, `list`, `loop`                       | Run one checker and bind the result to the current implementation digest                                         |
+| `case_access`     | `await-login`                               | Poll a CDP page until a sign-in predicate holds (ready / timeout / error)                                        |
+| `case_app`        | `inspect`                                   | One-screen macOS `.app` summary (bundle id, versions, sandbox, ATS, UTI domains)                                 |
+| `case_brief`      | `export`                                    | Write the redacted spec pack (`spec.json` + `brief.md`)                                                          |
+| `case_ingest`     | `ingest`, `schema`                          | Ingest an external agent's report under a stable contract (recorded, not endorsed); `schema` prints the contract |
+
+`case_project` also carries `close`, `report` (`format: md | html | both`), `bundle` (machine-readable, deterministic), `overview`, `archive`, `drop`, and `autonomy` (L0–L3 gating).
 
 Every tool returns `{ ok, data?, error?{code,message,hint}, summary }`; errors carry a stable code, so the model can correct itself instead of guessing.
 
