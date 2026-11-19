@@ -4,13 +4,13 @@
 
 ## 分层
 
-| 层                   | 命令                                           | 覆盖                                                                                                        | 依赖                                                         |
-| -------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| 单元                 | `pnpm --filter @kangyishuai/dsh-casefile test` | core（model/store/digest/manifest/brief）、actions（含义务关闭硬门）、tools、Remote 声明一致性              | 无                                                           |
-| 静态                 | `pnpm verify`                                  | lint + 类型 + 插件规范 + 文档一致性 + 公开边界 + 全部测试                                                   | 无                                                           |
-| web 端到端（API 级） | `pnpm smoke:casefile`                          | 临时 DSH_HOME 里装包、启动真实 web 宿主、打 Remote 端点：项目/证据/结论/义务/检查/规格包/脱敏/审计/能力探测 | 本机 `dsh`                                                   |
-| 桌面只读回归         | `pnpm smoke:casefile-desktop --require`        | 真实 Electron 渲染进程：侧栏入口、工作台页、新建表单开关、设置分节、Esc 不崩                                | 桌面版**已装本插件**且带 `--remote-debugging-port=9222` 启动 |
-| 发版门禁             | `pnpm gate casefile`                           | verify → web 冒烟 → 桌面回归                                                                                | 同上；桌面未就绪时用 `--skip-desktop`（门禁不完整）          |
+| 层                   | 命令                                           | 覆盖                                                                                                                                                                                      | 依赖                                                         |
+| -------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| 单元                 | `pnpm --filter @kangyishuai/dsh-casefile test` | **216 项**：core（model/store/digest/manifest/brief/bundle/ingest/autonomy/provenance/app-bundle/login-wait/png）、actions（含义务关闭硬门、外部摄入、L3 预算）、tools、Remote 声明一致性 | 无                                                           |
+| 静态                 | `pnpm verify`                                  | lint + 类型 + 插件规范 + 文档一致性 + 公开边界 + 全部测试                                                                                                                                 | 无                                                           |
+| web 端到端（API 级） | `pnpm smoke:casefile`                          | **56 项**：临时 DSH_HOME 装包 + 真实 web 宿主，打 Remote 端点：项目/证据/结论/义务/检查/规格包/脱敏/审计/能力探测 + **外部报告摄入（dryRun 与真摄入）**                                   | 本机 `dsh`                                                   |
+| 桌面只读回归         | `pnpm smoke:casefile-desktop --require`        | **15 项**：真实 Electron 渲染进程：侧栏入口、工作台页、**自主性级别徽章**、新建表单开关、设置分节、Esc 不崩                                                                               | 桌面版**已装本插件**且带 `--remote-debugging-port=9222` 启动 |
+| 发版门禁             | `pnpm gate casefile`                           | verify → web 冒烟 → 桌面回归                                                                                                                                                              | 同上；桌面未就绪时用 `--skip-desktop`（门禁不完整）          |
 
 ## web 冒烟（API 级）
 
@@ -102,7 +102,7 @@ DSH_HOME="$H" dsh web --port 0 --no-open    # 打印 http://127.0.0.1:<port>/?to
 | `publishConfig.access`            | `public`                                                                                                                   |
 | `dsh.bundle.patch` / `dsh.client` | 均在，client 注入 `dsh-client-ui-workspace` + `dsh-client-ui-slots`                                                        |
 | `pnpm probe:runtime`              | **72/72 PASS**（0 WARN / 0 FAIL）                                                                                          |
-| `pnpm verify`                     | 通过（138 项单测）                                                                                                         |
+| `pnpm verify`                     | 通过（当时 138 项；现 216 项）                                                                                             |
 | web 冒烟                          | 52/52                                                                                                                      |
 | 桌面只读回归                      | **14 PASS / 0 FAIL**（真实 Electron 渲染进程，CDP 9222，2026-11-18）                                                       |
 
@@ -124,3 +124,37 @@ DSH_HOME="$H" dsh web --port 0 --no-open    # 打印 http://127.0.0.1:<port>/?to
    改成「`clickAria("账号菜单")` → 在 `body` 里点「设置」→ 在 `[role="dialog"]` 里点「案卷」」。
 3. 同理，`[data-casefile-settings]` 在 **loading 骨架**阶段就已存在，REA 行要等 `diagnose` 返回；
    断言 REA 前必须先 `waitFor("[data-casefile-rea]")`。
+
+### 发版门禁记录（2026-11-19，0.8.1）
+
+- `pnpm gate casefile`（不跳过桌面）：**4/4 步全绿**
+  - `pnpm verify`：**216 项**单测通过
+  - `pnpm probe:runtime`：宿主 0.2.2-rc.3 表面全绿
+  - web 端到端：**56 PASS / 0 FAIL**
+  - 桌面只读回归：**15 PASS / 0 FAIL**
+- 桌面回归新增断言：**面板显示自主性级别徽章**（`data-casefile-autonomy`，默认 `L2`）。
+
+#### 这条断言踩过的坑
+
+`page.evaluate` 这个 CDP 辅助函数**只接受字符串表达式**；传箭头函数会得到：
+
+```
+{"code":-32602,"message":"Invalid parameters","data":"Failed to deserialize params.expression"}
+```
+
+看起来像页面报错，其实是调用方式错了。正确写法是把整个函数包进字符串：
+
+```js
+await page.evaluate(`(() => { ... })()`);
+```
+
+#### 断言写法的一个反面教材
+
+写「摄入后证据数仍为 0」时我用了不存在的 Remote，而 `?? []` 把它掩盖成通过：
+
+```js
+(undefinedEvidence ?? []).length === 0; // PASS，但什么都没验证
+```
+
+改为真实存在的 `projectDetail`，并让断言失败时打印真实值。
+**凡在断言里写 `x?.a ?? []`，先确认 `x` 本身可能不存在时会不会把问题掩盖掉。**
