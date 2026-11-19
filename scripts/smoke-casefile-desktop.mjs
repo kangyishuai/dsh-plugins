@@ -206,12 +206,11 @@ async function main() {
     check("工作台主面板渲染（data-casefile-page）", pageMounted === true);
 
     // 2b) 自主性级别徽章：L3 是危险状态，必须始终可见（默认 L2）
-    const autonomy = await page.evaluate(() => {
+    // 注意：这个 helper 只接受**字符串表达式**（不是函数），否则 CDP 报 Invalid parameters
+    const autonomy = await page.evaluate(`(() => {
       const el = document.querySelector("[data-casefile-autonomy]");
-      return el
-        ? { level: el.getAttribute("data-casefile-autonomy"), text: el.textContent || "" }
-        : null;
-    });
+      return el ? { level: el.getAttribute("data-casefile-autonomy"), text: el.textContent || "" } : null;
+    })()`);
     check(
       "面板显示自主性级别徽章（data-casefile-autonomy，默认 L2）",
       autonomy != null && /^L[0-3]$/.test(String(autonomy.level)) && autonomy.text.length > 0,
