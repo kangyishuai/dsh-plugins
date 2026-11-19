@@ -55,6 +55,7 @@ function fakeHandlers() {
       startBuilder: record("startBuilder"),
       awaitBuilder: record("awaitBuilder"),
       awaitLogin: record("awaitLogin"),
+      inspectApp: record("inspectApp"),
       startBuild: record("startBuild"),
       runCheck: record("runCheck"),
       loopStatus: record("loopStatus"),
@@ -63,10 +64,10 @@ function fakeHandlers() {
   };
 }
 
-test("注册 10 个工具且名字符合约定", () => {
+test("注册 11 个工具且名字符合约定", () => {
   const { handlers } = fakeHandlers();
   const definitions = buildToolDefinitions(handlers, () => undefined);
-  assert.equal(definitions.length, 10);
+  assert.equal(definitions.length, 11);
   assert.deepEqual(
     definitions.map((item) => item.name),
     Object.values(TOOL_NAMES),

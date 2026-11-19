@@ -3,10 +3,14 @@
 // 业务逻辑全部在 ./actions.js（可单测）；Remote 方法必须声明在**被导出的类自身原型**上
 // （否则 /api/casefile/* 返回 404，见 docs/runtime/0.2.1-rc.5.md §6.10）。
 
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { Remote, RemoteError, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 
 import { createActions } from "./actions.js";
 import { diffCapabilities, gradeCapabilities } from "./core/manifest.js";
+import { buildProvenance, parsePackageVersion, parseReaVersion } from "./core/provenance.js";
 import { CaseStore } from "./core/store.js";
 import { buildToolDefinitions } from "./tools.js";
 
@@ -93,6 +97,22 @@ export class CasefileService extends TypertRemoteService {
     /** 会话 → 最近打开的项目（工具省略 projectId 时用）。 @type {Map<string, string>} */
     this.currentProject = new Map();
     this.accessWait = null;
+    // casefile 自己起子进程读系统信息（plutil/lipo）；这类只读命令不走会话终端，
+    // 避免污染用户 shell 历史，也不需要交互。
+    this.runner = async (/** @type {string} */ command, /** @type {any} */ options) => {
+      const { exec } = await import("node:child_process");
+      return await new Promise((resolve, reject) => {
+        exec(command, { timeout: options?.timeoutMs ?? 15000 }, (error, stdout, stderr) => {
+          if (error && !stdout) reject(error);
+          else
+            resolve({
+              stdout: String(stdout ?? ""),
+              stderr: String(stderr ?? ""),
+              code: error ? 1 : 0,
+            });
+        });
+      });
+    };
     this.actions = createActions(this.actionOptions());
     this.installSessions();
     this.installTools();
@@ -116,6 +136,78 @@ export class CasefileService extends TypertRemoteService {
   }
 
   /**
+   * 探测当前 REA 版本与工具面哈希，用于把"当时的工具"锚进项目。
+   * 版本来源：profile patch 文件里实际被启动的 `rea-agents@x.y.z`；
+   * 找不到就留 null（不猜），工具面哈希始终可算。
+   * @returns {{ reaVersion: string | null, capabilityHash: string, reaToolCount: number, probedAt: string }}
+   */
+  provenance() {
+    let toolNames = [];
+    try {
+      const tools = this.ctx.get?.("tools");
+      const definitions = tools?.definitions?.() ?? [];
+      toolNames = definitions
+        .map((/** @type {any} */ item) => String(item?.name ?? ""))
+        .filter((/** @type {string} */ name) => name.startsWith("mcp__rea__"));
+    } catch {
+      toolNames = [];
+    }
+    return buildProvenance({ toolNames, reaVersion: this.detectReaVersion() });
+  }
+
+  /**
+   * 从本机 DSH patch 文件 / 全局安装里找 REA 版本。
+   * @returns {string | null}
+   */
+  detectReaVersion() {
+    const paths = [
+      process.env.DSH_HOME ? join(process.env.DSH_HOME, "cordis.patch.yml") : null,
+      join(homedir(), ".dsh", "cordis.patch.yml"),
+    ].filter((item) => typeof item === "string");
+    for (const patchPath of paths) {
+      try {
+        if (!existsSync(patchPath)) continue;
+        const found = parseReaVersion(readFileSync(patchPath, "utf8"));
+        if (found != null) return found;
+      } catch {
+        // 读不到就继续试下一个来源
+      }
+    }
+    try {
+      const meta = join(
+        homedir(),
+        ".npm-global",
+        "lib",
+        "node_modules",
+        "rea-agents",
+        "package.json",
+      );
+      if (existsSync(meta)) return parsePackageVersion(readFileSync(meta, "utf8"));
+    } catch {
+      // 忽略
+    }
+    return null;
+  }
+
+  /** @returns {Promise<Record<string, any>>} */
+  async provenanceInfo() {
+    return this.provenance();
+  }
+
+  /**
+   * 应用包摘要（勘察第一跳）。
+   * @param {{ path: string }} input
+   * @returns {Promise<Record<string, any>>}
+   */
+  async inspectApp(input) {
+    try {
+      return await this.actions.inspectAppBundle(input);
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
    * 拿到会话服务后重建 actions（builder 需要 create/prompt/wait）。
    */
   /**
@@ -130,6 +222,8 @@ export class CasefileService extends TypertRemoteService {
       onWaitChange: (/** @type {any} */ state) => {
         this.accessWait = state;
       },
+      provenance: () => this.provenance(),
+      runner: this.runner,
     };
   }
 
@@ -225,6 +319,8 @@ export class CasefileService extends TypertRemoteService {
       overview: () => this.actions.overview(),
       awaitLogin: (projectId, input) => this.actions.awaitLogin(projectId, input),
       accessState: () => this.accessState(),
+      provenanceInfo: () => this.provenance(),
+      inspectApp: (input) => this.actions.inspectAppBundle(input),
       archiveProject: (projectId, options) => this.actions.archiveProject(projectId, options),
       dropProject: (projectId, options) => this.actions.dropProject(projectId, options),
       runCycle: (projectId, input) => this.actions.runCycle(projectId, input),
@@ -727,6 +823,8 @@ declareRemote(CasefileService, "closeObligation");
 declareRemote(CasefileService, "reopenObligation");
 declareRemote(CasefileService, "overview");
 declareRemote(CasefileService, "accessState");
+declareRemote(CasefileService, "inspectApp");
+declareRemote(CasefileService, "provenanceInfo");
 declareRemote(CasefileService, "archiveProject");
 declareRemote(CasefileService, "dropProject");
 declareRemote(CasefileService, "awaitLogin");
