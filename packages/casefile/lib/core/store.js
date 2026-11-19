@@ -368,6 +368,13 @@ export class CaseStore {
     }
     if (patch.state != null) next.state = String(patch.state).slice(0, 32);
     if (patch.reaVersion != null) next.reaVersion = String(patch.reaVersion).slice(0, 64);
+    if (patch.autonomy != null && typeof patch.autonomy === "object") {
+      next.autonomy = {
+        level: String(patch.autonomy.level ?? "L2").slice(0, 4),
+        unlockedAt: patch.autonomy.unlockedAt ?? null,
+        budget: patch.autonomy.budget ?? null,
+      };
+    }
     if (patch.capabilityHash != null)
       next.capabilityHash = String(patch.capabilityHash).slice(0, 128);
     next.updatedAt = nowIso();

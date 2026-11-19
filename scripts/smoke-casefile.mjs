@@ -534,9 +534,10 @@ async function main() {
     const sameShot = join(shotDir, "same.png");
     const diffShot = join(shotDir, "diff.png");
     const png = await import("./casefile-png-fixture.mjs");
-    await writeFile(refShot, png.solidPng(8, 8, [20, 40, 60]));
-    await writeFile(sameShot, png.solidPng(8, 8, [20, 40, 60]));
-    await writeFile(diffShot, png.solidPng(8, 8, [240, 40, 60]));
+    // 用有纹理的图：纯色会被 blank-image 规则直接判 fail（那是另一条断言的事）
+    await writeFile(refShot, png.texturedPng(16, 16, [20, 40, 60]));
+    await writeFile(sameShot, png.texturedPng(16, 16, [20, 40, 60]));
+    await writeFile(diffShot, png.texturedPng(16, 16, [240, 40, 60]));
     await remote(session, "createProject", {
       input: { title: "Shot Compare", target: { kind: "web", ref: "about:blank" } },
     });

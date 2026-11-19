@@ -63,10 +63,28 @@ export function createBuildChecker(options = {}) {
      */
     async run(input) {
       const startedAt = new Date().toISOString();
-      const result = await runner(String(input.command), {
-        cwd: input.cwd,
-        timeoutMs: input.timeoutMs,
-      });
+      /** @type {any} */
+      let result;
+      try {
+        result = await runner(String(input.command), {
+          cwd: input.cwd,
+          timeoutMs: input.timeoutMs,
+        });
+      } catch (error) {
+        // 命令根本没跑起来（不存在 / 不可执行）→ unknown，不能判成"构建失败"。
+        return {
+          verdict: "unknown",
+          detail: {
+            reason: "runner-error",
+            message: String(/** @type {any} */ (error)?.message ?? error),
+          },
+          startedAt,
+          endedAt: new Date().toISOString(),
+          exitCode: null,
+          stdout: "",
+          stderr: "",
+        };
+      }
       const endedAt = new Date().toISOString();
       if (result.killed === true || result.exitCode === null) {
         return {
