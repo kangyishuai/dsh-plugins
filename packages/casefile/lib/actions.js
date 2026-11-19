@@ -101,6 +101,26 @@ export function createActions(options) {
    * @param {string} projectId
    * @returns {Record<string, any>}
    */
+  /**
+   * 把 Info.plist（XML 或二进制）转成 JSON 对象。
+   * @param {string} plistPath
+   * @returns {Promise<Record<string, any>>}
+   */
+  const readPlistAsJson = async (plistPath) => {
+    if (runner != null) {
+      const result = await runner(`plutil -convert json -o - ${JSON.stringify(plistPath)}`);
+      const text = String(result?.stdout ?? "").trim();
+      if (text !== "") return JSON.parse(text);
+    }
+    // 没有 runner 或 plutil 没输出：只在文件本身就是 JSON 形式时接受
+    const raw = readFileSync(plistPath, "utf8").trim();
+    if (raw.startsWith("{")) return JSON.parse(raw);
+    throw new CasefileInputError(
+      "invalid-input",
+      "无法解析 Info.plist：它可能是 XML 或二进制，需要在 macOS 上用 plutil 转换（runner 不可用）",
+    );
+  };
+
   const requireProject = (projectId) => {
     const id = String(projectId ?? "");
     const project = store.getProject(id);
@@ -1227,8 +1247,9 @@ export function createActions(options) {
       if (!existsSync(plistPath)) {
         throw new CasefileInputError("invalid-input", `不是 macOS 应用包：缺 ${plistPath}`);
       }
-      /** @type {Record<string, any>} */
-      const plist = JSON.parse(readFileSync(plistPath, "utf8"));
+      // Info.plist 可能是 XML（实测 Bob.app 就是），也可能是二进制；统一交给 plutil 转 JSON。
+      // 直接 JSON.parse 会在 XML 上炸——真实使用一轮就踩到了。
+      const plist = await readPlistAsJson(plistPath);
       const executableName =
         typeof plist.CFBundleExecutable === "string" ? plist.CFBundleExecutable : null;
       const executablePath =
