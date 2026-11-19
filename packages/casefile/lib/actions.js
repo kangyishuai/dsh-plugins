@@ -19,6 +19,7 @@ import { buildBundle } from "./core/bundle.js";
 import { createCheckers } from "./core/checks.js";
 import { hashTree, shortDigest } from "./core/digest.js";
 import { validateIngestPayload } from "./core/ingest.js";
+import { looksLikeCraftReport, mapCraftReport } from "./core/ingest-craft.js";
 import { awaitLogin } from "./core/login-wait.js";
 import { gradeCapabilities } from "./core/manifest.js";
 import {
@@ -1227,7 +1228,10 @@ export function createActions(options) {
      */
     async ingestReport(projectId, payload, options = {}) {
       const project = requireProject(projectId);
-      const normalized = validateIngestPayload(payload);
+      // 别的 agent 的报告常是「证据账本」形状（subject/operation/result…）。
+      // Craft 的公开字段可自动映射；其余形状要求调用方先自己转成契约。
+      const shaped = looksLikeCraftReport(payload) ? mapCraftReport(payload) : payload;
+      const normalized = validateIngestPayload(shaped);
       const dryRun = options?.dryRun === true;
 
       // 报告本体若有路径，归档进项目目录（/tmp 会过期，过期就没法复算）
