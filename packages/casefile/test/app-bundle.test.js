@@ -109,3 +109,62 @@ test("buildProvenance：没有版本时留 null，但哈希始终可算", () => 
   assert.match(p.capabilityHash, /^[a-f0-9]{16}$/u);
   assert.match(p.probedAt, /^\d{4}-/u);
 });
+
+test("inspectAppBundle 用 plutil 把 XML Info.plist 转成 JSON（真实踩到的 bug）", async () => {
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { createActions } = await import("../lib/actions.js");
+  const { CaseStore } = await import("../lib/core/store.js");
+
+  const root = mkdtempSync(join(tmpdir(), "app-bundle-"));
+  const appDir = join(root, "Demo.app");
+  const contents = join(appDir, "Contents");
+  const macos = join(contents, "MacOS");
+  const { mkdirSync } = await import("node:fs");
+  mkdirSync(contents, { recursive: true });
+  mkdirSync(macos, { recursive: true });
+  writeFileSync(join(macos, "Demo"), "not-a-real-binary", "utf8");
+  // 故意写 XML plist：直接 JSON.parse 会炸
+  writeFileSync(
+    join(contents, "Info.plist"),
+    `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>com.demo.app</string>
+<key>CFBundleExecutable</key><string>Demo</string>
+<key>CFBundleShortVersionString</key><string>9.9.9</string>
+<key>LSUIElement</key><true/>
+</dict></plist>`,
+    "utf8",
+  );
+
+  // plutil 只在 macOS 上有，CI 跑 Linux。注入假 runner：既跨平台，
+  // 又精确守住"必须走 plutil 转换、不能直接 JSON.parse"这条路径。
+  const seenCommands = [];
+  const runner = async (/** @type {string} */ command) => {
+    seenCommands.push(command);
+    assert.match(command, /plutil -convert json -o -/u);
+    return {
+      exitCode: 0,
+      stdout: JSON.stringify({
+        CFBundleIdentifier: "com.demo.app",
+        CFBundleExecutable: "Demo",
+        CFBundleShortVersionString: "9.9.9",
+        LSUIElement: true,
+      }),
+      stderr: "",
+    };
+  };
+
+  const actions = createActions({
+    store: new CaseStore({ dataRoot: root }),
+    dataRoot: root,
+    runner,
+  });
+  const summary = await actions.inspectAppBundle({ path: appDir });
+  assert.equal(summary.bundleId, "com.demo.app");
+  assert.equal(summary.shortVersion, "9.9.9");
+  assert.equal(summary.uiElement, true);
+  assert.equal(seenCommands.length >= 1, true);
+});
