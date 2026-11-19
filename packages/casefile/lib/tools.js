@@ -178,6 +178,21 @@ export function buildToolDefinitions(handlers, projectOf) {
             enum: ["md", "html", "both"],
             description: "report 时的输出格式：md（默认）/ html（单文件、可外发归档）/ both",
           },
+          level: {
+            type: "string",
+            enum: ["L0", "L1", "L2", "L3"],
+            description: "autonomy 动作的目标级别；L3 需 scope=selected 且义务全有检查配方",
+          },
+          budget: {
+            type: "object",
+            additionalProperties: false,
+            description: "L3 预算：maxRounds / maxBuilds / maxWallClockMs，缺项用默认",
+            properties: {
+              maxRounds: { type: "integer" },
+              maxBuilds: { type: "integer" },
+              maxWallClockMs: { type: "integer" },
+            },
+          },
           redact: {
             type: "boolean",
             description: "bundle 时是否脱敏（默认 true）",
@@ -242,6 +257,24 @@ export function buildToolDefinitions(handlers, projectOf) {
                 closed: closed.project,
                 coverage: preview.coverage,
                 summary: `项目已关闭（覆盖率 ${(preview.coverage.ratio * 100).toFixed(0)}%）`,
+              };
+            }
+            case "autonomy": {
+              if (args.level == null) {
+                const status = await handlers.autonomyStatus(projectId(args, exec));
+                return {
+                  autonomy: status.autonomy,
+                  unlock: status.unlock,
+                  summary: `当前 ${status.autonomy.level}${status.unlock.ok ? "（可升 L3）" : `（不可升 L3：${status.unlock.blockers.join("、")}）`}`,
+                };
+              }
+              const updated = await handlers.setAutonomy(projectId(args, exec), {
+                level: args.level,
+                budget: args.budget,
+              });
+              return {
+                ...updated,
+                summary: `自主性已设为 ${updated.autonomy.level}`,
               };
             }
             case "bundle": {

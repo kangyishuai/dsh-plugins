@@ -70,6 +70,8 @@ function fail(error) {
     "project-exists",
     "not-found",
     "confirm-required",
+    "autonomy-blocked",
+    "autonomy-stop",
     "project-not-found",
     "obligationTooTall",
     "coverage-not-met",
@@ -99,18 +101,36 @@ export class CasefileService extends TypertRemoteService {
     this.accessWait = null;
     // casefile 自己起子进程读系统信息（plutil/lipo）；这类只读命令不走会话终端，
     // 避免污染用户 shell 历史，也不需要交互。
+    // casefile 自己起子进程读系统信息 / 跑 checker 命令。**不要**因为非零退出就 reject：
+    // checker 需要拿到「退出码是多少」来判定 fail，reject 会把它变成 internal 错误。
+    // 只有 spawn 级别失败（命令不存在 / 无权限）才算真的无法执行。
     this.runner = async (/** @type {string} */ command, /** @type {any} */ options) => {
       const { exec } = await import("node:child_process");
       return await new Promise((resolve, reject) => {
-        exec(command, { timeout: options?.timeoutMs ?? 15000 }, (error, stdout, stderr) => {
-          if (error && !stdout) reject(error);
-          else
+        exec(
+          command,
+          { timeout: options?.timeoutMs ?? 15000, cwd: options?.cwd, maxBuffer: 8 * 1024 * 1024 },
+          (error, stdout, stderr) => {
+            const code = /** @type {any} */ (error)?.code;
+            // exec 把「命令不存在 / 不可执行」报成退出码 127 / 126（数字，不是 ENOENT 字符串），
+            // 且此时没有任何输出。这不是"命令跑了但失败"，而是"根本没跑起来"。
+            const spawnFailed =
+              typeof code === "string"
+                ? /ENOENT|EACCES|EPERM/u.test(code)
+                : (code === 127 || code === 126) && !stdout && !stderr;
+            if (spawnFailed) {
+              reject(error);
+              return;
+            }
+            const killed = Boolean(error && /** @type {any} */ (error).killed === true);
             resolve({
+              exitCode: killed ? null : typeof code === "number" ? code : error ? 1 : 0,
               stdout: String(stdout ?? ""),
               stderr: String(stderr ?? ""),
-              code: error ? 1 : 0,
+              killed,
             });
-        });
+          },
+        );
       });
     };
     this.actions = createActions(this.actionOptions());
@@ -330,6 +350,8 @@ export class CasefileService extends TypertRemoteService {
       closePreview: (projectId, options) => this.actions.closePreview(projectId, options),
       exportReport: (projectId, options) => this.actions.exportReport(projectId, options),
       exportBundle: (projectId, options) => this.actions.exportBundle(projectId, options),
+      setAutonomy: (projectId, input) => this.actions.setAutonomy(projectId, input),
+      autonomyStatus: (projectId) => this.actions.autonomyStatus(projectId),
       advanceLoop: (projectId, input) => this.actions.advanceLoop(projectId, input),
       startBuilder: (projectId, input) => this.actions.startBuilder(projectId, input),
       awaitBuilder: (projectId, input) => this.actions.awaitBuilder(projectId, input),
@@ -645,6 +667,31 @@ export class CasefileService extends TypertRemoteService {
 
   /**
    * @param {string} projectId
+   * @param {{ level?: string, budget?: Record<string, any> | null }} input
+   * @returns {Promise<Record<string, any>>}
+   */
+  async setAutonomy(projectId, input) {
+    try {
+      return await this.actions.setAutonomy(projectId, input ?? {});
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
+   * @returns {Promise<Record<string, any>>}
+   */
+  async autonomyStatus(projectId) {
+    try {
+      return await this.actions.autonomyStatus(projectId);
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * @param {string} projectId
    * @param {{ redact?: boolean }} [options]
    * @returns {Promise<Record<string, any>>}
    */
@@ -847,6 +894,8 @@ declareRemote(CasefileService, "runCycle");
 declareRemote(CasefileService, "closeProject");
 declareRemote(CasefileService, "exportReport");
 declareRemote(CasefileService, "exportBundle");
+declareRemote(CasefileService, "setAutonomy");
+declareRemote(CasefileService, "autonomyStatus");
 declareRemote(CasefileService, "advanceLoop");
 declareRemote(CasefileService, "startBuilder");
 declareRemote(CasefileService, "awaitBuilder");

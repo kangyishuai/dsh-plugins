@@ -83,6 +83,9 @@ window.__ModuleLoader__.load({
       "blocker.failedObligations": "有失败的义务",
       "blocker.blockedObligations": "有阻塞的义务",
       "blocker.coverageBelow": "覆盖率不足",
+      "autonomy.label": "自主性",
+      "autonomy.hint":
+        "L3 无人值守仅对 scope=selected 且义务全带检查配方的项目开放；任一失败即停。",
       "wait.title": "案卷：等待登录",
       "wait.hint": "请在弹出的浏览器窗口里完成登录；就绪后会自动继续。",
       "wait.elapsed": "已等待 {seconds}s",
@@ -175,6 +178,9 @@ window.__ModuleLoader__.load({
       "blocker.failedObligations": "failed obligations",
       "blocker.blockedObligations": "blocked obligations",
       "blocker.coverageBelow": "coverage below target",
+      "autonomy.label": "Autonomy",
+      "autonomy.hint":
+        "L3 unattended runs are limited to scope=selected projects whose obligations all carry check recipes; any failure stops the loop.",
       "wait.title": "Casefile: waiting for sign-in",
       "wait.hint":
         "Finish signing in in the browser window; it continues automatically once ready.",
@@ -1096,6 +1102,17 @@ window.__ModuleLoader__.load({
           h("h2", null, text(t, "panel.title")),
           h("span", { className: "cf-sub" }, text(t, "panel.subtitle")),
           h("span", { className: "cf-grow" }),
+          h(
+            "span",
+            {
+              className: "cf-muted",
+              "data-casefile-autonomy":
+                (detail && detail.autonomy && detail.autonomy.level) || "L2",
+              title: text(t, "autonomy.hint"),
+              style: { marginRight: 8 },
+            },
+            `${text(t, "autonomy.label")} ${(detail && detail.autonomy && detail.autonomy.level) || "L2"}`,
+          ),
           h(
             "button",
             {

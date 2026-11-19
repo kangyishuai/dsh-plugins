@@ -204,6 +204,18 @@ async function main() {
     // 2) 工作台页渲染（首次挂载要等两个 RPC，轮询而不是固定 sleep）
     const pageMounted = await waitFor(page, "[data-casefile-page]");
     check("工作台主面板渲染（data-casefile-page）", pageMounted === true);
+
+    // 2b) 自主性级别徽章：L3 是危险状态，必须始终可见（默认 L2）
+    const autonomy = await page.evaluate(() => {
+      const el = document.querySelector("[data-casefile-autonomy]");
+      return el
+        ? { level: el.getAttribute("data-casefile-autonomy"), text: el.textContent || "" }
+        : null;
+    });
+    check(
+      "面板显示自主性级别徽章（data-casefile-autonomy，默认 L2）",
+      autonomy != null && /^L[0-3]$/.test(String(autonomy.level)) && autonomy.text.length > 0,
+    );
     await screenshot(page, "panel");
 
     // 3) 新建表单可打开/取消（不提交）

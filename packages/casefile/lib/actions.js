@@ -8,6 +8,12 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArchitectures, summarizeAppBundle } from "./core/app-bundle.js";
 import { buildAttestation } from "./core/attestation.js";
+import {
+  evaluateBudget,
+  evaluateUnlock,
+  normalizeAutonomy,
+  normalizeBudget,
+} from "./core/autonomy.js";
 import { buildSpecPack, redactPack, renderSpecMarkdown, writeSpecPack } from "./core/brief.js";
 import { buildBundle } from "./core/bundle.js";
 import { createCheckers } from "./core/checks.js";
@@ -198,6 +204,8 @@ export function createActions(options) {
       const data = store.readAll(project.id);
       return {
         project,
+        // 面板要显示当前自主性级别（L3 是危险状态，必须看得见）
+        autonomy: normalizeAutonomy(project.autonomy),
         stats: projectStats(project, data),
         claims: data.claims,
         evidence: data.evidence,
@@ -1148,6 +1156,32 @@ export function createActions(options) {
       if (typeof command !== "string" || command.trim() === "") {
         throw new CasefileInputError("invalid-input", "runCycle 需要 command（构建命令）");
       }
+      // L3 无人值守：预算与"任一失败即停"在循环前/后强制生效，不可由调用方放宽。
+      const autonomy = normalizeAutonomy(project.autonomy);
+      /** @type {{ maxRounds: number, maxBuilds: number, maxWallClockMs: number } | null} */
+      let budget = null;
+      if (autonomy.level === "L3") {
+        budget = normalizeBudget(autonomy.budget);
+        const existing = store.readAll(project.id).builds;
+        const preStop = evaluateBudget({
+          builds: existing,
+          startedAt: autonomy.unlockedAt,
+          budget,
+        });
+        if (preStop.stop) {
+          store.audit(project.id, {
+            actor: "agent",
+            action: "autonomy/stop",
+            target: project.id,
+            detail: { reason: preStop.reason, ...preStop.detail },
+          });
+          throw Object.assign(new Error(`L3 停止：${preStop.reason}`), {
+            code: "autonomy-stop",
+            reason: preStop.reason,
+            detail: preStop.detail,
+          });
+        }
+      }
       const loop = await this.advanceLoop(project.id, {
         command,
         cwd: input?.cwd,
@@ -1178,6 +1212,78 @@ export function createActions(options) {
       }
       const overview = buildOverview(projects, dataById);
       return { ...overview, summary: summarizeOverview(overview) };
+    },
+
+    // ---------- 自主性阶梯 ----------
+
+    /**
+     * 解锁 / 降级自主性。L3 有硬条件，不满足就拒绝并列出 blocker。
+     * @param {string} projectId
+     * @param {{ level?: string, budget?: Record<string, any> | null }} input
+     * @returns {Promise<Record<string, any>>}
+     */
+    async setAutonomy(projectId, input) {
+      const project = requireProject(projectId);
+      const level = String(input?.level ?? "L3");
+      if (!["L0", "L1", "L2", "L3"].includes(level)) {
+        throw new CasefileInputError("invalid-input", `未知级别：${level}`);
+      }
+      if (level !== "L3") {
+        // 降级永远允许且立即生效：这是"停"的开关。
+        const next = store.updateProject(project.id, {
+          autonomy: { level, unlockedAt: null, budget: null },
+        });
+        store.audit(project.id, {
+          actor: "agent",
+          action: "autonomy/lock",
+          target: project.id,
+          detail: { level },
+        });
+        return { project: next, autonomy: normalizeAutonomy(next.autonomy) };
+      }
+      const data = store.readAll(project.id);
+      const unlock = evaluateUnlock({
+        project,
+        obligations: data.obligations,
+        budget: input?.budget,
+      });
+      if (!unlock.ok) {
+        throw Object.assign(new Error(`L3 解锁被拒绝：${unlock.blockers.join("、")}`), {
+          code: "autonomy-blocked",
+          blockers: unlock.blockers,
+        });
+      }
+      const next = store.updateProject(project.id, {
+        autonomy: {
+          level: "L3",
+          unlockedAt: nowIso(),
+          budget: unlock.budget,
+        },
+      });
+      store.audit(project.id, {
+        actor: "agent",
+        action: "autonomy/unlock",
+        target: project.id,
+        detail: { level, budget: unlock.budget, obligations: data.obligations.length },
+      });
+      return { project: next, autonomy: normalizeAutonomy(next.autonomy) };
+    },
+
+    /**
+     * 当前自主性状态（含 L3 前置条件检查，便于面板展示"为什么不能升"）。
+     * @param {string} projectId
+     * @returns {Promise<Record<string, any>>}
+     */
+    async autonomyStatus(projectId) {
+      const project = requireProject(projectId);
+      const data = store.readAll(project.id);
+      const autonomy = normalizeAutonomy(project.autonomy);
+      const unlock = evaluateUnlock({
+        project,
+        obligations: data.obligations,
+        budget: autonomy.budget,
+      });
+      return { autonomy, unlock: { ok: unlock.ok, blockers: unlock.blockers } };
     },
 
     // ---------- 等登录（人机协作） ----------
