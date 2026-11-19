@@ -138,11 +138,14 @@ Config is read from the `casefile` row in `cordis.patch.yml`. Do not edit the pr
 
 ## Compatibility
 
-| Plugin | Verified on DSH                   | What was run                                                                                                                                                                                      |
-| ------ | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0.1.x  | 0.2.2-rc.3 (macOS, desktop + web) | 138 unit tests; 52-assertion web end-to-end smoke on a throwaway DSH home; **14-assertion desktop read-only regression on a real Electron renderer (CDP)**; `pnpm gate casefile` 4/4 steps green. |
+| Plugin      | Verified on DSH                   | What was run                                                                                                                                                                                                                                        |
+| ----------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.1.x–0.2.x | 0.2.2-rc.3 (macOS, desktop + web) | 138 → 177 unit tests; 52-assertion web end-to-end smoke on a throwaway DSH home; **14-assertion desktop read-only regression on a real Electron renderer (CDP)**; `pnpm gate casefile` 4/4 steps green.                                             |
+| 0.3.x–0.5.x | same                              | 172 → 177 unit tests; adds `case_access` (sign-in wait), `case_app` (app-bundle first hop), artifact archiving, and project `archive`/`drop`; **exercised on 8 real projects** (local macOS app, sign-in-gated page, external-collector ingestion). |
 
 Host APIs used here were verified by runtime inspection; the findings are recorded in `docs/runtime/0.2.2-rc.3.md` §10 (including two pitfalls: a missed `declareRemote` silently 404s only that endpoint, and `agentPresets` cannot be composed from bundle names).
+
+Four target kinds were exercised in real tasks: **a local macOS app bundle** (Info.plist, signature surface, binary inventory — the binary layer needs REA + Ghidra, see `docs/runtime/0.2.2-rc.3.md` §13–§14), **a sign-in-gated web page** (`case_access await-login`, structure-only capture), **external-collector artifacts** (`producer` + `artifactPath` archiving), and **an app's own release package** (survey → spec → acceptance, closed end to end).
 
 ## Side effects & risks
 
