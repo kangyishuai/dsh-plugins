@@ -26,5 +26,6 @@
 | [0019](0019-projects-authorization-model.md)          | projects：危险动作可配置，授权来源不可伪造            | 已接受 |
 | [0020](0020-projects-no-cloud-execution.md)           | projects：不做云端执行 / 多租户 / 多设备同步          | 已接受 |
 | [0021](0021-projects-auto-fix-boundary.md)            | projects：auto-fix 只改实现、不碰测试                 | 已接受 |
+| [0022](0022-btw-bounded-context-cost.md)              | btw：超大会话的 bounded-context（草案）               | 提议中 |
 
 新建：复制 [0000-template.md](0000-template.md)。
