@@ -32,6 +32,8 @@ const HOST_KEYS = {
   panelOnly: "btw.answer.panelOnly",
   reopen: "btw.answer.reopen",
   truncated: "btw.answer.truncated",
+  costWarn: "btw.cost.warn",
+  costLast: "btw.cost.last",
 };
 
 /**

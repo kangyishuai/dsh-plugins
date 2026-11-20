@@ -23,6 +23,14 @@ export const LIMITS = {
    * 「输入框把对话都挤没了」），收到 1200 字：够保留结论与要点。
    */
   promoteChars: 1200,
+  /**
+   * 旁问成本提示的阈值（父会话上下文 tokens）。
+   *
+   * 依据 2026-11-20 探针（notes/btw/fork-cost.md §5）：fork 子代理的 prompt 约为
+   * 父会话 contextPressure 的 0.75–1.2 倍；空会话固定开销 ~114K。250K 是「再问一次
+   * 可能真按几十万 tokens 计费」的保守线，只提示不阻断。
+   */
+  pressureWarnTokens: 250_000,
 };
 
 /**

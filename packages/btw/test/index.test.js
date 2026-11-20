@@ -6,6 +6,14 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { renderBadge, renderScopeInstruction } from "../lib/badge.js";
 import { parseAllowedTools } from "../lib/config.js";
+import {
+  buildCostHint,
+  COST_RATIO_HIGH,
+  COST_RATIO_LOW,
+  formatCostHintLine,
+  lastPromptTokens,
+  promptTokensOfCost,
+} from "../lib/cost-hint.js";
 import { formatDuration, formatTokens } from "../lib/format.js";
 import { appendRecord, lastRecord, listRecent, readRecords } from "../lib/history.js";
 import { clip, LIMITS } from "../lib/limits.js";
@@ -346,6 +354,88 @@ test("settings: 保存是原子替换且只合并已知字段", async () => {
   assert.equal(reread.echoAnswer, false);
   const raw = await readFile(settingsPath(dir), "utf8");
   assert.ok(raw.trim().startsWith("{"), "落盘是 JSON");
+});
+
+// --- 旁问成本提示（Phase 1，纯逻辑）-----------------------------------------
+
+test("cost-hint: 拿不到 pressure 就是 unknown，不伪造 0", () => {
+  assert.equal(buildCostHint({}).level, "unknown");
+  assert.equal(buildCostHint({ pressureTokens: 0 }).level, "unknown");
+  assert.equal(buildCostHint({ pressureTokens: Number.NaN }).level, "unknown");
+  const unknown = buildCostHint({ pressureTokens: undefined, lastActualPromptTokens: 1234 });
+  assert.equal(unknown.level, "unknown");
+  assert.equal(unknown.lastActualPromptTokens, 1234, "上次实际值仍保留");
+  assert.equal(unknown.pressureTokens, undefined);
+});
+
+test("cost-hint: 阈值边界与 0.75–1.2 倍区间", () => {
+  const below = buildCostHint({ pressureTokens: LIMITS.pressureWarnTokens - 1 });
+  assert.equal(below.level, "ok");
+  assert.equal(below.threshold, LIMITS.pressureWarnTokens);
+  const at = buildCostHint({ pressureTokens: LIMITS.pressureWarnTokens });
+  assert.equal(at.level, "warn");
+  assert.equal(at.pressureTokens, LIMITS.pressureWarnTokens);
+  assert.equal(at.estimatedLow, Math.round(LIMITS.pressureWarnTokens * COST_RATIO_LOW));
+  assert.equal(at.estimatedHigh, Math.round(LIMITS.pressureWarnTokens * COST_RATIO_HIGH));
+  assert.equal(COST_RATIO_LOW, 0.75);
+  assert.equal(COST_RATIO_HIGH, 1.2);
+  assert.equal(LIMITS.pressureWarnTokens, 250_000);
+  // 自定义阈值
+  assert.equal(buildCostHint({ pressureTokens: 1000, threshold: 500 }).level, "warn");
+  assert.equal(
+    buildCostHint({ pressureTokens: 1000, threshold: 0 }).threshold,
+    LIMITS.pressureWarnTokens,
+  );
+});
+
+test("cost-hint: prompt 总量 = 新增 + 命中缓存，取最近一条有 cost 的记录", () => {
+  assert.equal(promptTokensOfCost({ inputTokens: 100, cacheReadTokens: 900 }), 1000);
+  assert.equal(promptTokensOfCost({ inputTokens: 5, cacheReadTokens: 0 }), 5);
+  assert.equal(promptTokensOfCost(null), null);
+  assert.equal(promptTokensOfCost({}), null);
+  assert.equal(promptTokensOfCost({ inputTokens: -1 }), null);
+  const records = [
+    { cost: { inputTokens: 1000, cacheReadTokens: 0 } },
+    { cost: null },
+    { question: "no cost yet" },
+    { cost: { inputTokens: 200, cacheReadTokens: 800 } },
+  ];
+  assert.equal(lastPromptTokens(records), 1000);
+  assert.equal(lastPromptTokens([]), null);
+  assert.equal(lastPromptTokens([{ cost: null }]), null);
+});
+
+test("cost-hint: 渲染成一行时只给区间 + 上次实际，ok/unknown 不出现", () => {
+  const zh = {
+    costWarn: "上下文约 {pressure} tokens（约 {low}–{high}）",
+    costLast: "上次实际 {tokens} tokens。",
+  };
+  const warn = buildCostHint({ pressureTokens: 300_000, lastActualPromptTokens: 260_000 });
+  const line = formatCostHintLine(warn, zh);
+  assert.match(line, /^⚠ 上下文约 300K tokens/u);
+  assert.match(line, /225K–360K/u);
+  assert.match(line, /上次实际 260K tokens/u);
+  assert.equal(
+    formatCostHintLine({ ...warn, lastActualPromptTokens: null }, zh).includes("上次实际"),
+    false,
+  );
+  assert.equal(
+    formatCostHintLine(/** @type {any} */ ({ level: "ok", pressureTokens: 10 }), zh),
+    "",
+  );
+  assert.equal(formatCostHintLine(null, zh), "");
+  assert.equal(formatCostHintLine(undefined, zh), "");
+});
+
+test("cost-hint: locale 译文已映射（中文/英文都能取到）", async () => {
+  const zh = await loadMessages(LOCALE_DIR, "zh");
+  const en = await loadMessages(LOCALE_DIR, "en");
+  assert.match(zh.costWarn, /本会话上下文约 \{pressure\} tokens/u);
+  assert.match(zh.costWarn, /0\.75–1\.2 倍/u);
+  assert.match(zh.costLast, /上次实际 \{tokens\}/u);
+  assert.match(en.costWarn, /forks the whole session/u);
+  assert.match(en.costLast, /Last actual: \{tokens\}/u);
+  assert.equal(format(zh.costLast, { tokens: 1234 }), "上次实际 1234 tokens。");
 });
 
 // --- threads / promote（v0.3 纯逻辑）---------------------------------------

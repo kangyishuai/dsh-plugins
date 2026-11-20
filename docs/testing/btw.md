@@ -2,13 +2,13 @@
 
 ## 分层次
 
-| 层                   | 命令                                      | 覆盖                                                                                                  |
-| -------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| 单测                 | `pnpm --filter @kangyishuai/dsh-btw test` | 路径解析、历史上限与坏行、提示词消毒、只读 guard、locale 摊平/映射、转正行数预算、白名单解析（65 项） |
-| 规范 + 类型 + 文档   | `pnpm verify`                             | biome / tsc / check-plugins / index-meta / docs 一致性                                                |
-| web 冒烟（不花钱）   | `pnpm smoke:btw`                          | 临时 `DSH_HOME` 起真实宿主：页面可交互、过掉预览版说明、能新建会话、**斜杠菜单列出 btw**              |
-| web 冒烟（真实调用） | `pnpm smoke:btw --deep`                   | 上述 + **真跑一次 `/btw`**，断言 history 落盘与耗时/缓存数字                                          |
-| 桌面回归             | _v0.2 起_                                 | 有 client 半后按约定 §6.1 补 `pnpm smoke:btw-desktop --require`                                       |
+| 层                   | 命令                                      | 覆盖                                                                                                                  |
+| -------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| 单测                 | `pnpm --filter @kangyishuai/dsh-btw test` | 路径解析、历史上限与坏行、提示词消毒、只读 guard、locale 摊平/映射、转正行数预算、成本提示纯逻辑、白名单解析（70 项） |
+| 规范 + 类型 + 文档   | `pnpm verify`                             | biome / tsc / check-plugins / index-meta / docs 一致性                                                                |
+| web 冒烟（不花钱）   | `pnpm smoke:btw`                          | 临时 `DSH_HOME` 起真实宿主：页面可交互、过掉预览版说明、能新建会话、**斜杠菜单列出 btw**                              |
+| web 冒烟（真实调用） | `pnpm smoke:btw --deep`                   | 上述 + **真跑一次 `/btw`**，断言 history 落盘与耗时/缓存数字                                                          |
+| 桌面回归             | _v0.2 起_                                 | 有 client 半后按约定 §6.1 补 `pnpm smoke:btw-desktop --require`                                                       |
 
 ## web 冒烟为什么默认不提交
 
@@ -338,6 +338,37 @@ profile 里给 btw 固定 `language: zh`（不依赖跑测机器的 `LANG`），
 **发布记录**：`@kangyishuai/dsh-btw@0.6.1` 已发布（npm latest / git tag / GitHub Release 已建；
 线上索引 8 个插件，btw `versions` 第一项为 0.6.1）。发布版用 `--npm` 复验通过（见上表）。
 
+
+## 0.6.2 成本提示（Phase 1，2026-11-20）
+
+**要解决的问题**：大会话里一次 `/btw` 会 fork 整个父会话；缓存过期时实测单次可达 762K input tokens，
+用户在下单前看不到任何量级信息。
+
+**实现（只提示、不阻断）**：
+
+- host 用 `ctx.tokenMeter.contextPressure(session).pressureTokens`（父会话最后一次请求的 prompt）做粗估；
+  再加上本会话**上一次旁问的真实 prompt 总量**（`cost.inputTokens + cost.cacheReadTokens`）。
+- 超过 `LIMITS.pressureWarnTokens = 250_000` 时：
+  - 面板顶部出现一行警告（`[data-btw-cost-hint="warn"]`）：上下文约 X tokens、区间 0.75–1.2 倍、上次实际值；
+  - `/btw` 命令结果末尾追加同一句提示；
+  - 不发请求也不拦截。
+- 新增 Remote `costHint`（单标识符参数，读 `sessions`/`tokenMeter`，拿不到时 level=`unknown` 不显示）。
+
+**为什么只给区间**：2026-11-20 临时 `DSH_HOME` 探针（真实会话 + 一次真实 fork 对账）实测，fork 子代理的
+prompt 与父会话 contextPressure 的比值在 **0.75–1.2×**；空会话 contextPressure 为空、固定开销 ~114K
+测不到，所以不能把 `measure()` 当精确账单（探针细节在私有 notes；本仓库只记录结论与阈值）。
+
+**测试**：
+
+- 单测 5 条（`lib/cost-hint.js`）：unknown 不伪造 0、阈值边界与 0.75/1.2 区间、prompt 总量取最近一条有 cost 的记录、提示行渲染（区间 + 上次实际）、中英 locale 映射。
+- 面板/命令提示是**数据相关**（只有 >250K 的会话才出现），默认 web 冒烟的新会话不会触发；冒烟计数不变
+  （仍 15 PASS / 3 SKIP、30 PASS / 1 SKIP），逻辑由单测覆盖。
+- **临时宿主大会话实测（2026-11-20，零模型调用）**：复制真实 `~/.dsh` 到临时 DSH_HOME、装当前源码包，
+  打开真实大会话（`contextPressure` ≈ 668K）后面板出现：
+  `[data-btw-cost-hint="warn"] 本会话上下文约 668K tokens；旁问会 fork 整个会话，历史实测约为其 0.75–1.2 倍（约 501K–802K tokens）。缓存过期时可能按这个量级计费。`
+  说明 host 的 `costHint` RPC 与 client 渲染都通；面板提示只挂在 btw 自己的 UI 上，不影响宿主全局样式。
+- 桌面端验证需要重启桌面版才载入最终 host/client 字节（runtime rc.5 §8.2），发版后按惯例再跑一次
+  `--npm` + 桌面回归。
 
 ## v0.2 发版就绪度（2026-11-17，变基到合并后的 main 之后重验）
 

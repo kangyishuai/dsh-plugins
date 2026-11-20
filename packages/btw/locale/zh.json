@@ -23,6 +23,10 @@
       "timeout": "旁问超时，没有得到答案。",
       "cancelled": "旁问已取消。",
       "tooLong": "问题太长（{length} 字符，上限 {max}）。"
+    },
+    "cost": {
+      "warn": "本会话上下文约 {pressure} tokens；旁问会 fork 整个会话，历史实测约为其 0.75–1.2 倍（约 {low}–{high} tokens）。缓存过期时可能按这个量级计费。",
+      "last": "上次实际 {tokens} tokens。"
     }
   },
   "threadFull": "这个旁问线程已满（{max} 轮），请开新线程。"
