@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // @ts-check
 // 用法：pnpm smoke:index
-//       SMOKE_DEBUG=1 pnpm smoke:index      —— 打印浏览器脚本完整输出
-//       SMOKE_KEEP=1 pnpm smoke:index       —— 保留临时 DSH_HOME 与索引文件（排障用）
+//       SMOKE_INDEX_URL=<url> pnpm smoke:index  —— 不构建本地索引，直接验**线上**索引源
+//                                                 （发版后用；例：jsDelivr 上的 index.json）
+//       SMOKE_DEBUG=1 pnpm smoke:index          —— 打印浏览器脚本完整输出
+//       SMOKE_KEEP=1 pnpm smoke:index           —— 保留临时 DSH_HOME 与索引文件（排障用）
 //
 // 索引源的真机验收：`mkdtemp` 出来的临时 DSH_HOME 里启动**真实宿主**，用本仓库的
 // 生成器从 npm registry 现场构建索引，再用 ego-browser 在真实「插件 → 发现」页面里
@@ -94,14 +96,17 @@ async function waitForBoot(logPath, timeoutMs) {
 /**
  * 浏览器脚本（ego-browser nodejs 里执行）。注意内层不能出现 `${}`，一律用字符串拼接。
  * @param {string} url @param {string} shots @param {string} goodIndexUrl @param {string} brokenIndexUrl
+ * @param {{ title: string, titles: string[], versions: string[], rewindTitle: string, deleteTitle: string }} expected
  */
-function browserScript(url, shots, goodIndexUrl, brokenIndexUrl) {
+function browserScript(url, shots, goodIndexUrl, brokenIndexUrl, expected) {
   return `(async () => {
 const task = await taskSpace("dsh smoke: plugin index");
 const page = task.page("p1");
 const SHOTS = ${JSON.stringify(shots)};
 const GOOD = ${JSON.stringify(goodIndexUrl)};
 const BROKEN = ${JSON.stringify(brokenIndexUrl)};
+// 标题与默认版本从**当前索引文档**派生（线上源会随时间前进，写死版本号会让发版后误报）。
+const EXPECTED = ${JSON.stringify(expected)};
 const checks = [];
 const check = (name, ok, detail) => checks.push({ name, ok: !!ok, detail: detail === undefined ? "" : String(detail) });
 const skip = (name, reason) => checks.push({ name, ok: true, skip: true, detail: reason });
@@ -278,16 +283,16 @@ await dialogClick("添加");
 await sleep(800);
 await closeDialog();
 await sleep(800);
-const listReady = await waitText("kangyishuai DSH 插件", 20000);
-check("索引标题出现在发现页", listReady, JSON.stringify({ filledGood }));
+const listReady = await waitText(EXPECTED.title, 20000);
+check("索引标题出现在发现页", listReady, JSON.stringify({ filledGood, title: EXPECTED.title }));
 await shot("04-list");
 
-const titles = ["会话删除", "会话回滚", "下一步", "顾问"];
+const titles = EXPECTED.titles;
 const present = [];
 for (const title of titles) present.push(await hasText(title));
 check("4 个插件都在列表里", present.every(Boolean), JSON.stringify({ present }));
 check("分类 pill 有 会话 / 工作流 / 工具", (await hasText("会话")) && (await hasText("工作流")) && (await hasText("工具")), "");
-const versions = ["0.5.0", "0.7.0", "0.4.2", "0.6.2"];
+const versions = EXPECTED.versions;
 const versionChecks = [];
 for (const version of versions) versionChecks.push(await hasText(version));
 check("卡片展示默认版本（4 个都在）", versionChecks.every(Boolean), JSON.stringify({ versionChecks }));
@@ -298,7 +303,7 @@ await sleep(1200);
 const searched = await page.evaluate(() => document.body.innerText || "");
 check(
   "搜索 rewind 只剩 会话回滚",
-  searched.indexOf("会话回滚") >= 0 && searched.indexOf("会话删除") < 0,
+  searched.indexOf(EXPECTED.rewindTitle) >= 0 && searched.indexOf(EXPECTED.deleteTitle) < 0,
   JSON.stringify(searched.slice(0, 200)),
 );
 await shot("05-search");
@@ -331,19 +336,97 @@ const main = async () => {
   /** @type {import("node:fs").WriteStream | undefined} */
   let hostLog;
   try {
-    // 1) 现场构建索引：生成器是对外承诺的一部分，冒烟就用它的真实产物。
-    const meta = JSON.parse(await readFile(join(REPO_ROOT, "scripts", "index-meta.json"), "utf8"));
-    const manifests = collectPackages(REPO_ROOT);
-    /** @type {Map<string, any>} */
-    const packuments = new Map();
-    for (const manifest of manifests)
-      packuments.set(manifest.name, await fetchPackument(manifest.name));
-    const index = buildIndex({ manifests, meta, packuments });
-    console.log(`索引已构建：${index.plugins.length} 个插件`);
+    // 1) 索引来源：默认现场构建（生成器是对外承诺的一部分）；SMOKE_INDEX_URL 则直接验线上源
+    //    （发版后用它验证 registry → jsDelivr 这条真实链路）。
+    const liveUrl = (process.env.SMOKE_INDEX_URL ?? "").trim();
+    /** @type {any} */
+    let index;
+    /** @type {string} */
+    let goodBody;
+    if (liveUrl !== "") {
+      let response;
+      try {
+        response = await fetch(liveUrl, { signal: AbortSignal.timeout(20_000) });
+      } catch (error) {
+        throw new Error(
+          `SMOKE_INDEX_URL 取不到（${liveUrl}）：${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      if (!response.ok) throw new Error(`SMOKE_INDEX_URL 返回 HTTP ${response.status}：${liveUrl}`);
+      goodBody = await response.text();
+      try {
+        index = JSON.parse(goodBody);
+      } catch {
+        throw new Error(`SMOKE_INDEX_URL 返回的不是 JSON：${liveUrl}`);
+      }
+      if (!Array.isArray(index?.plugins) || index.plugins.length === 0) {
+        throw new Error(`SMOKE_INDEX_URL 的文档里没有 plugins：${liveUrl}`);
+      }
+      console.log(`索引来源：线上地址 ${liveUrl}（${index.plugins.length} 个插件）`);
+    } else {
+      const meta = JSON.parse(
+        await readFile(join(REPO_ROOT, "scripts", "index-meta.json"), "utf8"),
+      );
+      const manifests = collectPackages(REPO_ROOT);
+      /** @type {Map<string, any>} */
+      const packuments = new Map();
+      for (const manifest of manifests)
+        packuments.set(manifest.name, await fetchPackument(manifest.name));
+      index = buildIndex({ manifests, meta, packuments });
+      goodBody = `${JSON.stringify(index)}\n`;
+      console.log(`索引已构建：${index.plugins.length} 个插件`);
+    }
 
-    const broken = JSON.parse(JSON.stringify(index));
+    /** 文档里每个插件：name + title + versions（默认版本 = versions[0]）。 @param {string} name @returns {any} */
+    const pluginEntry = (name) =>
+      /** @type {any[]} */ (index.plugins).find((/** @type {any} */ item) => item?.name === name);
+    /** @type {Record<string, string>} */
+    const EXPECTED_NAMES = {
+      delete: "@kangyishuai/dsh-session-delete",
+      rewind: "@kangyishuai/dsh-session-rewind",
+      nextStep: "@kangyishuai/dsh-next-step",
+      advisor: "@kangyishuai/dsh-advisor",
+    };
+    /** @type {Record<string, { title: string, version: string }>} */
+    const derived = {};
+    for (const [key, name] of Object.entries(
+      /** @type {Record<string, string>} */ (EXPECTED_NAMES),
+    )) {
+      const entry = pluginEntry(name);
+      if (entry === undefined) {
+        throw new Error(
+          `索引里没有 ${name}（现有：${/** @type {any[]} */ (index.plugins).map((/** @type {any} */ item) => item?.name).join(", ")}）`,
+        );
+      }
+      const zhTitle = entry.title?.zh ?? entry.title?.en ?? "";
+      const version = entry.versions?.[0]?.version ?? "";
+      if (zhTitle === "" || version === "")
+        throw new Error(
+          `${name} 缺少标题或版本：${JSON.stringify(entry.title)} / ${JSON.stringify(entry.versions?.[0])}`,
+        );
+      derived[key] = { title: zhTitle, version };
+    }
+    const expected = {
+      title: index.title?.zh ?? index.title?.en ?? "",
+      titles: [
+        derived.delete.title,
+        derived.rewind.title,
+        derived.nextStep.title,
+        derived.advisor.title,
+      ],
+      versions: [
+        derived.delete.version,
+        derived.rewind.version,
+        derived.nextStep.version,
+        derived.advisor.version,
+      ],
+      rewindTitle: derived.rewind.title,
+      deleteTitle: derived.delete.title,
+    };
+    if (expected.title === "") throw new Error("索引文档缺少 title");
+
+    const broken = JSON.parse(goodBody);
     broken.plugins[0].versions[0].version = "1.0"; // 非精确 SemVer：宿主必须拒收整份文档
-    const goodBody = `${JSON.stringify(index)}\n`;
     const brokenBody = `${JSON.stringify(broken)}\n`;
 
     // 2) 本地 http 服务：宿主接受 http: 索引源，正好省掉一次外部部署
@@ -367,7 +450,8 @@ const main = async () => {
       server?.listen(0, "127.0.0.1", done),
     );
     const address = /** @type {import("node:net").AddressInfo} */ (server.address());
-    urls.good = `http://127.0.0.1:${address.port}/index.json`;
+    // 线上模式：GOOD 直接用 SMOKE_INDEX_URL；坏索引仍由本地服务提供（格式错乱只用于拒收断言）。
+    urls.good = liveUrl !== "" ? liveUrl : `http://127.0.0.1:${address.port}/index.json`;
     urls.broken = `http://127.0.0.1:${address.port}/broken.json`;
     await writeFile(join(work, "index.json"), goodBody);
     console.log(`索引地址：${urls.good}`);
@@ -489,6 +573,7 @@ const main = async () => {
         shotsDir,
         urls.good,
         urls.broken,
+        expected,
       ),
     );
     const raw = await new Promise((/** @type {(value: string) => void} */ done) => {
