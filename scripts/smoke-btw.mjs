@@ -16,7 +16,17 @@
 //   `[data-chat-flow-kind]` 永远是 0。所以 `--deep` 先发一条普通消息把会话 materialize（热身），
 //   再提交 /btw；否则「回车后聊天流出现节点 / 命令卡片」两条断言必然 SKIP（而不是宿主拒收）。
 import { execFile, spawn } from "node:child_process";
-import { cp, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  cp,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -337,7 +347,9 @@ function browserScript(url, deep) {
     "    ? card.text",
     "    : await page.evaluate(() => (document.body ? document.body.innerText : ''));",
     "  const text = String(fullText).toLowerCase();",
-    '  record("卡片内容可诊断（非空白/非崩溃）", /read-only|subagent|side question|旁问|只读|unavailable|失败|无法|tokens|cached/.test(text), String(fullText).slice(0, 200));',
+    "  const baseOk = /read-only|subagent|side question|旁问|只读|unavailable|失败|无法|tokens|cached/.test(text);",
+    `  const localeOk = ${JSON.stringify(deep)} ? /命中缓存|旁问 · 新增/.test(String(fullText)) : true;`,
+    '  record("卡片内容可诊断（非空白/非崩溃）", baseOk && localeOk, String(fullText).slice(0, 200));',
     '  record("没有 uncaught 错误痕迹", !/uncaught|typeerror|is not a function/i.test(text), String(fullText).slice(0, 200));',
     `  if (${JSON.stringify(deep)}) {`,
     '    record("deep：答案含成本徽章", /tokens|cached|token/.test(text), String(fullText).slice(0, 200));',
@@ -376,7 +388,7 @@ function browserScript(url, deep) {
     "    await page.evaluate(() => { const b = document.querySelector('[data-btw-promote]'); if (b) b.click(); });",
     "    await page.waitForTimeout(1000);",
     "    const draft = await draftOf();",
-    '    record("deep：转正草稿含 Markdown 与线程首问", /^##\\s/m.test(draft) && draft.includes("reply with exactly OK"), draft.slice(0, 100));',
+    '    record("deep：转正草稿含首问（四节 Markdown 或摘要）", draft.includes("reply with exactly OK") && (/^##\\s/m.test(draft) || /完整内容见右侧|side-question panel/.test(draft)), draft.slice(0, 100));',
     "    await focusComposer();",
     '    await page.keyboard.press("Meta+A");',
     '    await page.keyboard.press("Backspace");',
@@ -460,6 +472,14 @@ const main = async () => {
       );
     }
     await writeFile(profileManifest, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    // 宿主没有 locale 服务（命令文案由插件自己按 language/LANG 选），而 web 冒烟的 --deep
+    // 要断言「扁平 locale 生效后命令结果是中文」。固定成 zh，不依赖跑测机器的 LANG，
+    // 否则换一台英文机器就假红（2026-11-20 实测 DSH 0.2.2-rc.5 无 host locale，见 runtime §8）。
+    await appendFile(
+      join(profile, "cordis.patch.yml"),
+      "\n- id: btw\n  config:\n    language: zh\n",
+      "utf8",
+    );
 
     // 只放一个工作区，指向临时目录；unit 参与存储校验，缺了工作区不会被采纳。
     await mkdir(join(home, "storages"), { recursive: true });

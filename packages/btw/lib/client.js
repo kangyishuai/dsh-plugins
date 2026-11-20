@@ -67,6 +67,9 @@ window.__ModuleLoader__.load({
       turns: "轮",
       promote: "转正",
       promoted: "已插入输入框草稿（未发送）",
+      promotedShort: "已插入摘要草稿（未发送）；完整内容见右侧「旁问」面板",
+      promoteHint: "插入摘要草稿；完整内容留在旁问面板",
+      promoteFooter: "完整内容见右侧「旁问」面板。",
       promoteBlocked: "输入框已有内容，先清空再转正",
       promoteFailed: "生成转正草稿失败",
       sending: "正在等待答案…",
@@ -124,6 +127,10 @@ window.__ModuleLoader__.load({
       turns: "turns",
       promote: "Promote",
       promoted: "Inserted into the composer as a draft (not sent)",
+      promotedShort:
+        "Inserted a summary draft (not sent); the full answer is in the side-question panel",
+      promoteHint: "Insert a summary draft; the full answer stays in the panel",
+      promoteFooter: "Full answer is in the side-question panel.",
       promoteBlocked: "Composer already has content; clear it before promoting",
       promoteFailed: "Could not create the promotion draft",
       sending: "Waiting for the answer…",
@@ -571,6 +578,141 @@ window.__ModuleLoader__.load({
           /* 忽略 */
         }
         return "zh";
+      };
+
+      // ---- 转正草稿的行数预算（纯函数，client 半不能 import，单测用源码抽取守卫）--------
+      // host 只返回完整 Markdown 草稿（最多 1200 字）；会不会撑爆 composer 取决于当前
+      // 输入框宽度（右侧栏展开约 20 字/行，收起约 40 字/行），所以「收进 6 行」必须在
+      // client 半按实测宽度做。超出部分不静默丢：末尾保留一行「完整内容见面板」。
+      // 单测用 test/index.test.js 的 @testable 抽取直接跑这段源码（避免复制一份逻辑）。
+      // @testable:begin
+      /** 转正草稿在输入框里的行数上限（目标：不超过视口约 1/3，或最多约 6 行）。 */
+      const PROMOTE_MAX_LINES = 6;
+
+      /**
+       * 估算文本在输入框里占几行：按每行字数粗算，换行符各占一行，宁可多算一行。
+       * @param {string} value
+       * @param {number} charsPerLine
+       * @returns {number}
+       */
+      function estimateDraftLines(value, charsPerLine) {
+        const width = Math.max(1, Math.trunc(Number(charsPerLine) || 1));
+        const text = String(value ?? "");
+        if (text === "") return 0;
+        let total = 0;
+        for (const line of text.split("\n")) {
+          total += Math.max(1, Math.ceil([...line].length / width));
+        }
+        return total;
+      }
+
+      /**
+       * 把完整草稿压成「摘要」：去掉 Markdown 标题行与多余空行，保留正文（首问 + 结论）。
+       *
+       * 为什么长草稿要先去标题：四节标题 + 空行在 6 行预算里要吃掉 4 行，标题下面
+       * 几乎剩不下结论。代码围栏内的 `#` 与空行原样保留，不能把代码内容改坏。
+       * @param {string} value
+       * @returns {string}
+       */
+      function compactDraftForComposer(value) {
+        /** @type {string[]} */
+        const out = [];
+        let fenced = "";
+        for (const line of String(value ?? "").split("\n")) {
+          const fence = /^\s*(`{3,}|~{3,})/u.exec(line);
+          if (fence !== null) {
+            fenced = fenced === "" ? fence[1][0] : "";
+            out.push(line);
+            continue;
+          }
+          if (fenced === "") {
+            if (/^#{1,6}\s+/u.test(line)) continue;
+            // 摘要里空行只占预算不提供信息；代码围栏内的空行另行保留。
+            if (line.trim() === "") continue;
+          }
+          out.push(line);
+        }
+        return out.join("\n").trim();
+      }
+
+      /**
+       * 把完整草稿收进 6 行预算：放得下就原样返回（保留四节 Markdown）；放不下就压成
+       * 摘要并保留开头 + 省略号 +「完整内容见面板」。截断点用二分找最长前缀，
+       * 按字符数组切，不劈开多字节字符。
+       * @param {string} value
+       * @param {{ maxLines?: number, charsPerLine?: number, footer?: string, ellipsis?: string }} [options]
+       * @returns {{ text: string, truncated: boolean }}
+       */
+      function fitDraftToLines(value, options = {}) {
+        const text = String(value ?? "");
+        const maxLines = Math.max(2, Math.trunc(Number(options.maxLines) || PROMOTE_MAX_LINES));
+        const charsPerLine = Math.max(4, Math.trunc(Number(options.charsPerLine) || 24));
+        const ellipsis = String(options.ellipsis ?? "…");
+        const footer = String(options.footer ?? "");
+        if (text === "") return { text, truncated: false };
+        if (estimateDraftLines(text, charsPerLine) <= maxLines) {
+          return { text, truncated: false };
+        }
+        const compact = compactDraftForComposer(text);
+        const base = compact === "" ? text : compact;
+        const tail = footer === "" ? "" : `\n${footer}`;
+        if (estimateDraftLines(`${base}${tail}`, charsPerLine) <= maxLines) {
+          return { text: `${base}${tail}`, truncated: true };
+        }
+        const suffix = footer === "" ? ellipsis : `${ellipsis}\n${footer}`;
+        const chars = [...base];
+        let low = 0;
+        let high = chars.length;
+        while (low < high) {
+          const mid = Math.ceil((low + high) / 2);
+          const candidate = `${chars.slice(0, mid).join("").replace(/\s+$/u, "")}${suffix}`;
+          if (estimateDraftLines(candidate, charsPerLine) <= maxLines) low = mid;
+          else high = mid - 1;
+        }
+        const prefix = chars.slice(0, low).join("").replace(/\s+$/u, "");
+        return { text: `${prefix}${suffix}`, truncated: true };
+      }
+      // @testable:end
+
+      /**
+       * 量当前 composer 的每行字数。CJK 字形宽度约等于字号，再乘 1.2 的余量
+       * （标点、粗体、英文混排），宁可少算一行。
+       * @returns {number}
+       */
+      const promoteCharsPerLine = () => {
+        try {
+          const el = document.querySelector("[data-composer-input]");
+          if (!el) return 24;
+          const style = getComputedStyle(el);
+          const fontSize = parseFloat(style.fontSize) || 14;
+          const padding =
+            (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+          // 面板刚打开/刚切会话时 clientWidth 可能还是 0，矩形宽度兜底。
+          const width = Math.max(
+            Number(el.clientWidth || 0),
+            Number(el.getBoundingClientRect().width || 0),
+          );
+          const usable = Math.max(160, width - padding);
+          return Math.max(8, Math.floor(usable / (fontSize * 1.2)));
+        } catch {
+          return 24;
+        }
+      };
+
+      /**
+       * 当前 composer 草稿渲染成几行；量不到时返回 undefined（不阻断转正）。
+       * @returns {number | undefined}
+       */
+      const composerDraftLines = () => {
+        try {
+          const el = document.querySelector("[data-composer-input]");
+          if (!el) return undefined;
+          const style = getComputedStyle(el);
+          const lineHeight = parseFloat(style.lineHeight) || 24;
+          return Math.round(el.getBoundingClientRect().height / lineHeight);
+        } catch {
+          return undefined;
+        }
       };
 
       /** Typert Remote 调用；解 { ok, value } 信封，失败返回 undefined。 */
@@ -1073,15 +1215,47 @@ window.__ModuleLoader__.load({
             setNotice(t("promoteFailed"));
             return;
           }
+          const full = result.text;
+          const charsPerLine = promoteCharsPerLine();
+          const fitted = fitDraftToLines(full, {
+            maxLines: PROMOTE_MAX_LINES,
+            charsPerLine,
+            footer: t("promoteFooter"),
+          });
+          let shortened = fitted.truncated;
           try {
-            actions.setDraft(result.text);
+            actions.setDraft(fitted.text);
           } catch {
             setBusy(false);
             setNotice(t("promoteFailed"));
             return;
           }
+          // 估算可能偏乐观（粗体/英文混排字形更宽）：量一次实际行数，超了就按比例
+          // 把每行字数收窄再切一次（只重试一次，避免草稿抖动）。
+          await waitDraftSettled(() => shellDraftOf(shell), fitted.text);
+          const lines = composerDraftLines();
+          if (lines !== undefined && lines > PROMOTE_MAX_LINES) {
+            const tighter = Math.max(
+              4,
+              Math.floor(charsPerLine * (PROMOTE_MAX_LINES / lines) * 0.9),
+            );
+            const second = fitDraftToLines(full, {
+              maxLines: PROMOTE_MAX_LINES,
+              charsPerLine: tighter,
+              footer: t("promoteFooter"),
+            });
+            if (second.text.length < fitted.text.length) {
+              shortened = true;
+              try {
+                actions.setDraft(second.text);
+              } catch {
+                /* 保留已经插入的那一版，提示语仍按摘要处理 */
+              }
+              await waitDraftSettled(() => shellDraftOf(shell), second.text);
+            }
+          }
           setBusy(false);
-          setNotice(t("promoted"));
+          setNotice(shortened ? t("promotedShort") : t("promoted"));
         };
 
         // 折叠按钮：展开/收起单条长答案。展开后保持被点答案的视口位置，避免列表跳回顶部。
@@ -1210,6 +1384,7 @@ window.__ModuleLoader__.load({
                           type: "button",
                           className: "dsh-btw-btn",
                           "data-btw-promote": "true",
+                          title: t("promoteHint"),
                           disabled: busy,
                           onClick: () => void promote(thread),
                         },

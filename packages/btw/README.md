@@ -87,6 +87,8 @@ Runtime settings (editable in **Settings → Side questions**, stored in `<dataR
 
 The settings file is re-read on every use, so edits take effect without restarting the host.
 
+Promotion inserts an **unsent draft** only; it never sends. The draft is fitted to the current composer width and capped at six lines: a short thread keeps the four-section Markdown source, a long thread becomes a question-plus-conclusion summary that ends with a pointer to the side-question panel (the full answer stays there).
+
 Panel details: the bottom「New question」input hides while a thread follow-up is open (no two similar inputs); the follow-up button reads「Follow up」/「Cancel follow-up」. `Esc` closes the panel unless the settings dialog owns focus; the input is focused when the panel opens; long answers can be expanded and collapsed without losing the reading position. The panel footer has an「Answer only in this panel」toggle (same as `echoAnswer`, no need to open Settings).
 
 ## Side effects & risks
@@ -102,10 +104,13 @@ Panel details: the bottom「New question」input hides while a thread follow-up 
 | ------ | --------------- |
 | 0.6.0  | 0.2.2-rc.3      |
 | 0.6.0  | 0.2.2-rc.5      |
+| 0.6.1  | 0.2.2-rc.5      |
 
 The underlying host seams (command dispatch while busy, fork cache reuse, `tools.guard`, `workspaceRegistry.archiveSession`) were verified on DSH 0.2.2-rc.3 and re-checked unchanged on 0.2.2-rc.5 ([runtime rc.5](../../docs/runtime/0.2.2-rc.5.md): a 43-package diff found no change in any seam this plugin uses).
 
 End-to-end status: for the published 0.6.0, the web smoke passes **15 PASS / 3 SKIP / 0 FAIL** and the deep smoke (real model calls) passes **30 PASS / 1 SKIP / 0 FAIL**; on DSH 0.2.2-rc.5 both were re-run (15/3/0 and **30 PASS / 1 SKIP / 0 FAIL**, the deep run leaving a `status=done` history record), plus the live desktop regression **18 PASS / 1 SKIP** (and **22 PASS / 1 SKIP** with `--deep`, which writes a real `~/.dsh/btw` record). The remaining deep SKIP is a data-dependent branch (the thread-card assertion runs before the first submit). The deep smoke warms the session up with one ordinary message first, because a slash command renders no conversation card in a **blank** session ([runtime rc.5 §5.2](../../docs/runtime/0.2.2-rc.5.md#52-命令卡片只在非空白会话里渲染2026-11-20-实测)). The desktop regression against the **installed 0.6.0** (real desktop profile, after restart) passes **25 PASS / 0 SKIP / 0 FAIL**, and `pnpm gate btw` passes the full 4-step gate.
+
+**0.6.1** fixes two 0.6.0 leftovers: promotion no longer blows up the main composer (a long thread used to insert a 1262-character draft that rendered ~62 lines; it is now fitted to at most six lines at the measured composer width, with the full answer left in the panel), and the host half now actually reads its Chinese/English locale files (0.6.0 kept showing the English `FALLBACK` for `/btw` command results because the nested locale table never matched the flat keys). On DSH 0.2.2-rc.5: web **15 PASS / 3 SKIP / 0 FAIL**, web `--deep` **30 PASS / 1 SKIP / 0 FAIL**, desktop **25 PASS / 0 SKIP / 0 FAIL**, desktop `--deep` **23 PASS / 1 SKIP / 0 FAIL** (the extra assertion is the composer-height threshold). DSH has **no host-side locale service** and passes command text through verbatim ([runtime rc.5 §8.1](../../docs/runtime/0.2.2-rc.5.md)), so a plugin must localize itself; and replacing `client.js` in a live desktop may keep serving the previously cached bundle until the app restarts ([runtime rc.5 §8.2](../../docs/runtime/0.2.2-rc.5.md)).
 
 ## License
 

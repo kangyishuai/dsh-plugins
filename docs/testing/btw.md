@@ -2,13 +2,13 @@
 
 ## 分层次
 
-| 层                   | 命令                                      | 覆盖                                                                                     |
-| -------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------- |
-| 单测                 | `pnpm --filter @kangyishuai/dsh-btw test` | 路径解析、历史上限与坏行、提示词消毒、只读 guard、locale 键集、白名单解析（14 项）       |
-| 规范 + 类型 + 文档   | `pnpm verify`                             | biome / tsc / check-plugins / index-meta / docs 一致性                                   |
-| web 冒烟（不花钱）   | `pnpm smoke:btw`                          | 临时 `DSH_HOME` 起真实宿主：页面可交互、过掉预览版说明、能新建会话、**斜杠菜单列出 btw** |
-| web 冒烟（真实调用） | `pnpm smoke:btw --deep`                   | 上述 + **真跑一次 `/btw`**，断言 history 落盘与耗时/缓存数字                             |
-| 桌面回归             | _v0.2 起_                                 | 有 client 半后按约定 §6.1 补 `pnpm smoke:btw-desktop --require`                          |
+| 层                   | 命令                                      | 覆盖                                                                                                  |
+| -------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| 单测                 | `pnpm --filter @kangyishuai/dsh-btw test` | 路径解析、历史上限与坏行、提示词消毒、只读 guard、locale 摊平/映射、转正行数预算、白名单解析（65 项） |
+| 规范 + 类型 + 文档   | `pnpm verify`                             | biome / tsc / check-plugins / index-meta / docs 一致性                                                |
+| web 冒烟（不花钱）   | `pnpm smoke:btw`                          | 临时 `DSH_HOME` 起真实宿主：页面可交互、过掉预览版说明、能新建会话、**斜杠菜单列出 btw**              |
+| web 冒烟（真实调用） | `pnpm smoke:btw --deep`                   | 上述 + **真跑一次 `/btw`**，断言 history 落盘与耗时/缓存数字                                          |
+| 桌面回归             | _v0.2 起_                                 | 有 client 半后按约定 §6.1 补 `pnpm smoke:btw-desktop --require`                                       |
 
 ## web 冒烟为什么默认不提交
 
@@ -135,15 +135,16 @@ profile 里无法验证，因为有登录门禁）。
 
 ## 0.2.2-rc.5 升级复核（2026-11-19）
 
-插件代码没有改动；只验证「宿主升级后仍成立」。本插件用到的 seam（busy 时命令派发、fork 缓存复用、`tools.guard`、`workspaceRegistry.archiveSession`）在 rc.3→rc.5 的 43 包逐包 diff 里**一个都没动**（[runtime rc.5](../runtime/0.2.2-rc.5.md) §1.1）。
+0.6.0 只做复核：插件代码没有改动，只验证「宿主升级后仍成立」。本插件用到的 seam（busy 时命令派发、fork 缓存复用、`tools.guard`、`workspaceRegistry.archiveSession`）在 rc.3→rc.5 的 43 包逐包 diff 里**一个都没动**（[runtime rc.5](../runtime/0.2.2-rc.5.md) §1.1）。0.6.1 的两个修复见下一节。
 
-| 层                                       | 结果                                                                                                              |
-| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `node --test`（包内）                    | **59 pass / 0 fail**                                                                                              |
-| `pnpm probe:runtime`                     | **72/72 PASS**                                                                                                    |
-| `pnpm smoke:btw`（web，默认）            | **15 PASS / 3 SKIP / 0 FAIL**（SKIP 全部是「默认模式不提交 / 提交前没有记录」的数据相关分支）                     |
-| `pnpm smoke:btw --deep`（web，真实模型） | **30 PASS / 1 SKIP / 0 FAIL**（先热身再提交，见下；真实花费三次模型调用：热身 1 + 旁问 1 + 面板追问 1）           |
-| `pnpm smoke:btw-desktop --require`       | **18 PASS / 1 SKIP / 0 FAIL**（SKIP：当前会话还没有旁问记录）；已有记录时 **25 PASS / 0 SKIP**（2026-11-20 实测） |
+| 层                                       | 结果                                                                                                                       |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `node --test`（包内）                    | **65 pass / 0 fail**（0.6.1 补了 6 项：locale 摊平 4 项 + client 转正预算 2 项）                                           |
+| `pnpm probe:runtime`                     | **72/72 PASS**                                                                                                             |
+| `pnpm smoke:btw`（web，默认）            | **15 PASS / 3 SKIP / 0 FAIL**（SKIP 全部是「默认模式不提交 / 提交前没有记录」的数据相关分支）                              |
+| `pnpm smoke:btw --deep`（web，真实模型） | **30 PASS / 1 SKIP / 0 FAIL**（先热身再提交，见下；真实花费三次模型调用：热身 1 + 旁问 1 + 面板追问 1）                    |
+| `pnpm smoke:btw-desktop --require`       | **18 PASS / 1 SKIP / 0 FAIL**（SKIP：当前会话还没有旁问记录）；已有记录时 **25 PASS / 0 SKIP**（2026-11-20 实测）          |
+| `pnpm smoke:btw-desktop --deep`          | **23 PASS / 1 SKIP / 0 FAIL**（空会话）/ **30 PASS / 0 SKIP**（已有旁问记录）；0.6.1 新增「转正后主 composer 不超过 6 行」 |
 
 **首跑假红**：接着 casefile 的桌面回归跑，页面还停在「案卷」面板，没有 composer，于是 `FAIL 输入框左侧出现 btw 按钮`；先点回任一会话再跑即 18 PASS / 1 SKIP。不是插件问题。
 
@@ -178,12 +179,18 @@ PASS history 文件已生成（session-9531c971-…）
 `pnpm smoke:btw-desktop --require --deep`（真实 desktop profile、真实数据根）：
 
 ```
-22 PASS / 1 SKIP / 0 FAIL
+23 PASS / 1 SKIP / 0 FAIL
 PASS --deep：真实 /btw 在真实数据根落盘
 PASS --deep：record 状态为 done 且有答案
 PASS --deep：record 带成本与耗时
 PASS --deep：写了 threadId（v0.3 线程字段）
+PASS --deep：转正后主 composer 不超过 6 行（长线程回退成摘要）
+  转正 composer 高度：{"lines":3,"seatHeight":262,"viewport":820,"seatPercent":32,...}
 ```
+
+最后那条是 0.6.1 新增的**高度阈值**断言：`--deep` 提交真实 `/btw` 之后，脚本挑本会话**最长**的
+线程转正，量 `[data-composer-input]` 的渲染行数；超过 6 行就 FAIL。放在 `--deep` 是因为它会给
+composer 插一条草稿（只读段虽然也会点一次转正，但那条线程可能是短的，阈值断言不够有代表性）。
 
 SKIP 是「当前会话还没有旁问记录」——只读段在提交前跑，那次切到的空闲会话本来没有 `/btw` 记录；
 提交后由 `--deep` 四条断言覆盖。前置：先把可见会话切到**空闲**会话（agent 自己的回合在跑时脚本拒绝交互），
@@ -198,7 +205,131 @@ SKIP 是「当前会话还没有旁问记录」——只读段在提交前跑，
 - 结论：**两个独立 RPC 的固有顺序**，不是计数错误。断言侧已改成「线程数与徽章同时到位」再判定，
   不需要改插件，也没有 changeset。
 
-结论：**rc.5 上 btw 无回归**；默认、`--deep`（含命令卡片与线程卡片）、桌面只读与桌面 `--deep` 都已覆盖。
+结论（0.6.0）：**rc.5 上 btw 无回归**；默认、`--deep`（含命令卡片与线程卡片）、桌面只读与桌面 `--deep` 都已覆盖。0.6.1 的两个修复见下一节。
+
+## 0.6.1 修复：转正撑高 composer + host 侧英文 FALLBACK（2026-11-20）
+
+这两个是 0.6.0 发布时记录的两条「已知未改」。本轮先复测、再修，证据如下。
+
+### A. 转正后主 composer 被撑高
+
+**复现环境**：live 桌面版 0.2.2-rc.5（CDP 9222）、窗口 1280×820、右侧栏展开（600px，composer 宽 356–380px）；
+会话里挑一条**长线程**（首问 + 2 轮追问，末答 1593 字）。点面板里的「转正」只插草稿、不发送。
+
+| 指标（同一线程、同一次转正）     | 修复前                                       | 修复后（摘要草稿）                                   |
+| -------------------------------- | -------------------------------------------- | ---------------------------------------------------- |
+| 插入草稿字符数（innerText）      | 1262（四节 Markdown，host 上限 1200 + 渲染） | 88（首问 + 结论开头 + 面板指引）                     |
+| `[data-composer-input]` 渲染行数 | **62 行**（1492px）                          | **5 行**（124px）                                    |
+| composer 卡片 / 座位高度         | 398px / 428px（52% 视口）                    | 186px / 216px（26% 视口）                            |
+| 可视对话区（座位顶 − 对话区顶）  | **316px**（被压掉一半）                      | **528px**                                            |
+| 面板提示                         | 已插入输入框草稿（未发送）                   | 已插入摘要草稿（未发送）；完整内容见右侧「旁问」面板 |
+
+> 字符数按 `[data-composer-input]` 的 `innerText` 统计；Lexical 把换行渲染成独立段落，`innerText`
+> 在段间会多出两个 `\n`，所以它比草稿源码略长（例如源码约 95 字、输入框读到 99 字）。
+
+**根因**：host 只负责生成完整草稿（1200 字上限），**输入框宽度只有 client 半知道**。1200 字在
+356px 宽的输入框里约 62 行；DSH 的 composer 会跟着草稿长高，把对话区挤到一半。只把
+`LIMITS.promoteChars` 调小也不对：同一个 1200 字在 708px 宽时只占 ~30 行，固定字数要么在窄窗口
+仍然撑爆、要么在宽窗口浪费预算。
+
+**重启桌面版后的最终字节复测**（1920×1050，右侧栏收起、输入框 708px，同一个长线程）：插入 5 行
+（124px）、composer 座位 216px（**21% 视口**）、可视对话区 758px；`pnpm smoke:btw-desktop --require --deep`
+在真实 Electron 里读到的也是 `{"lines":3,"seatHeight":262,"viewport":1050,"seatPercent":25}`。
+
+**修法（纯 client 半，不改宿主全局样式）**：转正时按实测 composer 宽度算每行字数
+（CJK 字形 ≈ 字号，加 20% 余量），把草稿收进 **6 行**预算：
+
+1. 放得下 → 原样插入四节 Markdown（与旧行为一致）；
+2. 放不下 → 去掉 `##` 标题与空行、按行数切到 `PROMOTE_MAX_LINES = 6`，末尾追加
+   「完整内容见右侧「旁问」面板」并换成「已插入摘要草稿」的提示；
+3. 插入后再量一次真实渲染行数，估算偏乐观（粗体/英文混排）时按比例再收一次（只重试一次）。
+
+选择「按行数截断并提示」而不是全局面板样式：后者会改变**所有**插件的 composer 行为（长草稿都
+变成滚动区），影响面不可控；截断方案只在 btw 自己的转正路径生效，完整内容仍留在面板里。
+
+阈值断言在 `scripts/smoke-btw-desktop.mjs` 的 `--deep`：真实 `/btw` 之后挑本会话最长的线程转正，
+量 `[data-composer-input]` 渲染行数，**> 6 行即 FAIL**。放 `--deep` 是因为这条路径会给 composer
+写草稿（只读段的转正只断言「草稿可读」，不承担高度阈值）。
+
+单测：`test/index.test.js` 用 `// @testable:begin/end` 从 `lib/client.js` **抽取同一段纯函数**
+（client 半是 classic script 不能 import，复制一份会漂移），覆盖：6 行预算、窄/宽保留量、
+代码围栏内的 `#` 与空行不被吞、emoji 不被劈开、footer 存在。
+
+> **宿主事实（与本次验证有关）**：本次替换 `client.js` 后，live 桌面版即使多次刷新（含清缓存、
+> 硬导航）仍可能跑宿主缓存的旧 bundle；`window.__DSH_BOOT__.entries[].rev` 也不是内容哈希（rc.3
+> §6.1 已记录）。所以「修完立刻在 live 桌面版看到最终字节」并不可靠，**client 半与 host 半都建议
+> 重启桌面版**；本次数字是先在 live 桌面版测到的（旧 bundle 已含截断逻辑），最终字节的完整验证
+> 走 web 冒烟（每次全新宿主进程）与单测。见 [runtime rc.5](../runtime/0.2.2-rc.5.md) §8.2。
+
+### B. `/btw` 命令结果走英文 FALLBACK
+
+**结论：插件问题，不是宿主缺陷；rc.5 没有修，也不需要报上游。**
+
+**复现（修复前）**：在一个空闲会话里发 `/btw reply with exactly OK`，会话日志里的结果：
+
+```
+command/done kind=success text="OK\n\n— btw · new … tokens · cached 0 · 1m"
+```
+
+同一时刻面板 client 文案是中文（「旁问」「追问」…）。**根因在 `lib/messages.js` 的加载器**：
+
+- 宿主的 `commands.register()` 把 `description` / `input.hint` 与命令结果 `{ kind, text }`
+  **逐字透传**，宿主侧**没有 locale 服务**（`ctx.locale` 只存在于 client 半，locale 字典是
+  扁平 `Record<string,string>`，没有嵌套归一化）；官方包里的 `locale/*.json` 只是插件展示元数据
+  （`meta.title` / `meta.description`），与命令文案无关。这些是这轮实测出来的宿主事实，记在
+  [runtime rc.5](../runtime/0.2.2-rc.5.md) §8.1。
+- 插件的 `locale/zh.json` 是**语义分层**的（`btw.command.description`、`btw.answer.meta`…），
+  而 `loadMessages()` 只做了 `{ ...FALLBACK, ...parsed.btw }`：merge 进来的是 `command` /
+  `usage` / `answer` 这些**对象**，平面的 `description` / `meta` / `panelOnly` 一个都覆盖不到，
+  所以永远落到英文 `FALLBACK`。
+- 另外 locale 是**异步**加载的，而 `/btw` 的 description/hint 在构造期就注册了——即使摊平正确，
+  菜单里的命令描述也会停在英文。
+
+**修法（纯插件侧）**：`lib/messages.js` 把嵌套 JSON 摊平成点号键，再用显式 `HOST_KEYS` 映射回
+FALLBACK 的平面键（新增 host 文案时两边一起加，单测会拦漏映射）；`lib/service.js` 在
+**注册命令前同步**读 locale（文件几 KB），保证 description/hint 与结果文案同一语言。
+
+**修复后证据**（web 冒烟临时宿主 `--deep`，同一路径截会话日志）：
+
+```
+command/done kind=success text="OK\n\n— 旁问 · 新增 722 tokens · 命中缓存 10.4K · 1.7s"
+```
+
+**重启桌面版后的 live 复验**（2026-11-20）：
+
+- 斜杠菜单里 `/btw` 的描述已是中文：`指令 btw 不打断主任务地提一个只读旁问`（修复前是英文 FALLBACK）。
+- 真实会话日志：`command/done ... text="OK\n\n— 旁问 · 新增 5.5K tokens · 命中缓存 109K · 13.5s"`。
+- `window.__DSH_BOOT__.entries` 里 btw 的 `rev` 从 `c349aec56fdb` 变为 `ca05b9ee487f`；用 CDP
+  `Debugger.getScriptSource` 抓「已执行」的 `plugins/??…` 模块，确认其中已是最终代码
+  （行数预算 / 摘要 / footer）。这也验证了 [runtime rc.5](../runtime/0.2.2-rc.5.md) §8.2 的「改 client 半要重启」。
+
+web 冒烟默认模式不提交、看不到结果文案，所以断言放在 `--deep` 的「卡片内容可诊断」里：临时
+profile 里给 btw 固定 `language: zh`（不依赖跑测机器的 `LANG`），deep 模式要求文案出现
+「命中缓存 / 旁问 · 新增」。单测另外锁住「中文 key 集 = 英文 key 集」「摊平后全是字符串」
+「同步加载 = 异步加载」「原始 locale 文件的中英 key 一一对应」。
+
+**为什么不改面板 client 文案**：client 有内嵌字典、经 `ctx.locale.register` 注册，一直是中文；
+这次只动 host 半的加载器与注册顺序。
+
+### 0.6.1 验证清单（2026-11-20）
+
+| 检查                                                                | 结果                                                                                  |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `pnpm verify`                                                       | 通过（biome / tsc / check / check:docs / check:public / 全部单测）                    |
+| `pnpm --filter @kangyishuai/dsh-btw test`                           | **65 pass / 0 fail**（0.6.0 是 59）                                                   |
+| `pnpm smoke:btw`                                                    | **15 PASS / 3 SKIP / 0 FAIL**（与 0.6.0 一致；3 条仍是数据相关分支）                  |
+| `pnpm smoke:btw --deep`                                             | **30 PASS / 1 SKIP / 0 FAIL**（「卡片内容可诊断」在 deep 下额外要求中文 locale 文案） |
+| `pnpm smoke:btw-desktop --require`（会话有旁问记录）                | **25 PASS / 0 SKIP / 0 FAIL**                                                         |
+| `pnpm smoke:btw-desktop --require`（会话没有旁问记录，空 btw 历史） | **18 PASS / 1 SKIP / 0 FAIL**（SKIP：没有线程可点）                                   |
+| `pnpm smoke:btw-desktop --require --deep`（空会话，真实 `/btw`）    | **23 PASS / 1 SKIP / 0 FAIL**（含新增的 composer 6 行阈值；花费 1 次模型调用）        |
+| `pnpm smoke:btw-desktop --require --deep`（会话已有 1 条旁问记录）  | **30 PASS / 0 SKIP / 0 FAIL**（默认段多 5 条线程/转正断言，deep 段不变）              |
+| `pnpm gate:all --plugins btw --repeat 2 --idle-session <空闲会话>`  | **PASS，53–54s**；web 15/3/0，桌面两次都是 18/1/0（幂等）                             |
+| 重启桌面版后的 live 复验（`/btw` 文案 / 最终 client bundle）        | 斜杠菜单与命令结果均为中文；CDP 抓到已执行模块含最终代码标记（见上面「重启后复验」）  |
+
+> live 桌面版验证的前置：本次先把源码包（不是 `link:`）装进 `desktop` profile；host 半的改动
+> **必须重启桌面版**才加载，client 半也可能被宿主缓存成旧 bundle（见 [runtime rc.5](../runtime/0.2.2-rc.5.md) §8.2）。
+> 因此最终字节的完整端到端验证走 web 冒烟（每次全新宿主进程）+ 单测；桌面回归负责真实 Electron
+> 渲染与 composer 阈值（`--deep` 那条）。
 
 
 ## v0.2 发版就绪度（2026-11-17，变基到合并后的 main 之后重验）

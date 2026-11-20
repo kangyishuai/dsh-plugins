@@ -2,6 +2,7 @@
 // host 半的 Service 形态：导出 TypertRemoteService 子类，供 client 半通过 RPC 取数据。
 // 依据 packages/next-step/lib/service.js 的既有形态（约定 §2：Remote 方法必须声明在
 // 被导出的类本人原型上，否则 /api/btw/* 会 404；运行时无装饰器语法，用 declareRemote 命令式登记）。
+import { fileURLToPath } from "node:url";
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 import { renderBadge } from "./badge.js";
 import { parseAllowedTools } from "./config.js";
@@ -11,7 +12,7 @@ import { appendRecord, lastRecord, listRecent } from "./history.js";
 import { clip, LIMITS } from "./limits.js";
 import { createLiveTracker } from "./live.js";
 import { parseMarkdown } from "./markdown.js";
-import { format, loadMessages, pickLanguage } from "./messages.js";
+import { format, loadMessagesSync, pickLanguage } from "./messages.js";
 import { historyFile, resolveDataRoot } from "./paths.js";
 import { buildSettingsPatch, loadSettings, saveSettings } from "./settings.js";
 import { observeUsage, runSideQuestion } from "./subagent.js";
@@ -44,6 +45,15 @@ function declareRemote(Proto, method) {
   });
   if (initializers.length !== 1) throw new Error(`btw: cannot declare Remote method ${method}`);
   initializers[0].call(Object.create(Proto.prototype));
+}
+
+/**
+ * locale 目录（包内，随 npm 包发布）。用 fileURLToPath 处理安装路径里的空格
+ * （`new URL().pathname` 会留下 %20）。
+ * @returns {string}
+ */
+function localeDirOf() {
+  return fileURLToPath(new URL("../locale/", import.meta.url));
 }
 
 /** 默认文案（locale 未加载时兜底）。 */
@@ -86,15 +96,16 @@ export class BtwService extends TypertRemoteService {
     this.liveTracker = createLiveTracker(ctx);
     // 抽屉追问借 composer 提交裸 `/btw`，真实参数从这里取（见 followup-queue.js）。
     this.followUps = createFollowUpQueue({});
+    // locale 必须在注册命令**之前**同步读完：宿主没有 locale 服务，命令的 description /
+    // hint / 结果 text 都是注册时/返回时的字面量（见 docs/runtime/0.2.2-rc.5.md §8），
+    // 异步加载会让 `/btw` 的菜单文案永远停在英文 FALLBACK。文件只有几 KB，同步读可接受。
     /** @type {Record<string, string>} */
     this.messages = FALLBACK;
-    // locale 加载（不阻塞激活）
-    const localeDir = new URL("../locale/", import.meta.url).pathname;
-    void loadMessages(localeDir, this.language)
-      .then((loaded) => {
-        this.messages = { ...FALLBACK, ...loaded };
-      })
-      .catch(() => {});
+    try {
+      this.messages = { ...FALLBACK, ...loadMessagesSync(localeDirOf(), this.language) };
+    } catch {
+      this.messages = FALLBACK;
+    }
 
     // 命令注册：服务构造期就拿到 ctx，和 v0.1 的 apply() 等价。
     const inject = /** @type {any} */ (ctx).inject;
@@ -353,6 +364,9 @@ export class BtwService extends TypertRemoteService {
       threadId === "" ? "" : renderThreadDetails(records, threadId, String(input.lang ?? ""));
     const requestedDetails = String(input.details ?? "").trim();
     const details = [threadDetails, requestedDetails].filter((part) => part !== "").join("\n\n");
+    // host 只负责生成完整草稿（四节 Markdown，最多 promoteChars）；草稿会不会撑爆
+    // composer 取决于输入框宽度，所以「按行数收进预算」放在 client 半按实测宽度做
+    // （host 进程看不到浏览器宽度；也避免为了一个纯 UI 预算去改 host 协议）。
     const text = renderPromoteDraft(record, {
       lang: String(input.lang ?? ""),
       details,

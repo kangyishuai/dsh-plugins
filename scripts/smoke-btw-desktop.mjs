@@ -336,10 +336,12 @@ const main = async () => {
             `(() => ((document.querySelector('[data-composer-input]') || {}).innerText || '').trim())()`,
           );
           check("转正把草稿插进输入框", draftAfter.length > 0, `draft=${draftAfter.slice(0, 40)}`);
+          // 长线程转正时会回退成「摘要 + 指回面板」（见 docs/testing/btw.md），
+          // 短线程仍是四节 Markdown 源码；两种都算可用的草稿。
           check(
-            "转正草稿保留 Markdown 源码",
-            /^##\s/m.test(draftAfter),
-            `draft=${draftAfter.slice(0, 60)}`,
+            "转正草稿是四节 Markdown 或摘要（完整内容留在面板）",
+            /^##\s/m.test(draftAfter) || /完整内容见右侧|side-question panel/.test(draftAfter),
+            `draft=${draftAfter.slice(0, 80)}`,
           );
           check(
             "转正没有发送任何消息",
@@ -612,6 +614,84 @@ const main = async () => {
           String(lastRecord?.threadId ?? ""),
         );
       }
+
+      // ---- --deep：转正后的 composer 高度阈值 -----------------------------
+      // 只读段也点过转正，但那条线程可能很短；这里在真实 /btw 之后挑**最长**的线程
+      // 转正，量输入框渲染行数。长线程必须回退成摘要：主 composer 不超过 6 行，
+      // 完整内容留在面板（阈值与 host 半 threads.js 的 PROMOTE_MAX_LINES 对齐）。
+      if (!(await cdp.evaluate(`(() => !!document.querySelector('[data-btw-panel]'))()`))) {
+        await cdp.evaluate(
+          `(() => { document.querySelector('[data-btw-toggle]')?.click(); return true; })()`,
+        );
+        await sleep(900);
+      }
+      const promotePick = await cdp.evaluate(`(() => {
+        const threads = [...document.querySelectorAll('[data-btw-thread]')];
+        if (threads.length === 0) return { ok: false, reason: 'no-thread' };
+        const pick = threads
+          .map((t) => ({ t, chars: (t.innerText || '').length }))
+          .sort((a, b) => b.chars - a.chars)[0];
+        const button = pick.t.querySelector('[data-btw-promote]');
+        if (!button) return { ok: false, reason: 'no-promote-button' };
+        button.click();
+        return { ok: true, threads: threads.length, chars: pick.chars };
+      })()`);
+      if (promotePick?.ok !== true) {
+        skip(
+          "--deep：转正后主 composer 不超过 6 行",
+          `没有可转正的线程（${JSON.stringify(promotePick)}）`,
+        );
+      } else {
+        let draftLen = 0;
+        for (let i = 0; i < 20; i += 1) {
+          await sleep(200);
+          draftLen = await cdp.evaluate(
+            `(() => ((document.querySelector('[data-composer-input]') || {}).innerText || '').length)()`,
+          );
+          if (draftLen > 0) break;
+        }
+        await sleep(800);
+        const geometry = await cdp.evaluate(`(() => {
+          const input = document.querySelector('[data-composer-input]');
+          if (!input) return null;
+          const style = getComputedStyle(input);
+          const lineHeight = parseFloat(style.lineHeight) || 24;
+          const rect = input.getBoundingClientRect();
+          const seat = document.querySelector('[data-composer-seat]');
+          const conv = document.querySelector('[data-conversation-scroll]');
+          const seatRect = seat ? seat.getBoundingClientRect() : null;
+          const convRect = conv ? conv.getBoundingClientRect() : null;
+          return {
+            viewport: innerHeight,
+            lines: Math.round(rect.height / lineHeight),
+            draftChars: (input.innerText || '').length,
+            seatHeight: seatRect ? Math.round(seatRect.height) : null,
+            visibleConversation: seatRect && convRect ? Math.round(seatRect.top - convRect.top) : null,
+            truncated: /完整内容见右侧|side-question panel/.test(input.innerText || ''),
+          };
+        })()`);
+        check(
+          "--deep：转正后主 composer 不超过 6 行（长线程回退成摘要）",
+          draftLen > 0 && geometry !== null && Number(geometry.lines) <= 6,
+          JSON.stringify({ pick: promotePick, geometry }),
+        );
+        console.log(
+          `  转正 composer 高度：${JSON.stringify({
+            lines: geometry?.lines,
+            seatHeight: geometry?.seatHeight,
+            viewport: geometry?.viewport,
+            seatPercent: geometry
+              ? Math.round((Number(geometry.seatHeight) / Number(geometry.viewport)) * 100)
+              : null,
+            visibleConversation: geometry?.visibleConversation,
+            draftChars: geometry?.draftChars,
+            truncated: geometry?.truncated,
+          })}`,
+        );
+        // 清掉草稿：绝不把测试内容留在用户输入框里
+        await clearComposerDraft(cdp);
+      }
+
       // 关掉浮层，避免留下打开的面板
       for (const type of ["keyDown", "keyUp"]) {
         await cdp.send("Input.dispatchKeyEvent", {
