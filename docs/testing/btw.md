@@ -419,13 +419,18 @@ CDP `Debugger.getScriptSource` 抓到**已执行**的 btw bundle 里含 `data-bt
 **0.6.3 发布后复验（2026-11-20）**：npm latest / git tag / GitHub Release 已建；线上索引
 8 个插件、btw `versions[0] = 0.6.3`。
 
-| 检查                                                                  | 结果                                                                                                                                         |
-| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm smoke:btw --npm`（发布版 0.6.3）                                | **15 PASS / 3 SKIP / 0 FAIL**                                                                                                                |
-| `pnpm smoke:btw --npm --deep`（发布版 0.6.3）                         | **30 PASS / 1 SKIP / 0 FAIL**                                                                                                                |
-| 临时宿主真实大会话 bounded e2e（发布版 0.6.3，父 668K，1 次模型调用） | record `mode="bounded"`、`cost.totalTokens=21,503`；命令结果 `… · bounded`，**不再带 fork 成本警告**                                         |
-| `SMOKE_INDEX_URL=… pnpm smoke:index`                                  | **13 PASS / 0 SKIP / 0 FAIL**                                                                                                                |
-| live 桌面版                                                           | 已装 0.6.3，但正在运行的实例仍是重启前的 0.6.2 bundle（boot `rev` 未变、设置分节尚无 `data-btw-setting-bounded`）；需重启一次才载入 0.6.3 UI |
+| 检查                                                                  | 结果                                                                                                                                                                                                                                                                          |
+| --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm smoke:btw --npm`（发布版 0.6.3）                                | **15 PASS / 3 SKIP / 0 FAIL**                                                                                                                                                                                                                                                 |
+| `pnpm smoke:btw --npm --deep`（发布版 0.6.3）                         | **30 PASS / 1 SKIP / 0 FAIL**                                                                                                                                                                                                                                                 |
+| 临时宿主真实大会话 bounded e2e（发布版 0.6.3，父 668K，1 次模型调用） | record `mode="bounded"`、`cost.totalTokens=21,503`；命令结果 `… · bounded`，**不再带 fork 成本警告**                                                                                                                                                                          |
+| `SMOKE_INDEX_URL=… pnpm smoke:index`                                  | **13 PASS / 0 SKIP / 0 FAIL**                                                                                                                                                                                                                                                 |
+| live 桌面版（重启后，0.6.3）                                          | 设置分节「更多设置」出现 `data-btw-setting-bounded`：勾选→保存后 `settings.json` 为 true；在 668K 大会话里 `/btw` 产出 record `mode="bounded"`、`cost.totalTokens=118,730`（同会话 full fork 762,526，≈1/6.4）、命令结果 `… · bounded` 且无 fork 警告；测完已把设置恢复 false |
+
+
+> bounded 的成本 = digest + spawn 子代理的**固定开销**（随宿主装的道具/技能组成变化：精简的临时宿主
+> 实测 ~21.5K，本机这个重载 desktop profile 实测 ~118.7K），仍远低于 full fork 的 762K；「约 20K」只适用于
+> 精简 profile，README 已按「tens of K ~ 1e5」措辞。
 
 **为什么只做 opt-in**：bounded 会丢上下文、且 spawn 不共享父会话缓存；默认开启会让「同样一句 `/btw`」
 时而全量时而裁剪，答案质量不可解释（见 [ADR-0022](../adr/0022-btw-bounded-context-cost.md)）。

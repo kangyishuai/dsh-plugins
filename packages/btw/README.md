@@ -99,7 +99,7 @@ Panel details: the bottom「New question」input hides while a thread follow-up 
 - **Writes** `<dataRoot>/btw/<parentSessionId>.jsonl` (up to 50 records per session, atomically replaced). It never copies the main conversation to disk.
 - **Read-only is enforced at runtime**, not by prompt text: a tool call from the side question is denied with a model-facing reason.
 - **Cost warning on very large sessions**: above a 250K-token parent context (the host's context pressure), the panel shows one warning line with the projected 0.75–1.2× range and the last actual side-question prompt size; `/btw` appends the same line to its result. It never blocks the question.
-- **Optional bounded mode (`boundedContext`)**: above 400K tokens, a side question can run on a `spawn` child that only sees the last 12 user/assistant messages (700 chars each, 4000 total) plus the question. Cost is capped (measured ~21K tokens vs 762K for a full fork on the same session), but older context is dropped and answers are marked `bounded`. Off by default; fork cache reuse is lost in this mode.
+- **Optional bounded mode (`boundedContext`)**: above 400K tokens, a side question can run on a `spawn` child that only sees the last 12 user/assistant messages (700 chars each, 4000 total) plus the question. Cost is bounded by the digest plus the host's fixed subagent overhead (tens of thousands of tokens; ~119K on a heavily loaded profile, vs 762K for a full fork on the same session), but older context is dropped and answers are marked `bounded`. Off by default; fork cache reuse is lost in this mode.
 
 ## Compatibility
 
