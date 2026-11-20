@@ -30,7 +30,7 @@
 | `pnpm smoke:advisor`        | web 端到端冒烟（临时 DSH_HOME，15 项断言，不花 token）                                             |
 | `pnpm index`                | 从 npm registry 重建插件索引源（`build/index.json`，不入库）                                       |
 | `pnpm check:index`          | 只校验索引 meta 一致性与已有输出结构（离线）                                                       |
-| `pnpm smoke:index`          | 索引源真机冒烟（临时 DSH_HOME，13 项断言，含坏索引拒收）                                           |
+| `pnpm smoke:index`          | 索引源真机冒烟（临时 DSH_HOME，13 项断言，含坏索引拒收；`SMOKE_INDEX_URL` 验线上源）               |
 | `pnpm smoke:<name>-desktop` | **桌面版只读回归（有 client 半的插件必须有）**                                                     |
 | `pnpm smoke:agent-tool`     | agent 工具真机冒烟（需要模型凭据，否则 SKIP）                                                      |
 

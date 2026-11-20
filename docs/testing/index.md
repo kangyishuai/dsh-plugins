@@ -15,9 +15,17 @@ https://cdn.jsdelivr.net/npm/@kangyishuai/dsh-plugin-index/index.json
 | `node --test scripts/test/index-build.test.js`（`pnpm test` 的一部分） | 生成器与校验器的离线单测：预发布/stub/无发布时间被排除、版本降序、`repository` 转换、meta 双向一致、宿主会拒的形态 | 无                              |
 | `pnpm check` / `pnpm check:index`                                      | `scripts/index-meta.json` 与 `packages/` 双向一致；`build/index.json` 存在时校验其结构                             | 无                              |
 | `pnpm index`                                                           | 从 npm registry 现场生成 `build/index.json`（不提交）                                                              | 联网                            |
-| `pnpm smoke:index`                                                     | 真机端到端：临时 `DSH_HOME` + 真实宿主 + 真实「发现」页                                                            | 本机 `dsh`、`ego-browser`；联网 |
+| `pnpm smoke:index`                                                     | 真机端到端：临时 `DSH_HOME` + 真实宿主 + 真实「发现」页；加 `SMOKE_INDEX_URL=<url>` 则直接验**线上**索引源         | 本机 `dsh`、`ego-browser`；联网 |
 
 `pnpm smoke:index` 的 13 条断言（2026-11-20 在 0.2.2-rc.5 上 **13/13 PASS**；rc.3 那轮是 12 条）：
+
+两种索引来源，断言同一套：
+
+- 默认：`build-index.mjs` 从 npm registry 现场构建，本地 http 服务喂给宿主（验生成器产物）；
+- **线上**：`SMOKE_INDEX_URL=https://cdn.jsdelivr.net/npm/@kangyishuai/dsh-plugin-index/index.json pnpm smoke:index`
+  直接验 jsDelivr 上的真实索引（发版后用它验证 registry → CDN 整条链路）。
+  标题与「默认版本」都从**当前索引文档派生**（线上会随时间前进，写死版本号会在发版后误报）；
+  坏索引仍由本地服务提供（格式错乱只用于拒收断言）。2026-11-20 线上模式实测 **13/13**（索引 8 个插件）。
 
 1. 页面可交互；
 2. **首启「预览版说明」已关闭**（不挡发现页；rc.5 复核新加，见下面的两个坑）；
