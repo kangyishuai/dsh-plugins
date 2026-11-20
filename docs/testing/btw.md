@@ -414,6 +414,19 @@ CDP `Debugger.getScriptSource` 抓到**已执行**的 btw bundle 里含 `data-bt
 | 临时宿主真实大会话 bounded e2e | 父会话 `contextPressure ≈ 668K`、`boundedContext: true`、`/btw reply with exactly OK`：record `mode="bounded"`、`cost.totalTokens=21,503`（同会话 fork 实测为 762,526）、命令结果含 `· bounded`；**1 次模型调用** |
 | 桌面端                         | 需重启桌面版才载入 0.6.3 字节（runtime rc.5 §8.2）；默认关，重启前行为不变                                                                                                                                        |
 
+
+
+**0.6.3 发布后复验（2026-11-20）**：npm latest / git tag / GitHub Release 已建；线上索引
+8 个插件、btw `versions[0] = 0.6.3`。
+
+| 检查                                                                  | 结果                                                                                                                                         |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm smoke:btw --npm`（发布版 0.6.3）                                | **15 PASS / 3 SKIP / 0 FAIL**                                                                                                                |
+| `pnpm smoke:btw --npm --deep`（发布版 0.6.3）                         | **30 PASS / 1 SKIP / 0 FAIL**                                                                                                                |
+| 临时宿主真实大会话 bounded e2e（发布版 0.6.3，父 668K，1 次模型调用） | record `mode="bounded"`、`cost.totalTokens=21,503`；命令结果 `… · bounded`，**不再带 fork 成本警告**                                         |
+| `SMOKE_INDEX_URL=… pnpm smoke:index`                                  | **13 PASS / 0 SKIP / 0 FAIL**                                                                                                                |
+| live 桌面版                                                           | 已装 0.6.3，但正在运行的实例仍是重启前的 0.6.2 bundle（boot `rev` 未变、设置分节尚无 `data-btw-setting-bounded`）；需重启一次才载入 0.6.3 UI |
+
 **为什么只做 opt-in**：bounded 会丢上下文、且 spawn 不共享父会话缓存；默认开启会让「同样一句 `/btw`」
 时而全量时而裁剪，答案质量不可解释（见 [ADR-0022](../adr/0022-btw-bounded-context-cost.md)）。
 
