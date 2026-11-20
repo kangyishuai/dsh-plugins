@@ -370,6 +370,16 @@ prompt 与父会话 contextPressure 的比值在 **0.75–1.2×**；空会话 co
 - 桌面端验证需要重启桌面版才载入最终 host/client 字节（runtime rc.5 §8.2），发版后按惯例再跑一次
   `--npm` + 桌面回归。
 
+**0.6.2 发布后复验（2026-11-20）**：npm latest / git tag / GitHub Release 已建，线上索引
+8 个插件且 btw `versions[0] = 0.6.2`。
+
+| 检查                                                                     | 结果                                                                                                                              |
+| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm smoke:btw --npm`（发布版 0.6.2）                                   | **15 PASS / 3 SKIP / 0 FAIL**                                                                                                     |
+| `pnpm smoke:btw --npm --deep`（发布版 0.6.2）                            | **30 PASS / 1 SKIP / 0 FAIL**                                                                                                     |
+| `pnpm smoke:btw-desktop --require --deep`（live 桌面版，会话有旁问记录） | **30 PASS / 0 SKIP / 0 FAIL**；注意这次跑的还是**重启前**的 0.6.1 字节，0.6.2 的 costHint UI 需要再重启一次才会出现在 live 桌面版 |
+| `SMOKE_INDEX_URL=… pnpm smoke:index`                                     | **13 PASS / 0 SKIP / 0 FAIL**（线上索引）                                                                                         |
+
 ## v0.2 发版就绪度（2026-11-17，变基到合并后的 main 之后重验）
 
 ```
