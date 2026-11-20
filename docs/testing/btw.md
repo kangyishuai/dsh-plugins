@@ -137,13 +137,13 @@ profile 里无法验证，因为有登录门禁）。
 
 插件代码没有改动；只验证「宿主升级后仍成立」。本插件用到的 seam（busy 时命令派发、fork 缓存复用、`tools.guard`、`workspaceRegistry.archiveSession`）在 rc.3→rc.5 的 43 包逐包 diff 里**一个都没动**（[runtime rc.5](../runtime/0.2.2-rc.5.md) §1.1）。
 
-| 层                                       | 结果                                                                                                    |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `node --test`（包内）                    | **59 pass / 0 fail**                                                                                    |
-| `pnpm probe:runtime`                     | **72/72 PASS**                                                                                          |
-| `pnpm smoke:btw`（web，默认）            | **15 PASS / 3 SKIP / 0 FAIL**（SKIP 全部是「默认模式不提交 / 提交前没有记录」的数据相关分支）           |
-| `pnpm smoke:btw --deep`（web，真实模型） | **30 PASS / 1 SKIP / 0 FAIL**（先热身再提交，见下；真实花费三次模型调用：热身 1 + 旁问 1 + 面板追问 1） |
-| `pnpm smoke:btw-desktop --require`       | **18 PASS / 1 SKIP / 0 FAIL**（SKIP：当前会话还没有旁问记录）                                           |
+| 层                                       | 结果                                                                                                              |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `node --test`（包内）                    | **59 pass / 0 fail**                                                                                              |
+| `pnpm probe:runtime`                     | **72/72 PASS**                                                                                                    |
+| `pnpm smoke:btw`（web，默认）            | **15 PASS / 3 SKIP / 0 FAIL**（SKIP 全部是「默认模式不提交 / 提交前没有记录」的数据相关分支）                     |
+| `pnpm smoke:btw --deep`（web，真实模型） | **30 PASS / 1 SKIP / 0 FAIL**（先热身再提交，见下；真实花费三次模型调用：热身 1 + 旁问 1 + 面板追问 1）           |
+| `pnpm smoke:btw-desktop --require`       | **18 PASS / 1 SKIP / 0 FAIL**（SKIP：当前会话还没有旁问记录）；已有记录时 **25 PASS / 0 SKIP**（2026-11-20 实测） |
 
 **首跑假红**：接着 casefile 的桌面回归跑，页面还停在「案卷」面板，没有 composer，于是 `FAIL 输入框左侧出现 btw 按钮`；先点回任一会话再跑即 18 PASS / 1 SKIP。不是插件问题。
 

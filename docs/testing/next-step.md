@@ -61,7 +61,7 @@ DSH_HOME=$H dsh --profile ns --port 0 --no-open
 | `pnpm verify`                               | 通过                                                                                                                                           |
 | `pnpm probe:runtime`                        | **72/72 PASS**                                                                                                                                 |
 | `pnpm smoke:next-step`（web，真实模型调用） | **73/73**，0 SKIP / 0 FAIL（2026-11-20 复跑；新增「点 ✕ → dismissed / 刷新后仍在」两条，另有两项只在模型判「无需继续」时出现，项数以输出为准） |
-| `pnpm smoke:next-step-desktop --require`    | **21 PASS + 1 SKIP**，0 FAIL（22 项；SKIP 是数据相关分支「该卡没有展开按钮」）                                                                 |
+| `pnpm smoke:next-step-desktop --require`    | **20–21 PASS + 1–2 SKIP**，0 FAIL（22 项；SKIP 都是数据相关分支：「该卡没有展开按钮」「只有一粒胶囊」；2026-11-20 复跑出现过 20/2 与 22/0）    |
 
 本轮 web 冒烟与桌面回归**串行**跑（不再并发），没有再出现 rc.3 那次「首跑两张卡 FAIL、重跑全绿」的瞬时失败。桌面脚本收尾也补了计数行，门禁能正确判定假绿。
 
@@ -81,7 +81,7 @@ DSH_HOME=$H dsh --profile ns --port 0 --no-open
 顺带把刷新后的「重开目标会话」改成轮询并先展开收起的工作区分组 / 「展开其余 N 个会话」——
 刷新后侧栏行可能被折叠起来，一次性 `querySelector` 会误报「没找到会话行」。
 
-连续两次实测：**21 PASS / 1 SKIP / 0 FAIL**（两次完全一致，幂等）。
+2026-11-19 连续两次实测 **21 PASS / 1 SKIP / 0 FAIL**（完全一致）；2026-11-20 复跑出现 20/2 与 22/0——**数据相关分支允许漂移，幂等的判据是两次都 0 FAIL**（`pnpm gate:all --repeat 2` 已按这个口径判定）。
 
 结论：**rc.5 上 next-step 无回归**。
 
