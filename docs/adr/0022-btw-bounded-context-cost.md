@@ -28,6 +28,22 @@ btw 的每一次旁问都 fork 整个父会话（[0016](0016-btw-fork-subagent.m
 但警告只是让用户「知道贵」，**没有提供更便宜的路径**：大会话里的用户要么按原价问、要么放弃。
 本 ADR 讨论是否、以及在什么护栏下提供一条 bounded 路径。
 
+### 探针结果（2026-11-20，已通过）
+
+临时 `DSH_HOME` + 只读探针插件（真实大会话 358，`contextPressure ≈ 668K`，一次真实 spawn 调用）：
+
+| 检查                                                                         | 结果                                                                                                  |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `ctx.subagents.getProvider("spawn")`                                         | 存在，`inheritsParentContext: false`；capabilities `agentOptions/agentPreset/outputSchema/depthLimit` |
+| `startActivation({provider:"spawn", parent, prompt:[…], delivery:"caller"})` | 成功，返回 childId；调用方提供的两段 text 材料被模型读到（回答 `ZEBRA-42`）                           |
+| 子代理是否继承父会话                                                         | **否**：父会话 668K，spawn 子代理 usage 仅 **input 20,283 / output 68**（约 20K，未含父会话）         |
+| 工具 guard（btw 的只读做法）                                                 | 子代理 ctx 上 `tools.guard` 可用（返回 disposer）                                                     |
+| 工具/上下文依赖                                                              | 结论：可以从插件侧用 spawn 实现「bounded context = 最近 N 轮原文 + 问题」                             |
+
+限制/未验证：spawn 子代理结果 settle 后 child session 已不可读（`sessions.get(childId)` 拿不到事件），
+所以「零父上下文」由 `inheritsParentContext` + usage 对账判定，而不是读子会话日志；`agentPreset`
+选择、超长 digest 的成本上限、以及答案质量的取舍仍需在实现时用单测/冒烟覆盖。
+
 ## 可选方案
 
 1. **维持现状（只警告）**：0.6.2 已做，零质量风险；但大会话用户没有低成本选项，可能因此不敢用。
@@ -46,16 +62,18 @@ btw 的每一次旁问都 fork 整个父会话（[0016](0016-btw-fork-subagent.m
 **1. 不默认切换、不静默切换。** bounded 模式默认关闭；只有用户显式开启，或显式传命令参数时才用。
 不允许出现「同样一条 `/btw`，有时全量、有时裁剪」而用户不知道的情况——那会让答案质量不可解释。
 
-**2. 上线前必须先过 provider 探针（硬门槛）。** 宿主源码里 `SubagentProvider` 有
-`context: "fresh" | "fork"` 的概念，但第三方插件侧能用的 provider 名单、能否携带自定义材料、
-`delivery: "caller"` 与工具 guard 是否仍成立，**都未验证**。探针失败则本方案作废，转方案 4。
+**2. provider 探针已通过（2026-11-20，见上）。** 宿主 base 组合同时挂载 `spawn`（fresh）与
+`fork`（继承父会话）两个 provider；spawn 可从插件命令上下文调用，能携带调用方材料、支持
+`delivery: "caller"` 与工具 guard，且不读父会话（668K vs ~20K usage）。因此选定 **spawn +
+digest prompt** 作为 bounded 实现路径；若未来宿主提供更原生的「fork 裁剪」，应改回复用上游。
 
 **3. 即使可用，也只做「opt-in + 有上限 + 有标记」：**
 
 - 设置项 `boundedContext`：`off`（默认）/ `aboveThreshold`（仅当 `contextPressure` 超过阈值）；
 - 阈值保守（建议 400K，远高于 0.6.2 的 250K 警告线）：bounded 只在「贵到值得牺牲上下文」时启用；
-- bounded prompt 的组成固定为：**最近 N 轮原文（可配 token 预算）+ 本次问题 + 一句明确说明
-  「上下文被裁剪，缺信息请直接说明」**；裁剪说明必须让模型知道自己在看部分上下文；
+- bounded prompt 的组成固定为：**最近 N 轮原文（可配 token 预算，按 `ContentBlock[]` 传）+ 本次问题
+  - 一句明确说明「上下文被裁剪，缺信息请直接说明」**；裁剪说明必须让模型知道自己在看部分上下文；
+    不为 bounded 模式单独造 persona（不传 `agentPreset`，沿用父级 generation）；
 - 回放旁问历史同样受 token 预算约束（方案 2 合并进来）；
 - 答案墨迹里标记 `bounded`（面板 meta 与 `/btw` 结果都可见），用户能分辨这次答案来自哪种上下文；
 - **不做**：把 full fork 的答案降级成 bounded、把 bounded 失败静默回退成 full（成本不可预测）。
@@ -78,6 +96,8 @@ btw 的每一次旁问都 fork 整个父会话（[0016](0016-btw-fork-subagent.m
 
 ## 待办（决定后）
 
-1. provider 探针：`subagents.startActivation` 是否有可用 fresh provider、能否带自定义消息与会话材料；
-2. 若可行：写 `feat(btw)` 实现（默认关 + 单测 + README/测试手册），按 feat 档人工合并；
-3. 若不可行：本 ADR 改为「已被上游请求取代」或维持提议中并关闭代码路径。
+1. ~~provider 探针~~：已通过（2026-11-20，见上）。
+2. 写 `feat(btw)` 实现：`boundedContext` 设置（默认 off）、digest 构造（最近 N 轮 + token 预算）、
+   spawn 执行路径、答案 meta 标记 `bounded`、两类质量用例 + 纯逻辑单测、README/测试手册；
+   按 feat 档人工合并。
+3. 以 0.6.3 或 0.7.0 发布前，用真实大会话做一次 bounded vs full 的对照手测（成本与答案质量各记一组）。
