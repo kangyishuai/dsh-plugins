@@ -111,6 +111,38 @@ test("有 client 半却没有桌面端套件时 check 报错", () => {
   }
 });
 
+test("桌面端套件没打印 PASS/SKIP/FAIL 计数行时 check 报错", () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "dsh-plugins-desktop-counts-"));
+  try {
+    mkdirSync(join(repoRoot, "packages"));
+    writeFileSync(join(repoRoot, "package.json"), JSON.stringify({ name: "repo", scripts: {} }));
+    scaffold({ root: repoRoot, name: "no-counts", description: "x" });
+    // 覆盖成「有 --require、但不打印计数行」的版本：旧门禁会把它当绿
+    writeFileSync(
+      join(repoRoot, "scripts", "smoke-no-counts-desktop.mjs"),
+      "// --require 有，但收尾没有计数行\nconsole.log('全部通过');\n",
+    );
+    const messages = checkRepo(repoRoot)
+      .filter((i) => i.level === "error" && i.plugin === "no-counts")
+      .map((i) => i.message)
+      .join("\n");
+    assert.match(messages, /没有打印 `N PASS \/ M SKIP \/ K FAIL` 计数行/);
+
+    // 补上计数行后这条错误消失（其它规则不受影响）
+    writeFileSync(
+      join(repoRoot, "scripts", "smoke-no-counts-desktop.mjs"),
+      "// --require\nconst checks = [];\nconsole.log(checks.length + ' PASS / 0 SKIP / 0 FAIL');\n",
+    );
+    const after = checkRepo(repoRoot)
+      .filter((i) => i.level === "error" && i.plugin === "no-counts")
+      .map((i) => i.message)
+      .join("\n");
+    assert.doesNotMatch(after, /计数行/);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("桌面端套件缺 --require 时 check 报错", () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "dsh-plugins-desktop-require-"));
   try {

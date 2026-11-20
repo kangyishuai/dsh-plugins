@@ -128,6 +128,8 @@ async function main() {
     if (!item.ok) failed += 1;
   }
   if (failed > 0) process.exitCode = 1;
+  // 门禁靠这一行判定「跑过但一条断言都没执行」（见 docs/plugin-conventions.md §6.1）。
+  console.log(`${results.length - failed} PASS / 0 SKIP / ${failed} FAIL`);
 }
 
 await main();

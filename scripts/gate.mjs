@@ -186,18 +186,29 @@ const main = async () => {
       process.exitCode = 1;
       return;
     }
-    // 桌面阶段：跑过但一条断言都没执行 = 假绿（见文件头说明）。
+    // 桌面阶段：跑过但一条断言都没执行 = 假绿；脚本不打印计数行则门禁无从判断，同样判失败。
     const isDesktopStage = String(stage.args[0] ?? "").endsWith("-desktop");
     if (isDesktopStage) {
       const counts = parseCounts(output);
-      if (isVacuousPass(counts)) {
+      const verdict = desktopGateVerdict(counts);
+      if (verdict !== "ok") {
         console.error("");
-        console.error(`FAIL 门禁中止：「${stage.title}」跑完了但**一条断言都没执行**`);
-        console.error(
-          `      计数：${counts?.pass ?? 0} PASS / ${counts?.skip ?? 0} SKIP / ${counts?.fail ?? 0} FAIL`,
-        );
-        console.error("      退出码 0 不代表验证过任何东西。常见原因：可见会话有运行中的回合");
-        console.error("      （agent 在自己会话里跑回归时），把可见会话切到空闲会话再跑。");
+        if (verdict === "missing-counts") {
+          console.error(
+            `FAIL 门禁中止：「${stage.title}」没有打印 \`N PASS / M SKIP / K FAIL\` 计数行`,
+          );
+          console.error("      门禁靠这一行识别「跑过但零断言」的假绿；缺了它就没有任何判据。");
+          console.error(
+            "      按 docs/plugin-conventions.md §6.1 在脚本收尾补上这一行（pnpm check 也会拦）。",
+          );
+        } else {
+          console.error(`FAIL 门禁中止：「${stage.title}」跑完了但**一条断言都没执行**`);
+          console.error(
+            `      计数：${counts?.pass ?? 0} PASS / ${counts?.skip ?? 0} SKIP / ${counts?.fail ?? 0} FAIL`,
+          );
+          console.error("      退出码 0 不代表验证过任何东西。常见原因：可见会话有运行中的回合");
+          console.error("      （agent 在自己会话里跑回归时），把可见会话切到空闲会话再跑。");
+        }
         process.exitCode = 1;
         return;
       }
@@ -255,6 +266,21 @@ export function parseCounts(output) {
  */
 export function isVacuousPass(counts) {
   return counts !== undefined && counts.pass === 0 && counts.fail === 0;
+}
+
+/**
+ * 桌面阶段的放行判定（2026-11-20 起）。
+ *
+ * - `missing-counts`：脚本没打印 `N PASS / M SKIP / K FAIL`。没有计数行就无法区分
+ *   「全绿」与「一条断言都没跑」——按假绿处理，判失败并提示补计数行。
+ * - `vacuous`：有计数行，但 0 PASS / 0 FAIL（全 SKIP 或根本没断言），同样是假绿。
+ * - `ok`：确实执行过断言。
+ * @param {{ pass: number, skip: number, fail: number } | undefined} counts
+ * @returns {"ok" | "missing-counts" | "vacuous"}
+ */
+export function desktopGateVerdict(counts) {
+  if (counts === undefined) return "missing-counts";
+  return isVacuousPass(counts) ? "vacuous" : "ok";
 }
 
 /**
