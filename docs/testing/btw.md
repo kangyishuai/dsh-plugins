@@ -313,23 +313,30 @@ profile 里给 btw 固定 `language: zh`（不依赖跑测机器的 `LANG`），
 
 ### 0.6.1 验证清单（2026-11-20）
 
-| 检查                                                                | 结果                                                                                  |
-| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `pnpm verify`                                                       | 通过（biome / tsc / check / check:docs / check:public / 全部单测）                    |
-| `pnpm --filter @kangyishuai/dsh-btw test`                           | **65 pass / 0 fail**（0.6.0 是 59）                                                   |
-| `pnpm smoke:btw`                                                    | **15 PASS / 3 SKIP / 0 FAIL**（与 0.6.0 一致；3 条仍是数据相关分支）                  |
-| `pnpm smoke:btw --deep`                                             | **30 PASS / 1 SKIP / 0 FAIL**（「卡片内容可诊断」在 deep 下额外要求中文 locale 文案） |
-| `pnpm smoke:btw-desktop --require`（会话有旁问记录）                | **25 PASS / 0 SKIP / 0 FAIL**                                                         |
-| `pnpm smoke:btw-desktop --require`（会话没有旁问记录，空 btw 历史） | **18 PASS / 1 SKIP / 0 FAIL**（SKIP：没有线程可点）                                   |
-| `pnpm smoke:btw-desktop --require --deep`（空会话，真实 `/btw`）    | **23 PASS / 1 SKIP / 0 FAIL**（含新增的 composer 6 行阈值；花费 1 次模型调用）        |
-| `pnpm smoke:btw-desktop --require --deep`（会话已有 1 条旁问记录）  | **30 PASS / 0 SKIP / 0 FAIL**（默认段多 5 条线程/转正断言，deep 段不变）              |
-| `pnpm gate:all --plugins btw --repeat 2 --idle-session <空闲会话>`  | **PASS，53–54s**；web 15/3/0，桌面两次都是 18/1/0（幂等）                             |
-| 重启桌面版后的 live 复验（`/btw` 文案 / 最终 client bundle）        | 斜杠菜单与命令结果均为中文；CDP 抓到已执行模块含最终代码标记（见上面「重启后复验」）  |
+| 检查                                                                                                     | 结果                                                                                                              |
+| -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `pnpm verify`                                                                                            | 通过（biome / tsc / check / check:docs / check:public / 全部单测）                                                |
+| `pnpm --filter @kangyishuai/dsh-btw test`                                                                | **65 pass / 0 fail**（0.6.0 是 59）                                                                               |
+| `pnpm smoke:btw`                                                                                         | **15 PASS / 3 SKIP / 0 FAIL**（与 0.6.0 一致；3 条仍是数据相关分支）                                              |
+| `pnpm smoke:btw --deep`                                                                                  | **30 PASS / 1 SKIP / 0 FAIL**（「卡片内容可诊断」在 deep 下额外要求中文 locale 文案）                             |
+| `pnpm smoke:btw-desktop --require`（会话有旁问记录）                                                     | **25 PASS / 0 SKIP / 0 FAIL**                                                                                     |
+| `pnpm smoke:btw-desktop --require`（会话没有旁问记录，空 btw 历史）                                      | **18 PASS / 1 SKIP / 0 FAIL**（SKIP：没有线程可点）                                                               |
+| `pnpm smoke:btw-desktop --require --deep`（空会话，真实 `/btw`）                                         | **23 PASS / 1 SKIP / 0 FAIL**（含新增的 composer 6 行阈值；花费 1 次模型调用）                                    |
+| `pnpm smoke:btw-desktop --require --deep`（会话已有 1 条旁问记录）                                       | **30 PASS / 0 SKIP / 0 FAIL**（默认段多 5 条线程/转正断言，deep 段不变）                                          |
+| `pnpm gate:all --plugins btw --repeat 2 --idle-session <空闲会话>`                                       | **PASS，53–54s**；web 15/3/0，桌面两次都是 18/1/0（幂等）                                                         |
+| `pnpm smoke:btw --npm`（发布版 0.6.1）                                                                   | **15 PASS / 3 SKIP / 0 FAIL**                                                                                     |
+| `pnpm smoke:btw --npm --deep`（发布版 0.6.1）                                                            | **30 PASS / 1 SKIP / 0 FAIL**；首跑遇到一次临时宿主的命令卡片渲染抖动（history/日志正常、卡片文本为空），重跑通过 |
+| `pnpm smoke:btw-desktop --require --deep`（发布版 0.6.1，空会话）                                        | **23 PASS / 1 SKIP / 0 FAIL**（composer `{"lines":3,"seatHeight":168,"viewport":1050}`）                          |
+| `SMOKE_INDEX_URL=https://cdn.jsdelivr.net/npm/@kangyishuai/dsh-plugin-index/index.json pnpm smoke:index` | **13 PASS / 0 SKIP / 0 FAIL**（线上索引 8 个插件，btw 0.6.1 已在 `versions` 里）                                  |
+| 重启桌面版后的 live 复验（`/btw` 文案 / 最终 client bundle）                                             | 斜杠菜单与命令结果均为中文；CDP 抓到已执行模块含最终代码标记（见上面「重启后复验」）                              |
 
 > live 桌面版验证的前置：本次先把源码包（不是 `link:`）装进 `desktop` profile；host 半的改动
 > **必须重启桌面版**才加载，client 半也可能被宿主缓存成旧 bundle（见 [runtime rc.5](../runtime/0.2.2-rc.5.md) §8.2）。
 > 因此最终字节的完整端到端验证走 web 冒烟（每次全新宿主进程）+ 单测；桌面回归负责真实 Electron
 > 渲染与 composer 阈值（`--deep` 那条）。
+
+**发布记录**：`@kangyishuai/dsh-btw@0.6.1` 已发布（npm latest / git tag / GitHub Release 已建；
+线上索引 8 个插件，btw `versions` 第一项为 0.6.1）。发布版用 `--npm` 复验通过（见上表）。
 
 
 ## v0.2 发版就绪度（2026-11-17，变基到合并后的 main 之后重验）

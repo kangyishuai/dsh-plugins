@@ -38,7 +38,7 @@
 
 1. 新插件：`pnpm new <name>`，然后 `pnpm install`
 2. 安装到本地验证：先打包再装——`cd packages/<name> && pnpm pack --pack-destination /tmp`，然后 `dsh plugin --profile desktop add /tmp/<tgz>`。**不要用 `link:`**：真实路径在 profile 外面，宿主注入的 `@deepseek-ai/*` 解析覆盖不到，插件会激活失败（见 [runtime](docs/runtime/0.2.1-rc.5.md) §6.9，该节在 0.2.2 仍然成立）
-3. host 半（`lib/index.js`）改动 → **重启 DSH 桌面版**；client 半（`lib/client.js`）改动 → **刷新页面**
+3. host 半（`lib/index.js`）改动 → **重启 DSH 桌面版**；client 半（`lib/client.js`）改动 → 先刷新页面，但 DSH 0.2.2-rc.5 实测「换文件 + 刷新」可能仍跑宿主缓存的旧 bundle（`rev` 不是内容哈希），**改完 client 半最稳的是直接重启桌面版**（[runtime §8.2](docs/runtime/0.2.2-rc.5.md)）
 4. 验证完必须能在侧栏或设置里看到真实效果，不能只靠单元测试；有 client 半的插件**还必须**有桌面端自动化测试（见硬性约定 11）
 5. 需要发版的改动跑 `pnpm changeset`
 6. 新增插件时同步更新根目录两份 README 的插件清单，并在 `scripts/index-meta.json` 里登记分类、中英标题与中文描述（漏了 `pnpm check` 会拦）；`pnpm new` 已自动登记 `.github/labeler.yml` 和 bug 报告下拉，按它的提示在 GitHub 上建 `plugin:<name>` 标签
