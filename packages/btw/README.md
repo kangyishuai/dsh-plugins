@@ -79,11 +79,12 @@ Plugin config (set when adding the plugin to a profile):
 
 Runtime settings (editable in **Settings → Side questions**, stored in `<dataRoot>/btw/settings.json`):
 
-| Key            | Default | Meaning                                                          |
-| -------------- | ------- | ---------------------------------------------------------------- |
-| `allowedTools` | `[]`    | Overrides the plugin config above when non-empty.                |
-| `historyLimit` | `50`    | Records kept per session (1–200).                                |
-| `echoAnswer`   | `true`  | Also show the full answer in the conversation; off = panel only. |
+| Key              | Default | Meaning                                                                                                                                                         |
+| ---------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `allowedTools`   | `[]`    | Overrides the plugin config above when non-empty.                                                                                                               |
+| `historyLimit`   | `50`    | Records kept per session (1–200).                                                                                                                               |
+| `echoAnswer`     | `true`  | Also show the full answer in the conversation; off = panel only.                                                                                                |
+| `boundedContext` | `false` | Above 400K tokens of session context, use a spawn child with the last 12 messages instead of forking the whole session. Opt-in; answers may miss older context. |
 
 The settings file is re-read on every use, so edits take effect without restarting the host.
 
@@ -98,6 +99,7 @@ Panel details: the bottom「New question」input hides while a thread follow-up 
 - **Writes** `<dataRoot>/btw/<parentSessionId>.jsonl` (up to 50 records per session, atomically replaced). It never copies the main conversation to disk.
 - **Read-only is enforced at runtime**, not by prompt text: a tool call from the side question is denied with a model-facing reason.
 - **Cost warning on very large sessions**: above a 250K-token parent context (the host's context pressure), the panel shows one warning line with the projected 0.75–1.2× range and the last actual side-question prompt size; `/btw` appends the same line to its result. It never blocks the question.
+- **Optional bounded mode (`boundedContext`)**: above 400K tokens, a side question can run on a `spawn` child that only sees the last 12 user/assistant messages (700 chars each, 4000 total) plus the question. Cost is capped (measured ~21K tokens vs 762K for a full fork on the same session), but older context is dropped and answers are marked `bounded`. Off by default; fork cache reuse is lost in this mode.
 
 ## Compatibility
 
@@ -107,6 +109,7 @@ Panel details: the bottom「New question」input hides while a thread follow-up 
 | 0.6.0  | 0.2.2-rc.5                                                                   |
 | 0.6.1  | 0.2.2-rc.5                                                                   |
 | 0.6.2  | 0.2.2-rc.5（发布后 `--npm` web 复验 + 线上索引 13/13 + live 桌面重启后复验） |
+| 0.6.3  | 0.2.2-rc.5（web 冒烟 + 临时宿主真实大会话 bounded e2e；桌面待重启复验）      |
 
 The underlying host seams (command dispatch while busy, fork cache reuse, `tools.guard`, `workspaceRegistry.archiveSession`) were verified on DSH 0.2.2-rc.3 and re-checked unchanged on 0.2.2-rc.5 ([runtime rc.5](../../docs/runtime/0.2.2-rc.5.md): a 43-package diff found no change in any seam this plugin uses).
 

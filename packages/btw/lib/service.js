@@ -5,6 +5,7 @@
 import { fileURLToPath } from "node:url";
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 import { renderBadge } from "./badge.js";
+import { buildBoundedDigest, buildBoundedPrompt } from "./bounded.js";
 import { parseAllowedTools } from "./config.js";
 import { buildCostHint, formatCostHintLine, lastPromptTokens } from "./cost-hint.js";
 import { createFollowUpQueue } from "./followup-queue.js";
@@ -210,6 +211,31 @@ export class BtwService extends TypertRemoteService {
       };
     }
     const history = [...sessionHistory, ...priorThread].slice(-LIMITS.replayRecords);
+    // bounded-context（ADR-0022）：只有用户显式开启、且父会话压力超过阈值时才用
+    // spawn（fresh context）+「最近 N 条消息 + 问题」替代 full fork。默认关，绝不静默切换。
+    /** @type {any[]} */
+    let parentEvents = [];
+    try {
+      const parentSession = agent?.session;
+      if (parentSession && typeof parentSession.snapshotEvents === "function") {
+        parentEvents = parentSession.snapshotEvents();
+      }
+    } catch {
+      parentEvents = [];
+    }
+    const boundedEligible =
+      stored?.boundedContext === true &&
+      Number(pressure?.pressureTokens) >= LIMITS.boundedTriggerTokens;
+    let mode = "fork";
+    /** @type {{ type: "text", text: string }[] | undefined} */
+    let boundedPrompt;
+    if (boundedEligible) {
+      const digest = buildBoundedDigest(parentEvents);
+      if (digest.messages > 0) {
+        mode = "bounded";
+        boundedPrompt = buildBoundedPrompt(question.text, digest, { history });
+      }
+    }
     // 线程 id 在 fork 之前就定下来：面板流式卡片和最终记录必须是同一个线程。
     const recordThreadId = threadId === "" ? newThreadId() : threadId;
     // 面板流式：登记这次 run；fork 拿到 childId 后 onChild 会接上实时文本。
@@ -227,6 +253,8 @@ export class BtwService extends TypertRemoteService {
         question: question.text,
         scope,
         history,
+        provider: mode === "bounded" ? "spawn" : "fork",
+        prompt: boundedPrompt,
         allowedTools,
         signal: invocation?.signal,
         usageBySession: this.usageBySession,
@@ -260,6 +288,8 @@ export class BtwService extends TypertRemoteService {
       childSessionId: outcome.childId ?? null,
       question: question.text,
       answer: outcome.text,
+      // fork（全量父会话）或 bounded（spawn + 最近 N 条）；老记录没有该字段按 fork 处理。
+      mode,
       status: outcome.status,
       cost: outcome.usage ?? null,
       ms: outcome.ms,
@@ -267,13 +297,15 @@ export class BtwService extends TypertRemoteService {
     };
     await appendRecord(file, record).catch(() => {});
     // 设置里关掉「主对话显示完整答案」时，只回一行提示；面板历史里仍有完整答案。
+    // bounded 已经把成本封顶；此时再贴「fork 可能花几十万 tokens」的警告会误导，所以跳过。
+    const answerHint = mode === "bounded" ? null : costHint;
     if (stored !== undefined && stored.echoAnswer === false) {
       return {
         kind: "success",
-        text: this.withCostHint(this.messages.panelOnly ?? FALLBACK.panelOnly, costHint),
+        text: this.withCostHint(this.messages.panelOnly ?? FALLBACK.panelOnly, answerHint),
       };
     }
-    return { kind: "success", text: this.withCostHint(this.formatAnswer(record), costHint) };
+    return { kind: "success", text: this.withCostHint(this.formatAnswer(record), answerHint) };
   }
 
   /**
@@ -484,7 +516,7 @@ export class BtwService extends TypertRemoteService {
   /**
    * 给 `/btw` 结果追加一行成本提示（只在高压力时出现，不阻断）。
    * @param {string} text
-   * @param {import("./cost-hint.js").CostHint} hint
+   * @param {import("./cost-hint.js").CostHint | null} hint null = 这次不提示（如 bounded 已封顶）
    * @returns {string}
    */
   withCostHint(text, hint) {
@@ -493,7 +525,7 @@ export class BtwService extends TypertRemoteService {
   }
 
   /**
-   * @param {import("./cost-hint.js").CostHint} hint
+   * @param {import("./cost-hint.js").CostHint | null} hint
    * @returns {string}
    */
   costHintLine(hint) {
@@ -503,11 +535,12 @@ export class BtwService extends TypertRemoteService {
   /** @param {any} record */
   formatAnswer(record) {
     const usage = record.cost ?? {};
-    const meta = format(this.messages.meta ?? FALLBACK.meta, {
+    const bounded = record.mode === "bounded" ? " · bounded" : "";
+    const meta = `${format(this.messages.meta ?? FALLBACK.meta, {
       newTokens: formatTokens(usage.inputTokens),
       cachedTokens: formatTokens(usage.cacheReadTokens),
       ms: formatDuration(record.ms),
-    });
+    })}${bounded}`;
     const lines = [record.answer, "", `— ${meta}`];
     if (record.status === "truncated")
       lines.push(this.messages.truncated ?? "The answer was cut off; ask again to retry.");

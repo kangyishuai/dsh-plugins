@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { renderBadge, renderScopeInstruction } from "../lib/badge.js";
+import { buildBoundedDigest, buildBoundedPrompt, extractBoundedMessages } from "../lib/bounded.js";
 import { parseAllowedTools } from "../lib/config.js";
 import {
   buildCostHint,
@@ -54,6 +55,7 @@ import {
   SCOPES,
   threadHistory,
   threadOf,
+  threadTurn,
 } from "../lib/threads.js";
 
 const LOCALE_DIR = new URL("../locale/", import.meta.url).pathname;
@@ -299,6 +301,7 @@ test("settings: 默认值、夹紧与非法输入", () => {
     allowedTools: [],
     historyLimit: DEFAULT_SETTINGS.historyLimit,
     echoAnswer: true,
+    boundedContext: false,
   });
   const clamped = sanitizeSettings({
     allowedTools: "read, send_message ,read ,grep",
@@ -309,6 +312,13 @@ test("settings: 默认值、夹紧与非法输入", () => {
   assert.equal(sanitizeSettings({ historyLimit: 0 }).historyLimit, 1, "下限夹到 1");
   assert.equal(sanitizeSettings({ echoAnswer: false }).echoAnswer, false, "显式关闭");
   assert.equal(sanitizeSettings({ echoAnswer: "false" }).echoAnswer, true, "非布尔值不轻信");
+  assert.equal(sanitizeSettings({}).boundedContext, false, "bounded 默认关");
+  assert.equal(sanitizeSettings({ boundedContext: true }).boundedContext, true, "显式开启");
+  assert.equal(
+    sanitizeSettings({ boundedContext: "true" }).boundedContext,
+    false,
+    "bounded 只认显式 true",
+  );
   assert.deepEqual(sanitizeSettings(null).allowedTools, []);
   assert.deepEqual(
     sanitizeSettings({ allowedTools: ["a", "b", "c", "d", "e", "f", "g", "h", "i"] }).allowedTools
@@ -436,6 +446,119 @@ test("cost-hint: locale 译文已映射（中文/英文都能取到）", async (
   assert.match(en.costWarn, /forks the whole session/u);
   assert.match(en.costLast, /Last actual: \{tokens\}/u);
   assert.equal(format(zh.costLast, { tokens: 1234 }), "上次实际 1234 tokens。");
+});
+
+// --- bounded-context（ADR-0022 纯逻辑）------------------------------------
+
+test("bounded: 只抽真实用户消息与 assistant 文本，过滤 reminder/工具块", () => {
+  const events = [
+    {
+      type: "user/message",
+      data: { source: { kind: "user" }, content: [{ type: "text", text: "第一个问题" }] },
+    },
+    {
+      type: "user/message",
+      data: {
+        source: { kind: "user" },
+        content: [{ type: "text", text: "<system-reminder>注入</system-reminder>" }],
+      },
+    },
+    {
+      type: "user/message",
+      data: {
+        source: { kind: "github-picker-mention" },
+        content: [{ type: "text", text: "mention" }],
+      },
+    },
+    {
+      type: "assistant/message",
+      data: {
+        message: {
+          content: [
+            { type: "reasoning", text: "内部推理" },
+            { type: "tool-call", name: "bash", arguments: "{}" },
+            { type: "text", text: "第一个回答" },
+          ],
+        },
+      },
+    },
+    {
+      type: "assistant/message",
+      data: { message: { content: [{ type: "tool-call", name: "x" }] } },
+    },
+    { type: "tool/result", data: { content: [{ type: "text", text: "工具输出" }] } },
+  ];
+  assert.deepEqual(extractBoundedMessages(events), [
+    { role: "User", text: "第一个问题" },
+    { role: "Assistant", text: "第一个回答" },
+  ]);
+});
+
+test("bounded: digest 保留最近 N 条并压到总字符预算", () => {
+  const events = [];
+  for (let i = 0; i < 30; i += 1) {
+    events.push({
+      type: "user/message",
+      data: { source: { kind: "user" }, content: [{ type: "text", text: `问题 ${i}` }] },
+    });
+    events.push({
+      type: "assistant/message",
+      data: { message: { content: [{ type: "text", text: `回答 ${i}` }] } },
+    });
+  }
+  const digest = buildBoundedDigest(events, {
+    maxMessages: 4,
+    maxCharsPerMessage: 20,
+    maxTotalChars: 200,
+  });
+  assert.equal(digest.messages, 4);
+  assert.equal(digest.truncated, true);
+  assert.ok(digest.text.includes("问题 29"));
+  assert.ok(!digest.text.includes("问题 20"), "更早的消息应被裁掉");
+  assert.ok(digest.chars <= 200 + 100, `总字符应受预算约束，实际 ${digest.chars}`);
+});
+
+test("bounded: 单条超长消息按字符截断并加省略号", () => {
+  const events = [
+    {
+      type: "user/message",
+      data: { source: { kind: "user" }, content: [{ type: "text", text: "字".repeat(200) }] },
+    },
+  ];
+  const digest = buildBoundedDigest(events, {
+    maxMessages: 4,
+    maxCharsPerMessage: 50,
+    maxTotalChars: 4000,
+  });
+  assert.equal([...digest.text].filter((c) => c === "字").length, 50);
+  assert.ok(digest.text.endsWith("…"));
+  assert.equal(digest.messages, 1);
+});
+
+test("bounded: prompt 含裁剪声明、excerpt、线程历史，问题在末尾", () => {
+  const prompt = buildBoundedPrompt(
+    "这次要问什么？",
+    { text: "User: 早先的问题\n\nAssistant: 早先的回答" },
+    {
+      history: [{ question: "旧旁问", answer: "旧旁答" }],
+    },
+  );
+  assert.equal(prompt.length, 1);
+  assert.equal(prompt[0].type, "text");
+  assert.match(prompt[0].text, /trimmed excerpt/u);
+  assert.match(prompt[0].text, /no tools/iu);
+  assert.match(prompt[0].text, /User: 早先的问题/u);
+  assert.match(prompt[0].text, /旧旁问/u);
+  assert.ok(prompt[0].text.trimEnd().endsWith("这次要问什么？"));
+  // 无消息时也不抛，并明确说没有可用消息
+  const empty = buildBoundedPrompt("q", { text: "" });
+  assert.match(empty[0].text, /no recent messages available/u);
+});
+
+test("bounded: threadTurn 透出 mode（老记录为空 = fork）", () => {
+  const turn = threadTurn({ id: "x", question: "q", answer: "a", mode: "bounded" });
+  assert.equal(turn.mode, "bounded");
+  assert.equal(threadTurn({ id: "y", question: "q", answer: "a" }).mode, "");
 });
 
 // --- threads / promote（v0.3 纯逻辑）---------------------------------------

@@ -31,6 +31,14 @@ export const LIMITS = {
    * 可能真按几十万 tokens 计费」的保守线，只提示不阻断。
    */
   pressureWarnTokens: 250_000,
+  /** bounded-context 的触发阈值（父会话 contextPressure）；比警告线更高，默认 400K。 */
+  boundedTriggerTokens: 400_000,
+  /** bounded digest 最多保留多少条消息（user/assistant 文本）。 */
+  boundedMessages: 12,
+  /** bounded digest 单条消息最多多少字符。 */
+  boundedMessageChars: 700,
+  /** bounded digest 总字符上限（决定 spawn prompt 的成本上限）。 */
+  boundedTotalChars: 4_000,
 };
 
 /**
