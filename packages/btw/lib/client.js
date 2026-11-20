@@ -51,6 +51,10 @@ window.__ModuleLoader__.load({
       collapseShort: "收起",
       expand: "展开旁问",
       cost: "新增 {newTokens} · 命中缓存 {cachedTokens} · {ms}",
+      costHint:
+        "本会话上下文约 {pressure} tokens；旁问会 fork 整个会话，历史实测约为其 0.75–1.2 倍（约 {low}–{high} tokens）。缓存过期时可能按这个量级计费。",
+      costLast: "上次实际 {tokens} tokens。",
+      costHintTitle: "旁问会 fork 整个会话；这是按父会话上下文做的量级估算，不是精确账单。",
       failed: "读取旁问历史失败",
       sent: "已提交，答案会出现在对话里",
       followUp: "追问",
@@ -111,6 +115,11 @@ window.__ModuleLoader__.load({
       collapseShort: "Collapse",
       expand: "Expand side questions",
       cost: "new {newTokens} · cached {cachedTokens} · {ms}",
+      costHint:
+        "This session's context is ~{pressure} tokens; a side question forks the whole session, and earlier runs actually used 0.75–1.2× that (~{low}–{high} tokens). If the cache expired, expect that order of magnitude.",
+      costLast: "Last actual: {tokens} tokens.",
+      costHintTitle:
+        "A side question forks the whole session; this is an order-of-magnitude estimate from the parent context, not an exact bill.",
       failed: "Could not read side-question history",
       sent: "Submitted; the answer appears in the conversation",
       followUp: "Follow up",
@@ -203,6 +212,7 @@ window.__ModuleLoader__.load({
       ".dsh-btw-meta{margin-top:3px;color:var(--dsw-alias-label-tertiary,GrayText);font-size:11px;font-variant-numeric:tabular-nums;}",
       ".dsh-btw-dim{color:var(--dsw-alias-label-tertiary,GrayText);padding:6px 0;}",
       ".dsh-btw-err{color:var(--dsw-alias-state-error-primary,#d9534f);padding:6px 0;word-break:break-word;}",
+      ".dsh-btw-cost-hint{margin:0 0 8px;padding:5px 8px;border-radius:var(--dsw-radius-sm,6px);background:var(--dsw-alias-bg-layer-3,var(--dsw-alias-bg-layer-2,Canvas));color:var(--dsw-alias-state-warn-primary,#b8860b);font-size:11.5px;line-height:1.5;}",
       ".dsh-btw-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px;}",
       // ---- Markdown --------------------------------------------------------
       ".dsh-btw-md{overflow-wrap:anywhere;}",
@@ -909,6 +919,7 @@ window.__ModuleLoader__.load({
         const [followQuestion, setFollowQuestion] = React.useState("");
         const [busy, setBusy] = React.useState(false);
         const [notice, setNotice] = React.useState("");
+        const [costHint, setCostHint] = React.useState(/** @type {any} */ (null));
         const [badge, setBadge] = React.useState("");
         const [echoAnswer, setEchoAnswer] = React.useState(true);
         const [echoSaving, setEchoSaving] = React.useState(false);
@@ -1000,6 +1011,18 @@ window.__ModuleLoader__.load({
           [sessionId],
         );
 
+        /** 成本粗估（Phase 1：只提示不阻断；超大压力会话才显示）。 */
+        const loadCostHint = React.useCallback(
+          () =>
+            callRemote("costHint", { sessionId }).then((/** @type {any} */ value) => {
+              if (aliveRef.current && value !== null && typeof value === "object") {
+                setCostHint(value);
+              }
+              return value;
+            }),
+          [sessionId],
+        );
+
         /** 重新拉徽章（记录数/范围）。提交完成、live 结束、切范围时都要刷新，避免计数落后。 */
         const refreshBadge = React.useCallback(() => {
           const scopeLabel =
@@ -1028,6 +1051,12 @@ window.__ModuleLoader__.load({
         React.useEffect(() => {
           void loadThreads();
         }, [loadThreads]);
+
+        // 成本提示随会话变化刷新；切换会话先清空，避免拿上一个会话的压力吓人。
+        React.useEffect(() => {
+          setCostHint(null);
+          if (sessionId !== "") void loadCostHint();
+        }, [sessionId, loadCostHint]);
 
         // 流式与后台刷新：面板打开期间常驻。有 run 时 350ms 一次、空闲 1s 一次；
         // 空闲时每 4 次才刷一次线程列表，避免无谓 RPC。
@@ -1176,6 +1205,7 @@ window.__ModuleLoader__.load({
               }
             }
             void refreshBadge();
+            void loadCostHint();
             setNotice(refreshed ? "" : t("sentPending"));
           } finally {
             if (aliveRef.current) setBusy(false);
@@ -1494,6 +1524,25 @@ window.__ModuleLoader__.load({
                   ...liveRuns.map((/** @type {any} */ run) => renderLive(run)),
                 ];
 
+        // 成本提示（Phase 1）：只有压力超过阈值才出现；给区间不给精确账单。
+        const costHintLast =
+          costHint?.level === "warn" && Number(costHint.lastActualPromptTokens) > 0
+            ? fmt(t("costLast"), { tokens: formatTokens(costHint.lastActualPromptTokens) })
+            : "";
+        const costHintText =
+          costHint?.level === "warn"
+            ? [
+                fmt(t("costHint"), {
+                  pressure: formatTokens(costHint.pressureTokens),
+                  low: formatTokens(costHint.estimatedLow),
+                  high: formatTokens(costHint.estimatedHigh),
+                }),
+                costHintLast,
+              ]
+                .filter((part) => part !== "")
+                .join(" ")
+            : "";
+
         // 有 live 卡片时不显示状态条：卡片里已经有「正在生成回答 · 12s」，不需要重复。
         const statusBusy = busy;
         const statusText = busy ? `${t("sending")}（${t("waitHint")}）` : notice;
@@ -1545,6 +1594,17 @@ window.__ModuleLoader__.load({
               t("close"),
             ),
           ),
+          costHintText === ""
+            ? null
+            : h(
+                "div",
+                {
+                  className: "dsh-btw-cost-hint",
+                  "data-btw-cost-hint": "warn",
+                  title: t("costHintTitle"),
+                },
+                costHintText,
+              ),
           statusVisible
             ? h(
                 "div",

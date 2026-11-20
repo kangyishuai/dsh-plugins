@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 import { renderBadge } from "./badge.js";
 import { parseAllowedTools } from "./config.js";
+import { buildCostHint, formatCostHintLine, lastPromptTokens } from "./cost-hint.js";
 import { createFollowUpQueue } from "./followup-queue.js";
 import { formatDuration, formatTokens } from "./format.js";
 import { appendRecord, lastRecord, listRecent } from "./history.js";
@@ -71,6 +72,9 @@ const FALLBACK = {
   meta: "btw · new {newTokens} tokens · cached {cachedTokens} · {ms}",
   panelOnly: "Side question answered; the full answer is in the side-question panel.",
   reopen: "Last side question: {question}",
+  costWarn:
+    "This session's context is ~{pressure} tokens; a side question forks the whole session, and earlier runs actually used 0.75–1.2× that (~{low}–{high} tokens). If the cache expired, expect that order of magnitude.",
+  costLast: "Last actual: {tokens} tokens.",
 };
 
 /**
@@ -115,7 +119,7 @@ export class BtwService extends TypertRemoteService {
     }
     inject.call(
       ctx,
-      ["agents", "commands", "subagents", "tools", "workspaceRegistry"],
+      ["agents", "commands", "sessions", "subagents", "tokenMeter", "tools", "workspaceRegistry"],
       (/** @type {any} */ scoped) => {
         this.scoped = scoped;
         this.registerCommand(scoped);
@@ -187,6 +191,14 @@ export class BtwService extends TypertRemoteService {
     const stored = await loadSettings(this.dataRoot).catch(() => undefined);
     const allowedTools = stored === undefined ? this.allowedTools : new Set(stored.allowedTools);
     const sessionHistory = await listRecent(file, LIMITS.replayRecords).catch(() => []);
+    // 成本提示（Phase 1，只提示不阻断）：父会话 contextPressure 粗估 + 上次真实 prompt 总量。
+    // 探针结论：fork prompt 约为 contextPressure 的 0.75–1.2 倍，见 notes/btw/fork-cost.md §5。
+    const pressure = this.pressureOf(String(agent?.id ?? ""));
+    const costHint = buildCostHint({
+      pressureTokens: Number(pressure?.pressureTokens),
+      contextWindow: Number(pressure?.contextWindow),
+      lastActualPromptTokens: lastPromptTokens(sessionHistory),
+    });
     // 追问：把同线程的问答回放给模型（每轮重新 fork，靠上下文重建多轮语义）。
     const priorThread = threadId === "" ? [] : threadHistory(sessionHistory, threadId);
     if (threadId !== "" && priorThread.length >= LIMITS.threadTurns) {
@@ -256,9 +268,12 @@ export class BtwService extends TypertRemoteService {
     await appendRecord(file, record).catch(() => {});
     // 设置里关掉「主对话显示完整答案」时，只回一行提示；面板历史里仍有完整答案。
     if (stored !== undefined && stored.echoAnswer === false) {
-      return { kind: "success", text: this.messages.panelOnly ?? FALLBACK.panelOnly };
+      return {
+        kind: "success",
+        text: this.withCostHint(this.messages.panelOnly ?? FALLBACK.panelOnly, costHint),
+      };
     }
-    return { kind: "success", text: this.formatAnswer(record) };
+    return { kind: "success", text: this.withCostHint(this.formatAnswer(record), costHint) };
   }
 
   /**
@@ -430,6 +445,61 @@ export class BtwService extends TypertRemoteService {
     return { ...saved, readOnly: saved.allowedTools.length === 0 };
   }
 
+  /**
+   * 父会话最后一次请求的 prompt 压力（只读；拿不到就返回空对象）。
+   * @param {string} sessionId
+   * @returns {{ pressureTokens?: number, contextWindow?: number }}
+   */
+  pressureOf(sessionId) {
+    try {
+      const session = this.scoped?.sessions?.get?.(sessionId);
+      if (session === undefined || session === null) return {};
+      const pressure = this.scoped?.tokenMeter?.contextPressure?.(session);
+      return pressure !== null && typeof pressure === "object" ? pressure : {};
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * 成本粗估（client 面板用）：contextPressure + 本会话上一次真实 prompt 总量。
+   * @param {{ sessionId?: string } | undefined} request
+   * @returns {Promise<any>}
+   */
+  async costHint(request) {
+    const input = request ?? {};
+    const sessionId = String(input.sessionId ?? "");
+    const pressure = this.pressureOf(sessionId);
+    const records = await listRecent(
+      historyFile(this.dataRoot, sessionId),
+      LIMITS.perSessionRecords,
+    ).catch(() => []);
+    return buildCostHint({
+      pressureTokens: Number(pressure?.pressureTokens),
+      contextWindow: Number(pressure?.contextWindow),
+      lastActualPromptTokens: lastPromptTokens(records),
+    });
+  }
+
+  /**
+   * 给 `/btw` 结果追加一行成本提示（只在高压力时出现，不阻断）。
+   * @param {string} text
+   * @param {import("./cost-hint.js").CostHint} hint
+   * @returns {string}
+   */
+  withCostHint(text, hint) {
+    const line = this.costHintLine(hint);
+    return line === "" ? text : `${text}\n\n${line}`;
+  }
+
+  /**
+   * @param {import("./cost-hint.js").CostHint} hint
+   * @returns {string}
+   */
+  costHintLine(hint) {
+    return formatCostHintLine(hint, this.messages);
+  }
+
   /** @param {any} record */
   formatAnswer(record) {
     const usage = record.cost ?? {};
@@ -460,5 +530,6 @@ declareRemote(BtwService, "stats");
 declareRemote(BtwService, "queueFollowUp");
 declareRemote(BtwService, "threads");
 declareRemote(BtwService, "promote");
+declareRemote(BtwService, "costHint");
 declareRemote(BtwService, "settings");
 declareRemote(BtwService, "updateSettings");

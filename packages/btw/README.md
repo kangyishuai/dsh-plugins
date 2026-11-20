@@ -97,14 +97,16 @@ Panel details: the bottom「New question」input hides while a thread follow-up 
 - **Creates a child session**, then archives it. If archiving is unavailable the child stays visible in the session list — the answer itself is unaffected.
 - **Writes** `<dataRoot>/btw/<parentSessionId>.jsonl` (up to 50 records per session, atomically replaced). It never copies the main conversation to disk.
 - **Read-only is enforced at runtime**, not by prompt text: a tool call from the side question is denied with a model-facing reason.
+- **Cost warning on very large sessions**: above a 250K-token parent context (the host's context pressure), the panel shows one warning line with the projected 0.75–1.2× range and the last actual side-question prompt size; `/btw` appends the same line to its result. It never blocks the question.
 
 ## Compatibility
 
-| Plugin | Verified on DSH |
-| ------ | --------------- |
-| 0.6.0  | 0.2.2-rc.3      |
-| 0.6.0  | 0.2.2-rc.5      |
-| 0.6.1  | 0.2.2-rc.5      |
+| Plugin | Verified on DSH                                                 |
+| ------ | --------------------------------------------------------------- |
+| 0.6.0  | 0.2.2-rc.3                                                      |
+| 0.6.0  | 0.2.2-rc.5                                                      |
+| 0.6.1  | 0.2.2-rc.5                                                      |
+| 0.6.2  | 0.2.2-rc.5（web 冒烟 + 临时宿主大会话面板验证；桌面复验待重启） |
 
 The underlying host seams (command dispatch while busy, fork cache reuse, `tools.guard`, `workspaceRegistry.archiveSession`) were verified on DSH 0.2.2-rc.3 and re-checked unchanged on 0.2.2-rc.5 ([runtime rc.5](../../docs/runtime/0.2.2-rc.5.md): a 43-package diff found no change in any seam this plugin uses).
 

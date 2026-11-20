@@ -23,6 +23,10 @@
       "timeout": "The side question timed out before it answered.",
       "cancelled": "The side question was cancelled.",
       "tooLong": "That question is too long ({length} characters, limit {max})."
+    },
+    "cost": {
+      "warn": "This session's context is ~{pressure} tokens; a side question forks the whole session, and earlier runs actually used 0.75–1.2× that (~{low}–{high} tokens). If the cache expired, expect that order of magnitude.",
+      "last": "Last actual: {tokens} tokens."
     }
   },
   "threadFull": "This side-question thread is full ({max} turns). Start a new one."
