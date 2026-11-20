@@ -58,6 +58,8 @@ jobs:
       - run: pnpm gate session-rewind --dry-run
       - run: pnpm gate session-delete --dry-run
       - run: pnpm gate advisor --dry-run
+      # 六插件的批量门禁结构（verify/probe 只跑一次 + 每插件 web/桌面脚本齐全），纯离线。
+      - run: pnpm gate:all --dry-run
 
   secrets:
     name: gitleaks (full history)
