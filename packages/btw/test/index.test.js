@@ -10,7 +10,14 @@ import { formatDuration, formatTokens } from "../lib/format.js";
 import { appendRecord, lastRecord, listRecent, readRecords } from "../lib/history.js";
 import { clip, LIMITS } from "../lib/limits.js";
 import { inlineText, parseMarkdown, truncateMarkdown } from "../lib/markdown.js";
-import { format, loadMessages, pickLanguage } from "../lib/messages.js";
+import {
+  flattenMessages,
+  format,
+  loadMessages,
+  loadMessagesSync,
+  mapMessages,
+  pickLanguage,
+} from "../lib/messages.js";
 import { btwRoot, historyFile, resolveDataRoot } from "../lib/paths.js";
 import {
   buildSideQuestionPrompt,
@@ -209,6 +216,58 @@ test("messages: pickLanguage 与 format", () => {
   assert.equal(pickLanguage(undefined, { LANG: "en_US.UTF-8" }), "en");
   assert.equal(format("a {b} c", { b: 1 }), "a 1 c");
   assert.equal(format("a {missing}", {}), "a {missing}");
+});
+
+test("messages: 嵌套 locale 被摊平成 host 半可用的平面键（英文 FALLBACK 的根因）", async () => {
+  const zh = await loadMessages(LOCALE_DIR, "zh");
+  const en = await loadMessages(LOCALE_DIR, "en");
+  // 关键回归：嵌套对象若被原样 merge 进去，这些平面键会全部缺失，界面/命令结果永远是英文。
+  assert.match(zh.description, /只读旁问/u, "命令 description 应是中文");
+  assert.match(zh.hint, /问题/u);
+  assert.match(zh.meta, /命中缓存/u);
+  assert.match(zh.panelOnly, /旁问面板/u);
+  assert.match(zh.threadFull, /线程已满/u);
+  assert.equal(zh.noHistory, "本会话还没有旁问记录。");
+  assert.ok(en.description.startsWith("Ask a read-only"), en.description);
+  assert.match(en.meta, /cached/u);
+  for (const [key, value] of Object.entries(zh)) {
+    assert.equal(typeof value, "string", `${key} 必须是字符串，不能是嵌套对象`);
+    assert.ok(value !== "", `${key} 不能是空串`);
+  }
+  // 所有 FALLBACK 键都必须被映射到（新增 host 文案时漏映射会在这里红）。
+  const mapped = Object.keys(zh).sort();
+  assert.deepEqual(mapped, Object.keys(en).sort());
+  assert.ok(mapped.includes("description") && mapped.includes("threadFull"));
+});
+
+test("messages: 同步加载器与异步加载器结果一致（host 半注册命令前要用同步版）", async () => {
+  for (const lang of /** @type {("zh" | "en")[]} */ (["zh", "en"])) {
+    const sync = loadMessagesSync(LOCALE_DIR, lang);
+    const async = await loadMessages(LOCALE_DIR, lang);
+    assert.deepEqual(sync, async);
+  }
+});
+
+test("messages: 原始 locale 文件的中英 key 集一一对应（含未映射的展示文案）", async () => {
+  /** @param {"zh" | "en"} lang */
+  const raw = async (lang) =>
+    flattenMessages(JSON.parse(await readFile(join(LOCALE_DIR, `${lang}.json`), "utf8")));
+  const zh = Object.keys(await raw("zh")).sort();
+  const en = Object.keys(await raw("en")).sort();
+  assert.deepEqual(zh, en);
+});
+
+test("messages: 已是平面键的字典也能映射（兼容未来简化格式）", () => {
+  const flat = mapMessages({
+    description: "d",
+    hint: "h",
+    meta: "m",
+    threadFull: "t",
+  });
+  assert.deepEqual(flat, { description: "d", hint: "h", threadFull: "t", meta: "m" });
+  // 坏形状不炸：非对象、缺键都只是少几个文案。
+  assert.deepEqual(mapMessages(null), {});
+  assert.deepEqual(mapMessages({ btw: { command: { description: 42 } } }), {});
 });
 
 // --- index -----------------------------------------------------------------
@@ -545,6 +604,89 @@ test("promote: 草稿长度受 promoteChars 约束（实测 4000 字撑爆输入
     `长度 ${draft.length} 应 <= ${LIMITS.promoteChars}`,
   );
   assert.equal(LIMITS.promoteChars, 1200, "默认上限收到 1200");
+});
+
+// --- client 半的转正行数预算（源码抽取，避免为 classic script 复制一份逻辑）---------
+
+/**
+ * 从 client.js 抽取 `// @testable:begin` … `// @testable:end` 之间的纯函数并在 node 里跑。
+ * client 半是 classic script，没有模块导出；复制一份到 lib/ 又会漂移，所以直接测源码本身。
+ * @returns {Promise<{ PROMOTE_MAX_LINES: number, estimateDraftLines: (value: string, charsPerLine: number) => number, fitDraftToLines: (value: string, options?: any) => { text: string, truncated: boolean }, compactDraftForComposer: (value: string) => string }>}
+ */
+async function clientDraftHelpers() {
+  const source = await readFile(join(import.meta.dirname, "..", "lib", "client.js"), "utf8");
+  const begin = source.indexOf("// @testable:begin");
+  const end = source.indexOf("// @testable:end");
+  assert.ok(begin >= 0 && end > begin, "client.js 必须有 @testable 纯函数块");
+  const block = source.slice(begin, end);
+  return new Function(
+    `${block}\nreturn { PROMOTE_MAX_LINES, estimateDraftLines, fitDraftToLines, compactDraftForComposer };`,
+  )();
+}
+
+test("client 转正：草稿的行数估算与 6 行预算", async () => {
+  const { PROMOTE_MAX_LINES, estimateDraftLines, fitDraftToLines, compactDraftForComposer } =
+    await clientDraftHelpers();
+  assert.equal(PROMOTE_MAX_LINES, 6, "预算与桌面回归阈值一致");
+  assert.equal(estimateDraftLines("", 20), 0);
+  assert.equal(estimateDraftLines("短", 20), 1);
+  assert.equal(estimateDraftLines("字".repeat(20), 20), 1);
+  assert.equal(estimateDraftLines("字".repeat(21), 20), 2);
+  assert.equal(estimateDraftLines("a\n\nb", 20), 3, "空行也占一行");
+
+  // 短草稿原样插入（四节 Markdown 不无故被截）
+  const short = "## 我问了什么\n配置文件叫什么？\n\n## 结论\nconfig.json";
+  const kept = fitDraftToLines(short, { maxLines: 6, charsPerLine: 20 });
+  assert.equal(kept.truncated, false);
+  assert.equal(kept.text, short);
+
+  // 长草稿压成摘要收进 6 行：保留首问 + 结论开头 + 指回面板，不静默丢内容
+  const long = `## 我问了什么\n这个仓库用哪个测试框架？\n\n## 结论\n${"每个 PR 都会跑 verify。".repeat(60)}`;
+  const fitted = fitDraftToLines(long, {
+    maxLines: 6,
+    charsPerLine: 20,
+    footer: "完整内容见右侧「旁问」面板。",
+  });
+  assert.equal(fitted.truncated, true);
+  assert.ok(fitted.text.startsWith("这个仓库用哪个测试框架？"), fitted.text.slice(0, 30));
+  assert.ok(!fitted.text.includes("## "), "摘要里不再有四节标题");
+  assert.ok(fitted.text.endsWith("完整内容见右侧「旁问」面板。"), fitted.text.slice(-40));
+  assert.ok(fitted.text.includes("…"), "截断处有省略号");
+  assert.ok(
+    estimateDraftLines(fitted.text, 20) <= 6,
+    `摘要应 <= 6 行，实际 ${estimateDraftLines(fitted.text, 20)} 行`,
+  );
+
+  // 输入框越宽保留越多；窄到极限也不会超行数
+  const narrow = fitDraftToLines(long, { maxLines: 6, charsPerLine: 14, footer: "foot" });
+  const wide = fitDraftToLines(long, { maxLines: 6, charsPerLine: 48, footer: "foot" });
+  assert.ok(wide.text.length > narrow.text.length, "宽输入框应保留更多内容");
+  assert.ok(estimateDraftLines(narrow.text, 14) <= 6);
+  assert.ok(estimateDraftLines(wide.text, 48) <= 6);
+
+  // 代码围栏里的 # 与空行要原样保留（不能把代码内容当标题删掉）
+  const fenced = "## 我问了什么\nq\n\n## 结论\n```bash\n# 注释\n\nls -la\n```";
+  const compact = compactDraftForComposer(fenced);
+  assert.ok(compact.includes("# 注释"), "围栏内的 # 注释不能删");
+  assert.ok(compact.includes("\n\nls -la"), "围栏内的空行不能吞掉");
+  assert.ok(!compact.includes("## 我问了什么"), "围栏外的标题要删掉");
+
+  // 没有 footer 时只留省略号；空串不额外加省略号
+  const noFooter = fitDraftToLines(long, { maxLines: 2, charsPerLine: 20 });
+  assert.ok(noFooter.text.endsWith("…"));
+  assert.equal(fitDraftToLines("", { maxLines: 2, charsPerLine: 20 }).text, "");
+
+  // 按字符数组切分，不把 emoji 的多字节代理对劈成半个
+  const emoji = `## 标题\n${"🙂".repeat(80)}`;
+  const cut = fitDraftToLines(emoji, { maxLines: 2, charsPerLine: 10, footer: "foot" });
+  assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/u.test(cut.text), "不能留孤立的高位代理");
+});
+
+test("client 转正：promote 走的是行数预算后的草稿（不是 host 的完整草稿）", async () => {
+  const source = await readFile(join(import.meta.dirname, "..", "lib", "client.js"), "utf8");
+  assert.ok(source.includes("fitDraftToLines(full"), "promote 必须用 fitDraftToLines 收紧草稿");
+  assert.ok(source.includes("composerDraftLines()"), "promote 必须量一次实际渲染行数");
+  assert.ok(source.includes("promotedShort"), "截断时给用户不同提示（完整内容在面板）");
 });
 
 // --- Markdown 渲染树（v0.4）------------------------------------------------
