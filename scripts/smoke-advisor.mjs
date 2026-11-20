@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { zstdDecompressSync } from "node:zlib";
+import { NOTICE_DISMISS_SOURCE } from "./lib/browser-helpers.mjs";
 
 const exec = promisify(execFile);
 const REPO = resolve(import.meta.dirname, "..");
@@ -111,31 +112,7 @@ for (const label of ["继续", "开始使用", "跳过", "关闭", "知道了"])
 }
 // 2026-11-20 实测：弹窗可能比第一次点击晚一拍出现，一次性点会漏关，然后输入框被盖住 →
 // 斜杠菜单空、设置打不开（5 条断言连环红）。改成轮询到它真正消失，并单独断言（与索引冒烟同一修法）。
-const dismissNotice = async () => {
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const present = await page.evaluate(() => /预览版说明/.test(document.body ? document.body.innerText : ""));
-    if (!present) return true;
-    const clicked = await page.evaluate(() => {
-      const dialogs = [...document.querySelectorAll('[role="dialog"],[aria-modal="true"]')];
-      const top = dialogs.find((d) => /预览版说明/.test(d.textContent || "")) || dialogs[dialogs.length - 1];
-      if (!top) return false;
-      const buttons = [...top.querySelectorAll("button")];
-      const button = buttons.find((b) => /继续|知道了|关闭/.test((b.textContent || "").trim()))
-        || buttons.find((b) => (b.textContent || "").trim() === "");
-      if (!button) return false;
-      button.click();
-      return true;
-    });
-    if (!clicked) {
-      await page.evaluate(() => {
-        const btn = [...document.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === "继续");
-        if (btn) btn.click();
-      }).catch(() => {});
-    }
-    await page.waitForTimeout(500);
-  }
-  return !(await page.evaluate(() => /预览版说明/.test(document.body ? document.body.innerText : "")));
-};
+${NOTICE_DISMISS_SOURCE}
 
 // 等页面可交互
 let ready = false;
@@ -666,6 +643,8 @@ const main = async () => {
       console.log(
         `PASS 全部 ${checks.length - skipped} 项 web 冒烟断言通过${skipped ? `（另有 ${skipped} 项 SKIP）` : ""}`,
       );
+    // 门禁靠这一行判定「跑过但零断言」的假绿（见 docs/plugin-conventions.md §6.1）。
+    console.log(`${checks.length - skipped} PASS / ${skipped} SKIP / ${failed} FAIL`);
   } catch (error) {
     if (process.env.SMOKE_DEBUG) console.error(error);
     fail(error instanceof Error ? error.message : String(error));

@@ -199,6 +199,8 @@ async function main() {
       if (item.ok !== true) failed += 1;
     }
     if (skipped > 0) console.log(`# ${skipped} 条跳过（非失败）`);
+    // 门禁靠这一行判定「跑过但零断言」的假绿（见 docs/plugin-conventions.md §6.1）。
+    console.log(`${checks.length - failed - skipped} PASS / ${skipped} SKIP / ${failed} FAIL`);
     ok = failed === 0;
     if (!ok) process.exitCode = 1;
   } catch (error) {

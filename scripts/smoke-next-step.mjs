@@ -38,6 +38,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { gunzipSync, zstdDecompressSync } from "node:zlib";
+import { NOTICE_DISMISS_SOURCE } from "./lib/browser-helpers.mjs";
 
 const exec = promisify(execFile);
 const REPO = resolve(import.meta.dirname, "..");
@@ -141,29 +142,8 @@ const skip = (name, reason) => checks.push({ name, ok: true, skip: true, detail:
 const shot = (name) => page.screenshot({ path: SHOTS + "/" + name + ".png" });
 
 // —— 页面辅助（全部只读 DOM / 真实按键） ——
-const noticeDialogOn = (target) => target.evaluate(() => {
-  const dialogs = [...document.querySelectorAll('[role="dialog"],[aria-modal="true"]')];
-  const dialog = dialogs.find((d) => /预览版说明|Preview notes|开始使用|Get started/i.test(d.textContent || ""));
-  return dialog ? (dialog.textContent || "").slice(0, 120) : "";
-});
-const dismissOnboarding = async () => {
-  // 首启「预览版说明」可能晚一拍出现：轮询删除，别只点一次（2026-11-20 同类竞态连中两次）。
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    if ((await noticeDialogOn(page).catch(() => "")) === "") break;
-    await page.evaluate(() => {
-      const dialogs = [...document.querySelectorAll('[role="dialog"],[aria-modal="true"]')];
-      const dialog = dialogs.find((d) => /预览版说明|Preview notes|开始使用|Get started/i.test(d.textContent || ""));
-      if (!dialog) return false;
-      const buttons = [...dialog.querySelectorAll("button,[role=button]")];
-      const label = (b) => ((b.getAttribute("aria-label") || "") + " " + (b.textContent || "")).trim();
-      const button = buttons.find((b) => /^(继续|开始使用|跳过|关闭|Continue|Get started|Skip|Close)$/.test(label(b)))
-        || buttons.find((b) => (b.textContent || "").trim() === "");
-      if (!button) return false;
-      button.click();
-      return true;
-    }).catch(() => false);
-    await page.waitForTimeout(400);
-  }
+${NOTICE_DISMISS_SOURCE}const dismissOnboarding = async () => {
+  await dismissNoticesOn(page);
   for (let i = 0; i < 2; i++) { await page.keyboard.press("Escape"); await page.waitForTimeout(120); }
 };
 const expandWorkspaces = () => page.evaluate(() => {
@@ -1880,6 +1860,8 @@ const main = async () => {
       else if (!item.ok) failed += 1;
     }
     const total = parsed.checks.length + logChecks.length;
+    // 门禁靠这一行判定「跑过但零断言」的假绿（见 docs/plugin-conventions.md §6.1）。
+    console.log(`${total - skipped - failed} PASS / ${skipped} SKIP / ${failed} FAIL`);
     console.log(`截图目录：${SHOTS_OUT}`);
     if (failed > 0) {
       // 把插件自己报的原因一起打出来，省掉「再去翻截图/临时目录」这一步。

@@ -9,6 +9,7 @@ import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/pr
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { NOTICE_DISMISS_SOURCE } from "./lib/browser-helpers.mjs";
 
 const exec = promisify(execFile);
 const REPO = resolve(import.meta.dirname, "..");
@@ -173,35 +174,7 @@ const shot = async (name) => {
   if (DEMO) await anonymize().catch((error) => console.log("DEBUG anonymize", String(error).slice(0, 160)));
   await page.screenshot({ path: SHOTS + "/" + name + ".png" });
 };
-const noticeDialogOn = (/**
- * @param {any} target
- * @returns {Promise<string>}
- */ target) => target.evaluate(() => {
-  const dialogs = [...document.querySelectorAll('[role="dialog"],[aria-modal="true"]')];
-  const dialog = dialogs.find((d) => /预览版说明|Preview notes|开始使用|Get started/i.test(d.textContent || ""));
-  return dialog ? (dialog.textContent || "").slice(0, 120) : "";
-});
-// 首启「预览版说明」可能比第一次点击晚一拍出现：轮询到它真正消失再继续。
-// 一次性点会漏关，弹窗盖住输入框/面板后整段断言连环红（2026-11-20 索引冒烟、advisor 冒烟都栽过）。
-const dismissNoticesOn = async (target) => {
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    if ((await noticeDialogOn(target).catch(() => "")) === "") return true;
-    await target.evaluate(() => {
-      const dialogs = [...document.querySelectorAll('[role="dialog"],[aria-modal="true"]')];
-      const dialog = dialogs.find((d) => /预览版说明|Preview notes|开始使用|Get started/i.test(d.textContent || ""));
-      if (!dialog) return false;
-      const buttons = [...dialog.querySelectorAll("button,[role=button]")];
-      const label = (b) => ((b.getAttribute("aria-label") || "") + " " + (b.textContent || "")).trim();
-      const button = buttons.find((b) => /^(继续|开始使用|跳过|关闭|Continue|Get started|Skip|Close)$/.test(label(b)))
-        || buttons.find((b) => (b.textContent || "").trim() === "");
-      if (!button) return false;
-      button.click();
-      return true;
-    }).catch(() => false);
-    await target.waitForTimeout(400);
-  }
-  return (await noticeDialogOn(target).catch(() => "")) === "";
-};
+${NOTICE_DISMISS_SOURCE}
 const dismiss = async () => {
   // 首启的「预览版说明 / 登录」弹层要点按钮关掉，Esc 不一定管用；
   // 它们的遮罩会把我们的浮层压暗，也会挡住真实指针事件。轮询到它真正消失（见上面的说明）。
@@ -1027,12 +1000,22 @@ const main = async () => {
       detail: auditFile,
     });
     let failed = 0;
+    let skipped = 0;
     for (const item of parsed.checks) {
+      if (/** @type {any} */ (item).skip === true) {
+        skipped += 1;
+        console.log(`SKIP ${item.name} :: ${item.detail}`);
+        continue;
+      }
       console.log(
         (item.ok ? "PASS " : "FAIL ") + item.name + (item.ok ? "" : ` :: ${item.detail}`),
       );
       if (!item.ok) failed += 1;
     }
+    // 门禁靠这一行判定「跑过但零断言」的假绿（见 docs/plugin-conventions.md §6.1）。
+    console.log(
+      `${parsed.checks.length - failed - skipped} PASS / ${skipped} SKIP / ${failed} FAIL`,
+    );
     if (failed > 0) {
       fail(`${failed} 项断言失败`);
       return;

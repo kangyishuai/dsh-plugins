@@ -529,6 +529,8 @@ const main = async () => {
       console.log(
         `PASS 全部 ${checks.length - skipped} 项真机断言通过${skipped ? `（另有 ${skipped} 项 SKIP）` : ""}`,
       );
+    // 门禁靠这一行判定「跑过但零断言」的假绿（见 docs/plugin-conventions.md §6.1）。
+    console.log(`${checks.length - skipped} PASS / ${skipped} SKIP / ${failed} FAIL`);
   } catch (error) {
     if (process.env.SMOKE_DEBUG) console.error(error);
     fail(error instanceof Error ? error.message : String(error));

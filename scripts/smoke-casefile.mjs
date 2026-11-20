@@ -1020,6 +1020,8 @@ async function main() {
       await rm(work, { recursive: true, force: true });
     }
     console.log(`\n结果：${passed} PASS / ${failed} FAIL`);
+    // 门禁靠这一行判定「跑过但零断言」的假绿（见 docs/plugin-conventions.md §6.1）。
+    console.log(`${passed} PASS / 0 SKIP / ${failed} FAIL`);
     if (failed > 0) process.exitCode = 1;
   }
 }
