@@ -61,7 +61,8 @@
     "wt": "node scripts/worktree.mjs",
     "smoke:casefile": "node scripts/smoke-casefile.mjs",
     "gate:casefile": "node scripts/gate.mjs casefile",
-    "smoke:casefile-desktop": "node scripts/smoke-casefile-desktop.mjs"
+    "smoke:casefile-desktop": "node scripts/smoke-casefile-desktop.mjs",
+    "gate:all": "node scripts/gate-all.mjs"
   },
   "simple-git-hooks": {
     "pre-commit": "pnpm exec lint-staged && node scripts/check-public.mjs",

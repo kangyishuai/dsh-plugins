@@ -58,10 +58,12 @@ DSH_HOME=$H dsh --profile ad --port 0 --no-open
 | `node --test`（包内）                      | **143 pass / 0 fail**                                    |
 | `pnpm verify`                              | 通过                                                     |
 | `pnpm probe:runtime`                       | **72/72 PASS**                                           |
-| `pnpm smoke:advisor`（web，临时 DSH home） | **14/14**，账本 0（不发起模型调用）                      |
+| `pnpm smoke:advisor`（web，临时 DSH home） | **15/15**，账本 0（不发起模型调用）                      |
 | `pnpm smoke:advisor-desktop --require`     | **19 PASS + 1 SKIP**，0 FAIL（SKIP：本会话没有顾问记录） |
 
 **前置踩坑**：第一次跑桌面回归时，可见会话还是 agent 自己那个「有运行中回合」的会话，脚本按设计拒绝敲键盘（`FAIL 当前会话空闲` + 13 条 SKIP）。切到一个**空闲会话**再跑即 19 PASS + 1 SKIP——切换只换视图，不会中断正在跑的回合。
+
+**web 冒烟的弹窗竞态（2026-11-20 修）**：`npm smoke:advisor` 在 11:00 左右突然从 14/14 变成 5 项 FAIL（斜杠菜单空、设置 `no-settings`），复跑仍红。排查确认**不是插件/宿主变化**：首启「预览版说明」比脚本第一次点击晚一拍出现，盖住输入框后所有键盘/点击断言都打偏。脚本原来只点一次「继续」，现在改成 `dismissNotice()` 轮询到弹窗真正消失（并单独断言，14 → 15 项）；斜杠菜单断言也留了一次不降低断言的重试。这与同一天修的索引冒烟是**同一类**竞态（见 [runtime rc.5 §6.4](../runtime/0.2.2-rc.5.md#64-索引源冒烟smokeindex的两个环境假设)）。
 
 结论：**rc.5 上 advisor 无回归**。
 

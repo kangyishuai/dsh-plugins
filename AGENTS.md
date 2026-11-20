@@ -25,11 +25,12 @@
 | `pnpm probe:runtime`        | 体检：宿主包/API/slot + 插件依赖的私有 seam 是否还在                          |
 | `pnpm gate <plugin>`        | 一键发版门禁（verify→体检→web→桌面，通用）                                    |
 | `pnpm gate:<plugin>`        | 同上，固定插件名的等价写法                                                    |
+| `pnpm gate:all`             | 六个发布插件的门禁一次跑完：verify/体检只跑一次，桌面步骤前自动切空闲会话     |
 | `pnpm smoke:session-delete` | 端到端 GUI 冒烟（临时 DSH_HOME，33 项断言）                                   |
-| `pnpm smoke:advisor`        | web 端到端冒烟（临时 DSH_HOME，14 项断言，不花 token）                        |
+| `pnpm smoke:advisor`        | web 端到端冒烟（临时 DSH_HOME，15 项断言，不花 token）                        |
 | `pnpm index`                | 从 npm registry 重建插件索引源（`build/index.json`，不入库）                  |
 | `pnpm check:index`          | 只校验索引 meta 一致性与已有输出结构（离线）                                  |
-| `pnpm smoke:index`          | 索引源真机冒烟（临时 DSH_HOME，12 项断言，含坏索引拒收）                      |
+| `pnpm smoke:index`          | 索引源真机冒烟（临时 DSH_HOME，13 项断言，含坏索引拒收）                      |
 | `pnpm smoke:<name>-desktop` | **桌面版只读回归（有 client 半的插件必须有）**                                |
 | `pnpm smoke:agent-tool`     | agent 工具真机冒烟（需要模型凭据，否则 SKIP）                                 |
 

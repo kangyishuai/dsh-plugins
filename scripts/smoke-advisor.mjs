@@ -109,6 +109,33 @@ for (const label of ["继续", "开始使用", "跳过", "关闭", "知道了"])
   }, label).catch(() => {});
   await page.waitForTimeout(150);
 }
+// 2026-11-20 实测：弹窗可能比第一次点击晚一拍出现，一次性点会漏关，然后输入框被盖住 →
+// 斜杠菜单空、设置打不开（5 条断言连环红）。改成轮询到它真正消失，并单独断言（与索引冒烟同一修法）。
+const dismissNotice = async () => {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const present = await page.evaluate(() => /预览版说明/.test(document.body ? document.body.innerText : ""));
+    if (!present) return true;
+    const clicked = await page.evaluate(() => {
+      const dialogs = [...document.querySelectorAll('[role="dialog"],[aria-modal="true"]')];
+      const top = dialogs.find((d) => /预览版说明/.test(d.textContent || "")) || dialogs[dialogs.length - 1];
+      if (!top) return false;
+      const buttons = [...top.querySelectorAll("button")];
+      const button = buttons.find((b) => /继续|知道了|关闭/.test((b.textContent || "").trim()))
+        || buttons.find((b) => (b.textContent || "").trim() === "");
+      if (!button) return false;
+      button.click();
+      return true;
+    });
+    if (!clicked) {
+      await page.evaluate(() => {
+        const btn = [...document.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === "继续");
+        if (btn) btn.click();
+      }).catch(() => {});
+    }
+    await page.waitForTimeout(500);
+  }
+  return !(await page.evaluate(() => /预览版说明/.test(document.body ? document.body.innerText : "")));
+};
 
 // 等页面可交互
 let ready = false;
@@ -119,6 +146,9 @@ for (let i = 0; i < 40; i += 1) {
 }
 check("页面可交互（输入框存在）", ready, "");
 if (!ready) { console.log("SMOKE_RESULT " + JSON.stringify({ checks })); return; }
+const noticeClosed = await dismissNotice();
+check("首启「预览版说明」已关闭（不挡输入框）", noticeClosed, "");
+await page.waitForTimeout(300);
 
 // 1) 插件 client 半已加载
 const pluginStyles = await page.evaluate(() => [...document.querySelectorAll("style[data-plugin]")].map((s) => s.getAttribute("data-plugin")).filter((v) => v && v.indexOf("advisor") >= 0));
@@ -143,7 +173,17 @@ const clearComposer = async () => {
 await focusComposer();
 await page.keyboard.type("/");
 await page.waitForTimeout(900);
-const menuItems = await page.evaluate(() => [...document.querySelectorAll('[role="option"],[role="menuitem"]')].map((n) => (n.innerText || "").replace(/\\s+/g, " ").slice(0, 60)));
+let menuItems = await page.evaluate(() => [...document.querySelectorAll('[role="option"],[role="menuitem"]')].map((n) => (n.innerText || "").replace(/\\s+/g, " ").slice(0, 60)));
+if (!menuItems.some((t) => /advisor/i.test(t))) {
+  // 手势断言留一次重试：刚关掉弹窗时焦点可能还差一拍（不降低断言，仍要求菜单真的出现）。
+  await page.keyboard.press("Escape").catch(() => {});
+  await clearComposer();
+  await dismissNotice().catch(() => false);
+  await focusComposer();
+  await page.keyboard.type("/");
+  await page.waitForTimeout(1200);
+  menuItems = await page.evaluate(() => [...document.querySelectorAll('[role="option"],[role="menuitem"]')].map((n) => (n.innerText || "").replace(/\\s+/g, " ").slice(0, 60)));
+}
 check("/ 菜单里出现 advisor（命令已注册）", menuItems.some((t) => /advisor/i.test(t)), JSON.stringify(menuItems.slice(0, 12)));
 await page.keyboard.press("Escape");
 await clearComposer();
