@@ -20,6 +20,7 @@ import { cp, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { NOTICE_DISMISS_SOURCE } from "./lib/browser-helpers.mjs";
 
 const exec = promisify(execFile);
 const REPO = resolve(import.meta.dirname, "..");
@@ -118,26 +119,9 @@ function browserScript(url, deep) {
     "",
     "// 2) 过掉预览版说明（未点「继续」时 composer 是 inert 的）",
     "//    一次性点会漏关：弹窗晚一拍出现时 composer 被盖住，后面整段断言空转（2026-11-20 同类竞态）。",
-    "const noticeDialog = () => page.evaluate(() => {",
-    '  const dialogs = [...document.querySelectorAll(\'[role="dialog"],[aria-modal="true"]\')];',
-    "  const dialog = dialogs.find((d) => /预览版说明|Preview notes|开始使用|Get started/i.test(d.textContent || ''));",
-    "  return dialog ? (dialog.textContent || '').replace(/\\s+/g, ' ').slice(0, 120) : '';",
-    "});",
-    "let noticeClosed = false;",
-    "for (let attempt = 0; attempt < 10; attempt += 1) {",
-    "  if ((await noticeDialog()) === '') { noticeClosed = true; break; }",
-    "  await page.evaluate(() => {",
-    '    const dialogs = [...document.querySelectorAll(\'[role="dialog"],[aria-modal="true"]\')];',
-    "    const dialog = dialogs.find((d) => /预览版说明|Preview notes|开始使用|Get started/i.test(d.textContent || ''));",
-    "    if (!dialog) return false;",
-    "    const buttons = [...dialog.querySelectorAll('button,[role=button]')];",
-    "    const label = (b) => ((b.getAttribute('aria-label') || '') + ' ' + (b.textContent || '')).trim();",
-    "    const button = buttons.find((b) => /^(继续|开始使用|跳过|关闭|Continue|Get started|Skip|Close)$/.test(label(b)))",
-    "      || buttons.find((b) => (b.textContent || '').trim() === '');",
-    "    if (!button) return false; button.click(); return true;",
-    "  }).catch(() => false);",
-    "  await page.waitForTimeout(400);",
-    "}",
+    "//    轮询逻辑与其它冒烟共用 scripts/lib/browser-helpers.mjs。",
+    NOTICE_DISMISS_SOURCE,
+    "const noticeClosed = await dismissNoticesOn(page);",
     'record("过掉预览版说明", noticeClosed, noticeClosed ? "" : "10 次轮询后弹窗仍在");',
     "await page.waitForTimeout(1200);",
     "",

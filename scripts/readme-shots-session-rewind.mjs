@@ -13,11 +13,12 @@
 // 所以这里刻意只用 user/message + turn/step 事件，够截图、且不会写出非法日志。
 import { execFile, spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
-import { cp, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { zstdCompressSync } from "node:zlib";
+import { NOTICE_DISMISS_SOURCE } from "./lib/browser-helpers.mjs";
 
 const exec = promisify(execFile);
 const REPO = resolve(import.meta.dirname, "..");
@@ -143,6 +144,22 @@ const main = async () => {
   await cp(join(process.env.HOME ?? "", ".dsh", "profiles", "desktop"), profile, {
     recursive: true,
   });
+  // 真实 desktop profile 里可能有用户自己装的第三方 bundle（如 dsh-ai-radar）。
+  // 不清理的话 `dsh plugin add` 会在 reconcile 阶段报 "cannot resolve profile bundle"。
+  // 与各冒烟的修法一致：删 node_modules/lock，dependencies 清空，bundles 只留宿主自带包。
+  await rm(join(profile, "node_modules"), { recursive: true, force: true });
+  await rm(join(profile, "pnpm-lock.yaml"), { force: true });
+  const profilePath = join(profile, "package.json");
+  const profileJson = JSON.parse(await readFile(profilePath, "utf8"));
+  profileJson.name = `dsh-profile-${profileName}-shots`;
+  profileJson.dependencies = {};
+  if (Array.isArray(profileJson.dsh?.profile?.bundles)) {
+    profileJson.dsh.profile.bundles = profileJson.dsh.profile.bundles.filter(
+      (/** @type {unknown} */ entry) =>
+        typeof entry === "string" && entry.startsWith("@deepseek-ai/"),
+    );
+  }
+  await writeFile(profilePath, `${JSON.stringify(profileJson, null, 2)}\n`);
 
   // 合成会话
   const slug = `--${WORKSPACE_PATH.replace(/^\//u, "").replace(/\//gu, "-")}--`;
@@ -250,27 +267,7 @@ const purgeLoopbackCookies = async () => {
 await purgeLoopbackCookies();
 await page.goto(${JSON.stringify(url)});
 await page.waitForTimeout(5000);
-// 首启「预览版说明」可能晚一拍出现：轮询到真正消失（一次性点会漏关，截图会带着弹窗）。
-const noticeDialog = () => page.evaluate(() => {
-  const dialogs = [...document.querySelectorAll('[role="dialog"],[aria-modal="true"]')];
-  const dialog = dialogs.find((d) => /预览版说明|Preview notes|开始使用|Get started/i.test(d.textContent || ""));
-  return dialog ? (dialog.textContent || "").slice(0, 120) : "";
-});
-for (let attempt = 0; attempt < 10; attempt += 1) {
-  if ((await noticeDialog()) === "") break;
-  await page.evaluate(() => {
-    const dialogs = [...document.querySelectorAll('[role="dialog"],[aria-modal="true"]')];
-    const dialog = dialogs.find((d) => /预览版说明|Preview notes|开始使用|Get started/i.test(d.textContent || ""));
-    if (!dialog) return false;
-    const buttons = [...dialog.querySelectorAll("button,[role=button]")];
-    const button = buttons.find((b) => /^(继续|开始使用|跳过|关闭|Continue|Get started|Skip|Close)$/.test((b.textContent || "").trim()))
-      || buttons.find((b) => (b.textContent || "").trim() === "");
-    if (!button) return false;
-    button.click();
-    return true;
-  }).catch(() => false);
-  await page.waitForTimeout(400);
-}
+${NOTICE_DISMISS_SOURCE}await dismissNoticesOn(page);
 for (let i = 0; i < 3; i++) { await page.keyboard.press("Escape"); await page.waitForTimeout(150); }
 await page.evaluate(() => {
   for (const el of document.querySelectorAll('[data-row-key^="workspace:"][aria-expanded="false"]')) el.click();

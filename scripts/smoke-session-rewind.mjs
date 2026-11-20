@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { gunzipSync, zstdDecompressSync } from "node:zlib";
+import { NOTICE_DISMISS_SOURCE } from "./lib/browser-helpers.mjs";
 
 const exec = promisify(execFile);
 const REPO = resolve(import.meta.dirname, "..");
@@ -146,35 +147,7 @@ const LABELS = {
   confirm: ["开始回退", "Start rewind"],
 };
 const matches = (text, list) => list.some((item) => String(text || "").trim() === item);
-const noticeDialogOn = (/**
- * @param {any} target
- * @returns {Promise<string>}
- */ target) => target.evaluate(() => {
-  const dialogs = [...document.querySelectorAll('[role="dialog"],[aria-modal="true"]')];
-  const dialog = dialogs.find((d) => /预览版说明|Preview notes|开始使用|Get started/i.test(d.textContent || ""));
-  return dialog ? (dialog.textContent || "").slice(0, 120) : "";
-});
-// 首启「预览版说明」可能比第一次点击晚一拍出现：轮询到它真正消失再继续。
-// 一次性点会漏关，弹窗盖住输入框/面板后整段断言连环红（2026-11-20 索引冒烟、advisor 冒烟都栽过）。
-const dismissNoticesOn = async (target) => {
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    if ((await noticeDialogOn(target).catch(() => "")) === "") return true;
-    await target.evaluate(() => {
-      const dialogs = [...document.querySelectorAll('[role="dialog"],[aria-modal="true"]')];
-      const dialog = dialogs.find((d) => /预览版说明|Preview notes|开始使用|Get started/i.test(d.textContent || ""));
-      if (!dialog) return false;
-      const buttons = [...dialog.querySelectorAll("button,[role=button]")];
-      const label = (b) => ((b.getAttribute("aria-label") || "") + " " + (b.textContent || "")).trim();
-      const button = buttons.find((b) => /^(继续|开始使用|跳过|关闭|Continue|Get started|Skip|Close)$/.test(label(b)))
-        || buttons.find((b) => (b.textContent || "").trim() === "");
-      if (!button) return false;
-      button.click();
-      return true;
-    }).catch(() => false);
-    await target.waitForTimeout(400);
-  }
-  return (await noticeDialogOn(target).catch(() => "")) === "";
-};
+${NOTICE_DISMISS_SOURCE}
 const dismiss = async () => {
   await dismissNoticesOn(page);
   for (let i = 0; i < 3; i++) { await page.keyboard.press("Escape"); await page.waitForTimeout(150); }
@@ -1608,6 +1581,11 @@ const main = async () => {
       parsed.checks.push(item);
       if (!item.ok) failed += 1;
     }
+    const skipped = parsed.checks.filter((item) => /** @type {any} */ (item).skip === true).length;
+    // 门禁靠这一行判定「跑过但零断言」的假绿（见 docs/plugin-conventions.md §6.1）。
+    console.log(
+      `${parsed.checks.length - failed - skipped} PASS / ${skipped} SKIP / ${failed} FAIL`,
+    );
     if (failed > 0) {
       fail(`${failed} 项断言失败`);
       return;

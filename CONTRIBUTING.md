@@ -286,7 +286,7 @@ gh workflow run ci.yml --ref changeset-release/main
 
 **发版前的真机全量门禁**：`pnpm gate:all --idle-session <侧栏里一个空闲会话的标题>`。
 它把六个发布插件的 `pnpm gate` 合成一条：`verify` / `probe:runtime` 只跑一次，再逐插件串行
-web 冒烟 + 桌面只读回归（桌面步骤永远带 `--require`，并按 `desktopGateVerdict()` 拦「缺计数行 /
+web 冒烟 + 桌面只读回归（桌面步骤永远带 `--require`；web 与桌面**都**按 `gateVerdict()` 拦「缺计数行 /
 全 SKIP」的假绿）。`--idle-session` 会在每个桌面步骤前把可见会话切到该空闲会话、全部结束后切回——
 这一步不能省：advisor / next-step 的桌面脚本在可见会话正跑回合时按设计拒绝交互，会直接判红。
 只想复跑一个插件仍用 `pnpm gate <plugin>`；跳过部分步骤用 `--skip-verify` / `--skip-desktop`

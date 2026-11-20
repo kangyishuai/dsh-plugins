@@ -948,6 +948,8 @@ const main = async () => {
     } else {
       console.log(`PASS 全部 ${checks.length} 项 web 冒烟断言通过`);
     }
+    // 门禁靠这一行判定「跑过但零断言」的假绿（见 docs/plugin-conventions.md §6.1）。
+    console.log(`${checks.length - failed} PASS / 0 SKIP / ${failed} FAIL`);
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
   } finally {

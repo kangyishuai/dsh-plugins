@@ -34,7 +34,7 @@ import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
-import { desktopGateVerdict, parseCounts } from "./gate.mjs";
+import { desktopGateVerdict, gateVerdict, parseCounts } from "./gate.mjs";
 import { isMain } from "./lib/repo.mjs";
 
 const REPO = resolve(import.meta.dirname, "..");
@@ -86,6 +86,17 @@ export function missingScripts(plugins, scripts, skipDesktop) {
     }
   }
   return missing;
+}
+
+/**
+ * 比较两次计数的 PASS/SKIP/FAIL。数据相关 SKIP 漂移允许（只提示），但 FAIL 变化要看得见。
+ * @param {{ pass: number, skip: number, fail: number }} first
+ * @param {{ pass: number, skip: number, fail: number }} next
+ * @returns {string | null} 有漂移时返回 `first → next` 描述，完全一致返回 null
+ */
+export function compareCounts(first, next) {
+  if (first.pass === next.pass && first.skip === next.skip && first.fail === next.fail) return null;
+  return `${first.pass}/${first.skip}/${first.fail} → ${next.pass}/${next.skip}/${next.fail}`;
 }
 
 /**
@@ -407,13 +418,26 @@ const main = async () => {
     console.log(`\n▶ [3.${index}] pnpm smoke:${plugin}`);
     const web = await run([`smoke:${plugin}`]);
     const webOk = web.code === 0;
+    const webCounts = parseCounts(web.output);
+    const webVerdict = gateVerdict(webCounts);
+    const webCountsText =
+      webCounts === undefined
+        ? "无计数行"
+        : `${webCounts.pass} PASS / ${webCounts.skip} SKIP / ${webCounts.fail} FAIL`;
     /** @type {PluginResult} */
     const result = { plugin, webOk, desktopOk: true };
     if (!webOk) {
       console.error(`FAIL web 冒烟失败：${plugin}（继续跑其余插件）`);
       result.detail = "web 冒烟失败";
+    } else if (webVerdict !== "ok") {
+      // 与桌面同一套标准：web 冒烟不打印计数行、或一条断言都没跑（全 SKIP）都算假绿。
+      console.error(
+        `FAIL web 冒烟判定：${plugin} → ${webVerdict === "missing-counts" ? "脚本没打印计数行" : "全 SKIP/零断言"}（${webCountsText}）`,
+      );
+      result.webOk = false;
+      result.detail = `web 冒烟判定失败（${webVerdict}，${webCountsText}）`;
     } else {
-      console.log(`✓ web 冒烟：${plugin}`);
+      console.log(`✓ web 冒烟：${plugin}（${webCountsText}）`);
     }
 
     if (desktopEnabled) {
@@ -448,16 +472,14 @@ const main = async () => {
         }
         if (firstCounts === undefined) {
           firstCounts = counts;
-        } else if (
-          counts !== undefined &&
-          (counts.pass !== firstCounts.pass ||
-            counts.skip !== firstCounts.skip ||
-            counts.fail !== firstCounts.fail)
-        ) {
+        } else if (counts !== undefined) {
           // 数据相关分支（SKIP）几次之间可以不同；但任何一次 FAIL 都已经在上面中断。
-          console.log(
-            `  注意：第 ${runIndex} 次计数与第 1 次不同（${firstCounts.pass}/${firstCounts.skip}/${firstCounts.fail} → ${counts.pass}/${counts.skip}/${counts.fail}）——数据相关分支允许不同，不允许失败`,
-          );
+          const drift = compareCounts(firstCounts, counts);
+          if (drift !== null) {
+            console.log(
+              `  注意：第 ${runIndex} 次计数与第 1 次不同（${drift}）——数据相关分支允许不同，不允许失败`,
+            );
+          }
         }
         console.log(`✓ 桌面回归：${plugin}${suffix}（${countsText}）`);
       }
