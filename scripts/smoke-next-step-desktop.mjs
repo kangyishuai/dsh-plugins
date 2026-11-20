@@ -400,9 +400,12 @@ const main = async () => {
      * @param {string} label
      */
     const structureCheck = (cards, label) => {
-      const badPills = cards.filter((c) => c.pills.length !== 0 && c.pills.length !== 2);
+      // 契约是 1–2 粒（ADR 0013）；这里的结构断言只拦「>2 粒」与「交互卡 0 粒」，
+      // 不再要求交互卡必须有 2 粒（2026-11-20 真实数据里交互卡只有 1 粒时曾误红）。
+      const badPills = cards.filter((c) => c.pills.length > 2);
       const interactiveWithWrongPills = cards.filter(
-        (c) => c.state === "interactive" && (c.pills.length !== 2 || !c.hasDismiss),
+        (c) =>
+          c.state === "interactive" && (c.pills.length < 1 || c.pills.length > 2 || !c.hasDismiss),
       );
       const readonlyWithPills = cards.filter(
         (c) => c.state !== "interactive" && c.state !== "sending" && c.pills.length !== 0,
