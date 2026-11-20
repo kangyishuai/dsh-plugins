@@ -12,11 +12,16 @@
 //   # 端口可用 --port 或 DSH_CDP_PORT 覆盖（默认 9222）
 //   DSH_CDP_PORT=9333 pnpm smoke:next-step-desktop
 //
-// 默认**只读**：只切会话、展开/收起卡片的摘要、点卡片上的 ✕、按一次 Esc，
-// **不发消息、不写文件、不装插件**，可以直接跑在真实 profile 上。
-// 唯一会写会话数据的是「点 ✕」——它会往会话日志追加一条 `plugin:next-step/decision`
-// （phase=dismissed），把那张卡变成只读态；这是只读回归允许的边界（与 session-rewind
-// 的「只开对话框再 Esc」同级），不会删除任何内容。
+// 默认**只读**：只切会话、展开/收起卡片的摘要、按一次 Esc、刷新页面，
+// **不点 ✕、不发消息、不写文件、不装插件**，可以直接跑在真实 profile 上，而且可以反复跑。
+//
+// 为什么不再点 ✕（2026-11-20 修）：点 ✕ 会往会话日志追加一条 `plugin:next-step/decision`
+// （phase=dismissed），把**那张卡**变成只读态且不可撤销——连跑几次就会把用户会话里仅有的
+// 可交互卡全部消耗掉，后面的运行因为「找不到可交互卡」而失败（实测：同一天连跑第 2 次就红）。
+// 「已决策的卡片在刷新后仍是只读态」改由下面的「已决策卡片（来自会话投影）」段覆盖，
+// 它读的是本来就存在的 dismissed 卡，不制造新决策。点 ✕ 的写路径归 `--deep`。
+//
+// 卡片胶囊数按插件契约是 **1–2 粒**（不是固定两粒），断言按 1–2 写。
 //
 // `--deep --workspace <专用测试目录>`：真正的破坏性端到端——在**该目录**里自己新建会话、
 // 发一条真实模型请求、等回答结束、等决策卡出现，然后点胶囊验证「点击 = 发出一条用户消息」。
@@ -32,7 +37,7 @@
 //    - **投影健康**：页面上没有「历史加载失败 / failed to project / Cannot read properties」
 //      ——投影一旦坏掉是「静默全灭」（消息能发、会话日志正常，只是历史加载失败、卡片永不渲染），
 //      这条是唯一能把那种状态和「本来就没有卡」区分开的断言；
-//    - 卡片结构不变量（当前会话里已有的卡）：胶囊数 0 或 2、只读态无胶囊、摘要/提问非空、
+//    - 卡片结构不变量（当前会话里已有的卡）：胶囊数 0 或 1–2（交互卡 1–2 粒）、只读态无胶囊、摘要/提问非空、
 //      任何时刻最多一张可交互卡；没有卡时这些断言**空跑通过**（不是验证过卡片）；
 //    - 幽灵提示默认不出现（ghost 默认关）。
 // 2. **插件未安装时必然 FAIL（这是对的，不是脚本坏了）**：
@@ -43,7 +48,7 @@
 //      注意：桌面版用的 profile 不一定是 `desktop`（本机实测是 `ai-radar`），装错 profile 等于没装。
 // 3. **需要已有卡片才能真跑的交互断言**（默认只读**不会**生成卡片）：
 //    - 找到带可交互卡的会话 → 点「展开」（摘要变高，带一次重试）→ 按一次 Esc（不误关卡片）
-//      → 点 ✕（进入 dismissed、胶囊消失，带一次重试）→ 刷新后 dismissed 仍在。
+//      → 刷新页面 → 卡片仍是可交互态（只读模式不写 decision）。点 ✕ 的写路径归 --deep。
 //    - 只读模式不发消息，「找到带可交互卡的会话」通常是 SKIP（只有最后一轮可交互）；
 //      要验交互必须用 --deep。
 //      播种办法：先跑一次 `--deep --workspace /tmp/next-step-deep`（会真发一轮模型请求并留下真卡），
@@ -54,7 +59,7 @@
 //    错误分支（stale/missing/disabled）、流式中不渲染。这些在 web 冒烟与单测里覆盖。
 //
 // 三条踩过的坑（照 session-rewind 的经验）：
-//   1. 手势断言（点 ✕ / 点「展开」）留**一次重试**：刚切完会话时焦点与回合状态可能差一拍，
+//   1. 手势断言（点「展开」）留**一次重试**：刚切完会话时焦点与回合状态可能差一拍，
 //      第一次点不动、第二次就成；重试不降低断言（最终仍要求状态真的变了）。
 //   2. 任何会写文件的段落都断言「没写进仓库 cwd」：会话没绑对工作区时模型的写入会落到
 //      脚本自身 cwd（本仓库），断言只表现为「文件不存在」，污染完全静默。
@@ -457,13 +462,41 @@ const main = async () => {
         .filter((row) => !(row.textContent || "").includes("进行中"))
         .map((row) => (row.getAttribute("data-row-key") || "").replace("session:", ""));
     })()`);
-    /** @param {string} id */
-    const switchTo = async (id) => {
-      await cdp.evaluate(`(() => {
-        const row = document.querySelector('[data-row-key="session:' + ${JSON.stringify(id)} + '"]');
-        if (row) { row.scrollIntoView({ block: "center" }); row.click(); }
+    // 侧栏里的会话行可能被收起的「工作区」分组或「展开其余 N 个会话」遮住
+    // （刷新后尤其如此：折叠状态不保证恢复成刷新前的样子）。找行之前先把它们点开。
+    const revealSidebarGroups = () =>
+      cdp.evaluate(`(() => {
+        let clicked = 0;
+        for (const row of document.querySelectorAll('[data-row-key^="workspace:"][aria-expanded="false"]')) {
+          row.click(); clicked += 1;
+        }
+        for (const btn of document.querySelectorAll('[data-row-key^="overflow:"][aria-expanded="false"]')) {
+          btn.click(); clicked += 1;
+        }
+        return clicked;
       })()`);
-      await sleep(1100);
+    /** 切到某个会话；行被折叠分组遮住时先展开再重试。 @param {string} id @returns {Promise<boolean>} */
+    const switchTo = async (id) => {
+      let found = false;
+      const deadline = Date.now() + 12000;
+      while (Date.now() < deadline) {
+        found = await cdp
+          .evaluate(
+            `(() => {
+              const row = document.querySelector('[data-row-key="session:' + ${JSON.stringify(id)} + '"]');
+              if (!row) return false;
+              row.scrollIntoView({ block: "center" });
+              row.click();
+              return true;
+            })()`,
+          )
+          .catch(() => false);
+        if (found) break;
+        await revealSidebarGroups().catch(() => 0);
+        await sleep(600);
+      }
+      if (found) await sleep(1100);
+      return found;
     };
     /** @type {{sessionId: string, turn: number} | null} */
     let target = null;
@@ -501,11 +534,12 @@ const main = async () => {
       structureCheck(cards, "目标会话");
       const card = cards.find((/** @type {any} */ c) => c.turn === target.turn) ?? null;
       check(
-        "可交互卡带摘要、提问、两粒胶囊与 ✕",
+        "可交互卡带摘要、提问、胶囊（1–2 粒）与 ✕",
         card !== null &&
           card.summary !== "" &&
           card.question !== "" &&
-          card.pills.length === 2 &&
+          card.pills.length >= 1 &&
+          card.pills.length <= 2 &&
           card.hasDismiss === true,
         JSON.stringify(
           card === null
@@ -519,19 +553,26 @@ const main = async () => {
               },
         ),
       );
-      check(
-        "两粒胶囊的 stance 互斥",
-        card !== null &&
-          card.pills.length === 2 &&
-          card.pills[0].stance !== "" &&
-          card.pills[1].stance !== "" &&
-          card.pills[0].stance !== card.pills[1].stance,
-        JSON.stringify(
-          card === null
-            ? null
-            : card.pills.map((/** @type {any} */ p) => ({ stance: p.stance, label: p.label })),
-        ),
-      );
+      if (card !== null && card.pills.length !== 2) {
+        skip(
+          "两粒胶囊的 stance 互斥",
+          `该卡只有 ${card.pills.length} 粒胶囊（插件契约 1–2 粒都合法，见 ADR 0013）`,
+        );
+      } else {
+        check(
+          "两粒胶囊的 stance 互斥",
+          card !== null &&
+            card.pills.length === 2 &&
+            card.pills[0].stance !== "" &&
+            card.pills[1].stance !== "" &&
+            card.pills[0].stance !== card.pills[1].stance,
+          JSON.stringify(
+            card === null
+              ? null
+              : card.pills.map((/** @type {any} */ p) => ({ stance: p.stance, label: p.label })),
+          ),
+        );
+      }
       await cdp.screenshot(join(SHOTS, "02-card.png"));
 
       // ---------- C. 展开 / 收起摘要（手势断言，留一次重试） ----------
@@ -590,7 +631,7 @@ const main = async () => {
         beforeEsc !== null &&
           escCard !== null &&
           escCard.state === "interactive" &&
-          escCard.pills.length === 2,
+          escCard.pills.length === (beforeEsc?.pills?.length ?? -1),
         JSON.stringify({
           before: beforeEsc?.state ?? null,
           after: escCard === null ? null : { state: escCard.state, pills: escCard.pills.length },
@@ -598,60 +639,56 @@ const main = async () => {
       );
       await cdp.screenshot(join(SHOTS, "04-after-esc.png"));
 
-      // ---------- E. 点 ✕ → 只读态 + 胶囊消失；刷新后仍是只读（投影持久化） ----------
-      let dismissed = null;
-      for (let attempt = 1; attempt <= 2; attempt += 1) {
-        const clicked = await clickCardButton(cdp, target.turn, "button[data-next-step-dismiss]");
-        if (clicked !== "clicked") {
-          check(
-            "点 ✕ 命中卡片上的关闭按钮",
-            false,
-            `clickCardButton 返回=${JSON.stringify(clicked)}`,
-          );
-          break;
-        }
-        dismissed = await waitCardState(cdp, target.turn, "dismissed", 5000);
-        if (dismissed?.state === "dismissed" && dismissed.pills.length === 0) break;
-        await sleep(400);
-      }
-      check(
-        "点 ✕ 后卡片进入 dismissed（且胶囊消失，失败时重试一次）",
-        dismissed !== null && dismissed.state === "dismissed" && dismissed.pills.length === 0,
-        JSON.stringify(
-          dismissed === null
-            ? null
-            : { turn: dismissed.turn, state: dismissed.state, pills: dismissed.pills.length },
-        ),
-      );
-      await cdp.screenshot(join(SHOTS, "05-dismissed.png"));
+      // ---------- E. 刷新页面：卡片状态不变（只读模式不制造 decision） ----------
+      // 早先这里会点 ✕ 制造一条 decision，再断言「刷新后仍是 dismissed」。但 dismiss 是写操作、
+      // 不可撤销：连跑几次就把用户会话里仅有的可交互卡全部消耗掉，之后连「找到可交互卡」都做不到
+      // （2026-11-20 实测同一天第 2 次运行就红）。已决策卡片的刷新持久化由上面的
+      // 「刷新页面后重新打开会话 / 已决策的卡片还在（来自会话投影）」段覆盖——它读现有数据，不造新决策。
+      // 这里改成验证刷新**不会误改**可交互卡的状态；点 ✕ 的写路径归 `--deep`。
+      await cdp.screenshot(join(SHOTS, "05-before-reload.png"));
 
       await cdp.send("Page.reload");
       await ensureReady(cdp);
       await sleep(2500);
-      const reopened = await cdp.evaluate(`(() => {
-        const row = document.querySelector('[data-row-key="session:' + ${JSON.stringify(target.sessionId)} + '"]');
-        if (!row) return false;
-        row.scrollIntoView({ block: "center" });
-        row.click();
-        return true;
-      })()`);
+      let reopened = false;
+      const reopenDeadline = Date.now() + 20000;
+      while (Date.now() < reopenDeadline) {
+        reopened = await cdp
+          .evaluate(
+            `(() => {
+              const row = document.querySelector('[data-row-key="session:' + ${JSON.stringify(target.sessionId)} + '"]');
+              if (!row) return false;
+              row.scrollIntoView({ block: "center" });
+              row.click();
+              return true;
+            })()`,
+          )
+          .catch(() => false);
+        if (reopened) break;
+        await revealSidebarGroups().catch(() => 0);
+        await sleep(700);
+      }
       await sleep(2500);
       const afterReload = await cardsNow(cdp);
       const reloadedCard =
         afterReload.find((/** @type {any} */ c) => c.turn === target.turn) ?? null;
       check(
-        "刷新后重新打开会话，已 dismiss 的卡片仍在且仍是只读态",
+        "刷新后卡片仍是可交互态（只读模式没有写 decision）",
         reopened === true &&
           reloadedCard !== null &&
-          reloadedCard.pills.length === 0 &&
-          reloadedCard.state === "dismissed",
+          reloadedCard.state === "interactive" &&
+          reloadedCard.pills.length === (card?.pills?.length ?? -1),
         JSON.stringify({
           reopened,
-          cards: afterReload.map((/** @type {any} */ c) => ({
-            turn: c.turn,
-            state: c.state,
-            pills: c.pills.length,
-          })),
+          ...(reopened ? {} : { reason: "刷新后侧栏里没找到目标会话行（已展开分组并轮询 20s）" }),
+          card:
+            reloadedCard === null
+              ? null
+              : {
+                  turn: reloadedCard.turn,
+                  state: reloadedCard.state,
+                  pills: reloadedCard.pills.length,
+                },
         }),
       );
       structureCheck(afterReload, "刷新后");
