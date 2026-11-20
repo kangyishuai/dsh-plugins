@@ -373,12 +373,23 @@ prompt 与父会话 contextPressure 的比值在 **0.75–1.2×**；空会话 co
 **0.6.2 发布后复验（2026-11-20）**：npm latest / git tag / GitHub Release 已建，线上索引
 8 个插件且 btw `versions[0] = 0.6.2`。
 
-| 检查                                                                     | 结果                                                                                                                              |
-| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm smoke:btw --npm`（发布版 0.6.2）                                   | **15 PASS / 3 SKIP / 0 FAIL**                                                                                                     |
-| `pnpm smoke:btw --npm --deep`（发布版 0.6.2）                            | **30 PASS / 1 SKIP / 0 FAIL**                                                                                                     |
-| `pnpm smoke:btw-desktop --require --deep`（live 桌面版，会话有旁问记录） | **30 PASS / 0 SKIP / 0 FAIL**；注意这次跑的还是**重启前**的 0.6.1 字节，0.6.2 的 costHint UI 需要再重启一次才会出现在 live 桌面版 |
-| `SMOKE_INDEX_URL=… pnpm smoke:index`                                     | **13 PASS / 0 SKIP / 0 FAIL**（线上索引）                                                                                         |
+| 检查                                                                      | 结果                                              |
+| ------------------------------------------------------------------------- | ------------------------------------------------- |
+| `pnpm smoke:btw --npm`（发布版 0.6.2）                                    | **15 PASS / 3 SKIP / 0 FAIL**                     |
+| `pnpm smoke:btw --npm --deep`（发布版 0.6.2）                             | **30 PASS / 1 SKIP / 0 FAIL**                     |
+| `pnpm smoke:btw-desktop --require --deep`（live 桌面版**重启后**，0.6.2） | **30 PASS / 0 SKIP / 0 FAIL**（该会话有旁问记录） |
+| `SMOKE_INDEX_URL=… pnpm smoke:index`                                      | **13 PASS / 0 SKIP / 0 FAIL**（线上索引）         |
+
+**live 桌面版（重启后）对 0.6.2 的最终确认**：btw 的 boot `rev` 从 `7482bdd445bd` 变为 `4bb7db1fed67`；
+CDP `Debugger.getScriptSource` 抓到**已执行**的 btw bundle 里含 `data-btw-cost-hint`；切到 668K 上下文的
+真实大会话（358）打开旁问面板，实际渲染：
+
+```
+[data-btw-cost-hint="warn"] 本会话上下文约 668K tokens；旁问会 fork 整个会话，历史实测约为其
+0.75–1.2 倍（约 501K–802K tokens）。缓存过期时可能按这个量级计费。 上次实际 763K tokens。
+```
+
+这也再次验证了 client bundle 必须重启才会换（runtime rc.5 §8.2）。
 
 ## v0.2 发版就绪度（2026-11-17，变基到合并后的 main 之后重验）
 

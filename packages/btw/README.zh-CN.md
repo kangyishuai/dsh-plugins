@@ -106,18 +106,18 @@ dsh plugin --profile desktop add @kangyishuai/dsh-btw
 
 ## 兼容性
 
-| 插件  | 已在 DSH 上验证                                                            |
-| ----- | -------------------------------------------------------------------------- |
-| 0.6.0 | 0.2.2-rc.3                                                                 |
-| 0.6.0 | 0.2.2-rc.5                                                                 |
-| 0.6.1 | 0.2.2-rc.5                                                                 |
-| 0.6.2 | 0.2.2-rc.5（发布后 `--npm` web 复验 + 线上索引 13/13；桌面 UI 待重启复验） |
+| 插件  | 已在 DSH 上验证                                                              |
+| ----- | ---------------------------------------------------------------------------- |
+| 0.6.0 | 0.2.2-rc.3                                                                   |
+| 0.6.0 | 0.2.2-rc.5                                                                   |
+| 0.6.1 | 0.2.2-rc.5                                                                   |
+| 0.6.2 | 0.2.2-rc.5（发布后 `--npm` web 复验 + 线上索引 13/13 + live 桌面重启后复验） |
 
 底层宿主 seam（busy 时命令派发、fork 缓存复用、`tools.guard`、`workspaceRegistry.archiveSession`）已在 DSH 0.2.2-rc.3 上实测，0.2.2-rc.5 逐包 diff 复核**未变**（[runtime rc.5](../../docs/runtime/0.2.2-rc.5.md)：43 个包里本插件用到的 seam 一个都没动）。
 
 端到端情况：发布版 0.6.0 的 web 冒烟 **15 PASS / 3 SKIP / 0 FAIL**、真实模型 `--deep` 冒烟 **30 PASS / 1 SKIP / 0 FAIL**；在 DSH 0.2.2-rc.5 上两条都复跑了（15/3/0 与 **30 PASS / 1 SKIP / 0 FAIL**，`--deep` 留下了 `status=done` 的 history 记录），桌面回归 **18 PASS / 1 SKIP**（`--deep` 另跑真实数据根往返 **22 PASS / 1 SKIP**，会往 `~/.dsh/btw` 写一条真实记录）；`--deep` 剩下的 1 条 SKIP 是数据相关分支（线程卡片断言在首次提交之前执行）；`--deep` 会先发一句普通消息热身，因为**空白会话里斜杠命令不渲染命令卡片**（[runtime rc.5 §5.2](../../docs/runtime/0.2.2-rc.5.md#52-命令卡片只在非空白会话里渲染2026-11-20-实测)）；桌面回归在**已安装的 0.6.0**（真实 desktop profile、重启后）上 **25 PASS / 0 SKIP / 0 FAIL**，`pnpm gate btw` 4 步门禁全绿。
 
-**0.6.1** 修掉 0.6.0 留下的两个问题：转正不再把主 composer 撑爆（长线程过去会插 1262 字草稿、渲染约 62 行；现在按实测输入框宽度收进最多 6 行，完整答案留在面板），以及 host 半现在真的会读中英 locale（0.6.0 的嵌套文案表没对上平面键，`/btw` 命令结果一直是英文 FALLBACK）。在 DSH 0.2.2-rc.5 上：web **15 PASS / 3 SKIP / 0 FAIL**、web `--deep` **30 PASS / 1 SKIP / 0 FAIL**、桌面 **25 PASS / 0 SKIP / 0 FAIL**、桌面 `--deep` **23 PASS / 1 SKIP / 0 FAIL**（多出来的断言是 composer 高度阈值）。宿主**没有 host 侧 locale 服务**、命令文案逐字透传（[runtime rc.5 §8.1](../../docs/runtime/0.2.2-rc.5.md)），所以文案必须插件自己本地化；另外在 live 桌面版里替换 `client.js` 后，宿主可能继续下发缓存里的旧 bundle，直到重启桌面版（[runtime rc.5 §8.2](../../docs/runtime/0.2.2-rc.5.md)）。**发布版 0.6.2** 已用 `--npm` 从 npm 复验：web **15 PASS / 3 SKIP / 0 FAIL**、`--npm --deep` **30 PASS / 1 SKIP / 0 FAIL**、线上索引 **13/13**（已收录 0.6.2）；面板提示还在临时宿主里用真实 668K 会话做了端到端验证。live 桌面版还需重启一次才会载入 0.6.2 的 client bundle（[runtime rc.5 §8.2](../../docs/runtime/0.2.2-rc.5.md)）。**发布版 0.6.1** 已用 `--npm` 从 npm 复验：web 冒烟 **15 PASS / 3 SKIP / 0 FAIL**、web `--deep` **30 PASS / 1 SKIP / 0 FAIL**、桌面回归 **23 PASS / 1 SKIP**（空会话），线上插件索引已收录 0.6.1（索引冒烟 **13/13**）。
+**0.6.1** 修掉 0.6.0 留下的两个问题：转正不再把主 composer 撑爆（长线程过去会插 1262 字草稿、渲染约 62 行；现在按实测输入框宽度收进最多 6 行，完整答案留在面板），以及 host 半现在真的会读中英 locale（0.6.0 的嵌套文案表没对上平面键，`/btw` 命令结果一直是英文 FALLBACK）。在 DSH 0.2.2-rc.5 上：web **15 PASS / 3 SKIP / 0 FAIL**、web `--deep` **30 PASS / 1 SKIP / 0 FAIL**、桌面 **25 PASS / 0 SKIP / 0 FAIL**、桌面 `--deep` **23 PASS / 1 SKIP / 0 FAIL**（多出来的断言是 composer 高度阈值）。宿主**没有 host 侧 locale 服务**、命令文案逐字透传（[runtime rc.5 §8.1](../../docs/runtime/0.2.2-rc.5.md)），所以文案必须插件自己本地化；另外在 live 桌面版里替换 `client.js` 后，宿主可能继续下发缓存里的旧 bundle，直到重启桌面版（[runtime rc.5 §8.2](../../docs/runtime/0.2.2-rc.5.md)）。**发布版 0.6.2** 已用 `--npm` 从 npm 复验：web **15 PASS / 3 SKIP / 0 FAIL**、`--npm --deep` **30 PASS / 1 SKIP / 0 FAIL**、线上索引 **13/13**（已收录 0.6.2）；面板提示还在临时宿主里用真实 668K 会话做了端到端验证。live 桌面版重启后已复验：真实 668K 会话上面板出现 `[data-btw-cost-hint="warn"]` 警告，桌面 `--deep` **30 PASS / 0 SKIP / 0 FAIL**（[runtime rc.5 §8.2](../../docs/runtime/0.2.2-rc.5.md)）。**发布版 0.6.1** 已用 `--npm` 从 npm 复验：web 冒烟 **15 PASS / 3 SKIP / 0 FAIL**、web `--deep` **30 PASS / 1 SKIP / 0 FAIL**、桌面回归 **23 PASS / 1 SKIP**（空会话），线上插件索引已收录 0.6.1（索引冒烟 **13/13**）。
 
 ## 许可证
 
