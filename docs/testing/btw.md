@@ -133,6 +133,49 @@ ego 与用户共用浏览器，宿主每轮用新 token 生成 `dsh-auth-<hash>`
 这样一旦把插件装进已登录的 desktop profile，一条命令即可验证设置 UI（当前在临时
 profile 里无法验证，因为有登录门禁）。
 
+## 0.2.2-rc.5 升级复核（2026-11-19）
+
+插件代码没有改动；只验证「宿主升级后仍成立」。本插件用到的 seam（busy 时命令派发、fork 缓存复用、`tools.guard`、`workspaceRegistry.archiveSession`）在 rc.3→rc.5 的 43 包逐包 diff 里**一个都没动**（[runtime rc.5](../runtime/0.2.2-rc.5.md) §1.1）。
+
+| 层                                       | 结果                                                                                                    |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `node --test`（包内）                    | **59 pass / 0 fail**                                                                                    |
+| `pnpm probe:runtime`                     | **72/72 PASS**                                                                                          |
+| `pnpm smoke:btw`（web，默认）            | **15 PASS / 3 SKIP / 0 FAIL**（SKIP 全部是「默认模式不提交 / 提交前没有记录」的数据相关分支）           |
+| `pnpm smoke:btw --deep`（web，真实模型） | **30 PASS / 1 SKIP / 0 FAIL**（先热身再提交，见下；真实花费三次模型调用：热身 1 + 旁问 1 + 面板追问 1） |
+| `pnpm smoke:btw-desktop --require`       | **18 PASS / 1 SKIP / 0 FAIL**（SKIP：当前会话还没有旁问记录）                                           |
+
+**首跑假红**：接着 casefile 的桌面回归跑，页面还停在「案卷」面板，没有 composer，于是 `FAIL 输入框左侧出现 btw 按钮`；先点回任一会话再跑即 18 PASS / 1 SKIP。不是插件问题。
+
+### 三条 SKIP 的根因（2026-11-20 排查）
+
+`--deep` 首跑是 **23 PASS / 3 SKIP**（`回车后聊天流出现节点`、`提交 /btw 后出现命令卡片`、`线程卡片带追问/转正按钮`），旧说明写成「web 冒烟里新会话未接受提交」——**这个说法是错的**：会话日志里 `command/run` → `command/done` 齐全、插件 history 也有 `status=done` 的记录，命令每次都真的执行了。
+
+真因（宿主行为，与插件无关）：
+
+- **命令卡片只在非空白会话里渲染。** 在全新（blank）会话里提交一条不产生回合的斜杠命令，客户端 `conversationPhase` 判定仍是 `blank` → `ConversationMainPanel` 走 hero 空态、不渲染 `conversation.session` 的 views → 一个 `[data-chat-flow-kind]` 节点都没有。整页刷新、点侧栏那一行也一样。
+- 在同一会话里先发一句普通消息（一次真实回合）后，`data-phase` 变 `active`，**之前那 3 条命令卡片一次性回溯出现**，随后新提交的 `/btw` 立刻渲染成第 4 张卡片。
+- `recordInput: false` 只影响 `command/run.args` 是否入日志，不影响渲染；命令卡片由宿主的 `conversation-nodes/command.ts` 统一构建。
+
+宿主源码与实测证据（含 `conversationPhase()` 的判定条件）记在 [runtime rc.5 §5.2](../runtime/0.2.2-rc.5.md#52-命令卡片只在非空白会话里渲染2026-11-20-实测)。
+
+第三条（`线程卡片带追问/转正按钮`）是**断言时机**问题：它在提交之前执行，那时本来就没有旁问记录，只能 SKIP。
+
+**修法（只改脚本）**：`--deep` 先发一句 `hi` 把会话 materialize（新增断言「deep：热身回合完成」），再提交 `/btw`；提交后在面板里补一条「deep：线程卡片带追问与转正按钮」。修后实测：
+
+```
+30 PASS / 1 SKIP / 0 FAIL（--deep）
+PASS history 文件已生成（session-9531c971-…）
+  record status=done answerLen=2 cost={"inputTokens":644,"cacheReadTokens":10496,"outputTokens":2,"totalTokens":11142}
+```
+
+剩下的 1 条 SKIP 就是「提交前线程卡片」那条数据相关分支（同一个能力已由提交后的断言覆盖）。顺带修了「面板提交后徽章立即更新」的竞态（原先线程数到 2 就判定，徽章可能还停在「1 条」；现在等线程数与徽章同时到位）。
+
+**给以后写冒烟的人**：想在自动化里断言「命令卡片」，会话必须先有一个真实回合；否则断言会空转（而插件侧的 history/日志其实是对的，容易误判成插件没生效）。另外，插件不能假定自己的 `/命令` 输出在空白会话里可见——btw 的可见回执靠右侧栏，不依赖命令卡片。
+
+结论：**rc.5 上 btw 无回归**；默认、`--deep`（含命令卡片与线程卡片）、桌面三条通道都已覆盖。
+
+
 ## v0.2 发版就绪度（2026-11-17，变基到合并后的 main 之后重验）
 
 ```

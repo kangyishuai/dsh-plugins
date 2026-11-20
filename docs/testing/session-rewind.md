@@ -311,6 +311,21 @@ pnpm smoke:session-rewind-desktop -- --require --recall --deep \
 渲染时 `prefs.defaultMode` 抛错，宿主的 slot 错误边界只留下一个空的 `data-slot-error` 锚点——
 现象是「设置页空白/打不开」，而不是一个像样的异常。抄跨插件的渲染代码前，先确认这层 API 的返回形态。
 
+## 0.7.0 在 0.2.2-rc.5 上的复核记录（2026-11-19，DSH 0.2.2-rc.5）
+
+插件代码没有改动；这一版只验证「升级后仍然成立」。宿主的 client 构建产物（含 `index-*` 哈希名）与会话格式 v4 与 rc.3 逐字节相同（[runtime rc.5](../runtime/0.2.2-rc.5.md) §1.1）。
+
+| 层                                            | 结果                                                                               |
+| --------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `node --test`（包内）                         | **208 pass / 0 fail**                                                              |
+| `pnpm verify`                                 | 通过                                                                               |
+| `pnpm probe:runtime`                          | **72/72 PASS**                                                                     |
+| `pnpm smoke:session-rewind`（web）            | **52/52**（临时 DSH home）                                                         |
+| `pnpm smoke:session-rewind-desktop --require` | **25/25 PASS**（live rc.5 桌面版，只读；收尾新增打印 `25 PASS / 0 SKIP / 0 FAIL`） |
+
+结论：**rc.5 上 session-rewind 无回归**。
+
+
 ## 0.7.0 在 0.2.2-rc.3 上的复核记录（2026-11-14，DSH 0.2.2-rc.3）
 
 插件代码没有改动；这一版只验证「升级后仍然成立」。

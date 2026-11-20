@@ -15,6 +15,11 @@
 //
 // `--workspace <侧栏里的工作区标题>`：把会话相关操作**严格限制**在该工作区内。
 // 指定后脚本只在那个工作区的分组里找会话行；找不到就判失败，**不会**去碰别的工作区的会话。
+//
+// 数据相关分支（2026-11-19 补）：回收站**为空**时插件只渲染空态，不渲染工具条（全选 / 恢复（n））
+// 与条目行，所以「保留全选与批量操作」「条目布局」两条断言在空回收站下记为 SKIP 而不是 FAIL。
+// 之前把它们写成无条件断言，导致 `pnpm gate session-delete` 在回收站空时出现假红（不是插件缺陷）。
+// 收尾打印 `N PASS / M SKIP / K FAIL`——门禁靠这一行识别「一条断言都没执行」的假绿。
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -130,13 +135,16 @@ const main = async () => {
   });
   // 容忍 `pnpm <script> -- --require`：多余的 `--` 会被当成位置参数，这里忽略它。
   const port = Number(values.port ?? process.env.DSH_CDP_PORT ?? 9222);
-  /** @type {{name: string, ok: boolean, detail: string}[]} */
+  /** @type {{name: string, ok: boolean, skip?: boolean, detail: string}[]} */
   const checks = [];
   const check = (
     /** @type {string} */ name,
     /** @type {boolean} */ ok,
     /** @type {string} */ detail = "",
   ) => checks.push({ name, ok, detail });
+  // 只给**数据相关分支**用（例如回收站为空时没有行可测）：不能用来兜住前置失败。
+  const skip = (/** @type {string} */ name, /** @type {string} */ reason) =>
+    checks.push({ name, ok: true, skip: true, detail: reason });
 
   /** @type {Awaited<ReturnType<typeof connect>> | undefined} */
   let cdp;
@@ -251,6 +259,9 @@ const main = async () => {
       return {
         hasTabs: ["审计", "体检", "回执"].some((tab) => buttons.some((label) => label.startsWith(tab))),
         hasBatch: buttons.some((label) => label.startsWith("恢复（")) || text.includes("全选"),
+        // 空回收站只渲染空态（没有 .dsh-sdel-list），工具条与条目都不存在：
+        // 这属于**数据相关分支**，相关断言记 SKIP，不算失败。
+        rows: dlg.querySelectorAll(".dsh-sdel-row").length,
         text: text.replace(/\\s+/g, " ").slice(0, 120),
       };
     })()`);
@@ -259,11 +270,18 @@ const main = async () => {
       panelShape !== null && panelShape.hasTabs === false,
       JSON.stringify(panelShape),
     );
-    check(
-      "回收站面板保留全选与批量操作",
-      panelShape !== null && panelShape.hasBatch === true,
-      JSON.stringify(panelShape),
-    );
+    if (panelShape !== null && panelShape.rows === 0) {
+      skip(
+        "回收站面板保留全选与批量操作",
+        "回收站为空（数据相关分支）：空态不渲染工具条，有条目时这条才可断言",
+      );
+    } else {
+      check(
+        "回收站面板保留全选与批量操作",
+        panelShape !== null && panelShape.hasBatch === true,
+        JSON.stringify(panelShape),
+      );
+    }
     // 行布局：条目标题必须能读出来（不能被压缩成「…」），体积/时间在第二行。
     // 之前行的 flex 分配有问题，面板一窄标题就只剩 `❗…`。
     const rowLayout = await cdp.evaluate(`(() => {
@@ -284,14 +302,17 @@ const main = async () => {
       const readable = detail.filter((row) => row.title.length >= 2 && row.titleWidth >= 60);
       return { status: "ok", rows: rows.length, readable: readable.length, detail: detail.slice(0, 3) };
     })()`);
-    check(
-      "回收站条目：标题可读且与体积/时间分两行",
-      rowLayout?.status === "ok" &&
-        (rowLayout.rows === 0 ||
-          (rowLayout.readable === rowLayout.rows &&
-            rowLayout.detail.every((/** @type {any} */ row) => row.metaBelowTitle === true))),
-      JSON.stringify(rowLayout ?? null).slice(0, 240),
-    );
+    if (rowLayout?.status === "ok" && rowLayout.rows === 0) {
+      skip("回收站条目：标题可读且与体积/时间分两行", "回收站为空（数据相关分支）：没有行可测");
+    } else {
+      check(
+        "回收站条目：标题可读且与体积/时间分两行",
+        rowLayout?.status === "ok" &&
+          rowLayout.readable === rowLayout.rows &&
+          rowLayout.detail.every((/** @type {any} */ row) => row.metaBelowTitle === true),
+        JSON.stringify(rowLayout ?? null).slice(0, 240),
+      );
+    }
     await cdp.screenshot(join(SHOTS, "02-panel.png"));
     await pressEscape(cdp);
     await sleep(600);
@@ -498,17 +519,22 @@ const main = async () => {
   }
 
   let failed = 0;
+  let skipped = 0;
   for (const item of checks) {
-    console.log((item.ok ? "PASS " : "FAIL ") + item.name + (item.ok ? "" : ` :: ${item.detail}`));
-    if (!item.ok) failed += 1;
+    const tag = item.skip === true ? "SKIP " : item.ok ? "PASS " : "FAIL ";
+    console.log(tag + item.name + (item.skip === true || !item.ok ? ` :: ${item.detail}` : ""));
+    if (item.skip === true) skipped += 1;
+    else if (!item.ok) failed += 1;
   }
   console.log(`截图目录：${SHOTS}`);
   if (failed > 0) {
-    console.error(`FAIL ${failed} 项桌面回归断言失败`);
+    console.error(`FAIL ${failed} 项桌面回归断言失败（SKIP ${skipped} 项）`);
     process.exitCode = 1;
   } else {
-    console.log(`PASS 全部 ${checks.length} 项桌面回归断言通过`);
+    console.log(`PASS 全部 ${checks.length - skipped} 项桌面回归断言通过（SKIP ${skipped} 项）`);
   }
+  // 门禁靠这一行判定「跑过但一条断言都没执行」（见 docs/plugin-conventions.md §6.1）。
+  console.log(`${checks.length - skipped} PASS / ${skipped} SKIP / ${failed} FAIL`);
 };
 
 await main();

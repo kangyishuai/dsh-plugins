@@ -101,10 +101,11 @@ Panel details: the bottom「New question」input hides while a thread follow-up 
 | Plugin | Verified on DSH |
 | ------ | --------------- |
 | 0.6.0  | 0.2.2-rc.3      |
+| 0.6.0  | 0.2.2-rc.5      |
 
-The underlying host seams (command dispatch while busy, fork cache reuse, `tools.guard`, `workspaceRegistry.archiveSession`) were verified on DSH 0.2.2-rc.3.
+The underlying host seams (command dispatch while busy, fork cache reuse, `tools.guard`, `workspaceRegistry.archiveSession`) were verified on DSH 0.2.2-rc.3 and re-checked unchanged on 0.2.2-rc.5 ([runtime rc.5](../../docs/runtime/0.2.2-rc.5.md): a 43-package diff found no change in any seam this plugin uses).
 
-End-to-end status: for the published 0.6.0, the web smoke passes **15 PASS / 3 SKIP / 0 FAIL** and the deep smoke (one real model call) passes **23 PASS / 3 SKIP / 0 FAIL**. The desktop regression against the **installed 0.6.0** (real desktop profile, after restart) passes **25 PASS / 0 SKIP / 0 FAIL**, and `pnpm gate btw` passes the full 4-step gate.
+End-to-end status: for the published 0.6.0, the web smoke passes **15 PASS / 3 SKIP / 0 FAIL** and the deep smoke (real model calls) passes **30 PASS / 1 SKIP / 0 FAIL**; on DSH 0.2.2-rc.5 both were re-run (15/3/0 and **30 PASS / 1 SKIP / 0 FAIL**, the deep run leaving a `status=done` history record), plus the live desktop regression **18 PASS / 1 SKIP**. The remaining deep SKIP is a data-dependent branch (the thread-card assertion runs before the first submit). The deep smoke warms the session up with one ordinary message first, because a slash command renders no conversation card in a **blank** session ([runtime rc.5 §5.2](../../docs/runtime/0.2.2-rc.5.md#52-命令卡片只在非空白会话里渲染2026-11-20-实测)). The desktop regression against the **installed 0.6.0** (real desktop profile, after restart) passes **25 PASS / 0 SKIP / 0 FAIL**, and `pnpm gate btw` passes the full 4-step gate.
 
 ## License
 

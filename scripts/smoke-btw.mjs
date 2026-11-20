@@ -10,7 +10,11 @@
 //
 // 边界（有意为之）：
 // - 默认**不发起模型调用**：只验证命令注册、菜单可见、以及「无凭据时的失败分类」。
-// - `--deep` 才真跑一次旁问，并断言 history 文件生成；该段会真实花费一次模型调用。
+// - `--deep` 才真跑旁问，并断言 history 文件生成；该段会真实花费模型调用（热身 1 次 + 旁问 1 次 + 面板追问 1 次）。
+// - **命令卡片只在非空白会话里渲染**（2026-11-20 实测，见 docs/runtime/0.2.2-rc.5.md）：
+//   在全新空白会话里直接提交 /btw，命令会在宿主执行、落 history，但页面停在 hero 空态，
+//   `[data-chat-flow-kind]` 永远是 0。所以 `--deep` 先发一条普通消息把会话 materialize（热身），
+//   再提交 /btw；否则「回车后聊天流出现节点 / 命令卡片」两条断言必然 SKIP（而不是宿主拒收）。
 import { execFile, spawn } from "node:child_process";
 import { cp, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -178,7 +182,7 @@ function browserScript(url, deep) {
     'record("面板给出宽度/收起提示", overlay.resizeHint === true, String(overlay.resizeHint));',
     'record("面板底部有「只在面板显示答案」开关", overlay.echoToggle === true, String(overlay.echoToggle));',
     "if (overlay.threads === 0) {",
-    "  results.push({ name: '线程卡片带追问/转正按钮', skip: true, detail: '本会话还没有旁问记录' });",
+    "  results.push({ name: '线程卡片带追问/转正按钮', skip: true, detail: '提交前还没有旁问记录（--deep 会在提交后断言线程卡片）' });",
     "} else {",
     "  results.push({",
     "    name: '线程卡片带追问/转正按钮',",
@@ -234,6 +238,24 @@ function browserScript(url, deep) {
     "let metaOk = false;",
     `if (${JSON.stringify(deep)}) {`,
     "// 4) 真正提交一次",
+    "// 4.0) 热身：命令节点只在非空白会话渲染（见文件头），先发一条普通消息让会话离开 blank 态。",
+    "await focusComposer();",
+    'await page.keyboard.insertText("hi");',
+    "await page.waitForTimeout(500);",
+    'await page.keyboard.press("Enter");',
+    "let warmed = false;",
+    "const warmDeadline = Date.now() + 120000;",
+    "while (Date.now() < warmDeadline) {",
+    "  await page.waitForTimeout(1000);",
+    "  warmed = await page.evaluate(() => {",
+    "    const steps = [...document.querySelectorAll('[data-chat-flow-kind=\"assistant-step\"]')];",
+    "    const root = document.querySelector('[data-phase]');",
+    "    return steps.some((n) => (n.innerText || '').trim().length > 0)",
+    "      && !!root && root.getAttribute('data-phase') === 'active';",
+    "  });",
+    "  if (warmed) break;",
+    "}",
+    'record("deep：热身回合完成（会话不再空白，命令卡片才会渲染）", warmed, "");',
     "await focusComposer();",
     `await page.keyboard.insertText(${JSON.stringify(prompt)});`,
     "await page.waitForTimeout(700);",
@@ -284,7 +306,7 @@ function browserScript(url, deep) {
     "  results.push({ name: '回车后聊天流出现节点', ok: true, detail: 'body 文本出现 btw 成本徽章' });",
     "} else if (kinds.length === 0) {",
     "  const tail = await page.evaluate(() => (document.body ? document.body.innerText : '').replace(/\\s+/g, ' ').slice(-200));",
-    "  results.push({ name: '回车后聊天流出现节点', skip: true, detail: 'web 冒烟里新会话未接受提交；桌面端覆盖真实提交。现场：' + tail });",
+    "  results.push({ name: '回车后聊天流出现节点', skip: true, detail: '会话仍是空白（命令节点只在非空白会话渲染），热身可能失败；现场：' + tail });",
     "} else {",
     "  results.push({ name: '回车后聊天流出现节点', ok: true, detail: JSON.stringify(kinds) });",
     "}",
@@ -300,12 +322,12 @@ function browserScript(url, deep) {
     "  if (card && card.text.length > 0) break;",
     "}",
     "} else {",
-    "  results.push({ name: '提交 /btw 并拿到命令卡片', skip: true, detail: '无凭据时宿主拒收提交（请选择模型/添加 API Key）；用 --deep 覆盖真实提交' });",
+    "  results.push({ name: '提交 /btw 并拿到命令卡片', skip: true, detail: '默认模式不提交（保证零模型调用）；--deep 会热身、提交并断言命令卡片' });",
     "}",
     "if (card === null && metaOk) {",
     "  results.push({ name: '提交 /btw 后出现命令卡片', ok: true, detail: '成本徽章已在对话流文本中出现（未定位到 command 卡片节点）' });",
     "} else if (card === null) {",
-    "  results.push({ name: '提交 /btw 后出现命令卡片', skip: true, detail: 'web 冒烟未能提交（同上一项）；由 --deep 或桌面端覆盖' });",
+    `  results.push({ name: '提交 /btw 后出现命令卡片', skip: true, detail: ${JSON.stringify(deep)} ? '提交没有渲染命令卡片（同上一项）；会话可能仍是空白' : '默认模式不提交（同上一项）；--deep 覆盖真实提交与卡片断言' });`,
     "} else {",
     "  results.push({ name: '提交 /btw 后出现命令卡片', ok: card.text.length > 0, detail: JSON.stringify(card) });",
     "}",
@@ -332,6 +354,12 @@ function browserScript(url, deep) {
     "    badge: (document.querySelector('[data-btw-badge]') || {}).innerText || '',",
     "  }));",
     '  record("deep：重开面板可见线程且徽章有条目", panelAfter.tab && panelAfter.threads >= 1 && /条|record/i.test(panelAfter.badge), JSON.stringify(panelAfter));',
+    "  const cardUi = await page.evaluate(() => ({",
+    "    threads: document.querySelectorAll('[data-btw-thread]').length,",
+    "    promote: document.querySelectorAll('[data-btw-promote]').length,",
+    "    followup: document.querySelectorAll('[data-btw-followup]').length,",
+    "  }));",
+    '  record("deep：线程卡片带追问与转正按钮", cardUi.threads >= 1 && cardUi.promote === cardUi.threads && cardUi.followup === cardUi.threads, JSON.stringify(cardUi));',
     "  await page.evaluate(() => { const b = document.querySelector('[data-btw-followup]'); if (b) b.click(); });",
     "  await page.waitForTimeout(700);",
     "  const follow = await page.evaluate(() => ({",
@@ -372,7 +400,7 @@ function browserScript(url, deep) {
     "    }));",
     "    panelThreads = st.threads;",
     "    panelBadge = st.badge;",
-    "    if (st.threads >= 2) break;",
+    "    if (st.threads >= 2 && /2 条|2 records?/i.test(st.badge)) break;",
     "  }",
     '  record("deep：面板提交后徽章立即更新", panelThreads >= 2 && /2 条|2 records?/i.test(panelBadge), JSON.stringify({ threads: panelThreads, badge: panelBadge }));',
     "  await page.evaluate(() => { const el = document.querySelector('[data-btw-panel] textarea[data-btw-input]'); if (el) el.focus(); });",

@@ -288,6 +288,8 @@ async function main() {
       /* ignore */
     }
     console.log(`\n结果：${passed} PASS / ${failed} FAIL`);
+    // 门禁靠这一行判定「跑过但一条断言都没执行」（见 docs/plugin-conventions.md §6.1）。
+    console.log(`${passed} PASS / 0 SKIP / ${failed} FAIL`);
     if (failed > 0) {
       console.error(`截图目录：${SHOTS}`);
       process.exitCode = 1;
