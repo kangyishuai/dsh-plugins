@@ -135,11 +135,20 @@ packages/<name>/
 - `scripts/smoke-advisor-desktop.mjs`（20 项，2026-11-19 在 rc.5 实测 19 PASS + 1 SKIP；SKIP 是「该会话没有顾问记录」——脚本不制造徵询）
 - `scripts/smoke-next-step-desktop.mjs`（23 项只读，2026-11-19 在 rc.5 实测 21 PASS + 2 SKIP——SKIP 是数据相关分支「当前会话没有决策卡 / 只读模式不造卡」；`--deep` 另加发送链 e2e，合计项数以脚本输出为准）
 - `scripts/smoke-casefile-desktop.mjs`（15 项只读，2026-11-19 在 rc.5 实测 15/15；注意它结束时页面停在「案卷」主面板，串行跑别的桌面回归前先点回会话）
-- `scripts/smoke-btw-desktop.mjs`（19 项只读，2026-11-19 在 rc.5 实测 18 PASS + 1 SKIP；`--deep` 另跑真实 `/btw`）
+- `scripts/smoke-btw-desktop.mjs`（19 项只读，2026-11-19 在 rc.5 实测 18 PASS + 1 SKIP；`--deep` 另跑真实 `/btw`，2026-11-20 在 rc.5 实测 **22 PASS + 1 SKIP**，真实数据根落下 `status=done` 记录）
 
-**收尾的计数行不是装饰（2026-11-19 实测补洞）**：`parseCounts()` 只认 `N PASS / M SKIP / K FAIL`；
+**收尾的计数行不是装饰，也不靠自觉（2026-11-19 发现，2026-11-20 上护栏）**：`parseCounts()` 只认 `N PASS / M SKIP / K FAIL`；
 脚本不打这一行时它返回 `undefined`，`isVacuousPass()` 就**永远放行**——门禁的假绿检测对该脚本等于不存在。
-2026-11-19 复核发现 advisor / next-step / session-rewind / casefile / session-delete 五条脚本都漏了这一行（只有 btw 打了），已逐条补上。
+2026-11-19 复核发现 advisor / next-step / session-rewind / casefile / session-delete 五条脚本都漏了这一行（只有 btw 打了）。
+
+现在有三层护栏：
+
+1. **门禁判失败**：`gate.mjs` 的 `desktopGateVerdict()` 在桌面阶段拿不到计数行时直接失败（`missing-counts`），
+   并提示按本节补这一行——不再把「无法判断」当成「通过」。
+2. **静态检查**：`pnpm check`（`check-plugins.mjs`）扫 `scripts/smoke-*-desktop.mjs`，没有计数行就是 error；
+   `templates/plugin-desktop-smoke/smoke.js` 也带这一行，新插件不会再漏。
+3. **单测锁住**：`scripts/test/gate.test.js` 覆盖 `missing-counts / vacuous / ok` 三种判定，
+   `scripts/test/scaffold-and-check.test.js` 覆盖「模板生成 → 检查通过」与「漏计数行 → 报错」。
 
 **「跑过但零断言」必须判失败（2026-11-17 血的教训）**：
 
@@ -159,14 +168,18 @@ PASS btw 门禁全绿（4 步，24s）        ← 假的
 ```
 
 **修法（`scripts/gate.mjs` 已实现）**：解析每阶段的 `N PASS / M SKIP / K FAIL` 收尾行，
-桌面阶段 `pass === 0 && fail === 0` 直接判失败并打印可操作原因。判定逻辑导出为
-`parseCounts` / `isVacuousPass`（`scripts/test/gate.test.js` 6 项锁住）。
+桌面阶段 `pass === 0 && fail === 0` 直接判失败并打印可操作原因；**没有计数行**同样判失败
+（2026-11-20 起，见上一条）。判定逻辑导出为 `parseCounts` / `isVacuousPass` / `desktopGateVerdict`
+（`scripts/test/gate.test.js` 覆盖）。
 
 写桌面脚本时的对应义务：
 
-- 收尾**必须**打印 `N PASS / M SKIP / K FAIL`（门禁靠它判定，格式不能改）
+- 收尾**必须**打印 `N PASS / M SKIP / K FAIL`（门禁靠它判定，格式不能改；`pnpm check` 会静态拦）
 - SKIP 只能在「数据相关分支」用（例如「该会话没有可交互卡」），**不能**用来兜住前置失败
 - 一个插件如果所有断言都能被 SKIP 掉，说明脚本设计有问题——至少留一条**无条件**断言
+- **会话是空白（blank）时不要断言命令卡片**：斜杠命令的生命周期事件是 log-only，客户端在
+  `blank` 会话里走 hero 空态、不构建任何会话节点；先发一条普通消息让会话 materialize 再断言
+  （宿主的 `conversationPhase()` 判定与实测见 [runtime rc.5 §5.2](runtime/0.2.2-rc.5.md#52-命令卡片只在非空白会话里渲染2026-11-20-实测)，`smoke:btw --deep` 已按此热身）
 
 **agent 自己跑桌面回归时会撞上的前置**：advisor / next-step 的脚本带「当前会话不能有运行中的回合」的安全检查
 （检测到「停止」按钮就拒绝一切交互，只留 SKIP）。而 agent 的回合就跑在同一个桌面版里，所以它自己跑必然失败。
