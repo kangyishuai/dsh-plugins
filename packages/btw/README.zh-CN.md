@@ -104,7 +104,7 @@ dsh plugin --profile desktop add @kangyishuai/dsh-btw
 - **会写** `<dataRoot>/btw/<父会话id>.jsonl`（每会话最多 50 条，原子替换）。**绝不**把主对话内容复制到磁盘。
 - **只读是运行期强制的**，不靠提示词：旁问发起的工具调用会带着面向模型的原因被拒绝。
 - **超大上下文会话会给成本量级提示**：父会话上下文超过 250K tokens（宿主 contextPressure）时，面板顶部显示一行警告（预计为上下文的 0.75–1.2 倍）并带上本会话上次旁问的真实 prompt 总量，`/btw` 结果末尾也会追加同一提示；**不阻断**提问。
-- **可选的 bounded 模式（`boundedContext`）**：上下文超过 400K 时，可以让旁问跑在 spawn 子代理上，只带最近 12 条 user/assistant 消息（单条 ≤700 字、总 ≤4000 字）+ 本次问题。成本封顶（同会话实测约 21K tokens，对比 full fork 的 762K），但会丢较早上下文，答案标记 `bounded`；默认关，且该模式不复用父会话前缀缓存。
+- **可选的 bounded 模式（`boundedContext`）**：上下文超过 400K 时，可以让旁问跑在 spawn 子代理上，只带最近 12 条 user/assistant 消息（单条 ≤700 字、总 ≤4000 字）+ 本次问题。成本 = digest + 宿主子代理固定开销（几万 tokens；本机重载 profile 实测约 119K，对比 full fork 的 762K），但会丢较早上下文，答案标记 `bounded`；默认关，且该模式不复用父会话前缀缓存。
 
 ## 兼容性
 
