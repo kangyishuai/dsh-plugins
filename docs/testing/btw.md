@@ -307,7 +307,7 @@ profile 里给 btw 固定 `language: zh`（不依赖跑测机器的 `LANG`），
 | `pnpm smoke:btw-desktop --require`（会话有旁问记录）                | **25 PASS / 0 SKIP / 0 FAIL**                                                         |
 | `pnpm smoke:btw-desktop --require`（会话没有旁问记录，空 btw 历史） | **18 PASS / 1 SKIP / 0 FAIL**（SKIP：没有线程可点）                                   |
 | `pnpm smoke:btw-desktop --require --deep`（新建会话，真实 `/btw`）  | **23 PASS / 1 SKIP / 0 FAIL**（含新增的 composer 6 行阈值；花费 1 次模型调用）        |
-| `pnpm gate:all --plugins btw --repeat 2 --idle-session <空闲会话>`  | **PASS，54s**；web 15/3/0，桌面两次都是 18/1/0（幂等）                                |
+| `pnpm gate:all --plugins btw --repeat 2 --idle-session <空闲会话>`  | **PASS，53–54s**；web 15/3/0，桌面两次都是 18/1/0（幂等）                             |
 
 > live 桌面版验证的前置：本次先把源码包（不是 `link:`）装进 `desktop` profile；host 半的改动
 > **必须重启桌面版**才加载，client 半也可能被宿主缓存成旧 bundle（见 [runtime rc.5](../runtime/0.2.2-rc.5.md) §8.2）。
