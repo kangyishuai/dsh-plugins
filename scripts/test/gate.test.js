@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { desktopGateVerdict, isVacuousPass, parseCounts } from "../gate.mjs";
+import { desktopGateVerdict, gateVerdict, isVacuousPass, parseCounts } from "../gate.mjs";
 
 test("parseCounts：解析标准收尾行", () => {
   assert.deepEqual(parseCounts("7 PASS / 3 SKIP / 0 FAIL（默认，未发起模型调用）"), {
@@ -61,6 +61,14 @@ test("desktopGateVerdict：全 SKIP 判假绿，跑过断言才放行", () => {
   assert.equal(desktopGateVerdict({ pass: 4, skip: 2, fail: 0 }), "ok");
   assert.equal(desktopGateVerdict({ pass: 0, skip: 0, fail: 1 }), "ok", "失败交给退出码处理");
   assert.equal(desktopGateVerdict(parseCounts("16 PASS / 2 SKIP / 0 FAIL")), "ok");
+});
+
+test("gateVerdict：web 与桌面共用同一套判定（2026-11-20 起 web 也打印计数行）", () => {
+  assert.equal(gateVerdict(undefined), "missing-counts");
+  assert.equal(gateVerdict({ pass: 0, skip: 4, fail: 0 }), "vacuous");
+  assert.equal(gateVerdict({ pass: 15, skip: 3, fail: 0 }), "ok");
+  assert.equal(gateVerdict(parseCounts("33 PASS / 0 SKIP / 0 FAIL")), "ok");
+  assert.equal(gateVerdict, desktopGateVerdict, "别名必须指向同一个实现");
 });
 
 test("isVacuousPass：全 SKIP 判为假绿，跑过断言不算", () => {

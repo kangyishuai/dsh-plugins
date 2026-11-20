@@ -284,6 +284,13 @@ export function desktopGateVerdict(counts) {
 }
 
 /**
+ * web 与桌面阶段共用的放行判定（2026-11-20 起 web 冒烟也要打印计数行）。
+ * @param {{ pass: number, skip: number, fail: number } | undefined} counts
+ * @returns {"ok" | "missing-counts" | "vacuous"}
+ */
+export const gateVerdict = desktopGateVerdict;
+
+/**
  * 跑一个 pnpm 脚本：输出照常透传，同时缓存下来供断言计数解析。
  * @param {string[]} args
  * @returns {Promise<{ code: number, output: string }>}

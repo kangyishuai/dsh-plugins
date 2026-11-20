@@ -6,7 +6,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
-import { buildPlan, missingScripts, normalizePlugins, RELEASE_PLUGINS } from "../gate-all.mjs";
+import {
+  buildPlan,
+  compareCounts,
+  missingScripts,
+  normalizePlugins,
+  RELEASE_PLUGINS,
+} from "../gate-all.mjs";
 import { REPO_ROOT } from "../lib/repo.mjs";
 
 test("默认插件列表就是六个发布插件", () => {
@@ -76,6 +82,20 @@ test("dry-run 计划：跳过项与 --repeat 标注", () => {
     repeat: 2,
   });
   assert.ok(repeated.includes("4.1 pnpm smoke:advisor-desktop --require（连跑 2 次）"));
+});
+
+test("compareCounts：一致返回 null，SKIP 漂移/新增失败都要看得见", () => {
+  assert.equal(compareCounts({ pass: 19, skip: 1, fail: 0 }, { pass: 19, skip: 1, fail: 0 }), null);
+  assert.equal(
+    compareCounts({ pass: 21, skip: 1, fail: 0 }, { pass: 20, skip: 2, fail: 0 }),
+    "21/1/0 → 20/2/0",
+    "数据相关 SKIP 变化要能打印出来",
+  );
+  assert.equal(
+    compareCounts({ pass: 19, skip: 1, fail: 0 }, { pass: 18, skip: 1, fail: 1 }),
+    "19/1/0 → 18/1/1",
+    "FAIL 变化同样要看得见（门禁本身还会因退出码判红）",
+  );
 });
 
 test("仓库里六个发布插件的 web/桌面脚本真的都在（离线结构检查）", () => {
