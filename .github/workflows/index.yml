@@ -48,13 +48,29 @@ jobs:
         id: diff
         run: |
           set -euo pipefail
-          tarball=$(npm view @kangyishuai/dsh-plugin-index dist.tarball 2>/dev/null || true)
-          if [ -z "${tarball}" ]; then
+          # 幂等比较要拉「最新已发布索引」的 tarball。npm 刚发布的版本在几十秒内可能
+          # 还 404（tarball 传播滞后）：2026-11-20 两次 run（44708185706 / 44709195691）
+          # 就是死在这里的裸 curl 上，所以先确认包存在，再对 tarball 拉取做退避重试。
+          version=""
+          if ! version=$(npm view @kangyishuai/dsh-plugin-index version 2>/dev/null); then
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "还没有发布过索引包"
             exit 0
           fi
-          curl -fsSL "${tarball}" -o /tmp/published.tgz
+          fetched=""
+          for attempt in $(seq 1 12); do
+            tarball=$(npm view "@kangyishuai/dsh-plugin-index@${version}" dist.tarball 2>/dev/null || true)
+            if [ -n "${tarball}" ] && curl -fsSL "${tarball}" -o /tmp/published.tgz; then
+              fetched="yes"
+              break
+            fi
+            echo "索引 tarball 还不可取（第 ${attempt}/12 次，10s 后重试）"
+            sleep 10
+          done
+          if [ -z "${fetched}" ]; then
+            echo "::error::npm registry 在 2 分钟内没有提供索引 ${version} 的 tarball"
+            exit 1
+          fi
           tar -xzOf /tmp/published.tgz package/index.json > /tmp/published.json
           if cmp -s /tmp/published.json dist/index.json; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -117,8 +133,23 @@ jobs:
         run: |
           set -euo pipefail
           version="0.0.${GITHUB_RUN_ID}"
-          tarball=$(npm view "@kangyishuai/dsh-plugin-index@${version}" dist.tarball 2>/dev/null)
-          curl -fsSL "${tarball}" -o /tmp/published-new.tgz
+          # 上一步「Wait for the npm registry to serve the version」只保证元数据可见，
+          # tarball 本体可能还要再晚一拍（2026-11-20 09:12 UTC 实测：npm view 已可查，
+          # curl tarball 仍 404）。这里同样退避重试，别把传播延迟判成发布错误。
+          fetched=""
+          for attempt in $(seq 1 12); do
+            tarball=$(npm view "@kangyishuai/dsh-plugin-index@${version}" dist.tarball 2>/dev/null || true)
+            if [ -n "${tarball}" ] && curl -fsSL "${tarball}" -o /tmp/published-new.tgz; then
+              fetched="yes"
+              break
+            fi
+            echo "新发布 tarball 还不可取（第 ${attempt}/12 次，10s 后重试）"
+            sleep 10
+          done
+          if [ -z "${fetched}" ]; then
+            echo "::error::npm registry 在 2 分钟内没有提供 ${version} 的 tarball"
+            exit 1
+          fi
           tar -xzOf /tmp/published-new.tgz package/index.json > /tmp/published-new.json
           cmp /tmp/published-new.json dist/index.json
           echo "registry 上的 index.json 与本次构建逐字节一致"
