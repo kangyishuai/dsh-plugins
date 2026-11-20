@@ -290,7 +290,8 @@ web 冒烟 + 桌面只读回归（桌面步骤永远带 `--require`，并按 `de
 全 SKIP」的假绿）。`--idle-session` 会在每个桌面步骤前把可见会话切到该空闲会话、全部结束后切回——
 这一步不能省：advisor / next-step 的桌面脚本在可见会话正跑回合时按设计拒绝交互，会直接判红。
 只想复跑一个插件仍用 `pnpm gate <plugin>`；跳过部分步骤用 `--skip-verify` / `--skip-desktop`
-（结束时会提示门禁不完整）。
+（结束时会提示门禁不完整）。**幂等自检**用 `--repeat 2`：桌面回归连跑两次，任何一次 FAIL 都判红；
+两次计数不同（数据相关 SKIP 分支）只打印提示、不判失败。
 
 本地跑 `pnpm version-packages` 需要 `GITHUB_TOKEN`，因为 changelog 由 `@changesets/changelog-github` 生成。
 
