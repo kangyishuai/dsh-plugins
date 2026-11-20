@@ -9,6 +9,13 @@
 // - `label` 就是点击后原样发送的用户消息（WYSIWYG）；2–20 字、必须是「动词 + 具体对象」。
 // - **宽容解析**：超长的展示文本截断、不合格的单条 option 丢掉，不再因为一个字段超长就整张卡作废。
 //   只有「结构不可用 / 三档判定缺失 / 一条可用建议都不剩」这三种才算失败，交给 service 做一次修复调用。
+//
+// 落地不变量（见 docs/adr/0023-next-step-grounded-cards.md）：
+// - **任何一次要产出卡片内容的调用，都必须带同一段对话**。修复调用原来不带，于是模型只能把
+//   「上一次输出为空」写成一张卡（「这一轮没有拿到任何对话内容…把对话贴进来？」）；
+// - **空输出不是格式问题**：重发原请求，不拿空字符串去「修格式」；
+// - **结构合法不等于有用**：卡片里至少要有一个对象能在对话里原样找到（`isGroundedIn`），否则丢弃；
+// - **对话本身是空的就不调模型**：那是接线故障（`deriveMessages` 没接上），不是模型的问题。
 
 import { PROMPT_VERSION } from "./scheme.js";
 
@@ -38,6 +45,22 @@ export const STANCE_MAX = 40;
 export const OPTIONS_MAX = 2;
 /** 修复调用里回贴模型原文的最大长度（避免把上次超长输出再喂回去撑爆上下文）。 */
 export const REPAIR_ECHO_MAX = 4000;
+/**
+ * 能做「落地校验」的对话材料上限（每行字符数）。
+ *
+ * 校验用的是「模型看到的那段对话」的**未裁剪**版本：卡片摘要里的数字/文件名常常出现在
+ * 回答的后半段，而喂给模型的 transcript 每条只留 800 字。这里放宽到 4000 字，只用于机械比对，
+ * 不发给模型。实测 909 张正常卡里 908 张通过（唯一不过的那张，对象全部是中文虚指）。
+ */
+export const MATERIAL_CLIP = 4000;
+/**
+ * 判定「这段对话有没有可依据的内容」的最小字符数。
+ *
+ * 不是质量阈值，而是**接线检查**：`deriveMessages()` 没接上、或被宿主改名时 transcript 为空，
+ * 此时无论模型多强都只能编——历史事故里出现的正是这种卡（「这一轮没有拿到任何对话内容」）。
+ * 实测本机 909 张正常卡的 transcript 最短 935 字，离 40 很远，所以这个阈值不会误伤真实回合。
+ */
+export const MIN_CONTEXT_CHARS = 40;
 /** 重新导出：提示词版本位，service 写卡片与事件时要用。 */
 export { PROMPT_VERSION };
 
@@ -163,6 +186,167 @@ export function ghostAgreesWithLabel(ghost, label) {
 }
 
 /**
+ * 这些词只说明「是哪一类东西」，指认不了「是哪一件事」——对话里出现也不算落地证据。
+ * 前一组是**生成过程自己的词**：模型一旦自述生成过程（「上一次输出为空」「JSON 解析失败」），
+ * 卡片就会出现这些词；后一组是泛化名词，任何一轮的对话里都能找到。
+ */
+const NOT_IDENTITY = new Set([
+  // 生成过程 / 协议字段
+  "json",
+  "summary",
+  "question",
+  "value",
+  "options",
+  "option",
+  "stance",
+  "label",
+  "nextprompt",
+  "diff",
+  "pr",
+  "api",
+  "md",
+  "e2e",
+  // 泛化名词
+  "文件名",
+  "命令",
+  "目录",
+  "文件",
+  "代码",
+  "测试",
+  "结果",
+  "数值",
+  "版本",
+  "分支",
+  "仓库",
+  "提交",
+  "修复",
+  "实现",
+  "功能",
+  "问题",
+  "改动",
+  "更新",
+  "文档",
+  "卡片",
+  "对话",
+  "原文",
+  "消息",
+  "请求",
+  "输出",
+  "输入",
+  "回复",
+  "内容",
+  "字段",
+  "解析",
+  "报错",
+  "错误",
+  "任务",
+  "步骤",
+  "流程",
+  "结论",
+  "摘要",
+  "提问",
+  "建议",
+  "决策卡",
+  "上一轮",
+  "上一次",
+  "上一条",
+  "这一轮",
+  "这一步",
+  "下一步",
+  "继续",
+  "可以",
+  "需要",
+  "以下",
+  "这段",
+]);
+
+/**
+ * 从文本里抽「能指认是哪一件事」的对象：版本号、文件名、命令、PR 号、带数字/下划线的标识符，
+ * 以及 ≥4 字、不像泛化名词的中文片段。
+ * 与 `concreteTokens` 的区别：后者用于**按钮文案**（宁松勿严，只要沾上具体对象就放行），
+ * 这里用于**落地校验**（宁严勿松：泛化名词和生成过程自己的词都不算对象）。
+ * @param {string} text
+ * @returns {Set<string>}
+ */
+export function identityTokens(text) {
+  const source = typeof text === "string" ? text : "";
+  const found = new Set();
+  for (const match of source.matchAll(/[A-Za-z0-9_./#-]{3,}/gu)) {
+    const token = match[0].replace(/^[./#-]+|[./#-]+$/gu, "").toLowerCase();
+    if (token.length < 3 || NOT_IDENTITY.has(token)) continue;
+    // 有数字 / 带路径分隔符 / 足够长的英文标识符：都能指认具体对象
+    if (/[0-9]/u.test(token) || /[./_#-]/u.test(token) || token.length >= 4) found.add(token);
+  }
+  for (const match of source.matchAll(/[\u4e00-\u9fa5]{4,}/gu)) {
+    const run = match[0];
+    // 中文动词/介词常粘在名词前面（「把二分查找」），去掉最多两个前导字再比对
+    for (let cut = 0; cut <= 2; cut += 1) {
+      const token = run.slice(cut);
+      if (token.length < 4) break;
+      if (!NOT_IDENTITY.has(token)) found.add(token);
+    }
+  }
+  return found;
+}
+
+/**
+ * 落地校验：卡片里至少有一个对象，能在**模型看到的那段对话**里原样找到。
+ *
+ * 这是「卡片必须在讲这一段对话」的机械判据，补的是提示词管不到的那一半：
+ * 结构合法、文案漂亮，但整段都在讲生成过程或者凭空想象的卡片，一律不落地。
+ * @param {string} text 卡片正文（summary + question + options + nextPrompt）
+ * @param {string} material 模型看到的对话材料（可以未裁剪）
+ * @returns {boolean}
+ */
+export function isGroundedIn(text, material) {
+  const haystack = typeof material === "string" ? material.toLowerCase() : "";
+  if (haystack.trim() === "") return false;
+  for (const token of identityTokens(text)) {
+    if (haystack.includes(token)) return true;
+  }
+  return false;
+}
+
+/**
+ * 卡片正文：落地校验要看全部展示文本，不只是按钮文案。
+ * @param {{ summary?: string, question?: string, options?: { label?: string }[], nextPrompt?: string }} suggestion
+ * @returns {string}
+ */
+export function groundableText(suggestion) {
+  if (!suggestion || typeof suggestion !== "object") return "";
+  const parts = [suggestion.summary, suggestion.question, suggestion.nextPrompt];
+  for (const option of Array.isArray(suggestion.options) ? suggestion.options : []) {
+    parts.push(option?.label);
+  }
+  return parts.filter((part) => typeof part === "string" && part !== "").join("\n");
+}
+
+/**
+ * 这段对话是否够长到能作为判断依据（接线检查，不是质量阈值）。
+ * @param {string} transcript
+ * @returns {boolean}
+ */
+export function hasContext(transcript) {
+  const text = typeof transcript === "string" ? transcript.trim() : "";
+  return text.length >= MIN_CONTEXT_CHARS;
+}
+
+/**
+ * 解析失败后走哪条恢复路径：
+ * - `retry`：首次输出**是空的**。空输出不是格式问题，拿它去「修格式」只会让模型对着
+ *   「（空）」编一张卡片（历史上 95 条垃圾卡就是这么来的）；正确做法是把**同一个请求**
+ *   原样再发一次。
+ * - `repair`：有内容但格式不对（不是 JSON / 缺字段 / 按钮文案超长）。这时确实该修格式，
+ *   且修复请求必须带上同一段对话。
+ * @param {{ raw?: unknown, problem?: unknown }} input
+ * @returns {"retry" | "repair"}
+ */
+export function recoveryPlan(input = {}) {
+  const raw = typeof input.raw === "string" ? input.raw.trim() : "";
+  return raw === "" ? "retry" : "repair";
+}
+
+/**
  * 系统提示词：判断这一轮是否值得继续（三档），并把对话压成一张决策卡，严格 JSON。
  *
  * v3 的关键改动是**判定语言**：boolean → 三档，并明写「拿不准一律判 could」。
@@ -205,8 +389,12 @@ export function buildSystemPrompt(options = {}) {
     "   它和 options 必须是**同一个建议**的两种说法（可以更长、更口语），不许各说一件事。",
     `7. 语言：跟随对话中用户使用的语言（当前界面语言 ${locale}，仅供参考）。`,
     '8. **即使 value 判为 "no"，也要把 summary / question / options 写完整** —— 用户可能手动要这张卡。',
-    "9. 信息不足时，两个方向应当是「先补信息」与「按现有信息推进」，不要编造事实。",
-    "10. 拿不准就不要编：任何一条 label 找不到对话里的具体对象时，直接减少 options 数量（最少 1 条）。",
+    "9. **这段对话就是你手上的全部材料，它不缺东西**：绝不要要求用户「把对话/原文/改动/回复贴过来」，",
+    '   也不要把「信息不足」当成一个方向。对话里确实没有能写进 label 的具体对象时：value 判 "no"，',
+    "   summary 只写这段对话里唯一可核查的事实，只给 1 条 label —— 宁可不给建议，也不要写一张要材料的卡。",
+    "10. **不要描述你自己这次生成的过程**：不要出现「上一次输出」「JSON」「解析失败」「summary / question 字段」",
+    "   「决策卡内容」「本次请求」这类字样 —— 它们不是对话里的事实，写出来只会让用户看到一张自言自语的空卡。",
+    "11. 拿不准就不要编：任何一条 label 找不到对话里的具体对象时，直接减少 options 数量（最少 1 条）。",
   ].join("\n");
 }
 
@@ -242,28 +430,40 @@ export function problemText(kind) {
 }
 
 /**
- * 构造「修复」调用：把模型上次的原文与具体问题回贴，只要求它修格式。
+ * 构造「修复」调用：**把同一段对话再带上**，然后回贴上次原文与具体问题，只要求它修格式。
+ *
+ * 为什么必须带对话（否则就是历史事故的根因）：修复只回贴「上一次输出 + 报错」，模型手里就只剩
+ * 「上一次输出为空、缺少 summary / question」这一条信息；它的唯一出路是把这条信息写成一张卡：
+ * 「这一轮没有拿到任何对话内容……把对话贴进来？」。这张卡结构合法、能过校验、还能显示出来 ——
+ * 于是「没有对话内容」的卡反复出现在用户面前。一次修复不能凭空修内容，它必须看得见原料。
  *
  * 刻意只用一条 user 消息、不伪造 assistant 轮次（宿主 adapter 对 assistant 消息有额外要求，
  * 伪造容易在 provider 侧被拒）。
- * @param {{ raw: unknown, problem: "json" | "value" | "options" }} input
+ * @param {{ transcript?: string, raw: unknown, problem: "json" | "value" | "options" }} input
  * @returns {{ role: "user", content: { type: "text", text: string }[] }[]}
  */
 export function buildRepairMessage(input) {
+  const transcript = typeof input.transcript === "string" ? input.transcript.trim() : "";
   const raw = typeof input.raw === "string" ? input.raw : String(input.raw ?? "");
   const echoed = raw.length > REPAIR_ECHO_MAX ? `${raw.slice(0, REPAIR_ECHO_MAX)}…` : raw;
   const text = [
-    "你上一次的输出不能被解析成决策卡。",
-    `问题：${problemText(input.problem)}。`,
+    "以下是最近的对话（与上一次请求相同），请据此修正你上一次的决策卡输出。",
     "",
-    "上一次的原始输出：",
+    "对话：",
+    transcript === "" ? "（没有可用的对话内容）" : transcript,
+    "",
+    "你上一次的输出：",
     '"""',
     echoed === "" ? "（空）" : echoed,
     '"""',
     "",
+    `问题：${problemText(input.problem)}。`,
+    "",
     "请只输出修正后的 JSON 对象，结构如下（字段含义与之前的要求完全相同）：",
     '{ "value": "must" | "could" | "no", "reason": "…", "summary": "…", "question": "…", "options": [ { "stance": "…", "label": "…" } ], "nextPrompt": "…" }',
     "不要输出任何解释、不要用代码围栏。",
+    "summary / question / options 的内容必须仍然来自上面这段对话；不要描述这次修正本身，" +
+      "也不要要求用户补充对话内容 —— 对话就在上面。",
   ].join("\n");
   return [{ role: "user", content: [{ type: "text", text }] }];
 }

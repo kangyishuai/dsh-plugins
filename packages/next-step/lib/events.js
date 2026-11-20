@@ -140,7 +140,7 @@ export function promoteEvent(input) {
 }
 
 /**
- * @param {{ at: number, sid: string, turn: number, kind: "schema" | "timeout" | "cancelled" | "llm" | "route", detail?: string }} input
+ * @param {{ at: number, sid: string, turn: number, kind: "schema" | "ungrounded" | "timeout" | "cancelled" | "llm" | "route", detail?: string }} input
  * @returns {any}
  */
 export function errorEvent(input) {

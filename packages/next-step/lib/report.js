@@ -305,6 +305,9 @@ export function summarize(events) {
     gates: gateCounts,
     errors: { total: errors.length, byKind: errorKinds },
     schemaShare: gateOkTurns === 0 ? 0 : (errorKinds.schema ?? 0) / gateOkTurns,
+    // 落地校验丢弃率：结构合法但讲不到这段对话的卡（自述生成过程 / 凭空想象）。
+    // 单独一个指标，因为它对应的病根和「格式失败」完全不同（见 docs/adr/0023）。
+    ungroundedShare: gateOkTurns === 0 ? 0 : (errorKinds.ungrounded ?? 0) / gateOkTurns,
     insufficient: turns.size < MIN_TURNS || shown < MIN_SHOWN,
   };
 }
@@ -375,6 +378,14 @@ export function verdicts(metrics) {
       code: "schema-failures",
       text: `有 ${Math.round(metrics.schemaShare * 100)}% 的生成是格式失败（${metrics.errors.byKind.schema ?? 0}/${metrics.turns + metrics.errors.total}）。`,
       action: "解析还需要放宽，或修复调用没有生效——先看 error.detail 的前缀分布。",
+    });
+  }
+
+  if ((metrics.ungroundedShare ?? 0) > 0.05) {
+    out.push({
+      code: "ungrounded-cards",
+      text: `有 ${Math.round(metrics.ungroundedShare * 100)}% 的生成因为「卡片与对话无关」被丢弃（${metrics.errors.byKind.ungrounded ?? 0}/${metrics.turns + metrics.errors.total}）。`,
+      action: "这通常是模型在自述生成过程：先确认修复调用带了对话，再收紧提示词第 9–10 条。",
     });
   }
 

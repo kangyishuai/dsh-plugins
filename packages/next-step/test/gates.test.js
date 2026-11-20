@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { cheapSkipReason, MIN_ANSWER_CHARS } from "../lib/gates.js";
+import { MIN_CONTEXT_CHARS } from "../lib/prompt.js";
 
 /** 一个「所有闸都放行」的基线输入。 */
 function base() {
@@ -102,4 +103,22 @@ test("多个条件同时不满足时，按便宜闸的顺序先报更靠前的",
     cheapSkipReason({ ...base(), pauseUntil: 2_000_000, answerChars: 1 })?.reason,
     "paused",
   );
+});
+
+test("对话本身是空的 → no-context（接线检查，不花这次调用）", () => {
+  // 空 transcript：deriveMessages 没接上 / 被宿主改名。模型再强也只能编一张
+  // 「没有对话内容」的空卡；这条闸让「没接上」在诊断里看起来就是「没接上」。
+  assert.equal(cheapSkipReason({ ...base(), contextChars: 0 })?.reason, "no-context");
+  assert.equal(cheapSkipReason({ ...base(), contextChars: 12 })?.reason, "no-context");
+  assert.equal(
+    cheapSkipReason({ ...base(), contextChars: MIN_CONTEXT_CHARS - 1 })?.reason,
+    "no-context",
+  );
+  // 有一点点对话内容就放行：这一条不是质量阈值
+  assert.equal(cheapSkipReason({ ...base(), contextChars: MIN_CONTEXT_CHARS }), null);
+  assert.equal(cheapSkipReason({ ...base(), contextChars: 935 }), null);
+});
+
+test("没给 contextChars 时不启用这条闸（保持老调用点的行为）", () => {
+  assert.equal(cheapSkipReason(base()), null);
 });

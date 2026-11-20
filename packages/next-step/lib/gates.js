@@ -10,6 +10,11 @@
 //   被档位抑制的候选不占预算，否则严格档会把预算永远用不完、放松档位时又突然没了额度。
 // - 短答闸不再只看最后一个回答的字数：工具密集型回合的收尾回答常常只有一句（「改好了」），
 //   但上下文一点都不缺。判据改成「本轮回答总字数 < 80 **且** 本轮没有工具调用」。
+//
+// v0.5 补一条**接线闸**（见 docs/adr/0023）：`deriveMessages()` 拿不到对话时 transcript 为空，
+// 这时调模型必然产出「没有对话内容，请贴回来」的空卡。对话是空的就不要发请求。
+
+import { MIN_CONTEXT_CHARS } from "./prompt.js";
 
 /** 回答短于这个字符数、且本轮没有任何工具调用，就不出卡：没有足够上下文，生成的建议必然是空话。 */
 export const MIN_ANSWER_CHARS = 80;
@@ -19,7 +24,7 @@ export const MIN_ANSWER_CHARS = 80;
  * @param {{
  *   enabled: boolean, cardEnabled: boolean, pauseUntil: number, now: number,
  *   queued: number, cardsForTurn: boolean, shownCardsInSession: number, maxCards: number,
- *   endKind?: string, answerChars?: number, toolCalls?: number,
+ *   endKind?: string, answerChars?: number, toolCalls?: number, contextChars?: number,
  * }} input
  * @returns {{ reason: string, detail: string } | null} 需要跳过时返回原因，否则 null
  */
@@ -27,6 +32,14 @@ export function cheapSkipReason(input) {
   if (!input.enabled) return { reason: "disabled", detail: "card generation is off" };
   if (!input.cardEnabled) return { reason: "disabled", detail: "cards are turned off" };
   if (input.pauseUntil > input.now) return { reason: "paused", detail: "generation is paused" };
+  // 对话本身是空的（宿主没给 message / deriveMessages 被改名）：模型再强也只能编。
+  // 这条闸不是质量阈值，而是**接线检查**——它的存在让「没接上」看起来像「没接上」。
+  if (input.contextChars !== undefined && input.contextChars < MIN_CONTEXT_CHARS) {
+    return {
+      reason: "no-context",
+      detail: `transcript has ${input.contextChars} chars; nothing to base a card on`,
+    };
+  }
   // 用户已经排了 ≥2 条消息：他马上要说的话比任何建议都准。
   if (input.queued >= 2)
     return { reason: "queued", detail: "the user already has queued messages" };
