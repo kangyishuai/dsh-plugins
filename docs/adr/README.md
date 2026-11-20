@@ -27,5 +27,6 @@
 | [0020](0020-projects-no-cloud-execution.md)           | projects：不做云端执行 / 多租户 / 多设备同步          | 已接受 |
 | [0021](0021-projects-auto-fix-boundary.md)            | projects：auto-fix 只改实现、不碰测试                 | 已接受 |
 | [0022](0022-btw-bounded-context-cost.md)              | btw：超大会话的 bounded-context（草案）               | 提议中 |
+| [0023](0023-next-step-grounded-cards.md)              | next-step：卡片必须落在对话上（落地不变量）           | 已接受 |
 
 新建：复制 [0000-template.md](0000-template.md)。
