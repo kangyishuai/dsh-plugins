@@ -828,6 +828,81 @@ check(
 );
 await shot("06-after-reload");
 
+// ---------- 4.5 点 ✕ 的写路径（临时 home，安全）：dismissed 必须进投影 ----------
+// 桌面只读回归不再点 ✕（decision 是永久写入、会让连跑不幂等，见 docs/testing/next-step.md）。
+// 这条写路径归冒烟的临时 DSH_HOME：先找一张可交互卡（没有就点「补生成」造一张），
+// 点 ✕ → 断言进入 dismissed，再刷新页面断言它来自投影而不是内存。
+let dismissCard = (await cardsNow()).filter((c) => c.state === "interactive").pop() ?? null;
+let dismissSource = "现成的可交互卡";
+if (dismissCard === null) {
+  const retried = await page.evaluate(() => {
+    const buttons = [...document.querySelectorAll("button")];
+    const button = buttons.find((b) => /生成下一步建议/.test(b.textContent || ""));
+    if (!button || button.disabled) return false;
+    button.click();
+    return true;
+  });
+  if (retried) {
+    dismissSource = "补生成按钮";
+    const deadline = Date.now() + 120000;
+    while (Date.now() < deadline) {
+      await page.waitForTimeout(700);
+      dismissCard = (await cardsNow()).filter((c) => c.state === "interactive").pop() ?? null;
+      if (dismissCard !== null) break;
+    }
+  }
+}
+if (dismissCard === null) {
+  skip("点 ✕ 后卡片进入 dismissed（写路径）", "本会话没有可交互卡，补生成也没出卡");
+  skip("刷新后 dismissed 仍在（来自投影）", "同上");
+} else {
+  const clickedDismiss = await page.evaluate((turn) => {
+    const el = [...document.querySelectorAll("[data-next-step-card]")].find(
+      (n) => Number(n.getAttribute("data-next-step-turn")) === turn,
+    );
+    const button = el ? el.querySelector("button[data-next-step-dismiss]") : null;
+    if (!button) return false;
+    button.click();
+    return true;
+  }, dismissCard.turn);
+  let dismissedState = null;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const now = (await cardsNow()).find((c) => c.turn === dismissCard.turn) ?? null;
+    dismissedState = now;
+    if (now !== null && now.state === "dismissed" && now.pills.length === 0) break;
+    await page.waitForTimeout(400);
+  }
+  check(
+    "点 ✕ 后卡片进入 dismissed（胶囊消失）",
+    clickedDismiss === true && dismissedState !== null && dismissedState.state === "dismissed" && dismissedState.pills.length === 0,
+    "来源=" + dismissSource + " clicked=" + clickedDismiss + " card=" + JSON.stringify(dismissedState === null ? null : { turn: dismissedState.turn, state: dismissedState.state, pills: dismissedState.pills.length }),
+  );
+  await shot("06b-dismissed");
+  await page.reload();
+  await page.waitForTimeout(5500);
+  await dismissOnboarding();
+  await expandWorkspaces();
+  await page.waitForTimeout(800);
+  await page.evaluate((id) => {
+    const row = document.querySelector('[data-row-key="session:' + id + '"]');
+    if (row) {
+      row.scrollIntoView({ block: "center" });
+      row.click();
+    }
+  }, sessionId);
+  await page.waitForTimeout(2500);
+  const cardsAfterDismissReload = await waitForCards(30000, 1);
+  const dismissedAfterReload = cardsAfterDismissReload.find((c) => c.turn === dismissCard.turn) ?? null;
+  check(
+    "刷新后 dismissed 仍在（来自投影）",
+    dismissedAfterReload !== null && dismissedAfterReload.state === "dismissed" && dismissedAfterReload.pills.length === 0,
+    dismissedAfterReload === null
+      ? "该轮卡片丢失；刷新后卡片=" + describeCards(cardsAfterDismissReload)
+      : JSON.stringify({ state: dismissedAfterReload.state, pills: dismissedAfterReload.pills.length }),
+  );
+  await shot("06c-dismissed-reload");
+}
+
 // ---------- 5. 关闭开关后不再出现新卡 ----------
 const cardsBeforeDisable = await waitStableCards(60000, 6000);
 const turnsBeforeDisable = cardsBeforeDisable.map((c) => c.turn);
