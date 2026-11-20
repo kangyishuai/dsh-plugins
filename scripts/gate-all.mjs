@@ -39,7 +39,7 @@ import { isMain } from "./lib/repo.mjs";
 
 const REPO = resolve(import.meta.dirname, "..");
 /** 默认只跑六个「已完成」插件；artifacts/projects 开发完成后再加进来。 */
-const RELEASE_PLUGINS = [
+export const RELEASE_PLUGINS = [
   "advisor",
   "btw",
   "casefile",
@@ -48,6 +48,73 @@ const RELEASE_PLUGINS = [
   "session-rewind",
 ];
 const sleep = (/** @type {number} */ ms) => new Promise((done) => setTimeout(done, ms));
+
+/**
+ * 解析 `--plugins a,b`：逗号分隔、去空白、去空项与重复；缺省返回六个发布插件。
+ * @param {string | undefined} raw
+ * @returns {string[]}
+ */
+export function normalizePlugins(raw) {
+  if (typeof raw !== "string" || raw.trim() === "") return [...RELEASE_PLUGINS];
+  /** @type {Set<string>} */
+  const seen = new Set();
+  /** @type {string[]} */
+  const plugins = [];
+  for (const part of raw.split(",")) {
+    const name = part.trim();
+    if (name === "" || seen.has(name)) continue;
+    seen.add(name);
+    plugins.push(name);
+  }
+  return plugins;
+}
+
+/**
+ * 所选插件缺哪些冒烟脚本（`--skip-desktop` 时不检查桌面脚本）。
+ * @param {string[]} plugins
+ * @param {Record<string, string>} scripts
+ * @param {boolean} skipDesktop
+ * @returns {string[]}
+ */
+export function missingScripts(plugins, scripts, skipDesktop) {
+  /** @type {string[]} */
+  const missing = [];
+  for (const plugin of plugins) {
+    if (typeof scripts[`smoke:${plugin}`] !== "string") missing.push(`smoke:${plugin}`);
+    if (!skipDesktop && typeof scripts[`smoke:${plugin}-desktop`] !== "string") {
+      missing.push(`smoke:${plugin}-desktop`);
+    }
+  }
+  return missing;
+}
+
+/**
+ * 生成 dry-run / 日志用的执行计划（纯文本行；不执行任何命令）。
+ * @param {{ plugins: string[], skipVerify: boolean, skipDesktop: boolean, idleTitle: string | null, repeat: number }} options
+ * @returns {string[]}
+ */
+export function buildPlan(options) {
+  const { plugins, skipVerify, skipDesktop, idleTitle, repeat } = options;
+  /** @type {string[]} */
+  const plan = [
+    skipVerify ? "- verify（已按 --skip-verify 跳过）" : "1. pnpm verify",
+    "2. pnpm probe:runtime",
+    ...plugins.map((plugin, index) => `3.${index + 1} pnpm smoke:${plugin}`),
+  ];
+  if (skipDesktop) {
+    plan.push("- 桌面端（已按 --skip-desktop 跳过）");
+  } else {
+    for (const [index, plugin] of plugins.entries()) {
+      plan.push(
+        `4.${index + 1} pnpm smoke:${plugin}-desktop --require${repeat > 1 ? `（连跑 ${repeat} 次）` : ""}`,
+      );
+    }
+    if (idleTitle !== null) {
+      plan.push(`   桌面步骤前切到空闲会话「${idleTitle}」，结束后切回`);
+    }
+  }
+  return plan;
+}
 
 /**
  * @param {string[]} args
@@ -244,6 +311,7 @@ const main = async () => {
       "skip-verify": { type: "boolean", default: false },
       "skip-desktop": { type: "boolean", default: false },
       "idle-session": { type: "string" },
+      repeat: { type: "string" },
       port: { type: "string" },
       "dry-run": { type: "boolean", default: false },
     },
@@ -251,39 +319,31 @@ const main = async () => {
   });
 
   const scripts = JSON.parse(await readFile(join(REPO, "package.json"), "utf8")).scripts ?? {};
-  const plugins =
-    typeof values.plugins === "string" && values.plugins !== ""
-      ? values.plugins
-          .split(",")
-          .map((name) => name.trim())
-          .filter(Boolean)
-      : RELEASE_PLUGINS;
+  const plugins = normalizePlugins(values.plugins);
   const port = Number(values.port ?? process.env.DSH_CDP_PORT ?? 9222);
   const idleTitle = typeof values["idle-session"] === "string" ? values["idle-session"] : null;
-  /** @type {string[]} */
-  const missing = [];
-  for (const plugin of plugins) {
-    if (typeof scripts[`smoke:${plugin}`] !== "string") missing.push(`smoke:${plugin}`);
-    if (values["skip-desktop"] !== true && typeof scripts[`smoke:${plugin}-desktop`] !== "string")
-      missing.push(`smoke:${plugin}-desktop`);
+  const repeat = Number(values.repeat ?? "1");
+  if (!Number.isInteger(repeat) || repeat < 1 || repeat > 3) {
+    console.error("FAIL --repeat 只接受 1–3 的整数（默认 1；幂等自检用 2）");
+    process.exitCode = 2;
+    return;
   }
+  const missing = missingScripts(plugins, scripts, values["skip-desktop"] === true);
   if (missing.length > 0) {
     console.error(`FAIL 这些脚本缺失：${missing.join(", ")}`);
     process.exitCode = 2;
     return;
   }
 
-  const plan = [
-    values["skip-verify"] === true ? "- verify（已按 --skip-verify 跳过）" : "1. pnpm verify",
-    "2. pnpm probe:runtime",
-    ...plugins.map((plugin, index) => `3.${index + 1} pnpm smoke:${plugin}`),
-    ...(values["skip-desktop"] === true
-      ? ["- 桌面端（已按 --skip-desktop 跳过）"]
-      : plugins.map((plugin, index) => `4.${index + 1} pnpm smoke:${plugin}-desktop --require`)),
-  ];
+  const plan = buildPlan({
+    plugins,
+    skipVerify: values["skip-verify"] === true,
+    skipDesktop: values["skip-desktop"] === true,
+    idleTitle,
+    repeat,
+  });
   console.log(`gate:all 计划：${plugins.length} 个插件（${plugins.join(", ")}）`);
   for (const line of plan) console.log(`  ${line}`);
-  if (idleTitle !== null) console.log(`  桌面步骤前切到空闲会话「${idleTitle}」，结束后切回`);
   if (values["dry-run"] === true) return;
   if (values["skip-verify"] === true || values["skip-desktop"] === true) {
     console.log("注意：带了 --skip-verify / --skip-desktop，门禁不完整。");
@@ -360,26 +420,46 @@ const main = async () => {
       if (cdp !== undefined && idleTitle !== null) {
         await switchToTitle(cdp, idleTitle).catch(() => false);
       }
-      console.log(`\n▶ [4.${index}] pnpm smoke:${plugin}-desktop --require`);
-      const desktop = await run([`smoke:${plugin}-desktop`, "--require"]);
-      const counts = parseCounts(desktop.output);
-      const verdict = desktopGateVerdict(counts);
-      const countsText =
-        counts === undefined
-          ? "无计数行"
-          : `${counts.pass} PASS / ${counts.skip} SKIP / ${counts.fail} FAIL`;
-      if (desktop.code !== 0) {
-        console.error(`FAIL 桌面回归失败：${plugin}（${countsText}）`);
-        result.desktopOk = false;
-        result.detail = `桌面回归失败（${countsText}）`;
-      } else if (verdict !== "ok") {
-        console.error(
-          `FAIL 桌面回归判定：${plugin} → ${verdict === "missing-counts" ? "脚本没打印计数行" : "全 SKIP/零断言"}（${countsText}）`,
-        );
-        result.desktopOk = false;
-        result.detail = `桌面回归判定失败（${verdict}，${countsText}）`;
-      } else {
-        console.log(`✓ 桌面回归：${plugin}（${countsText}）`);
+      /** @type {{ pass: number, skip: number, fail: number } | undefined} */
+      let firstCounts;
+      for (let runIndex = 1; runIndex <= repeat; runIndex += 1) {
+        const suffix = repeat > 1 ? `（第 ${runIndex}/${repeat} 次）` : "";
+        console.log(`\n▶ [4.${index}] pnpm smoke:${plugin}-desktop --require${suffix}`);
+        const desktop = await run([`smoke:${plugin}-desktop`, "--require"]);
+        const counts = parseCounts(desktop.output);
+        const verdict = desktopGateVerdict(counts);
+        const countsText =
+          counts === undefined
+            ? "无计数行"
+            : `${counts.pass} PASS / ${counts.skip} SKIP / ${counts.fail} FAIL`;
+        if (desktop.code !== 0) {
+          console.error(`FAIL 桌面回归失败：${plugin}${suffix}（${countsText}）`);
+          result.desktopOk = false;
+          result.detail = `桌面回归失败（${countsText}）`;
+          break;
+        }
+        if (verdict !== "ok") {
+          console.error(
+            `FAIL 桌面回归判定：${plugin}${suffix} → ${verdict === "missing-counts" ? "脚本没打印计数行" : "全 SKIP/零断言"}（${countsText}）`,
+          );
+          result.desktopOk = false;
+          result.detail = `桌面回归判定失败（${verdict}，${countsText}）`;
+          break;
+        }
+        if (firstCounts === undefined) {
+          firstCounts = counts;
+        } else if (
+          counts !== undefined &&
+          (counts.pass !== firstCounts.pass ||
+            counts.skip !== firstCounts.skip ||
+            counts.fail !== firstCounts.fail)
+        ) {
+          // 数据相关分支（SKIP）几次之间可以不同；但任何一次 FAIL 都已经在上面中断。
+          console.log(
+            `  注意：第 ${runIndex} 次计数与第 1 次不同（${firstCounts.pass}/${firstCounts.skip}/${firstCounts.fail} → ${counts.pass}/${counts.skip}/${counts.fail}）——数据相关分支允许不同，不允许失败`,
+          );
+        }
+        console.log(`✓ 桌面回归：${plugin}${suffix}（${countsText}）`);
       }
     }
     results.push(result);
@@ -419,7 +499,9 @@ const main = async () => {
     process.exitCode = 1;
     return;
   }
-  console.log(`\nPASS 六/全部插件门禁全绿（${results.length} 个插件，${seconds}s）`);
+  console.log(
+    `\nPASS 六/全部插件门禁全绿（${results.length} 个插件，${seconds}s${repeat > 1 ? `，桌面每步跑 ${repeat} 次` : ""}）`,
+  );
 };
 
 if (isMain(import.meta.url)) await main();
