@@ -318,13 +318,16 @@ DSH_AGENT_TOOL_PATCH=/tmp/model-overlay.yml ZHINAO_API_KEY=<key> pnpm smoke:agen
 
 插件代码没有改动；这一版只验证「升级后仍然成立」。
 
-| 层                                            | 结果                                                                                             |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `node --test`（包内）                         | **86 pass / 0 fail**                                                                             |
-| `pnpm verify`                                 | 通过                                                                                             |
-| `pnpm probe:runtime`                          | **72/72 PASS**                                                                                   |
-| `pnpm smoke:session-delete`（web）            | **33/33 PASS**（临时 DSH home）                                                                  |
-| `pnpm smoke:session-delete-desktop --require` | **16 PASS + 2 SKIP**（只读；本机回收站为空，两条「工具条 / 条目布局」数据相关断言记 SKIP，见下） |
+| 层                                            | 结果                                                                                                                                                                                       |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `node --test`（包内）                         | **86 pass / 0 fail**                                                                                                                                                                       |
+| `pnpm verify`                                 | 通过                                                                                                                                                                                       |
+| `pnpm probe:runtime`                          | **72/72 PASS**                                                                                                                                                                             |
+| `pnpm smoke:session-delete`（web）            | **33/33 PASS**（临时 DSH home）                                                                                                                                                            |
+| `pnpm smoke:session-delete-desktop --require` | **16 PASS + 2 SKIP**（只读；本机回收站为空，两条「工具条 / 条目布局」数据相关断言记 SKIP，见下）                                                                                           |
+| `DEEPSEEK_API_KEY=… pnpm smoke:agent-tool`    | **通过**（2026-11-20 在 rc.5 上补跑）：真实模型走完 `session_delete` 两段式（plan → delete），回收站出现条目、审计记录 `operator=agent`；此前几轮因无凭据一直 SKIP，这一项不再是「未覆盖」 |
+
+**agent-tool 补跑（2026-11-20）**：`smoke:agent-tool` 需要真实模型凭据（脚本会复制 `~/.dsh/.credentials.yaml`，但 provider 的 `apiKeyEnv` 要环境变量）。这次用本机凭据在 rc.5 上补跑通过：headless 组合下模型两段式调用 `session_delete`（plan → delete），回收站出现条目、审计里 `operator=agent`。能力探测仍是 `minimal` 档（headless 没有 workspaceRegistry），归档/置顶/工作区记账/spill 按预期 skipped 并写进回执。
 
 **本轮发现并修了的假红**：回收站为空时，插件的面板只渲染空态，不渲染工具条与条目行，而脚本把这两条写成无条件断言，于是 `FAIL 回收站面板保留全选与批量操作`。这**不是**插件或 rc.5 的问题。修法只动脚本：按 `.dsh-sdel-row` 数量分支，空时 SKIP、非空时照旧断言（并去掉原先 `rows === 0` 直接算通过的假绿）；收尾补打印门禁依赖的 `N PASS / M SKIP / K FAIL`。详见 [runtime rc.5 §6.1](../runtime/0.2.2-rc.5.md#61-session-delete-桌面回归空回收站会假红)。
 
