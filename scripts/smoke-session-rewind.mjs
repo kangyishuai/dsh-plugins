@@ -146,14 +146,37 @@ const LABELS = {
   confirm: ["开始回退", "Start rewind"],
 };
 const matches = (text, list) => list.some((item) => String(text || "").trim() === item);
-const dismiss = async () => {
-  for (const label of ["继续", "开始使用", "跳过", "关闭"]) {
-    await page.evaluate((text) => {
-      const btn = [...document.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === text);
-      if (btn) btn.click();
-    }, label).catch(() => {});
-    await page.waitForTimeout(200);
+const noticeDialogOn = (/**
+ * @param {any} target
+ * @returns {Promise<string>}
+ */ target) => target.evaluate(() => {
+  const dialogs = [...document.querySelectorAll('[role="dialog"],[aria-modal="true"]')];
+  const dialog = dialogs.find((d) => /预览版说明|Preview notes|开始使用|Get started/i.test(d.textContent || ""));
+  return dialog ? (dialog.textContent || "").slice(0, 120) : "";
+});
+// 首启「预览版说明」可能比第一次点击晚一拍出现：轮询到它真正消失再继续。
+// 一次性点会漏关，弹窗盖住输入框/面板后整段断言连环红（2026-11-20 索引冒烟、advisor 冒烟都栽过）。
+const dismissNoticesOn = async (target) => {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if ((await noticeDialogOn(target).catch(() => "")) === "") return true;
+    await target.evaluate(() => {
+      const dialogs = [...document.querySelectorAll('[role="dialog"],[aria-modal="true"]')];
+      const dialog = dialogs.find((d) => /预览版说明|Preview notes|开始使用|Get started/i.test(d.textContent || ""));
+      if (!dialog) return false;
+      const buttons = [...dialog.querySelectorAll("button,[role=button]")];
+      const label = (b) => ((b.getAttribute("aria-label") || "") + " " + (b.textContent || "")).trim();
+      const button = buttons.find((b) => /^(继续|开始使用|跳过|关闭|Continue|Get started|Skip|Close)$/.test(label(b)))
+        || buttons.find((b) => (b.textContent || "").trim() === "");
+      if (!button) return false;
+      button.click();
+      return true;
+    }).catch(() => false);
+    await target.waitForTimeout(400);
   }
+  return (await noticeDialogOn(target).catch(() => "")) === "";
+};
+const dismiss = async () => {
+  await dismissNoticesOn(page);
   for (let i = 0; i < 3; i++) { await page.keyboard.press("Escape"); await page.waitForTimeout(150); }
 };
 const expandWorkspaces = () => page.evaluate(() => {
@@ -702,13 +725,7 @@ try {
   page2 = await task.newPage();
   await page2.goto(${JSON.stringify(url)});
   await page2.waitForTimeout(4500);
-  for (const label of ["继续", "开始使用", "跳过", "关闭"]) {
-    await page2.evaluate((text) => {
-      const btn = [...document.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === text);
-      if (btn) btn.click();
-    }, label).catch(() => {});
-    await page2.waitForTimeout(150);
-  }
+  await dismissNoticesOn(page2);
   await page2.evaluate(() => {
     for (const el of document.querySelectorAll('[data-row-key^="workspace:"][aria-expanded="false"]')) el.click();
   });
