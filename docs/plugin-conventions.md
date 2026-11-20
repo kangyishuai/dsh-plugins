@@ -133,7 +133,7 @@ packages/<name>/
 - `scripts/smoke-session-rewind-desktop.mjs`（25 项只读，2026-11-19 在 rc.5 实测 25/25；`--recall` 再加 7 项输入框召回；`--deep` 再加文件模式 e2e，合计 40 项）
 - `scripts/smoke-session-delete-desktop.mjs`（18 项只读，2026-11-19 在 rc.5 实测 **16 PASS + 2 SKIP**——本机回收站为空时，「保留全选与批量操作」「条目布局」是**数据相关分支**，空态下不渲染工具条/条目行，按 SKIP 记；非空时照旧断言。带 `--workspace` 时另有写文件段落。这条脚本 2026-11-19 修过一次假红，见 [runtime rc.5 §6.1](runtime/0.2.2-rc.5.md#61-session-delete-桌面回归空回收站会假红)）
 - `scripts/smoke-advisor-desktop.mjs`（20 项，2026-11-19 在 rc.5 实测 19 PASS + 1 SKIP；SKIP 是「该会话没有顾问记录」——脚本不制造徵询）
-- `scripts/smoke-next-step-desktop.mjs`（23 项只读，2026-11-19 在 rc.5 实测 21 PASS + 2 SKIP——SKIP 是数据相关分支「当前会话没有决策卡 / 只读模式不造卡」；`--deep` 另加发送链 e2e，合计项数以脚本输出为准）
+- `scripts/smoke-next-step-desktop.mjs`（22 项只读，2026-11-20 在 rc.5 实测 21 PASS + 1 SKIP——SKIP 是数据相关分支「该卡没有展开按钮」；**默认只读不点 ✕**（decision 是写操作、不可撤销，会让连跑不幂等），点 ✕ 归 `--deep`；胶囊按 1–2 粒断言）
 - `scripts/smoke-casefile-desktop.mjs`（15 项只读，2026-11-19 在 rc.5 实测 15/15；注意它结束时页面停在「案卷」主面板，串行跑别的桌面回归前先点回会话）
 - `scripts/smoke-btw-desktop.mjs`（19 项只读，2026-11-19 在 rc.5 实测 18 PASS + 1 SKIP；`--deep` 另跑真实 `/btw`，2026-11-20 在 rc.5 实测 **22 PASS + 1 SKIP**，真实数据根落下 `status=done` 记录）
 
