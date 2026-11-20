@@ -92,6 +92,7 @@ export function threadHistory(records, threadId, maxTurns = LIMITS.threadTurns) 
  *   cost: any,
  *   ms: number,
  *   at: number,
+ *   mode: string,
  *   status: string,
  * }}
  */
@@ -105,6 +106,8 @@ export function threadTurn(record) {
     cost: record?.cost ?? null,
     ms: Number(record?.ms ?? 0),
     at: Number(record?.at ?? 0),
+    // fork（全量父会话）或 bounded（spawn + 最近 N 条）；老记录为空 = fork。
+    mode: String(record?.mode ?? ""),
     status: String(record?.status ?? ""),
   };
 }

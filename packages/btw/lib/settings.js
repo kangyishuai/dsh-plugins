@@ -19,6 +19,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   historyLimit: LIMITS.perSessionRecords,
   /** 主对话里是否还回显完整答案；false = 只在旁问面板展示。 */
   echoAnswer: true,
+  /** 大会话里是否允许用 bounded（spawn + 最近 N 条）代替 full fork；默认关。 */
+  boundedContext: false,
 });
 
 /** @param {string} dataRoot @returns {string} */
@@ -29,7 +31,7 @@ export function settingsPath(dataRoot) {
 /**
  * 把任意输入夹紧成合法设置。
  * @param {any} raw
- * @returns {{ schemaVersion: number, allowedTools: string[], historyLimit: number, echoAnswer: boolean }}
+ * @returns {{ schemaVersion: number, allowedTools: string[], historyLimit: number, echoAnswer: boolean, boundedContext: boolean }}
  */
 export function sanitizeSettings(raw) {
   const input = raw !== null && typeof raw === "object" ? raw : {};
@@ -53,7 +55,15 @@ export function sanitizeSettings(raw) {
     : LIMITS.perSessionRecords;
   // 只有显式 false 关闭；缺省/other 值保持 true（旧设置文件与向后兼容）。
   const echoAnswer = input.echoAnswer === false ? false : true;
-  return { schemaVersion: SETTINGS_SCHEMA_VERSION, allowedTools, historyLimit, echoAnswer };
+  // bounded 是 opt-in：只有显式 true 才开，缺省/旧设置保持关闭。
+  const boundedContext = input.boundedContext === true;
+  return {
+    schemaVersion: SETTINGS_SCHEMA_VERSION,
+    allowedTools,
+    historyLimit,
+    echoAnswer,
+    boundedContext,
+  };
 }
 
 /**
@@ -70,13 +80,14 @@ export function buildSettingsPatch(input) {
   if (source.allowedTools !== undefined) patch.allowedTools = source.allowedTools;
   if (source.historyLimit !== undefined) patch.historyLimit = source.historyLimit;
   if (source.echoAnswer !== undefined) patch.echoAnswer = source.echoAnswer;
+  if (source.boundedContext !== undefined) patch.boundedContext = source.boundedContext;
   return patch;
 }
 
 /**
  * 读设置；文件缺失、坏 JSON、坏字段一律静默回落到默认值。
  * @param {string} dataRoot
- * @returns {Promise<{ schemaVersion: number, allowedTools: string[], historyLimit: number, echoAnswer: boolean }>}
+ * @returns {Promise<{ schemaVersion: number, allowedTools: string[], historyLimit: number, echoAnswer: boolean, boundedContext: boolean }>}
  */
 export async function loadSettings(dataRoot) {
   let text;
@@ -96,7 +107,7 @@ export async function loadSettings(dataRoot) {
  * 原子写设置（先写临时文件再 rename）。
  * @param {string} dataRoot
  * @param {any} patch 只合并已知字段
- * @returns {Promise<{ schemaVersion: number, allowedTools: string[], historyLimit: number, echoAnswer: boolean }>}
+ * @returns {Promise<{ schemaVersion: number, allowedTools: string[], historyLimit: number, echoAnswer: boolean, boundedContext: boolean }>}
  */
 export async function saveSettings(dataRoot, patch) {
   const current = await loadSettings(dataRoot);

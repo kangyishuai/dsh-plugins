@@ -101,6 +101,9 @@ window.__ModuleLoader__.load({
       "settings.mode": "模式",
       "settings.readOnly": "只读",
       "settings.echo": "主对话显示完整答案",
+      "settings.bounded": "大会话用精简上下文（bounded）",
+      "settings.boundedHint":
+        "仅当会话上下文超过 400K tokens 时启用：只把最近 12 条消息交给 spawn 子代理。成本封顶，但可能答不全；默认关。",
       "settings.echoHint": "关闭后只在旁问面板展示，/btw 命令只回一行提示。",
     };
     const en = {
@@ -1129,15 +1132,21 @@ window.__ModuleLoader__.load({
           el.scrollTop = el.scrollHeight;
         }, [threads, liveRuns]);
 
-        const metaTextOf = (/** @type {any} */ cost, /** @type {number} */ ms) => {
+        const metaTextOf = (
+          /** @type {any} */ cost,
+          /** @type {number} */ ms,
+          /** @type {string} */ mode,
+        ) => {
+          const bounded = mode === "bounded" ? " · bounded" : "";
           if (cost && typeof cost === "object") {
-            return fmt(t("cost"), {
+            return `${fmt(t("cost"), {
               newTokens: formatTokens(cost.inputTokens),
               cachedTokens: formatTokens(cost.cacheReadTokens),
               ms: formatDuration(ms),
-            });
+            })}${bounded}`;
           }
-          return ms > 0 ? formatDuration(ms) : "";
+          const duration = ms > 0 ? formatDuration(ms) : "";
+          return duration === "" ? "" : `${duration}${bounded}`;
         };
 
         /**
@@ -1386,7 +1395,11 @@ window.__ModuleLoader__.load({
                     )
                   : null,
                 (() => {
-                  const meta = metaTextOf(item?.cost, Number(item?.ms ?? 0));
+                  const meta = metaTextOf(
+                    item?.cost,
+                    Number(item?.ms ?? 0),
+                    String(item?.mode ?? ""),
+                  );
                   return meta === ""
                     ? null
                     : h("div", { className: "dsh-btw-meta", "data-btw-meta": "true" }, meta);
@@ -1777,6 +1790,7 @@ window.__ModuleLoader__.load({
         const [tools, setTools] = React.useState("");
         const [limit, setLimit] = React.useState("");
         const [echo, setEcho] = React.useState(true);
+        const [bounded, setBounded] = React.useState(false);
         const [saving, setSaving] = React.useState(false);
         const [notice, setNotice] = React.useState("");
         const [expanded, setExpanded] = React.useState(false);
@@ -1787,6 +1801,7 @@ window.__ModuleLoader__.load({
           setTools(Array.isArray(value.allowedTools) ? value.allowedTools.join(", ") : "");
           setLimit(String(value.historyLimit ?? ""));
           setEcho(value.echoAnswer !== false);
+          setBounded(value.boundedContext === true);
         }, []);
 
         React.useEffect(() => {
@@ -1799,7 +1814,8 @@ window.__ModuleLoader__.load({
           loaded !== null &&
           (tools !== (loaded.allowedTools ?? []).join(", ") ||
             limit !== String(loaded.historyLimit ?? "") ||
-            echo !== (loaded.echoAnswer !== false));
+            echo !== (loaded.echoAnswer !== false) ||
+            bounded !== (loaded.boundedContext === true));
 
         const save = async () => {
           const call =
@@ -1808,7 +1824,12 @@ window.__ModuleLoader__.load({
           setSaving(true);
           setNotice("");
           const next = await Promise.resolve(
-            call({ allowedTools: tools, historyLimit: Number(limit), echoAnswer: echo }),
+            call({
+              allowedTools: tools,
+              historyLimit: Number(limit),
+              echoAnswer: echo,
+              boundedContext: bounded,
+            }),
           ).catch(() => undefined);
           setSaving(false);
           if (next && typeof next === "object") {
@@ -1900,6 +1921,21 @@ window.__ModuleLoader__.load({
             ? h(
                 "div",
                 { "data-btw-settings-extra": "true" },
+                h(
+                  "div",
+                  { className: "dsh-btw-setrow" },
+                  h("span", { className: "dsh-btw-setlabel" }, t("settings.bounded")),
+                  h("input", {
+                    type: "checkbox",
+                    "data-btw-setting-bounded": "true",
+                    "aria-label": t("settings.bounded"),
+                    title: t("settings.boundedHint"),
+                    checked: bounded,
+                    onChange: (/** @type {any} */ event) =>
+                      setBounded(event?.target?.checked === true),
+                  }),
+                ),
+                h("div", { className: "dsh-btw-meta" }, t("settings.boundedHint")),
                 row(
                   t("settings.limit"),
                   h("input", {

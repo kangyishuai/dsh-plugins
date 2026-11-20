@@ -80,6 +80,8 @@ export function makeReadOnlyGuard(allowedTools) {
  *   signal?: AbortSignal,
  *   usageBySession: Map<string, Usage>,
  *   scope?: string,
+ *   provider?: "fork" | "spawn" | string,
+ *   prompt?: { type: "text", text: string }[],
  *   workspaceRegistry?: any,
  *   now?: () => number,
  *   onChild?: (childId: string) => void,
@@ -96,6 +98,8 @@ export async function runSideQuestion(input) {
     usageBySession,
     workspaceRegistry,
   } = input;
+  const provider =
+    typeof input.provider === "string" && input.provider !== "" ? input.provider : "fork";
   const now = input.now ?? (() => Date.now());
   const startedAt = now();
   const subagents = ctx?.subagents;
@@ -114,9 +118,12 @@ export async function runSideQuestion(input) {
   let releaseGuard;
   try {
     activation = await subagents.startActivation({
-      provider: "fork",
+      provider,
       label: `btw: ${clip(question, 40).text}`,
-      prompt: buildSideQuestionPrompt(question, history, String(input.scope ?? "")),
+      prompt:
+        Array.isArray(input.prompt) && input.prompt.length > 0
+          ? input.prompt
+          : buildSideQuestionPrompt(question, history, String(input.scope ?? "")),
       parent: agent,
       signal: controller.signal,
       delivery: "caller",

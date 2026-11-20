@@ -83,11 +83,12 @@ dsh plugin --profile desktop add @kangyishuai/dsh-btw
 
 运行期设置（在**设置 → 旁问**里改，落在 `<dataRoot>/btw/settings.json`）：
 
-| 键             | 默认   | 含义                                             |
-| -------------- | ------ | ------------------------------------------------ |
-| `allowedTools` | `[]`   | 非空时覆盖上面的插件配置。                       |
-| `historyLimit` | `50`   | 每会话保留的旁问条数（1–200）。                  |
-| `echoAnswer`   | `true` | 主对话是否回显完整答案；关闭后只在旁问面板展示。 |
+| 键               | 默认    | 含义                                                                                                               |
+| ---------------- | ------- | ------------------------------------------------------------------------------------------------------------------ |
+| `allowedTools`   | `[]`    | 非空时覆盖上面的插件配置。                                                                                         |
+| `historyLimit`   | `50`    | 每会话保留的旁问条数（1–200）。                                                                                    |
+| `echoAnswer`     | `true`  | 主对话是否回显完整答案；关闭后只在旁问面板展示。                                                                   |
+| `boundedContext` | `false` | 会话上下文超过 400K tokens 时，改用 spawn 子代理只带最近 12 条消息，不为整段父会话付费。opt-in；可能丢较早上下文。 |
 
 设置文件每次使用前重读，改完不需要重启宿主。
 
@@ -103,6 +104,7 @@ dsh plugin --profile desktop add @kangyishuai/dsh-btw
 - **会写** `<dataRoot>/btw/<父会话id>.jsonl`（每会话最多 50 条，原子替换）。**绝不**把主对话内容复制到磁盘。
 - **只读是运行期强制的**，不靠提示词：旁问发起的工具调用会带着面向模型的原因被拒绝。
 - **超大上下文会话会给成本量级提示**：父会话上下文超过 250K tokens（宿主 contextPressure）时，面板顶部显示一行警告（预计为上下文的 0.75–1.2 倍）并带上本会话上次旁问的真实 prompt 总量，`/btw` 结果末尾也会追加同一提示；**不阻断**提问。
+- **可选的 bounded 模式（`boundedContext`）**：上下文超过 400K 时，可以让旁问跑在 spawn 子代理上，只带最近 12 条 user/assistant 消息（单条 ≤700 字、总 ≤4000 字）+ 本次问题。成本封顶（同会话实测约 21K tokens，对比 full fork 的 762K），但会丢较早上下文，答案标记 `bounded`；默认关，且该模式不复用父会话前缀缓存。
 
 ## 兼容性
 
@@ -112,6 +114,7 @@ dsh plugin --profile desktop add @kangyishuai/dsh-btw
 | 0.6.0 | 0.2.2-rc.5                                                                   |
 | 0.6.1 | 0.2.2-rc.5                                                                   |
 | 0.6.2 | 0.2.2-rc.5（发布后 `--npm` web 复验 + 线上索引 13/13 + live 桌面重启后复验） |
+| 0.6.3 | 0.2.2-rc.5（web 冒烟 + 临时宿主真实大会话 bounded e2e；桌面待重启复验）      |
 
 底层宿主 seam（busy 时命令派发、fork 缓存复用、`tools.guard`、`workspaceRegistry.archiveSession`）已在 DSH 0.2.2-rc.3 上实测，0.2.2-rc.5 逐包 diff 复核**未变**（[runtime rc.5](../../docs/runtime/0.2.2-rc.5.md)：43 个包里本插件用到的 seam 一个都没动）。
 

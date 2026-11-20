@@ -391,6 +391,32 @@ CDP `Debugger.getScriptSource` 抓到**已执行**的 btw bundle 里含 `data-bt
 
 这也再次验证了 client bundle 必须重启才会换（runtime rc.5 §8.2）。
 
+## 0.6.3 bounded-context（ADR-0022 实现，2026-11-20）
+
+**行为（默认关，opt-in）**：
+
+- 设置项 `boundedContext`（设置分节「更多设置」里的复选框，默认 false）。开启后，只有当父会话
+  `contextPressure` **≥ 400K tokens**（`LIMITS.boundedTriggerTokens`）时才走 bounded；其余情况仍 full fork。
+- bounded 路径：`subagents.startActivation({ provider: "spawn", … })` + digest prompt。digest 取父会话
+  最近 **12 条** user/assistant 文本（单条 ≤700 字符、总 ≤4000 字符），过滤 system-reminder、工具调用/
+  工具结果、非 user 来源的控制消息；prompt 里明确写「上下文被裁剪，缺信息请直接说」。
+- 答案 meta 与面板 meta 都带 `· bounded` 标记；bounded 成功结果**不再追加** fork 成本警告（成本已封顶）。
+- 线程追问：bounded 同样把该线程之前的旁问 Q/A 带进 prompt；digest 为空（没有可用消息）时安全回退 full fork。
+- spawn 不是 fork：不继承父会话、不复用父会话前缀缓存；这是 opt-in 的取舍（ADR-0022）。
+
+**验证**：
+
+| 检查                           | 结果                                                                                                                                                                                                              |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 单测                           | **75 pass / 0 fail**（新增 5 条 `lib/bounded.js` 纯逻辑 + settings `boundedContext` 断言）                                                                                                                        |
+| `pnpm verify`                  | 通过（含 check:docs / check:public）                                                                                                                                                                              |
+| `pnpm smoke:btw` / `--deep`    | 默认关，计数与 0.6.2 一致（15/3/0、30/1/0）                                                                                                                                                                       |
+| 临时宿主真实大会话 bounded e2e | 父会话 `contextPressure ≈ 668K`、`boundedContext: true`、`/btw reply with exactly OK`：record `mode="bounded"`、`cost.totalTokens=21,503`（同会话 fork 实测为 762,526）、命令结果含 `· bounded`；**1 次模型调用** |
+| 桌面端                         | 需重启桌面版才载入 0.6.3 字节（runtime rc.5 §8.2）；默认关，重启前行为不变                                                                                                                                        |
+
+**为什么只做 opt-in**：bounded 会丢上下文、且 spawn 不共享父会话缓存；默认开启会让「同样一句 `/btw`」
+时而全量时而裁剪，答案质量不可解释（见 [ADR-0022](../adr/0022-btw-bounded-context-cost.md)）。
+
 ## v0.2 发版就绪度（2026-11-17，变基到合并后的 main 之后重验）
 
 ```
