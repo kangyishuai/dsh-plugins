@@ -324,6 +324,28 @@ export function checkRepo(root = REPO_ROOT) {
       });
     }
   }
+
+  // 桌面回归脚本必须打印 `N PASS / M SKIP / K FAIL`：gate.mjs 靠这一行识别「跑过但零断言」
+  // 的假绿；2026-11-20 之前有五条脚本漏打，门禁的假绿防线对它们等于不存在。这里做成静态检查，
+  // 新脚本漏了会在 `pnpm check` / CI 直接拦住，而不是等下一次升级才发现。
+  /** @type {Map<string, string>} name → plugin 目录（用于把问题挂到插件名下） */
+  const desktopSmokeOwner = new Map();
+  for (const dir of listPluginDirs(root)) desktopSmokeOwner.set(`smoke-${dir}-desktop.mjs`, dir);
+  const scriptsDir = join(root, "scripts");
+  if (existsSync(scriptsDir)) {
+    for (const name of readdirSync(scriptsDir)) {
+      if (!/^smoke-.+-desktop\.mjs$/u.test(name)) continue;
+      const src = readFileSync(join(scriptsDir, name), "utf8");
+      if (!/PASS\s*\/\s*.*SKIP\s*\/\s*.*FAIL/u.test(src)) {
+        issues.push({
+          level: "error",
+          plugin: desktopSmokeOwner.get(name) ?? "scripts",
+          message: `${name} 没有打印 \`N PASS / M SKIP / K FAIL\` 计数行（gate.mjs 靠它判断假绿，见 docs/plugin-conventions.md §6.1）`,
+        });
+      }
+    }
+  }
+
   return issues;
 }
 

@@ -11,6 +11,14 @@
 //   2. 搜索与条目详情可用（详情读的是 npm 上的 README）；
 //   3. 格式坏掉的索引会被宿主拒收（`plugin-market/invalid-index`），而不是静默显示空列表。
 //
+// 环境前提（2026-11-20 实测补充，踩过两次）：
+// - **发现页必须是全新的**：临时 profile 是从真实 desktop profile 复制的，而真实 profile 的
+//   `cordis.patch.yml` 里可能已经有 `plugin-market` 的 `config.indexes`（用户自己加过索引源）。
+//   继承下来会让「发现页空状态 / 添加索引源」两步全部错位（URL 被填进搜索框，后面连环红），
+//   所以下面会把这条行整条删掉。
+// - **首启「预览版说明」必须关掉**：它会盖住发现页。早先只在页面刚加载时点一次「继续」，
+//   弹窗稍晚出现就漏关；现在用 dismissNotice() 轮询到它消失，并作为一条断言。
+//
 // 边界（有意为之）：
 // - **不点「安装」**：本冒烟只读，不会往临时 profile 里装任何东西，也不会发起模型调用。
 // - 需要联网：要读 npm registry 的 packument 与 jsDelivr 上的 README。
@@ -201,6 +209,29 @@ if (!ready) { console.log("SMOKE_RESULT " + JSON.stringify({ checks }) + " END")
 // 临时 profile 没有模型凭据，首启会弹「开始使用」；关掉它，截图才不被挡住。
 await closeDialog().catch(() => {});
 await sleep(400);
+// 首启「预览版说明」可能比第一次点击晚一拍出现：轮询关掉它，并单独断言。
+const dismissNotice = async () => {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const present = await page.evaluate(() => /预览版说明/.test(document.body ? document.body.innerText : ""));
+    if (!present) return true;
+    const clicked = await page.evaluate(() => {
+      const dialogs = [...document.querySelectorAll('[role="dialog"],[aria-modal="true"]')];
+      const top = dialogs.find((d) => /预览版说明/.test(d.textContent || "")) || dialogs[dialogs.length - 1];
+      if (!top) return false;
+      const buttons = [...top.querySelectorAll("button")];
+      const button = buttons.find((b) => /继续|知道了|关闭/.test((b.textContent || "").trim()))
+        || buttons.find((b) => (b.textContent || "").trim() === "");
+      if (!button) return false;
+      button.click();
+      return true;
+    });
+    if (!clicked) await click("继续").catch(() => {});
+    await sleep(500);
+  }
+  return !(await page.evaluate(() => /预览版说明/.test(document.body ? document.body.innerText : "")));
+};
+const noticeClosed = await dismissNotice();
+check("首启「预览版说明」已关闭（不挡发现页）", noticeClosed, "");
 
 // 打开侧栏的「插件」页
 const openedPlugins = await click("插件");
@@ -217,6 +248,7 @@ await click("发现");
 await sleep(1200);
 await click("稍后配置").catch(() => {});
 await sleep(300);
+await dismissNotice();
 const emptyState = await waitText("添加索引源", 8000);
 check("发现页有空状态与「添加索引源」入口", emptyState, "");
 await shot("02-empty");
@@ -350,6 +382,24 @@ const main = async () => {
     await cp(join(realHome, ".dsh", "profiles", "desktop"), profile, { recursive: true });
     await rm(join(profile, "node_modules"), { recursive: true, force: true });
     await rm(join(profile, "pnpm-lock.yaml"), { force: true });
+    // 真实 profile 的 patch 可能带 `- id: plugin-market` + `config.indexes`（用户加过索引源）。
+    // 继承下来会让「全新发现页」这一前提不成立：整条删掉，交给 market bundle 用默认配置挂载。
+    const patchPath = join(profile, "cordis.patch.yml");
+    const patchText = await readFile(patchPath, "utf8").catch(() => "");
+    if (patchText.includes("plugin-market")) {
+      const kept = [];
+      let skipping = false;
+      for (const line of patchText.split("\n")) {
+        if (/^- id: plugin-market\s*$/.test(line)) {
+          skipping = true;
+          continue;
+        }
+        if (skipping && /^- /.test(line)) skipping = false;
+        if (!skipping) kept.push(line);
+      }
+      await writeFile(patchPath, kept.join("\n"), "utf8");
+      console.log("已从临时 profile 的 patch 里删掉 plugin-market 行（避免继承用户的索引源）");
+    }
 
     const profilePath = join(profile, "package.json");
     const profileJson = JSON.parse(await readFile(profilePath, "utf8"));

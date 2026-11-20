@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { isVacuousPass, parseCounts } from "../gate.mjs";
+import { desktopGateVerdict, isVacuousPass, parseCounts } from "../gate.mjs";
 
 test("parseCounts：解析标准收尾行", () => {
   assert.deepEqual(parseCounts("7 PASS / 3 SKIP / 0 FAIL（默认，未发起模型调用）"), {
@@ -47,6 +47,20 @@ test("parseCounts：没有计数行返回 undefined", () => {
   assert.equal(parseCounts("SKIP 桌面交互 — 当前会话有运行中的回合"), undefined);
   assert.equal(parseCounts(undefined), undefined);
   assert.equal(parseCounts(null), undefined);
+});
+
+test("desktopGateVerdict：缺计数行判失败（2026-11-20 补的洞）", () => {
+  // 没有计数行时 isVacuousPass 返回 false，旧门禁会直接放行——这就是那个洞。
+  assert.equal(isVacuousPass(undefined), false);
+  assert.equal(desktopGateVerdict(undefined), "missing-counts");
+});
+
+test("desktopGateVerdict：全 SKIP 判假绿，跑过断言才放行", () => {
+  assert.equal(desktopGateVerdict({ pass: 0, skip: 1, fail: 0 }), "vacuous");
+  assert.equal(desktopGateVerdict({ pass: 0, skip: 5, fail: 0 }), "vacuous");
+  assert.equal(desktopGateVerdict({ pass: 4, skip: 2, fail: 0 }), "ok");
+  assert.equal(desktopGateVerdict({ pass: 0, skip: 0, fail: 1 }), "ok", "失败交给退出码处理");
+  assert.equal(desktopGateVerdict(parseCounts("16 PASS / 2 SKIP / 0 FAIL")), "ok");
 });
 
 test("isVacuousPass：全 SKIP 判为假绿，跑过断言不算", () => {

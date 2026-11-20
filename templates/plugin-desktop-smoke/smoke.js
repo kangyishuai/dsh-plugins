@@ -170,6 +170,9 @@ const main = async () => {
   } else {
     console.log(`PASS 全部 ${checks.length} 项桌面回归断言通过`);
   }
+  // 门禁靠这一行判定「跑过但一条断言都没执行」（docs/plugin-conventions.md §6.1）。
+  // 格式不能改：`N PASS / M SKIP / K FAIL`；`pnpm check` 会静态检查这一行是否存在。
+  console.log(`${checks.length - failed} PASS / 0 SKIP / ${failed} FAIL`);
 };
 
 await main();
