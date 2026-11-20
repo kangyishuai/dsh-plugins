@@ -250,12 +250,26 @@ const purgeLoopbackCookies = async () => {
 await purgeLoopbackCookies();
 await page.goto(${JSON.stringify(url)});
 await page.waitForTimeout(5000);
-for (const label of ["继续", "开始使用", "跳过", "关闭"]) {
-  await page.evaluate((text) => {
-    const btn = [...document.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === text);
-    if (btn) btn.click();
-  }, label).catch(() => {});
-  await page.waitForTimeout(150);
+// 首启「预览版说明」可能晚一拍出现：轮询到真正消失（一次性点会漏关，截图会带着弹窗）。
+const noticeDialog = () => page.evaluate(() => {
+  const dialogs = [...document.querySelectorAll('[role="dialog"],[aria-modal="true"]')];
+  const dialog = dialogs.find((d) => /预览版说明|Preview notes|开始使用|Get started/i.test(d.textContent || ""));
+  return dialog ? (dialog.textContent || "").slice(0, 120) : "";
+});
+for (let attempt = 0; attempt < 10; attempt += 1) {
+  if ((await noticeDialog()) === "") break;
+  await page.evaluate(() => {
+    const dialogs = [...document.querySelectorAll('[role="dialog"],[aria-modal="true"]')];
+    const dialog = dialogs.find((d) => /预览版说明|Preview notes|开始使用|Get started/i.test(d.textContent || ""));
+    if (!dialog) return false;
+    const buttons = [...dialog.querySelectorAll("button,[role=button]")];
+    const button = buttons.find((b) => /^(继续|开始使用|跳过|关闭|Continue|Get started|Skip|Close)$/.test((b.textContent || "").trim()))
+      || buttons.find((b) => (b.textContent || "").trim() === "");
+    if (!button) return false;
+    button.click();
+    return true;
+  }).catch(() => false);
+  await page.waitForTimeout(400);
 }
 for (let i = 0; i < 3; i++) { await page.keyboard.press("Escape"); await page.waitForTimeout(150); }
 await page.evaluate(() => {

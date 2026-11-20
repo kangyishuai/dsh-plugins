@@ -173,16 +173,39 @@ const shot = async (name) => {
   if (DEMO) await anonymize().catch((error) => console.log("DEBUG anonymize", String(error).slice(0, 160)));
   await page.screenshot({ path: SHOTS + "/" + name + ".png" });
 };
+const noticeDialogOn = (/**
+ * @param {any} target
+ * @returns {Promise<string>}
+ */ target) => target.evaluate(() => {
+  const dialogs = [...document.querySelectorAll('[role="dialog"],[aria-modal="true"]')];
+  const dialog = dialogs.find((d) => /预览版说明|Preview notes|开始使用|Get started/i.test(d.textContent || ""));
+  return dialog ? (dialog.textContent || "").slice(0, 120) : "";
+});
+// 首启「预览版说明」可能比第一次点击晚一拍出现：轮询到它真正消失再继续。
+// 一次性点会漏关，弹窗盖住输入框/面板后整段断言连环红（2026-11-20 索引冒烟、advisor 冒烟都栽过）。
+const dismissNoticesOn = async (target) => {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if ((await noticeDialogOn(target).catch(() => "")) === "") return true;
+    await target.evaluate(() => {
+      const dialogs = [...document.querySelectorAll('[role="dialog"],[aria-modal="true"]')];
+      const dialog = dialogs.find((d) => /预览版说明|Preview notes|开始使用|Get started/i.test(d.textContent || ""));
+      if (!dialog) return false;
+      const buttons = [...dialog.querySelectorAll("button,[role=button]")];
+      const label = (b) => ((b.getAttribute("aria-label") || "") + " " + (b.textContent || "")).trim();
+      const button = buttons.find((b) => /^(继续|开始使用|跳过|关闭|Continue|Get started|Skip|Close)$/.test(label(b)))
+        || buttons.find((b) => (b.textContent || "").trim() === "");
+      if (!button) return false;
+      button.click();
+      return true;
+    }).catch(() => false);
+    await target.waitForTimeout(400);
+  }
+  return (await noticeDialogOn(target).catch(() => "")) === "";
+};
 const dismiss = async () => {
   // 首启的「预览版说明 / 登录」弹层要点按钮关掉，Esc 不一定管用；
-  // 它们的遮罩会把我们的浮层压暗，也会挡住真实指针事件。
-  for (const label of ["继续", "开始使用", "跳过", "关闭"]) {
-    await page.evaluate((text) => {
-      const btn = [...document.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === text);
-      if (btn) btn.click();
-    }, label).catch(() => {});
-    await page.waitForTimeout(250);
-  }
+  // 它们的遮罩会把我们的浮层压暗，也会挡住真实指针事件。轮询到它真正消失（见上面的说明）。
+  await dismissNoticesOn(page);
   for (let i = 0; i < 3; i++) { await page.keyboard.press("Escape"); await page.waitForTimeout(200); }
 };
 // 侧栏第一行可能是「新会话」：它尚未落盘，data-row-key 也是 session:，

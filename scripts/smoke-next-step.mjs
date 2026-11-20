@@ -141,13 +141,28 @@ const skip = (name, reason) => checks.push({ name, ok: true, skip: true, detail:
 const shot = (name) => page.screenshot({ path: SHOTS + "/" + name + ".png" });
 
 // —— 页面辅助（全部只读 DOM / 真实按键） ——
+const noticeDialogOn = (target) => target.evaluate(() => {
+  const dialogs = [...document.querySelectorAll('[role="dialog"],[aria-modal="true"]')];
+  const dialog = dialogs.find((d) => /预览版说明|Preview notes|开始使用|Get started/i.test(d.textContent || ""));
+  return dialog ? (dialog.textContent || "").slice(0, 120) : "";
+});
 const dismissOnboarding = async () => {
-  for (const label of ["继续", "开始使用", "跳过", "关闭"]) {
-    await page.evaluate((text) => {
-      const btn = [...document.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === text);
-      if (btn) btn.click();
-    }, label).catch(() => {});
-    await page.waitForTimeout(150);
+  // 首启「预览版说明」可能晚一拍出现：轮询删除，别只点一次（2026-11-20 同类竞态连中两次）。
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if ((await noticeDialogOn(page).catch(() => "")) === "") break;
+    await page.evaluate(() => {
+      const dialogs = [...document.querySelectorAll('[role="dialog"],[aria-modal="true"]')];
+      const dialog = dialogs.find((d) => /预览版说明|Preview notes|开始使用|Get started/i.test(d.textContent || ""));
+      if (!dialog) return false;
+      const buttons = [...dialog.querySelectorAll("button,[role=button]")];
+      const label = (b) => ((b.getAttribute("aria-label") || "") + " " + (b.textContent || "")).trim();
+      const button = buttons.find((b) => /^(继续|开始使用|跳过|关闭|Continue|Get started|Skip|Close)$/.test(label(b)))
+        || buttons.find((b) => (b.textContent || "").trim() === "");
+      if (!button) return false;
+      button.click();
+      return true;
+    }).catch(() => false);
+    await page.waitForTimeout(400);
   }
   for (let i = 0; i < 2; i++) { await page.keyboard.press("Escape"); await page.waitForTimeout(120); }
 };
