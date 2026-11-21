@@ -980,6 +980,14 @@ window.__ModuleLoader__.load({
                       .filter((part) => part !== "")
                       .join(" · ") || "—",
                   ),
+                  // 可观测摘要（规格 §7.7.3）：步骤/工具/diff/tokens，缺失显式 n/a
+                  row.summary
+                    ? h(
+                        "span",
+                        { style: styles.meta, "data-projects-thread-stats": "" },
+                        String(row.summary),
+                      )
+                    : null,
                 ),
               ),
             ),

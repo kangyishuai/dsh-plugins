@@ -24,6 +24,7 @@ import { runCommand } from "./exec.js";
 import { executeApprovalCore } from "./execute.js";
 import { checkPreapproval } from "./executor.js";
 import { appendEntry } from "./memory.js";
+import { initialStats, observeEvent, parseNumstat, summarizeForRow } from "./observability.js";
 import { initialView, reduce, sortRows } from "./overview.js";
 import { resolveDataRoot } from "./paths.js";
 import { buildPersona } from "./persona.js";
@@ -147,6 +148,8 @@ export class ProjectsService extends TypertRemoteService {
     this.coordinatorAgents = new Map();
     /** 协调器工具注册的清理函数。 @type {Map<string, (() => void)[]>} */
     this.coordinatorToolDisposers = new Map();
+    /** 每个线程会话的可观测统计（规格 §7.7.3：从事件累积，重启后从 0 起算）。 @type {Map<string, any>} */
+    this.stats = new Map();
     /** 每个线程会话最近一条 assistant 文本（唤醒信封要带它，M0 实测不带模型读不到结果）。 @type {Map<string, string>} */
     this.lastMessages = new Map();
     /** @type {any} */
@@ -265,6 +268,7 @@ export class ProjectsService extends TypertRemoteService {
       if (sessionId === "" || !this.store) return;
       // 只跟项目线程，其它会话零开销
       if (!this.store.projectOfSession(sessionId)) return;
+      this.stats.set(sessionId, observeEvent(this.stats.get(sessionId) ?? initialStats(), event));
       const previous = this.views.get(sessionId) ?? initialView();
       const next = reduce(previous, event);
       this.views.set(sessionId, next);
@@ -1288,6 +1292,36 @@ export class ProjectsService extends TypertRemoteService {
   }
 
   /**
+   * 单个线程的可观测明细（规格 §7.7.3）：事件累积的步骤/命令/tokens，加 worktree 的 diff 摘要。
+   * diff 用 `git diff --numstat <base>..HEAD` 现算；拿不到就给 null，让面板显示 n/a。
+   * @param {string} projectId
+   * @param {string} sessionId
+   */
+  async threadStats(projectId, sessionId) {
+    const store = this.requireStore();
+    const thread = store
+      .listThreads(projectId)
+      .find((/** @type {any} */ item) => item.sessionId === sessionId);
+    if (!thread) throw new Error(`projects: unknown thread ${sessionId}`);
+    const stats = this.stats.get(sessionId) ?? initialStats();
+
+    let diff = null;
+    const worktree = typeof thread.worktree === "string" ? thread.worktree : "";
+    if (worktree !== "") {
+      const base = thread.baseSha ?? "HEAD~1";
+      const numstat = await runGit(["diff", "--numstat", `${base}..HEAD`], worktree);
+      if (numstat.code === 0) diff = parseNumstat(numstat.stdout);
+    }
+
+    return {
+      sessionId,
+      stats,
+      diff,
+      summary: summarizeForRow({ stats, diff }),
+    };
+  }
+
+  /**
    * 待审批队列（面板用）。
    * @param {string|undefined} projectId
    */
@@ -1552,12 +1586,17 @@ export class ProjectsService extends TypertRemoteService {
   progress(projectId) {
     const store = this.requireStore();
     const threads = store.listThreads(projectId);
-    const rows = threads.map((/** @type {any} */ thread) => ({
-      sessionId: thread.sessionId,
-      branch: thread.branch ?? null,
-      worktree: thread.worktree ?? null,
-      view: this.views.get(thread.sessionId) ?? initialView(),
-    }));
+    const rows = threads.map((/** @type {any} */ thread) => {
+      const stats = this.stats.get(thread.sessionId) ?? initialStats();
+      return {
+        sessionId: thread.sessionId,
+        branch: thread.branch ?? null,
+        worktree: thread.worktree ?? null,
+        view: this.views.get(thread.sessionId) ?? initialView(),
+        stats: { ...stats, commands: stats.commands.slice(-3) },
+        summary: summarizeForRow({ stats }),
+      };
+    });
     const sorted = sortRows(rows);
     /** @type {Record<string, number>} */
     const counts = { "waiting-user": 0, failed: 0, working: 0, done: 0, idle: 0 };
@@ -1705,6 +1744,7 @@ declareRemote(ProjectsService, "detachThread");
 declareRemote(ProjectsService, "createThread");
 declareRemote(ProjectsService, "reclaimThread");
 declareRemote(ProjectsService, "progress");
+declareRemote(ProjectsService, "threadStats");
 declareRemote(ProjectsService, "previewRoute");
 declareRemote(ProjectsService, "route");
 declareRemote(ProjectsService, "requestAction");
