@@ -159,3 +159,27 @@ export function shouldDeleteBranch(input) {
 export function planDeleteBranch(branch) {
   return ["branch", "-d", String(branch)];
 }
+
+/**
+ * 删分支判据 v2（规格 §7.7.5）。
+ *
+ * 为什么不用 `git branch --merged`：它在两个方向都会误判（未提交的新分支被当"已合并"、
+ * squash 合并的分支被当"未合并"，见 docs/runtime §11.15）。改成三条互相独立的判据：
+ *  ① 分支是插件建的（`dsh/` 前缀且与线程记录一致）
+ *  ② 该线程**确实有合并结果**（记录里有 mergedAt，或 GitHub 上 PR 为 MERGED）
+ *  ③ 本地没有未推送提交：`git rev-list --count <branch> --not --remotes` 为 0
+ *
+ * @param {{ branch?: string|null, threadBranch?: string|null, merged?: boolean, unpushedCommits?: number }} input
+ * @returns {{ ok: boolean, reason: string }}
+ */
+export function shouldDeleteBranchV2(input) {
+  const branch = String(input?.branch ?? "").trim();
+  const threadBranch = String(input?.threadBranch ?? "").trim();
+  if (branch === "") return { ok: false, reason: "no-branch" };
+  if (!branch.startsWith(`${BRANCH_PREFIX}/`)) return { ok: false, reason: "branch-not-ours" };
+  if (threadBranch !== branch) return { ok: false, reason: "branch-not-recorded" };
+  if (input?.merged !== true) return { ok: false, reason: "not-merged" };
+  const unpushed = Number(input?.unpushedCommits ?? 0);
+  if (!Number.isFinite(unpushed) || unpushed > 0) return { ok: false, reason: "unpushed-commits" };
+  return { ok: true, reason: "" };
+}
