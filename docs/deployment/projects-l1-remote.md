@@ -83,7 +83,7 @@ http://127.0.0.1:8080/?token=<一次性 token>
 - [ ] 设置页出现「项目」分节（若该 profile 禁用了设置页，此项允许跳过）
 - [ ] 断网再恢复：面板能重新加载，不出现永久 loading
 
-自动化版本见 [docs/testing/projects.md](../testing/projects.md)（web 冒烟 51 项）与
+自动化版本见 [docs/testing/projects.md](../testing/projects.md)（web 冒烟 50 项）与
 `pnpm smoke:projects-desktop`（桌面只读回归 11 项）。
 
 ## 5. 已知限制

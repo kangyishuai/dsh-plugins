@@ -12,7 +12,7 @@ Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/de
 > Details: `docs/runtime/0.2.2-rc.3.md` §11.24–§11.26.
 
 > **Status: M4 done, pre-1.0.** Projects, context injection, isolated parallel threads, an opt-in coordinator,
-> and a gated approval/executor layer are implemented, unit-tested (274 tests) and covered by a 51-assertion
+> and a gated approval/executor layer are implemented, unit-tested (276 tests) and covered by a 50-assertion
 > web end-to-end smoke plus an 11-assertion desktop read-only regression.
 > Remote writes (push / PR / merge) are wired and verified locally against a bare remote and a stub `gh`;
 > the real-GitHub effect still needs one release confirmation. Project **sharing** is deferred ([ADR 0018](../../docs/adr/0018-projects-defer-liveshare-sharing.md)).
@@ -65,9 +65,12 @@ does not do over a remote connection.
 
 ## Compatibility
 
-| Plugin | Verified on DSH |
-| ------ | --------------- |
-| 0.1.x  | 0.2.2-rc.3      |
+| Plugin | Verified on DSH                                                                                                                                                |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.1.1  | 0.2.2-rc.5: no code change needed. 276 unit tests + `pnpm probe:runtime` 72/72 + web smoke 50/0/0 + desktop read-only regression **11 PASS / 0 SKIP / 0 FAIL** |
+| 0.1.x  | 0.2.2-rc.3                                                                                                                                                     |
+
+The private host seams this plugin uses (`dsh-session`, `dsh-workspace`, `dsh-api-gateway`, `dsh-typert-protocol`, `dsh-agent`, …) are byte-identical between rc.3 and rc.5 — a 43-package diff found no change ([runtime rc.5 §1.1](../../docs/runtime/0.2.2-rc.5.md)).
 
 ## License
 

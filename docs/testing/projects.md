@@ -57,7 +57,7 @@ pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体�
 | `memory.test.js`    | 记忆写入：幂等、单条与总量上限、时间戳注释、被拒时给出原因                                    |
 | `exec.test.js`      | 子进程封装：参数原样传递、失败返回 code 不抛、cwd 生效、命令不存在也不抛                      |
 
-## 2. web 端到端冒烟（51 项）
+## 2. web 端到端冒烟（50 项）
 
 `pnpm smoke:projects` 在临时 home 里种子一个**真实 git 仓库**作为工作区，然后：
 
@@ -86,6 +86,23 @@ pnpm smoke:projects-desktop --require
 设置分节出现、关闭后界面仍可用。
 
 未装进当前 live profile 时默认 **SKIP**，加 `--require` 则 **FAIL**（发版门禁用它）。
+
+**2026-11-21 实测（DSH 0.2.2-rc.5，live profile 装的是 0.1.1）**：
+
+```
+11 PASS / 0 SKIP / 0 FAIL
+```
+
+这是本插件第一次跑通桌面回归。前置是**先把可见会话切到空闲会话**：桌面回归读的是
+「当前可见会话」，而 agent 在自己的会话里跑时那一轮正在跑回合
+（[runtime rc.5 §5.1](../runtime/0.2.2-rc.5.md)）。用一条命令把切换自动化掉：
+
+```bash
+pnpm gate:all --plugins projects --idle-session "<任一空闲会话标题的子串>"
+```
+
+`gate:all` 会在桌面步骤前切过去、结束后切回原会话，并用 `desktopGateVerdict()`
+拦「缺计数行 / 全 SKIP」的假绿。
 
 ## 4. 手工验证（发版 / DSH 升级后）
 
@@ -190,7 +207,7 @@ gh pr edit 146 --base main && gh pr merge 146 --squash --delete-branch
 合并后 Changesets 会开一个 `chore(release): version packages` PR，合并它即发布 `0.1.0`。
 可用 `gh pr list --search "version packages" --state open` 找到。
 
-### 9.3 桌面只读回归（唯一还没绿的门禁项）
+### 9.3 桌面只读回归（2026-11-21 已绿，保留步骤备查）
 
 ```bash
 # 1) 装进 live profile（打包，不要用 link:）
