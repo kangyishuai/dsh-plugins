@@ -87,7 +87,8 @@ pnpm smoke:projects-desktop --require
 
 未装进当前 live profile 时默认 **SKIP**，加 `--require` 则 **FAIL**（发版门禁用它）。
 
-**2026-11-21 实测（DSH 0.2.2-rc.5）**：0.1.1 与 0.2.1 各跑过一次，都是 11 PASS / 0 SKIP / 0 FAIL。
+**2026-11-21 实测（DSH 0.2.2-rc.5）**：0.1.1 / 0.2.1 / 0.3.0 各跑过一次，都是 11 PASS / 0 SKIP / 0 FAIL
+（0.3.0 那次 web 冒烟同时是 52 项，门禁 64s 全绿）。
 0.2.1 那次是**装进 live profile 并重启桌面版之后**跑的（`pnpm gate:all --plugins projects --idle-session …`，
 64s 全绿）。该 profile 里 `ui-settings` 是 `enabled: false`，所以「设置页出现项目分节」这条按允许跳过处理——
 想验证设置页文案得先把设置页打开。
