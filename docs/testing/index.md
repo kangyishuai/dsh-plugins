@@ -72,6 +72,13 @@ https://cdn.jsdelivr.net/npm/@kangyishuai/dsh-plugin-index/index.json
 - [ ] 真实桌面版：**插件 → 发现**，切换索引后卡片上的版本等于刚发的版本；
 - [ ] 点一张卡进详情页，**安装**按钮可用（不要真装，除非是在临时 profile 里）。
 
+**CDN 滞后（2026-11-21 实测）**：`index.json` 的 `cache-control` 是 `max-age=604800, s-maxage=43200`，
+workflow 里的 purge 之后仍可能有约 20 分钟的边缓存。`dsh-next-step@0.4.3` 发布（02:08）后立刻
+`curl` 文档里的 `@latest` URL 拿到的还是 0.4.2，02:35 才可见。要**立刻**验证「发布本身对不对」，
+用固定版本 URL（`.../@kangyishuai/dsh-plugin-index@0.0.<run_id>/index.json`）或
+`SMOKE_INDEX_URL=<固定版本 URL> pnpm smoke:index`；验线上 `@latest` 则等缓存过期再跑。
+另外 `npm view <pkg> version` 也会读到本地 npm 缓存，别拿它当发布判据——直接查 registry 文档。
+
 ## 3. 手工补发（workflow 失败或漏跑时）
 
 ```bash
