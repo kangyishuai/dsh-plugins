@@ -503,6 +503,48 @@ export class ProjectStore {
    * @param {string} requestId
    * @param {any} [evidence]
    */
+  /**
+   * 占位（claim）：真正执行**之前**先原子占用，防并发重复执行。
+   * 与 executedAt 分开存：占位失败可释放，已执行则不可再动。
+   * @param {string} requestId
+   * @returns {{ requestId: string }}
+   */
+  claimApproval(requestId) {
+    const found = this.state.approvals.find(
+      (/** @type {any} */ item) => item.requestId === requestId,
+    );
+    if (!found) throw new Error(`projects: unknown approval ${requestId}`);
+    if (typeof found.executedAt === "string" && found.executedAt !== "") {
+      throw new Error(`projects: approval ${requestId} already executed`);
+    }
+    if (typeof found.claimedAt === "string" && found.claimedAt !== "") {
+      throw new Error(`projects: approval ${requestId} already claimed`);
+    }
+    found.claimedAt = iso(this.now());
+    return { requestId };
+  }
+
+  /**
+   * 释放占位：执行被拒绝或失败时调用，让同一张申请还能重试。
+   * 已执行的申请不会被释放（宁可留痕，也不给重复执行的缝隙）。
+   * @param {string} requestId
+   * @returns {boolean} 是否真的释放了
+   */
+  releaseApproval(requestId) {
+    const found = this.state.approvals.find(
+      (/** @type {any} */ item) => item.requestId === requestId,
+    );
+    if (!found) return false;
+    if (typeof found.executedAt === "string" && found.executedAt !== "") return false;
+    if (typeof found.claimedAt !== "string" || found.claimedAt === "") return false;
+    found.claimedAt = null;
+    return true;
+  }
+
+  /**
+   * @param {string} requestId
+   * @param {any} [evidence]
+   */
   markApprovalExecuted(requestId, evidence) {
     const found = this.state.approvals.find(
       (/** @type {any} */ item) => item.requestId === requestId,
@@ -512,6 +554,7 @@ export class ProjectStore {
       throw new Error(`projects: approval ${requestId} already executed`);
     }
     found.executedAt = iso(this.now());
+    found.claimedAt = null;
     found.evidence = evidence ?? null;
     return { ...found };
   }

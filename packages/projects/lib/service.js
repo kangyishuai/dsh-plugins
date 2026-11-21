@@ -1477,7 +1477,7 @@ export class ProjectsService extends TypertRemoteService {
         reason: "already-executed",
       });
       store.save();
-      return { executed: false, reason: "already-executed" };
+      return { executed: false, reason: "already-executed" }; // 已执行：与占位无关
     }
 
     const project = store.getProject(approval.projectId);
@@ -1490,7 +1490,7 @@ export class ProjectsService extends TypertRemoteService {
         reason: "project-missing",
       });
       store.save();
-      return { executed: false, reason: "project-missing" };
+      return { executed: false, reason: "project-missing" }; // 同样在占位之前
     }
 
     const verdict = checkExecutable({
@@ -1513,24 +1513,38 @@ export class ProjectsService extends TypertRemoteService {
         reason: verdict.reason,
       });
       store.save();
-      return { executed: false, reason: verdict.reason };
+      return { executed: false, reason: verdict.reason }; // 闸门在占位之前，无需释放
     }
 
-    // 幂等：先占位（占用失败说明已经执行过），再真正执行。
-    // 否则并发两次 executeApproval 会重复推送/重复删除。
+    // 幂等：先**占位**（claim）再执行，防并发两次推送/重复删除；
+    // 但占用 ≠ 执行——被拒绝或被闸门挡住时要释放，让同一张申请还能重试。
     try {
-      store.markApprovalExecuted(requestId, null);
-    } catch {
+      store.claimApproval(requestId);
+    } catch (error) {
+      const message = String(error instanceof Error ? error.message : error);
+      const reason = message.includes("already claimed") ? "already-claimed" : "already-executed";
       store.appendAudit({
         action: "approval/execution-refused",
         projectId: approval.projectId,
         requestId,
         dangerAction: approval.action,
-        reason: "already-executed",
+        reason,
       });
       store.save();
-      return { executed: false, reason: "already-executed" };
+      return { executed: false, reason }; // 占位失败：不释放（本来就没占上）
     }
+    // 统一收口：本次调用结束后，成功的落 executedAt，其余一律释放占位。
+    const settle = (/** @type {any} */ result) => {
+      try {
+        if (result?.executed === true)
+          store.markApprovalExecuted(requestId, result.evidence ?? null);
+        else store.releaseApproval(requestId);
+        store.save();
+      } catch {
+        /* 收口失败不该盖掉真实结果 */
+      }
+      return result;
+    };
 
     // merge 的目标仓库必须**先**解析出来：早期 planCommand 就要用它，
     // 否则它会因为缺 repo 直接拒绝（也防止落到「宿主当前目录所在仓库」）。
@@ -1552,7 +1566,7 @@ export class ProjectsService extends TypertRemoteService {
           reason: "merge/repo-unknown",
         });
         store.save();
-        return { executed: false, reason: "merge/repo-unknown" };
+        return settle({ executed: false, reason: "merge/repo-unknown" });
       }
     }
     const planArgs =
@@ -1567,7 +1581,7 @@ export class ProjectsService extends TypertRemoteService {
         reason: planned.error,
       });
       store.save();
-      return { executed: false, reason: planned.error };
+      return settle({ executed: false, reason: planned.error });
     }
 
     // push-branch：在工作树里跑真实 git（argv 数组，不经 shell），只推我们自己的分支
@@ -1587,7 +1601,7 @@ export class ProjectsService extends TypertRemoteService {
           reason: "no-worktree",
         });
         store.save();
-        return { executed: false, reason: "no-worktree" };
+        return settle({ executed: false, reason: "no-worktree" });
       }
       const branch = String(approval.args?.branch ?? thread?.branch ?? "");
       const force = approval.args?.force === true;
@@ -1610,7 +1624,7 @@ export class ProjectsService extends TypertRemoteService {
             reason: "force-push/repo-unknown",
           });
           store.save();
-          return { executed: false, reason: "force-push/repo-unknown" };
+          return settle({ executed: false, reason: "force-push/repo-unknown" });
         }
         const expectedSha = String(approval.args?.expectedSha ?? "");
         const remoteHead = await runGit(["rev-parse", `origin/${branch}`], worktree);
@@ -1635,7 +1649,7 @@ export class ProjectsService extends TypertRemoteService {
             reason: prereqs.reason,
           });
           store.save();
-          return { executed: false, reason: prereqs.reason };
+          return settle({ executed: false, reason: prereqs.reason });
         }
         const forced = await runGit(
           ["push", `--force-with-lease=${branch}:${expectedSha}`, "origin", branch],
@@ -1662,9 +1676,11 @@ export class ProjectsService extends TypertRemoteService {
           }
         }
         store.save();
-        return forcedOk
-          ? { executed: true, evidence: forcedEvidence }
-          : { executed: false, reason: "force-push-failed" };
+        settle(
+          forcedOk
+            ? { executed: true, evidence: forcedEvidence }
+            : { executed: false, reason: "force-push-failed" },
+        );
       }
 
       const pushed = await runGit(["push", "-u", "origin", branch], worktree);
@@ -1685,7 +1701,7 @@ export class ProjectsService extends TypertRemoteService {
         ...(ok ? {} : { reason: String(pushed.stderr).split("\n")[0].slice(0, 200) }),
       });
       store.save();
-      return ok ? { executed: true, evidence } : { executed: false, reason: "push-failed" };
+      settle(ok ? { executed: true, evidence } : { executed: false, reason: "push-failed" });
     }
 
     // merge 走 gh：需要真实远端与 PR 号，留给后续步骤（这里只回报计划）
@@ -1700,7 +1716,7 @@ export class ProjectsService extends TypertRemoteService {
         evidence,
       });
       store.save();
-      return { executed: true, evidence };
+      return settle({ executed: true, evidence });
     }
 
     // 直推保护/默认分支（规格 §7.5 行 2）：per-repo 首次授予 + 服务端允许 + 审计/事后通知
@@ -1722,7 +1738,7 @@ export class ProjectsService extends TypertRemoteService {
           reason: "protected-push/repo-unknown",
         });
         store.save();
-        return { executed: false, reason: "protected-push/repo-unknown" };
+        return settle({ executed: false, reason: "protected-push/repo-unknown" });
       }
       // ① per-repo 首次授予：只有项目策略里显式列出的仓库才允许
       if (grProject?.policy?.repoGrants?.[grRepo] !== true) {
@@ -1735,7 +1751,7 @@ export class ProjectsService extends TypertRemoteService {
           repo: grRepo,
         });
         store.save();
-        return { executed: false, reason: "protected-push/repo-not-granted" };
+        return settle({ executed: false, reason: "protected-push/repo-not-granted" });
       }
       // ② 服务端必须允许直接推：查 protection 与 rulesets
       const protection = await runGh(["api", `repos/${grRepo}/branches/${branch}/protection`]);
@@ -1770,7 +1786,7 @@ export class ProjectsService extends TypertRemoteService {
           reason: allowed.reason,
         });
         store.save();
-        return { executed: false, reason: allowed.reason };
+        return settle({ executed: false, reason: allowed.reason });
       }
       // ③ 多人协作检测：不禁止，但要在审计与返回里显式警告
       const commits = await runGh(["api", `repos/${grRepo}/commits?per_page=30`]);
@@ -1805,15 +1821,17 @@ export class ProjectsService extends TypertRemoteService {
           : { reason: String(pushedProtected.stderr).split("\n")[0].slice(0, 200) }),
       });
       store.save();
-      return okProtected
-        ? {
-            executed: true,
-            evidence,
-            ...(collab.multi
-              ? { warning: "multi-collaborator", collaborators: collab.collaborators }
-              : {}),
-          }
-        : { executed: false, reason: "protected-push-failed" };
+      settle(
+        okProtected
+          ? {
+              executed: true,
+              evidence,
+              ...(collab.multi
+                ? { warning: "multi-collaborator", collaborators: collab.collaborators }
+                : {}),
+            }
+          : { executed: false, reason: "protected-push-failed" },
+      );
     }
 
     // merge：走 gh pr merge（argv 里已含 --squash，不带 --admin/--force）。
@@ -1841,7 +1859,7 @@ export class ProjectsService extends TypertRemoteService {
           reason: String(view.stderr).split("\n")[0].slice(0, 200) || "merge/pr-view-failed",
         });
         store.save();
-        return { executed: false, reason: "merge/pr-view-failed" };
+        return settle({ executed: false, reason: "merge/pr-view-failed" });
       }
       const parsed = (() => {
         try {
@@ -1881,7 +1899,7 @@ export class ProjectsService extends TypertRemoteService {
           reason: preflight.reason,
         });
         store.save();
-        return { executed: false, reason: preflight.reason };
+        return settle({ executed: false, reason: preflight.reason });
       }
 
       const ghArgs = planned.argv.slice(1); // 去掉 argv[0] 的 "gh"（planArgs 已带 --repo）
@@ -1901,7 +1919,7 @@ export class ProjectsService extends TypertRemoteService {
           : { reason: String(merged.stderr).split("\n")[0].slice(0, 200) || "gh-merge-failed" }),
       });
       store.save();
-      return ok ? { executed: true, evidence } : { executed: false, reason: "gh-merge-failed" };
+      settle(ok ? { executed: true, evidence } : { executed: false, reason: "gh-merge-failed" });
     }
 
     // 改本插件自己的配置（规格 §7.5 行 5a）：只允许白名单键，安全面一律拒绝
@@ -1916,7 +1934,7 @@ export class ProjectsService extends TypertRemoteService {
           reason: checked.reason,
         });
         store.save();
-        return { executed: false, reason: checked.reason };
+        return settle({ executed: false, reason: checked.reason });
       }
       const before = store.getProject(approval.projectId);
       const nextPolicy = applySettingsPatch(before?.policy ?? {}, checked.patch);
@@ -1931,7 +1949,7 @@ export class ProjectsService extends TypertRemoteService {
         evidence,
       });
       store.save();
-      return { executed: true, evidence, keys: checked.keys };
+      return settle({ executed: true, evidence, keys: checked.keys });
     }
 
     // 回收站清理（规格 §7.5 行 4c）：审批路径复用 purgeTrash，开关与项目都按本次申请的项目判定
@@ -1956,9 +1974,11 @@ export class ProjectsService extends TypertRemoteService {
         ...(ok ? {} : { reason: purged.reason ?? "purge-failed" }),
       });
       store.save();
-      return ok
-        ? { executed: true, evidence, purged: purged.purged.length, kept: purged.kept }
-        : { executed: false, reason: purged.reason ?? "purge-failed" };
+      return settle(
+        ok
+          ? { executed: true, evidence, purged: purged.purged.length, kept: purged.kept }
+          : { executed: false, reason: purged.reason ?? "purge-failed" },
+      );
     }
 
     store.appendAudit({
@@ -1970,7 +1990,11 @@ export class ProjectsService extends TypertRemoteService {
       planned: planned.argv,
     });
     store.save();
-    return { executed: false, reason: "remote-action-not-implemented", planned: planned.argv };
+    return settle({
+      executed: false,
+      reason: "remote-action-not-implemented",
+      planned: planned.argv,
+    });
   }
 
   /**

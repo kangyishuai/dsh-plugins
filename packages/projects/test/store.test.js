@@ -282,3 +282,56 @@ describe("审批执行的幂等保护", () => {
     assert.equal(store.resolveApproval(requestId, "rejected").status, "rejected");
   });
 });
+
+describe("审批的 claim / release（占用 ≠ 执行）", () => {
+  /** @returns {{ store: any, requestId: string, project: any }} */
+  const setup = () => {
+    const dir = mkdtempSync(join(tmpdir(), "dsh-store-claim-"));
+    const store = new ProjectStore({ root: dir });
+    store.load();
+    const project = store.createProject("claim-demo");
+    const item = store.appendApproval({
+      projectId: project.id,
+      action: "merge",
+      reason: "x",
+      args: { prNumber: 1 },
+    });
+    return { store, requestId: item.requestId, project };
+  };
+
+  it("占位成功 → 再占位抛 already claimed", () => {
+    const { store, requestId } = setup();
+    store.claimApproval(requestId);
+    assert.throws(() => store.claimApproval(requestId), /already claimed/u);
+  });
+
+  it("释放后可再次占位（被拒绝的申请能重试）", () => {
+    const { store, requestId } = setup();
+    store.claimApproval(requestId);
+    assert.equal(store.releaseApproval(requestId), true);
+    assert.equal(store.claimApproval(requestId).requestId, requestId);
+  });
+
+  it("已执行的申请不能占位、也不会被释放", () => {
+    const { store, requestId } = setup();
+    store.claimApproval(requestId);
+    store.markApprovalExecuted(requestId, { any: "evidence" });
+    assert.throws(() => store.claimApproval(requestId), /already executed/u);
+    assert.equal(store.releaseApproval(requestId), false);
+  });
+
+  it("markApprovalExecuted 会清掉占位（不会卡住已执行记录）", () => {
+    const { store, requestId } = setup();
+    store.claimApproval(requestId);
+    store.markApprovalExecuted(requestId, null);
+    const item = store.listApprovals().find((/** @type {any} */ a) => a.requestId === requestId);
+    assert.equal(item.claimedAt, null);
+    assert.ok(typeof item.executedAt === "string" && item.executedAt !== "");
+  });
+
+  it("未知申请：claim 抛错、release 返回 false（不炸）", () => {
+    const { store } = setup();
+    assert.throws(() => store.claimApproval("nope"), /unknown approval/u);
+    assert.equal(store.releaseApproval("nope"), false);
+  });
+});

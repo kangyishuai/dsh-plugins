@@ -316,6 +316,14 @@ pnpm smoke:projects-desktop --require
 `settingsForbidden` → `settings/forbidden:danger`；`purgeApprovalSwitchOff` → `switch-off`；
 `purgeApprovalSwitchOn` → `executed:true, purged:1`（清单已写盘）。
 
-**已知取舍**：幂等占位（`executedAt`）在闸门之前就写入，因此**被拒绝的申请也会被占用**，
-不会显示「执行」按钮，需要协调器重新申请。这样做是为了避免并发重复执行；换成
-claim/release 模型可以既保幂等又可重试，但涉及 14 处拒绝点，留作后续。
+**占用与执行分离（claim / release）**：早期实现把 `executedAt` 写在闸门之前，导致「被拒绝的申请也被占用」，
+用户修好条件后无法重试。现在拆成两步：
+
+- `claimApproval()` 在闸门前占位（`claimedAt`），并发第二次会得到 `already-claimed`；
+- 执行**成功**才 `markApprovalExecuted()`（落 `executedAt` + evidence，并清占位）；
+- 被拒绝或失败一律 `releaseApproval()`，**同一张申请可以重试**；
+- 已执行的申请既不能占位也不会被释放（`already-executed`）。
+
+真机验证（临时宿主）：同一张 `purge-trash` 申请先因开关关返回 `switch-off`，
+打开开关后**再次执行同一张申请**返回 `executed:true`，第三次返回 `already-executed`；
+最终记录 `{status:"approved", claimedAt:null, executed:true}`。
