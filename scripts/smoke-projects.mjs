@@ -702,6 +702,83 @@ try {
   );
 
   // 点它那一行的「恢复」
+  // 回收站必须能"彻底删掉"：超期自动清理之外，用户也要能主动清（ADR 0002：两步确认 + 影响面）
+  // 用**第三个**临时项目做，别动上面留给恢复/宿主断言的条目
+  await page.evaluate(() => document.querySelector("[data-projects-detail-back]")?.click());
+  await page.waitForTimeout(900);
+  await page.evaluate(() => {
+    const input = document.querySelector("[data-projects-create-input]");
+    const button = document.querySelector("[data-projects-create]");
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    setter.call(input, "smoke-to-purge");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    button.click();
+  });
+  await page.waitForTimeout(2000);
+  await page.evaluate(() => {
+    const row = [...document.querySelectorAll("[data-projects-row]")].find((n) =>
+      (n.textContent || "").includes("smoke-to-purge"),
+    );
+    if (row) row.click();
+  });
+  await page.waitForTimeout(1400);
+  await page.evaluate(() => document.querySelector("[data-projects-delete]")?.click());
+  await page.waitForTimeout(900);
+  await page.evaluate(() => document.querySelector("[data-projects-delete-confirm]")?.click());
+  await page.waitForTimeout(2200);
+  // 打开主项目 → 展开高级设置 → 找到 smoke-to-purge 那一行
+  await page.evaluate(() => {
+    const row = [...document.querySelectorAll("[data-projects-row]")].find(
+      (node) => !(node.textContent || "").includes("smoke-to-purge"),
+    );
+    if (row) row.click();
+  });
+  await page.waitForTimeout(1800);
+  await page.evaluate(() => {
+    const details = document.querySelector("[data-projects-config]");
+    if (details) details.open = true;
+  });
+  await page.waitForTimeout(900);
+  const trashRowsBefore = await page.evaluate(() => document.querySelectorAll("[data-projects-trash-row]").length);
+  const clickedDeleteOnce = await page.evaluate(() => {
+    const row = [...document.querySelectorAll("[data-projects-trash-row]")].find((n) =>
+      (n.textContent || "").includes("smoke-to-purge"),
+    );
+    if (!row) return "no-row";
+    const btn = row.querySelector("[data-projects-trash-delete]");
+    if (!btn) return "no-button";
+    btn.click();
+    return "clicked";
+  });
+  await page.waitForTimeout(500);
+  const confirmLabel = await page.evaluate(() => {
+    const row = [...document.querySelectorAll("[data-projects-trash-row]")].find((n) =>
+      (n.textContent || "").includes("smoke-to-purge"),
+    );
+    return (row?.querySelector("[data-projects-trash-delete]")?.textContent || "").trim();
+  });
+  add(
+    "彻底删除需二次确认且写明不可恢复",
+    clickedDeleteOnce === "clicked" && /不可恢复|irreversible/u.test(confirmLabel),
+    confirmLabel.slice(0, 60),
+  );
+  await page.evaluate(() => {
+    const row = [...document.querySelectorAll("[data-projects-trash-row]")].find((n) =>
+      (n.textContent || "").includes("smoke-to-purge"),
+    );
+    row?.querySelector("[data-projects-trash-delete]")?.click();
+  });
+  await page.waitForTimeout(2000);
+  const purgeGone = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll("[data-projects-trash-row]")];
+    return { left: rows.length, hasPurge: rows.some((n) => (n.textContent || "").includes("smoke-to-purge")) };
+  });
+  add(
+    "确认后该条目从回收站消失",
+    trashRowsBefore > 0 && purgeGone.hasPurge === false && purgeGone.left === trashRowsBefore - 1,
+    JSON.stringify({ trashRowsBefore, purgeGone }),
+  );
+
   const clickedRestore = await page.evaluate(() => {
     const row = [...document.querySelectorAll("[data-projects-trash-row]")].find((n) =>
       (n.textContent || "").includes("smoke-to-restore"),

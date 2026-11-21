@@ -899,6 +899,51 @@ export class ProjectsService extends TypertRemoteService {
   }
 
   /**
+   * 彻底删除**一个**回收站条目（不可恢复）。ADR 0002：必须显式 confirm，并写审计。
+   * 与 purgeTrash 的区别：那个只清「超过保留期」的，这个是用户主动清"刚删错又不想留"的。
+   * @param {{ entryId?: string, confirm?: boolean }} [options]
+   */
+  deleteTrashEntry(options) {
+    const input = options ?? {};
+    const entryId = String(input.entryId ?? "");
+    if (!/^[A-Za-z0-9_.-]+$/u.test(entryId) || entryId.includes("..")) {
+      throw new Error("projects: invalid trash entry");
+    }
+    const dir = join(this.dataRoot, TRASH_DIR, entryId);
+    if (!existsSync(dir)) throw new Error(`projects: trash entry not found ${entryId}`);
+    if (input.confirm !== true) {
+      // 不确认时只报影响面，不动手（与 purgeTrash 的 dry-run 同款语义）
+      return { ok: false, reason: "confirm-required", entryId, bytes: this.sizeOf(dir) };
+    }
+    const bytes = this.sizeOf(dir);
+    rmSync(dir, { recursive: true, force: true });
+    const store = this.requireStore();
+    store.appendAudit({ action: "trash/entry-deleted", entryId, bytes });
+    store.save();
+    return { ok: true, entryId, bytes };
+  }
+
+  /**
+   * 清空回收站（不可恢复）。ADR 0002：必须显式 confirm，并写审计。
+   * @param {{ confirm?: boolean }} [options]
+   */
+  emptyTrash(options) {
+    const input = options ?? {};
+    const root = join(this.dataRoot, TRASH_DIR);
+    const names = existsSync(root) ? readdirSync(root) : [];
+    let bytes = 0;
+    for (const name of names) bytes += this.sizeOf(join(root, name));
+    if (input.confirm !== true) {
+      return { ok: false, reason: "confirm-required", count: names.length, bytes };
+    }
+    for (const name of names) rmSync(join(root, name), { recursive: true, force: true });
+    const store = this.requireStore();
+    store.appendAudit({ action: "trash/emptied", count: names.length, bytes });
+    store.save();
+    return { ok: true, count: names.length, bytes };
+  }
+
+  /**
    * 从回收站恢复一个项目（把 manifest 里的元数据放回仓储，内容目录搬回去）。
    * @param {string} entryId 回收站子目录名（不接受路径分隔符）
    */
@@ -2035,6 +2080,8 @@ declareRemote(ProjectsService, "purgeTrash");
 declareRemote(ProjectsService, "cleanupBranches");
 declareRemote(ProjectsService, "listTrash");
 declareRemote(ProjectsService, "restoreTrash");
+declareRemote(ProjectsService, "deleteTrashEntry");
+declareRemote(ProjectsService, "emptyTrash");
 declareRemote(ProjectsService, "previewDeleteProject");
 declareRemote(ProjectsService, "deleteProject");
 declareRemote(ProjectsService, "attachThread");
