@@ -344,6 +344,40 @@ try {
     await page.waitForTimeout(500);
   }
   add("详情页显示预算用量", budgetText !== "", budgetText);
+  // 详情页新增两块：仓库授权 + 回收站清理（都必须渲染出来）
+  const newBlocks = await page.evaluate(() => ({
+    grants: Boolean(document.querySelector("[data-projects-grants]")),
+    grantInput: Boolean(document.querySelector("[data-projects-grant-input]")),
+    purge: Boolean(document.querySelector("[data-projects-purge]")),
+    purgePreview: Boolean(document.querySelector("[data-projects-purge-preview]")),
+  }));
+  add(
+    "详情页有仓库授权与回收站清理入口",
+    newBlocks.grants && newBlocks.grantInput && newBlocks.purge && newBlocks.purgePreview,
+    JSON.stringify(newBlocks),
+  );
+
+  // 清理预览：dry-run 不应删除任何东西，只报告条数
+  const preview = await page.evaluate(() => {
+    const button = document.querySelector("[data-projects-purge-preview]");
+    if (!button) return "no-button";
+    button.click();
+    return "clicked";
+  });
+  let purgeResult = "";
+  for (let i = 0; i < 10; i += 1) {
+    await page.waitForTimeout(400);
+    purgeResult = await page.evaluate(
+      () => (document.querySelector("[data-projects-purge-result]")?.textContent || "").trim(),
+    );
+    if (purgeResult !== "") break;
+  }
+  add(
+    "回收站清理预览可用（dry-run 不删东西）",
+    preview === "clicked" && purgeResult !== "" && !/FAIL/u.test(purgeResult),
+    purgeResult,
+  );
+
   const memoryTab = await page.evaluate(() => {
     const tab = document.querySelector('[data-projects-tab="memory"]');
     if (!tab) return "no-tab";

@@ -114,6 +114,19 @@ window.__ModuleLoader__.load({
       "settings.danger.editProfile.risk": "协调器可能借此放宽自己的限制；风险最高",
       "detail.archive": "归档项目",
       "detail.unarchive": "取消归档",
+      "detail.execute": "执行",
+      "detail.executed": "已执行（结果见审计）",
+      "detail.refused": "未执行：{reason}",
+      "detail.grantsTitle": "仓库授权（直推保护分支用）",
+      "detail.grantsEmpty": "尚未授权任何仓库；直推保护分支前必须在这里加 owner/repo",
+      "detail.grantAdd": "添加",
+      "detail.purgeTitle": "回收站清理",
+      "detail.purgeHint":
+        "只清理本项目回收站里**超过保留期**的条目；先预览，再确认。需要打开 purgeAfterRetention 开关。",
+      "detail.purgePreview": "预览可清理项",
+      "detail.purgeConfirm": "确认清理 {count} 项",
+      "detail.purgeNothing": "没有超过保留期的条目",
+      "detail.purged": "已清理 {count} 项，清单已写入 trash/",
     };
     var EN = {
       title: "Projects",
@@ -218,6 +231,20 @@ window.__ModuleLoader__.load({
         "the coordinator could loosen its own limits; highest risk",
       "detail.archive": "Archive project",
       "detail.unarchive": "Unarchive project",
+      "detail.execute": "Execute",
+      "detail.executed": "Executed (see audit)",
+      "detail.refused": "Not executed: {reason}",
+      "detail.grantsTitle": "Repository grants (for pushing protected branches)",
+      "detail.grantsEmpty":
+        "No repository granted yet; add owner/repo before pushing a protected branch",
+      "detail.grantAdd": "Add",
+      "detail.purgeTitle": "Trash purge",
+      "detail.purgeHint":
+        "Only purges entries in this project's trash that are **past the retention period**; preview first, then confirm. Requires the purgeAfterRetention switch.",
+      "detail.purgePreview": "Preview purgeable",
+      "detail.purgeConfirm": "Purge {count} entries",
+      "detail.purgeNothing": "Nothing past the retention period",
+      "detail.purged": "Purged {count} entries; manifest written under trash/",
     };
     var PANEL_ID = "projects";
     var SERVICE = "projects";
@@ -634,6 +661,108 @@ window.__ModuleLoader__.load({
         [api, load, setData],
       );
 
+      const execState = useState({ busy: "", ok: null, message: "" });
+      const exec = execState[0];
+      const setExec = execState[1];
+      // 执行一次已批准的申请：这是「批准 ≠ 可执行」里那独立的一步。
+      // 服务端还会再过一遍开关/阈值/幂等，所以这里不做乐观判断——把真实结果回显出来。
+      const executeApproval = useCallback(
+        (/** @type {any} */ requestId) => {
+          setExec({ busy: requestId, ok: null, message: "" });
+          call(api.ctx, "executeApproval", { requestId }).then(
+            (/** @type {any} */ result) => {
+              const ok = result?.executed === true;
+              setExec({
+                busy: "",
+                ok,
+                message: ok
+                  ? text(t, "detail.executed")
+                  : text(t, "detail.refused", { reason: String(result?.reason ?? "?") }),
+              });
+              load();
+            },
+            (error) => {
+              setExec({ busy: "", ok: false, message: String(error?.message ?? error) });
+            },
+          );
+        },
+        [api, load, setExec, t],
+      );
+
+      const grantsState = useState("");
+      const grantsDraft = grantsState[0];
+      const setGrantsDraft = grantsState[1];
+      const grants = Object.keys(project?.policy?.repoGrants ?? {});
+      const setGrants = useCallback(
+        (/** @type {string[]} */ next) => {
+          /** @type {Record<string, true>} */
+          const map = {};
+          for (const key of next) map[key] = true;
+          const policy = { ...(project?.policy ?? {}), repoGrants: map };
+          call(api.ctx, "updateProject", { id: project.id, patch: { policy } }).then(
+            () => load(),
+            (error) =>
+              setData((/** @type {any} */ prev) => ({
+                ...prev,
+                error: String(error?.message ?? error),
+              })),
+          );
+        },
+        [api, load, project?.policy, project.id, setData],
+      );
+
+      const purgeState = useState({ phase: "idle", eligible: 0, kept: 0, message: "" });
+      const purge = purgeState[0];
+      const setPurge = purgeState[1];
+      const previewPurge = useCallback(() => {
+        setPurge({ phase: "loading", eligible: 0, kept: 0, message: "" });
+        call(api.ctx, "purgeTrash", { dryRun: true, projectId: project.id }).then(
+          (/** @type {any} */ result) => {
+            const eligible = Array.isArray(result?.eligible) ? result.eligible.length : 0;
+            setPurge({
+              phase: eligible > 0 ? "confirm" : "idle",
+              eligible,
+              kept: Number(result?.kept ?? 0),
+              message: eligible > 0 ? "" : text(t, "detail.purgeNothing"),
+            });
+          },
+          (error) =>
+            setPurge({
+              phase: "idle",
+              eligible: 0,
+              kept: 0,
+              message: String(error?.message ?? error),
+            }),
+        );
+      }, [api, project.id, setPurge, t]);
+      const runPurge = useCallback(() => {
+        setPurge((/** @type {any} */ prev) => ({ ...prev, phase: "loading" }));
+        call(api.ctx, "purgeTrash", {
+          dryRun: false,
+          confirm: "purge",
+          projectId: project.id,
+        }).then(
+          (/** @type {any} */ result) => {
+            const ok = result?.ok === true;
+            setPurge({
+              phase: "idle",
+              eligible: 0,
+              kept: Number(result?.kept ?? 0),
+              message: ok
+                ? text(t, "detail.purged", { count: (result?.purged ?? []).length })
+                : text(t, "detail.refused", { reason: String(result?.reason ?? "?") }),
+            });
+          },
+          (error) =>
+            setPurge({
+              phase: "idle",
+              eligible: 0,
+              kept: 0,
+              message: String(error?.message ?? error),
+            }),
+        );
+      }, [api, project.id, setPurge, t]);
+
       const askDelete = useCallback(() => {
         call(api.ctx, "previewDeleteProject", { id: project.id }).then(
           (preview) => setDel({ confirming: true, busy: false, impact: preview }),
@@ -1029,62 +1158,215 @@ window.__ModuleLoader__.load({
             text(t, "detail.dirSave"),
           ),
         ),
-        (data.approvals ?? []).filter((/** @type {any} */ item) => item.status === "pending")
-          .length > 0
-          ? h(
+        (() => {
+          const all = Array.isArray(data.approvals) ? data.approvals : [];
+          const pending = all.filter((/** @type {any} */ item) => item.status === "pending");
+          // 已批准但还没执行：这才是「批准 ≠ 可执行」里那独立的一步，必须有入口
+          const runnable = all.filter(
+            (/** @type {any} */ item) =>
+              item.status === "approved" &&
+              !(typeof item.executedAt === "string" && item.executedAt !== ""),
+          );
+          if (pending.length === 0 && runnable.length === 0) return null;
+          const row = (/** @type {any} */ item, /** @type {any} */ actions) =>
+            h(
               "div",
               {
-                "data-projects-approvals": "",
-                style: {
-                  border: `1px solid ${T.border}`,
-                  borderRadius: "8px",
-                  padding: "8px 10px",
-                  marginTop: "8px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "6px",
+                key: item.requestId,
+                style: { display: "flex", gap: "8px", alignItems: "center" },
+                "data-projects-approval-row": item.requestId,
+              },
+              h(
+                "span",
+                { style: { ...styles.meta, flex: 1, minWidth: 0 } },
+                `${item.action} · ${item.reason}`,
+              ),
+              ...actions,
+            );
+          return h(
+            "div",
+            {
+              "data-projects-approvals": "",
+              style: {
+                border: `1px solid ${T.border}`,
+                borderRadius: "8px",
+                padding: "8px 10px",
+                marginTop: "8px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "6px",
+              },
+            },
+            h("div", { style: styles.name }, text(t, "detail.approvalsTitle")),
+            pending.map((/** @type {any} */ item) =>
+              row(item, [
+                h(
+                  "button",
+                  {
+                    key: "approve",
+                    type: "button",
+                    style: styles.button,
+                    "data-projects-approval-approve": item.requestId,
+                    onClick: () => resolveApproval(item.requestId, "approved"),
+                  },
+                  text(t, "detail.approve"),
+                ),
+                h(
+                  "button",
+                  {
+                    key: "reject",
+                    type: "button",
+                    style: { ...styles.button, color: T.danger },
+                    "data-projects-approval-reject": item.requestId,
+                    onClick: () => resolveApproval(item.requestId, "rejected"),
+                  },
+                  text(t, "detail.reject"),
+                ),
+              ]),
+            ),
+            runnable.map((/** @type {any} */ item) =>
+              row(item, [
+                h(
+                  "button",
+                  {
+                    key: "execute",
+                    type: "button",
+                    style: styles.button,
+                    disabled: exec.busy === item.requestId,
+                    "data-projects-approval-execute": item.requestId,
+                    onClick: () => executeApproval(item.requestId),
+                  },
+                  text(t, "detail.execute"),
+                ),
+              ]),
+            ),
+            exec.message !== ""
+              ? h(
+                  "div",
+                  {
+                    style: { ...styles.meta, color: exec.ok === false ? T.danger : T.text },
+                    "data-projects-approval-exec-result": "",
+                  },
+                  exec.message,
+                )
+              : null,
+          );
+        })(),
+        // 仓库授权：直推保护分支需要 per-repo 首次授予（规格 §7.5 行 2），没有界面就只能手编 JSON
+        h(
+          "div",
+          {
+            "data-projects-grants": "",
+            style: {
+              border: `1px solid ${T.border}`,
+              borderRadius: "8px",
+              padding: "8px 10px",
+              marginTop: "8px",
+              display: "flex",
+              flexDirection: "column",
+              gap: "6px",
+            },
+          },
+          h("div", { style: styles.name }, text(t, "detail.grantsTitle")),
+          h(
+            "div",
+            { style: styles.meta },
+            grants.length > 0 ? grants.join(" · ") : text(t, "detail.grantsEmpty"),
+          ),
+          h(
+            "div",
+            { style: { display: "flex", gap: "8px", alignItems: "center" } },
+            h("input", {
+              value: grantsDraft,
+              placeholder: "owner/repo",
+              "data-projects-grant-input": "",
+              style: { ...styles.input, flex: 1, minWidth: 0 },
+              onInput: (/** @type {any} */ event) => setGrantsDraft(event.target.value),
+            }),
+            h(
+              "button",
+              {
+                type: "button",
+                style: styles.button,
+                "data-projects-grant-add": "",
+                onClick: () => {
+                  const slug = String(grantsDraft).trim();
+                  if (!/^[\w.-]+\/[\w.-]+$/u.test(slug)) return;
+                  setGrants([...grants, slug]);
+                  setGrantsDraft("");
                 },
               },
-              h("div", { style: styles.name }, text(t, "detail.approvalsTitle")),
-              (data.approvals ?? [])
-                .filter((/** @type {any} */ item) => item.status === "pending")
-                .map((/** @type {any} */ item) =>
+              text(t, "detail.grantAdd"),
+            ),
+          ),
+          grants.length > 0
+            ? h(
+                "div",
+                { style: { display: "flex", gap: "6px", flexWrap: "wrap" } },
+                ...grants.map((/** @type {string} */ slug) =>
                   h(
-                    "div",
+                    "button",
                     {
-                      key: item.requestId,
-                      style: { display: "flex", gap: "8px", alignItems: "center" },
-                      "data-projects-approval-row": item.requestId,
+                      key: slug,
+                      type: "button",
+                      style: { ...styles.button, fontSize: "11px" },
+                      "data-projects-grant-remove": slug,
+                      onClick: () => setGrants(grants.filter((item) => item !== slug)),
                     },
-                    h(
-                      "span",
-                      { style: { ...styles.meta, flex: 1, minWidth: 0 } },
-                      `${item.action} · ${item.reason}`,
-                    ),
-                    h(
-                      "button",
-                      {
-                        type: "button",
-                        style: styles.button,
-                        "data-projects-approval-approve": item.requestId,
-                        onClick: () => resolveApproval(item.requestId, "approved"),
-                      },
-                      text(t, "detail.approve"),
-                    ),
-                    h(
-                      "button",
-                      {
-                        type: "button",
-                        style: { ...styles.button, color: T.danger },
-                        "data-projects-approval-reject": item.requestId,
-                        onClick: () => resolveApproval(item.requestId, "rejected"),
-                      },
-                      text(t, "detail.reject"),
-                    ),
+                    `${slug} ✕`,
                   ),
                 ),
-            )
-          : null,
+              )
+            : null,
+        ),
+        // 回收站清理：只处理本项目的、超保留期的条目；先预览再确认（规格 §7.5 行 4c）
+        h(
+          "div",
+          {
+            "data-projects-purge": "",
+            style: {
+              border: `1px solid ${T.border}`,
+              borderRadius: "8px",
+              padding: "8px 10px",
+              marginTop: "8px",
+              display: "flex",
+              flexDirection: "column",
+              gap: "6px",
+            },
+          },
+          h("div", { style: styles.name }, text(t, "detail.purgeTitle")),
+          h("div", { style: styles.meta }, text(t, "detail.purgeHint")),
+          h(
+            "div",
+            { style: { display: "flex", gap: "8px", alignItems: "center" } },
+            h(
+              "button",
+              {
+                type: "button",
+                style: styles.button,
+                disabled: purge.phase === "loading",
+                "data-projects-purge-preview": "",
+                onClick: previewPurge,
+              },
+              text(t, "detail.purgePreview"),
+            ),
+            purge.phase === "confirm"
+              ? h(
+                  "button",
+                  {
+                    type: "button",
+                    style: { ...styles.button, color: T.danger },
+                    "data-projects-purge-confirm": "",
+                    onClick: runPurge,
+                  },
+                  text(t, "detail.purgeConfirm", { count: purge.eligible }),
+                )
+              : null,
+          ),
+          purge.message !== ""
+            ? h("div", { style: styles.meta, "data-projects-purge-result": "" }, purge.message)
+            : null,
+        ),
         del.confirming
           ? h(
               "div",
