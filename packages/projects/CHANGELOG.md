@@ -1,5 +1,15 @@
 # @kangyishuai/dsh-projects
 
+## 0.2.1
+
+### Patch Changes
+
+- [#263](https://github.com/kangyishuai/dsh-plugins/pull/263) [`3b5c030`](https://github.com/kangyishuai/dsh-plugins/commit/3b5c030640628873c78c553014f8ac99ae02e756) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 兼容表补 `0.2.0` 一行，并如实写清它验证到什么程度：309 项单测 + `pnpm verify` + web 冒烟 50/0/0，
+  三项危险动作在临时宿主上真机验证（本地 bare 远端 + 桩 `gh`）；**桌面只读回归尚未对 0.2.0 复跑**
+  （本次 client 半只改了开关文案，上次全绿是 0.1.1）。
+  
+  顺带把 README 里过时的「276 项单测」更新为 309。
+
 ## 0.2.0
 
 ### Minor Changes
