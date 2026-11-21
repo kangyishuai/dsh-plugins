@@ -2,7 +2,7 @@
 
 - 状态：已接受
 - 日期：2026-11-21
-- 涉及：`@kangyishuai/dsh-next-step`（v0.5.0）
+- 涉及：`@kangyishuai/dsh-next-step`（v0.4.3）
 - 上游：[0009](0009-next-step-architecture.md)、[0013](0013-next-step-gating-telemetry.md)
 
 ## 背景
