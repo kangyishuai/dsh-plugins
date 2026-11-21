@@ -1,5 +1,41 @@
 # @kangyishuai/dsh-projects
 
+## 0.5.0
+
+### Minor Changes
+
+- [#287](https://github.com/kangyishuai/dsh-plugins/pull/287) [`685dab8`](https://github.com/kangyishuai/dsh-plugins/commit/685dab8b80e374b5993fc0b72be5e2698a70c21b) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 真实用户走查后发现并修复的两处缺陷 + 一处补齐（走查报告见私有 notes）。
+  
+  **修：回收站预览直接报网关错**
+  `purgeTrash(options)` 只有一个参数 `options`，客户端把 `dryRun`/`projectId` 平铺在最外层，
+  网关按参数名校验拒绝，用户看到的是 `typert gateway: ... unexpected "dryRun", "projectId"`。
+  改成 `{ options: {...} }`。已核对全仓 16 个客户端调用，仅此一处写错。
+  
+  **补：删除承诺"可恢复"，现在真的能恢复**
+  - 新增 RPC `listTrash()`：列出回收站条目（名称 / 线程数 / 删除时间 / 体积）
+  - 新增 RPC `restoreTrash(entryId)`：把项目与线程放回仓储、内容目录搬回、清掉回收站条目
+  - 详情页新增「回收站（可恢复）」区块，每行一个「恢复」按钮；恢复后自动刷新项目列表
+  
+  **修：冒烟断言把报错当成通过**
+  原断言只校验"有文字且不含 FAIL"，于是上面的网关错误一路绿灯发版。现在必须校验成功语义，
+  并新增「回收站列表」与「删除→恢复往返」两条断言（web 冒烟 57 项）。
+  
+  新增 3 项 store 单测（恢复项目、同 id 拒绝、线程归属保持）。
+
+- [#289](https://github.com/kangyishuai/dsh-plugins/pull/289) [`e1315bc`](https://github.com/kangyishuai/dsh-plugins/commit/e1315bca89ae3c45b03dfe65f62afc25c1cf2949) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 真实用户走查的 P1 四项（走查报告见私有 notes）。
+  
+  - **建线程写审计**：从面板「新建线程」成功后不再无声无息，现在写 `thread/created`
+    （含 sessionId、是否隔离、任务摘要），「审计」页签能看到。之前只有被拒绝才留痕，
+    与"可审计"的主张自相矛盾。
+  - **路由结果说人话**：`按 blocked → new-thread · #long-task · 被拦: autonomy/L1` 这种内部码
+    换成「规则「long-task」建议「新建线程」，但当前自治等级（L1）不允许自动执行，已拦下（可在设置里提高自治等级，或手动执行）」；
+    原始码移到 `title` 属性，需要的人 hover 才看。
+  - **高级设置默认折叠**：仓库授权 / 回收站清理 / 回收站（可恢复）三块收进一个
+    「高级设置」折叠区，首屏留给线程——走查里这三块把主内容压到了折叠线以下。
+  - **重名项目可区分**：项目行在名字后显示 `#<id 后缀>`，两条同名项目不再一模一样。
+  
+  冒烟从 57 增至 **59** 项（新增折叠态、项目行短 id 两条断言）。
+
 ## 0.4.3
 
 ### Patch Changes
