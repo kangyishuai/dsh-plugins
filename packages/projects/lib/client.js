@@ -82,6 +82,16 @@ window.__ModuleLoader__.load({
       "detail.routeDecision": "按 {by} → {action}",
       "detail.routeExecuted": "已执行",
       "detail.routeRejected": "被拦",
+      "detail.routeAction.answer-inline": "直接回答",
+      "detail.routeAction.propose": "给出方案",
+      "detail.routeAction.new-thread": "新建线程",
+      "detail.routeAction.reuse-thread": "复用现有线程",
+      "detail.routeBy.rule": "按规则「{rule}」",
+      "detail.routeBy.fallback": "按默认策略",
+      "detail.routeOk": "{how}：{action}",
+      "detail.routeBlocked":
+        "{how}建议「{action}」，但当前自治等级（{level}）不允许自动执行，已拦下",
+      "detail.routeBlockedHint": "可在设置里提高自治等级，或手动执行",
       "detail.approvalsTitle": "待你批准的动作",
       "detail.approve": "批准",
       "detail.reject": "拒绝",
@@ -117,6 +127,7 @@ window.__ModuleLoader__.load({
       "detail.execute": "执行",
       "detail.executed": "已执行（结果见审计）",
       "detail.refused": "未执行：{reason}",
+      "detail.configTitle": "高级设置（仓库授权 / 回收站）",
       "detail.grantsTitle": "仓库授权（直推保护分支用）",
       "detail.grantsEmpty": "尚未授权任何仓库；直推保护分支前必须在这里加 owner/repo",
       "detail.grantAdd": "添加",
@@ -199,6 +210,16 @@ window.__ModuleLoader__.load({
       "detail.routeDecision": "by {by} → {action}",
       "detail.routeExecuted": "executed",
       "detail.routeRejected": "blocked",
+      "detail.routeAction.answer-inline": "answer inline",
+      "detail.routeAction.propose": "propose a plan",
+      "detail.routeAction.new-thread": "start a new thread",
+      "detail.routeAction.reuse-thread": "reuse an existing thread",
+      "detail.routeBy.rule": "rule “{rule}”",
+      "detail.routeBy.fallback": "the default policy",
+      "detail.routeOk": "{how}: {action}",
+      "detail.routeBlocked":
+        "{how} suggests “{action}”, but autonomy level {level} does not allow it to run automatically — stopped",
+      "detail.routeBlockedHint": "raise the autonomy level in settings, or run it yourself",
       "detail.approvalsTitle": "Actions waiting for your approval",
       "detail.approve": "Approve",
       "detail.reject": "Reject",
@@ -540,7 +561,20 @@ window.__ModuleLoader__.load({
                     h(
                       "div",
                       { style: styles.rowMain },
-                      h("span", { style: styles.name }, project.name),
+                      h(
+                        "span",
+                        { style: styles.name },
+                        // 重名项目不可区分（走查撞到两条同名）：名字后带一小段 id 后缀
+                        project.name,
+                        h(
+                          "span",
+                          {
+                            style: { ...styles.meta, marginLeft: "6px" },
+                            "data-projects-row-id": project.id,
+                          },
+                          `#${String(project.id).slice(-6)}`,
+                        ),
+                      ),
                       h(
                         "span",
                         { style: styles.meta },
@@ -997,23 +1031,29 @@ window.__ModuleLoader__.load({
                     style: { ...styles.meta, margin: "0 0 8px" },
                     "data-projects-route-result": "",
                     "data-projects-route-executed": routeResult.executed ? "yes" : "no",
+                    title: routeResult.decision
+                      ? `by=${String(routeResult.decision.by)} action=${String(routeResult.decision.action)}${routeResult.decision.ruleId ? ` rule=${String(routeResult.decision.ruleId)}` : ""}${routeResult.decision.blockedReason ? ` reason=${String(routeResult.decision.blockedReason)}` : ""}`
+                      : "",
                   },
                   (() => {
-                    const parts = [];
-                    if (routeResult.decision) {
-                      parts.push(
-                        text(t, "detail.routeDecision", {
-                          by: String(routeResult.decision.by),
-                          action: String(routeResult.decision.action),
-                        }),
-                      );
-                      if (routeResult.decision.ruleId)
-                        parts.push(`#${routeResult.decision.ruleId}`);
-                    }
-                    if (routeResult.executed) parts.push(text(t, "detail.routeExecuted"));
-                    else if (routeResult.reason)
-                      parts.push(`${text(t, "detail.routeRejected")}: ${routeResult.reason}`);
-                    return parts.join(" · ");
+                    const decision = routeResult.decision;
+                    if (!decision) return routeResult.reason ? String(routeResult.reason) : "";
+                    const action = String(decision.action);
+                    const actionText = text(t, `detail.routeAction.${action}`);
+                    const how =
+                      decision.ruleId && decision.by !== "fallback"
+                        ? text(t, "detail.routeBy.rule", { rule: String(decision.ruleId) })
+                        : text(t, "detail.routeBy.fallback");
+                    if (routeResult.executed)
+                      return text(t, "detail.routeOk", { how, action: actionText });
+                    // 被拦下的情况：说清"想做什么、为什么没做、可以怎么办"
+                    const level = String(decision.blockedReason ?? "").replace(/^autonomy\//u, "");
+                    const head = text(t, "detail.routeBlocked", {
+                      how,
+                      action: actionText,
+                      level: level || "?",
+                    });
+                    return `${head}（${text(t, "detail.routeBlockedHint")}）`;
                   })(),
                 )
               : null,
@@ -1332,188 +1372,201 @@ window.__ModuleLoader__.load({
               : null,
           );
         })(),
-        // 仓库授权：直推保护分支需要 per-repo 首次授予（规格 §7.5 行 2），没有界面就只能手编 JSON
+        // 走查发现这两块配置把主内容（线程）压到折叠线以下：收进折叠区，首屏留给线程
         h(
-          "div",
+          "details",
           {
-            "data-projects-grants": "",
-            style: {
-              border: `1px solid ${T.border}`,
-              borderRadius: "8px",
-              padding: "8px 10px",
-              marginTop: "8px",
-              display: "flex",
-              flexDirection: "column",
-              gap: "6px",
-            },
+            style: { marginTop: "8px" },
+            "data-projects-config": "",
           },
-          h("div", { style: styles.name }, text(t, "detail.grantsTitle")),
           h(
-            "div",
-            { style: styles.meta },
-            grants.length > 0 ? grants.join(" · ") : text(t, "detail.grantsEmpty"),
+            "summary",
+            { style: { ...styles.meta, cursor: "pointer" } },
+            text(t, "detail.configTitle"),
           ),
+          // 仓库授权：直推保护分支需要 per-repo 首次授予（规格 §7.5 行 2），没有界面就只能手编 JSON
           h(
             "div",
-            { style: { display: "flex", gap: "8px", alignItems: "center" } },
-            h("input", {
-              value: grantsDraft,
-              placeholder: "owner/repo",
-              "data-projects-grant-input": "",
-              style: { ...styles.input, flex: 1, minWidth: 0 },
-              onInput: (/** @type {any} */ event) => setGrantsDraft(event.target.value),
-            }),
-            h(
-              "button",
-              {
-                type: "button",
-                style: styles.button,
-                "data-projects-grant-add": "",
-                onClick: () => {
-                  const slug = String(grantsDraft).trim();
-                  if (!/^[\w.-]+\/[\w.-]+$/u.test(slug)) return;
-                  setGrants([...grants, slug]);
-                  setGrantsDraft("");
-                },
+            {
+              "data-projects-grants": "",
+              style: {
+                border: `1px solid ${T.border}`,
+                borderRadius: "8px",
+                padding: "8px 10px",
+                marginTop: "8px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "6px",
               },
-              text(t, "detail.grantAdd"),
-            ),
-          ),
-          grants.length > 0
-            ? h(
-                "div",
-                { style: { display: "flex", gap: "6px", flexWrap: "wrap" } },
-                ...grants.map((/** @type {string} */ slug) =>
-                  h(
-                    "button",
-                    {
-                      key: slug,
-                      type: "button",
-                      style: { ...styles.button, fontSize: "11px" },
-                      "data-projects-grant-remove": slug,
-                      onClick: () => setGrants(grants.filter((item) => item !== slug)),
-                    },
-                    `${slug} ✕`,
-                  ),
-                ),
-              )
-            : null,
-        ),
-        // 回收站清理：只处理本项目的、超保留期的条目；先预览再确认（规格 §7.5 行 4c）
-        h(
-          "div",
-          {
-            "data-projects-purge": "",
-            style: {
-              border: `1px solid ${T.border}`,
-              borderRadius: "8px",
-              padding: "8px 10px",
-              marginTop: "8px",
-              display: "flex",
-              flexDirection: "column",
-              gap: "6px",
             },
-          },
-          h("div", { style: styles.name }, text(t, "detail.purgeTitle")),
-          h("div", { style: styles.meta }, text(t, "detail.purgeHint")),
-          h(
-            "div",
-            { style: { display: "flex", gap: "8px", alignItems: "center" } },
+            h("div", { style: styles.name }, text(t, "detail.grantsTitle")),
             h(
-              "button",
-              {
-                type: "button",
-                style: styles.button,
-                disabled: purge.phase === "loading",
-                "data-projects-purge-preview": "",
-                onClick: previewPurge,
-              },
-              text(t, "detail.purgePreview"),
+              "div",
+              { style: styles.meta },
+              grants.length > 0 ? grants.join(" · ") : text(t, "detail.grantsEmpty"),
             ),
-            purge.phase === "confirm"
-              ? h(
-                  "button",
-                  {
-                    type: "button",
-                    style: { ...styles.button, color: T.danger },
-                    "data-projects-purge-confirm": "",
-                    onClick: runPurge,
+            h(
+              "div",
+              { style: { display: "flex", gap: "8px", alignItems: "center" } },
+              h("input", {
+                value: grantsDraft,
+                placeholder: "owner/repo",
+                "data-projects-grant-input": "",
+                style: { ...styles.input, flex: 1, minWidth: 0 },
+                onInput: (/** @type {any} */ event) => setGrantsDraft(event.target.value),
+              }),
+              h(
+                "button",
+                {
+                  type: "button",
+                  style: styles.button,
+                  "data-projects-grant-add": "",
+                  onClick: () => {
+                    const slug = String(grantsDraft).trim();
+                    if (!/^[\w.-]+\/[\w.-]+$/u.test(slug)) return;
+                    setGrants([...grants, slug]);
+                    setGrantsDraft("");
                   },
-                  text(t, "detail.purgeConfirm", { count: purge.eligible }),
-                )
-              : null,
-          ),
-          purge.message !== ""
-            ? h("div", { style: styles.meta, "data-projects-purge-result": "" }, purge.message)
-            : null,
-        ),
-        // 回收站（可恢复）：删除承诺"可恢复"，就必须给得出恢复入口（P0-2）
-        h(
-          "div",
-          {
-            "data-projects-trash": "",
-            style: {
-              border: `1px solid ${T.border}`,
-              borderRadius: "8px",
-              padding: "8px 10px",
-              marginTop: "8px",
-              display: "flex",
-              flexDirection: "column",
-              gap: "6px",
-            },
-          },
-          h("div", { style: styles.name }, text(t, "detail.trashTitle")),
-          trash.entries.length === 0
-            ? h(
-                "div",
-                { style: styles.meta, "data-projects-trash-empty": "" },
-                text(t, "detail.trashEmpty"),
-              )
-            : h(
-                "div",
-                { style: { display: "flex", flexDirection: "column", gap: "4px" } },
-                trash.entries.slice(0, 8).map((/** @type {any} */ entry) =>
-                  h(
-                    "div",
-                    {
-                      key: entry.entryId,
-                      "data-projects-trash-row": entry.entryId,
-                      style: {
-                        display: "flex",
-                        gap: "8px",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                      },
-                    },
-                    h(
-                      "span",
-                      {
-                        style: {
-                          ...styles.meta,
-                          minWidth: 0,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                        },
-                      },
-                      `${entry.name} · ${entry.threadCount} 个线程 · ${entry.deletedAt > 0 ? new Date(entry.deletedAt).toLocaleString() : "时间未知"} · ${formatBytes(entry.sizeBytes)}`,
-                    ),
+                },
+                text(t, "detail.grantAdd"),
+              ),
+            ),
+            grants.length > 0
+              ? h(
+                  "div",
+                  { style: { display: "flex", gap: "6px", flexWrap: "wrap" } },
+                  ...grants.map((/** @type {string} */ slug) =>
                     h(
                       "button",
                       {
+                        key: slug,
                         type: "button",
-                        style: styles.button,
-                        "data-projects-trash-restore": entry.entryId,
-                        onClick: () => restoreEntry(entry.entryId),
-                        disabled: entry.restorable !== true,
+                        style: { ...styles.button, fontSize: "11px" },
+                        "data-projects-grant-remove": slug,
+                        onClick: () => setGrants(grants.filter((item) => item !== slug)),
                       },
-                      text(t, "detail.trashRestore"),
+                      `${slug} ✕`,
+                    ),
+                  ),
+                )
+              : null,
+          ),
+          // 回收站清理：只处理本项目的、超保留期的条目；先预览再确认（规格 §7.5 行 4c）
+          h(
+            "div",
+            {
+              "data-projects-purge": "",
+              style: {
+                border: `1px solid ${T.border}`,
+                borderRadius: "8px",
+                padding: "8px 10px",
+                marginTop: "8px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "6px",
+              },
+            },
+            h("div", { style: styles.name }, text(t, "detail.purgeTitle")),
+            h("div", { style: styles.meta }, text(t, "detail.purgeHint")),
+            h(
+              "div",
+              { style: { display: "flex", gap: "8px", alignItems: "center" } },
+              h(
+                "button",
+                {
+                  type: "button",
+                  style: styles.button,
+                  disabled: purge.phase === "loading",
+                  "data-projects-purge-preview": "",
+                  onClick: previewPurge,
+                },
+                text(t, "detail.purgePreview"),
+              ),
+              purge.phase === "confirm"
+                ? h(
+                    "button",
+                    {
+                      type: "button",
+                      style: { ...styles.button, color: T.danger },
+                      "data-projects-purge-confirm": "",
+                      onClick: runPurge,
+                    },
+                    text(t, "detail.purgeConfirm", { count: purge.eligible }),
+                  )
+                : null,
+            ),
+            purge.message !== ""
+              ? h("div", { style: styles.meta, "data-projects-purge-result": "" }, purge.message)
+              : null,
+          ),
+          // 回收站（可恢复）：删除承诺"可恢复"，就必须给得出恢复入口（P0-2）
+          h(
+            "div",
+            {
+              "data-projects-trash": "",
+              style: {
+                border: `1px solid ${T.border}`,
+                borderRadius: "8px",
+                padding: "8px 10px",
+                marginTop: "8px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "6px",
+              },
+            },
+            h("div", { style: styles.name }, text(t, "detail.trashTitle")),
+            trash.entries.length === 0
+              ? h(
+                  "div",
+                  { style: styles.meta, "data-projects-trash-empty": "" },
+                  text(t, "detail.trashEmpty"),
+                )
+              : h(
+                  "div",
+                  { style: { display: "flex", flexDirection: "column", gap: "4px" } },
+                  trash.entries.slice(0, 8).map((/** @type {any} */ entry) =>
+                    h(
+                      "div",
+                      {
+                        key: entry.entryId,
+                        "data-projects-trash-row": entry.entryId,
+                        style: {
+                          display: "flex",
+                          gap: "8px",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                        },
+                      },
+                      h(
+                        "span",
+                        {
+                          style: {
+                            ...styles.meta,
+                            minWidth: 0,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          },
+                        },
+                        `${entry.name} · ${entry.threadCount} 个线程 · ${entry.deletedAt > 0 ? new Date(entry.deletedAt).toLocaleString() : "时间未知"} · ${formatBytes(entry.sizeBytes)}`,
+                      ),
+                      h(
+                        "button",
+                        {
+                          type: "button",
+                          style: styles.button,
+                          "data-projects-trash-restore": entry.entryId,
+                          onClick: () => restoreEntry(entry.entryId),
+                          disabled: entry.restorable !== true,
+                        },
+                        text(t, "detail.trashRestore"),
+                      ),
                     ),
                   ),
                 ),
-              ),
-          trash.message !== ""
-            ? h("div", { style: styles.meta, "data-projects-trash-result": "" }, trash.message)
-            : null,
+            trash.message !== ""
+              ? h("div", { style: styles.meta, "data-projects-trash-result": "" }, trash.message)
+              : null,
+          ),
         ),
         del.confirming
           ? h(

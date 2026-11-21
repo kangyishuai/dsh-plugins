@@ -409,6 +409,22 @@ try {
   const purgeOk = /项可清理|没有|空/u.test(purgeResult) && !/gateway|失败|错误/u.test(purgeResult);
   add("回收站清理预览可用（dry-run 不删东西）", preview === "clicked" && purgeOk, purgeResult);
 
+  // 配置区默认折叠：否则三块配置把线程压到折叠线以下（走查结论）
+  const configCollapsed = await page.evaluate(() => {
+    const details = document.querySelector("[data-projects-config]");
+    return details ? { present: true, open: details.open === true } : { present: false, open: false };
+  });
+  add(
+    "高级设置默认折叠（首屏留给线程）",
+    configCollapsed.present === true && configCollapsed.open === false,
+    JSON.stringify(configCollapsed),
+  );
+  // 展开后才看回收站（真实用户也要先展开）
+  await page.evaluate(() => {
+    const details = document.querySelector("[data-projects-config]");
+    if (details) details.open = true;
+  });
+  await page.waitForTimeout(600);
   // 回收站必须可看、可恢复（删除文案承诺"可恢复"，承诺就要能看到入口）
   const trashVisible = await page.evaluate(() =>
     Boolean(document.querySelector("[data-projects-trash]")),
@@ -416,6 +432,7 @@ try {
   const trashText = await page.evaluate(
     () => (document.querySelector("[data-projects-trash]")?.innerText || "").trim(),
   );
+
   add(
     "回收站区块存在且给出恢复入口说明",
     trashVisible === true && trashText.length > 0,
@@ -622,6 +639,15 @@ try {
     throwaway === "clicked" && openedThrowaway === "clicked" && confirmed === "clicked" && goneFromList === true,
     JSON.stringify({ throwaway, openedThrowaway, confirmed }),
   );
+  const rowIds = await page.evaluate(() =>
+    [...document.querySelectorAll("[data-projects-row-id]")].map((n) => (n.textContent || "").trim()),
+  );
+  add(
+    "项目行带短 id（重名可区分）",
+    rowIds.length > 0 && rowIds.every((id) => /^#[A-Za-z0-9_-]{4,}$/u.test(id)),
+    JSON.stringify(rowIds.slice(0, 3)),
+  );
+
 
   // 删除承诺"可恢复"，就必须能真的恢复回来。用一个**单独**的临时项目做往返，
   // 免得把上面留给宿主侧 manifest 断言的条目恢复走。
@@ -656,6 +682,11 @@ try {
     return "clicked";
   });
   await page.waitForTimeout(1800);
+  await page.evaluate(() => {
+    const details = document.querySelector("[data-projects-config]");
+    if (details) details.open = true;
+  });
+  await page.waitForTimeout(500);
   let trashListText = "";
   for (let i = 0; i < 12; i += 1) {
     await page.waitForTimeout(400);
