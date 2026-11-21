@@ -376,3 +376,19 @@ CI 有 FAILURE    → merge/ci-not-green
 
 **口径**：统计从插件启动后开始累积（不是回放历史），diff 是现算的所以始终准确。
 冒烟断言 `data-projects-thread-stats` 存在且含「步 / 工具 / diff / tokens」。
+
+## 14. 周预算与步数上限（2026-11-21，规格 §7.7.4）
+
+| 闸门           | 配置                       | 行为                                                                           |
+| -------------- | -------------------------- | ------------------------------------------------------------------------------ |
+| 日 token       | `budget.dailyTokens`       | 到线拒建线程（`budget/daily-tokens`）                                          |
+| **周 token**   | `budget.weeklyTokens`      | 按**自然周周一 00:00（本地时区）**聚合，到线拒建（`budget/weekly-tokens`）     |
+| **单线程步数** | `budget.maxStepsPerThread` | 超限**只停协调器唤醒**（`wake/skipped` + `budget/steps-per-thread`），不杀会话 |
+
+**为什么步数只停唤醒**：预算是防止无人值守时无限烧 token，不是惩罚使用者——
+人还可以继续在同一会话里干活，只是插件不再主动唤醒协调器。
+
+**token 存储改按天分桶**（原先单日桶算不出周）：`usage[projectId].days = { "YYYY-MM-DD": tokens }`，
+保留最近 21 天；旧形状 `{date, tokens}` 首次写入时自动迁移，历史数不丢。
+
+`threadStats` 另外返回 `overBudget` / `budgetReason`，面板可据此提示。

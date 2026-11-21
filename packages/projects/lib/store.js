@@ -429,30 +429,67 @@ export class ProjectStore {
    * @param {number} [now]
    * @returns {{ date: string, tokens: number }}
    */
+  /**
+   * 记 token 用量。**按天分桶**（周预算要跨天求和，单日桶算不出来）。
+   * 保留最近 21 天，避免无限增长；兼容旧的 `{date, tokens}` 形状。
+   * @param {string} projectId @param {number} tokens @param {number} [now]
+   */
   addTokenUsage(projectId, tokens, now = this.now()) {
     const amount = Number.isFinite(tokens) ? Math.max(0, Math.trunc(Number(tokens))) : 0;
     const date = new Date(now).toISOString().slice(0, 10);
     this.state.usage = this.state.usage ?? {};
-    const bucket = this.state.usage[projectId] ?? { date, tokens: 0 };
-    if (bucket.date !== date) {
-      bucket.date = date;
-      bucket.tokens = 0;
+    const bucket = this.state.usage[projectId] ?? { days: {} };
+    // 旧形状（单日桶）迁移成按天表
+    if (!bucket.days) {
+      bucket.days = {};
+      if (typeof bucket.date === "string") bucket.days[bucket.date] = Number(bucket.tokens ?? 0);
+      delete bucket.date;
+      delete bucket.tokens;
     }
-    bucket.tokens += amount;
+    bucket.days[date] = (Number(bucket.days[date]) || 0) + amount;
+    const keys = Object.keys(bucket.days).sort();
+    for (const stale of keys.slice(0, Math.max(0, keys.length - 21))) delete bucket.days[stale];
     this.state.usage[projectId] = bucket;
-    return { ...bucket };
+    return { date, tokens: bucket.days[date] };
   }
 
   /**
-   * 读今天的 token 花费（日期不同就视为 0）。
-   * @param {string} projectId
-   * @param {number} [now]
+   * 指定日期（本地日）的用量。
+   * @param {string} projectId @param {number} [now]
+   * @returns {number}
    */
   tokenUsageToday(projectId, now = this.now()) {
+    return this.tokenUsageOn(projectId, now);
+  }
+
+  /**
+   * 某一天的用量。
+   * @param {string} projectId @param {number} [now]
+   * @returns {number}
+   */
+  tokenUsageOn(projectId, now = this.now()) {
     const date = new Date(now).toISOString().slice(0, 10);
     const bucket = this.state.usage?.[projectId];
-    if (!bucket || bucket.date !== date) return 0;
-    return Number.isFinite(bucket.tokens) ? bucket.tokens : 0;
+    if (!bucket) return 0;
+    if (bucket.days) return Number(bucket.days[date]) || 0;
+    return bucket.date === date ? Number(bucket.tokens) || 0 : 0; // 旧形状兜底
+  }
+
+  /**
+   * 从某个时刻（含）起的累计用量（周预算用）。
+   * @param {string} projectId @param {number} [fromMs]
+   * @returns {number}
+   */
+  tokenUsageSince(projectId, fromMs = 0) {
+    const bucket = this.state.usage?.[projectId];
+    if (!bucket) return 0;
+    const fromDate = new Date(fromMs).toISOString().slice(0, 10);
+    if (bucket.days) {
+      return Object.entries(bucket.days)
+        .filter(([date]) => date >= fromDate)
+        .reduce((sum, [, value]) => sum + (Number(value) || 0), 0);
+    }
+    return Number(bucket.tokens) || 0; // 旧形状：只有一天的量
   }
 
   /**
