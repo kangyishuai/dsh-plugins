@@ -854,11 +854,43 @@ window.__ModuleLoader__.load({
         if (tab === "threads") {
           const rows = data.progress?.rows ?? [];
           const counts = data.progress?.counts ?? {};
+          // 空列表也要给「建线程」入口：否则新项目只能靠会话菜单归属，没法从这里起线程
+          const composer = h(
+            "div",
+            { style: { display: "flex", gap: "8px", margin: "0 0 8px" } },
+            h("input", {
+              style: styles.input,
+              value: draft,
+              placeholder: text(t, "detail.threadPlaceholder"),
+              "data-projects-thread-input": "",
+              onChange: (/** @type {any} */ event) => setDraft(event.target.value),
+              onKeyDown: (/** @type {any} */ event) => {
+                if (event.key === "Enter") createThread();
+              },
+              disabled: busy,
+            }),
+            h(
+              "button",
+              {
+                type: "button",
+                style: styles.button,
+                "data-projects-thread-create": "",
+                onClick: createThread,
+                disabled: busy,
+              },
+              busy ? text(t, "detail.threadCreating") : text(t, "detail.threadCreate"),
+            ),
+          );
           if (rows.length === 0)
             return h(
-              "p",
-              { style: styles.empty, "data-projects-threads-empty": "" },
-              text(t, "detail.threadsEmpty"),
+              "div",
+              { "data-projects-threads": "", "data-projects-attention": "0" },
+              composer,
+              h(
+                "p",
+                { style: styles.empty, "data-projects-threads-empty": "" },
+                text(t, "detail.threadsEmpty"),
+              ),
             );
           return h(
             "div",
@@ -866,32 +898,7 @@ window.__ModuleLoader__.load({
               "data-projects-threads": "",
               "data-projects-attention": String(data.progress?.attention ?? 0),
             },
-            h(
-              "div",
-              { style: { display: "flex", gap: "8px", margin: "0 0 8px" } },
-              h("input", {
-                style: styles.input,
-                value: draft,
-                placeholder: text(t, "detail.threadPlaceholder"),
-                "data-projects-thread-input": "",
-                onChange: (/** @type {any} */ event) => setDraft(event.target.value),
-                onKeyDown: (/** @type {any} */ event) => {
-                  if (event.key === "Enter") createThread();
-                },
-                disabled: busy,
-              }),
-              h(
-                "button",
-                {
-                  type: "button",
-                  style: styles.button,
-                  "data-projects-thread-create": "",
-                  onClick: createThread,
-                  disabled: busy,
-                },
-                busy ? text(t, "detail.threadCreating") : text(t, "detail.threadCreate"),
-              ),
-            ),
+            composer,
             h(
               "div",
               { style: { display: "flex", gap: "8px", margin: "0 0 8px" } },
