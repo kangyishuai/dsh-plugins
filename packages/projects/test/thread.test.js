@@ -366,9 +366,10 @@ describe("reclaimThreadWorktree：未推送判据（修 base..HEAD 的缺陷）"
       projectId: project.id,
       deps,
     });
-    await commitIn(thread.worktree, "work.txt");
+    const worktree = String(thread.worktree ?? "");
+    await commitIn(worktree, "work.txt");
     // 推上去（模拟 PR 已推送），此时「相对 base 有新提交」依然 >0
-    await runGit(["push", "-q", "origin", thread.branch], thread.worktree);
+    await runGit(["push", "-q", "origin", String(thread.branch ?? "")], worktree);
 
     const result = await reclaimThreadWorktree({
       store,
@@ -393,7 +394,7 @@ describe("reclaimThreadWorktree：未推送判据（修 base..HEAD 的缺陷）"
       projectId: project.id,
       deps,
     });
-    await commitIn(thread.worktree, "local-only.txt");
+    await commitIn(String(thread.worktree ?? ""), "local-only.txt");
 
     const result = await reclaimThreadWorktree({
       store,
