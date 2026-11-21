@@ -13,6 +13,7 @@ import {
   planDeleteBranch,
   planRemove,
   shouldDeleteBranch,
+  shouldDeleteBranchV2,
   shouldReclaim,
   slug,
   WORKTREE_DIR,
@@ -250,6 +251,66 @@ describe("分支清理（M4 §5）", () => {
   });
 
   it("删分支用 -d 而不是 -D（不强删）", () => {
+    assert.deepEqual(planDeleteBranch("dsh/p-1"), ["branch", "-d", "dsh/p-1"]);
+    assert.ok(!planDeleteBranch("dsh/p-1").includes("-D"));
+  });
+});
+
+describe("shouldDeleteBranchV2（规格 §7.7.5：不用 --merged 的三条判据）", () => {
+  const ok = { branch: "dsh/p-1", threadBranch: "dsh/p-1", merged: true, unpushedCommits: 0 };
+
+  it("三条全满足才删", () => {
+    assert.deepEqual(shouldDeleteBranchV2(ok), { ok: true, reason: "" });
+  });
+
+  it("没合并 → 保留（哪怕看起来干净）", () => {
+    assert.equal(shouldDeleteBranchV2({ ...ok, merged: false }).reason, "not-merged");
+  });
+
+  it("有未推送提交 → 保留", () => {
+    assert.equal(shouldDeleteBranchV2({ ...ok, unpushedCommits: 1 }).reason, "unpushed-commits");
+    assert.equal(
+      shouldDeleteBranchV2({ ...ok, unpushedCommits: Number.NaN }).reason,
+      "unpushed-commits",
+      "读不出计数时必须拒绝，不能当 0",
+    );
+  });
+
+  it("不是 dsh/ 前缀 / 与线程记录不符 → 保留", () => {
+    assert.equal(
+      shouldDeleteBranchV2({ ...ok, branch: "feature/x", threadBranch: "feature/x" }).reason,
+      "branch-not-ours",
+    );
+    assert.equal(
+      shouldDeleteBranchV2({ ...ok, threadBranch: "dsh/other" }).reason,
+      "branch-not-recorded",
+    );
+  });
+
+  it("两种已知误判场景：都必须保留", () => {
+    // 场景 A：分支刚建、内容已进 HEAD（--merged 会说"已合并"）但线程从未合并 → 不能删
+    assert.equal(
+      shouldDeleteBranchV2({
+        branch: "dsh/fresh",
+        threadBranch: "dsh/fresh",
+        merged: false,
+        unpushedCommits: 0,
+      }).reason,
+      "not-merged",
+    );
+    // 场景 B：squash 合并（--merged 会说"未合并"）但记录里 mergedAt 存在且无未推送 → 可以删
+    assert.equal(
+      shouldDeleteBranchV2({
+        branch: "dsh/squashed",
+        threadBranch: "dsh/squashed",
+        merged: true,
+        unpushedCommits: 0,
+      }).ok,
+      true,
+    );
+  });
+
+  it("删除只用 -d，永不 -D", () => {
     assert.deepEqual(planDeleteBranch("dsh/p-1"), ["branch", "-d", "dsh/p-1"]);
     assert.ok(!planDeleteBranch("dsh/p-1").includes("-D"));
   });

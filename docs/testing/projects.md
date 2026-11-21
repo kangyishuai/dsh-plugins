@@ -392,3 +392,22 @@ CI 有 FAILURE    → merge/ci-not-green
 保留最近 21 天；旧形状 `{date, tokens}` 首次写入时自动迁移，历史数不丢。
 
 `threadStats` 另外返回 `overBudget` / `budgetReason`，面板可据此提示。
+
+## 15. 分支生命周期（2026-11-21，规格 §7.7.5）
+
+**为什么不能用 `git branch --merged`**：它在两个方向都会误判（见 [runtime §11.15](../runtime/0.2.2-rc.3.md)）——
+未提交的新分支被当"已合并"、squash 合并的分支被当"未合并"。所以改用三条独立判据：
+
+| 判据         | 检查                                                         | 不满足                                    |
+| ------------ | ------------------------------------------------------------ | ----------------------------------------- |
+| 是我们的分支 | `dsh/` 前缀 + 与线程记录 `branch` 一致                       | `branch-not-ours` / `branch-not-recorded` |
+| 确有合并结果 | 记录 `mergedAt`，或 `merge-base --is-ancestor <branch> HEAD` | `not-merged`                              |
+| 无未推送提交 | `rev-list --count <branch> --not --remotes` 为 0             | `unpushed-commits`（读不出也算不满足）    |
+
+**worktree 先处理**：分支被 worktree 占用时 `git branch -d` 会拒绝；所以只在 worktree
+`git status --porcelain` **为空**时用 `git worktree remove`（不加 `--force`）移除，脏的一律保留。
+
+删除**只用 `git branch -d`，永不用 `-D`**。RPC `cleanupBranches` 默认 dry-run，真删需 `confirm: true`；
+归档项目时自动跑一次（失败不影响归档）。
+
+真机（临时裸远端 + 桩 gh）：已合并且已推送的分支被删；未合并的保留（`not-merged`）。
