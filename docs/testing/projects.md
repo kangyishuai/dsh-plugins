@@ -362,3 +362,17 @@ CI 有 FAILURE    → merge/ci-not-green
 
 **注意**：宿主没有审批策略 API（`ctx.approval.setPolicy` 不存在，见 [runtime §11.32](../runtime/0.2.2-rc.3.md)），
 所以预授权是本插件用 `policy-grant` 自己实现的，不是宿主能力。
+
+## 13. 可观测（2026-11-21，规格 §7.7.3）
+
+线程行现在多一行摘要：`N 步 · N 次工具 · diff N 文件 +a/-b · N tokens`。
+
+| 指标        | 来源                                                                      | 缺失时                        |
+| ----------- | ------------------------------------------------------------------------- | ----------------------------- |
+| 步骤数      | `assistant/attempt` 计数                                                  | —                             |
+| 工具 / 命令 | `tool/call` 记名，`tool/result` 回填 ok                                   | 取不到命令行则记工具名        |
+| tokens      | `assistant/attempt.data.usage`（兼容 `totalTokens`/`total`/input+output） | 显式 `n/a`（宿主常缺）        |
+| diff        | `git diff --numstat <base>..HEAD`（`threadStats` RPC 现算）               | 二进制 `-/-` → `null` → `n/a` |
+
+**口径**：统计从插件启动后开始累积（不是回放历史），diff 是现算的所以始终准确。
+冒烟断言 `data-projects-thread-stats` 存在且含「步 / 工具 / diff / tokens」。

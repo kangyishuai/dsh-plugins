@@ -344,6 +344,16 @@ try {
     await page.waitForTimeout(500);
   }
   add("详情页显示预算用量", budgetText !== "", budgetText);
+  // 可观测摘要（规格 §7.7.3）：线程行应显示「N 步 · N 次工具 · diff … · tokens …」
+  const statsText = await page.evaluate(
+    () => (document.querySelector("[data-projects-thread-stats]")?.textContent || "").trim(),
+  );
+  add(
+    "线程行显示可观测摘要（步骤/工具/diff/tokens）",
+    /步/u.test(statsText) && /(工具|diff|tokens)/u.test(statsText),
+    statsText,
+  );
+
   // 详情页新增两块：仓库授权 + 回收站清理（都必须渲染出来）
   const newBlocks = await page.evaluate(() => ({
     grants: Boolean(document.querySelector("[data-projects-grants]")),
