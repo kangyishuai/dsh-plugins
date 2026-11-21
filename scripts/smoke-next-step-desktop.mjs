@@ -191,7 +191,9 @@ const cardsNow = (cdp) =>
       hasDismiss: !!el.querySelector("button[data-next-step-dismiss]"),
       hasMore: !!el.querySelector("button[data-next-step-more]"),
       pills: [...el.querySelectorAll("button[data-next-step-pill]")].map((b) => ({
-        label: (b.textContent || "").trim(),
+        // 胶囊的 textContent 会把 primary 的键帽（⌘↵）也算进去；标签以 data-text 为准
+        // （与 smoke-next-step.mjs 的取法一致，data-text 就是点下去真正发出去的那句话）。
+        label: (b.getAttribute("data-text") || b.textContent || "").trim(),
         stance: b.getAttribute("data-stance") || "",
         index: Number(b.getAttribute("data-index")),
         disabled: b.disabled === true,
@@ -984,15 +986,37 @@ const main = async () => {
           }),
         );
         if (deepCard !== null) {
+          // 插件契约是 **1–2 粒**（ADR 0013）：只有一粒表示「下一步很明确」，不是残缺。
+          // 模型经常只给一条（2026-11-21 实测 --deep 打出 1 粒「补一个二分查找代码示例」），
+          // 写死 2 粒会让门禁随模型输出漂移而假红。
           check(
-            "--deep 卡片有两粒 stance 互斥的胶囊",
-            deepCard.pills.length === 2 &&
-              deepCard.pills[0].stance !== deepCard.pills[1].stance &&
+            "--deep 卡片有 1–2 粒胶囊、文案非空",
+            deepCard.pills.length >= 1 &&
+              deepCard.pills.length <= 2 &&
               deepCard.pills.every((/** @type {any} */ p) => p.label !== ""),
             JSON.stringify(
               deepCard.pills.map((/** @type {any} */ p) => ({ stance: p.stance, label: p.label })),
             ),
           );
+          if (deepCard.pills.length !== 2) {
+            skip(
+              "--deep 两粒胶囊的 stance 互斥",
+              `该卡只有 ${deepCard.pills.length} 粒胶囊（插件契约 1–2 粒都合法，见 ADR 0013）`,
+            );
+          } else {
+            check(
+              "--deep 两粒胶囊的 stance 互斥",
+              deepCard.pills[0].stance !== "" &&
+                deepCard.pills[1].stance !== "" &&
+                deepCard.pills[0].stance !== deepCard.pills[1].stance,
+              JSON.stringify(
+                deepCard.pills.map((/** @type {any} */ p) => ({
+                  stance: p.stance,
+                  label: p.label,
+                })),
+              ),
+            );
+          }
           await cdp.screenshot(join(SHOTS, "07-deep-card.png"));
           // 点第一粒胶囊：会真的发出一条用户消息（破坏性，只在 --deep 下做）。
           const userRowsBefore = await cdp.evaluate(
