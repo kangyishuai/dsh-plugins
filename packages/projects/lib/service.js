@@ -1968,6 +1968,15 @@ export class ProjectsService extends TypertRemoteService {
         runGit: runGit,
         createSession: async (/** @type {{cwd: string}} */ request) => {
           const created = await sc.create({ cwd: request.cwd });
+          // 成功也要留痕：面板建线程不写审计的话，"可审计"就只是句口号（走查发现）
+          store.appendAudit({
+            action: "thread/created",
+            projectId,
+            sessionId: String(created.sessionId),
+            isolated: created.isolated === true,
+            task: String(task ?? "").slice(0, 120),
+          });
+          store.save();
           return { sessionId: String(created.sessionId) };
         },
       },
