@@ -290,7 +290,7 @@ export class ProjectStore {
     return this;
   }
 
-  /** @param {string} name @param {{goal?: string, dirs?: string[]}} [input] */
+  /** @param {string} name @param {{goal?: string, dirs?: string[], template?: boolean}} [input] */
   createProject(name, input = {}) {
     const trimmed = String(name ?? "").trim();
     if (trimmed === "") throw new Error("projects: project name is required");
