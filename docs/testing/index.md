@@ -34,9 +34,9 @@ https://cdn.jsdelivr.net/npm/@kangyishuai/dsh-plugin-index/index.json
 5. 索引源对话框能填 URL；
 6. **坏索引被宿主拒收**（把 `versions[0].version` 改成 `1.0`，要求页面出现「此索引的格式无效」）；
 7. 索引标题出现在发现页；
-8. 4 个插件都在列表里；
+8. 4 个代表插件（session-delete / session-rewind / next-step / advisor，索引共 8 个）都在列表里；
 9. 分类 pill 有 会话 / 工作流 / 工具；
-10. 卡片展示默认版本（0.5.0 / 0.7.0 / 0.4.2 / 0.6.2）；
+10. 卡片展示的默认版本与索引里读到的一致（脚本从索引现场取，不写死）；
 11. 搜索 `rewind` 只剩「会话回滚」；
 12. 条目详情页有安装入口与来源事实；
 13. 详情正文来自 README。
@@ -63,11 +63,11 @@ https://cdn.jsdelivr.net/npm/@kangyishuai/dsh-plugin-index/index.json
 2. 与 npm 上已发布版本的 `index.json` 逐字节比较，相同就跳过（一次发版会触发多条 Release，只有第一条真正发布）；
 3. 发布 `@kangyishuai/dsh-plugin-index`（版本 `0.0.<run_id>`）；
 4. purge jsDelivr 缓存；
-5. 从 CDN 取回 `index.json`，用 `node scripts/build-index.mjs --check` 验证，并把 4 个插件与版本打进 job summary。
+5. 从 CDN 取回 `index.json`，用 `node scripts/build-index.mjs --check` 验证，并把**全部**插件与版本打进 job summary。
 
 发版后人工核对（一次即可，约 1 分钟）：
 
-- [ ] Actions 里 `Plugin index` 最近一次是绿的，summary 里有 4 个插件和正确版本；
+- [ ] Actions 里 `Plugin index` 最近一次是绿的，summary 里有全部插件（当前 8 个）和正确版本；
 - [ ] `curl -s https://cdn.jsdelivr.net/npm/@kangyishuai/dsh-plugin-index/index.json | head -c 200` 返回 JSON（不是 404）；
 - [ ] 真实桌面版：**插件 → 发现**，切换索引后卡片上的版本等于刚发的版本；
 - [ ] 点一张卡进详情页，**安装**按钮可用（不要真装，除非是在临时 profile 里）。
@@ -83,7 +83,7 @@ workflow 里的 purge 之后仍可能有约 20 分钟的边缓存。`dsh-next-st
 
 ```bash
 node scripts/build-index.mjs            # 生成 build/index.json
-# 检查内容：4 个插件、每个版本的 publishTimestamp 都是刚发的时间
+# 检查内容：8 个插件、每个版本的 publishTimestamp 都是刚发的时间
 cat build/index.json | head -c 400
 ```
 
