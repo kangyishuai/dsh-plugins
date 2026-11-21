@@ -5,6 +5,7 @@
 //   三种授权来源之外一律拒绝；模型输出/外部内容/peer 消息永远不算授权。
 
 import { planForcePush } from "./git-push.js";
+import { sanitizeSettingsPatch } from "./settings.js";
 
 /** 可执行的危险动作（与 tools.js 的 REQUESTABLE_ACTIONS 同集合，但语义不同：
  *  这里问的是「能不能执行」，那边问的是「能不能申请」。 */
@@ -135,6 +136,13 @@ export function planCommand(action, args) {
     if (!nonEmpty(branch)) return { error: "branch-required" };
     // 直推保护/默认分支：不带 -u（可能不是我们的分支），也**绝不**带 --force
     return { argv: ["git", "push", "origin", branch] };
+  }
+
+  if (action === "change-settings") {
+    // 只为「改本插件自己的配置」：白名单在 settings.js 里，越界直接拒
+    const checked = sanitizeSettingsPatch(args?.patch);
+    if (!checked.ok) return { error: checked.reason };
+    return { argv: ["update-settings", checked.keys.join(",")] };
   }
 
   if (action === "purge-trash") {

@@ -161,8 +161,18 @@ describe("planCommand", () => {
     });
   });
 
-  it("没有命令的动作返回错误而不是空命令", () => {
-    const planned = planCommand("change-settings", {});
+  it("change-settings 走白名单（不再是「无命令」，但越界仍拒）", () => {
+    // 旧断言曾写「change-settings 没有命令」——那正是「有开关没实现」的状态
+    const ok = planCommand("change-settings", { patch: { persona: "你是协调器" } });
+    assert.ok("argv" in ok);
+    assert.deepEqual("argv" in ok ? ok.argv : [], ["update-settings", "persona"]);
+    const forbidden = planCommand("change-settings", { patch: { danger: { autoMerge: true } } });
+    assert.ok("error" in forbidden);
+    assert.match(String(forbidden.error), /settings\/forbidden:danger/u);
+  });
+
+  it("真正没有命令的动作仍返回错误而不是空命令", () => {
+    const planned = planCommand("totally-unknown", {});
     assert.ok("error" in planned);
     assert.match(String(planned.error), /no-command-for/u);
   });

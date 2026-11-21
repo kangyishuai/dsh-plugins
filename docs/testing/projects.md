@@ -298,3 +298,23 @@ pnpm smoke:projects-desktop --require
 注意：强推的「远端被别人动过」有两种挡法——前置的 `remote-moved`（用记录过的 `lastPushedSha` 对比
 本地 tracking ref）与 `--force-with-lease` 本身。前者依赖 tracking ref 新鲜，后者不依赖，
 所以**即使前置检查放过，lease 也会 fail-closed 拒绝**（上表第三行就是这种情形）。
+
+## 11. 审批 → 执行闭环（2026-11-21）
+
+规格要求「批准 ≠ 可执行」：批准只是改状态，**执行是独立一步**。此前这一步没有任何入口
+（`executeApproval` 已导出但零调用方），等于安全层空转。现在补上：
+
+- 详情页审批区把「待处理」与「已批准未执行」分开渲染；后者带 `data-projects-approval-execute` 按钮，
+  点击调 `executeApproval`，把 `executed:true` 或拒绝原因（`detail.refused`）回显在
+  `data-projects-approval-exec-result`
+- 服务端补 `purge-trash` 与 `change-settings` 两条执行路径（此前走到 `execution-deferred`）
+- `change-settings` 只接受白名单键（`persona` / `routing` / `goal`）；`danger` / `autonomy` /
+  `preapprove` / `budget` / `repoGrants` 等安全面一律拒绝（`settings/forbidden:<key>`）
+
+真机验证（临时宿主）：`settingsAllowed` → `executed:true, keys:["persona"]`；
+`settingsForbidden` → `settings/forbidden:danger`；`purgeApprovalSwitchOff` → `switch-off`；
+`purgeApprovalSwitchOn` → `executed:true, purged:1`（清单已写盘）。
+
+**已知取舍**：幂等占位（`executedAt`）在闸门之前就写入，因此**被拒绝的申请也会被占用**，
+不会显示「执行」按钮，需要协调器重新申请。这样做是为了避免并发重复执行；换成
+claim/release 模型可以既保幂等又可重试，但涉及 14 处拒绝点，留作后续。

@@ -41,6 +41,7 @@ import { buildPersona } from "./persona.js";
 import { readProjectFiles } from "./project-files.js";
 import { buildPurgeManifest, DEFAULT_RETENTION_DAYS, selectExpired } from "./purge.js";
 import { decideRoute } from "./routing.js";
+import { applySettingsPatch, sanitizeSettingsPatch } from "./settings.js";
 import { ProjectStore } from "./store.js";
 import { createIsolatedThread, reclaimThreadWorktree, reconcileWorktrees } from "./thread.js";
 import { buildCoordinatorTools, REQUESTABLE_ACTIONS } from "./tools.js";
@@ -1901,6 +1902,63 @@ export class ProjectsService extends TypertRemoteService {
       });
       store.save();
       return ok ? { executed: true, evidence } : { executed: false, reason: "gh-merge-failed" };
+    }
+
+    // 改本插件自己的配置（规格 §7.5 行 5a）：只允许白名单键，安全面一律拒绝
+    if (approval.action === "change-settings") {
+      const checked = sanitizeSettingsPatch(approval.args?.patch);
+      if (!checked.ok) {
+        store.appendAudit({
+          action: "approval/execution-refused",
+          projectId: approval.projectId,
+          requestId,
+          dangerAction: approval.action,
+          reason: checked.reason,
+        });
+        store.save();
+        return { executed: false, reason: checked.reason };
+      }
+      const before = store.getProject(approval.projectId);
+      const nextPolicy = applySettingsPatch(before?.policy ?? {}, checked.patch);
+      store.updateProject(approval.projectId, { policy: nextPolicy });
+      const evidence = recoveryEvidence(approval.action, { keys: checked.keys }, {});
+      store.appendAudit({
+        action: "approval/executed",
+        projectId: approval.projectId,
+        requestId,
+        dangerAction: approval.action,
+        keys: checked.keys,
+        evidence,
+      });
+      store.save();
+      return { executed: true, evidence, keys: checked.keys };
+    }
+
+    // 回收站清理（规格 §7.5 行 4c）：审批路径复用 purgeTrash，开关与项目都按本次申请的项目判定
+    if (approval.action === "purge-trash") {
+      const purged = this.purgeTrash({
+        dryRun: false,
+        confirm: "purge",
+        projectId: approval.projectId,
+      });
+      const ok = purged.ok === true;
+      const evidence = recoveryEvidence(approval.action, approval.args ?? {}, {
+        purged: purged.purged.length,
+        kept: purged.kept,
+        manifestPath: purged.manifestPath ?? "",
+      });
+      store.appendAudit({
+        action: ok ? "approval/executed" : "approval/execution-failed",
+        projectId: approval.projectId,
+        requestId,
+        dangerAction: approval.action,
+        evidence,
+        ...(ok ? {} : { reason: purged.reason ?? "purge-failed" }),
+      });
+      store.save();
+      return ok
+        ? { executed: true, evidence, purged: purged.purged.length, kept: purged.kept }
+        : { executed: false, reason: purged.reason ?? "purge-failed" };
     }
 
     store.appendAudit({

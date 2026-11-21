@@ -89,6 +89,18 @@
     "settings.danger.editProfile.label": "edit project policy itself",
     "settings.danger.editProfile.risk": "the coordinator could loosen its own limits; highest risk",
     "detail.archive": "Archive project",
-    "detail.unarchive": "Unarchive project"
+    "detail.unarchive": "Unarchive project",
+    "detail.execute": "Execute",
+    "detail.executed": "Executed (see audit)",
+    "detail.refused": "Not executed: {reason}",
+    "detail.grantsTitle": "Repository grants (for pushing protected branches)",
+    "detail.grantsEmpty": "No repository granted yet; add owner/repo before pushing a protected branch",
+    "detail.grantAdd": "Add",
+    "detail.purgeTitle": "Trash purge",
+    "detail.purgeHint": "Only purges entries in this project's trash that are **past the retention period**; preview first, then confirm. Requires the purgeAfterRetention switch.",
+    "detail.purgePreview": "Preview purgeable",
+    "detail.purgeConfirm": "Purge {count} entries",
+    "detail.purgeNothing": "Nothing past the retention period",
+    "detail.purged": "Purged {count} entries; manifest written under trash/"
   }
 }

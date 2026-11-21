@@ -89,6 +89,18 @@
     "settings.danger.editProfile.label": "允许修改项目策略本身",
     "settings.danger.editProfile.risk": "协调器可能借此放宽自己的限制；风险最高",
     "detail.archive": "归档项目",
-    "detail.unarchive": "取消归档"
+    "detail.unarchive": "取消归档",
+    "detail.execute": "执行",
+    "detail.executed": "已执行（结果见审计）",
+    "detail.refused": "未执行：{reason}",
+    "detail.grantsTitle": "仓库授权（直推保护分支用）",
+    "detail.grantsEmpty": "尚未授权任何仓库；直推保护分支前必须在这里加 owner/repo",
+    "detail.grantAdd": "添加",
+    "detail.purgeTitle": "回收站清理",
+    "detail.purgeHint": "只清理本项目回收站里**超过保留期**的条目；先预览，再确认。需要打开 purgeAfterRetention 开关。",
+    "detail.purgePreview": "预览可清理项",
+    "detail.purgeConfirm": "确认清理 {count} 项",
+    "detail.purgeNothing": "没有超过保留期的条目",
+    "detail.purged": "已清理 {count} 项，清单已写入 trash/"
   }
 }
