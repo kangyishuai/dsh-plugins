@@ -226,7 +226,7 @@ pnpm smoke:projects-desktop --require
 
 ### 9.4 真实 GitHub 上的远端写入（2026-11-21 已做）
 
-在一个**私有测试仓库**（`kangyishuai/dsh-projects-e2e`）上跑通了完整链路。做法是：
+在一个**临时私有测试仓库**上跑通了完整链路（用完即归档，不复用；下文 PR 号与合并提交 SHA 只作本次记录）。做法是：
 临时 `DSH_HOME` + **复制真实 desktop profile** 起临时宿主（与 web 冒烟同一套 boot 方式，
 否则只有 `dsh-base`、web 服务起不来）+ 一个临时驱动插件调用 `projects` 的 RPC。
 
