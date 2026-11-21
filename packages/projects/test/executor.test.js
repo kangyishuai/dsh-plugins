@@ -1,11 +1,16 @@
 // @ts-check
-// 执行器闸门单测：批准≠可执行；开关关 → 拒绝；越界参数与结构性硬边。
+// 执行器纯逻辑单测：开关映射、阈值、命令形状、恢复证据、合并前置。
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  checkCiGreen,
   checkExecutable,
+  checkMergeMethod,
   checkMergePreflight,
+  checkMergeReadiness,
+  checkPreapproval,
+  countApprovedReviews,
   DANGER_ACTIONS,
   DEFAULT_MERGE_LIMITS,
   parseRepoFromRemote,
@@ -19,6 +24,10 @@ import {
 // 用**真实开关键**打开全部开关（避免用 action 名当键——那正是真机踩过的坑）
 const allOn = Object.fromEntries(DANGER_ACTIONS.map((action) => [switchForAction(action), true]));
 const approved = (/** @type {string} */ action) => ({ status: "approved", action });
+
+/** 从 { ok, reason } 形状里取原因，便于断言。 */
+const reasonOf = (/** @type {any} */ result) =>
+  result?.ok === false ? String(result.reason) : "ok";
 
 describe("checkExecutable", () => {
   it("批准 + 开关打开 → 可执行", () => {
@@ -298,5 +307,184 @@ describe("动作 ↔ 开关 ↔ 可申请 的一致性（防漏接线）", () =>
     for (const action of DANGER_ACTIONS) {
       assert.ok(REQUESTABLE_ACTIONS.includes(action), `${action} 不在可申请白名单里`);
     }
+  });
+});
+
+describe("checkCiGreen（规格 §7.5 行 3 的 ①）", () => {
+  it("全绿放行", () => {
+    assert.deepEqual(checkCiGreen([{ conclusion: "SUCCESS" }, { state: "SUCCESS" }]), { ok: true });
+  });
+
+  it("空列表 = 未配置检查 → 拒绝，不猜", () => {
+    assert.equal(reasonOf(checkCiGreen([])), "merge/ci-unknown");
+    assert.equal(reasonOf(checkCiGreen(null)), "merge/ci-unknown");
+  });
+
+  it("失败 / 在跑 / 无结论都拒绝，且原因可区分", () => {
+    assert.equal(reasonOf(checkCiGreen([{ conclusion: "FAILURE" }])), "merge/ci-not-green");
+    assert.equal(reasonOf(checkCiGreen([{ conclusion: "CANCELLED" }])), "merge/ci-not-green");
+    assert.equal(reasonOf(checkCiGreen([{ state: "PENDING" }])), "merge/ci-pending");
+    assert.equal(reasonOf(checkCiGreen([{}])), "merge/ci-unknown");
+  });
+
+  it("SKIPPED / NEUTRAL 算通过", () => {
+    assert.deepEqual(checkCiGreen([{ conclusion: "SKIPPED" }, { conclusion: "NEUTRAL" }]), {
+      ok: true,
+    });
+  });
+});
+
+describe("countApprovedReviews（④ 人工批准数）", () => {
+  it("按不同作者去重，只数 APPROVED", () => {
+    assert.equal(countApprovedReviews([]), 0);
+    assert.equal(countApprovedReviews([{ state: "APPROVED", author: { login: "a" } }]), 1);
+    assert.equal(
+      countApprovedReviews([
+        { state: "APPROVED", author: { login: "a" } },
+        { state: "APPROVED", author: { login: "a" } },
+        { state: "APPROVED", author: { login: "b" } },
+      ]),
+      2,
+    );
+    assert.equal(countApprovedReviews([{ state: "CHANGES_REQUESTED", author: { login: "a" } }]), 0);
+  });
+});
+
+describe("checkMergeMethod（⑥ 仓库允许的合并方式）", () => {
+  it("允许 squash 才放行；不允许就拒绝而不是换方式", () => {
+    assert.deepEqual(checkMergeMethod(["merge", "squash"]), { ok: true });
+    assert.equal(reasonOf(checkMergeMethod(["merge", "rebase"])), "merge/method-not-allowed");
+    assert.equal(reasonOf(checkMergeMethod([])), "merge/method-unknown");
+  });
+});
+
+describe("checkMergeReadiness（一次判完）", () => {
+  const base = {
+    isDraft: false,
+    mergeable: "MERGEABLE",
+    state: "OPEN",
+    statusCheckRollup: [{ conclusion: "SUCCESS" }],
+  };
+  const approved = [{ state: "APPROVED", author: { login: "a" } }];
+
+  it("全部满足才放行，并报出批准数", () => {
+    assert.deepEqual(
+      checkMergeReadiness({ pr: base, reviews: approved, allowedMethods: ["squash"] }),
+      { ok: true, approvals: 1 },
+    );
+  });
+
+  it("draft 优先于 CI 判定（先报更根本的问题）", () => {
+    assert.equal(
+      reasonOf(
+        checkMergeReadiness({
+          pr: { ...base, isDraft: true },
+          reviews: approved,
+          allowedMethods: ["squash"],
+        }),
+      ),
+      "merge/pr-is-draft",
+    );
+  });
+
+  it("CI 未绿时不会去看批准数", () => {
+    assert.equal(
+      reasonOf(
+        checkMergeReadiness({
+          pr: { ...base, statusCheckRollup: [] },
+          reviews: approved,
+          allowedMethods: ["squash"],
+        }),
+      ),
+      "merge/ci-unknown",
+    );
+  });
+
+  it("批准数不足 → not-approved 并带实际数", () => {
+    const result = checkMergeReadiness({ pr: base, reviews: [], allowedMethods: ["squash"] });
+    assert.equal(reasonOf(result), "merge/not-approved");
+    assert.equal(result.approvals, 0);
+  });
+
+  it("minApprovals = 0 时不看批准数，但仍要求 CI 绿", () => {
+    assert.deepEqual(
+      checkMergeReadiness({ pr: base, reviews: [], allowedMethods: ["squash"], minApprovals: 0 }),
+      { ok: true, approvals: 0 },
+    );
+    assert.equal(
+      reasonOf(
+        checkMergeReadiness({
+          pr: { ...base, statusCheckRollup: [] },
+          reviews: [],
+          allowedMethods: ["squash"],
+          minApprovals: 0,
+        }),
+      ),
+      "merge/ci-unknown",
+    );
+  });
+
+  it("仓库不允许 squash → 拒绝", () => {
+    assert.equal(
+      reasonOf(checkMergeReadiness({ pr: base, reviews: approved, allowedMethods: ["merge"] })),
+      "merge/method-not-allowed",
+    );
+  });
+});
+
+describe("checkPreapproval（预授权三条门槛，规格 §7.7.2）", () => {
+  const danger = {
+    forcePushOwnBranch: true,
+    autoMerge: true,
+    pushProtectedBranch: true,
+    purgeAfterRetention: true,
+  };
+
+  it("policy-grant 动作 + 已列出 + 开关开 → 放行", () => {
+    assert.deepEqual(
+      checkPreapproval({ action: "push-branch", preapprove: ["push-branch"], danger }),
+      { ok: true },
+    );
+    assert.deepEqual(
+      checkPreapproval({ action: "purge-trash", preapprove: ["purge-trash"], danger }),
+      { ok: true },
+    );
+  });
+
+  it("merge / 直推保护分支永远不能被预授权（授权来源不是 policy-grant）", () => {
+    assert.equal(
+      reasonOf(checkPreapproval({ action: "merge", preapprove: ["merge"], danger })),
+      "preapprove/source-not-policy-grant",
+    );
+    assert.equal(
+      reasonOf(
+        checkPreapproval({
+          action: "push-protected-branch",
+          preapprove: ["push-protected-branch"],
+          danger,
+        }),
+      ),
+      "preapprove/source-not-policy-grant",
+    );
+  });
+
+  it("没列出 / 开关关 → 不放行", () => {
+    assert.equal(
+      reasonOf(checkPreapproval({ action: "push-branch", preapprove: [], danger })),
+      "preapprove/not-listed",
+    );
+    assert.equal(
+      reasonOf(
+        checkPreapproval({ action: "push-branch", preapprove: ["push-branch"], danger: {} }),
+      ),
+      "preapprove/switch-off",
+    );
+  });
+
+  it("空动作安全", () => {
+    assert.equal(
+      reasonOf(checkPreapproval({ action: "", preapprove: [""], danger })),
+      "preapprove/action-required",
+    );
   });
 });

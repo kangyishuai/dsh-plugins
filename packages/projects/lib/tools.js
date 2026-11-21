@@ -9,7 +9,7 @@
  * @property {(task: string) => Promise<{ sessionId: string, isolated?: boolean }>} startThread
  * @property {() => Promise<{ rows: any[], counts: Record<string, number>, attention: number }>} listThreads
  * @property {(sessionId: string, text: string) => Promise<{ ok: boolean }>} messageThread
- * @property {(request: { action: string, args?: any, reason: string }) => Promise<{ requestId: string }>} requestAction
+ * @property {(request: { action: string, args?: any, reason: string }) => Promise<{ ok?: boolean, requestId: string, autoApproved?: boolean, executed?: boolean, reason?: string }>} requestAction
  * @property {(text: string) => Promise<{ ok: boolean, added?: boolean, reason?: string }>} writeMemory
  * @property {() => Promise<{ instructions: string, memoryIndex: string }>} readMemory
  */
@@ -29,7 +29,7 @@ export const REQUESTABLE_ACTIONS = Object.freeze([
  * 申请一个危险动作（入审批队列，不执行）。
  * @param {CoordinatorDeps} deps
  * @param {{ action?: string, args?: any, reason?: string }} input
- * @returns {Promise<{ ok: boolean, requestId?: string, error?: string }>}
+ * @returns {Promise<{ ok: boolean, requestId?: string, error?: string, autoApproved?: boolean, executed?: boolean, reason?: string }>}
  */
 export async function requestAction(deps, input) {
   const action = String(input?.action ?? "");
@@ -39,7 +39,18 @@ export async function requestAction(deps, input) {
   const reason = String(input?.reason ?? "").trim();
   if (reason === "") return { ok: false, error: "reason-required" };
   const created = await deps.requestAction({ action, args: input?.args ?? null, reason });
-  return { ok: true, requestId: created.requestId };
+  // 透传预授权结果：命中时它已经被执行过，模型需要知道真相而不是"已排队"
+  return {
+    ok: true,
+    requestId: created.requestId,
+    ...(created.autoApproved === true
+      ? {
+          autoApproved: true,
+          executed: created.executed === true,
+          ...(created.executed === true ? {} : { reason: String(created.reason ?? "") }),
+        }
+      : {}),
+  };
 }
 
 /**
@@ -214,7 +225,7 @@ export function buildCoordinatorTools(deps) {
     {
       name: "project_request_action",
       description:
-        "Ask the human to approve a dangerous or irreversible action. You cannot execute it yourself; it is queued for approval.",
+        "Ask for a dangerous or irreversible action. If the project pre-approves this action (policy-grant), it is executed immediately through the same gates; otherwise it is queued for a human to approve and execute.",
       inputSchema: {
         type: "object",
         properties: {
@@ -232,22 +243,35 @@ export function buildCoordinatorTools(deps) {
             requestId: { type: "string" },
             status: { type: "string" },
             error: { type: "string" },
+            reason: { type: "string" },
           },
         },
       },
       async execute(/** @type {any} */ args) {
         const result = await requestAction(deps, args ?? {});
-        return result.ok
-          ? { requestId: String(result.requestId), status: "queued" }
-          : { status: "rejected", error: String(result.error) };
+        if (!result.ok) return { status: "rejected", error: String(result.error) };
+        // 预授权命中时已经执行过：把真实结果交给模型，而不是一律说 "queued"
+        if (result.autoApproved === true) {
+          return {
+            requestId: String(result.requestId),
+            status: result.executed === true ? "executed" : "auto-approved-not-executed",
+            ...(result.executed === true ? {} : { reason: String(result.reason ?? "") }),
+          };
+        }
+        return { requestId: String(result.requestId), status: "queued" };
       },
       render(/** @type {any} */ _args, /** @type {any} */ value) {
         return [
           {
             type: "text",
-            text: value?.requestId
-              ? `queued for approval (${value.requestId})`
-              : `rejected: ${value?.error ?? ""}`,
+            text:
+              value?.status === "executed"
+                ? `auto-approved and executed (${value?.requestId ?? ""})`
+                : value?.status === "auto-approved-not-executed"
+                  ? `auto-approved but not executed: ${value?.reason ?? ""}`
+                  : value?.requestId
+                    ? `queued for approval (${value.requestId})`
+                    : `rejected: ${value?.error ?? ""}`,
           },
         ];
       },

@@ -20,6 +20,7 @@ export const FORMAT_VERSION = 1;
  * @property {{ rules: any[], fallback: boolean }} routing 路由规则（扁平结构）与是否允许模型兜底
  * @property {string} persona 协调器人格；空串表示用内置默认人格
  * @property {Record<string, true>} repoGrants 直推保护分支的 per-repo 首次授予
+ * @property {{minApprovals:number, maxDiffFiles:number, maxDiffLines:number}} merge 合并门槛
  */
 
 /**
@@ -69,6 +70,8 @@ export function defaultPolicy() {
     persona: "",
     // 直推保护分支的 per-repo 首次授予：只有显式 true 的仓库才允许
     repoGrants: {},
+    // 合并门槛（规格 §7.5 行 3 的 ④⑤）：默认要求 1 个人批过
+    merge: { minApprovals: 1, maxDiffFiles: 20, maxDiffLines: 600 },
   };
 }
 
@@ -109,6 +112,16 @@ export function normalizePolicy(raw, fallbackPolicy) {
         : typeof previous.persona === "string"
           ? previous.persona
           : "",
+    merge: (() => {
+      const raw = policy.merge ?? previous.merge ?? {};
+      const num = (/** @type {any} */ value, /** @type {number} */ fallback) =>
+        Number.isFinite(value) ? Math.max(0, Number(value)) : fallback;
+      return {
+        minApprovals: num(raw.minApprovals, 1),
+        maxDiffFiles: num(raw.maxDiffFiles, 20),
+        maxDiffLines: num(raw.maxDiffLines, 600),
+      };
+    })(),
     // 只接受显式 true 的仓库授权；其它写法一律当没授权
     repoGrants: (() => {
       const pick = (/** @type {any} */ source) =>

@@ -251,3 +251,122 @@ export function parseRepoFromRemote(url) {
 export function shouldRetryPreflight(reason) {
   return String(reason ?? "") === "merge/pr-mergeable-unknown";
 }
+
+/** CI 通过的结论集（GitHub CheckRun conclusion 与 StatusContext state 都覆盖）。 */
+const CI_PASS = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
+/** CI 明确失败的结论集。 */
+const CI_FAIL = new Set([
+  "FAILURE",
+  "ERROR",
+  "CANCELLED",
+  "TIMED_OUT",
+  "ACTION_REQUIRED",
+  "STALE",
+  "STARTUP_FAILURE",
+]);
+
+/**
+ * 规格 §7.5 行 3 的 ①：CI 必须绿。
+ * 空列表按「未配置检查」处理并**拒绝**——不猜、不放行（2026-11-21 定的口径）。
+ * @param {any[]|null|undefined} rollup `gh pr view --json statusCheckRollup` 的结果
+ * @returns {{ ok: true } | { ok: false, reason: string }}
+ */
+export function checkCiGreen(rollup) {
+  const list = Array.isArray(rollup) ? rollup : [];
+  if (list.length === 0) return { ok: false, reason: "merge/ci-unknown" };
+  for (const item of list) {
+    const verdict = String(item?.conclusion ?? item?.state ?? "").toUpperCase();
+    if (verdict === "") return { ok: false, reason: "merge/ci-unknown" }; // 还在跑（无结论）
+    if (CI_FAIL.has(verdict)) return { ok: false, reason: "merge/ci-not-green" };
+    if (!CI_PASS.has(verdict)) return { ok: false, reason: "merge/ci-pending" }; // PENDING 等
+  }
+  return { ok: true };
+}
+
+/**
+ * 规格 §7.5 行 3 的 ④：人工批准数。按**不同作者**去重，只看 APPROVED。
+ * @param {any[]|null|undefined} reviews `gh pr view --json reviews`
+ * @returns {number}
+ */
+export function countApprovedReviews(reviews) {
+  const list = Array.isArray(reviews) ? reviews : [];
+  /** @type {Set<string>} */
+  const authors = new Set();
+  for (const review of list) {
+    if (String(review?.state ?? "").toUpperCase() !== "APPROVED") continue;
+    const who = String(review?.author?.login ?? review?.user?.login ?? "").trim();
+    if (who !== "") authors.add(who);
+  }
+  return authors.size;
+}
+
+/**
+ * 规格 §7.5 行 3 的 ⑥：只用仓库允许的合并方式。
+ * 我们固定用 squash；仓库不允许就拒绝，**不改用** merge/rebase。
+ * @param {string[]|null|undefined} allowed `gh api repos/{owner}/{repo}` 的 allowed_merge_methods
+ * @returns {{ ok: true } | { ok: false, reason: string }}
+ */
+export function checkMergeMethod(allowed) {
+  const list = Array.isArray(allowed) ? allowed.map((item) => String(item)) : [];
+  if (list.length === 0) return { ok: false, reason: "merge/method-unknown" };
+  if (!list.includes("squash")) return { ok: false, reason: "merge/method-not-allowed" };
+  return { ok: true };
+}
+
+/**
+ * 把一条 PR 的「可合并性」一次判完：draft / 冲突 / 状态 / CI / 批准数 / 合并方式。
+ * @param {{ pr?: any, reviews?: any[], allowedMethods?: string[], minApprovals?: number }} input
+ * @returns {{ ok: boolean, reason?: string, approvals?: number }}
+ */
+export function checkMergeReadiness(input) {
+  const preflight = checkMergePreflight(input?.pr ?? null);
+  if (!preflight.ok) return preflight;
+
+  const ci = checkCiGreen(input?.pr?.statusCheckRollup);
+  if (!ci.ok) return ci;
+
+  const minApprovals = Number.isFinite(input?.minApprovals) ? Number(input?.minApprovals) : 1;
+  const approvals = countApprovedReviews(input?.reviews ?? input?.pr?.reviews);
+  if (minApprovals > 0 && approvals < minApprovals) {
+    return { ok: false, reason: "merge/not-approved", approvals };
+  }
+
+  const method = checkMergeMethod(input?.allowedMethods);
+  if (!method.ok) return method;
+
+  return { ok: true, approvals };
+}
+
+/**
+ * 授权来源是 `policy-grant` 的动作（规格 §7.5 表）。
+ * 只有这些动作**可能**被 `policy.preapprove` 预授权放行——
+ * `merge`（approval-event）与 `push-protected-branch`（per-incident）永远不行。
+ */
+export const POLICY_GRANT_ACTIONS = Object.freeze([
+  "push-branch",
+  "delete-thread",
+  "delete-project",
+  "purge-trash",
+  "change-settings",
+]);
+
+/**
+ * 预授权判定（规格 §7.7.2）。三条全满足才算命中：列在 preapprove 里、
+ * 动作的授权来源是 policy-grant、对应危险开关已打开。
+ * @param {{ action?: string, preapprove?: string[], danger?: any }} input
+ * @returns {{ ok: true } | { ok: false, reason: string }}
+ */
+export function checkPreapproval(input) {
+  const action = String(input?.action ?? "");
+  if (action === "") return { ok: false, reason: "preapprove/action-required" };
+  if (!POLICY_GRANT_ACTIONS.includes(action)) {
+    return { ok: false, reason: "preapprove/source-not-policy-grant" };
+  }
+  const list = Array.isArray(input?.preapprove) ? input.preapprove.map((item) => String(item)) : [];
+  if (!list.includes(action)) return { ok: false, reason: "preapprove/not-listed" };
+  const switchKey = switchForAction(action);
+  if (switchKey === "" || input?.danger?.[switchKey] !== true) {
+    return { ok: false, reason: "preapprove/switch-off" };
+  }
+  return { ok: true };
+}
