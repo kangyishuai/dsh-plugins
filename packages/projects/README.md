@@ -12,7 +12,7 @@ Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/de
 > Details: `docs/runtime/0.2.2-rc.3.md` §11.24–§11.26.
 
 > **Status: M4 done, pre-1.0.** Projects, context injection, isolated parallel threads, an opt-in coordinator,
-> and a gated approval/executor layer are implemented, unit-tested (317 tests) and covered by a 52-assertion
+> and a gated approval/executor layer are implemented, unit-tested (385 tests) and covered by a 54-assertion
 > web end-to-end smoke plus an 11-assertion desktop read-only regression.
 > Remote writes (push / PR / merge) are wired and verified locally against a bare remote and a stub `gh`;
 > the real-GitHub effect still needs one release confirmation. Project **sharing** is deferred ([ADR 0018](../../docs/adr/0018-projects-defer-liveshare-sharing.md)).
@@ -67,6 +67,7 @@ does not do over a remote connection.
 
 | Plugin | Verified on DSH                                                                                                                                                                                                                                                                                                                                   |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.4.2  | 0.2.2-rc.5: installed into the live profile and **measured after a desktop restart** — desktop read-only regression **11 PASS / 0 SKIP / 0 FAIL**, web smoke **54**/0/0, `pnpm gate:all` green (64s). Fixes "no way to start a thread in an empty project"; confirmed with a real UI screenshot                                                   |
 | 0.3.0  | 0.2.2-rc.5: installed into the live profile and **measured after a desktop restart** — desktop read-only regression **11 PASS / 0 SKIP / 0 FAIL**, web smoke **52**/0/0, `pnpm gate:all` green (64s). This release changed the client half (execute button, repository grants, trash purge), and the panel was confirmed rendering in the real UI |
 | 0.2.1  | 0.2.2-rc.5: installed into the live profile and **measured after a desktop restart** — desktop read-only regression **11 PASS / 0 SKIP / 0 FAIL**, web smoke 50/0/0, `pnpm gate:all` green. This release only updates the README tables                                                                                                           |
 | 0.2.0  | 0.2.2-rc.5: adds the three danger actions. 309 unit tests + `pnpm verify` + web smoke 50/0/0; the three actions were verified on a temporary host (local bare remote + stub `gh`, see docs/testing/projects.md §10). Desktop regression confirmed on 0.2.1 (identical client half)                                                                |

@@ -57,7 +57,7 @@ pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体�
 | `memory.test.js`    | 记忆写入：幂等、单条与总量上限、时间戳注释、被拒时给出原因                                    |
 | `exec.test.js`      | 子进程封装：参数原样传递、失败返回 code 不抛、cwd 生效、命令不存在也不抛                      |
 
-## 2. web 端到端冒烟（50 项）
+## 2. web 端到端冒烟（54 项）
 
 `pnpm smoke:projects` 在临时 home 里种子一个**真实 git 仓库**作为工作区，然后：
 
@@ -87,7 +87,7 @@ pnpm smoke:projects-desktop --require
 
 未装进当前 live profile 时默认 **SKIP**，加 `--require` 则 **FAIL**（发版门禁用它）。
 
-**2026-11-21 实测（DSH 0.2.2-rc.5）**：0.1.1 / 0.2.1 / 0.3.0 各跑过一次，都是 11 PASS / 0 SKIP / 0 FAIL
+**2026-11-21 实测（DSH 0.2.2-rc.5）**：0.1.1 / 0.2.1 / 0.3.0 / 0.4.1 / 0.4.2 各跑过一次，都是 11 PASS / 0 SKIP / 0 FAIL
 （0.3.0 那次 web 冒烟同时是 52 项，门禁 64s 全绿）。
 0.2.1 那次是**装进 live profile 并重启桌面版之后**跑的（`pnpm gate:all --plugins projects --idle-session …`，
 64s 全绿）。该 profile 里 `ui-settings` 是 `enabled: false`，所以「设置页出现项目分节」这条按允许跳过处理——
