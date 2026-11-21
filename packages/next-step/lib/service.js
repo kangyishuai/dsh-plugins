@@ -887,6 +887,8 @@ export class NextStepService extends TypertRemoteService {
                 transcript,
                 raw,
                 problem: parsed.problem.kind,
+                // 把「上一次 label 到底几字」带进修复请求：模型数不准自己的字数
+                detail: parsed.problem.detail,
               }),
             );
       parsed = parseSuggestion(raw);

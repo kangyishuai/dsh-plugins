@@ -28,6 +28,7 @@ import {
   MIN_CONTEXT_CHARS,
   NEXT_PROMPT_MAX,
   OPTIONS_MAX,
+  overlongLabelHint,
   parseSuggestion as parseRaw,
   problemText,
   QUESTION_MAX,
@@ -36,6 +37,7 @@ import {
   recoveryPlan,
   renderTranscript,
   SUMMARY_MAX,
+  sharedChineseGramCount,
 } from "../lib/prompt.js";
 
 /** v0.4 起返回 { suggestion, problem, detail }：这里取 suggestion，让大多数断言保持原写法。 */
@@ -1003,4 +1005,75 @@ test("groundableText：落地校验看全部展示文本，不只是按钮文案
     assert.equal(text.includes(part), true, `期望包含 ${part}`);
   }
   assert.equal(groundableText(/** @type {any} */ (null)), "");
+});
+
+// 2026-11-21 桌面 --deep 实测的误杀：一句话回答 + 改写式卡片（0 个具体对象）被判「与对话无关」。
+const SHORT_ANSWER_CASE = {
+  transcript: [
+    "用户：用一句话解释什么是二分查找。不要使用任何工具，直接回答。",
+    "助手：二分查找是在一个已排序的序列中，每次都取中间元素与目标比较，并据此把搜索范围折半缩小，" +
+      "直到找到目标或范围为空，因此其时间复杂度为 O(log n)。",
+  ].join("\n\n"),
+  card: [
+    "用一句话把二分查找定义为「在有序序列中反复取中间元素与目标比较、每次淘汰一半搜索范围」，" +
+      "并标注时间复杂度 O(log n)，全程未调用工具。",
+    "是否要补一个可运行示例？",
+    "补一个二分查找代码示例",
+  ].join("\n"),
+};
+
+test("isGroundedIn：短回答 + 改写式卡片（没有文件名/命令）也要能落地", () => {
+  // 这条曾经被误杀：卡片里一个具体对象都没有，只在讲同一件事（二分查找 / 中间元素 / 搜索范围）。
+  // 落地校验必须有一条「改写的说法」通道，否则一句话解释类回合永远出不了卡。
+  assert.equal(
+    sharedChineseGramCount(SHORT_ANSWER_CASE.card, SHORT_ANSWER_CASE.transcript.toLowerCase()) >= 2,
+    true,
+  );
+  assert.equal(isGroundedIn(SHORT_ANSWER_CASE.card, SHORT_ANSWER_CASE.transcript), true);
+});
+
+test("isGroundedIn：只共享 1 条 4 字片段的擦边卡不算落地", () => {
+  // 「二分查找」是两边唯一的交集时，卡片没有提供任何新的可核查信息，按不落地处理。
+  const card = "二分查找讲完了。要不要继续深入？继续深入";
+  const material = "用户：解释一下二分查找。\n\n助手：二分查找要先排序，然后每次比较中间元素。";
+  assert.equal(sharedChineseGramCount(card, material.toLowerCase()), 1);
+  assert.equal(isGroundedIn(card, material), false);
+});
+
+test("sharedChineseGramCount：只数不同的片段，且能穿透粘着的动词", () => {
+  const count = sharedChineseGramCount(
+    "用一句话把二分查找定义为在有序序列中反复取中间元素与目标比较",
+    "二分查找是在一个已排序的序列中，每次都取中间元素与目标比较",
+  );
+  assert.equal(count >= 2, true, `期望至少命中 2 条 4 字片段，实际=${count}`);
+  assert.equal(sharedChineseGramCount("没有中文片段 abc", "abc"), 0);
+  assert.equal(sharedChineseGramCount("", "任何东西"), 0);
+});
+
+// ---------------------------------------------------------------------------
+// 修复请求要给出「可执行」的收紧信息（2026-11-21 web 冒烟实测：20 字上限被写成 21–22 字，
+// 只提示「2–20 字」修不回来，两次都超 → 整张卡作废 → 用户看到「没出卡」）
+// ---------------------------------------------------------------------------
+
+test("overlongLabelHint：把上一次的 label 实际字数写进修复请求", () => {
+  const hint = overlongLabelHint(
+    "dropped-option:0:label-length:22,dropped-option:1:label-length:24",
+  );
+  assert.equal(hint.includes("22 / 24"), true, "要写出实际字数");
+  assert.equal(hint.includes("超了 4 字"), true, "要写出超出多少（按最长那条算）");
+  assert.equal(hint.includes("保留同一个具体对象"), true, "收紧时不许丢掉对象");
+  assert.equal(overlongLabelHint("dropped-option:0:stance"), "", "其它问题不给长度提示");
+  assert.equal(overlongLabelHint(undefined), "");
+});
+
+test("buildRepairMessage：label 超长时，修复请求带上实际字数与压缩目标", () => {
+  const messages = buildRepairMessage({
+    transcript: TRANSCRIPT_FIXTURE,
+    raw: '{"value":"could","summary":"x","question":"y","options":[{"stance":"a","label":"太长的文案"}]}',
+    problem: "options",
+    detail: "dropped-option:0:label-length:23",
+  });
+  const text = messages[0].content[0].text;
+  assert.equal(text.includes("23 字"), true);
+  assert.equal(text.includes(`上限是 ${LABEL_MAX} 字`), true);
 });

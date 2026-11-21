@@ -294,6 +294,16 @@ export function identityTokens(text) {
  *
  * 这是「卡片必须在讲这一段对话」的机械判据，补的是提示词管不到的那一半：
  * 结构合法、文案漂亮，但整段都在讲生成过程或者凭空想象的卡片，一律不落地。
+ *
+ * 两条通道，命中一条即落地：
+ * 1. **具体对象原样出现**（`identityTokens`）：文件名、命令、版本号、PR 号这类硬证据；
+ * 2. **共享 ≥2 条中文 4 字片段**：短回答（一句话解释一个概念）里，卡片通常是在**改写**答案而不是
+ *    引用文件名，一个具体对象都没有。这条通道按「有没有在讲同一件事」判，而不是按「有没有抄到 ID」。
+ *    中文 4-gram 能扛住前后粘着的动词（「用一句话把二分查找定义为」里含「二分查找」）。
+ *
+ * 实测（本机 1038 条历史卡片，其中 119 条自述式）：只有通道 1 时正常卡 918/919、拦下自述卡 98/119；
+ * 加上通道 2 之后正常卡 919/919、仍然拦下 98/119 —— 只赚不亏。没有它，一句话回答的回合会被误杀
+ * （2026-11-21 桌面 --deep 实测：卡片共享 12 条 4 字片段、0 个具体对象，被误判成「与对话无关」）。
  * @param {string} text 卡片正文（summary + question + options + nextPrompt）
  * @param {string} material 模型看到的对话材料（可以未裁剪）
  * @returns {boolean}
@@ -304,7 +314,33 @@ export function isGroundedIn(text, material) {
   for (const token of identityTokens(text)) {
     if (haystack.includes(token)) return true;
   }
-  return false;
+  return sharedChineseGramCount(text, haystack) >= CN_GRAM_MIN;
+}
+
+/** 中文 4-gram 的窗口大小。 */
+const CN_GRAM = 4;
+/** 卡片与对话至少共享这么多条 4 字片段才算在讲同一件事。 */
+const CN_GRAM_MIN = 2;
+
+/**
+ * 卡片与对话共享多少条不同的中文 4 字片段（只看卡片侧，逐条在对话里找）。
+ * @param {string} text 卡片正文
+ * @param {string} haystack 已小写的对话材料
+ * @returns {number}
+ */
+export function sharedChineseGramCount(text, haystack) {
+  const source = typeof text === "string" ? text : "";
+  const hay = typeof haystack === "string" ? haystack : "";
+  if (hay === "") return 0;
+  const seen = new Set();
+  for (const match of source.matchAll(/[\u4e00-\u9fa5]{4,}/gu)) {
+    const run = match[0];
+    for (let index = 0; index + CN_GRAM <= run.length; index += 1) {
+      const gram = run.slice(index, index + CN_GRAM);
+      if (!seen.has(gram) && hay.includes(gram)) seen.add(gram);
+    }
+  }
+  return seen.size;
 }
 
 /**
@@ -417,16 +453,39 @@ export function buildMessages(input = {}) {
 /**
  * 失败原因 → 给修复调用的中文说明。
  * @param {"json" | "value" | "options"} kind
+ * @param {unknown} [detail] `parseSuggestion` 的 problem.detail（用来给出可执行的收紧信息）
  * @returns {string}
  */
-export function problemText(kind) {
+export function problemText(kind, detail) {
   if (kind === "value") {
     return 'value 必须是 "must" / "could" / "no" 三者之一（不要用 needed 之类的旧字段代替）';
   }
   if (kind === "options") {
-    return `options 里没有一条可用的建议：需要 1–${OPTIONS_MAX} 条，label 为 ${LABEL_MIN}–${LABEL_MAX} 字、必须是「动词 + 对话里的具体对象」，不能是「检查定义是否准确」这类放到哪一轮都成立的空话`;
+    const base = `options 里没有一条可用的建议：需要 1–${OPTIONS_MAX} 条，label 为 ${LABEL_MIN}–${LABEL_MAX} 字、必须是「动词 + 对话里的具体对象」，不能是「检查定义是否准确」这类放到哪一轮都成立的空话`;
+    // 把「你上一次到底写了多少字」直接写进修复请求：模型数不准自己的字数（实测 20 字上限
+    // 被写成 21–22 字，只提示「2–20 字」修不回来），给出实际数字才知道要压多少。
+    const overshoot = overlongLabelHint(detail);
+    return overshoot === "" ? base : `${base}。${overshoot}`;
   }
   return "不是合法 JSON，或缺少 summary / question 这两个必填文本字段";
+}
+
+/**
+ * 从解析失败的 detail 里读「上一次 label 到底几字」，生成一句可执行的收紧提示。
+ * @param {unknown} detail `parseSuggestion` 的 problem.detail（如 `dropped-option:0:label-length:22`）
+ * @returns {string} 没有长度问题时返回空串
+ */
+export function overlongLabelHint(detail) {
+  const text = typeof detail === "string" ? detail : "";
+  /** @type {number[]} */
+  const lengths = [];
+  for (const match of text.matchAll(/label-length:(\d+)/gu)) {
+    const value = Number(match[1]);
+    if (Number.isSafeInteger(value) && value > 0) lengths.push(value);
+  }
+  if (lengths.length === 0) return "";
+  const longest = Math.max(...lengths);
+  return `你上一次的 label 有 ${lengths.join(" / ")} 字，上限是 ${LABEL_MAX} 字（最长那条超了 ${longest - LABEL_MAX} 字）——请压到 ${LABEL_MAX} 字以内，并保留同一个具体对象`;
 }
 
 /**
@@ -439,7 +498,7 @@ export function problemText(kind) {
  *
  * 刻意只用一条 user 消息、不伪造 assistant 轮次（宿主 adapter 对 assistant 消息有额外要求，
  * 伪造容易在 provider 侧被拒）。
- * @param {{ transcript?: string, raw: unknown, problem: "json" | "value" | "options" }} input
+ * @param {{ transcript?: string, raw: unknown, problem: "json" | "value" | "options", detail?: unknown }} input
  * @returns {{ role: "user", content: { type: "text", text: string }[] }[]}
  */
 export function buildRepairMessage(input) {
@@ -457,7 +516,7 @@ export function buildRepairMessage(input) {
     echoed === "" ? "（空）" : echoed,
     '"""',
     "",
-    `问题：${problemText(input.problem)}。`,
+    `问题：${problemText(input.problem, input.detail)}。`,
     "",
     "请只输出修正后的 JSON 对象，结构如下（字段含义与之前的要求完全相同）：",
     '{ "value": "must" | "could" | "no", "reason": "…", "summary": "…", "question": "…", "options": [ { "stance": "…", "label": "…" } ], "nextPrompt": "…" }',
