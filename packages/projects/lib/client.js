@@ -139,6 +139,13 @@ window.__ModuleLoader__.load({
       "detail.trashTitle": "回收站（可恢复）",
       "detail.trashEmpty": "回收站是空的。删除项目会先放进这里，可以随时恢复。",
       "detail.trashRestore": "恢复",
+      "detail.trashDelete": "彻底删除",
+      "detail.trashDeleteConfirm": "确认彻底删除（{size}，不可恢复）",
+      "detail.trashDeleted": "已彻底删除（{size}）",
+      "detail.trashDeleteFailed": "彻底删除失败：{reason}",
+      "detail.trashEmptyAll": "清空回收站",
+      "detail.trashEmptyConfirm": "确认清空（{count} 项 / {size}，不可恢复）",
+      "detail.trashEmptied": "已清空回收站（{count} 项）",
       "detail.trashRestored": "已恢复「{name}」（{count} 个线程）",
       "detail.trashFailed": "恢复失败：{reason}",
       "detail.purgeConfirm": "确认清理 {count} 项",
@@ -272,6 +279,13 @@ window.__ModuleLoader__.load({
       "detail.trashTitle": "Trash (restorable)",
       "detail.trashEmpty": "Trash is empty. Deleted projects land here first and can be restored.",
       "detail.trashRestore": "Restore",
+      "detail.trashDelete": "Delete forever",
+      "detail.trashDeleteConfirm": "Confirm delete forever ({size}, irreversible)",
+      "detail.trashDeleted": "Deleted forever ({size})",
+      "detail.trashDeleteFailed": "Delete failed: {reason}",
+      "detail.trashEmptyAll": "Empty trash",
+      "detail.trashEmptyConfirm": "Confirm empty ({count} items / {size}, irreversible)",
+      "detail.trashEmptied": "Trash emptied ({count} items)",
       "detail.trashRestored": "Restored “{name}” ({count} threads)",
       "detail.trashFailed": "Restore failed: {reason}",
       "detail.purgeConfirm": "Purge {count} entries",
@@ -791,6 +805,65 @@ window.__ModuleLoader__.load({
             })),
         );
       }, [api, setTrash]);
+      const [pendingDelete, setPendingDelete] = useState({ entryId: "", confirmAll: false });
+      const deleteEntry = useCallback(
+        (/** @type {any} */ entry) => {
+          if (pendingDelete.entryId !== entry.entryId) {
+            // 两步确认：第一次点只进入确认态，避免误触不可恢复操作
+            setPendingDelete({ entryId: entry.entryId, confirmAll: false });
+            return;
+          }
+          call(api.ctx, "deleteTrashEntry", {
+            options: { entryId: entry.entryId, confirm: true },
+          }).then(
+            (/** @type {any} */ result) => {
+              setPendingDelete({ entryId: "", confirmAll: false });
+              setTrash((/** @type {any} */ prev) => ({
+                ...prev,
+                entries: prev.entries.filter(
+                  (/** @type {any} */ item) => item.entryId !== entry.entryId,
+                ),
+                message: text(t, "detail.trashDeleted", {
+                  size: formatBytes(Number(result?.bytes ?? entry.sizeBytes)),
+                }),
+              }));
+              loadTrash();
+            },
+            (/** @type {any} */ error) =>
+              setTrash((/** @type {any} */ prev) => ({
+                ...prev,
+                message: text(t, "detail.trashDeleteFailed", {
+                  reason: String(error?.message ?? error),
+                }),
+              })),
+          );
+        },
+        [api, loadTrash, pendingDelete.entryId, setPendingDelete, setTrash, t],
+      );
+      const emptyAll = useCallback(() => {
+        if (pendingDelete.confirmAll !== true) {
+          setPendingDelete({ entryId: "", confirmAll: true });
+          return;
+        }
+        call(api.ctx, "emptyTrash", { options: { confirm: true } }).then(
+          (/** @type {any} */ result) => {
+            setPendingDelete({ entryId: "", confirmAll: false });
+            setTrash({
+              entries: [],
+              loaded: false,
+              message: text(t, "detail.trashEmptied", { count: Number(result?.count ?? 0) }),
+            });
+            loadTrash();
+          },
+          (/** @type {any} */ error) =>
+            setTrash((/** @type {any} */ prev) => ({
+              ...prev,
+              message: text(t, "detail.trashDeleteFailed", {
+                reason: String(error?.message ?? error),
+              }),
+            })),
+        );
+      }, [api, loadTrash, pendingDelete.confirmAll, setPendingDelete, setTrash, t]);
       const restoreEntry = useCallback(
         (/** @type {string} */ entryId) => {
           call(api.ctx, "restoreTrash", { entryId }).then(
@@ -1565,9 +1638,50 @@ window.__ModuleLoader__.load({
                         },
                         text(t, "detail.trashRestore"),
                       ),
+                      h(
+                        "button",
+                        {
+                          type: "button",
+                          style: { ...styles.button, borderColor: T.danger, color: T.danger },
+                          "data-projects-trash-delete": entry.entryId,
+                          onClick: () => deleteEntry(entry),
+                        },
+                        pendingDelete.entryId === entry.entryId
+                          ? text(t, "detail.trashDeleteConfirm", {
+                              size: formatBytes(entry.sizeBytes),
+                            })
+                          : text(t, "detail.trashDelete"),
+                      ),
                     ),
                   ),
                 ),
+            trash.entries.length > 0
+              ? h(
+                  "div",
+                  { style: { display: "flex", justifyContent: "flex-end" } },
+                  h(
+                    "button",
+                    {
+                      type: "button",
+                      style: { ...styles.button, borderColor: T.danger, color: T.danger },
+                      "data-projects-trash-empty": "",
+                      onClick: emptyAll,
+                    },
+                    pendingDelete.confirmAll
+                      ? text(t, "detail.trashEmptyConfirm", {
+                          count: trash.entries.length,
+                          size: formatBytes(
+                            trash.entries.reduce(
+                              (/** @type {number} */ sum, /** @type {any} */ item) =>
+                                sum + Number(item.sizeBytes ?? 0),
+                              0,
+                            ),
+                          ),
+                        })
+                      : text(t, "detail.trashEmptyAll"),
+                  ),
+                )
+              : null,
             trash.message !== ""
               ? h("div", { style: styles.meta, "data-projects-trash-result": "" }, trash.message)
               : null,
