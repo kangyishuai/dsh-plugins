@@ -110,9 +110,18 @@ export async function reclaimThreadWorktree(input) {
     return { reclaimed: false, reason: "no-worktree" };
 
   const status = await safeGit(deps.runGit, ["status", "--porcelain"], worktree);
+  // 「未推送」要按**是否已在某个远端**判断，而不是「相对 base 有没有新提交」：
+  // 后者在合并之后仍然 > 0（base 不会因为合并而前移），于是合并过的线程 worktree
+  // 永远回收不掉——这是 0.4.0 之前一直存在的缺陷（B5 只能绕开它）。
+  // 但没有远端的仓库（本地临时仓库、离线项目）无处可推，`--not --remotes` 会把所有提交
+  // 都算成未推送，于是回退到旧判据（相对 base 有无新提交）。
+  const remotes = await safeGit(deps.runGit, ["remote"], worktree);
+  const hasRemote = remotes.code === 0 && String(remotes.stdout ?? "").trim() !== "";
   const unpushed = await safeGit(
     deps.runGit,
-    ["rev-list", "--count", `${record.baseSha ?? "HEAD"}..HEAD`],
+    hasRemote
+      ? ["rev-list", "--count", "HEAD", "--not", "--remotes"]
+      : ["rev-list", "--count", `${record.baseSha ?? "HEAD"}..HEAD`],
     worktree,
   );
   const verdict = shouldReclaim({

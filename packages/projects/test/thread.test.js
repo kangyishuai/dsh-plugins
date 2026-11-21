@@ -340,3 +340,67 @@ describe("cleanupThreadBranch（M4 §5）", () => {
     assert.ok(String(branches.stdout).includes("dsh/payments-1"), "分支必须还在");
   });
 });
+
+describe("reclaimThreadWorktree：未推送判据（修 base..HEAD 的缺陷）", () => {
+  const commitIn = async (/** @type {string} */ worktree, /** @type {string} */ file) => {
+    writeFileSync(join(worktree, file), "x\n", "utf8");
+    await runGit(["add", "."], worktree);
+    await runGit(
+      ["-c", "user.email=t@local", "-c", "user.name=t", "commit", "-qm", file],
+      worktree,
+    );
+  };
+
+  it("有远端且提交已推送 → 允许回收（合并后也能回收，这是本次修复的点）", async () => {
+    const bare = join(root, "remote.git");
+    await runGit(["init", "-q", "--bare", bare], root);
+    await runGit(["remote", "add", "origin", bare], repo);
+    await runGit(["push", "-q", "-u", "origin", "main"], repo);
+
+    const store = new ProjectStore({ root: join(root, "data") }).load();
+    const project = store.createProject("payments", { dirs: [repo] });
+    const deps = { runGit, createSession: fakeSessions().createSession };
+    const thread = await createIsolatedThread({
+      store,
+      dataRoot: join(root, "data"),
+      projectId: project.id,
+      deps,
+    });
+    await commitIn(thread.worktree, "work.txt");
+    // 推上去（模拟 PR 已推送），此时「相对 base 有新提交」依然 >0
+    await runGit(["push", "-q", "origin", thread.branch], thread.worktree);
+
+    const result = await reclaimThreadWorktree({
+      store,
+      sessionId: thread.sessionId,
+      deps: { runGit },
+    });
+    assert.equal(result.reclaimed, true, `应允许回收：${result.reason}`);
+  });
+
+  it("有远端但提交未推送 → 拒绝回收（内容只在本地，不能丢）", async () => {
+    const bare = join(root, "remote.git");
+    await runGit(["init", "-q", "--bare", bare], root);
+    await runGit(["remote", "add", "origin", bare], repo);
+    await runGit(["push", "-q", "-u", "origin", "main"], repo);
+
+    const store = new ProjectStore({ root: join(root, "data") }).load();
+    const project = store.createProject("payments", { dirs: [repo] });
+    const deps = { runGit, createSession: fakeSessions().createSession };
+    const thread = await createIsolatedThread({
+      store,
+      dataRoot: join(root, "data"),
+      projectId: project.id,
+      deps,
+    });
+    await commitIn(thread.worktree, "local-only.txt");
+
+    const result = await reclaimThreadWorktree({
+      store,
+      sessionId: thread.sessionId,
+      deps: { runGit },
+    });
+    assert.equal(result.reclaimed, false);
+    assert.equal(result.reason, "unpushed-commits");
+  });
+});
