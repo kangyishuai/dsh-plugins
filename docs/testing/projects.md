@@ -264,3 +264,32 @@ pnpm smoke:projects-desktop --require
 
 在 §4「手工验证」的表格里记下本次 DSH 版本与结果，
 并把 README 状态行里的「真实 GitHub 上的效果还需发版后确认一次」改掉。
+
+## 10. 危险动作的真机验证（临时宿主 + 本地 bare 远端）
+
+三个推送/清理类动作在本地就能端到端验证，不需要真 GitHub：
+
+- **远端**：`git init --bare` 当 origin；主仓库用
+  `git remote set-url origin https://github.com/<slug>/<name>.git`（让插件能解析出 owner/repo）
+  \+ `git remote set-url --push origin file:///path/to/remote.git`（真正推送到本地 bare）。
+  `get-url` 读到的是 https 形态、推送落到本地目录，两件事都不牺牲。
+- **`gh`**：PATH 前置一个桩脚本，按参数返回 protection 404 / rulesets `[]` / commits 两人。
+- **宿主**：复制真实 desktop profile 起临时 `DSH_HOME`（与 web 冒烟同一套 boot 方式）。
+- **驱动**：临时插件调 `projects` 的 RPC（`requestAction` → `resolveApproval` → `executeApproval`）。
+
+2026-11-21 实测结果：
+
+| 动作                    | 场景                     | 结果                                                                                    |
+| ----------------------- | ------------------------ | --------------------------------------------------------------------------------------- |
+| `push-branch`（普通）   | 开关开                   | `executed:true`，远端分支 = 本地 HEAD                                                   |
+| `push-branch`（强推）   | 期望 SHA 与远端一致      | `executed:true`，远端 SHA 更新                                                          |
+| `push-branch`（强推）   | 另一个 clone 先推了提交  | **`executed:false`（`force-push-failed`）** —— `--force-with-lease` 拒绝了 `stale info` |
+| `push-protected-branch` | 未做 per-repo 授予       | **`executed:false`（`protected-push/repo-not-granted`）**                               |
+| `push-protected-branch` | 已授予 + 服务端未要求 PR | `executed:true`                                                                         |
+| `purgeTrash`            | dry-run                  | `eligible:1 kept:2`，未删任何东西                                                       |
+| `purgeTrash`            | 真删但没给确认串         | **`ok:false`（`confirm-required`）**                                                    |
+| `purgeTrash`            | 开关开 + 确认            | `purged:1`，并写出 `trash/purge-<ts>.md` 清单                                           |
+
+注意：强推的「远端被别人动过」有两种挡法——前置的 `remote-moved`（用记录过的 `lastPushedSha` 对比
+本地 tracking ref）与 `--force-with-lease` 本身。前者依赖 tracking ref 新鲜，后者不依赖，
+所以**即使前置检查放过，lease 也会 fail-closed 拒绝**（上表第三行就是这种情形）。

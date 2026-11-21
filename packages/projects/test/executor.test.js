@@ -267,3 +267,26 @@ describe("shouldRetryPreflight", () => {
     assert.equal(shouldRetryPreflight(""), false);
   });
 });
+
+describe("动作 ↔ 开关 ↔ 可申请 的一致性（防漏接线）", () => {
+  it("每个危险动作都有显式开关映射，没有落到空串", () => {
+    for (const action of DANGER_ACTIONS) {
+      assert.notEqual(switchForAction(action), "", `${action} 缺少开关映射`);
+    }
+  });
+
+  it("开关映射的目标必须是 policy.danger 里真实存在的键", async () => {
+    const { DEFAULT_DANGER } = await import("../lib/store.js");
+    for (const action of DANGER_ACTIONS) {
+      const key = switchForAction(action);
+      assert.ok(key in DEFAULT_DANGER, `${action} 映射到不存在的开关 ${key}`);
+    }
+  });
+
+  it("每个危险动作都能通过 requestAction 的申请白名单", async () => {
+    const { REQUESTABLE_ACTIONS } = await import("../lib/tools.js");
+    for (const action of DANGER_ACTIONS) {
+      assert.ok(REQUESTABLE_ACTIONS.includes(action), `${action} 不在可申请白名单里`);
+    }
+  });
+});

@@ -8,6 +8,7 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -28,11 +29,17 @@ import {
   recoveryEvidence,
   shouldRetryPreflight,
 } from "./executor.js";
+import {
+  checkForcePushPrereqs,
+  checkProtectedPushPrereqs,
+  countCollaborators,
+} from "./git-push.js";
 import { appendEntry } from "./memory.js";
 import { initialView, reduce, sortRows } from "./overview.js";
 import { resolveDataRoot } from "./paths.js";
 import { buildPersona } from "./persona.js";
 import { readProjectFiles } from "./project-files.js";
+import { buildPurgeManifest, DEFAULT_RETENTION_DAYS, selectExpired } from "./purge.js";
 import { decideRoute } from "./routing.js";
 import { ProjectStore } from "./store.js";
 import { createIsolatedThread, reclaimThreadWorktree, reconcileWorktrees } from "./thread.js";
@@ -801,6 +808,149 @@ export class ProjectsService extends TypertRemoteService {
   }
 
   /**
+   * 回收站保留期清理（规格 §7.5 行 4c）。
+   * 三道硬前提：开关 `purgeAfterRetention` 打开、调用方显式确认、只处理**超保留期**的条目。
+   * 默认 dry-run：只报告「会删什么」，不真删。
+   * @param {{ dryRun?: boolean, confirm?: string, retentionDays?: number, projectId?: string }} [options]
+   * @returns {{ ok: boolean, reason?: string, eligible: any[], kept: number, purged: string[], manifestPath: string|null }}
+   */
+  purgeTrash(options) {
+    const store = this.requireStore();
+    const input = options ?? {};
+    const dryRun = input.dryRun !== false; // 省略时按 dry-run 处理，删东西必须是显式选择
+
+    /** @type {any[]} */
+    const entries = [];
+    const projects = input.projectId
+      ? [store.getProject(String(input.projectId))].filter(Boolean)
+      : store.listProjects();
+    for (const project of projects) {
+      const dir = this.trashRoot();
+      if (!dir) continue;
+      let names = [];
+      try {
+        names = readdirSync(dir, { withFileTypes: true })
+          .filter((entry) => entry.isDirectory() && entry.name.startsWith(`${project.id}-`))
+          .map((entry) => entry.name);
+      } catch {
+        continue;
+      }
+      for (const name of names) {
+        const full = join(dir, name);
+        entries.push({ name, path: full, bytes: this.sizeOf(full) });
+      }
+    }
+
+    const retentionDays = Number.isFinite(input.retentionDays)
+      ? Number(input.retentionDays)
+      : DEFAULT_RETENTION_DAYS;
+    const { eligible, kept } = selectExpired(entries, { retentionDays });
+
+    if (dryRun) {
+      return { ok: true, eligible, kept, purged: [], manifestPath: null };
+    }
+
+    // 真删：开关 + 显式确认
+    const switchOn = projects.some(
+      (/** @type {any} */ project) => project?.policy?.danger?.purgeAfterRetention === true,
+    );
+    if (!switchOn) {
+      store.appendAudit({ action: "trash/purge-refused", reason: "switch-off" });
+      store.save();
+      return { ok: false, reason: "switch-off", eligible, kept, purged: [], manifestPath: null };
+    }
+    if (String(input.confirm ?? "").trim() !== "purge") {
+      store.appendAudit({ action: "trash/purge-refused", reason: "confirm-required" });
+      store.save();
+      return {
+        ok: false,
+        reason: "confirm-required",
+        eligible,
+        kept,
+        purged: [],
+        manifestPath: null,
+      };
+    }
+
+    // ② 执行前生成可恢复清单
+    const purgedAt = new Date().toISOString();
+    const manifest = buildPurgeManifest({ purgedAt, retentionDays, entries: eligible });
+    const manifestPath = join(
+      this.dataRoot,
+      "trash",
+      `purge-${purgedAt.replace(/[:.]/gu, "-")}.md`,
+    );
+    try {
+      mkdirSync(join(this.dataRoot, "trash"), { recursive: true });
+      writeFileSync(manifestPath, manifest, { mode: 0o600 });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      store.appendAudit({ action: "trash/purge-refused", reason: `manifest-failed: ${message}` });
+      store.save();
+      return {
+        ok: false,
+        reason: "manifest-failed",
+        eligible,
+        kept,
+        purged: [],
+        manifestPath: null,
+      };
+    }
+
+    const purged = [];
+    for (const entry of eligible) {
+      try {
+        rmSync(entry.path, { recursive: true, force: true });
+        purged.push(entry.name);
+      } catch {
+        /* 单个失败不影响其它；下面审计里会体现数量差异 */
+      }
+    }
+    store.appendAudit({
+      action: "trash/purged",
+      count: purged.length,
+      eligible: eligible.length,
+      kept,
+      retentionDays,
+      manifestPath,
+    });
+    store.save();
+    return { ok: true, eligible, kept, purged, manifestPath };
+  }
+
+  /** 回收站根目录（数据根下）。 @returns {string} */
+  trashRoot() {
+    return this.dataRoot ? join(this.dataRoot, "trash") : "";
+  }
+
+  /**
+   * 递归求目录字节数（清单里要写「删了多少」）。
+   * @param {string} dir
+   * @returns {number}
+   */
+  sizeOf(dir) {
+    let total = 0;
+    let items = [];
+    try {
+      items = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return 0;
+    }
+    for (const item of items) {
+      const full = join(dir, item.name);
+      if (item.isDirectory()) total += this.sizeOf(full);
+      else {
+        try {
+          total += statSync(full).size;
+        } catch {
+          /* 忽略读不到的文件 */
+        }
+      }
+    }
+    return total;
+  }
+
+  /**
    * 冷会话唤醒：启动后补发「应用关着时欠下的」协调器信封。
    * 为什么需要：wake 原本只在 turn/end 触发；应用关着时线程跑完，协调器永远不知道。
    * 只处理需要人看的终态（done/failed/waiting-user），且由 decideWake 统一去重。
@@ -1439,8 +1589,91 @@ export class ProjectsService extends TypertRemoteService {
         return { executed: false, reason: "no-worktree" };
       }
       const branch = String(approval.args?.branch ?? thread?.branch ?? "");
+      const force = approval.args?.force === true;
+
+      if (force) {
+        // 强推硬前提（规格 §7.5 行 1）：自建且被记录、远端没被别人动过、非保护分支、旧 SHA 已知
+        const pushProject = store.getProject(approval.projectId);
+        const pushRepoDir = String(pushProject?.dirs?.[0] ?? "");
+        const pushRemote =
+          pushRepoDir === ""
+            ? { code: 1, stdout: "", stderr: "" }
+            : await runGit(["remote", "get-url", "origin"], pushRepoDir);
+        const pushRepo = pushRemote.code === 0 ? parseRepoFromRemote(pushRemote.stdout) : "";
+        if (pushRepo === "") {
+          store.appendAudit({
+            action: "approval/execution-refused",
+            projectId: approval.projectId,
+            requestId,
+            dangerAction: approval.action,
+            reason: "force-push/repo-unknown",
+          });
+          store.save();
+          return { executed: false, reason: "force-push/repo-unknown" };
+        }
+        const expectedSha = String(approval.args?.expectedSha ?? "");
+        const remoteHead = await runGit(["rev-parse", `origin/${branch}`], worktree);
+        const protectedCheck = await runGh([
+          "api",
+          `repos/${pushRepo}/branches/${branch}/protection`,
+        ]);
+        const prereqs = checkForcePushPrereqs({
+          branch,
+          threadBranch: thread?.branch ?? null,
+          expectedSha,
+          remoteHeadSha: remoteHead.code === 0 ? String(remoteHead.stdout).trim() : "",
+          lastPushedSha: thread?.lastPushedSha ?? null,
+          protectedBranch: protectedCheck.code === 0,
+        });
+        if (!prereqs.ok) {
+          store.appendAudit({
+            action: "approval/execution-refused",
+            projectId: approval.projectId,
+            requestId,
+            dangerAction: approval.action,
+            reason: prereqs.reason,
+          });
+          store.save();
+          return { executed: false, reason: prereqs.reason };
+        }
+        const forced = await runGit(
+          ["push", `--force-with-lease=${branch}:${expectedSha}`, "origin", branch],
+          worktree,
+        );
+        const forcedOk = forced.code === 0;
+        const forcedEvidence = recoveryEvidence(
+          approval.action,
+          { branch, oldSha: expectedSha },
+          { stdout: forced.stdout },
+        );
+        store.appendAudit({
+          action: forcedOk ? "approval/executed" : "approval/execution-failed",
+          projectId: approval.projectId,
+          requestId,
+          dangerAction: approval.action,
+          evidence: forcedEvidence,
+          ...(forcedOk ? {} : { reason: String(forced.stderr).split("\n")[0].slice(0, 200) }),
+        });
+        if (forcedOk) {
+          const head = await runGit(["rev-parse", "HEAD"], worktree);
+          if (head.code === 0) {
+            store.setThreadWorktree(sessionId, { lastPushedSha: String(head.stdout).trim() });
+          }
+        }
+        store.save();
+        return forcedOk
+          ? { executed: true, evidence: forcedEvidence }
+          : { executed: false, reason: "force-push-failed" };
+      }
+
       const pushed = await runGit(["push", "-u", "origin", branch], worktree);
       const ok = pushed.code === 0;
+      if (ok) {
+        const head = await runGit(["rev-parse", "HEAD"], worktree);
+        if (head.code === 0) {
+          store.setThreadWorktree(sessionId, { lastPushedSha: String(head.stdout).trim() });
+        }
+      }
       const evidence = recoveryEvidence(approval.action, { branch }, { stdout: pushed.stdout });
       store.appendAudit({
         action: ok ? "approval/executed" : "approval/execution-failed",
@@ -1467,6 +1700,119 @@ export class ProjectsService extends TypertRemoteService {
       });
       store.save();
       return { executed: true, evidence };
+    }
+
+    // 直推保护/默认分支（规格 §7.5 行 2）：per-repo 首次授予 + 服务端允许 + 审计/事后通知
+    if (approval.action === "push-protected-branch") {
+      const branch = String(approval.args?.branch ?? "");
+      const grProject = store.getProject(approval.projectId);
+      const grDir = String(grProject?.dirs?.[0] ?? "");
+      const grRemote =
+        grDir === ""
+          ? { code: 1, stdout: "", stderr: "" }
+          : await runGit(["remote", "get-url", "origin"], grDir);
+      const grRepo = grRemote.code === 0 ? parseRepoFromRemote(grRemote.stdout) : "";
+      if (grRepo === "") {
+        store.appendAudit({
+          action: "approval/execution-refused",
+          projectId: approval.projectId,
+          requestId,
+          dangerAction: approval.action,
+          reason: "protected-push/repo-unknown",
+        });
+        store.save();
+        return { executed: false, reason: "protected-push/repo-unknown" };
+      }
+      // ① per-repo 首次授予：只有项目策略里显式列出的仓库才允许
+      if (grProject?.policy?.repoGrants?.[grRepo] !== true) {
+        store.appendAudit({
+          action: "approval/execution-refused",
+          projectId: approval.projectId,
+          requestId,
+          dangerAction: approval.action,
+          reason: "protected-push/repo-not-granted",
+          repo: grRepo,
+        });
+        store.save();
+        return { executed: false, reason: "protected-push/repo-not-granted" };
+      }
+      // ② 服务端必须允许直接推：查 protection 与 rulesets
+      const protection = await runGh(["api", `repos/${grRepo}/branches/${branch}/protection`]);
+      const rulesets = await runGh(["api", `repos/${grRepo}/rulesets`]);
+      let parsedRulesets = [];
+      if (rulesets.code === 0) {
+        try {
+          parsedRulesets = JSON.parse(rulesets.stdout);
+        } catch {
+          parsedRulesets = [];
+        }
+      }
+      const allowed = checkProtectedPushPrereqs({
+        protection:
+          protection.code === 0
+            ? (() => {
+                try {
+                  return JSON.parse(protection.stdout);
+                } catch {
+                  return null;
+                }
+              })()
+            : null,
+        rulesets: parsedRulesets,
+      });
+      if (!allowed.ok) {
+        store.appendAudit({
+          action: "approval/execution-refused",
+          projectId: approval.projectId,
+          requestId,
+          dangerAction: approval.action,
+          reason: allowed.reason,
+        });
+        store.save();
+        return { executed: false, reason: allowed.reason };
+      }
+      // ③ 多人协作检测：不禁止，但要在审计与返回里显式警告
+      const commits = await runGh(["api", `repos/${grRepo}/commits?per_page=30`]);
+      /** @type {{ collaborators: number, multi: boolean, sample: string[] }} */
+      let collab = { collaborators: 0, multi: false, sample: [] };
+      if (commits.code === 0) {
+        try {
+          collab = countCollaborators(JSON.parse(commits.stdout));
+        } catch {
+          /* 拿不到就按单人处理，但下面仍会记一条审计 */
+        }
+      }
+      const pushedProtected = await runGit(["push", "origin", branch], grDir);
+      const okProtected = pushedProtected.code === 0;
+      const evidence = recoveryEvidence(
+        approval.action,
+        { branch, repo: grRepo },
+        { stdout: pushedProtected.stdout },
+      );
+      store.appendAudit({
+        action: okProtected ? "approval/executed" : "approval/execution-failed",
+        projectId: approval.projectId,
+        requestId,
+        dangerAction: approval.action,
+        repo: grRepo,
+        branch,
+        evidence,
+        collaborators: collab.collaborators,
+        ...(collab.multi ? { warning: "multi-collaborator" } : {}),
+        ...(okProtected
+          ? {}
+          : { reason: String(pushedProtected.stderr).split("\n")[0].slice(0, 200) }),
+      });
+      store.save();
+      return okProtected
+        ? {
+            executed: true,
+            evidence,
+            ...(collab.multi
+              ? { warning: "multi-collaborator", collaborators: collab.collaborators }
+              : {}),
+          }
+        : { executed: false, reason: "protected-push-failed" };
     }
 
     // merge：走 gh pr merge（argv 里已含 --squash，不带 --admin/--force）。
@@ -1771,6 +2117,7 @@ declareRemote(ProjectsService, "resumeProject");
 declareRemote(ProjectsService, "archiveProject");
 declareRemote(ProjectsService, "unarchiveProject");
 declareRemote(ProjectsService, "reconcileWakes");
+declareRemote(ProjectsService, "purgeTrash");
 declareRemote(ProjectsService, "previewDeleteProject");
 declareRemote(ProjectsService, "deleteProject");
 declareRemote(ProjectsService, "attachThread");

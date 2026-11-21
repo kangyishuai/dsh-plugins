@@ -18,6 +18,8 @@
 export const REQUESTABLE_ACTIONS = Object.freeze([
   "merge",
   "push-branch",
+  "push-protected-branch",
+  "purge-trash",
   "delete-thread",
   "delete-project",
   "change-settings",
