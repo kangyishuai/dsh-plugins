@@ -22,7 +22,7 @@ window.__ModuleLoader__.load({
     var ZH = {
       title: "项目",
       "panel.title": "项目",
-      "panel.summary": "{projects} 个项目 · {active} 个活跃 · {attached} 个会话已挂上下文",
+      "panel.summary": "{projects} 个项目 · {active} 个活跃 · {attached} 个会话已接入",
       "panel.empty": "还没有项目。建一个，把会话丢进去，下次就不用重复交代背景。",
       "panel.createPlaceholder": "项目名，例如 payments-api",
       "panel.create": "新建项目",
@@ -48,7 +48,8 @@ window.__ModuleLoader__.load({
       "detail.tab.threads": "线程 ({count})",
       "detail.tab.memory": "记忆",
       "detail.tab.audit": "审计",
-      "detail.threadsEmpty": "还没有会话归属到这个项目。在会话行的「…」菜单里选择「归属到项目…」。",
+      "detail.threadsEmpty":
+        "还没有线程。在上面输入一个任务就能新建线程；也可以回到会话行，用「…」菜单把已有会话归属到本项目。",
       "detail.threadState": "状态：{state}",
       "detail.instructions": "常设规则（instructions.md）",
       "detail.memoryIndex": "记忆索引（MEMORY.md）",
@@ -610,6 +611,10 @@ window.__ModuleLoader__.load({
       const tabState = useState("threads");
       const tab = tabState[0];
       const setTab = tabState[1];
+      // 换项目/重进详情时回到「线程」：否则上次停在「审计」会让人误以为项目里没有线程
+      useEffect(() => {
+        setTab("threads");
+      }, [project.id, setTab]);
       const dataState = useState({
         loading: true,
         error: "",

@@ -409,6 +409,21 @@ try {
   const purgeOk = /项可清理|没有|空/u.test(purgeResult) && !/gateway|失败|错误/u.test(purgeResult);
   add("回收站清理预览可用（dry-run 不删东西）", preview === "clicked" && purgeOk, purgeResult);
 
+  // 进详情默认落在「线程」页签（页签不该被记忆），且空态指引要提到"在上面建线程"
+  const tabDefault = await page.evaluate(() => {
+    const active = document.querySelector('[data-projects-tab][aria-selected="true"]');
+    return active ? active.getAttribute("data-projects-tab") : "none";
+  });
+  add("进入详情默认停在「线程」页签", tabDefault === "threads", String(tabDefault));
+  const panelSummary = await page.evaluate(
+    () => (document.querySelector("[data-projects-summary]")?.textContent || "").trim(),
+  );
+  add(
+    "头部统计不再用「已挂上下文」这类术语",
+    panelSummary.length > 0 && !/挂上下文/u.test(panelSummary),
+    panelSummary.slice(0, 80),
+  );
+
   // 配置区默认折叠：否则三块配置把线程压到折叠线以下（走查结论）
   const configCollapsed = await page.evaluate(() => {
     const details = document.querySelector("[data-projects-config]");
@@ -667,6 +682,14 @@ try {
     if (row) row.click();
   });
   await page.waitForTimeout(1500);
+  const emptyHint = await page.evaluate(
+    () => (document.querySelector("[data-projects-threads-empty]")?.textContent || "").trim(),
+  );
+  add(
+    "空态指引提到可直接建线程",
+    /输入|新建线程/u.test(emptyHint),
+    emptyHint.slice(0, 90),
+  );
   await page.evaluate(() => document.querySelector("[data-projects-delete]")?.click());
   await page.waitForTimeout(900);
   await page.evaluate(() => document.querySelector("[data-projects-delete-confirm]")?.click());
