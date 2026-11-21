@@ -224,7 +224,33 @@ pnpm smoke:projects-desktop --require
 预期：`PASS 全部 11 项桌面回归断言通过`。在此之前它一直输出
 `SKIP 插件未装进当前 live profile`。
 
-### 9.4 真实 GitHub 上的远端写入
+### 9.4 真实 GitHub 上的远端写入（2026-11-21 已做）
+
+在一个**私有测试仓库**（`kangyishuai/dsh-projects-e2e`）上跑通了完整链路。做法是：
+临时 `DSH_HOME` + **复制真实 desktop profile** 起临时宿主（与 web 冒烟同一套 boot 方式，
+否则只有 `dsh-base`、web 服务起不来）+ 一个临时驱动插件调用 `projects` 的 RPC。
+
+实测结果：
+
+| 档位    | PR  | GitHub 侧事实                                                                                                     |
+| ------- | --- | ----------------------------------------------------------------------------------------------------------------- |
+| `draft` | #5  | `state=OPEN`、`isDraft=true`、**未被合并**（合并请求被前置校验拒绝：`merge/pr-is-draft`）                         |
+| `ready` | #6  | `state=MERGED`、`mergedAt=2026-11-21T05:12:06Z`、main 上出现 **squash 合并提交** `8332471 e2e: ready commit (#6)` |
+
+四个检查点全部确认：draft PR ✓、分支名 `dsh/…` ✓、标题前缀 `dsh:` ✓、
+合并只在「开关打开 + 审批通过」后发生且 argv 为 `pr merge <n> --squash --repo <owner/repo>` ✓。
+
+**这一轮抓到了两个真缺陷**（已修，见 [runtime rc.5 §8.3](../runtime/0.2.2-rc.5.md)）：
+
+1. `gh pr merge` 没带 `--repo` → 合并会打到**宿主进程当前目录所在的仓库**；
+   且 `gh pr merge` 对「已合并的 PR」仍返回 0，于是插件误报成功。修复：合并前从项目目录的
+   `git remote get-url origin` 解析 `owner/repo` 并要求必须带上，解析不到就拒绝。
+2. 没有「非 draft / 可合并」前置校验 → draft PR 也被当作可合并。修复：`gh pr view --json
+   isDraft,mergeable,state` + `checkMergePreflight()`；`mergeable=UNKNOWN`（GitHub 刚建 PR
+   时会这样）做有界重试而不是硬拒。
+
+原计划（保留作步骤参考）：
+
 
 本地验证用的是 bare 远端 + 桩 `gh`（§8）。真机确认只需一次：
 
