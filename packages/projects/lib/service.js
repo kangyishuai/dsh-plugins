@@ -20,7 +20,14 @@ import { buildFixTask, errorSignature, shouldContinueFix } from "./autofix.js";
 import { buildPrText, nextPrAction, parsePrNumber, planPrCreate } from "./autopr.js";
 import { checkThreadBudget, checkTokenBudget, tokensOf } from "./budget.js";
 import { runCommand } from "./exec.js";
-import { checkExecutable, planCommand, recoveryEvidence } from "./executor.js";
+import {
+  checkExecutable,
+  checkMergePreflight,
+  parseRepoFromRemote,
+  planCommand,
+  recoveryEvidence,
+  shouldRetryPreflight,
+} from "./executor.js";
 import { appendEntry } from "./memory.js";
 import { initialView, reduce, sortRows } from "./overview.js";
 import { resolveDataRoot } from "./paths.js";
@@ -1374,7 +1381,32 @@ export class ProjectsService extends TypertRemoteService {
       return { executed: false, reason: "already-executed" };
     }
 
-    const planned = planCommand(approval.action, approval.args ?? {});
+    // merge 的目标仓库必须**先**解析出来：早期 planCommand 就要用它，
+    // 否则它会因为缺 repo 直接拒绝（也防止落到「宿主当前目录所在仓库」）。
+    let mergeRepo = "";
+    if (approval.action === "merge") {
+      const project = store.getProject(approval.projectId);
+      const repoDir = Array.isArray(project?.dirs) ? String(project.dirs[0] ?? "") : "";
+      const remote =
+        repoDir === ""
+          ? { code: 1, stdout: "", stderr: "" }
+          : await runGit(["remote", "get-url", "origin"], repoDir);
+      mergeRepo = remote.code === 0 ? parseRepoFromRemote(remote.stdout) : "";
+      if (mergeRepo === "") {
+        store.appendAudit({
+          action: "approval/execution-refused",
+          projectId: approval.projectId,
+          requestId,
+          dangerAction: approval.action,
+          reason: "merge/repo-unknown",
+        });
+        store.save();
+        return { executed: false, reason: "merge/repo-unknown" };
+      }
+    }
+    const planArgs =
+      mergeRepo === "" ? (approval.args ?? {}) : { ...(approval.args ?? {}), repo: mergeRepo };
+    const planned = planCommand(approval.action, planArgs);
     if ("error" in planned) {
       store.appendAudit({
         action: "approval/execution-refused",
@@ -1440,7 +1472,72 @@ export class ProjectsService extends TypertRemoteService {
     // merge：走 gh pr merge（argv 里已含 --squash，不带 --admin/--force）。
     // 只合并我们自己的 PR：planCommand 已保证 PR 号是正整数，且危险开关与阈值都过了。
     if (approval.action === "merge") {
-      const ghArgs = planned.argv.slice(1); // 去掉 argv[0] 的 "gh"
+      const prNumber = Number(approval.args?.prNumber);
+      const repo = mergeRepo;
+
+      // 前置校验：非 draft、可合并、仍 open（规格 §7.5 行 3 的硬前提）
+      const view = await runGh([
+        "pr",
+        "view",
+        String(prNumber),
+        "--repo",
+        repo,
+        "--json",
+        "isDraft,mergeable,state",
+      ]);
+      if (view.code !== 0) {
+        store.appendAudit({
+          action: "approval/execution-failed",
+          projectId: approval.projectId,
+          requestId,
+          dangerAction: approval.action,
+          reason: String(view.stderr).split("\n")[0].slice(0, 200) || "merge/pr-view-failed",
+        });
+        store.save();
+        return { executed: false, reason: "merge/pr-view-failed" };
+      }
+      const parsed = (() => {
+        try {
+          return JSON.parse(view.stdout);
+        } catch {
+          return null;
+        }
+      })();
+      // GitHub 刚建 PR 时 mergeable 可能是 UNKNOWN（服务端还在算）：有界重试几次。
+      let preflight = checkMergePreflight(parsed);
+      let attempt = 0;
+      while (!preflight.ok && shouldRetryPreflight(preflight.reason ?? "") && attempt < 5) {
+        attempt += 1;
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const again = await runGh([
+          "pr",
+          "view",
+          String(prNumber),
+          "--repo",
+          repo,
+          "--json",
+          "isDraft,mergeable,state",
+        ]);
+        if (again.code !== 0) break;
+        try {
+          preflight = checkMergePreflight(JSON.parse(again.stdout));
+        } catch {
+          break;
+        }
+      }
+      if (!preflight.ok) {
+        store.appendAudit({
+          action: "approval/execution-refused",
+          projectId: approval.projectId,
+          requestId,
+          dangerAction: approval.action,
+          reason: preflight.reason,
+        });
+        store.save();
+        return { executed: false, reason: preflight.reason };
+      }
+
+      const ghArgs = planned.argv.slice(1); // 去掉 argv[0] 的 "gh"（planArgs 已带 --repo）
       const merged = await runGh(ghArgs);
       const ok = merged.code === 0;
       const evidence = recoveryEvidence(approval.action, approval.args ?? {}, {

@@ -5,11 +5,14 @@ import { describe, it } from "node:test";
 
 import {
   checkExecutable,
+  checkMergePreflight,
   DANGER_ACTIONS,
   DEFAULT_MERGE_LIMITS,
+  parseRepoFromRemote,
   planCommand,
   recoveryEvidence,
   STRUCTURALLY_FORBIDDEN,
+  shouldRetryPreflight,
   switchForAction,
 } from "../lib/executor.js";
 
@@ -132,12 +135,21 @@ describe("planCommand", () => {
     assert.deepEqual(planCommand("push-branch", {}), { error: "branch-required" });
   });
 
-  it("merge 必须给正整数 PR 号，且不带 --admin/--force", () => {
-    assert.deepEqual(planCommand("merge", { prNumber: 12 }), {
-      argv: ["gh", "pr", "merge", "12", "--squash"],
+  it("merge 必须给正整数 PR 号 + 目标仓库，且不带 --admin/--force", () => {
+    // 旧版断言只写 prNumber 就期望成功——正是这个假设让「合并打到错仓库」的缺陷溜过去
+    assert.deepEqual(planCommand("merge", { prNumber: 12, repo: "o/r" }), {
+      argv: ["gh", "pr", "merge", "12", "--squash", "--repo", "o/r"],
     });
-    assert.deepEqual(planCommand("merge", { prNumber: "12abc" }), { error: "pr-required" });
-    assert.deepEqual(planCommand("merge", { prNumber: 0 }), { error: "pr-required" });
+    const planned = planCommand("merge", { prNumber: 12, repo: "o/r" });
+    assert.ok("argv" in planned, "应给出 argv");
+    const argv = ("argv" in planned ? planned.argv : []).join(" ");
+    assert.ok(!argv.includes("--admin"), "不能带 --admin");
+    assert.ok(!argv.includes("--force"), "不能带 --force");
+    assert.ok(!argv.includes("--delete-branch"), "不能删分支");
+    assert.deepEqual(planCommand("merge", { prNumber: "12abc", repo: "o/r" }), {
+      error: "pr-required",
+    });
+    assert.deepEqual(planCommand("merge", { prNumber: 0, repo: "o/r" }), { error: "pr-required" });
   });
 
   it("删除类动作走内部动作名，不是外部命令", () => {
@@ -181,5 +193,77 @@ describe("recoveryEvidence", () => {
     const evidence = recoveryEvidence("merge", { prNumber: 1 });
     assert.equal(evidence.action, "merge");
     assert.match(String(evidence.at), /^\d{4}-\d{2}-\d{2}T/u);
+  });
+});
+
+describe("merge 必须显式指定目标仓库（真机 e2e 抓到的缺陷）", () => {
+  it("没有 repo 就拒绝，绝不能落到「当前目录所在仓库」", () => {
+    assert.deepEqual(planCommand("merge", { prNumber: 7 }), { error: "repo-required" });
+    assert.deepEqual(planCommand("merge", { prNumber: 7, repo: "" }), { error: "repo-required" });
+    assert.deepEqual(planCommand("merge", { prNumber: 7, repo: "not a repo" }), {
+      error: "repo-required",
+    });
+  });
+
+  it("给了 repo 时 argv 带 --repo", () => {
+    const planned = planCommand("merge", { prNumber: 7, repo: "o/r" });
+    assert.deepEqual(planned, {
+      argv: ["gh", "pr", "merge", "7", "--squash", "--repo", "o/r"],
+    });
+  });
+});
+
+describe("checkMergePreflight（规格 §7.5 行 3 的硬前提）", () => {
+  it("draft PR 不能合并", () => {
+    assert.deepEqual(
+      checkMergePreflight({ isDraft: true, mergeable: "MERGEABLE", state: "OPEN" }),
+      {
+        ok: false,
+        reason: "merge/pr-is-draft",
+      },
+    );
+  });
+
+  it("冲突 / 状态未知 / 已关闭都拒绝", () => {
+    assert.equal(checkMergePreflight({ mergeable: "CONFLICTING" }).reason, "merge/pr-conflicting");
+    assert.equal(
+      checkMergePreflight({ mergeable: "UNKNOWN" }).reason,
+      "merge/pr-mergeable-unknown",
+    );
+    assert.equal(checkMergePreflight({ state: "MERGED" }).reason, "merge/pr-not-open");
+    assert.equal(checkMergePreflight(null).reason, "merge/pr-unknown");
+  });
+
+  it("可合并且非 draft 才放行", () => {
+    assert.deepEqual(
+      checkMergePreflight({ isDraft: false, mergeable: "MERGEABLE", state: "OPEN" }),
+      {
+        ok: true,
+      },
+    );
+  });
+});
+
+describe("parseRepoFromRemote", () => {
+  it("https / ssh / 无 .git 后缀都能解析", () => {
+    assert.equal(parseRepoFromRemote("https://github.com/o/r.git"), "o/r");
+    assert.equal(parseRepoFromRemote("https://github.com/o/r"), "o/r");
+    assert.equal(parseRepoFromRemote("git@github.com:o/r.git"), "o/r");
+    assert.equal(parseRepoFromRemote("ssh://git@github.com/o/r.git"), "o/r");
+  });
+
+  it("非 GitHub / 空串返回空", () => {
+    assert.equal(parseRepoFromRemote("https://gitlab.com/o/r.git"), "");
+    assert.equal(parseRepoFromRemote(""), "");
+    assert.equal(parseRepoFromRemote(null), "");
+  });
+});
+
+describe("shouldRetryPreflight", () => {
+  it("只有 mergeable 未知才值得重试", () => {
+    assert.equal(shouldRetryPreflight("merge/pr-mergeable-unknown"), true);
+    assert.equal(shouldRetryPreflight("merge/pr-is-draft"), false);
+    assert.equal(shouldRetryPreflight("merge/pr-conflicting"), false);
+    assert.equal(shouldRetryPreflight(""), false);
   });
 });

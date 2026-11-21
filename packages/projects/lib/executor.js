@@ -117,7 +117,12 @@ export function planCommand(action, args) {
   if (action === "merge") {
     const prNumber = Number(args?.prNumber);
     if (!Number.isInteger(prNumber) || prNumber <= 0) return { error: "pr-required" };
-    return { argv: ["gh", "pr", "merge", String(prNumber), "--squash"] };
+    // **必须**带 --repo：否则 gh 会合并「宿主进程当前目录所在仓库」里同号的 PR。
+    // 这是 2026-11-21 真机 e2e 抓到的真缺陷：命令跑在 dsh-plugins 仓库里，
+    // 恰好那里 PR #1 已合并、gh 返回 0，于是插件误判成功，而目标 PR 根本没动。
+    const repo = String(args?.repo ?? "").trim();
+    if (!/^[\w.-]+\/[\w.-]+$/u.test(repo)) return { error: "repo-required" };
+    return { argv: ["gh", "pr", "merge", String(prNumber), "--squash", "--repo", repo] };
   }
 
   if (action === "delete-thread") {
@@ -164,4 +169,49 @@ export function recoveryEvidence(action, args, result) {
   if (action === "change-settings")
     return { ...base, before: String(result?.before ?? ""), after: String(result?.after ?? "") };
   return base;
+}
+
+/**
+ * 合并前的前置校验（规格 §7.5 行 3 的硬前提）。纯函数便于单测：
+ * 只从 `gh pr view --json` 的结果判断，不假设任何外部状态。
+ * @param {{ isDraft?: boolean, mergeable?: string, state?: string }|null} pr
+ * @returns {{ ok: boolean, reason?: string }}
+ */
+export function checkMergePreflight(pr) {
+  if (!pr || typeof pr !== "object") return { ok: false, reason: "merge/pr-unknown" };
+  if (String(pr.state ?? "OPEN").toUpperCase() !== "OPEN")
+    return { ok: false, reason: "merge/pr-not-open" };
+  // draft PR 合并会被 GitHub 拒绝；auto-merge 也不该替人「先转正再合并」
+  if (pr.isDraft === true) return { ok: false, reason: "merge/pr-is-draft" };
+  const mergeable = String(pr.mergeable ?? "UNKNOWN").toUpperCase();
+  if (mergeable === "CONFLICTING") return { ok: false, reason: "merge/pr-conflicting" };
+  if (mergeable !== "MERGEABLE") return { ok: false, reason: "merge/pr-mergeable-unknown" };
+  return { ok: true };
+}
+
+/**
+ * 从 git remote URL 里取 owner/repo（支持 https 与 ssh 两种写法）。
+ * @param {string|null} url
+ * @returns {string}
+ */
+export function parseRepoFromRemote(url) {
+  const text = String(url ?? "")
+    .trim()
+    .replace(/\.git$/u, "");
+  const https = text.match(/github\.com[/:]([\w.-]+)\/([\w.-]+)$/u);
+  if (https) return `${https[1]}/${https[2]}`;
+  const ssh = text.match(/^git@[\w.-]+:([\w.-]+)\/([\w.-]+)$/u);
+  if (ssh) return `${ssh[1]}/${ssh[2]}`;
+  return "";
+}
+
+/**
+ * 哪些前置失败值得等一会儿再试。GitHub 在 PR 刚创建后的一两秒内可能返回
+ * `mergeable: UNKNOWN`（服务端还在算），这不是「不能合并」，重试几次就会变成 MERGEABLE。
+ * 其余失败（draft / 冲突 / 已关闭）重试没有意义，直接拒绝。
+ * @param {string} reason
+ * @returns {boolean}
+ */
+export function shouldRetryPreflight(reason) {
+  return String(reason ?? "") === "merge/pr-mergeable-unknown";
 }
