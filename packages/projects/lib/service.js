@@ -39,8 +39,8 @@ import { readProjectFiles } from "./project-files.js";
 import { buildPurgeManifest, DEFAULT_RETENTION_DAYS, selectExpired } from "./purge.js";
 import { decideRoute } from "./routing.js";
 import { ProjectStore } from "./store.js";
+import { planTemplate } from "./template.js";
 import { createIsolatedThread, reclaimThreadWorktree, reconcileWorktrees } from "./thread.js";
-
 import { buildCoordinatorTools, REQUESTABLE_ACTIONS } from "./tools.js";
 import { impactOf, trashDirFor } from "./trash.js";
 import { buildEnvelope, createInjectionGuard, decideWake, pendingWakes } from "./wake.js";
@@ -632,13 +632,49 @@ export class ProjectsService extends TypertRemoteService {
 
   /**
    * @param {string} name
-   * @param {{goal?: string, dirs?: string[]}} [input]
+   * @param {{goal?: string, dirs?: string[], template?: boolean}} [input]
    */
   createProject(name, input) {
     // SRC 模式（无生成描述符）要求 Remote 方法不带默认参数/解构/rest，否则网关直接拒绝。
     const store = this.requireStore();
     const project = store.createProject(name, input ?? {});
     store.save();
+    // 一键建项目模板（规格 §7.7.6）：只在显式要求时动作，失败不阻断建项目
+    if (input?.template === true) {
+      try {
+        const dir = Array.isArray(project.dirs) && project.dirs.length > 0 ? project.dirs[0] : "";
+        const agentsPath = dir === "" ? "AGENTS.md" : `${dir.replace(/\/+$/u, "")}/AGENTS.md`;
+        const instructionsPath =
+          dir === "" ? "instructions.md" : `${dir.replace(/\/+$/u, "")}/instructions.md`;
+        const plan = planTemplate({
+          dir,
+          exists: {
+            dirExists: dir === "" ? true : existsSync(dir),
+            agentsMd: existsSync(agentsPath),
+            instructionsMd: existsSync(instructionsPath),
+          },
+        });
+        for (const mkdir of plan.mkdirs) mkdirSync(mkdir, { recursive: true });
+        for (const file of plan.files) {
+          mkdirSync(dirname(file.path), { recursive: true });
+          writeFileSync(file.path, file.content, { flag: "wx" }); // wx：绝不覆盖用户已有文件
+        }
+        store.appendAudit({
+          action: "project/template",
+          projectId: project.id,
+          created: plan.files.map((file) => file.path),
+          skipped: plan.skipped.map((item) => item.path),
+        });
+        store.save();
+      } catch (error) {
+        store.appendAudit({
+          action: "project/template-failed",
+          projectId: project.id,
+          reason: String(/** @type {any} */ (error)?.message ?? error).slice(0, 160),
+        });
+        store.save();
+      }
+    }
     return project;
   }
 
