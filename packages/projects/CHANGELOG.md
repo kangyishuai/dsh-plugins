@@ -1,5 +1,85 @@
 # @kangyishuai/dsh-projects
 
+## 0.4.0
+
+### Minor Changes
+
+- [#280](https://github.com/kangyishuai/dsh-plugins/pull/280) [`4210c95`](https://github.com/kangyishuai/dsh-plugins/commit/4210c9517b28a7d5376452ab578b4543520b8109) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 补上「分支生命周期」（规格 §7.7.5 / 计划 B5）：worktree 会回收，分支以前**永不删除**，会一路累积。
+  
+  **新判据（三条全满足才删）**，刻意**不用** `git branch --merged`——它在两个方向都会误判
+  （未提交的新分支被当"已合并"、squash 合并的分支被当"未合并"，见 runtime §11.15）：
+  
+  1. 分支是插件建的（`dsh/` 前缀且与线程记录一致）
+  2. 该线程**确有合并结果**：记录里有 `mergedAt`，或 `git merge-base --is-ancestor <branch> HEAD` 成立
+  3. **没有未推送提交**：`git rev-list --count <branch> --not --remotes` 为 0
+  
+  **worktree 先处理**：分支若仍被 worktree 占用，`git branch -d` 会被拒。所以只在 worktree
+  **干净**（`git status --porcelain` 为空）时用 `git worktree remove`（不加 `--force`）移除它，
+  脏 worktree 一律保留并报告 `worktree-dirty`。
+  
+  **删除只用 `git branch -d`，永不用 `-D`**；失败保留并写审计。
+  提供 RPC `cleanupBranches(projectId, { dryRun })`（默认 dry-run，真删需 `confirm: true`），
+  并在**归档项目**时自动按同一判据清理一次（失败不影响归档）。
+  
+  真机验证（临时裸远端）：已合并+已推送的分支被删；未合并的分支保留（`not-merged`）；worktree 脏时保留。
+  新增 6 项单测（三判据真值表 + 两种历史误判场景 + `-d` 断言）。
+
+- [#273](https://github.com/kangyishuai/dsh-plugins/pull/273) [`4d8dcd1`](https://github.com/kangyishuai/dsh-plugins/commit/4d8dcd1642155b65743aa76c8bf3dd3f5359ca1e) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 补齐规格 §7.5 行 3 漏实现的合并硬前提，并落地项目级预授权（规格 §7.7.2）。
+  
+  **合并的三道硬前提**（此前只查「非 draft / 无冲突」）
+  - **CI 绿**：`statusCheckRollup` 必须全部通过；空列表按「未配置检查」**拒绝**（`merge/ci-unknown`），不猜
+  - **人工批准**：统计 `reviews` 里不同作者的 APPROVED 数 ≥ `policy.merge.minApprovals`（默认 1）
+  - **合并方式**：仓库 `allowed_merge_methods` 必须含 `squash`，否则拒绝而不改用 merge/rebase
+  - 阈值改从 `policy.merge` 读（`minApprovals` / `maxDiffFiles` / `maxDiffLines`），不再写死
+  
+  **项目级预授权**：`policy.preapprove` 列出可被 `policy-grant` 直接放行的动作；三条全满足才生效
+  （在列表里、授权来源是 policy-grant、危险开关已开）。命中后自动 approved 并**立即执行**——
+  闸门一条不跳过，只省掉「等人点一下」。`merge`（approval-event）与直推保护分支（per-incident）
+  **永不**被预授权覆盖。执行结果会如实回报给协调器（`executed` / `auto-approved-not-executed` + 原因）。
+  
+  **顺带**：`delete-thread` 之前也是「可申请但执行只会 deferred」，现在真正走 `reclaimThread`（三重判据不变）。
+  
+  **一处旧结论纠正**：宿主没有 `ctx.approval.setPolicy`（`dsh-authorization` 是凭据流程，不是审批），
+  所以预授权是本插件用政策授权自己实现的，不是宿主能力。
+  
+  341 项单测（新增 19 项：CI/批准数/合并方式/预授权/工具回报）、真机验过五种拒绝与两种放行路径。
+
+- [#276](https://github.com/kangyishuai/dsh-plugins/pull/276) [`83910f7`](https://github.com/kangyishuai/dsh-plugins/commit/83910f76c1f22f6f0aca32f7246cf24ea54aa6f2) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 补上「可观测」（规格 §7.7.3）：面板不再只有线程状态，还能看到这一步花了什么、改了什么。
+  
+  - 从**持久会话事件**累积每个线程的：步骤数（`assistant/attempt`）、工具调用与命令明细
+    （`tool/call` + `tool/result` 回填成功与否，保留最近 12 条）、token 用量
+  - 新增 RPC `threadStats(projectId, sessionId)`：在事件统计之外现算 worktree 的
+    `git diff --numstat <base>..HEAD`（文件数 / +增 / -删）
+  - 详情页线程行显示一行摘要：`N 步 · N 次工具 · diff N 文件 +a/-b · N tokens`
+  - **缺失数据显式 n/a**：二进制文件的 numstat 是 `-/-`、宿主没上报 usage 时，都写 `n/a`，
+    不用估算值冒充测量值
+  
+  新增 13 项单测（事件归约、命令上限、token 字段兼容、numstat 解析、n/a 语义）；
+  web 冒烟 53 项（新增 1 项断言线程行摘要）。
+
+- [#279](https://github.com/kangyishuai/dsh-plugins/pull/279) [`49ef2bb`](https://github.com/kangyishuai/dsh-plugins/commit/49ef2bb829987e6a198c0790e3e007254133a233) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 补「一键建项目模板」（规格 §7.7.6 / 计划 B6）：`createProject(name, { dirs, template: true })`
+  会建目录、写一份 `instructions.md` 骨架。
+  
+  - **绝不覆盖**：写盘用 `writeFileSync(..., { flag: "wx" })`，已有 `instructions.md` 直接跳过并记审计
+  - **已有 `AGENTS.md` 时不动它**，只在新骨架里加一行「两者都会注入，请避免写重复内容」，
+    与 spec §3.3 的去重口径一致
+  - 重复调用幂等；模板创建失败**不阻断**建项目（只写审计 `project/template-failed`）
+  
+  真机验证：新目录被建且骨架写入；已有 AGENTS.md 内容逐字节未变；同目录再建一次不覆盖。
+  新增 6 项单测。
+
+- [#277](https://github.com/kangyishuai/dsh-plugins/pull/277) [`8fc72fd`](https://github.com/kangyishuai/dsh-plugins/commit/8fc72fd4cb1e5b016843c6b7bddf1ce3f0285d19) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 补「周预算」与「单线程步数上限」（规格 §7.7.4）。
+  
+  - **周预算**：`policy.budget.weeklyTokens`，按**自然周（周一 00:00，本地时区）**聚合 token 用量，
+    到线即拒建新线程（`budget/weekly-tokens`）。为此把 token 用量从「单日桶」改成**按天分桶**
+    （保留最近 21 天，旧形状自动迁移，不丢历史数）
+  - **单线程步数**：`policy.budget.maxStepsPerThread`，按 `assistant/attempt` 计步；
+    超限**只停协调器唤醒**（审计 `wake/skipped` + `budget/steps-per-thread`），
+    **不杀会话、不阻止人继续**——这是刻意的：预算是防止无人值守的无限烧，不是惩罚使用者
+  - `threadStats` 增加 `overBudget` / `budgetReason`，面板可据此提示
+  
+  新增 9 项单测（周界计算、周预算边界、步数边界、按天分桶、旧形状迁移、21 天修剪）。
+
 ## 0.3.2
 
 ### Patch Changes
