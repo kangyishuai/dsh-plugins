@@ -40,9 +40,11 @@ import { buildPurgeManifest, DEFAULT_RETENTION_DAYS, selectExpired } from "./pur
 import { decideRoute } from "./routing.js";
 import { ProjectStore } from "./store.js";
 import { createIsolatedThread, reclaimThreadWorktree, reconcileWorktrees } from "./thread.js";
+
 import { buildCoordinatorTools, REQUESTABLE_ACTIONS } from "./tools.js";
 import { impactOf, trashDirFor } from "./trash.js";
 import { buildEnvelope, createInjectionGuard, decideWake, pendingWakes } from "./wake.js";
+import { planDeleteBranch, shouldDeleteBranchV2 } from "./worktree.js";
 
 /**
  * 运行时不支持装饰器语法，用命令式方式登记 Remote（与 advisor / next-step 同法）。
@@ -689,13 +691,19 @@ export class ProjectsService extends TypertRemoteService {
   /**
    * @param {string} id
    */
-  archiveProject(id) {
+  async archiveProject(id) {
     const store = this.requireStore();
     const project = store.archiveProject(id);
     store.save();
     // 归档后立刻摘掉在线会话的项目上下文：否则已挂上的 agent 会带着归档项目的规则继续跑。
     for (const thread of store.listThreads(id)) {
       this.detachSession(thread.sessionId);
+    }
+    // 归档时顺手清理已合并、无未推送提交的分支（规格 §7.7.5 三判据；失败只记录不阻断归档）
+    try {
+      await this.cleanupBranches(id, { dryRun: false, confirm: true });
+    } catch {
+      /* 分支清理失败不该让归档失败 */
     }
     return project;
   }
@@ -809,6 +817,110 @@ export class ProjectsService extends TypertRemoteService {
     // 不需要在这里补挂上下文：项目上下文是**全局注册 + 按会话求值**的
     // （见构造函数的 registerProjectContext），归属一落盘，下一次请求就会渲染出来。
     return thread;
+  }
+
+  /**
+   * 分支生命周期清理（规格 §7.7.5）。三条判据全部满足才删，且只用 `git branch -d`。
+   * 默认 dry-run；真删需 `confirm: true`。
+   * @param {string} projectId
+   * @param {{ dryRun?: boolean, confirm?: boolean }} [options]
+   */
+  async cleanupBranches(projectId, options) {
+    const store = this.requireStore();
+    const project = store.getProject(projectId);
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const dryRun = options?.dryRun !== false;
+    const repoRoot = Array.isArray(project.dirs) ? String(project.dirs[0] ?? "") : "";
+    /** @type {any[]} */
+    const candidates = [];
+    const threads = store.listThreads(projectId);
+
+    for (const thread of threads) {
+      const branch = typeof thread.branch === "string" ? thread.branch : "";
+      if (branch === "") continue;
+      // ① 必须是我们的分支且与记录一致
+      const ours = branch.startsWith("dsh/") && branch === thread.branch;
+      if (!ours) {
+        candidates.push({ branch, ok: false, reason: "branch-not-ours" });
+        continue;
+      }
+      if (repoRoot === "") {
+        candidates.push({ branch, ok: false, reason: "no-repo" });
+        continue;
+      }
+      const current = await runGit(["rev-parse", "--abbrev-ref", "HEAD"], repoRoot);
+      if (String(current.stdout ?? "").trim() === branch) {
+        candidates.push({ branch, ok: false, reason: "current-branch" });
+        continue;
+      }
+      // 分支若还被某个 worktree 占用，`git branch -d` 会被拒。
+      // 只有在 worktree **干净**（无未提交改动）时才移除它——未提交内容绝不丢。
+      const worktree = typeof thread.worktree === "string" ? thread.worktree : "";
+      if (worktree !== "") {
+        const status = await runGit(["status", "--porcelain"], worktree);
+        const clean = status.code === 0 && String(status.stdout ?? "").trim() === "";
+        if (!clean) {
+          candidates.push({ branch, ok: false, reason: "worktree-dirty" });
+          continue;
+        }
+        if (!dryRun) {
+          const removed = await runGit(["worktree", "remove", worktree], repoRoot);
+          if (removed.code !== 0) {
+            candidates.push({ branch, ok: false, reason: "worktree-remove-failed" });
+            continue;
+          }
+          store.setThreadWorktree(thread.sessionId, { worktree: null });
+          store.save();
+        }
+      }
+
+      // ② 合并结果：记录里有 mergedAt，或远端确实已合并到 HEAD
+      let merged = typeof thread.mergedAt === "string" && thread.mergedAt !== "";
+      if (!merged) {
+        const mergedIntoHead = await runGit(
+          ["merge-base", "--is-ancestor", branch, "HEAD"],
+          repoRoot,
+        );
+        merged = mergedIntoHead.code === 0;
+      }
+      // ③ 没有未推送提交
+      const unpushed = await runGit(
+        ["rev-list", "--count", branch, "--not", "--remotes"],
+        repoRoot,
+      );
+      const verdict = shouldDeleteBranchV2({
+        branch,
+        threadBranch: thread.branch,
+        merged,
+        unpushedCommits:
+          unpushed.code === 0 ? Number(String(unpushed.stdout).trim() || "0") : Number.NaN,
+      });
+      candidates.push({ branch, ok: verdict.ok, reason: verdict.reason });
+    }
+
+    if (dryRun || options?.confirm !== true) {
+      return { ok: true, dryRun: true, candidates, deleted: [] };
+    }
+
+    /** @type {string[]} */
+    const deleted = [];
+    for (const item of candidates) {
+      if (!item.ok) continue;
+      const removed = await runGit(planDeleteBranch(item.branch), repoRoot);
+      if (removed.code === 0) {
+        deleted.push(item.branch);
+        store.appendAudit({ action: "branch/deleted", projectId, branch: item.branch });
+      } else {
+        store.appendAudit({
+          action: "branch/kept",
+          projectId,
+          branch: item.branch,
+          reason: String(removed.stderr).split("\n")[0].slice(0, 160) || "delete-failed",
+        });
+      }
+    }
+    store.save();
+    return { ok: true, dryRun: false, candidates, deleted };
   }
 
   /**
@@ -1780,6 +1892,7 @@ declareRemote(ProjectsService, "archiveProject");
 declareRemote(ProjectsService, "unarchiveProject");
 declareRemote(ProjectsService, "reconcileWakes");
 declareRemote(ProjectsService, "purgeTrash");
+declareRemote(ProjectsService, "cleanupBranches");
 declareRemote(ProjectsService, "previewDeleteProject");
 declareRemote(ProjectsService, "deleteProject");
 declareRemote(ProjectsService, "attachThread");
