@@ -4,11 +4,14 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  checkStepBudget,
   checkThreadBudget,
   checkTokenBudget,
+  checkWeeklyTokenBudget,
   DAY_MS,
   isToday,
   startOfDay,
+  startOfWeek,
   tokensOf,
 } from "../lib/budget.js";
 
@@ -167,5 +170,45 @@ describe("checkTokenBudget", () => {
 
   it("未到线放行", () => {
     assert.equal(checkTokenBudget({ dailyTokens: 1000, usedTokens: 999 }).ok, true);
+  });
+});
+
+describe("周预算与步数预算（规格 §7.7.4）", () => {
+  it("周起点是本地周一 00:00", () => {
+    const wednesday = new Date(2026, 10, 18, 15, 30, 0).getTime(); // 2026-11-18 周三
+    const start = startOfWeek(wednesday);
+    const date = new Date(start);
+    assert.equal(date.getDay(), 1, "应为周一");
+    assert.equal(date.getHours(), 0);
+    assert.equal(date.getMinutes(), 0);
+    assert.ok(start <= wednesday && wednesday - start < 7 * 24 * 3600 * 1000);
+  });
+
+  it("周内任何一天算出的周起点相同，跨周则不同", () => {
+    const mon = new Date(2026, 10, 16, 1, 0, 0).getTime();
+    const sun = new Date(2026, 10, 22, 23, 0, 0).getTime();
+    const nextMon = new Date(2026, 10, 23, 1, 0, 0).getTime();
+    assert.equal(startOfWeek(mon), startOfWeek(sun));
+    assert.notEqual(startOfWeek(mon), startOfWeek(nextMon));
+  });
+
+  it("周预算：未配置不限制；到线即拒", () => {
+    assert.deepEqual(checkWeeklyTokenBudget({ weeklyTokens: null, usedTokens: 999 }), {
+      ok: true,
+      used: 999,
+      limit: null,
+      reason: "",
+    });
+    assert.equal(
+      checkWeeklyTokenBudget({ weeklyTokens: 100, usedTokens: 100 }).reason,
+      "budget/weekly-tokens",
+    );
+    assert.equal(checkWeeklyTokenBudget({ weeklyTokens: 100, usedTokens: 99 }).ok, true);
+  });
+
+  it("步数预算：等于上限仍放行，超过才拒", () => {
+    assert.equal(checkStepBudget({ maxSteps: 3, steps: 3 }).ok, true);
+    assert.equal(checkStepBudget({ maxSteps: 3, steps: 4 }).reason, "budget/steps-per-thread");
+    assert.equal(checkStepBudget({ maxSteps: null, steps: 999 }).ok, true);
   });
 });

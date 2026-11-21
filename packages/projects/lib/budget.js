@@ -93,3 +93,41 @@ export function checkTokenBudget(input) {
   if (used >= limit) return { ok: false, used, limit, reason: "budget/daily-tokens" };
   return { ok: true, used, limit, reason: "" };
 }
+
+/**
+ * 本地时区的「自然周」起点（周一 00:00）。
+ * @param {number} now
+ * @returns {number}
+ */
+export function startOfWeek(now) {
+  const date = new Date(now);
+  date.setHours(0, 0, 0, 0);
+  const weekday = (date.getDay() + 6) % 7; // 周一=0
+  return date.getTime() - weekday * DAY_MS;
+}
+
+/**
+ * 周 token 预算（规格 §7.7.4）。
+ * @param {{ weeklyTokens?: number|null, usedTokens?: number }} input
+ * @returns {{ ok: boolean, used: number, limit: number|null, reason: string }}
+ */
+export function checkWeeklyTokenBudget(input) {
+  const limit = Number.isFinite(input?.weeklyTokens) ? Number(input.weeklyTokens) : null;
+  const used = Number.isFinite(input?.usedTokens) ? Number(input.usedTokens) : 0;
+  if (limit === null) return { ok: true, used, limit: null, reason: "" };
+  if (used >= limit) return { ok: false, used, limit, reason: "budget/weekly-tokens" };
+  return { ok: true, used, limit, reason: "" };
+}
+
+/**
+ * 单线程步数预算（规格 §7.7.4）：超限**只停协调器唤醒**，不杀会话、不阻止人继续。
+ * @param {{ maxSteps?: number|null, steps?: number }} input
+ * @returns {{ ok: boolean, steps: number, limit: number|null, reason: string }}
+ */
+export function checkStepBudget(input) {
+  const limit = Number.isFinite(input?.maxSteps) ? Number(input.maxSteps) : null;
+  const steps = Number.isFinite(input?.steps) ? Number(input.steps) : 0;
+  if (limit === null) return { ok: true, steps, limit: null, reason: "" };
+  if (steps > limit) return { ok: false, steps, limit, reason: "budget/steps-per-thread" };
+  return { ok: true, steps, limit, reason: "" };
+}

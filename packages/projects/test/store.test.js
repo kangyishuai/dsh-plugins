@@ -335,3 +335,39 @@ describe("审批的 claim / release（占用 ≠ 执行）", () => {
     assert.equal(store.releaseApproval("nope"), false);
   });
 });
+
+describe("token 用量按天分桶（周预算需要跨天求和）", () => {
+  it("同一天累加，不同天分开记", () => {
+    const store = new ProjectStore({ root }).load();
+    const project = store.createProject("usage");
+    const day1 = new Date(2026, 10, 16, 10, 0, 0).getTime();
+    const day2 = new Date(2026, 10, 17, 10, 0, 0).getTime();
+    store.addTokenUsage(project.id, 10, day1);
+    store.addTokenUsage(project.id, 5, day1);
+    store.addTokenUsage(project.id, 7, day2);
+    assert.equal(store.tokenUsageOn(project.id, day1), 15);
+    assert.equal(store.tokenUsageOn(project.id, day2), 7);
+    assert.equal(store.tokenUsageSince(project.id, day1), 22);
+    assert.equal(store.tokenUsageSince(project.id, day2), 7);
+  });
+
+  it("兼容旧的单日桶形状（迁移后不再丢数）", () => {
+    const store = new ProjectStore({ root }).load();
+    const project = store.createProject("legacy");
+    const day = new Date(2026, 10, 16, 10, 0, 0).getTime();
+    store.state.usage = { [project.id]: { date: "2026-11-16", tokens: 42 } };
+    assert.equal(store.tokenUsageOn(project.id, day), 42);
+    store.addTokenUsage(project.id, 8, day);
+    assert.equal(store.tokenUsageOn(project.id, day), 50);
+  });
+
+  it("只保留最近 21 天（长跑不无限增长）", () => {
+    const store = new ProjectStore({ root }).load();
+    const project = store.createProject("prune");
+    const base = new Date(2026, 10, 1, 12, 0, 0).getTime();
+    for (let i = 0; i < 40; i += 1) store.addTokenUsage(project.id, 1, base + i * 86400000);
+    const days = Object.keys(store.state.usage[project.id].days);
+    assert.equal(days.length, 21);
+    assert.ok(days.includes(new Date(base + 39 * 86400000).toISOString().slice(0, 10)));
+  });
+});
