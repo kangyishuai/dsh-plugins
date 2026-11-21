@@ -344,6 +344,19 @@ try {
     await page.waitForTimeout(500);
   }
   add("详情页显示预算用量", budgetText !== "", budgetText);
+  // 空项目也必须给「建线程」入口（否则新项目在面板里无法起线程，只能靠会话菜单归属）
+  const emptyComposer = await page.evaluate(() => {
+    const empty = Boolean(document.querySelector("[data-projects-threads-empty]"));
+    const input = Boolean(document.querySelector("[data-projects-thread-input]"));
+    const button = Boolean(document.querySelector("[data-projects-thread-create]"));
+    return { empty, input, button };
+  });
+  add(
+    "空项目的详情页仍有建线程入口",
+    emptyComposer.input && emptyComposer.button,
+    JSON.stringify(emptyComposer),
+  );
+
   // 可观测摘要（规格 §7.7.3）：线程行应显示「N 步 · N 次工具 · diff … · tokens …」
   const statsText = await page.evaluate(
     () => (document.querySelector("[data-projects-thread-stats]")?.textContent || "").trim(),
@@ -353,6 +366,16 @@ try {
     /步/u.test(statsText) && /(工具|diff|tokens)/u.test(statsText),
     statsText,
   );
+  // 留一张详情页截图：线程行摘要与「仓库授权 / 回收站清理」两块新 UI 都在这一屏
+  {
+    // ego 的 page.screenshot() 在本版本返回空数据；直接走 CDP 更可靠
+    const detailShot = await page.cdp("Page.captureScreenshot", { format: "png" });
+    const fsp = await import("node:fs/promises");
+    await fsp.writeFile(
+      ${JSON.stringify(shotsDir)} + "/02-detail-thread-stats.png",
+      Buffer.from(detailShot.data, "base64"),
+    );
+  }
 
   // 详情页新增两块：仓库授权 + 回收站清理（都必须渲染出来）
   const newBlocks = await page.evaluate(() => ({
