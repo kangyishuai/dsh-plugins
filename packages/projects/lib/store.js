@@ -430,6 +430,27 @@ export class ProjectStore {
    * @returns {{ date: string, tokens: number }}
    */
   /**
+   * 把回收站里的项目放回仓储（规格 §7.5 行 4a 的可恢复性）。
+   * 同 id 已存在时拒绝，不覆盖当前项目。
+   * @param {{ project: any, threads: any[] }} input
+   */
+  restoreProject(input) {
+    const project = input?.project;
+    const threads = Array.isArray(input?.threads) ? input.threads : [];
+    const id = String(project?.id ?? "");
+    if (id === "") throw new Error("projects: restoreProject requires project.id");
+    if (this.state.projects[id]) throw new Error(`projects: project already exists ${id}`);
+    this.state.projects[id] = { ...project, state: "active" };
+    for (const thread of threads) {
+      const sessionId = String(thread?.sessionId ?? "");
+      if (sessionId === "") continue;
+      const { sessionId: _ignored, ...rest } = thread;
+      this.state.threads[sessionId] = { ...rest, projectId: id };
+    }
+    return { project: { ...this.state.projects[id] }, threadCount: threads.length };
+  }
+
+  /**
    * 记 token 用量。**按天分桶**（周预算要跨天求和，单日桶算不出来）。
    * 保留最近 21 天，避免无限增长；兼容旧的 `{date, tokens}` 形状。
    * @param {string} projectId @param {number} tokens @param {number} [now]

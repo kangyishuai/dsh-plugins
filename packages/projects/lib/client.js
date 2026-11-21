@@ -124,6 +124,11 @@ window.__ModuleLoader__.load({
       "detail.purgeHint":
         "只清理本项目回收站里**超过保留期**的条目；先预览，再确认。需要打开 purgeAfterRetention 开关。",
       "detail.purgePreview": "预览可清理项",
+      "detail.trashTitle": "回收站（可恢复）",
+      "detail.trashEmpty": "回收站是空的。删除项目会先放进这里，可以随时恢复。",
+      "detail.trashRestore": "恢复",
+      "detail.trashRestored": "已恢复「{name}」（{count} 个线程）",
+      "detail.trashFailed": "恢复失败：{reason}",
       "detail.purgeConfirm": "确认清理 {count} 项",
       "detail.purgeNothing": "没有超过保留期的条目",
       "detail.purged": "已清理 {count} 项，清单已写入 trash/",
@@ -242,6 +247,11 @@ window.__ModuleLoader__.load({
       "detail.purgeHint":
         "Only purges entries in this project's trash that are **past the retention period**; preview first, then confirm. Requires the purgeAfterRetention switch.",
       "detail.purgePreview": "Preview purgeable",
+      "detail.trashTitle": "Trash (restorable)",
+      "detail.trashEmpty": "Trash is empty. Deleted projects land here first and can be restored.",
+      "detail.trashRestore": "Restore",
+      "detail.trashRestored": "Restored “{name}” ({count} threads)",
+      "detail.trashFailed": "Restore failed: {reason}",
       "detail.purgeConfirm": "Purge {count} entries",
       "detail.purgeNothing": "Nothing past the retention period",
       "detail.purged": "Purged {count} entries; manifest written under trash/",
@@ -507,6 +517,8 @@ window.__ModuleLoader__.load({
                 setSelectedId(null);
                 refresh();
               },
+              // 恢复/其它"改了项目集合"的操作：只刷新列表，不切换选中项
+              onChanged: () => refresh(),
             })
           : null,
         selectedId
@@ -555,7 +567,7 @@ window.__ModuleLoader__.load({
     /**
      * 项目详情：线程 / 记忆 / 审计三个页签（conventions §7.3：页签 ≤3）。
      * 只读；写操作留给后续里程碑。
-     * @param {{api: any, t: any, project: any, onBack: () => void, onDeleted?: () => void}} props
+     * @param {{api: any, t: any, project: any, onBack: () => void, onDeleted?: () => void, onChanged?: () => void}} props
      */
     function ProjectDetail(props) {
       const api = props.api;
@@ -714,9 +726,64 @@ window.__ModuleLoader__.load({
       const purgeState = useState({ phase: "idle", eligible: 0, kept: 0, message: "" });
       const purge = purgeState[0];
       const setPurge = purgeState[1];
+      /** 体积格式化（回收站行里用；host 侧的同名逻辑不跨进程，这里单独实现） */
+      const formatBytes = (/** @type {number} */ bytes) => {
+        const n = Number.isFinite(bytes) ? Math.max(0, Number(bytes)) : 0;
+        if (n < 1024) return `${n} B`;
+        if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+        return `${(n / 1024 / 1024).toFixed(1)} MB`;
+      };
+      const trashState = useState({ entries: [], loaded: false, message: "" });
+      const trash = trashState[0];
+      const setTrash = trashState[1];
+      const loadTrash = useCallback(() => {
+        call(api.ctx, "listTrash", {}).then(
+          (/** @type {any} */ result) =>
+            setTrash((/** @type {any} */ prev) => ({
+              ...prev,
+              entries: Array.isArray(result?.entries) ? result.entries : [],
+              loaded: true,
+            })),
+          (/** @type {any} */ error) =>
+            setTrash((/** @type {any} */ prev) => ({
+              ...prev,
+              loaded: true,
+              message: String(error?.message ?? error),
+            })),
+        );
+      }, [api, setTrash]);
+      const restoreEntry = useCallback(
+        (/** @type {string} */ entryId) => {
+          call(api.ctx, "restoreTrash", { entryId }).then(
+            (/** @type {any} */ result) => {
+              setTrash({
+                entries: [],
+                loaded: false,
+                message: text(t, "detail.trashRestored", {
+                  name: result?.name ?? "",
+                  count: result?.threadCount ?? 0,
+                }),
+              });
+              loadTrash();
+              // 恢复的是"另一个"项目，必须刷新列表——否则用户看到"点了恢复但项目没回来"
+              if (typeof props.onChanged === "function") props.onChanged();
+            },
+            (/** @type {any} */ error) =>
+              setTrash((/** @type {any} */ prev) => ({
+                ...prev,
+                message: text(t, "detail.trashFailed", { reason: String(error?.message ?? error) }),
+              })),
+          );
+        },
+        [api, loadTrash, setTrash, t],
+      );
+      useEffect(() => {
+        if (!trash.loaded) loadTrash();
+      }, [trash.loaded, loadTrash]);
+
       const previewPurge = useCallback(() => {
         setPurge({ phase: "loading", eligible: 0, kept: 0, message: "" });
-        call(api.ctx, "purgeTrash", { dryRun: true, projectId: project.id }).then(
+        call(api.ctx, "purgeTrash", { options: { dryRun: true, projectId: project.id } }).then(
           (/** @type {any} */ result) => {
             const eligible = Array.isArray(result?.eligible) ? result.eligible.length : 0;
             setPurge({
@@ -738,9 +805,7 @@ window.__ModuleLoader__.load({
       const runPurge = useCallback(() => {
         setPurge((/** @type {any} */ prev) => ({ ...prev, phase: "loading" }));
         call(api.ctx, "purgeTrash", {
-          dryRun: false,
-          confirm: "purge",
-          projectId: project.id,
+          options: { dryRun: false, confirm: "purge", projectId: project.id },
         }).then(
           (/** @type {any} */ result) => {
             const ok = result?.ok === true;
@@ -1380,6 +1445,74 @@ window.__ModuleLoader__.load({
           ),
           purge.message !== ""
             ? h("div", { style: styles.meta, "data-projects-purge-result": "" }, purge.message)
+            : null,
+        ),
+        // 回收站（可恢复）：删除承诺"可恢复"，就必须给得出恢复入口（P0-2）
+        h(
+          "div",
+          {
+            "data-projects-trash": "",
+            style: {
+              border: `1px solid ${T.border}`,
+              borderRadius: "8px",
+              padding: "8px 10px",
+              marginTop: "8px",
+              display: "flex",
+              flexDirection: "column",
+              gap: "6px",
+            },
+          },
+          h("div", { style: styles.name }, text(t, "detail.trashTitle")),
+          trash.entries.length === 0
+            ? h(
+                "div",
+                { style: styles.meta, "data-projects-trash-empty": "" },
+                text(t, "detail.trashEmpty"),
+              )
+            : h(
+                "div",
+                { style: { display: "flex", flexDirection: "column", gap: "4px" } },
+                trash.entries.slice(0, 8).map((/** @type {any} */ entry) =>
+                  h(
+                    "div",
+                    {
+                      key: entry.entryId,
+                      "data-projects-trash-row": entry.entryId,
+                      style: {
+                        display: "flex",
+                        gap: "8px",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                      },
+                    },
+                    h(
+                      "span",
+                      {
+                        style: {
+                          ...styles.meta,
+                          minWidth: 0,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        },
+                      },
+                      `${entry.name} · ${entry.threadCount} 个线程 · ${entry.deletedAt > 0 ? new Date(entry.deletedAt).toLocaleString() : "时间未知"} · ${formatBytes(entry.sizeBytes)}`,
+                    ),
+                    h(
+                      "button",
+                      {
+                        type: "button",
+                        style: styles.button,
+                        "data-projects-trash-restore": entry.entryId,
+                        onClick: () => restoreEntry(entry.entryId),
+                        disabled: entry.restorable !== true,
+                      },
+                      text(t, "detail.trashRestore"),
+                    ),
+                  ),
+                ),
+              ),
+          trash.message !== ""
+            ? h("div", { style: styles.meta, "data-projects-trash-result": "" }, trash.message)
             : null,
         ),
         del.confirming

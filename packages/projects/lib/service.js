@@ -42,7 +42,7 @@ import { ProjectStore } from "./store.js";
 import { planTemplate } from "./template.js";
 import { createIsolatedThread, reclaimThreadWorktree, reconcileWorktrees } from "./thread.js";
 import { buildCoordinatorTools, REQUESTABLE_ACTIONS } from "./tools.js";
-import { impactOf, trashDirFor } from "./trash.js";
+import { impactOf, TRASH_DIR, trashDirFor } from "./trash.js";
 import { buildEnvelope, createInjectionGuard, decideWake, pendingWakes } from "./wake.js";
 import { planDeleteBranch, shouldDeleteBranchV2 } from "./worktree.js";
 
@@ -853,6 +853,101 @@ export class ProjectsService extends TypertRemoteService {
     // 不需要在这里补挂上下文：项目上下文是**全局注册 + 按会话求值**的
     // （见构造函数的 registerProjectContext），归属一落盘，下一次请求就会渲染出来。
     return thread;
+  }
+
+  /**
+   * 回收站里有哪些项目（规格 §7.5 行 4a 的可恢复性：**能删就要能看、能还原**）。
+   * 直接扫数据根下的 `trash/`，每个子目录读 manifest.json。
+   */
+  listTrash() {
+    const root = join(this.dataRoot, TRASH_DIR);
+    if (!existsSync(root)) return { entries: [] };
+    /** @type {any[]} */
+    const entries = [];
+    for (const name of readdirSync(root)) {
+      const dir = join(root, name);
+      const manifestPath = join(dir, "manifest.json");
+      if (!existsSync(manifestPath)) continue;
+      try {
+        const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+        const deletedAt = Date.parse(String(manifest?.deletedAt ?? "")) || 0;
+        const project = manifest?.project ?? {};
+        entries.push({
+          entryId: name,
+          projectId: String(project.id ?? ""),
+          name: String(project.name ?? "(未命名)"),
+          deletedAt,
+          threadCount: Array.isArray(manifest?.threads) ? manifest.threads.length : 0,
+          sizeBytes: this.sizeOf(dir),
+          restorable: String(project.id ?? "") !== "",
+        });
+      } catch {
+        // 认不出的条目保留在列表里并标不可恢复，绝不静默忽略（约定 1）
+        entries.push({
+          entryId: name,
+          projectId: "",
+          name,
+          deletedAt: 0,
+          threadCount: 0,
+          sizeBytes: 0,
+          restorable: false,
+        });
+      }
+    }
+    entries.sort((a, b) => b.deletedAt - a.deletedAt);
+    return { entries };
+  }
+
+  /**
+   * 从回收站恢复一个项目（把 manifest 里的元数据放回仓储，内容目录搬回去）。
+   * @param {string} entryId 回收站子目录名（不接受路径分隔符）
+   */
+  restoreTrash(entryId) {
+    const store = this.requireStore();
+    const id = String(entryId ?? "");
+    if (!/^[A-Za-z0-9_.-]+$/u.test(id) || id.includes("..")) {
+      throw new Error("projects: invalid trash entry");
+    }
+    const dir = join(this.dataRoot, TRASH_DIR, id);
+    const manifestPath = join(dir, "manifest.json");
+    if (!existsSync(manifestPath)) throw new Error(`projects: trash entry not found ${id}`);
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const project = manifest?.project;
+    if (!project?.id) throw new Error("projects: trash manifest has no project");
+
+    const restored = store.restoreProject({ project, threads: manifest.threads ?? [] });
+    // 内容目录搬回项目目录（失败则报错，元数据已恢复但内容留在回收站，可再试）
+    const contentTrash = join(dir, "content");
+    if (existsSync(contentTrash)) {
+      const target = join(this.dataRoot, String(project.id));
+      try {
+        renameSync(contentTrash, target);
+      } catch (error) {
+        store.appendAudit({
+          action: "project/restore-content-failed",
+          projectId: project.id,
+          reason: String(/** @type {any} */ (error)?.message ?? error).slice(0, 160),
+        });
+        store.save();
+        throw new Error(
+          `projects: content restore failed (${String(/** @type {any} */ (error)?.message ?? error)})`,
+        );
+      }
+    }
+    rmSync(dir, { recursive: true, force: true });
+    store.appendAudit({
+      action: "project/restored",
+      projectId: project.id,
+      entryId: id,
+      threadCount: restored.threadCount,
+    });
+    store.save();
+    return {
+      ok: true,
+      projectId: project.id,
+      name: restored.project.name,
+      threadCount: restored.threadCount,
+    };
   }
 
   /**
@@ -1929,6 +2024,8 @@ declareRemote(ProjectsService, "unarchiveProject");
 declareRemote(ProjectsService, "reconcileWakes");
 declareRemote(ProjectsService, "purgeTrash");
 declareRemote(ProjectsService, "cleanupBranches");
+declareRemote(ProjectsService, "listTrash");
+declareRemote(ProjectsService, "restoreTrash");
 declareRemote(ProjectsService, "previewDeleteProject");
 declareRemote(ProjectsService, "deleteProject");
 declareRemote(ProjectsService, "attachThread");

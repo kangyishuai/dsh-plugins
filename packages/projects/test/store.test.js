@@ -371,3 +371,43 @@ describe("token 用量按天分桶（周预算需要跨天求和）", () => {
     assert.ok(days.includes(new Date(base + 39 * 86400000).toISOString().slice(0, 10)));
   });
 });
+
+describe("restoreProject（从回收站恢复）", () => {
+  it("把项目与线程一起放回去，状态回到 active", () => {
+    const store = new ProjectStore({ root }).load();
+    const project = store.createProject("to-restore");
+    store.attachThread("s-1", project.id);
+    store.setThreadWorktree("s-1", { branch: "dsh/x", worktree: null, baseSha: null });
+    const removed = store.removeProject(project.id);
+    assert.equal(store.getProject(project.id), undefined);
+
+    const restored = store.restoreProject(removed);
+    assert.equal(restored.threadCount, 1);
+    const back = store.getProject(project.id);
+    assert.equal(back.name, "to-restore");
+    assert.equal(back.state, "active");
+    assert.ok(store.listThreads(project.id).some((t) => t.sessionId === "s-1"));
+  });
+
+  it("同 id 已存在时拒绝，绝不覆盖现有项目", () => {
+    const store = new ProjectStore({ root }).load();
+    const project = store.createProject("dup");
+    const removed = store.removeProject(project.id);
+    store.createProject("dup"); // 另一个项目（新 id）
+    // 人为制造同 id 占用
+    store.state.projects[project.id] = { ...removed.project, name: "occupied" };
+    assert.throws(() => store.restoreProject(removed), /already exists/u);
+    assert.equal(store.getProject(project.id).name, "occupied");
+  });
+
+  it("恢复后线程仍归属该项目", () => {
+    const store = new ProjectStore({ root }).load();
+    const project = store.createProject("threads");
+    store.attachThread("s-2", project.id);
+    store.setThreadWorktree("s-2", { branch: "dsh/y", worktree: null, baseSha: null });
+    const restored = store.restoreProject(store.removeProject(project.id));
+    const threads = store.listThreads(restored.project.id);
+    assert.equal(threads.length, 1);
+    assert.equal(threads[0].projectId, restored.project.id);
+  });
+});

@@ -405,10 +405,21 @@ try {
     );
     if (purgeResult !== "") break;
   }
+  // 断言必须校验「成功」，不能只校验「有文字且不含 FAIL」——0.4.3 就是这样把网关报错放过去的
+  const purgeOk = /项可清理|没有|空/u.test(purgeResult) && !/gateway|失败|错误/u.test(purgeResult);
+  add("回收站清理预览可用（dry-run 不删东西）", preview === "clicked" && purgeOk, purgeResult);
+
+  // 回收站必须可看、可恢复（删除文案承诺"可恢复"，承诺就要能看到入口）
+  const trashVisible = await page.evaluate(() =>
+    Boolean(document.querySelector("[data-projects-trash]")),
+  );
+  const trashText = await page.evaluate(
+    () => (document.querySelector("[data-projects-trash]")?.innerText || "").trim(),
+  );
   add(
-    "回收站清理预览可用（dry-run 不删东西）",
-    preview === "clicked" && purgeResult !== "" && !/FAIL/u.test(purgeResult),
-    purgeResult,
+    "回收站区块存在且给出恢复入口说明",
+    trashVisible === true && trashText.length > 0,
+    trashText.slice(0, 80),
   );
 
   const memoryTab = await page.evaluate(() => {
@@ -612,7 +623,77 @@ try {
     JSON.stringify({ throwaway, openedThrowaway, confirmed }),
   );
 
+  // 删除承诺"可恢复"，就必须能真的恢复回来。用一个**单独**的临时项目做往返，
+  // 免得把上面留给宿主侧 manifest 断言的条目恢复走。
+  await page.evaluate(() => {
+    const input = document.querySelector("[data-projects-create-input]");
+    const button = document.querySelector("[data-projects-create]");
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    setter.call(input, "smoke-to-restore");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    button.click();
+  });
+  await page.waitForTimeout(2000);
+  await page.evaluate(() => {
+    const row = [...document.querySelectorAll("[data-projects-row]")].find((n) =>
+      (n.textContent || "").includes("smoke-to-restore"),
+    );
+    if (row) row.click();
+  });
+  await page.waitForTimeout(1500);
+  await page.evaluate(() => document.querySelector("[data-projects-delete]")?.click());
+  await page.waitForTimeout(900);
+  await page.evaluate(() => document.querySelector("[data-projects-delete-confirm]")?.click());
+  await page.waitForTimeout(2200);
 
+  // 打开主项目，回收站里应能看到刚删的 smoke-to-restore
+  const openedMainForTrash = await page.evaluate(() => {
+    const row = [...document.querySelectorAll("[data-projects-row]")].find(
+      (node) => !(node.textContent || "").includes("smoke-to-restore"),
+    );
+    if (!row) return "no-row";
+    row.click();
+    return "clicked";
+  });
+  await page.waitForTimeout(1800);
+  let trashListText = "";
+  for (let i = 0; i < 12; i += 1) {
+    await page.waitForTimeout(400);
+    trashListText = await page.evaluate(
+      () => (document.querySelector("[data-projects-trash]")?.innerText || "").trim(),
+    );
+    if (trashListText.includes("smoke-to-restore")) break;
+  }
+  add(
+    "回收站列出刚删除的项目",
+    openedMainForTrash === "clicked" && trashListText.includes("smoke-to-restore"),
+    trashListText.split(String.fromCharCode(10)).join(" | ").slice(0, 140),
+  );
+
+  // 点它那一行的「恢复」
+  const clickedRestore = await page.evaluate(() => {
+    const row = [...document.querySelectorAll("[data-projects-trash-row]")].find((n) =>
+      (n.textContent || "").includes("smoke-to-restore"),
+    );
+    if (!row) return "no-row";
+    const button = row.querySelector("[data-projects-trash-restore]");
+    if (!button) return "no-button";
+    button.click();
+    return "clicked";
+  });
+  await page.waitForTimeout(2600);
+  // 回到列表看它是否真的回来了（恢复的是"另一个"项目，列表必须自己刷新）
+  await page.evaluate(() => document.querySelector("[data-projects-detail-back]")?.click());
+  await page.waitForTimeout(1500);
+  const backInList = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll("[data-projects-row]")];
+    return rows.some((node) => (node.textContent || "").includes("smoke-to-restore"));
+  });
+  add(
+    "点「恢复」后项目回到列表（列表自动刷新）",
+    clickedRestore === "clicked" && backInList === true,
+    JSON.stringify({ clickedRestore, backInList }),
+  );
 
   // 设置分节：本机 profile 的 cordis.patch.yml 可能把设置页整体禁用（该插件 enabled:false），
   // 那就无从打开——记录为 tolerated 而不是失败，真正的分节渲染由桌面回归在可打开的环境里覆盖。
