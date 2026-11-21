@@ -487,3 +487,13 @@ typert gateway: projects/purgeTrash: args fields do not match the descriptor: un
 界面都用**两步确认**：第一次点进入确认态，第二次点的按钮上直接写
 「确认彻底删除（1.6 KB，不可恢复）」——不可恢复的操作必须把代价写在按钮上。
 两个动作都写审计（`trash/entry-deleted` / `trash/emptied`）。
+### 17.6 记忆页签可写（v0.6.x）
+
+| 动作         | RPC                                           | 语义                                                                |
+| ------------ | --------------------------------------------- | ------------------------------------------------------------------- |
+| 保存常设规则 | `setProjectInstructions({ projectId, text })` | 写 `instructions.md`（0o600）；空文本=清空（删文件）；上限 20k 字符 |
+| 追加记忆     | `appendMemory({ projectId, text })`           | 追加一条到 `MEMORY.md`，重复条目如实返回 `added:false`              |
+
+**坑**：给 Remote 方法的参数加**行内** `/** @type */` 会让 SRC 网关拒绝注册该方法，
+运行时表现为 `typert gateway: ...` 而看不出是注册阶段的问题。一律用上方 JSDoc `@param`；
+`pnpm check` 的 SRC 守卫会拦住（`Remote 方法 X 的参数表里不能有行内类型注释`）。

@@ -428,6 +428,42 @@ export class ProjectsService extends TypertRemoteService {
    * @param {string} projectId
    * @param {string} text
    */
+  /**
+   * 保存项目常设规则（instructions.md）。走查发现「记忆」页签只读，用户没法自己写规则。
+   * 有上限（20k 字符）：这个文件每次请求都会注入，太长会持续吃上下文。
+   * @param {{ projectId?: string, text?: string }} [options]
+   */
+  setProjectInstructions(options) {
+    const store = this.requireStore();
+    const projectId = String(options?.projectId ?? "");
+    if (!store.getProject(projectId)) throw new Error(`projects: unknown project ${projectId}`);
+    const text = String(options?.text ?? "");
+    const MAX = 20_000;
+    if (text.length > MAX) {
+      store.appendAudit({ action: "project/instructions-rejected", projectId, reason: "too-long" });
+      store.save();
+      return { ok: false, reason: "too-long", limit: MAX };
+    }
+    const file = join(this.dataRoot, projectId, "instructions.md");
+    mkdirSync(dirname(file), { recursive: true });
+    if (text.trim() === "") {
+      // 清空 = 删文件：留一个空文件会让"有没有规则"变得难以判断
+      if (existsSync(file)) rmSync(file, { force: true });
+      store.appendAudit({ action: "project/instructions-cleared", projectId });
+      store.save();
+      return { ok: true, chars: 0 };
+    }
+    writeFileSync(file, text.endsWith("\n") ? text : `${text}\n`, { mode: 0o600 });
+    store.appendAudit({ action: "project/instructions-saved", projectId, chars: text.length });
+    store.save();
+    // 无需刷新挂载：上下文条目是函数，宿主每次请求都会重新读（见 attach.js）
+    return { ok: true, chars: text.length };
+  }
+
+  /**
+   * @param {string} projectId
+   * @param {string} text
+   */
   appendMemory(projectId, text) {
     const store = this.requireStore();
     if (!store.getProject(projectId)) throw new Error(`projects: unknown project ${projectId}`);
@@ -2104,4 +2140,5 @@ declareRemote(ProjectsService, "detachSession");
 declareRemote(ProjectsService, "describe");
 declareRemote(ProjectsService, "getProjectContent");
 declareRemote(ProjectsService, "appendMemory");
+declareRemote(ProjectsService, "setProjectInstructions");
 declareRemote(ProjectsService, "listAudit");

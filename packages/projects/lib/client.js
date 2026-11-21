@@ -52,6 +52,16 @@ window.__ModuleLoader__.load({
         "还没有线程。在上面输入一个任务就能新建线程；也可以回到会话行，用「…」菜单把已有会话归属到本项目。",
       "detail.threadState": "状态：{state}",
       "detail.instructions": "常设规则（instructions.md）",
+      "detail.memoryEdit": "编辑常设规则",
+      "detail.memorySave": "保存规则",
+      "detail.memorySaving": "保存中…",
+      "detail.memorySaved": "已保存规则（{chars} 字符）",
+      "detail.memoryCleared": "已清空规则",
+      "detail.memorySaveFailed": "保存失败：{reason}",
+      "detail.memoryAppendPlaceholder": "追加一条记忆（例如：这个仓库的测试用 pnpm test）",
+      "detail.memoryAppend": "追加记忆",
+      "detail.memoryAppended": "已追加记忆",
+      "detail.memoryAppendDup": "这条已经记过了，没有重复写入",
       "detail.memoryIndex": "记忆索引（MEMORY.md）",
       "detail.emptyFile": "（空）",
       "detail.auditEmpty": "还没有审计记录。",
@@ -670,6 +680,65 @@ window.__ModuleLoader__.load({
           },
         );
       }, [api, project.id]);
+      const [mem, setMem] = useState({
+        editing: false,
+        draft: "",
+        busy: false,
+        message: "",
+        append: "",
+      });
+      const saveInstructions = useCallback(() => {
+        setMem((/** @type {any} */ prev) => ({ ...prev, busy: true }));
+        call(api.ctx, "setProjectInstructions", {
+          options: { projectId: project.id, text: mem.draft },
+        }).then(
+          (/** @type {any} */ result) => {
+            setMem((/** @type {any} */ prev) => ({
+              ...prev,
+              busy: false,
+              editing: false,
+              message:
+                Number(result?.chars ?? 0) === 0
+                  ? text(t, "detail.memoryCleared")
+                  : text(t, "detail.memorySaved", { chars: Number(result?.chars ?? 0) }),
+            }));
+            if (typeof props.onChanged === "function") props.onChanged();
+            load();
+          },
+          (/** @type {any} */ error) =>
+            setMem((/** @type {any} */ prev) => ({
+              ...prev,
+              busy: false,
+              message: text(t, "detail.memorySaveFailed", {
+                reason: String(error?.message ?? error),
+              }),
+            })),
+        );
+      }, [api, mem.draft, project.id, props, setMem, t]);
+      const appendMemoryLine = useCallback(() => {
+        const line = String(mem.append ?? "").trim();
+        if (line === "") return;
+        call(api.ctx, "appendMemory", { projectId: project.id, text: line }).then(
+          (/** @type {any} */ result) => {
+            setMem((/** @type {any} */ prev) => ({
+              ...prev,
+              append: "",
+              message:
+                result?.added === false
+                  ? text(t, "detail.memoryAppendDup")
+                  : text(t, "detail.memoryAppended"),
+            }));
+            load();
+          },
+          (/** @type {any} */ error) =>
+            setMem((/** @type {any} */ prev) => ({
+              ...prev,
+              message: text(t, "detail.memorySaveFailed", {
+                reason: String(error?.message ?? error),
+              }),
+            })),
+        );
+      }, [api, load, mem.append, project.id, setMem, t]);
 
       const draftState = useState("");
       const draft = draftState[0];
@@ -1189,14 +1258,85 @@ window.__ModuleLoader__.load({
             "div",
             { "data-projects-memory": "" },
             h("h3", { style: styles.name }, text(t, "detail.instructions")),
+            // 走查发现这一页只读：用户看得到规则却写不进去。加编辑与追加两个入口。
+            mem.editing
+              ? h("textarea", {
+                  style: { ...styles.input, minHeight: "140px", fontFamily: "inherit" },
+                  value: mem.draft,
+                  placeholder: text(t, "detail.memoryAppendPlaceholder"),
+                  "data-projects-memory-editor": "",
+                  onChange: (/** @type {any} */ event) =>
+                    setMem((/** @type {any} */ prev) => ({ ...prev, draft: event.target.value })),
+                })
+              : h(
+                  "pre",
+                  {
+                    style: { ...styles.meta, whiteSpace: "pre-wrap", margin: "4px 0 12px" },
+                    "data-projects-instructions": "",
+                  },
+                  content.instructions || text(t, "detail.emptyFile"),
+                ),
             h(
-              "pre",
-              {
-                style: { ...styles.meta, whiteSpace: "pre-wrap", margin: "4px 0 12px" },
-                "data-projects-instructions": "",
-              },
-              content.instructions || text(t, "detail.emptyFile"),
+              "div",
+              { style: { display: "flex", gap: "8px", alignItems: "center", margin: "0 0 12px" } },
+              h(
+                "button",
+                {
+                  type: "button",
+                  style: styles.button,
+                  "data-projects-memory-edit": "",
+                  onClick: () =>
+                    setMem((/** @type {any} */ prev) => ({
+                      ...prev,
+                      editing: !prev.editing,
+                      draft: prev.editing ? prev.draft : String(content.instructions ?? ""),
+                      message: "",
+                    })),
+                },
+                mem.editing ? text(t, "detail.cancel") : text(t, "detail.memoryEdit"),
+              ),
+              mem.editing
+                ? h(
+                    "button",
+                    {
+                      type: "button",
+                      style: styles.button,
+                      "data-projects-memory-save": "",
+                      onClick: saveInstructions,
+                      disabled: mem.busy,
+                    },
+                    mem.busy ? text(t, "detail.memorySaving") : text(t, "detail.memorySave"),
+                  )
+                : null,
             ),
+            h(
+              "div",
+              { style: { display: "flex", gap: "8px", margin: "0 0 12px" } },
+              h("input", {
+                style: styles.input,
+                value: mem.append,
+                placeholder: text(t, "detail.memoryAppendPlaceholder"),
+                "data-projects-memory-append-input": "",
+                onChange: (/** @type {any} */ event) =>
+                  setMem((/** @type {any} */ prev) => ({ ...prev, append: event.target.value })),
+                onKeyDown: (/** @type {any} */ event) => {
+                  if (event.key === "Enter") appendMemoryLine();
+                },
+              }),
+              h(
+                "button",
+                {
+                  type: "button",
+                  style: styles.button,
+                  "data-projects-memory-append": "",
+                  onClick: appendMemoryLine,
+                },
+                text(t, "detail.memoryAppend"),
+              ),
+            ),
+            mem.message !== ""
+              ? h("div", { style: styles.meta, "data-projects-memory-result": "" }, mem.message)
+              : null,
             h("h3", { style: styles.name }, text(t, "detail.memoryIndex")),
             h(
               "pre",

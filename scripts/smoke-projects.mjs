@@ -466,6 +466,59 @@ try {
   );
   add("记忆页签渲染规则与索引", memorySeen === true, String(memoryTab));
 
+  // 走查发现记忆页签只读：现在应当能编辑规则并追加记忆
+  const memEdit = await page.evaluate(() => {
+    const btn = document.querySelector("[data-projects-memory-edit]");
+    if (!btn) return "no-button";
+    btn.click();
+    return "clicked";
+  });
+  await page.waitForTimeout(700);
+  const editorReady = await page.evaluate(() => Boolean(document.querySelector("[data-projects-memory-editor]")));
+  await page.evaluate(() => {
+    const area = document.querySelector("[data-projects-memory-editor]");
+    if (!area) return;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+    setter.call(area, "冒烟写入的规则：测试用 pnpm test");
+    area.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await page.waitForTimeout(300);
+  await page.evaluate(() => document.querySelector("[data-projects-memory-save]")?.click());
+  await page.waitForTimeout(2200);
+  const saved = await page.evaluate(
+    () => (document.querySelector("[data-projects-memory-result]")?.textContent || "").trim(),
+  );
+  const rulesText = await page.evaluate(
+    () => (document.querySelector("[data-projects-instructions]")?.textContent || "").trim(),
+  );
+  add(
+    "记忆页签可编辑常设规则并即时生效",
+    memEdit === "clicked" && editorReady === true && /已保存/u.test(saved) && rulesText.includes("冒烟写入的规则"),
+    JSON.stringify({ memEdit, editorReady, saved: saved.slice(0, 30) }),
+  );
+
+  await page.evaluate(() => {
+    const input = document.querySelector("[data-projects-memory-append-input]");
+    if (!input) return;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    setter.call(input, "冒烟追加的一条记忆");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await page.waitForTimeout(300);
+  await page.evaluate(() => document.querySelector("[data-projects-memory-append]")?.click());
+  await page.waitForTimeout(1800);
+  const appendResult = await page.evaluate(
+    () => (document.querySelector("[data-projects-memory-result]")?.textContent || "").trim(),
+  );
+  const memoryIndexText = await page.evaluate(
+    () => (document.querySelector("[data-projects-memory-index]")?.textContent || "").trim(),
+  );
+  add(
+    "可追加一条记忆并出现在索引里",
+    /已追加/u.test(appendResult) && memoryIndexText.includes("冒烟追加的一条记忆"),
+    JSON.stringify({ appendResult: appendResult.slice(0, 20), indexed: memoryIndexText.includes("冒烟追加的一条记忆") }),
+  );
+
   const auditTab = await page.evaluate(() => {
     const tab = document.querySelector('[data-projects-tab="audit"]');
     if (!tab) return "no-tab";
