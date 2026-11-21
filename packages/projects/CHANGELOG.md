@@ -1,5 +1,49 @@
 # @kangyishuai/dsh-projects
 
+## 0.6.0
+
+### Minor Changes
+
+- [#292](https://github.com/kangyishuai/dsh-plugins/pull/292) [`5d319ba`](https://github.com/kangyishuai/dsh-plugins/commit/5d319ba18af09296959a323e563f6a3c75aab6aa) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 「记忆」页签从只读变成可写。
+  
+  走查发现：用户能看到「常设规则（instructions.md）」和「记忆索引（MEMORY.md）」，却没有任何编辑入口——
+  规则只能靠协调器工具写，人想加一句"这个仓库测试用 pnpm test"都无处下手。
+  
+  - RPC `setProjectInstructions({ projectId, text })`：写 `instructions.md`（0o600）；
+    空文本视为清空（删文件，而不是留个空文件让人分不清有没有规则）；上限 20k 字符（每次请求都会注入，太长持续吃上下文）
+  - 界面：「编辑常设规则」→ 文本域 →「保存规则」；另有「追加一条记忆」输入框（回车即追加，重复条目会如实提示"已经记过了"）
+  - 两个动作都写审计（`project/instructions-saved` / `project/instructions-cleared` / `memory/appended`）
+  
+  **踩坑记录**：给 `appendMemory` 加行内类型注释会让 SRC 网关拒绝注册该方法，
+  表现为运行时 `typert gateway: ...`。`pnpm check` 里的 SRC 守卫当场拦住了——改用上方 JSDoc `@param`。
+  
+  冒烟 62 → **61**（本分支基于 main，新增 2 条记忆编辑断言）。
+
+- [#291](https://github.com/kangyishuai/dsh-plugins/pull/291) [`59df29a`](https://github.com/kangyishuai/dsh-plugins/commit/59df29ae3b3e649a4e54846b6e72fb55750bcae8) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 回收站补「彻底删除 / 清空回收站」。
+  
+  走查发现：`purgeTrash` 只清**超过保留期（默认 30 天）**的条目，所以删错的项目即使恢复回来又删掉，
+  也会在回收站里躺满 30 天——用户没有任何"现在就清掉"的手段。
+  
+  - RPC `deleteTrashEntry({ entryId, confirm })`：彻底删一个条目；不带 `confirm` 时只回报影响面（字节数），不动手
+  - RPC `emptyTrash({ confirm })`：清空回收站，同样先回报条目数与总量
+  - 界面：每行「彻底删除」（**两步确认**，第二次的按钮上直接写「确认彻底删除（1.6 KB，不可恢复）」），
+    底部「清空回收站」（同样两步确认并写明条目数与总量）
+  - 两个动作都写审计（`trash/entry-deleted` / `trash/emptied`），符合 ADR 0002
+  
+  冒烟 59 → **61** 项（新增：二次确认文案含"不可恢复"、确认后条目从回收站消失）。
+
+### Patch Changes
+
+- [#290](https://github.com/kangyishuai/dsh-plugins/pull/290) [`bd9aa97`](https://github.com/kangyishuai/dsh-plugins/commit/bd9aa979638430795bbeabc36ae6727e707b9433) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 走查 P2 的三处纯体验修补。
+  
+  - **空态指引过时**：原本只说"在会话行的「…」菜单里归属"，但现在面板本身就能建线程。
+    改成「在上面输入一个任务就能新建线程；也可以回到会话行，用「…」菜单把已有会话归属到本项目」。
+  - **页签被记忆**：上次停在「审计」，再进详情还停在「审计」，容易误判"这个项目没有线程"。
+    现在换项目/重进详情一律回到「线程」。
+  - **头部术语**：`N 个会话已挂上下文` → `N 个会话已接入`。
+  
+  冒烟 59 → **62** 项（新增：默认页签、空态指引、头部术语三条断言）。
+
 ## 0.5.0
 
 ### Minor Changes
