@@ -327,3 +327,38 @@ pnpm smoke:projects-desktop --require
 真机验证（临时宿主）：同一张 `purge-trash` 申请先因开关关返回 `switch-off`，
 打开开关后**再次执行同一张申请**返回 `executed:true`，第三次返回 `already-executed`；
 最终记录 `{status:"approved", claimedAt:null, executed:true}`。
+
+## 12. 合并硬前提与预授权（2026-11-21）
+
+### 12.1 合并的三道硬前提（规格 §7.5 行 3）
+
+之前只查「非 draft / 无冲突」，漏了 CI、人工批准数与合并方式。现在 `checkMergeReadiness` 一次判完：
+
+| 前提     | 判定                                                                                   | 拒绝原因                                                       |
+| -------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| CI 绿    | `statusCheckRollup` 全部 SUCCESS/NEUTRAL/SKIPPED；**空列表按未配置检查处理并拒绝**     | `merge/ci-unknown` / `merge/ci-not-green` / `merge/ci-pending` |
+| 人工批准 | `reviews` 里不同作者的 APPROVED 数 ≥ `policy.merge.minApprovals`（默认 1，0 表示不看） | `merge/not-approved`                                           |
+| 合并方式 | 仓库 `allowed_merge_methods` 含 `squash`，否则拒绝（**不改用** merge/rebase）          | `merge/method-unknown` / `merge/method-not-allowed`            |
+
+阈值从 `policy.merge`（`minApprovals` / `maxDiffFiles` / `maxDiffLines`）读，不再是写死默认值。
+
+真机（临时宿主 + 桩 `gh` 切场景）：
+
+```
+CI 为空          → merge/ci-unknown
+CI 有 FAILURE    → merge/ci-not-green
+无 APPROVED      → merge/not-approved
+全绿 + 已批 1 人  → executed:true
+```
+
+### 12.2 预授权（规格 §7.7.2）
+
+三条全满足才放行：动作在 `policy.preapprove` 里、该动作授权来源是 `policy-grant`、对应危险开关已打开。
+命中则 `requestAction` 直接落 approved（`source: policy-grant`）+ 审计 `approval/auto-approved`，
+并**立即走 `executeApproval`**——闸门一条不跳过，只是省掉「等人点一下」。
+
+真机：`delete-thread` 列进预授权后 `autoApproved:true`，随后被真实闸门拒绝（`unknown-thread`）；
+`merge` 即使列进预授权也 `autoApproved:false`（授权来源不是 policy-grant）。
+
+**注意**：宿主没有审批策略 API（`ctx.approval.setPolicy` 不存在，见 [runtime §11.32](../runtime/0.2.2-rc.3.md)），
+所以预授权是本插件用 `policy-grant` 自己实现的，不是宿主能力。

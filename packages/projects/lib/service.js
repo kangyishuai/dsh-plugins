@@ -23,7 +23,8 @@ import { checkThreadBudget, checkTokenBudget, tokensOf } from "./budget.js";
 import { runCommand } from "./exec.js";
 import {
   checkExecutable,
-  checkMergePreflight,
+  checkMergeReadiness,
+  checkPreapproval,
   parseRepoFromRemote,
   planCommand,
   recoveryEvidence,
@@ -1242,7 +1243,7 @@ export class ProjectsService extends TypertRemoteService {
    * @param {string} projectId
    * @param {{ action?: string, reason?: string, args?: any }} request
    */
-  requestAction(projectId, request) {
+  async requestAction(projectId, request) {
     const store = this.requireStore();
     const project = store.getProject(projectId);
     if (!project) throw new Error(`projects: unknown project ${projectId}`);
@@ -1265,7 +1266,34 @@ export class ProjectsService extends TypertRemoteService {
       dangerAction: action,
     });
     store.save();
-    return { ok: true, requestId: created.requestId };
+
+    // 预授权（规格 §7.7.2）：命中则由 policy-grant 直接放行并立即尝试执行。
+    // 闸门一条都不跳过——只是省掉「等人点一下」。
+    const pre = checkPreapproval({
+      action,
+      preapprove: project.policy?.preapprove ?? [],
+      danger: project.policy?.danger ?? {},
+    });
+    if (!pre.ok) return { ok: true, requestId: created.requestId, autoApproved: false };
+
+    store.resolveApproval(created.requestId, "approved");
+    store.appendAudit({
+      action: "approval/auto-approved",
+      projectId,
+      requestId: created.requestId,
+      dangerAction: action,
+      source: "policy-grant",
+    });
+    store.save();
+    // 预授权 = 预先委托执行权，因此立即尝试执行；闸门（开关/阈值/前置/证据/幂等）一条都不跳过
+    const outcome = await this.executeApproval(created.requestId);
+    return {
+      ok: true,
+      requestId: created.requestId,
+      autoApproved: true,
+      executed: outcome?.executed === true,
+      ...(outcome?.executed === true ? {} : { reason: String(outcome?.reason ?? "not-executed") }),
+    };
   }
 
   /**
@@ -1676,7 +1704,7 @@ export class ProjectsService extends TypertRemoteService {
           }
         }
         store.save();
-        settle(
+        return settle(
           forcedOk
             ? { executed: true, evidence: forcedEvidence }
             : { executed: false, reason: "force-push-failed" },
@@ -1701,7 +1729,7 @@ export class ProjectsService extends TypertRemoteService {
         ...(ok ? {} : { reason: String(pushed.stderr).split("\n")[0].slice(0, 200) }),
       });
       store.save();
-      settle(ok ? { executed: true, evidence } : { executed: false, reason: "push-failed" });
+      return settle(ok ? { executed: true, evidence } : { executed: false, reason: "push-failed" });
     }
 
     // merge 走 gh：需要真实远端与 PR 号，留给后续步骤（这里只回报计划）
@@ -1821,7 +1849,7 @@ export class ProjectsService extends TypertRemoteService {
           : { reason: String(pushedProtected.stderr).split("\n")[0].slice(0, 200) }),
       });
       store.save();
-      settle(
+      return settle(
         okProtected
           ? {
               executed: true,
@@ -1848,7 +1876,7 @@ export class ProjectsService extends TypertRemoteService {
         "--repo",
         repo,
         "--json",
-        "isDraft,mergeable,state",
+        "isDraft,mergeable,state,statusCheckRollup,reviews",
       ]);
       if (view.code !== 0) {
         store.appendAudit({
@@ -1868,8 +1896,26 @@ export class ProjectsService extends TypertRemoteService {
           return null;
         }
       })();
+      // 规格 §7.5 行 3 的 ⑥：仓库允许的合并方式（不允许 squash 就拒绝，不改方式）
+      const repoInfo = await runGh(["api", `repos/${repo}`]);
+      let allowedMethods = [];
+      if (repoInfo.code === 0) {
+        try {
+          allowedMethods = JSON.parse(repoInfo.stdout)?.allowed_merge_methods ?? [];
+        } catch {
+          allowedMethods = [];
+        }
+      }
+      const readiness = (/** @type {any} */ pr) =>
+        checkMergeReadiness({
+          pr,
+          reviews: pr?.reviews ?? [],
+          allowedMethods,
+          minApprovals: Number(project?.policy?.merge?.minApprovals ?? 1),
+        });
+
       // GitHub 刚建 PR 时 mergeable 可能是 UNKNOWN（服务端还在算）：有界重试几次。
-      let preflight = checkMergePreflight(parsed);
+      let preflight = readiness(parsed);
       let attempt = 0;
       while (!preflight.ok && shouldRetryPreflight(preflight.reason ?? "") && attempt < 5) {
         attempt += 1;
@@ -1881,11 +1927,11 @@ export class ProjectsService extends TypertRemoteService {
           "--repo",
           repo,
           "--json",
-          "isDraft,mergeable,state",
+          "isDraft,mergeable,state,statusCheckRollup,reviews",
         ]);
         if (again.code !== 0) break;
         try {
-          preflight = checkMergePreflight(JSON.parse(again.stdout));
+          preflight = readiness(JSON.parse(again.stdout));
         } catch {
           break;
         }
@@ -1919,7 +1965,42 @@ export class ProjectsService extends TypertRemoteService {
           : { reason: String(merged.stderr).split("\n")[0].slice(0, 200) || "gh-merge-failed" }),
       });
       store.save();
-      settle(ok ? { executed: true, evidence } : { executed: false, reason: "gh-merge-failed" });
+      return settle(
+        ok ? { executed: true, evidence } : { executed: false, reason: "gh-merge-failed" },
+      );
+    }
+
+    // 删除线程 / 回收 worktree（规格 §7.5 行 4b）：走 reclaimThread，三重判据仍生效
+    if (approval.action === "delete-thread") {
+      const sessionId = String(approval.args?.sessionId ?? approval.args?.threadSessionId ?? "");
+      if (sessionId === "") {
+        store.appendAudit({
+          action: "approval/execution-refused",
+          projectId: approval.projectId,
+          requestId,
+          dangerAction: approval.action,
+          reason: "session-required",
+        });
+        store.save();
+        return settle({ executed: false, reason: "session-required" });
+      }
+      const reclaimed = await this.reclaimThread(sessionId);
+      const ok = reclaimed?.reclaimed === true;
+      const evidence = recoveryEvidence(approval.action, { sessionId }, reclaimed ?? {});
+      store.appendAudit({
+        action: ok ? "approval/executed" : "approval/execution-failed",
+        projectId: approval.projectId,
+        requestId,
+        dangerAction: approval.action,
+        evidence,
+        ...(ok ? {} : { reason: String(reclaimed?.reason ?? "worktree-kept") }),
+      });
+      store.save();
+      return settle(
+        ok
+          ? { executed: true, evidence }
+          : { executed: false, reason: String(reclaimed?.reason ?? "worktree-kept") },
+      );
     }
 
     // 改本插件自己的配置（规格 §7.5 行 5a）：只允许白名单键，安全面一律拒绝

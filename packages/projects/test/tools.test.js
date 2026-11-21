@@ -199,3 +199,39 @@ describe("pickTools", () => {
     assert.deepEqual(pickTools(undefined, undefined), []);
   });
 });
+
+describe("预授权命中时工具要说出真相（不是一律 queued）", () => {
+  const depsWith = (/** @type {any} */ result) => ({
+    startThread: async () => ({ sessionId: "s-1" }),
+    listThreads: async () => ({ rows: [], counts: {}, attention: 0 }),
+    messageThread: async () => ({ ok: true }),
+    requestAction: async () => result,
+    writeMemory: async () => ({ ok: true, added: true }),
+    readMemory: async () => ({ instructions: "", memoryIndex: "" }),
+  });
+
+  it("预授权且已执行 → status=executed", async () => {
+    const tool = buildCoordinatorTools(
+      depsWith({ requestId: "req-1", autoApproved: true, executed: true }),
+    ).find((t) => t.name === "project_request_action");
+    const value = await tool.execute({ action: "push-branch", reason: "x" });
+    assert.equal(value.status, "executed");
+  });
+
+  it("预授权但未执行 → 带上原因", async () => {
+    const tool = buildCoordinatorTools(
+      depsWith({ requestId: "req-1", autoApproved: true, executed: false, reason: "switch-off" }),
+    ).find((t) => t.name === "project_request_action");
+    const value = await tool.execute({ action: "push-branch", reason: "x" });
+    assert.equal(value.status, "auto-approved-not-executed");
+    assert.equal(value.reason, "switch-off");
+  });
+
+  it("未命中预授权 → 仍是 queued", async () => {
+    const tool = buildCoordinatorTools(depsWith({ requestId: "req-1" })).find(
+      (t) => t.name === "project_request_action",
+    );
+    const value = await tool.execute({ action: "merge", reason: "x" });
+    assert.equal(value.status, "queued");
+  });
+});
