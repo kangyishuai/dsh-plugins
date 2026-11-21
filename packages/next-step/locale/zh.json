@@ -39,6 +39,8 @@
     "error.exists": "这一轮已经有卡片了",
     "error.inflight": "正在生成，请稍候",
     "error.noTurn": "没有可生成建议的回合",
+    "error.ungrounded": "生成的卡片与这段对话无关，已丢弃",
+    "error.noContext": "没有可用的对话内容，未生成卡片",
     "retry.generate": "生成下一步建议",
     "retry.generating": "正在生成…",
     "settings.nav": "下一步建议",

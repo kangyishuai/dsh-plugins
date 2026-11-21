@@ -39,6 +39,8 @@
     "error.exists": "This turn already has a card",
     "error.inflight": "Already generating; try again in a moment",
     "error.noTurn": "No completed turn to generate a card for",
+    "error.ungrounded": "The generated card did not refer to this conversation; discarded",
+    "error.noContext": "No conversation content to generate a card from",
     "retry.generate": "Generate a next-step card",
     "retry.generating": "Generating…",
     "settings.nav": "Next-step suggestions",

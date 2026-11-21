@@ -11,7 +11,7 @@
 export const SCHEME = "v0.4";
 
 /** 提示词版本位：每次改提示词或按钮文案规则就 +1。 */
-export const PROMPT_VERSION = 3;
+export const PROMPT_VERSION = 4;
 
 /**
  * 用户可选的出卡档位（显示阈值），从紧到松。

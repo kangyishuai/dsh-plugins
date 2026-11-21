@@ -6,7 +6,10 @@
 //    两条同 stance、value（三档）/ needed（旧字段）缺失、超长 label / nextPrompt、空字符串、缺字段。
 //    v0.4 起是**宽容解析**：展示文本超长截断、单条 option 不合格只丢这一条；
 //    只有「结构不可用 / 三档判定缺失 / 一条可用建议都不剩」才失败（交给 service 修一次）。
-//  - buildRepairMessage：修复调用只发一条 user 消息、回贴原文与问题。
+//  - buildRepairMessage：修复调用只发一条 user 消息、回贴原文与问题，**并且带着同一段对话**。
+//  - 落地不变量：recoveryPlan（空输出重发、其余修格式）、hasContext、identityTokens、isGroundedIn。
+//    这里「恢复链路回归」两个用例直接模拟 service.generate 的两次请求，把
+//    「修卡调用丢了对话」这个事故形态钉死在单测里（service 本身依赖宿主包，单测导入不了）。
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
@@ -15,18 +18,26 @@ import {
   buildSystemPrompt,
   concreteTokens,
   ghostAgreesWithLabel,
+  groundableText,
+  hasContext,
+  identityTokens,
   isGenericLabel,
+  isGroundedIn,
   LABEL_MAX,
   LABEL_MIN,
+  MIN_CONTEXT_CHARS,
   NEXT_PROMPT_MAX,
   OPTIONS_MAX,
+  overlongLabelHint,
   parseSuggestion as parseRaw,
   problemText,
   QUESTION_MAX,
   REASON_MAX,
   REPAIR_ECHO_MAX,
+  recoveryPlan,
   renderTranscript,
   SUMMARY_MAX,
+  sharedChineseGramCount,
 } from "../lib/prompt.js";
 
 /** v0.4 起返回 { suggestion, problem, detail }：这里取 suggestion，让大多数断言保持原写法。 */
@@ -854,4 +865,215 @@ test("buildRepairMessage：raw 不是字符串也不抛错", () => {
     assert.equal(messages.length, 1);
     assert.equal(typeof messages[0].content[0].text, "string");
   }
+});
+
+// ---------------------------------------------------------------------------
+// 恢复链路回归（事故形态：修卡调用丢了对话 → 模型把「上次输出为空」写成一张卡）
+// ---------------------------------------------------------------------------
+
+/** 一段有唯一事实标记的对话，用来证明「第二次请求里仍然带着原料」。 */
+const TRANSCRIPT_FIXTURE = [
+  "用户：改 importer/csv.ts 的流式读取，内存能不能别顶到 1.8 GB",
+  "助手：改完了：peak-mem 从 1.8 GB 降到 90 MB，跑了 3 条边界用例。",
+].join("\n\n");
+const FACT_MARKER = "importer/csv.ts";
+
+test("恢复链路回归：首次输出为空 → 重发**同一个**请求，第二次请求里对话还在", () => {
+  const messages = buildMessages({ transcript: TRANSCRIPT_FIXTURE });
+  const first = parseRaw("");
+  assert.notEqual(first.problem, null, "空输出必须被判定为解析失败");
+  // service：空输出不是格式问题，重发原请求（而不是拿空字符串去修格式）
+  assert.equal(recoveryPlan({ raw: "", problem: first.problem }), "retry");
+  assert.equal(recoveryPlan({ raw: "   \n ", problem: first.problem }), "retry");
+  for (const message of messages) {
+    assert.equal(
+      message.content[0].text.includes(FACT_MARKER),
+      true,
+      "重发的请求必须仍带着原对话（否则模型只能自述「上一次输出为空」）",
+    );
+  }
+});
+
+test("恢复链路回归：有内容但格式不对 → 修复请求里**仍然带着同一段对话**", () => {
+  const malformed = '{"value":"maybe","summary":"x"}';
+  const first = parseRaw(malformed);
+  assert.notEqual(first.problem, null);
+  assert.equal(recoveryPlan({ raw: malformed, problem: first.problem }), "repair");
+  const repaired = buildRepairMessage({
+    transcript: TRANSCRIPT_FIXTURE,
+    raw: malformed,
+    problem: first.problem?.kind ?? "json",
+  });
+  assert.equal(repaired.length, 1, "仍然只发一条 user 消息");
+  const text = repaired[0].content[0].text;
+  assert.equal(text.includes(FACT_MARKER), true, "修复请求必须带原对话，不能只回贴报错");
+  assert.equal(text.includes(malformed), true, "同时保留回贴的上次原文");
+  assert.equal(
+    text.includes("不要描述这次修正本身"),
+    true,
+    "明确禁止模型把「修正这件事」写成卡片内容",
+  );
+});
+
+test("buildRepairMessage：原文为空时不会把「（空）」当成唯一材料递给模型", () => {
+  // 空输出走的是重发路径；这里只保证函数本身是总的、并且仍然带着对话与禁止自述的约束
+  const repaired = buildRepairMessage({
+    transcript: TRANSCRIPT_FIXTURE,
+    raw: "",
+    problem: "json",
+  });
+  const text = repaired[0].content[0].text;
+  assert.equal(text.includes(FACT_MARKER), true);
+  assert.equal(text.includes("（空）"), true, "空原文照实标注，不假装它有内容");
+  assert.equal(text.includes("对话就在上面"), true);
+});
+
+// ---------------------------------------------------------------------------
+// 落地不变量：结构合法 ≠ 有用
+// ---------------------------------------------------------------------------
+
+test("hasContext：空 / 极短的 transcript 不算上下文（接线检查，不是质量阈值）", () => {
+  assert.equal(hasContext(""), false);
+  assert.equal(hasContext("   "), false);
+  assert.equal(hasContext(/** @type {any} */ (undefined)), false);
+  assert.equal(hasContext("用户：继续"), false, "2 个字的对话撑不起一张具体卡片");
+  assert.equal(hasContext("短".repeat(MIN_CONTEXT_CHARS - 1)), false);
+  assert.equal(hasContext("长".repeat(MIN_CONTEXT_CHARS)), true);
+});
+
+test("identityTokens：认具体对象，不认泛化名词与生成过程自己的词", () => {
+  const tokens = identityTokens(
+    "合并 PR #236；载入 importer/csv.ts；peak-mem 1.8 GB；v0.4.2 已发；用了 JSON 与 summary 字段；文件名 命令 解析",
+  );
+  assert.equal(tokens.has("236"), true, "PR 号");
+  assert.equal(tokens.has("importer/csv.ts"), true, "路径");
+  assert.equal(tokens.has("peak-mem"), true, "带连字符的标识符");
+  assert.equal(tokens.has("1.8"), true, "版本/数值");
+  assert.equal(tokens.has("v0.4.2"), true, "版本号");
+  assert.equal(tokens.has("json"), false, "协议字段不是对象");
+  assert.equal(tokens.has("summary"), false, "协议字段不是对象");
+  assert.equal(tokens.has("文件名"), false, "泛化名词不是对象");
+  assert.equal(tokens.has("解析"), false, "泛化动词不是对象");
+});
+
+test("identityTokens：中文对象被标点/引号隔开、或前面只粘了 1–2 个字时能认出来", () => {
+  // 中文没有分词器：只做「最长汉字串 + 去掉最多两个前导字」这种最小努力。
+  // 卡片里真正的对象通常是文件名/命令（ASCII），中文对象多半带引号或标点，够用。
+  assert.equal(identityTokens("把「二分查找」的论证压到 80 字").has("二分查找"), true);
+  assert.equal(identityTokens("先做二分查找").has("二分查找"), true, "去掉前导「先做」后应能匹配");
+  assert.equal(identityTokens("效率优化方案确定").has("优化"), false, "2 字片段不作为对象");
+  // 明确记下这条已知弱点：中文对象夹在长句中间时认不出来（宁漏勿滥 —— 放宽成任意子串
+  // 会让 11 张历史垃圾卡重新通过落地校验，见 docs/adr/0023 的取舍表）。
+  assert.equal(identityTokens("先做二分查找再压字数").has("二分查找"), false);
+});
+
+test("isGroundedIn：自述生成过程的卡片与这段对话没有交集 → 不落地", () => {
+  const card = [
+    "这一轮没有拿到任何对话内容，上一条回复是空的；因此没有文件名、命令、diff 或测试结果可以核查。",
+    "你需要把哪一段对话或哪份改动贴进来，我才能判断下一步要不要继续？",
+    "贴回上一轮对话原文",
+  ].join("\n");
+  assert.equal(isGroundedIn(card, TRANSCRIPT_FIXTURE), false);
+});
+
+test("isGroundedIn：卡片引用了对话里的对象 → 落地", () => {
+  const card = [
+    "importer/csv.ts 的流式读取已改完，峰值内存 1.8 GB → 90 MB。",
+    "现在补边界用例，还是先合并？",
+  ].join("\n");
+  assert.equal(isGroundedIn(card, TRANSCRIPT_FIXTURE), true);
+});
+
+test("isGroundedIn：对话为空时一律不落地（没有原料就没有依据）", () => {
+  assert.equal(isGroundedIn("合并 PR #236", ""), false);
+  assert.equal(isGroundedIn("合并 PR #236", "   "), false);
+  assert.equal(isGroundedIn("合并 PR #236", /** @type {any} */ (undefined)), false);
+});
+
+test("isGroundedIn 对大小写不敏感（Haystack 统一小写）", () => {
+  assert.equal(isGroundedIn("改完了 Importer/CSV.ts", TRANSCRIPT_FIXTURE), true);
+});
+
+test("groundableText：落地校验看全部展示文本，不只是按钮文案", () => {
+  const text = groundableText({
+    summary: "s",
+    question: "q",
+    options: [{ label: "l1" }, { label: "l2" }],
+    nextPrompt: "n",
+  });
+  for (const part of ["s", "q", "l1", "l2", "n"]) {
+    assert.equal(text.includes(part), true, `期望包含 ${part}`);
+  }
+  assert.equal(groundableText(/** @type {any} */ (null)), "");
+});
+
+// 2026-11-21 桌面 --deep 实测的误杀：一句话回答 + 改写式卡片（0 个具体对象）被判「与对话无关」。
+const SHORT_ANSWER_CASE = {
+  transcript: [
+    "用户：用一句话解释什么是二分查找。不要使用任何工具，直接回答。",
+    "助手：二分查找是在一个已排序的序列中，每次都取中间元素与目标比较，并据此把搜索范围折半缩小，" +
+      "直到找到目标或范围为空，因此其时间复杂度为 O(log n)。",
+  ].join("\n\n"),
+  card: [
+    "用一句话把二分查找定义为「在有序序列中反复取中间元素与目标比较、每次淘汰一半搜索范围」，" +
+      "并标注时间复杂度 O(log n)，全程未调用工具。",
+    "是否要补一个可运行示例？",
+    "补一个二分查找代码示例",
+  ].join("\n"),
+};
+
+test("isGroundedIn：短回答 + 改写式卡片（没有文件名/命令）也要能落地", () => {
+  // 这条曾经被误杀：卡片里一个具体对象都没有，只在讲同一件事（二分查找 / 中间元素 / 搜索范围）。
+  // 落地校验必须有一条「改写的说法」通道，否则一句话解释类回合永远出不了卡。
+  assert.equal(
+    sharedChineseGramCount(SHORT_ANSWER_CASE.card, SHORT_ANSWER_CASE.transcript.toLowerCase()) >= 2,
+    true,
+  );
+  assert.equal(isGroundedIn(SHORT_ANSWER_CASE.card, SHORT_ANSWER_CASE.transcript), true);
+});
+
+test("isGroundedIn：只共享 1 条 4 字片段的擦边卡不算落地", () => {
+  // 「二分查找」是两边唯一的交集时，卡片没有提供任何新的可核查信息，按不落地处理。
+  const card = "二分查找讲完了。要不要继续深入？继续深入";
+  const material = "用户：解释一下二分查找。\n\n助手：二分查找要先排序，然后每次比较中间元素。";
+  assert.equal(sharedChineseGramCount(card, material.toLowerCase()), 1);
+  assert.equal(isGroundedIn(card, material), false);
+});
+
+test("sharedChineseGramCount：只数不同的片段，且能穿透粘着的动词", () => {
+  const count = sharedChineseGramCount(
+    "用一句话把二分查找定义为在有序序列中反复取中间元素与目标比较",
+    "二分查找是在一个已排序的序列中，每次都取中间元素与目标比较",
+  );
+  assert.equal(count >= 2, true, `期望至少命中 2 条 4 字片段，实际=${count}`);
+  assert.equal(sharedChineseGramCount("没有中文片段 abc", "abc"), 0);
+  assert.equal(sharedChineseGramCount("", "任何东西"), 0);
+});
+
+// ---------------------------------------------------------------------------
+// 修复请求要给出「可执行」的收紧信息（2026-11-21 web 冒烟实测：20 字上限被写成 21–22 字，
+// 只提示「2–20 字」修不回来，两次都超 → 整张卡作废 → 用户看到「没出卡」）
+// ---------------------------------------------------------------------------
+
+test("overlongLabelHint：把上一次的 label 实际字数写进修复请求", () => {
+  const hint = overlongLabelHint(
+    "dropped-option:0:label-length:22,dropped-option:1:label-length:24",
+  );
+  assert.equal(hint.includes("22 / 24"), true, "要写出实际字数");
+  assert.equal(hint.includes("超了 4 字"), true, "要写出超出多少（按最长那条算）");
+  assert.equal(hint.includes("保留同一个具体对象"), true, "收紧时不许丢掉对象");
+  assert.equal(overlongLabelHint("dropped-option:0:stance"), "", "其它问题不给长度提示");
+  assert.equal(overlongLabelHint(undefined), "");
+});
+
+test("buildRepairMessage：label 超长时，修复请求带上实际字数与压缩目标", () => {
+  const messages = buildRepairMessage({
+    transcript: TRANSCRIPT_FIXTURE,
+    raw: '{"value":"could","summary":"x","question":"y","options":[{"stance":"a","label":"太长的文案"}]}',
+    problem: "options",
+    detail: "dropped-option:0:label-length:23",
+  });
+  const text = messages[0].content[0].text;
+  assert.equal(text.includes("23 字"), true);
+  assert.equal(text.includes(`上限是 ${LABEL_MAX} 字`), true);
 });

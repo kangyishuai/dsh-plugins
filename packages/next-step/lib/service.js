@@ -11,6 +11,11 @@
 //    promote / error。事件落在 `<dataRoot>/next-step/events.jsonl`，不写进会话日志。
 // 3. 宽容解析 + 一次修复调用：格式问题不再让整张卡消失。
 //
+// v0.5 的一条不变量（见 docs/adr/0023）：**结构合法 ≠ 有用**。任何一次要产出卡片内容的调用都必须
+// 带同一段对话；空输出重发原请求而不是「修格式」；写卡前再做一次落地校验（卡片里至少有一个对象
+// 能在对话里找到）。没有对话内容时直接跳过，不调模型 —— 这条路径曾经稳定产出「这一轮没有拿到
+// 任何对话内容，请把对话贴进来」的空卡，95 条历史记录全部来自这里。
+//
 // 说明：插件可以 import 宿主的 @deepseek-ai/* 包（运行时由宿主解析），但不能把它们写进
 // package.json 的 dependencies —— `pnpm check` 会拦（AGENTS.md 硬性约定 3）。
 
@@ -50,7 +55,13 @@ import {
   buildRepairMessage,
   buildSystemPrompt,
   concreteTokens,
+  groundableText,
+  hasContext,
+  identityTokens,
+  isGroundedIn,
+  MATERIAL_CLIP,
   parseSuggestion,
+  recoveryPlan,
   renderTranscript,
   textOf,
 } from "./prompt.js";
@@ -238,6 +249,36 @@ function answerStatsOf(session) {
     }
   }
   return { answerChars, toolCalls };
+}
+
+/**
+ * 恢复路径 → 事件里的 `parse` 字段（报表按它分组对比）。
+ * @param {"none" | "retry" | "repair"} recovery
+ * @returns {"ok" | "retried" | "repaired"}
+ */
+function parseKindOf(recovery) {
+  if (recovery === "retry") return "retried";
+  return recovery === "repair" ? "repaired" : "ok";
+}
+
+/**
+ * 本轮要发给模型的对话材料（一次算好，闸、请求、落地校验共用同一份）。
+ *
+ * 两个口径，别混用：
+ * - `transcript` 发给模型（每条消息裁剪到 800 字，只留最近 N 条）；
+ * - `material` 只用于**落地校验**（同一条窗口、不裁剪）：摘要里的数字/文件名常在回答后半段，
+ *   拿裁剪过的版本去校验会误杀正常卡。它不发给模型。
+ * @param {any} session
+ * @param {any} settings
+ * @returns {{ transcript: string, material: string }}
+ */
+function contextOf(session, settings) {
+  const messages = typeof session?.deriveMessages === "function" ? session.deriveMessages() : [];
+  const limit = settings?.contextMessages;
+  return {
+    transcript: renderTranscript(messages, { limit }),
+    material: renderTranscript(messages, { limit, clip: MATERIAL_CLIP }),
+  };
 }
 
 /**
@@ -461,6 +502,7 @@ export class NextStepService extends TypertRemoteService {
     const sessionId = session.id;
     const { cards } = scanSession(session);
     const stats = answerStatsOf(session);
+    const context = contextOf(session, settings);
 
     const skip = cheapSkipReason({
       enabled: settings.enabled,
@@ -474,6 +516,7 @@ export class NextStepService extends TypertRemoteService {
       endKind: event?.data?.reason?.kind,
       answerChars: stats.answerChars,
       toolCalls: stats.toolCalls,
+      contextChars: context.transcript.length,
     });
     if (skip !== null) {
       if (skip.reason !== "disabled") this.markSkip(skip.reason, skip.detail);
@@ -494,6 +537,7 @@ export class NextStepService extends TypertRemoteService {
       seq: Number.isSafeInteger(event?.seq) ? event.seq : 0,
       force: false,
       feat: stats,
+      context,
     });
   }
 
@@ -501,7 +545,11 @@ export class NextStepService extends TypertRemoteService {
    * 跑一次模型调用并为该轮写卡（自动门控与手动补生成共用）。
    * @param {any} session
    * @param {any} settings
-   * @param {{ turn: number, seq: number, force: boolean, feat?: { answerChars: number, toolCalls: number } }} options
+   * @param {{
+   *   turn: number, seq: number, force: boolean,
+   *   feat?: { answerChars: number, toolCalls: number },
+   *   context?: { transcript: string, material: string },
+   * }} options
    *   force=true 时无视档位阈值（用户明确要卡），但仍受总开关/预算约束
    * @returns {Promise<{ ok: true, card: any } | { ok: false, reason: string }>}
    */
@@ -510,6 +558,13 @@ export class NextStepService extends TypertRemoteService {
     const turn = options.turn;
     const feat = options.feat ?? answerStatsOf(session);
     const sid = sidOf(sessionId);
+    const context = options.context ?? contextOf(session, settings);
+    // 补生成（force）绕过了便宜闸，所以这里再确认一次：对话是空的就不发请求。
+    if (!hasContext(context.transcript)) {
+      this.counters.skipped += 1;
+      this.markSkip("no-context", "no conversation content to base a card on");
+      return { ok: false, reason: "no-context" };
+    }
     if (this.inflight.has(sessionId)) this.abortInflight(sessionId);
     const controller = new AbortController();
     this.inflight.set(sessionId, controller);
@@ -518,7 +573,7 @@ export class NextStepService extends TypertRemoteService {
       settings.timeoutMs,
     );
     try {
-      const result = await this.generate(session, settings, controller.signal);
+      const result = await this.generate(session, settings, controller.signal, context);
       if (controller.signal.aborted) {
         this.markAbort(controller.signal.reason, settings.timeoutMs);
         await this.writeErrorEvent(
@@ -534,7 +589,15 @@ export class NextStepService extends TypertRemoteService {
         await this.writeErrorEvent(sid, turn, "cancelled");
         return { ok: false, reason: "aborted" };
       }
-      if (result === null) {
+      if (result.ok !== true) {
+        // 三种「没有可用卡片」的结局分开记，诊断面板才说得出是哪一种（docstring 见 generate）。
+        if (result.failure === "ungrounded") {
+          this.counters.failed += 1;
+          this.lastError = "generated card is not grounded in this conversation";
+          this.markFailure(this.lastError);
+          await this.writeErrorEvent(sid, turn, "ungrounded", result.detail);
+          return { ok: false, reason: "ungrounded" };
+        }
         // generate() 已经把原因写进 lastError；这里只补事件。
         await this.writeErrorEvent(sid, turn, "schema", this.lastError);
         return { ok: false, reason: "schema" };
@@ -596,7 +659,9 @@ export class NextStepService extends TypertRemoteService {
             summaryChars: card.summary.length,
             questionChars: card.question.length,
             hasGhost: card.nextPrompt !== undefined,
-            parse: result.repaired ? "repaired" : "ok",
+            // 三种恢复路径都记下来：ok（一次成功）/ retried（空输出重采样）/
+            // repaired（带对话修格式）—— 复盘时这三种的输出分布完全不同
+            parse: parseKindOf(result.recovery),
             ...(result.usage === undefined ? {} : { usage: result.usage }),
           },
         }),
@@ -675,7 +740,7 @@ export class NextStepService extends TypertRemoteService {
   }
 
   /**
-   * 写一条 error 事件（失败/超时/取消/路由），把「没出卡」的成因留痕。
+   * 写一条 error 事件（失败/超时/取消/路由/落地校验），把「没出卡」的成因留痕。
    * @param {string} sid
    * @param {number} turn
    * @param {string} kind
@@ -685,7 +750,11 @@ export class NextStepService extends TypertRemoteService {
   async writeErrorEvent(sid, turn, kind, detail) {
     /** @type {any} */
     const mapped =
-      kind === "schema" || kind === "timeout" || kind === "cancelled" || kind === "route"
+      kind === "schema" ||
+      kind === "ungrounded" ||
+      kind === "timeout" ||
+      kind === "cancelled" ||
+      kind === "route"
         ? kind
         : "llm";
     await this.writeEvent(
@@ -700,16 +769,28 @@ export class NextStepService extends TypertRemoteService {
   }
 
   /**
-   * 一次额外补全：prepareCall + stream → 宽容解析（失败时再修一次）。
+   * 一次额外补全：prepareCall + stream → 宽容解析 → （必要时）重采样或带对话修复 → 落地校验。
+   *
+   * 四种结局，全部显式返回（不再用 null 一锅端）：
+   * - `{ ok: true, suggestion, … }`
+   * - `{ ok: false, failure: "schema" }`      两次输出都不合格（原因已写进 lastError）
+   * - `{ ok: false, failure: "ungrounded" }`  结构合格，但卡片里没有任何对象能在这段对话里找到
+   *
+   * 两条硬规则（见 docs/adr/0023）：
+   * 1. **空输出不修复，重发原请求**：拿空字符串去「修格式」，模型手里就只剩「上次输出为空」这条
+   *    信息，它的唯一出路是把它写成一张卡（「这一轮没有拿到任何对话内容…」）——历史 95 条垃圾卡
+   *    全部来自这里；
+   * 2. **修复请求必须带同一段对话**：修复是「改格式」，不是「重新想象内容」，没有原料就只能编。
    * @param {any} session
    * @param {any} settings
    * @param {AbortSignal} signal
-   * @returns {Promise<{
-   *   suggestion: NonNullable<ReturnType<typeof parseSuggestion>["suggestion"]>,
-   *   route: string, latencyMs: number, repaired: boolean, usage?: any,
-   * } | null>}
+   * @param {{ transcript: string, material: string }} context
+   * @returns {Promise<
+   *   | { ok: true, suggestion: NonNullable<ReturnType<typeof parseSuggestion>["suggestion"]>, route: string, latencyMs: number, repaired: boolean, recovery: "none" | "retry" | "repair", usage?: any }
+   *   | { ok: false, failure: "schema" | "ungrounded", detail?: string }
+   * >}
    */
-  async generate(session, settings, signal) {
+  async generate(session, settings, signal, context) {
     const llm = serviceOf(this.ctx, "llm");
     if (llm === undefined || typeof llm.prepareCall !== "function") {
       throw new Error("host llm service is unavailable");
@@ -718,9 +799,7 @@ export class NextStepService extends TypertRemoteService {
     const maxTokens = settings.maxTokens;
     const locale = this.localeName();
     const system = buildSystemPrompt({ locale });
-    const transcript = renderTranscript(session.deriveMessages?.() ?? [], {
-      limit: settings.contextMessages,
-    });
+    const transcript = context.transcript;
     /** @type {any} */
     let usage;
     const startedAt = Date.now();
@@ -788,17 +867,31 @@ export class NextStepService extends TypertRemoteService {
     };
 
     const messages = buildMessages({ transcript, locale });
-    const raw = await run(messages);
+    let raw = await run(messages);
     let parsed = parseSuggestion(raw);
-    let repaired = false;
+    /** @type {"none" | "retry" | "repair"} */
+    let recovery = "none";
     if (parsed.suggestion === null && parsed.problem !== null) {
-      // 格式问题不该由用户承担损失：带「原文 + 具体问题」再要一次，只要求它修格式。
-      repaired = true;
+      const plan = recoveryPlan({ raw, problem: parsed.problem });
+      recovery = plan;
       this.warn(
-        `model output did not match the card schema (${parsed.problem.kind}: ${parsed.problem.detail}), retrying once`,
+        `model output did not match the card schema (${parsed.problem.kind}: ${parsed.problem.detail}), ${plan === "retry" ? "resending the same request" : "repairing with the transcript"}`,
       );
-      const repairRaw = await run(buildRepairMessage({ raw, problem: parsed.problem.kind }));
-      parsed = parseSuggestion(repairRaw);
+      // 空输出：重发**同一个请求**。拿空字符串去「修格式」等于让模型凭空写一张卡。
+      // 有内容但格式不对：带同一段对话再要一次，只要求它修格式。
+      raw =
+        plan === "retry"
+          ? await run(messages)
+          : await run(
+              buildRepairMessage({
+                transcript,
+                raw,
+                problem: parsed.problem.kind,
+                // 把「上一次 label 到底几字」带进修复请求：模型数不准自己的字数
+                detail: parsed.problem.detail,
+              }),
+            );
+      parsed = parseSuggestion(raw);
     }
     if (parsed.suggestion === null) {
       const detail =
@@ -807,17 +900,26 @@ export class NextStepService extends TypertRemoteService {
       this.lastError = `model output did not match the card schema (${detail})`;
       this.markFailure(this.lastError);
       this.warn(`model output did not match the card schema: ${detail}`);
-      return null;
+      return { ok: false, failure: "schema" };
     }
     if (parsed.detail !== "") {
       // 宽容解析里被容忍的问题（截断/丢弃单条），留在日志里便于复盘提示词
       this.warn(`card normalized with tolerated problems: ${parsed.detail}`);
     }
+    // 落地校验：结构合法但讲不到这段对话（自述生成过程 / 凭空想象）的卡，一律不写进会话。
+    if (!isGroundedIn(groundableText(parsed.suggestion), context.material)) {
+      const detail = `identityTokens=${identityTokens(groundableText(parsed.suggestion)).size} matched=0 recovery=${recovery}`;
+      this.warn(`discarded a card that is not grounded in this conversation (${detail})`);
+      this.lastError = "generated card is not grounded in this conversation";
+      return { ok: false, failure: "ungrounded", detail };
+    }
     return {
+      ok: true,
       suggestion: parsed.suggestion,
       route: `${route.provider}/${route.model}`,
       latencyMs: Date.now() - startedAt,
-      repaired,
+      repaired: recovery === "repair",
+      recovery,
       ...(usage === undefined ? {} : { usage }),
     };
   }
