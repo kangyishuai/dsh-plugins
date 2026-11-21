@@ -19,7 +19,14 @@ import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 import { registerProjectContext } from "./attach.js";
 import { buildFixTask, errorSignature, shouldContinueFix } from "./autofix.js";
 import { buildPrText, nextPrAction, parsePrNumber, planPrCreate } from "./autopr.js";
-import { checkThreadBudget, checkTokenBudget, tokensOf } from "./budget.js";
+import {
+  checkStepBudget,
+  checkThreadBudget,
+  checkTokenBudget,
+  checkWeeklyTokenBudget,
+  startOfWeek,
+  tokensOf,
+} from "./budget.js";
 import { runCommand } from "./exec.js";
 import { executeApprovalCore } from "./execute.js";
 import { checkPreapproval } from "./executor.js";
@@ -1099,6 +1106,24 @@ export class ProjectsService extends TypertRemoteService {
         .listThreads(project.id)
         .find((/** @type {any} */ item) => item.sessionId === sessionId);
       if (!thread) return;
+      // 单线程步数预算（规格 §7.7.4）：超限只停唤醒，不杀会话——人还可以继续用
+      const stepVerdict = checkStepBudget({
+        maxSteps: project.budget?.maxStepsPerThread,
+        steps: (this.stats.get(sessionId) ?? initialStats()).steps,
+      });
+      if (!stepVerdict.ok) {
+        store.appendAudit({
+          action: "wake/skipped",
+          projectId: project.id,
+          sessionId,
+          reason: stepVerdict.reason,
+          steps: stepVerdict.steps,
+          limit: stepVerdict.limit,
+        });
+        store.save();
+        return;
+      }
+
       const turn = Number(view?.turn ?? 0);
 
       const envelope = buildEnvelope({
@@ -1313,10 +1338,16 @@ export class ProjectsService extends TypertRemoteService {
       if (numstat.code === 0) diff = parseNumstat(numstat.stdout);
     }
 
+    const stepVerdict = checkStepBudget({
+      maxSteps: store.getProject(projectId)?.budget?.maxStepsPerThread,
+      steps: stats.steps,
+    });
     return {
       sessionId,
       stats,
       diff,
+      overBudget: !stepVerdict.ok,
+      budgetReason: stepVerdict.reason,
       summary: summarizeForRow({ stats, diff }),
     };
   }
@@ -1653,11 +1684,23 @@ export class ProjectsService extends TypertRemoteService {
       dailyTokens: project.budget?.dailyTokens,
       usedTokens: store.tokenUsageToday(projectId, nowMs),
     });
+    // 周预算（规格 §7.7.4）：按自然周（周一 00:00 起）聚合
+    const weekVerdict = checkWeeklyTokenBudget({
+      weeklyTokens: project.budget?.weeklyTokens,
+      usedTokens: store.tokenUsageSince(projectId, startOfWeek(nowMs)),
+    });
     if (!tokenVerdict.ok) {
       store.appendAudit({ action: "thread/rejected", projectId, reason: tokenVerdict.reason });
       store.save();
       throw new Error(
         `projects: ${tokenVerdict.reason} (used=${tokenVerdict.used}, limit=${tokenVerdict.limit})`,
+      );
+    }
+    if (!weekVerdict.ok) {
+      store.appendAudit({ action: "thread/rejected", projectId, reason: weekVerdict.reason });
+      store.save();
+      throw new Error(
+        `projects: ${weekVerdict.reason} (used=${weekVerdict.used}, limit=${weekVerdict.limit})`,
       );
     }
     const verdict = checkThreadBudget({
