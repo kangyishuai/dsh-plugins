@@ -96,20 +96,20 @@ window.__ModuleLoader__.load({
       "settings.fallback": "规则都不命中时允许模型兜底提议",
       "settings.dangerTitle": "危险动作开关（默认全关）",
       "settings.dangerHint": "打开任何一个开关都需要你明确同意；插件不会自行打开。",
-      "settings.danger.forcePushOwnBranch.label": "允许推送自己的 dsh/ 分支（普通推送，非强推）",
+      "settings.danger.forcePushOwnBranch.label": "允许强推自己的 dsh/ 分支",
       "settings.danger.forcePushOwnBranch.risk":
-        "会写远端仓库；只推 dsh/ 开头的分支。**强推（--force）尚未实现**，打开此开关不会产生强推。",
-      "settings.danger.pushProtectedBranch.label": "允许推送受保护分支（暂未实现）",
+        "用 --force-with-lease 绑定期望 SHA；远端被他人动过、分支受保护、旧 SHA 未知时一律拒绝，并记旧 SHA 供恢复。",
+      "settings.danger.pushProtectedBranch.label": "允许直推默认/保护分支",
       "settings.danger.pushProtectedBranch.risk":
-        "当前版本没有对应执行路径，打开也不会生效；保留此键是为了将来对齐。",
+        "需要先在项目策略里对该仓库 per-repo 授予；推前查 protection/rulesets，服务端要求 PR 时直接拒；每次审计，检测到多人协作会额外警告。",
       "settings.danger.autoMerge.label": "允许自动合并 PR",
       "settings.danger.autoMerge.risk":
         "合并不可逆（只能用 revert 回退）；仍受 diff 阈值与人工批准约束",
       "settings.danger.trashAuto.label": "允许自动归档/删除到回收站",
       "settings.danger.trashAuto.risk": "会把内容移入 trash/；可从 manifest 恢复，但不是零成本",
-      "settings.danger.purgeAfterRetention.label": "允许保留期后清理回收站（暂未实现）",
+      "settings.danger.purgeAfterRetention.label": "允许保留期后清理回收站",
       "settings.danger.purgeAfterRetention.risk":
-        "当前版本没有对应执行路径，打开也不会生效；回收站不会被自动清空。",
+        "只处理已在回收站且超过保留期的条目；执行前生成清理清单；默认 dry-run，真删需显式确认。",
       "settings.danger.editProfile.label": "允许修改项目策略本身",
       "settings.danger.editProfile.risk": "协调器可能借此放宽自己的限制；风险最高",
       "detail.archive": "归档项目",
@@ -196,14 +196,13 @@ window.__ModuleLoader__.load({
       "settings.dangerTitle": "Danger switches (all off by default)",
       "settings.dangerHint":
         "Every switch needs your explicit consent; the plugin never turns one on by itself.",
-      "settings.danger.forcePushOwnBranch.label":
-        "Allow pushing your own dsh/ branches (normal push, not force)",
+      "settings.danger.forcePushOwnBranch.label": "Allow force-pushing your own dsh/ branches",
       "settings.danger.forcePushOwnBranch.risk":
-        "Writes to the remote; only branches starting with dsh/. **Force push (--force) is not implemented yet** — turning this on does not enable force push.",
+        "Uses --force-with-lease bound to the expected SHA; refuses when the remote moved, the branch is protected, or the old SHA is unknown, and records the old SHA for recovery.",
       "settings.danger.pushProtectedBranch.label":
-        "Allow pushing to protected branches (not implemented yet)",
+        "Allow pushing directly to default/protected branches",
       "settings.danger.pushProtectedBranch.risk":
-        "No execution path exists in this version, so turning it on has no effect; the key is kept for future alignment.",
+        "Requires a per-repo grant in the project policy; checks protection/rulesets first and refuses when the server requires a PR; every push is audited and multi-collaborator repos raise a warning.",
       "settings.danger.autoMerge.label": "auto-merge PRs",
       "settings.danger.autoMerge.risk":
         "merging is irreversible (revert only); still gated by diff limits and human approval",
@@ -211,9 +210,9 @@ window.__ModuleLoader__.load({
       "settings.danger.trashAuto.risk":
         "moves content into trash/; restorable from manifest, but not free",
       "settings.danger.purgeAfterRetention.label":
-        "Allow purging the trash after retention (not implemented yet)",
+        "Allow purging the trash after the retention period",
       "settings.danger.purgeAfterRetention.risk":
-        "No execution path exists in this version, so turning it on has no effect; the trash is never emptied automatically.",
+        "Only touches entries already in the trash that exceed the retention period; writes a purge manifest first; dry-run by default, real deletion needs explicit confirmation.",
       "settings.danger.editProfile.label": "edit project policy itself",
       "settings.danger.editProfile.risk":
         "the coordinator could loosen its own limits; highest risk",

@@ -19,6 +19,7 @@ export const FORMAT_VERSION = 1;
  * @property {Record<string, boolean>} danger 危险动作开关，默认全 false
  * @property {{ rules: any[], fallback: boolean }} routing 路由规则（扁平结构）与是否允许模型兜底
  * @property {string} persona 协调器人格；空串表示用内置默认人格
+ * @property {Record<string, true>} repoGrants 直推保护分支的 per-repo 首次授予
  */
 
 /**
@@ -40,6 +41,8 @@ export const FORMAT_VERSION = 1;
  * @property {string} projectId
  * @property {'idle'|'working'|'waiting'|'done'|'failed'} state
  * @property {string|null} branch
+ * @property {string|null} lastPushedSha
+ * @property {string|null} baseSha
  * @property {string|null} worktree
  * @property {number} seq
  */
@@ -64,6 +67,8 @@ export function defaultPolicy() {
     routing: { rules: defaultRules(), fallback: true },
     // 协调器人格；空串表示用内置默认人格
     persona: "",
+    // 直推保护分支的 per-repo 首次授予：只有显式 true 的仓库才允许
+    repoGrants: {},
   };
 }
 
@@ -104,6 +109,19 @@ export function normalizePolicy(raw, fallbackPolicy) {
         : typeof previous.persona === "string"
           ? previous.persona
           : "",
+    // 只接受显式 true 的仓库授权；其它写法一律当没授权
+    repoGrants: (() => {
+      const pick = (/** @type {any} */ source) =>
+        source && typeof source === "object" && !Array.isArray(source)
+          ? Object.fromEntries(
+              Object.entries(source).filter(
+                ([key, value]) => typeof key === "string" && value === true,
+              ),
+            )
+          : {};
+      const fromPolicy = pick(policy.repoGrants);
+      return Object.keys(fromPolicy).length > 0 ? fromPolicy : pick(previous.repoGrants);
+    })(),
   };
 }
 
@@ -183,6 +201,8 @@ export function normalize(raw, root) {
           ? thread.state
           : "idle",
         branch: typeof thread.branch === "string" ? thread.branch : null,
+        lastPushedSha: typeof thread.lastPushedSha === "string" ? thread.lastPushedSha : null,
+        baseSha: typeof thread.baseSha === "string" ? thread.baseSha : null,
         worktree: typeof thread.worktree === "string" ? thread.worktree : null,
         seq: Number.isInteger(thread.seq) ? thread.seq : 0,
         createdAt: typeof thread.createdAt === "string" ? thread.createdAt : iso(),
@@ -372,12 +392,15 @@ export class ProjectStore {
   /**
    * 记录线程的 worktree 归属（建 worktree 成功后调用）。
    * @param {string} sessionId
-   * @param {{ branch?: string|null, worktree?: string|null, baseSha?: string|null, state?: string }} patch
+   * @param {{ branch?: string|null, worktree?: string|null, baseSha?: string|null, lastPushedSha?: string|null, state?: string }} patch
    */
   setThreadWorktree(sessionId, patch) {
     const current = this.state.threads[sessionId];
     if (!current) throw new Error(`projects: unknown thread ${sessionId}`);
     if (typeof patch.branch === "string" || patch.branch === null) current.branch = patch.branch;
+    if (typeof patch.lastPushedSha === "string" || patch.lastPushedSha === null) {
+      current.lastPushedSha = patch.lastPushedSha;
+    }
     if (typeof patch.worktree === "string" || patch.worktree === null)
       current.worktree = patch.worktree;
     if (typeof patch.baseSha === "string" || patch.baseSha === null)

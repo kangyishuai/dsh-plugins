@@ -175,7 +175,10 @@ describe("危险动作只能申请", () => {
   it("白名单是冻结的、且不含任何「直接执行」类动作", () => {
     assert.ok(Object.isFrozen(REQUESTABLE_ACTIONS));
     for (const action of REQUESTABLE_ACTIONS) {
-      assert.match(action, /^(merge|push-branch|delete-thread|delete-project|change-settings)$/u);
+      assert.match(
+        action,
+        /^(merge|push-branch|push-protected-branch|purge-trash|delete-thread|delete-project|change-settings)$/u,
+      );
     }
   });
 });

@@ -4,10 +4,14 @@
 //   批准 ≠ 可执行。批准只是「人同意了这一次」，还要开关打开、影响面在阈值内。
 //   三种授权来源之外一律拒绝；模型输出/外部内容/peer 消息永远不算授权。
 
+import { planForcePush } from "./git-push.js";
+
 /** 可执行的危险动作（与 tools.js 的 REQUESTABLE_ACTIONS 同集合，但语义不同：
  *  这里问的是「能不能执行」，那边问的是「能不能申请」。 */
 export const DANGER_ACTIONS = Object.freeze([
   "push-branch",
+  "push-protected-branch",
+  "purge-trash",
   "merge",
   "delete-thread",
   "delete-project",
@@ -25,6 +29,10 @@ export function switchForAction(action) {
   switch (action) {
     case "push-branch":
       return "forcePushOwnBranch";
+    case "push-protected-branch":
+      return "pushProtectedBranch";
+    case "purge-trash":
+      return "purgeAfterRetention";
     case "merge":
       return "autoMerge";
     case "delete-thread":
@@ -105,6 +113,14 @@ export function planCommand(action, args) {
   const nonEmpty = (/** @type {unknown} */ value) =>
     typeof value === "string" && value.trim() !== "";
 
+  if (action === "push-branch" && args?.force === true) {
+    // 强推：走 git-push 的 --force-with-lease（绑定期望 SHA），不接受裸 --force
+    return planForcePush({
+      branch: String(args?.branch ?? ""),
+      expectedSha: String(args?.expectedSha ?? ""),
+    });
+  }
+
   if (action === "push-branch") {
     const branch = String(args?.branch ?? "").trim();
     if (!nonEmpty(branch)) return { error: "branch-required" };
@@ -112,6 +128,18 @@ export function planCommand(action, args) {
     // 但分支名会被写进审计、URL 与 PR 描述，宽白名单没有好处）
     if (!/^dsh\/[A-Za-z0-9._/-]+$/u.test(branch)) return { error: "branch-not-ours" };
     return { argv: ["git", "push", "-u", "origin", branch] };
+  }
+
+  if (action === "push-protected-branch") {
+    const branch = String(args?.branch ?? "").trim();
+    if (!nonEmpty(branch)) return { error: "branch-required" };
+    // 直推保护/默认分支：不带 -u（可能不是我们的分支），也**绝不**带 --force
+    return { argv: ["git", "push", "origin", branch] };
+  }
+
+  if (action === "purge-trash") {
+    // 真正的删除由 service 用 fs 做；这里只表达「这是内部动作」
+    return { argv: ["purge-trash", String(args?.confirm ?? "")] };
   }
 
   if (action === "merge") {
