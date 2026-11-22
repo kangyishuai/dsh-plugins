@@ -1,6 +1,6 @@
 {
   "name": "@kangyishuai/dsh-projects",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "Project-level context for DeepSeek Harness: group sessions into projects, inject instructions and memory, run isolated parallel threads, and coordinate them with an optional auditable coordinator.",
   "keywords": [
     "dsh",
