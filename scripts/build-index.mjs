@@ -523,25 +523,35 @@ export async function main(argv = process.argv.slice(2)) {
   for (const manifest of manifests)
     packuments.set(manifest.name, await fetchPackument(manifest.name, { registry }));
 
-  // 等每个包声明的版本都出现在 registry 上（发版后传播需要时间，见 missingPublishedVersions 的注释）。
-  const waitAttempts = Number(process.env.INDEX_VERSION_ATTEMPTS ?? 12);
-  const waitDelayMs = Number(process.env.INDEX_VERSION_DELAY_MS ?? 20_000);
-  for (let attempt = 1; ; attempt += 1) {
+  // 等每个包声明的版本都出现在 registry 上。
+  //
+  // 为什么不用固定次数：npm 的**元数据**与 **tarball/CDN** 分开传播，实测能差好几分钟。
+  // 0.9.0 发版时固定 12 次 × 20s（共 4 分钟）就用完了，工作流报"等不到版本"而失败，
+  // 只能人工重跑。改成指数退避 + 总预算（默认 15 分钟），并在每次重试时打印已等时长。
+  const waitBudgetMs = Number(process.env.INDEX_VERSION_WAIT_MS ?? 15 * 60_000);
+  const waitStartMs = Date.now();
+  let delayMs = Number(process.env.INDEX_VERSION_DELAY_MS ?? 5_000);
+  const maxDelayMs = 60_000;
+  for (;;) {
     const missing = missingPublishedVersions(manifests, packuments);
     if (missing.length === 0) break;
-    if (attempt >= waitAttempts) {
+    const waitedMs = Date.now() - waitStartMs;
+    if (waitedMs + delayMs > waitBudgetMs) {
       throw new Error(
-        `等不到这些版本出现在 npm（重试 ${waitAttempts} 次后）：${missing
+        `等不到这些版本出现在 npm（已等 ${Math.round(waitedMs / 1000)}s，预算 ${Math.round(
+          waitBudgetMs / 1000,
+        )}s）：${missing
           .map((item) => `${item.name}@${item.version}（registry 上是 ${item.latest}）`)
           .join("、")}`,
       );
     }
     console.log(
-      `等待 registry 传播（第 ${attempt}/${waitAttempts - 1} 次）：${missing
-        .map((item) => `${item.name}@${item.version}`)
-        .join("、")}`,
+      `等待 registry 传播（已等 ${Math.round(waitedMs / 1000)}s，下次再等 ${Math.round(
+        delayMs / 1000,
+      )}s）：${missing.map((item) => `${item.name}@${item.version}`).join("、")}`,
     );
-    await new Promise((resolve) => setTimeout(resolve, waitDelayMs));
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    delayMs = Math.min(maxDelayMs, Math.round(delayMs * 2));
     for (const item of missing) {
       packuments.set(item.name, await fetchPackument(item.name, { registry }));
     }
