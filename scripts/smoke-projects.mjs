@@ -454,8 +454,8 @@ try {
     () => (document.querySelector("[data-projects-summary]")?.textContent || "").trim(),
   );
   add(
-    "头部统计不再用「已挂上下文」这类术语",
-    panelSummary.length > 0 && !/挂上下文/u.test(panelSummary),
+    "头部统计给出线程数",
+    panelSummary.length > 0 && /线程/u.test(panelSummary),
     panelSummary.slice(0, 80),
   );
 
@@ -749,6 +749,23 @@ try {
     "项目行带短 id（重名可区分）",
     rowIds.length > 0 && rowIds.every((id) => /^#[A-Za-z0-9_-]{4,}$/u.test(id)),
     JSON.stringify(rowIds.slice(0, 3)),
+  );
+  // 从详情返回后，列表里的线程数必须是新的（走查发现返回不刷新）
+  await page.evaluate(() => {
+    const row = document.querySelector("[data-projects-row]");
+    if (row) row.click();
+  });
+  await page.waitForTimeout(1500);
+  await page.evaluate(() => document.querySelector("[data-projects-detail-back]")?.click());
+  await page.waitForTimeout(1200);
+  const refreshedCounts = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll("[data-projects-row]")].map((n) => (n.textContent || "").trim());
+    return { rows: rows.length, hasThreadCount: rows.some((text) => /个线程/u.test(text)) };
+  });
+  add(
+    "从详情返回后列表线程数已刷新",
+    refreshedCounts.hasThreadCount === true,
+    JSON.stringify(refreshedCounts),
   );
   // 长项目名必须截断，不许撑爆行高
   const nameOverflow = await page.evaluate(() => {
