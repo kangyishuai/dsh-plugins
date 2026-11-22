@@ -94,6 +94,15 @@ const main = async () => {
     /** @type {boolean} */ ok,
     /** @type {string} */ detail = "",
   ) => checks.push({ name, ok, detail });
+  /**
+   * 只用于**数据分支**的 SKIP（例如 live profile 里一个项目都没有，详情页无从打开）。
+   * 判定「是否真的跑过」由末尾计数行承担：SKIP 不计入 PASS，也不伪装成通过
+   * （docs/plugin-conventions.md §6.1）。
+   * @type {{name: string, detail: string}[]}
+   */
+  const skips = [];
+  const skip = (/** @type {string} */ name, /** @type {string} */ detail = "") =>
+    skips.push({ name, detail });
 
   /** @type {Awaited<ReturnType<typeof connect>> | undefined} */
   let cdp;
@@ -225,17 +234,104 @@ const main = async () => {
       String(summary),
     );
 
-    // 3) 只读断言：新建控件存在，但不提交（默认只读）
-    const controls = await cdp.evaluate(`(() => ({
-      input: Boolean(document.querySelector("[data-projects-create-input]")),
-      button: Boolean(document.querySelector("[data-projects-create]")),
+    // 3) 只读断言：新建入口打开模态、给出两条入口、名称为空时主按钮禁用（打开即关，不提交）
+    //    注意：`data-projects-create-input`/`-create` 现在常驻 DOM 但在模态里（关闭时 display:none），
+    //    只查"存在"会变成测隐藏控件，所以必须先点入口再查。
+    await cdp.screenshot(join(SHOTS, "01-projects-panel.png"));
+    const openedNew = await cdp.evaluate(`(() => {
+      const button = document.querySelector("[data-projects-new]");
+      if (!button) return "no-button";
+      button.click();
+      return "clicked";
+    })()`);
+    let modalSeen = false;
+    for (let i = 0; i < 25; i += 1) {
+      modalSeen = await cdp.evaluate(
+        `document.querySelector("[data-projects-new-modal]")?.getAttribute("data-projects-new-modal") === "open"`,
+      );
+      if (modalSeen === true) break;
+      await sleep(200);
+    }
+    const chooser = await cdp.evaluate(`(() => ({
+      scratch: Boolean(document.querySelector("[data-projects-new-scratch]")),
+      folder: Boolean(document.querySelector("[data-projects-new-folder]")),
+      form: Boolean(document.querySelector("[data-projects-new-form]")),
     }))()`);
     check(
-      "新建控件存在（不提交）",
-      controls?.input === true && controls?.button === true,
-      JSON.stringify(controls ?? {}),
+      "新建入口打开模态并给出两条入口（不提交）",
+      openedNew === "clicked" &&
+        modalSeen === true &&
+        chooser?.scratch === true &&
+        chooser?.folder === true &&
+        chooser?.form === false,
+      JSON.stringify({ openedNew, modalSeen, chooser }),
     );
-    await cdp.screenshot(join(SHOTS, "01-projects-panel.png"));
+    const emptyName = await cdp.evaluate(`(() => {
+      const formHost = document.querySelector("[data-projects-new-scratch]");
+      if (formHost) formHost.click();
+      return true;
+    })()`);
+    await sleep(400);
+    const createDisabled = await cdp.evaluate(
+      `document.querySelector("[data-projects-create]")?.disabled === true`,
+    );
+    check(
+      "项目名为空时创建按钮禁用（唯一门槛）",
+      emptyName === true && createDisabled === true,
+      String(createDisabled),
+    );
+    // 关掉模态（Esc），后续断言不应被遮罩影响
+    await cdp.evaluate(
+      `document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))`,
+    );
+    await sleep(400);
+
+    // 3b) 详情页两列（数据分支：live profile 里没有项目时 SKIP，而不是伪 PASS）
+    const rowOpened = await cdp.evaluate(`(() => {
+      const row = document.querySelector("[data-projects-row] button, [data-projects-row]");
+      if (!row) return "no-row";
+      row.click();
+      return "clicked";
+    })()`);
+    if (rowOpened === "no-row") {
+      skip("详情页两列（主列 + 右栏）", "live profile 没有项目，属于数据分支");
+    } else {
+      let detailSeen = false;
+      for (let i = 0; i < 25; i += 1) {
+        detailSeen = await cdp.evaluate(
+          `Boolean(document.querySelector("[data-projects-detail]"))`,
+        );
+        if (detailSeen === true) break;
+        await sleep(200);
+      }
+      const rail = await cdp.evaluate(`(() => {
+        const detail = document.querySelector("[data-projects-detail]");
+        if (!detail) return null;
+        const text = detail.innerText || "";
+        return {
+          hasInstructions: Boolean(document.querySelector("[data-projects-instructions]")),
+          hasContextSection: /指令/u.test(text) && /记忆/u.test(text) && /上下文/u.test(text),
+          hasThreads: Boolean(document.querySelector("[data-projects-threads]")),
+        };
+      })()`);
+      check(
+        "详情页渲染主列 + 右栏三段（指令/记忆/上下文）",
+        detailSeen === true &&
+          rail?.hasInstructions === true &&
+          rail?.hasContextSection === true &&
+          rail?.hasThreads === true,
+        JSON.stringify({ detailSeen, rail }),
+      );
+      const back = await cdp.evaluate(`(() => {
+        const button = document.querySelector("[data-projects-detail-back]");
+        if (!button) return "no-button";
+        button.click();
+        return "clicked";
+      })()`);
+      await sleep(500);
+      check("详情页可返回列表", back !== "no-button", String(back));
+    }
+    await cdp.screenshot(join(SHOTS, "01b-projects-list.png"));
 
     // 4) 设置分节
     const openedSettings = await cdp.evaluate(`(() => {
@@ -287,15 +383,21 @@ const main = async () => {
     console.log((item.ok ? "PASS " : "FAIL ") + item.name + (item.ok ? "" : ` :: ${item.detail}`));
     if (!item.ok) failed += 1;
   }
+  for (const item of skips) {
+    console.log("SKIP " + item.name + (item.detail ? ` :: ${item.detail}` : ""));
+  }
   console.log(`截图目录：${SHOTS}`);
   if (failed > 0) {
     console.error(`FAIL ${failed} 项桌面回归断言失败`);
     process.exitCode = 1;
   } else {
-    console.log(`PASS 全部 ${checks.length} 项桌面回归断言通过`);
+    console.log(
+      `PASS 全部 ${checks.length} 项桌面回归断言通过` +
+        (skips.length > 0 ? `（另有 ${skips.length} 项数据分支 SKIP）` : ""),
+    );
   }
   // 门禁靠这一行判定「跑过但一条断言都没执行」（见 docs/plugin-conventions.md §6.1）。
-  console.log(`${checks.length - failed} PASS / 0 SKIP / ${failed} FAIL`);
+  console.log(`${checks.length - failed} PASS / ${skips.length} SKIP / ${failed} FAIL`);
 };
 
 await main();

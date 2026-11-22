@@ -1149,7 +1149,7 @@ try {
   const confirmFocused = await page.evaluate(
     () => document.activeElement?.getAttribute("data-projects-delete-confirm") !== null,
   );
-  add("确认按钮带默认聚焦锚点", confirmFocused === true || true, String(confirmFocused));
+  add("确认按钮带默认聚焦", confirmFocused === true, String(confirmFocused));
   const confirmed = await page.evaluate(() => {
     const button = document.querySelector("[data-projects-delete-confirm]");
     if (!button) return "no-button";
