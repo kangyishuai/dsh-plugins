@@ -57,7 +57,7 @@ pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体�
 | `memory.test.js`    | 记忆写入：幂等、单条与总量上限、时间戳注释、被拒时给出原因                                    |
 | `exec.test.js`      | 子进程封装：参数原样传递、失败返回 code 不抛、cwd 生效、命令不存在也不抛                      |
 
-## 2. web 端到端冒烟（54 项）
+## 2. web 端到端冒烟（78 项）
 
 `pnpm smoke:projects` 在临时 home 里种子一个**真实 git 仓库**作为工作区，然后：
 
