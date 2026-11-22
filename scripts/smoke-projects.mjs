@@ -489,6 +489,14 @@ try {
     dangerPanel.count === 6 && dangerPanel.text.length > 60,
     JSON.stringify({ count: dangerPanel.count }),
   );
+  // 文案要人话：不许出现 __force-with-lease / SHA / per-repo / rulesets / manifest / dry-run__ 这类术语
+  const jargon = ["--force-with-lease", "SHA", "per-repo", "rulesets", "manifest", "dry-run"];
+  const hitJargon = jargon.filter((word) => dangerPanel.text.includes(word));
+  add(
+    "危险开关文案不含工程术语",
+    hitJargon.length === 0,
+    JSON.stringify({ hitJargon }),
+  );
 
   const trashVisible = await page.evaluate(() =>
     Boolean(document.querySelector("[data-projects-trash]")),

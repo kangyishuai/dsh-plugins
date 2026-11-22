@@ -123,22 +123,23 @@ window.__ModuleLoader__.load({
       "settings.fallback": "规则都不命中时允许模型兜底提议",
       "settings.dangerTitle": "危险动作开关（默认全关）",
       "settings.dangerHint": "打开任何一个开关都需要你明确同意；插件不会自行打开。",
-      "settings.danger.forcePushOwnBranch.label": "允许强推自己的 dsh/ 分支",
+      "settings.danger.forcePushOwnBranch.label": "允许覆盖插件自己创建的远端分支",
       "settings.danger.forcePushOwnBranch.risk":
-        "用 --force-with-lease 绑定期望 SHA；远端被他人动过、分支受保护、旧 SHA 未知时一律拒绝，并记旧 SHA 供恢复。",
-      "settings.danger.pushProtectedBranch.label": "允许直推默认/保护分支",
+        "只覆盖插件自己建的分支。覆盖前会核对远端版本：被别人改过、分支受保护、或版本对不上，就停下并把旧版本号记下来，方便恢复。",
+      "settings.danger.pushProtectedBranch.label": "允许直接推送主干或受保护分支",
       "settings.danger.pushProtectedBranch.risk":
-        "需要先在项目策略里对该仓库 per-repo 授予；推前查 protection/rulesets，服务端要求 PR 时直接拒；每次审计，检测到多人协作会额外警告。",
+        "只对你在「仓库授权」里显式加过的仓库生效。推送前会检查该分支的保护规则：要求走 PR 的仓库会直接拒绝；每次都会记录，检测到多人协作会额外提醒。",
       "settings.danger.autoMerge.label": "允许自动合并 PR",
       "settings.danger.autoMerge.risk":
-        "合并不可逆（只能用 revert 回退）；仍受 diff 阈值与人工批准约束",
-      "settings.danger.trashAuto.label": "允许自动归档/删除到回收站",
-      "settings.danger.trashAuto.risk": "会把内容移入 trash/；可从 manifest 恢复，但不是零成本",
-      "settings.danger.purgeAfterRetention.label": "允许保留期后清理回收站",
+        "合并之后只能用 revert 回退，不能当作没发生。仍然要求：改动量在阈值内、CI 通过、人工批准数达标。",
+      "settings.danger.trashAuto.label": "允许自动归档或删除到回收站",
+      "settings.danger.trashAuto.risk": "内容会先移进回收站，之后还能恢复，但要花点时间找回。",
+      "settings.danger.purgeAfterRetention.label": "允许清理过期的回收站条目",
       "settings.danger.purgeAfterRetention.risk":
-        "只处理已在回收站且超过保留期的条目；执行前生成清理清单；默认 dry-run，真删需显式确认。",
+        "只清理已在回收站、且超过保留期的条目。清理前先列出清单，默认只看不删，真删还要再确认一次。",
       "settings.danger.editProfile.label": "允许修改项目策略本身",
-      "settings.danger.editProfile.risk": "协调器可能借此放宽自己的限制；风险最高",
+      "settings.danger.editProfile.risk":
+        "协调器可能借此放宽对自己的限制——风险最高，建议保持关闭。",
       "detail.archive": "归档项目",
       "detail.unarchive": "取消归档",
       "detail.execute": "执行",
