@@ -135,19 +135,36 @@ jobs:
           version="0.0.${GITHUB_RUN_ID}"
           # 上一步「Wait for the npm registry to serve the version」只保证元数据可见，
           # tarball 本体可能还要再晚一拍（2026-11-20 09:12 UTC 实测：npm view 已可查，
-          # curl tarball 仍 404）。这里同样退避重试，别把传播延迟判成发布错误。
+          # curl tarball 仍 404）。这里退避重试，别把传播延迟判成发布错误。
+          #
+          # 2026-11-22 又把这条撞了一次：固定 12×10s（2 分钟）用完时 tarball 还没出来，
+          # 而**索引本身其实已经正确发布**（事后核对 index.json 里版本齐全）——
+          # 也就是"发布成功、校验误判"。改成指数退避 + 10 分钟预算，并把已等时长打进日志。
           fetched=""
-          for attempt in $(seq 1 12); do
+          start=$(date +%s)
+          deadline=$((start + 600))
+          delay=10
+          attempt=0
+          while :; do
+            attempt=$((attempt + 1))
             tarball=$(npm view "@kangyishuai/dsh-plugin-index@${version}" dist.tarball 2>/dev/null || true)
             if [ -n "${tarball}" ] && curl -fsSL "${tarball}" -o /tmp/published-new.tgz; then
               fetched="yes"
+              echo "tarball 已可取（第 ${attempt} 次尝试，已等 $(( $(date +%s) - start ))s）"
               break
             fi
-            echo "新发布 tarball 还不可取（第 ${attempt}/12 次，10s 后重试）"
-            sleep 10
+            now=$(date +%s)
+            if [ $((now + delay)) -gt "${deadline}" ]; then
+              echo "::error::npm registry 在 $((now - start))s 内没有提供 ${version} 的 tarball"
+              exit 1
+            fi
+            echo "新发布 tarball 还不可取（第 ${attempt} 次，已等 $((now - start))s，${delay}s 后重试）"
+            sleep "${delay}"
+            delay=$((delay * 2))
+            if [ "${delay}" -gt 60 ]; then delay=60; fi
           done
           if [ -z "${fetched}" ]; then
-            echo "::error::npm registry 在 2 分钟内没有提供 ${version} 的 tarball"
+            echo "::error::npm registry 没有提供 ${version} 的 tarball"
             exit 1
           fi
           tar -xzOf /tmp/published-new.tgz package/index.json > /tmp/published-new.json
@@ -175,12 +192,29 @@ jobs:
                 console.log('live index:', index.plugins.length, 'plugins');
                 for (const plugin of index.plugins) console.log(' ', plugin.name, plugin.versions[0].version);
               "
+              # 只"是合法索引"还不够：CDN 可能仍在发 12 小时的旧缓存。
+              # 2026-11-22 实测到这种情况：npm 上已有 0.9.1，不带版本号的 URL 仍返回 0.9.0，
+              # 而这一步因为"内容合法"直接过了——等于把"用户看不到新版本"判成成功。
+              node -e "
+                const fs = require('node:fs');
+                const live = JSON.parse(fs.readFileSync('/tmp/live.json', 'utf8'));
+                const built = JSON.parse(fs.readFileSync('build/index.json', 'utf8'));
+                const latest = (index) => new Map(index.plugins.map((p) => [p.name, p.versions[0]?.version ?? '']));
+                const liveMap = latest(live);
+                const builtMap = latest(built);
+                const stale = [...builtMap].filter(([name, version]) => liveMap.get(name) !== version);
+                if (stale.length > 0) {
+                  console.log('CDN 仍是旧内容，落后：' + stale.map(([n, v]) => n + '@' + v).join('、'));
+                  process.exit(1);
+                }
+                console.log('CDN 内容与本次构建一致');
+              "
               echo "cdn=ok" >> "$GITHUB_OUTPUT"
               exit 0
             fi
             sleep 10
           done
-          echo "::warning::jsDelivr 在 3 分钟内没有提供 index.json；npm 上已发布，CDN 会随后跟上"
+          echo "::warning::jsDelivr 在 3 分钟内没有提供与本次构建一致的 index.json；npm 上已发布，CDN 会随后跟上"
           echo "cdn=lagging" >> "$GITHUB_OUTPUT"
 
       - name: Summary
