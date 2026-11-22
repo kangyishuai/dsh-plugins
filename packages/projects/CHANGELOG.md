@@ -1,5 +1,23 @@
 # @kangyishuai/dsh-projects
 
+## 0.7.3
+
+### Patch Changes
+
+- [#302](https://github.com/kangyishuai/dsh-plugins/pull/302) [`f6623c5`](https://github.com/kangyishuai/dsh-plugins/commit/f6623c565d5aa170b8fffe769206408ef913e597) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 修 `reclaimThread` 对**已合并线程**的保守判据：squash 合并 + 删分支之后，worktree 会一直回收不掉。
+  
+  **根因**：回收要确认"提交都推上去了"。但 squash 合并会生成一个新的提交，原分支的提交
+  **不再是主干的祖先**，而分支一旦被删（B5 的常规操作），这些提交也不在任何 remote ref 上——
+  两个判据同时失效，于是永远拒绝。
+  
+  **修法**：让"已合并"成为一个可记录的事实，而不是靠 git 事后推断。
+  - 线程记录新增 `prNumber` / `mergedAt`：`openPr` 成功时记下 PR 号
+  - 合并审批执行成功时，把对应 PR 的线程标记 `mergedAt`
+  - 回收判据：`mergedAt` 存在即放行（内容已在主干）；否则维持原判据（未合并且有未推送就拒绝）
+  
+  新增 1 项真实 git 集成测试：squash 合并 + 删远端分支后，**未标记时拒绝、标记后允许回收**；
+  另加 4 项 `shouldReclaim` 单测（merged 放行、未合并拒绝、当前会话/脏工作区仍拒绝）。
+
 ## 0.7.2
 
 ### Patch Changes
