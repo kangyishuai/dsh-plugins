@@ -580,3 +580,27 @@ failed to create session: Error: session header cwd must be an absolute path, go
 
 集成测试用真实 git 复现整条链路（commit → push → squash 合并 → 删远端分支），断言
 **未标记时拒绝、标记后回收成功**。
+
+### 17.12 危险开关的可达性（v0.8.x）
+
+**验收发现**：把临时 profile 的 `ui-settings` 打开后，插件设置分节在**未登录**的 profile 里没有出现——
+「插件」页只有「已安装插件 → @kangyishuai/dsh-projects → 开始使用」，没有配置区。
+如果分节不渲染，六个危险开关（以及人格/路由/预算）在界面上就**完全不可达**，只能手改 JSON。
+
+**对策**：把危险开关放进**项目详情 → 高级设置**（它们本来就是 per-project 策略），
+与设置页共用同一套 i18n 文案与写入路径：
+
+```
+▼ 高级设置（仓库授权 / 回收站）
+  ▼ 危险动作开关（默认全关）
+     □ 允许强推自己的 dsh/ 分支 — 用 --force-with-lease 绑定期望 SHA…
+     □ 允许直推默认/保护分支 — 需要先在项目策略里对该仓库 per-repo 授予…
+     □ 允许自动合并 PR — 合并不可逆（只能用 revert 回退）…
+     □ 允许自动归档/删除到回收站 — 会把内容移入 trash/…
+     □ 允许保留期后清理回收站 — …默认 dry-run，真删需显式确认
+     □ 允许修改项目策略本身 — 协调器可能借此放宽自己的限制；风险最高
+```
+
+**文案评估（待改进）**：六条说明偏工程向，普通用户会被 `--force-with-lease`、`SHA`、`per-repo`、
+`protection/rulesets`、`manifest`、`dry-run`、`diff 阈值` 这些词挡住。建议每条先给一句人话结论，
+技术细节折进第二行或 tooltip。

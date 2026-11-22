@@ -1853,6 +1853,17 @@ window.__ModuleLoader__.load({
             { style: { ...styles.meta, cursor: "pointer" } },
             text(t, "detail.configTitle"),
           ),
+          // 危险开关放这里：宿主设置页在未登录 profile 里根本不渲染插件分节（验收发现），
+          // 而这些都是 per-project 策略，放在项目自己的高级设置里更合理。
+          h(DangerSwitches, {
+            t: t,
+            policy: project.policy,
+            onChange: (/** @type {any} */ patch) =>
+              call(api.ctx, "updateProject", {
+                id: project.id,
+                patch: { policy: { ...project.policy, ...patch } },
+              }).then(() => load()),
+          }),
           // 仓库授权：直推保护分支需要 per-repo 首次授予（规格 §7.5 行 2），没有界面就只能手编 JSON
           h(
             "div",

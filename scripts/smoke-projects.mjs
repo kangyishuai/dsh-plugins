@@ -476,6 +476,20 @@ try {
   });
   await page.waitForTimeout(600);
   // 回收站必须可看、可恢复（删除文案承诺"可恢复"，承诺就要能看到入口）
+  // 危险开关必须能在项目详情里看到（设置页在未登录 profile 里不渲染插件分节）
+  const dangerPanel = await page.evaluate(() => {
+    const details = document.querySelector("[data-projects-policy-danger]");
+    if (details) details.open = true;
+    const labels = [...document.querySelectorAll("[data-projects-danger-switch]")].map((n) => n.getAttribute("data-projects-danger-switch"));
+    const box = document.querySelector("[data-projects-policy-danger]");
+    return { count: labels.length, text: box ? (box.innerText || "").slice(0, 200) : "" };
+  });
+  add(
+    "项目详情可见六个危险开关（含风险说明）",
+    dangerPanel.count === 6 && dangerPanel.text.length > 60,
+    JSON.stringify({ count: dangerPanel.count }),
+  );
+
   const trashVisible = await page.evaluate(() =>
     Boolean(document.querySelector("[data-projects-trash]")),
   );
