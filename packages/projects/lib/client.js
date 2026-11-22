@@ -567,6 +567,8 @@ window.__ModuleLoader__.load({
               onChanged: () => refresh(),
             })
           : null,
+        // 一个项目都没有时，详情页进不去——回收站必须在面板这层有出口，否则恢复入口自锁
+        selectedId ? null : h(PanelTrash, { api: api, t: t, onChanged: refresh }),
         selectedId
           ? null
           : projects.length === 0 && !view.loading
@@ -626,6 +628,184 @@ window.__ModuleLoader__.load({
     /**
      * 项目详情：线程 / 记忆 / 审计三个页签（conventions §7.3：页签 ≤3）。
      * 只读；写操作留给后续里程碑。
+     * @param {{api: any, t: any, project: any, onBack: () => void, onDeleted?: () => void, onChanged?: () => void}} props
+     */
+    /**
+     * 面板级回收站（只在"一个项目都没有"时出现）。
+     * 为什么需要它：回收站原先只挂在项目详情页里，删掉最后一个项目后就再也进不去详情页，
+     * 恢复入口自锁——这是 0.6.0 验收时发现的死锁。这里给一条不依赖项目的出路。
+     * @param {any} props
+     */
+    function PanelTrash(props) {
+      const api = props.api;
+      const t = props.t;
+      const stateTuple = useState({ entries: [], loaded: false, message: "", pending: "" });
+      const state = stateTuple[0];
+      const setState = stateTuple[1];
+      const size = (/** @type {number} */ bytes) => {
+        const n = Number.isFinite(bytes) ? Math.max(0, Number(bytes)) : 0;
+        if (n < 1024) return `${n} B`;
+        if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+        return `${(n / 1024 / 1024).toFixed(1)} MB`;
+      };
+      const load = useCallback(() => {
+        call(api.ctx, "listTrash", {}).then(
+          (/** @type {any} */ result) =>
+            setState((/** @type {any} */ prev) => ({
+              ...prev,
+              entries: Array.isArray(result?.entries) ? result.entries : [],
+              loaded: true,
+            })),
+          (/** @type {any} */ error) =>
+            setState((/** @type {any} */ prev) => ({
+              ...prev,
+              loaded: true,
+              message: String(error?.message ?? error),
+            })),
+        );
+      }, [api, setState]);
+      useEffect(() => {
+        if (!state.loaded) load();
+      }, [load, state.loaded]);
+      const restore = useCallback(
+        (/** @type {any} */ entry) => {
+          call(api.ctx, "restoreTrash", { entryId: entry.entryId }).then(
+            (/** @type {any} */ result) => {
+              setState({
+                entries: [],
+                loaded: false,
+                message: text(t, "detail.trashRestored", {
+                  name: result?.name ?? "",
+                  count: result?.threadCount ?? 0,
+                }),
+                pending: "",
+              });
+              load();
+              props.onChanged();
+            },
+            (/** @type {any} */ error) =>
+              setState((/** @type {any} */ prev) => ({
+                ...prev,
+                message: text(t, "detail.trashFailed", { reason: String(error?.message ?? error) }),
+              })),
+          );
+        },
+        [api, load, props, setState, t],
+      );
+      const remove = useCallback(
+        (/** @type {any} */ entry) => {
+          if (state.pending !== entry.entryId) {
+            setState((/** @type {any} */ prev) => ({ ...prev, pending: entry.entryId }));
+            return;
+          }
+          call(api.ctx, "deleteTrashEntry", {
+            options: { entryId: entry.entryId, confirm: true },
+          }).then(
+            (/** @type {any} */ result) => {
+              setState((/** @type {any} */ prev) => ({
+                ...prev,
+                pending: "",
+                entries: prev.entries.filter(
+                  (/** @type {any} */ item) => item.entryId !== entry.entryId,
+                ),
+                message: text(t, "detail.trashDeleted", {
+                  size: size(Number(result?.bytes ?? entry.sizeBytes)),
+                }),
+              }));
+            },
+            (/** @type {any} */ error) =>
+              setState((/** @type {any} */ prev) => ({
+                ...prev,
+                message: text(t, "detail.trashDeleteFailed", {
+                  reason: String(error?.message ?? error),
+                }),
+              })),
+          );
+        },
+        [api, setState, state.pending, t],
+      );
+      if (state.entries.length === 0 && state.message === "") {
+        return h(
+          "div",
+          { "data-projects-trash": "", style: { ...styles.meta, marginTop: "8px" } },
+          text(t, "detail.trashEmpty"),
+        );
+      }
+      return h(
+        "div",
+        {
+          "data-projects-trash": "",
+          style: {
+            border: `1px solid ${T.border}`,
+            borderRadius: "8px",
+            padding: "8px 10px",
+            marginTop: "10px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "6px",
+          },
+        },
+        h("div", { style: styles.name }, text(t, "detail.trashTitle")),
+        state.entries.map((/** @type {any} */ entry) =>
+          h(
+            "div",
+            {
+              key: entry.entryId,
+              "data-projects-trash-row": entry.entryId,
+              style: {
+                display: "flex",
+                gap: "8px",
+                alignItems: "center",
+                justifyContent: "space-between",
+              },
+            },
+            h(
+              "span",
+              {
+                style: {
+                  ...styles.meta,
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                },
+              },
+              `${entry.name} · ${entry.threadCount} 个线程 · ${size(entry.sizeBytes)}`,
+            ),
+            h(
+              "div",
+              { style: { display: "flex", gap: "6px" } },
+              h(
+                "button",
+                {
+                  type: "button",
+                  style: styles.button,
+                  "data-projects-trash-restore": entry.entryId,
+                  onClick: () => restore(entry),
+                },
+                text(t, "detail.trashRestore"),
+              ),
+              h(
+                "button",
+                {
+                  type: "button",
+                  style: { ...styles.button, borderColor: T.danger, color: T.danger },
+                  "data-projects-trash-delete": entry.entryId,
+                  onClick: () => remove(entry),
+                },
+                state.pending === entry.entryId
+                  ? text(t, "detail.trashDeleteConfirm", { size: size(entry.sizeBytes) })
+                  : text(t, "detail.trashDelete"),
+              ),
+            ),
+          ),
+        ),
+        state.message !== ""
+          ? h("div", { style: styles.meta, "data-projects-trash-result": "" }, state.message)
+          : null,
+      );
+    }
+
+    /**
      * @param {{api: any, t: any, project: any, onBack: () => void, onDeleted?: () => void, onChanged?: () => void}} props
      */
     function ProjectDetail(props) {

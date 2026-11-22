@@ -440,7 +440,11 @@ export class ProjectStore {
     const id = String(project?.id ?? "");
     if (id === "") throw new Error("projects: restoreProject requires project.id");
     if (this.state.projects[id]) throw new Error(`projects: project already exists ${id}`);
-    this.state.projects[id] = { ...project, state: "active" };
+    // 恢复要**保留原状态**：归档的仍是归档、暂停的仍是暂停，别把用户显式设过的状态抹掉
+    const state = ["active", "paused", "archived"].includes(String(project?.state))
+      ? String(project.state)
+      : "active";
+    this.state.projects[id] = { ...project, state };
     for (const thread of threads) {
       const sessionId = String(thread?.sessionId ?? "");
       if (sessionId === "") continue;
