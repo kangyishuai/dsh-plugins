@@ -806,6 +806,24 @@ export class ProjectsService extends TypertRemoteService {
     return project;
   }
 
+  /**
+   * 收藏 / 取消收藏项目。
+   * 只改 pinned 一个字段：不杀线程、不动 worktree、不触发唤醒——收藏是视图状态，
+   * 副作用越少越不会出现"收个藏把项目停了"这类意外（U2：UI 状态必须有持久化字段）。
+   * @param {string} projectId
+   * @param {boolean} pinned
+   */
+  setProjectPinned(projectId, pinned) {
+    const store = this.requireStore();
+    const project = store.setPinned(String(projectId ?? ""), pinned === true);
+    store.appendAudit({
+      action: pinned === true ? "project/pinned" : "project/unpinned",
+      projectId: project.id,
+    });
+    store.save();
+    return project;
+  }
+
   /** @param {string} id */
   /**
    * 取消归档：回到 active，线程归属与内容文件都还在（归档从不删数据）。
@@ -2182,6 +2200,7 @@ declareRemote(ProjectsService, "pauseProject");
 declareRemote(ProjectsService, "resumeProject");
 declareRemote(ProjectsService, "archiveProject");
 declareRemote(ProjectsService, "unarchiveProject");
+declareRemote(ProjectsService, "setProjectPinned");
 declareRemote(ProjectsService, "reconcileWakes");
 declareRemote(ProjectsService, "purgeTrash");
 declareRemote(ProjectsService, "cleanupBranches");

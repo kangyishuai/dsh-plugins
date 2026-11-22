@@ -124,6 +124,54 @@ try {
   const notifierMounted = await page.evaluate(() => Boolean(document.querySelector("[data-projects-notifier]")));
   add("全局通知器已挂载", notifierMounted === true, String(notifierMounted));
 
+  // 新建走真实入口：工具条主按钮 → 模态（两张入口卡）→ 填名 → 创建。
+  // 老流程直接点列表页的输入框，那些锚点现在在模态里（模态常驻 DOM、关闭时 display:none），
+  // 所以断言必须按新流程走，否则测的是"隐藏按钮能被脚本点"而不是用户能走通的路。
+  const createViaModal = async (value, mode) => {
+    await page.evaluate(() => document.querySelector("[data-projects-new]")?.click());
+    await page.waitForTimeout(350);
+    await page.evaluate((which) => {
+      const sel = which === "folder" ? "[data-projects-new-folder]" : "[data-projects-new-scratch]";
+      document.querySelector(sel)?.click();
+    }, mode || "scratch");
+    await page.waitForTimeout(250);
+    const ok = await page.evaluate((text) => {
+      const input = document.querySelector("[data-projects-create-input]");
+      const button = document.querySelector("[data-projects-create]");
+      if (!input || !button) return false;
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+      setter.call(input, text);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      return true;
+    }, value);
+    await page.waitForTimeout(250);
+    await page.evaluate(() => document.querySelector("[data-projects-create]")?.click());
+    for (let i = 0; i < 24; i += 1) {
+      const done = await page.evaluate(
+        (text) =>
+          [...document.querySelectorAll("[data-projects-row]")].some((row) =>
+            (row.innerText || "").includes(text),
+          ) && document.querySelector("[data-projects-new-modal]")?.getAttribute("data-projects-new-modal") === "closed",
+        value,
+      );
+      if (done) return ok === true;
+      await page.waitForTimeout(500);
+    }
+    return false;
+  };
+
+  // 详情页的「归档 / 删除」收在右上 ⋯ 菜单里：点菜单再点对应项（锚点没变，入口变了）
+  const openDetailMenu = async () => {
+    const clicked = await page.evaluate(() => {
+      const button = document.querySelector("[data-projects-row-menu]");
+      if (!button) return false;
+      button.click();
+      return true;
+    });
+    await page.waitForTimeout(400);
+    return clicked;
+  };
+
 
 
   const dismissed = await page.evaluate(() => {
@@ -162,25 +210,97 @@ try {
 
   const beforeRows = await page.evaluate(() => document.querySelectorAll("[data-projects-row]").length);
   const name = "smoke-" + Date.now().toString(36);
-  // 用原生 setter + input 事件与真实 click 调起 React 处理器：
-  // 宿主主内容区上层有一层几何覆盖，page.fill/click 的命中测试会被拦，但这不影响真实用户。
+
+  // —— 新建项目：工具条主按钮 → 模态（两张入口卡）→ 表单 ——
+  const openedNew = await page.evaluate(() => {
+    const button = document.querySelector("[data-projects-new]");
+    if (!button) return "no-button";
+    button.click();
+    return "clicked";
+  });
+  await page.waitForTimeout(500);
+  const modalFirstScreen = await page.evaluate(() => ({
+    open: document.querySelector("[data-projects-new-modal]")?.getAttribute("data-projects-new-modal") ?? "",
+    dialog: Boolean(document.querySelector("[data-projects-new-dialog]")),
+    scratch: Boolean(document.querySelector("[data-projects-new-scratch]")),
+    folder: Boolean(document.querySelector("[data-projects-new-folder]")),
+    form: Boolean(document.querySelector("[data-projects-new-form]")),
+  }));
+  add(
+    "新建入口打开模态且给出两条入口",
+    openedNew === "clicked" &&
+      modalFirstScreen.open === "open" &&
+      modalFirstScreen.dialog &&
+      modalFirstScreen.scratch &&
+      modalFirstScreen.folder &&
+      modalFirstScreen.form === false,
+    JSON.stringify(modalFirstScreen),
+  );
+  // 两条入口各自打开同一张表单（顺序：folder → 返回 → scratch）
+  await page.evaluate(() => document.querySelector("[data-projects-new-folder]")?.click());
+  await page.waitForTimeout(250);
+  const folderPath = await page.evaluate(
+    () => document.querySelector("[data-projects-new-form]")?.getAttribute("data-projects-new-form") ?? "",
+  );
+  await page.evaluate(() => document.querySelector("[data-projects-new-back]")?.click());
+  await page.waitForTimeout(250);
+  const backToChooser = await page.evaluate(
+    () => Boolean(document.querySelector("[data-projects-new-scratch]")) && !document.querySelector("[data-projects-new-form]"),
+  );
+  await page.evaluate(() => document.querySelector("[data-projects-new-scratch]")?.click());
+  await page.waitForTimeout(250);
+  const scratchPath = await page.evaluate(
+    () => document.querySelector("[data-projects-new-form]")?.getAttribute("data-projects-new-form") ?? "",
+  );
+  add(
+    "两条入口各自打开同一张表单",
+    folderPath === "folder" && scratchPath === "scratch" && backToChooser === true,
+    JSON.stringify({ folderPath, scratchPath, backToChooser }),
+  );
+  const emptyDisabled = await page.evaluate(() => {
+    const button = document.querySelector("[data-projects-create]");
+    return button
+      ? { disabled: button.disabled === true, ready: button.getAttribute("data-projects-create-ready") }
+      : null;
+  });
+  add("项目名为空时创建按钮禁用", emptyDisabled?.disabled === true, JSON.stringify(emptyDisabled));
   await page.evaluate((value) => {
     const input = document.querySelector("[data-projects-create-input]");
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
     setter.call(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
-    document.querySelector("[data-projects-create]").click();
   }, name);
-  await page.waitForTimeout(3000);
-  const after = await page.evaluate((target) => ({
-    rows: document.querySelectorAll("[data-projects-row]").length,
-    created: [...document.querySelectorAll("[data-projects-row]")].some((row) => (row.innerText || "").includes(target)),
-    summary: document.querySelector("[data-projects-summary]")?.textContent || "",
-    error: document.querySelector("[data-projects-error]")?.textContent || "",
-  }), name);
+  await page.waitForTimeout(250);
+  const filledEnabled = await page.evaluate(
+    () => document.querySelector("[data-projects-create]")?.disabled === false,
+  );
+  add("填了项目名后创建按钮可用（唯一门槛）", filledEnabled === true, String(filledEnabled));
+  await page.evaluate(() => document.querySelector("[data-projects-create]")?.click());
+  let after = { rows: 0, created: false, summary: "", error: "", modal: "", toast: "" };
+  for (let i = 0; i < 24; i += 1) {
+    await page.waitForTimeout(500);
+    after = await page.evaluate((target) => {
+      const rows = [...document.querySelectorAll("[data-projects-row]")];
+      return {
+        rows: rows.length,
+        created: rows.some((row) => (row.innerText || "").includes(target)),
+        summary: document.querySelector("[data-projects-summary]")?.textContent || "",
+        error: document.querySelector("[data-projects-error]")?.textContent || "",
+        modal: document.querySelector("[data-projects-new-modal]")?.getAttribute("data-projects-new-modal") ?? "",
+        toast: [...document.querySelectorAll("[data-projects-toast]")].map((node) => (node.textContent || "").trim()).join(" | "),
+      };
+    }, name);
+    if (after.created) break;
+  }
   add("通过 UI 新建项目成功", after.created && after.rows === beforeRows + 1, JSON.stringify(after));
+  add("新建成功后模态关闭", after.modal === "closed", String(after.modal));
+  add("新建成功后出现 toast 并点名项目", after.toast.includes(name), after.toast.slice(0, 80));
   add("新建后摘要计数增加", /\\d+/u.test(after.summary), after.summary);
   add("新建没有报错条", after.error === "", after.error);
+  // toast 3.5s 自动消失：必须断言「真的消失」，不能只断言出现过
+  await page.waitForTimeout(4200);
+  const toastGone = await page.evaluate(() => document.querySelectorAll("[data-projects-toast]").length === 0);
+  add("toast 在 4 秒内自动消失", toastGone === true, String(toastGone));
 
   // 会话行菜单：先建一个会话（临时 home 已种工作区），再打开它的「…」菜单归属到项目。
   const createdSession = await page.evaluate(() => {
@@ -437,6 +557,25 @@ try {
       Buffer.from(detailShot.data, "base64"),
     );
   }
+  // 详情页两列布局：主列（composer + 页签 + 线程）在 DOM 里先于右栏（指令/记忆/上下文）
+  await page.cdp("Emulation.setDeviceMetricsOverride", { width: 800, height: 900, deviceScaleFactor: 1, mobile: false });
+  await page.waitForTimeout(400);
+  {
+    const detailShot2 = await page.cdp("Page.captureScreenshot", { format: "png" });
+    const fsp = await import("node:fs/promises");
+    await fsp.writeFile(${JSON.stringify(shotsDir)} + "/04-detail.png", Buffer.from(detailShot2.data, "base64"));
+  }
+  await page.cdp("Emulation.clearDeviceMetricsOverride", {});
+
+  // 宽窗（1440）再拍一张：确认两列布局（主列 + 320 右栏）在宽面板下真的成立
+  await page.cdp("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+  await page.waitForTimeout(500);
+  {
+    const wideShot = await page.cdp("Page.captureScreenshot", { format: "png" });
+    const fsp = await import("node:fs/promises");
+    await fsp.writeFile(${JSON.stringify(shotsDir)} + "/05-detail-wide.png", Buffer.from(wideShot.data, "base64"));
+  }
+  await page.cdp("Emulation.clearDeviceMetricsOverride", {});
 
   // 详情页新增两块：仓库授权 + 回收站清理（都必须渲染出来）
   const newBlocks = await page.evaluate(() => ({
@@ -485,15 +624,40 @@ try {
     panelSummary.slice(0, 80),
   );
 
-  // 配置区默认折叠：否则三块配置把线程压到折叠线以下（走查结论）
-  const configCollapsed = await page.evaluate(() => {
-    const details = document.querySelector("[data-projects-config]");
-    return details ? { present: true, open: details.open === true } : { present: false, open: false };
+  // 详情页改成 Claude 项目主页的两列布局：主列（composer + 页签 + 线程）在 DOM 里先于右栏，
+  // 右栏常驻「指令 / 记忆 / 上下文」三段。旧版是「三块配置压在线程列表之前」，走查 P1-5 已修。
+  const layout = await page.evaluate(() => {
+    const rail = document.querySelector("[data-projects-config]");
+    const main = document.querySelector("[data-projects-detail-main]");
+    const threads = document.querySelector("[data-projects-threads], [data-projects-threads-empty]");
+    const following = (a, b) =>
+      a && b ? (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 : false;
+    return {
+      rail: Boolean(rail),
+      main: Boolean(main),
+      sections: ["[data-projects-rail-instructions]", "[data-projects-rail-memory]", "[data-projects-rail-context]"].map(
+        (sel) => Boolean(document.querySelector(sel)),
+      ),
+      instructions: Boolean(document.querySelector("[data-projects-instructions]")),
+      dirInput: Boolean(document.querySelector("[data-projects-dir-input]")),
+      mainBeforeRail: following(main, rail),
+      threadsBeforeRail: following(threads, rail),
+      configIsAside: rail ? rail.tagName.toLowerCase() === "aside" : false,
+    };
   });
   add(
-    "高级设置默认折叠（首屏留给线程）",
-    configCollapsed.present === true && configCollapsed.open === false,
-    JSON.stringify(configCollapsed),
+    "详情页两列：右栏含指令/记忆/上下文三段",
+    layout.rail === true &&
+      layout.main === true &&
+      layout.sections.every((value) => value === true) &&
+      layout.instructions === true &&
+      layout.dirInput === true,
+    JSON.stringify(layout),
+  );
+  add(
+    "线程列表在右栏之前（DOM 顺序，不再压线程）",
+    layout.mainBeforeRail === true && layout.threadsBeforeRail === true && layout.configIsAside === true,
+    JSON.stringify({ mainBeforeRail: layout.mainBeforeRail, threadsBeforeRail: layout.threadsBeforeRail }),
   );
   // 展开后才看回收站（真实用户也要先展开）
   await page.evaluate(() => {
@@ -712,15 +876,7 @@ try {
     if (back) back.click();
   });
   await page.waitForTimeout(1200);
-  await page.evaluate(() => {
-    const input = document.querySelector("[data-projects-create-input]");
-    const button = document.querySelector("[data-projects-create]");
-    if (!input || !button) return;
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-    setter.call(input, "smoke-to-archive");
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    button.click();
-  });
+  await createViaModal("smoke-to-archive");
   await page.waitForTimeout(2000);
   const openedArchiveRow = await page.evaluate(() => {
     const row = [...document.querySelectorAll("[data-projects-row]")].find((node) =>
@@ -731,6 +887,7 @@ try {
     return "clicked";
   });
   await page.waitForTimeout(1500);
+  await openDetailMenu();
   const archiveClicked = await page.evaluate(() => {
     const button = document.querySelector("[data-projects-toggle-archive]");
     if (!button) return "no-button";
@@ -772,16 +929,7 @@ try {
   await page.waitForTimeout(1200);
 
   // 先建一个一次性项目专门用来删（不要删主项目，后面还有宿主侧断言要用它）
-  const throwaway = await page.evaluate(() => {
-    const input = document.querySelector("[data-projects-create-input]");
-    const button = document.querySelector("[data-projects-create]");
-    if (!input || !button) return "no-controls";
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-    setter.call(input, "smoke-to-delete");
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    button.click();
-    return "clicked";
-  });
+  const throwaway = await createViaModal("smoke-to-delete");
   await page.waitForTimeout(2000);
   const openedThrowaway = await page.evaluate(() => {
     const row = [...document.querySelectorAll("[data-projects-row]")].find((node) =>
@@ -793,6 +941,7 @@ try {
   });
   await page.waitForTimeout(1500);
 
+  await openDetailMenu();
   const askedDelete = await page.evaluate(() => {
     const button = document.querySelector("[data-projects-delete]");
     if (!button) return "no-button";
@@ -830,7 +979,7 @@ try {
   });
   add(
     "确认删除后临时项目消失",
-    throwaway === "clicked" && openedThrowaway === "clicked" && confirmed === "clicked" && goneFromList === true,
+    throwaway === true && openedThrowaway === "clicked" && confirmed === "clicked" && goneFromList === true,
     JSON.stringify({ throwaway, openedThrowaway, confirmed }),
   );
   const rowIds = await page.evaluate(() =>
@@ -841,6 +990,161 @@ try {
     rowIds.length > 0 && rowIds.every((id) => /^#[A-Za-z0-9_-]{4,}$/u.test(id)),
     JSON.stringify(rowIds.slice(0, 3)),
   );
+
+  // —— 列表页：搜索 / 排序 / 收藏 / 行内 ⋯（Batch A 的四个新面） ——
+  const listShot = async (file) => {
+    const data = await page.cdp("Page.captureScreenshot", { format: "png" });
+    const fsp = await import("node:fs/promises");
+    await fsp.writeFile(${JSON.stringify(shotsDir)} + "/" + file, Buffer.from(data.data, "base64"));
+  };
+  await page.cdp("Emulation.setDeviceMetricsOverride", { width: 800, height: 900, deviceScaleFactor: 1, mobile: false });
+  await page.waitForTimeout(400);
+  await listShot("03-list.png");
+  await page.cdp("Emulation.clearDeviceMetricsOverride", {});
+
+  const rowsTotal = await page.evaluate(() => document.querySelectorAll("[data-projects-row]").length);
+  const searched = await page.evaluate(() => {
+    const input = document.querySelector("[data-projects-search]");
+    if (!input) return "no-input";
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    setter.call(input, "smoke-to-");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    return "typed";
+  });
+  await page.waitForTimeout(500);
+  const searchMatched = await page.evaluate(() => document.querySelectorAll("[data-projects-row]").length);
+  await page.evaluate(() => {
+    const input = document.querySelector("[data-projects-search]");
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    setter.call(input, "zzz-definitely-no-such-project");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await page.waitForTimeout(600);
+  const searchMiss = await page.evaluate(() => ({
+    rows: document.querySelectorAll("[data-projects-row]").length,
+    empty: (document.querySelector("[data-projects-search-empty]")?.textContent || "").trim(),
+    createButton: Boolean(document.querySelector("[data-projects-new]")),
+  }));
+  add(
+    "搜索即时过滤且命中项保留",
+    searched === "typed" && searchMatched > 0 && searchMatched < rowsTotal,
+    JSON.stringify({ rowsTotal, searchMatched }),
+  );
+  add(
+    "搜索无结果给专属文案（与「没有项目」空态不同）",
+    searchMiss.rows === 0 && /没有匹配|No projects match/u.test(searchMiss.empty),
+    JSON.stringify(searchMiss),
+  );
+  await page.evaluate(() => document.querySelector("[data-projects-search-clear]")?.click());
+  await page.waitForTimeout(600);
+  const clearedRows = await page.evaluate(() => document.querySelectorAll("[data-projects-row]").length);
+  add("清空搜索后回到完整列表", clearedRows === rowsTotal, JSON.stringify({ clearedRows, rowsTotal }));
+
+  // 排序菜单：三项 + 当前项打勾
+  await page.evaluate(() => document.querySelector("[data-projects-sort]")?.click());
+  await page.waitForTimeout(500);
+  const sortMenu = await page.evaluate(() => ({
+    open: Boolean(document.querySelector("[data-projects-sort-menu]")),
+    options: [...document.querySelectorAll("[data-projects-sort-option]")].map((node) =>
+      node.getAttribute("data-projects-sort-option"),
+    ),
+    check: Boolean(document.querySelector("[data-projects-sort-check]")),
+  }));
+  add(
+    "排序菜单给出三项且当前项打勾",
+    sortMenu.open === true &&
+      sortMenu.options.join(",") === "lastActive,created,name" &&
+      sortMenu.check === true,
+    JSON.stringify(sortMenu),
+  );
+  await page.evaluate(() => document.querySelector('[data-projects-sort-option="name"]')?.click());
+  await page.waitForTimeout(500);
+  const sortedByName = await page.evaluate(() => ({
+    key: document.querySelector("[data-projects-sort]")?.getAttribute("data-sort") ?? "",
+    rows: [...document.querySelectorAll("[data-projects-row-name]")].map((node) =>
+      (node.textContent || "").trim(),
+    ),
+  }));
+  const nameOrder = sortedByName.rows.map((text) => text.split("#")[0]);
+  const nameSorted = nameOrder.every((value, index) => index === 0 || nameOrder[index - 1].localeCompare(value) <= 0);
+  add(
+    "选择「名称」后列表按名称重排",
+    sortedByName.key === "name" && nameSorted === true,
+    JSON.stringify(sortedByName).slice(0, 160),
+  );
+  await page.evaluate(() => document.querySelector('[data-projects-sort-option="lastActive"]')?.click());
+  await page.waitForTimeout(500);
+
+  // 收藏：默认未收藏 → 点击变已收藏 → 收藏项排到最前（乐观更新 + 回读）
+  const pinBefore = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll("[data-projects-row]")];
+    const row = rows.find((node) => (node.textContent || "").includes(name));
+    if (!row) return { found: false };
+    const button = row.querySelector("[data-projects-pin]");
+    return {
+      found: true,
+      id: row.getAttribute("data-projects-row"),
+      pinned: button?.getAttribute("data-pinned") ?? "",
+      first: rows[0]?.getAttribute("data-projects-row") ?? "",
+    };
+  });
+  const pinClicked = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll("[data-projects-row]")];
+    const row = rows.find((node) => (node.textContent || "").includes(name));
+    const button = row?.querySelector("[data-projects-pin]");
+    if (!button) return "no-button";
+    button.click();
+    return "clicked";
+  });
+  await page.waitForTimeout(2200);
+  const pinAfter = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll("[data-projects-row]")];
+    return {
+      first: rows[0]?.getAttribute("data-projects-row") ?? "",
+      pinned: rows[0]?.querySelector("[data-projects-pin]")?.getAttribute("data-pinned") ?? "",
+      marks: document.querySelectorAll("[data-projects-pin-mark]").length,
+    };
+  });
+  add(
+    "收藏默认 false、点击后变 true 且排到列表最前",
+    pinBefore.found === true &&
+      pinBefore.pinned === "false" &&
+      pinClicked === "clicked" &&
+      pinAfter.pinned === "true" &&
+      pinAfter.first === pinBefore.id &&
+      pinAfter.marks > 0,
+    JSON.stringify({ pinBefore, pinClicked, pinAfter }),
+  );
+
+  // 行内 ⋯：三项（编辑详情 / 归档 / 删除）
+  await page.evaluate(() => {
+    const rows = [...document.querySelectorAll("[data-projects-row]")];
+    const row = rows.find((node) => (node.textContent || "").includes(name));
+    row?.querySelector("[data-projects-row-menu]")?.click();
+  });
+  await page.waitForTimeout(500);
+  const rowMenu = await page.evaluate(() => {
+    const list = document.querySelector("[data-projects-row-menu-list]");
+    return {
+      open: Boolean(list),
+      edit: Boolean(document.querySelector("[data-projects-row-menu-edit]")),
+      archive: Boolean(document.querySelector("[data-projects-row-menu-archive]")),
+      remove: Boolean(document.querySelector("[data-projects-row-menu-delete]")),
+      text: (list?.textContent || "").trim(),
+    };
+  });
+  add(
+    "行内 ⋯ 给出编辑详情/归档/删除三项",
+    rowMenu.open === true &&
+      rowMenu.edit === true &&
+      rowMenu.archive === true &&
+      rowMenu.remove === true &&
+      /编辑详情/u.test(rowMenu.text) &&
+      /删除/u.test(rowMenu.text),
+    JSON.stringify(rowMenu).slice(0, 200),
+  );
+  await page.evaluate(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  await page.waitForTimeout(400);
   // 从详情返回后，列表里的线程数必须是新的（走查发现返回不刷新）
   await page.evaluate(() => {
     const row = document.querySelector("[data-projects-row]");
@@ -871,14 +1175,7 @@ try {
 
   // 删除承诺"可恢复"，就必须能真的恢复回来。用一个**单独**的临时项目做往返，
   // 免得把上面留给宿主侧 manifest 断言的条目恢复走。
-  await page.evaluate(() => {
-    const input = document.querySelector("[data-projects-create-input]");
-    const button = document.querySelector("[data-projects-create]");
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-    setter.call(input, "smoke-to-restore");
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    button.click();
-  });
+  await createViaModal("smoke-to-restore");
   await page.waitForTimeout(2000);
   await page.evaluate(() => {
     const row = [...document.querySelectorAll("[data-projects-row]")].find((n) =>
@@ -903,6 +1200,7 @@ try {
     /数据目录/u.test(noDirHint) && /绑定/u.test(noDirHint),
     noDirHint.slice(0, 80),
   );
+  await openDetailMenu();
   await page.evaluate(() => document.querySelector("[data-projects-delete]")?.click());
   await page.waitForTimeout(900);
   await page.evaluate(() => document.querySelector("[data-projects-delete-confirm]")?.click());
@@ -942,14 +1240,7 @@ try {
   // 用**第三个**临时项目做，别动上面留给恢复/宿主断言的条目
   await page.evaluate(() => document.querySelector("[data-projects-detail-back]")?.click());
   await page.waitForTimeout(900);
-  await page.evaluate(() => {
-    const input = document.querySelector("[data-projects-create-input]");
-    const button = document.querySelector("[data-projects-create]");
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-    setter.call(input, "smoke-to-purge");
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    button.click();
-  });
+  await createViaModal("smoke-to-purge");
   await page.waitForTimeout(2000);
   await page.evaluate(() => {
     const row = [...document.querySelectorAll("[data-projects-row]")].find((n) =>
@@ -958,6 +1249,7 @@ try {
     if (row) row.click();
   });
   await page.waitForTimeout(1400);
+  await openDetailMenu();
   await page.evaluate(() => document.querySelector("[data-projects-delete]")?.click());
   await page.waitForTimeout(900);
   await page.evaluate(() => document.querySelector("[data-projects-delete-confirm]")?.click());
@@ -1128,7 +1420,8 @@ try {
       if (row) row.click();
     });
     await page.waitForTimeout(1200);
-    await page.evaluate(() => document.querySelector("[data-projects-delete]")?.click());
+    await openDetailMenu();
+  await page.evaluate(() => document.querySelector("[data-projects-delete]")?.click());
     await page.waitForTimeout(800);
     await page.evaluate(() => document.querySelector("[data-projects-delete-confirm]")?.click());
     await page.waitForTimeout(1500);
@@ -1161,6 +1454,7 @@ try {
   }
   const restoredBack = await page.evaluate(() => document.querySelectorAll("[data-projects-row]").length);
   result.restoredAfterSelfLockCheck = restoredBack;
+  result.pinnedProject = name;
   result.projectName = name;
   await task.finish({ keep: [] });
 } catch (error) {
@@ -1446,6 +1740,24 @@ const main = async () => {
       detail: JSON.stringify(
         pausedProjects.map((/** @type {any} */ project) => project.name).slice(0, 2),
       ),
+    });
+    const pinnedProjects = Object.values(parsed?.projects ?? {}).filter(
+      (/** @type {any} */ project) => project?.pinned === true,
+    );
+    checks.push({
+      name: "收藏动作在宿主侧落盘（pinned=true 可回读）",
+      ok:
+        pinnedProjects.length === 1 &&
+        pinnedProjects[0].name === result.pinnedProject &&
+        typeof pinnedProjects[0].pinned === "boolean",
+      detail: JSON.stringify(pinnedProjects.map((/** @type {any} */ project) => project.name)),
+    });
+    checks.push({
+      name: "未收藏的项目 pinned 显式为 false（不是缺字段）",
+      ok: Object.values(parsed?.projects ?? {}).every(
+        (/** @type {any} */ project) => typeof project?.pinned === "boolean",
+      ),
+      detail: "",
     });
     const threadIds = parsed?.threads ? Object.keys(parsed.threads) : [];
     checks.push({

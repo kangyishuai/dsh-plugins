@@ -33,6 +33,7 @@ export const FORMAT_VERSION = 1;
  * @property {string|null} coordinatorSessionId
  * @property {ProjectPolicy} policy
  * @property {{dailyTokens:number|null, maxThreadsPerDay:number|null, maxStepsPerThread:number|null}} budget
+ * @property {boolean} pinned 收藏（个人视图状态；只影响列表排序，不触发其它动作）
  * @property {string} createdAt
  * @property {string} updatedAt
  */
@@ -198,6 +199,9 @@ export function normalize(raw, root) {
               ? project.budget.maxStepsPerThread
               : null,
         },
+        // 旧数据没有 pinned：缺失即 false（不 bump formatVersion——纯增量可选字段，
+        // 老版本读到 pinned 也只是忽略，两个方向都能读；破坏性变更才需要迁移步骤）。
+        pinned: project.pinned === true,
         createdAt: typeof project.createdAt === "string" ? project.createdAt : iso(),
         updatedAt: typeof project.updatedAt === "string" ? project.updatedAt : iso(),
       };
@@ -303,6 +307,7 @@ export class ProjectStore {
       state: "active",
       dirs: Array.isArray(input.dirs) ? input.dirs.filter((d) => typeof d === "string") : [],
       coordinatorSessionId: null,
+      pinned: false,
       policy: defaultPolicy(),
       budget: {
         dailyTokens: null,
@@ -328,7 +333,7 @@ export class ProjectStore {
 
   /**
    * @param {string} id
-   * @param {Partial<{name: string, goal: string, state: string, dirs: string[], coordinatorSessionId: string|null, policy: any, persona: string, budget: any}>} patch
+   * @param {Partial<{name: string, goal: string, state: string, dirs: string[], coordinatorSessionId: string|null, pinned: boolean, policy: any, persona: string, budget: any}>} patch
    */
   updateProject(id, patch) {
     const current = this.state.projects[id];
@@ -336,6 +341,7 @@ export class ProjectStore {
     const next = { ...current };
     if (typeof patch.name === "string" && patch.name.trim() !== "") next.name = patch.name.trim();
     if (typeof patch.goal === "string") next.goal = patch.goal;
+    if (typeof patch.pinned === "boolean") next.pinned = patch.pinned;
     if (["active", "paused", "archived"].includes(String(patch.state))) next.state = patch.state;
     if (Array.isArray(patch.dirs))
       next.dirs = patch.dirs.filter((/** @type {unknown} */ d) => typeof d === "string");
@@ -357,6 +363,21 @@ export class ProjectStore {
     next.updatedAt = iso(this.now());
     this.state.projects[id] = next;
     return { ...next };
+  }
+
+  /**
+   * 收藏 / 取消收藏：只改 pinned 一个字段。
+   * 为什么不复用 updateProject：收藏是「个人视图状态」，不该顺手改别的字段；
+   * 单独一个方法让调用点无法误传 policy/dirs。
+   * @param {string} id @param {boolean} pinned
+   */
+  setPinned(id, pinned) {
+    const current = this.state.projects[id];
+    if (!current) throw new Error(`projects: unknown project ${id}`);
+    current.pinned = pinned === true;
+    // 刻意**不**动 updatedAt：列表按「上次活跃」排序时，收藏不该让一个项目假装刚被用过。
+    // 排序里「收藏永远最前」是独立规则（sortProjects），不依赖 updatedAt。
+    return { ...current };
   }
 
   /**
