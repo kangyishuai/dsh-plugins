@@ -96,6 +96,35 @@ gh run watch "$(gh run list --workflow=index.yml --limit 1 --json databaseId --j
 
 它自己会比对内容、发布、purge。不要手工 `npm publish` 索引包——provenance 与版本号规则都在 workflow 里。**合并 PR 后第一件事就是跑它**：在这之前索引包还不存在，那个 URL 是 404。
 
+
+### 3.1 registry 传播慢导致 workflow 失败（2026-11-22 实测）
+
+`0.9.0` 发版时 `Plugin index` 失败，报：
+
+```
+Error: 等不到这些版本出现在 npm（重试 12 次后）：@kangyishuai/dsh-projects@0.9.0（registry 上是 0.8.2）
+```
+
+原因是 **npm 元数据与 tarball/CDN 分开传播**：`npm view` 已经有版本号，tarball（和 workflow 读的
+packument）却还落后几分钟。原来的等待是固定 `12 × 20s`（共 4 分钟），撞上这次延迟就用完了。
+
+**已改**（`scripts/build-index.mjs`）：指数退避 + 总预算。
+
+| 环境变量                 | 默认                | 含义                                                                 |
+| ------------------------ | ------------------- | -------------------------------------------------------------------- |
+| `INDEX_VERSION_WAIT_MS`  | `900000`（15 分钟） | 等待总预算；超时才抛错，报错里带**已等秒数**与每个包的 registry 版本 |
+| `INDEX_VERSION_DELAY_MS` | `5000`              | 首次等待间隔；之后每次翻倍，封顶 60 秒                               |
+
+日志会持续打印「已等 Ns，下次再等 Ms」，因此从失败日志就能判断是"还没传播完"还是"根本发错了版本"。
+
+**验证方式**（不依赖真实 npm 延迟）：起一个假 registry，让每个包**前两次请求少一个版本**、之后返回真实版本。
+
+- 成功路径：退避若干次后拿到版本，正常写出索引；
+- 失败路径：预算耗尽后抛错，报错包含已等时长与各包 registry 上的最新版本。
+
+失败后**不要改代码**，先确认 npm 上版本是否可见（`npm view <pkg>@<ver> version` 与
+tarball 的 HTTP 状态），可见后 `gh run rerun <run-id> --failed` 即可。
+
 ## 4. 已知边界
 
 - **每个插件只显示默认版本**：卡片上的版本是索引里最高稳定版；更老的版本在条目详情页的 **版本** 列表里（format 1 里我们列出了全部正式版本）。
