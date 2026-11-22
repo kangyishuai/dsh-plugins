@@ -2151,7 +2151,15 @@ export class ProjectsService extends TypertRemoteService {
   /** @param {string} sessionId */
   detachThread(sessionId) {
     const store = this.requireStore();
+    const project = store.projectOfSession(sessionId);
     const removed = store.detachThread(sessionId);
+    if (removed) {
+      store.appendAudit({
+        action: "thread/detached",
+        ...(project?.id ? { projectId: project.id } : {}),
+        sessionId,
+      });
+    }
     store.save();
     return removed;
   }

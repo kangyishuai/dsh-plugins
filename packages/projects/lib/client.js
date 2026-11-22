@@ -84,6 +84,14 @@ window.__ModuleLoader__.load({
         "不是 git 仓库：线程会共享这个目录（没有 worktree 隔离，别让两个线程同时改同一批文件）",
       "detail.dirInvalidHint": "需要绝对路径（以 / 开头）；相对路径无法作为会话目录，已拒绝保存。",
       "detail.threadShared": "未隔离",
+      "detail.threadWorktree": "目录：{path}",
+      "detail.threadReclaim": "回收目录",
+      "detail.threadReclaimed": "已回收 worktree（分支保留）",
+      "detail.threadReclaimKept": "未回收：{reason}",
+      "detail.threadRemove": "移除",
+      "detail.threadRemoveConfirm": "确认移除追踪？",
+      "detail.threadRemoved": "已移除追踪",
+      "detail.threadActionFailed": "操作失败：{reason}",
       "detail.pause": "暂停项目",
       "detail.resume": "恢复项目",
       "detail.budget": "今日 {today} 个线程 · 进行中 {running}",
@@ -227,6 +235,14 @@ window.__ModuleLoader__.load({
       "detail.dirSharedHint":
         "Not a git repo: threads share this directory (no worktree isolation — avoid two threads editing the same files)",
       "detail.threadShared": "not isolated",
+      "detail.threadWorktree": "dir: {path}",
+      "detail.threadReclaim": "Reclaim dir",
+      "detail.threadReclaimed": "Worktree reclaimed (branch kept)",
+      "detail.threadReclaimKept": "Not reclaimed: {reason}",
+      "detail.threadRemove": "Remove",
+      "detail.threadRemoveConfirm": "Remove tracking?",
+      "detail.threadRemoved": "Tracking removed",
+      "detail.threadActionFailed": "Action failed: {reason}",
       "detail.pause": "Pause project",
       "detail.resume": "Resume project",
       "detail.budget": "{today} threads today · {running} running",
@@ -894,6 +910,60 @@ window.__ModuleLoader__.load({
           },
         );
       }, [api, project.id]);
+      const [threadAction, setThreadAction] = useState({ pending: "", message: "", ok: null });
+      const reclaimDir = useCallback(
+        (/** @type {string} */ sessionId) => {
+          setThreadAction({ pending: sessionId, message: "", ok: null });
+          call(api.ctx, "reclaimThread", { sessionId }).then(
+            (/** @type {any} */ result) => {
+              setThreadAction({
+                pending: "",
+                ok: result?.reclaimed === true,
+                message:
+                  result?.reclaimed === true
+                    ? text(t, "detail.threadReclaimed")
+                    : text(t, "detail.threadReclaimKept", {
+                        reason: String(result?.reason ?? "?"),
+                      }),
+              });
+              load();
+            },
+            (/** @type {any} */ error) =>
+              setThreadAction({
+                pending: "",
+                ok: false,
+                message: text(t, "detail.threadActionFailed", {
+                  reason: String(error?.message ?? error),
+                }),
+              }),
+          );
+        },
+        [api, load, setThreadAction, t],
+      );
+      const removeThread = useCallback(
+        (/** @type {string} */ sessionId) => {
+          if (threadAction.pending !== sessionId) {
+            setThreadAction({ pending: sessionId, message: "", ok: null });
+            return;
+          }
+          call(api.ctx, "detachThread", { sessionId }).then(
+            () => {
+              setThreadAction({ pending: "", ok: true, message: text(t, "detail.threadRemoved") });
+              load();
+              if (typeof props.onChanged === "function") props.onChanged();
+            },
+            (/** @type {any} */ error) =>
+              setThreadAction({
+                pending: "",
+                ok: false,
+                message: text(t, "detail.threadActionFailed", {
+                  reason: String(error?.message ?? error),
+                }),
+              }),
+          );
+        },
+        [api, load, props, setThreadAction, t, threadAction.pending],
+      );
       const [mem, setMem] = useState({
         editing: false,
         draft: "",
@@ -1335,6 +1405,21 @@ window.__ModuleLoader__.load({
           const counts = data.progress?.counts ?? {};
           // 空列表也要给「建线程」入口：否则新项目只能靠会话菜单归属，没法从这里起线程
           const noDir = !Array.isArray(props.project?.dirs) || props.project.dirs.length === 0;
+          const actionBanner =
+            threadAction.message !== ""
+              ? h(
+                  "div",
+                  {
+                    style: {
+                      ...styles.meta,
+                      margin: "0 0 8px",
+                      color: threadAction.ok === false ? T.danger : T.text,
+                    },
+                    "data-projects-thread-action-result": "",
+                  },
+                  threadAction.message,
+                )
+              : null;
           const composer = h(
             "div",
             { style: { display: "flex", gap: "8px", margin: "0 0 8px" } },
@@ -1365,6 +1450,7 @@ window.__ModuleLoader__.load({
             return h(
               "div",
               { "data-projects-threads": "", "data-projects-attention": "0" },
+              actionBanner,
               noDir
                 ? h(
                     "div",
@@ -1388,6 +1474,7 @@ window.__ModuleLoader__.load({
               "data-projects-threads": "",
               "data-projects-attention": String(data.progress?.attention ?? 0),
             },
+            actionBanner,
             composer,
             h(
               "div",
@@ -1492,6 +1579,51 @@ window.__ModuleLoader__.load({
                         String(row.summary),
                       )
                     : null,
+                  row.worktree
+                    ? h(
+                        "span",
+                        {
+                          style: {
+                            ...styles.meta,
+                            minWidth: 0,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          },
+                          "data-projects-thread-worktree": row.sessionId,
+                          title: String(row.worktree),
+                        },
+                        text(t, "detail.threadWorktree", { path: String(row.worktree) }),
+                      )
+                    : null,
+                  h(
+                    "span",
+                    { style: { display: "flex", gap: "6px" } },
+                    row.worktree
+                      ? h(
+                          "button",
+                          {
+                            type: "button",
+                            style: styles.button,
+                            "data-projects-thread-reclaim": row.sessionId,
+                            onClick: () => reclaimDir(row.sessionId),
+                            disabled: threadAction.pending === row.sessionId,
+                          },
+                          text(t, "detail.threadReclaim"),
+                        )
+                      : null,
+                    h(
+                      "button",
+                      {
+                        type: "button",
+                        style: { ...styles.button, color: T.danger, borderColor: T.danger },
+                        "data-projects-thread-remove": row.sessionId,
+                        onClick: () => removeThread(row.sessionId),
+                      },
+                      threadAction.pending === row.sessionId
+                        ? text(t, "detail.threadRemoveConfirm")
+                        : text(t, "detail.threadRemove"),
+                    ),
+                  ),
                 ),
               ),
             ),

@@ -401,6 +401,32 @@ try {
     /步/u.test(statsText) && /(工具|diff|tokens)/u.test(statsText),
     statsText,
   );
+  // 线程行要有可操作入口：看 worktree 路径、回收目录、移除追踪（两步确认）
+  const threadActions = await page.evaluate(() => ({
+    worktree: document.querySelectorAll("[data-projects-thread-worktree]").length,
+    reclaim: document.querySelectorAll("[data-projects-thread-reclaim]").length,
+    remove: document.querySelectorAll("[data-projects-thread-remove]").length,
+  }));
+  add(
+    "线程行给出目录路径与回收/移除入口",
+    threadActions.remove > 0 && (threadActions.reclaim > 0 || threadActions.worktree === 0),
+    JSON.stringify(threadActions),
+  );
+  const removeOnce = await page.evaluate(() => {
+    const btn = document.querySelector("[data-projects-thread-remove]");
+    if (!btn) return "no-button";
+    btn.click();
+    return "clicked";
+  });
+  await page.waitForTimeout(700);
+  const removeConfirmLabel = await page.evaluate(
+    () => (document.querySelector("[data-projects-thread-remove]")?.textContent || "").trim(),
+  );
+  add(
+    "移除线程需二次确认",
+    removeOnce === "clicked" && /确认|confirm/iu.test(removeConfirmLabel),
+    removeConfirmLabel.slice(0, 40),
+  );
   // 留一张详情页截图：线程行摘要与「仓库授权 / 回收站清理」两块新 UI 都在这一屏
   {
     // ego 的 page.screenshot() 在本版本返回空数据；直接走 CDP 更可靠
