@@ -22,7 +22,8 @@ window.__ModuleLoader__.load({
     var ZH = {
       title: "项目",
       "panel.title": "项目",
-      "panel.summary": "{projects} 个项目 · {active} 个活跃 · {attached} 个会话已接入",
+      "panel.summary":
+        "{projects} 个项目 · {active} 个活跃 · {threads} 个线程 · {attached} 个会话带上下文",
       "panel.empty": "还没有项目。建一个，把会话丢进去，下次就不用重复交代背景。",
       "panel.createPlaceholder": "项目名，例如 payments-api",
       "panel.create": "新建项目",
@@ -170,7 +171,8 @@ window.__ModuleLoader__.load({
     var EN = {
       title: "Projects",
       "panel.title": "Projects",
-      "panel.summary": "{projects} projects · {active} active · {attached} sessions attached",
+      "panel.summary":
+        "{projects} projects · {active} active · {threads} threads · {attached} sessions with context",
       "panel.empty":
         "No projects yet. Create one, drop sessions into it, and stop restating the background.",
       "panel.createPlaceholder": "Project name, e.g. payments-api",
@@ -511,6 +513,11 @@ window.__ModuleLoader__.load({
         ? text(t, "panel.summary", {
             projects: describe.projectCount,
             active: describe.activeCount,
+            // 线程总数比"已挂上下文的会话数"更贴近用户感知：建了线程就该看到
+            threads: (view.projects || []).reduce(
+              (/** @type {number} */ sum, /** @type {any} */ p) => sum + Number(p.threadCount || 0),
+              0,
+            ),
             attached: describe.attachedSessions,
           })
         : "";
@@ -567,7 +574,11 @@ window.__ModuleLoader__.load({
               api: api,
               t: t,
               project: projects.find((/** @type {any} */ p) => p.id === selectedId),
-              onBack: () => setSelectedId(null),
+              onBack: () => {
+                setSelectedId(null);
+                // 详情页里建了线程/改了目录，回列表必须刷新，否则面板还显示旧线程数（走查发现）
+                refresh();
+              },
               onDeleted: () => {
                 setSelectedId(null);
                 refresh();
@@ -1817,18 +1828,19 @@ window.__ModuleLoader__.load({
                 ),
               ]),
             ),
-            exec.message !== ""
-              ? h(
-                  "div",
-                  {
-                    style: { ...styles.meta, color: exec.ok === false ? T.danger : T.text },
-                    "data-projects-approval-exec-result": "",
-                  },
-                  exec.message,
-                )
-              : null,
           );
         })(),
+        // 执行结果放在审批列表**外面**：列表执行完就空了，提示不能跟着消失（验收时踩到）
+        exec.message !== ""
+          ? h(
+              "div",
+              {
+                style: { ...styles.meta, color: exec.ok === false ? T.danger : T.text },
+                "data-projects-approval-exec-result": "",
+              },
+              exec.message,
+            )
+          : null,
         // 走查发现这两块配置把主内容（线程）压到折叠线以下：收进折叠区，首屏留给线程
         h(
           "details",
