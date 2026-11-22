@@ -1,5 +1,20 @@
 # @kangyishuai/dsh-projects
 
+## 0.7.0
+
+### Minor Changes
+
+- [#296](https://github.com/kangyishuai/dsh-plugins/pull/296) [`6a519e9`](https://github.com/kangyishuai/dsh-plugins/commit/6a519e9c02a2a11c7a45f9869a6688196a7584f9) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 边界/空态走查后修的三处（走查报告见私有 notes）。
+  
+  - **非 git 目录静默降级**：绑一个普通目录后，线程其实是**共享目录**（没有 worktree 隔离），
+    但界面什么都不说，用户会以为有隔离。现在绑定后当场探测并明确提示：
+    「不是 git 仓库：线程会共享这个目录（没有 worktree 隔离，别让两个线程同时改同一批文件）」；
+    线程行也标「共享目录（未隔离）」。新增 RPC `inspectDir({ path })`（exists / isGit / writable）。
+  - **超长项目名撑爆行高**：120 字符的项目名会把列表行拉得很高。现在名字单行省略号截断。
+  - **绑定目录无任何反馈**：成功失败都静默。现在绑定后显示目录状态（git / 非 git）。
+  
+  冒烟 67 → **69** 项（新增：非 git 目录如实说明、超长名字截断）。
+
 ## 0.6.1
 
 ### Patch Changes
