@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  allowedMergeMethodsFromRepo,
   checkCiGreen,
   checkExecutable,
   checkMergeMethod,
@@ -486,5 +487,41 @@ describe("checkPreapproval（预授权三条门槛，规格 §7.7.2）", () => {
       reasonOf(checkPreapproval({ action: "", preapprove: [""], danger })),
       "preapprove/action-required",
     );
+  });
+});
+
+describe("allowedMergeMethodsFromRepo（真实 REST 字段）", () => {
+  it("从三个布尔推导（REST 的真实形态）", () => {
+    assert.deepEqual(
+      allowedMergeMethodsFromRepo({
+        allow_squash_merge: true,
+        allow_merge_commit: false,
+        allow_rebase_merge: true,
+      }),
+      ["squash", "rebase"],
+    );
+  });
+
+  it("仓库不允许 squash 时推导结果里没有 squash（会让合并被拒，这是预期）", () => {
+    assert.deepEqual(
+      allowedMergeMethodsFromRepo({
+        allow_squash_merge: false,
+        allow_merge_commit: true,
+        allow_rebase_merge: true,
+      }),
+      ["merge", "rebase"],
+    );
+  });
+
+  it("兼容直接给 allowed_merge_methods 的形态（桩/GraphQL）", () => {
+    assert.deepEqual(allowedMergeMethodsFromRepo({ allowed_merge_methods: ["squash"] }), [
+      "squash",
+    ]);
+  });
+
+  it("null / 非对象 → 空数组（调用方据此拒绝合并，不猜）", () => {
+    assert.deepEqual(allowedMergeMethodsFromRepo(null), []);
+    assert.deepEqual(allowedMergeMethodsFromRepo("nope"), []);
+    assert.deepEqual(allowedMergeMethodsFromRepo({}), []);
   });
 });

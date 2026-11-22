@@ -655,3 +655,27 @@ failed to create session: Error: session header cwd must be an absolute path, go
 | 移除     | `detachThread(sessionId)`  | 两步确认；移除追踪关系；写审计 `thread/detached`                           |
 
 **顺带**：`detachThread` 之前不写审计，这次补上——移除追踪也是可审计的变更。
+
+### 17.16 真实 GitHub 端到端验证（v0.9.x，两个真机缺陷）
+
+用私有测试仓库 + 真实 Actions CI 跑完整链路（探针插件调 RPC，不经过 UI）。**抓到两个只有真机才会暴露的缺陷**：
+
+| 缺陷                     | 表现                                                        | 根因                                                                                                                    | 修法                                                                         |
+| ------------------------ | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| **自动开 PR 从来没成功** | `pr/failed: failed to run git: fatal: not a git repository` | `gh pr create` 在 cwd 里解析 git 上下文，而调用方用的是**宿主进程 cwd**（不是仓库）                                     | `runGh(args, cwd)` 支持 cwd；`openPr` 用 worktree、合并链路用项目目录        |
+| **合并永远被拒**         | 真实仓库上 `merge/method-unknown`                           | REST `GET /repos/{o}/{r}` 返回 `allow_squash_merge` 三个布尔，**没有** `allowed_merge_methods`；代码一直读后者 → 空数组 | 新增纯函数 `allowedMergeMethodsFromRepo`（布尔与数组两种形态都认）+ 4 项单测 |
+
+**为什么之前的测试全绿**：桩 `gh` 不关心 cwd，也不校验字段名——它把这两个错误都"吃"掉了。
+这正是"必须有一个真实宿主/真实外部服务"的价值。
+
+**真机验证结果**：
+
+| 场景                            | 结果                                              |
+| ------------------------------- | ------------------------------------------------- |
+| 开 PR（真 GitHub）              | `opened:true`，PR 创建成功                        |
+| CI 绿检测                       | `statusCheckRollup` 读到 `SUCCESS`                |
+| `minApprovals=0` + CI 绿        | `executed:true`（真合并）                         |
+| `minApprovals=1`（无人 review） | `merge/not-approved`                              |
+| L2 自治 + `long-task` 规则      | `executed:true`，真的新建线程（两段文本各建一个） |
+
+测试仓库用完即归档（`gh repo archive`）；本机 `dsh-projects-merge-e2e` 仍需要 `delete_repo` 权限才能真删。

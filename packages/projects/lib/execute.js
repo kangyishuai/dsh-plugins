@@ -6,6 +6,7 @@
 // 纯函数单测抓不到，只有真机或这一层能抓（0.3.x 就踩过一次）。
 
 import {
+  allowedMergeMethodsFromRepo,
   checkExecutable,
   checkMergeReadiness,
   parseRepoFromRemote,
@@ -25,7 +26,7 @@ import { applySettingsPatch, sanitizeSettingsPatch } from "./settings.js";
  * @property {any} store 仓储（真实 ProjectStore 或等价替身）
  * @property {string} dataRoot 数据根（purgeTrash 用）
  * @property {(args: string[], cwd?: string) => Promise<{code: number, stdout: string, stderr: string}>} runGit
- * @property {(args: string[]) => Promise<{code: number, stdout: string, stderr: string}>} runGh
+ * @property {(args: string[], cwd?: string) => Promise<{code: number, stdout: string, stderr: string}>} runGh
  * @property {(projectId: string) => any} purgeTrash
  * @property {(sessionId: string) => Promise<any>} reclaimThread
  * @property {(projectId: string) => Promise<any>} deleteProject
@@ -126,9 +127,12 @@ export async function executeApprovalCore(deps, requestId) {
   // merge 的目标仓库必须**先**解析出来：早期 planCommand 就要用它，
   // 否则它会因为缺 repo 直接拒绝（也防止落到「宿主当前目录所在仓库」）。
   let mergeRepo = "";
+  /** gh 的 pr 子命令要在仓库里跑（宿主 cwd 不是仓库）——真实仓库验证时踩到 */
+  let mergeRepoDir = "";
   if (approval.action === "merge") {
     const project = store.getProject(approval.projectId);
     const repoDir = Array.isArray(project?.dirs) ? String(project.dirs[0] ?? "") : "";
+    mergeRepoDir = repoDir;
     const remote =
       repoDir === ""
         ? { code: 1, stdout: "", stderr: "" }
@@ -418,15 +422,18 @@ export async function executeApprovalCore(deps, requestId) {
     const repo = mergeRepo;
 
     // 前置校验：非 draft、可合并、仍 open（规格 §7.5 行 3 的硬前提）
-    const view = await runGh([
-      "pr",
-      "view",
-      String(prNumber),
-      "--repo",
-      repo,
-      "--json",
-      "isDraft,mergeable,state,statusCheckRollup,reviews",
-    ]);
+    const view = await runGh(
+      [
+        "pr",
+        "view",
+        String(prNumber),
+        "--repo",
+        repo,
+        "--json",
+        "isDraft,mergeable,state,statusCheckRollup,reviews",
+      ],
+      mergeRepoDir || undefined,
+    );
     if (view.code !== 0) {
       store.appendAudit({
         action: "approval/execution-failed",
@@ -446,15 +453,11 @@ export async function executeApprovalCore(deps, requestId) {
       }
     })();
     // 规格 §7.5 行 3 的 ⑥：仓库允许的合并方式（不允许 squash 就拒绝，不改方式）
-    const repoInfo = await runGh(["api", `repos/${repo}`]);
-    let allowedMethods = [];
-    if (repoInfo.code === 0) {
-      try {
-        allowedMethods = JSON.parse(repoInfo.stdout)?.allowed_merge_methods ?? [];
-      } catch {
-        allowedMethods = [];
-      }
-    }
+    const repoInfo = await runGh(["api", `repos/${repo}`], mergeRepoDir || undefined);
+    // REST 给的是三个布尔（allow_squash_merge…），没有 allowed_merge_methods 字段——真实仓库验证时踩到
+    const allowedMethods = allowedMergeMethodsFromRepo(
+      repoInfo.code === 0 ? JSON.parse(repoInfo.stdout) : null,
+    );
     const readiness = (/** @type {any} */ pr) =>
       checkMergeReadiness({
         pr,
@@ -469,15 +472,18 @@ export async function executeApprovalCore(deps, requestId) {
     while (!preflight.ok && shouldRetryPreflight(preflight.reason ?? "") && attempt < 5) {
       attempt += 1;
       await new Promise((resolve) => setTimeout(resolve, 2000));
-      const again = await runGh([
-        "pr",
-        "view",
-        String(prNumber),
-        "--repo",
-        repo,
-        "--json",
-        "isDraft,mergeable,state,statusCheckRollup,reviews",
-      ]);
+      const again = await runGh(
+        [
+          "pr",
+          "view",
+          String(prNumber),
+          "--repo",
+          repo,
+          "--json",
+          "isDraft,mergeable,state,statusCheckRollup,reviews",
+        ],
+        mergeRepoDir || undefined,
+      );
       if (again.code !== 0) break;
       try {
         preflight = readiness(JSON.parse(again.stdout));
@@ -498,7 +504,7 @@ export async function executeApprovalCore(deps, requestId) {
     }
 
     const ghArgs = planned.argv.slice(1); // 去掉 argv[0] 的 "gh"（planArgs 已带 --repo）
-    const merged = await runGh(ghArgs);
+    const merged = await runGh(ghArgs, mergeRepoDir || undefined);
     const ok = merged.code === 0;
     if (ok) {
       // squash 合并后分支 commit 不再是主干的祖先，回收判据证不出"已合并"。

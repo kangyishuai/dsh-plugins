@@ -370,3 +370,24 @@ export function checkPreapproval(input) {
   }
   return { ok: true };
 }
+
+/**
+ * 从 REST `GET /repos/{owner}/{repo}` 的响应推导"允许的合并方式"。
+ *
+ * REST 返回的是三个布尔（allow_squash_merge / allow_merge_commit / allow_rebase_merge），
+ * **没有** allowed_merge_methods 这个字段——真实仓库验证时踩到：之前一直读后者，
+ * 于是永远拿到空数组，真实仓库上的合并永远被拒（`merge/method-unknown`）。
+ * 某些替身/GraphQL 形态确实给 allowed_merge_methods，所以两者都认。
+ * @param {any} repoJson
+ * @returns {string[]}
+ */
+export function allowedMergeMethodsFromRepo(repoJson) {
+  if (repoJson === null || typeof repoJson !== "object") return [];
+  if (Array.isArray(repoJson.allowed_merge_methods)) return [...repoJson.allowed_merge_methods];
+  /** @type {string[]} */
+  const derived = [];
+  if (repoJson.allow_squash_merge === true) derived.push("squash");
+  if (repoJson.allow_merge_commit === true) derived.push("merge");
+  if (repoJson.allow_rebase_merge === true) derived.push("rebase");
+  return derived;
+}

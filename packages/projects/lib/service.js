@@ -93,8 +93,15 @@ async function runGit(args, cwd) {
  * @param {string[]} args
  * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
  */
-async function runGh(args) {
-  return runCommand("gh", args);
+/**
+ * 跑 gh。**必须能传 cwd**：`gh pr create` 会在 cwd 里解析 git 上下文，
+ * 从宿主进程 cwd（不是仓库）调用会直接报 "fatal: not a git repository"——
+ * 真实仓库端到端验证时踩到（桩 gh 不关心 cwd，所以单测/冒烟都发现不了）。
+ * @param {string[]} args
+ * @param {string} [cwd]
+ */
+async function runGh(args, cwd) {
+  return runCommand("gh", args, { cwd });
 }
 
 /**
@@ -1892,7 +1899,7 @@ export class ProjectsService extends TypertRemoteService {
       }
     }
 
-    const gh = await runGh(planned.argv);
+    const gh = await runGh(planned.argv, worktree !== "" ? worktree : repoRoot || undefined);
     const prNumber = gh.code === 0 ? parsePrNumber(gh.stdout) : null;
     if (gh.code !== 0 || prNumber === null) {
       const tryCount = Number(thread.prAttempts ?? 0) + 1;
