@@ -489,8 +489,51 @@ try {
     dangerPanel.count === 6 && dangerPanel.text.length > 60,
     JSON.stringify({ count: dangerPanel.count }),
   );
+  // 危险开关勾选后必须**立刻**反映到界面（以前要重新进详情才看到，用户以为没生效）
+  const toggledNow = await page.evaluate(() => {
+    const box = document.querySelector('[data-projects-danger-switch="autoMerge"]');
+    if (!box) return "no-box";
+    const before = box.checked;
+    box.click();
+    return { before };
+  });
+  await page.waitForTimeout(1800);
+  const checkedAfter = await page.evaluate(() => document.querySelector('[data-projects-danger-switch="autoMerge"]')?.checked);
+  add(
+    "危险开关勾选后界面即时反映",
+    checkedAfter === true,
+    JSON.stringify({ toggledNow, checkedAfter }),
+  );
+  // 安全面变更必须写审计
+  await page.evaluate(() => document.querySelector('[data-projects-tab="audit"]')?.click());
+  await page.waitForTimeout(1200);
+  const auditForPolicy = await page.evaluate(() => (document.querySelector("[data-projects-audit]")?.innerText || "").trim());
+  add(
+    "危险开关变更写审计（project/policy-changed）",
+    auditForPolicy.includes("project/policy-changed"),
+    auditForPolicy.split(String.fromCharCode(10)).slice(0, 4).join(" | "),
+  );
+  // 把开关关回去，别影响后续断言
+  await page.evaluate(() => {
+    const tab = document.querySelector('[data-projects-tab="threads"]');
+    if (tab) tab.click();
+  });
+  await page.waitForTimeout(900);
+  await page.evaluate(() => {
+    const cfg = document.querySelector("[data-projects-config]");
+    if (cfg) cfg.open = true;
+    const danger = document.querySelector("[data-projects-policy-danger]");
+    if (danger) danger.open = true;
+  });
+  await page.waitForTimeout(600);
+  await page.evaluate(() => {
+    const box = document.querySelector('[data-projects-danger-switch="autoMerge"]');
+    if (box && box.checked) box.click();
+  });
+  await page.waitForTimeout(1500);
+
   // 文案要人话：不许出现 __force-with-lease / SHA / per-repo / rulesets / manifest / dry-run__ 这类术语
-  const jargon = ["--force-with-lease", "SHA", "per-repo", "rulesets", "manifest", "dry-run"];
+  const jargon = ["--force-with-lease", "SHA", "per-repo", "rulesets", "manifest", "dry-run", "**"];
   const hitJargon = jargon.filter((word) => dangerPanel.text.includes(word));
   add(
     "危险开关文案不含工程术语",
@@ -825,6 +868,14 @@ try {
     "空态指引提到可直接建线程",
     /输入|新建线程/u.test(emptyHint),
     emptyHint.slice(0, 90),
+  );
+  const noDirHint = await page.evaluate(
+    () => (document.querySelector("[data-projects-no-dir-hint]")?.textContent || "").trim(),
+  );
+  add(
+    "未绑目录时说明线程跑在插件数据目录",
+    /数据目录/u.test(noDirHint) && /绑定/u.test(noDirHint),
+    noDirHint.slice(0, 80),
   );
   await page.evaluate(() => document.querySelector("[data-projects-delete]")?.click());
   await page.waitForTimeout(900);

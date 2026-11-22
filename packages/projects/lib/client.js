@@ -51,6 +51,8 @@ window.__ModuleLoader__.load({
       "detail.tab.audit": "审计",
       "detail.threadsEmpty":
         "还没有线程。在上面输入一个任务就能新建线程；也可以回到会话行，用「…」菜单把已有会话归属到本项目。",
+      "detail.noDirHint":
+        "还没有绑定项目目录：线程会跑在插件的数据目录里（不隔离，也不便接手你的仓库）。建议先在上面「项目目录」里绑定一个 git 仓库，线程才会各占一个 worktree。",
       "detail.threadState": "状态：{state}",
       "detail.instructions": "常设规则（instructions.md）",
       "detail.memoryEdit": "编辑常设规则",
@@ -81,7 +83,7 @@ window.__ModuleLoader__.load({
       "detail.dirSharedHint":
         "不是 git 仓库：线程会共享这个目录（没有 worktree 隔离，别让两个线程同时改同一批文件）",
       "detail.dirInvalidHint": "需要绝对路径（以 / 开头）；相对路径无法作为会话目录，已拒绝保存。",
-      "detail.threadShared": "共享目录（未隔离）",
+      "detail.threadShared": "未隔离",
       "detail.pause": "暂停项目",
       "detail.resume": "恢复项目",
       "detail.budget": "今日 {today} 个线程 · 进行中 {running}",
@@ -151,7 +153,7 @@ window.__ModuleLoader__.load({
       "detail.grantAdd": "添加",
       "detail.purgeTitle": "回收站清理",
       "detail.purgeHint":
-        "只清理本项目回收站里**超过保留期**的条目；先预览，再确认。需要打开 purgeAfterRetention 开关。",
+        "只清理本项目回收站里超过保留期的条目；先预览，再确认。需要在上面的危险开关里打开「清理过期的回收站条目」。",
       "detail.purgePreview": "预览可清理项",
       "detail.trashTitle": "回收站（可恢复）",
       "detail.trashEmpty": "回收站是空的。删除项目会先放进这里，可以随时恢复。",
@@ -203,6 +205,8 @@ window.__ModuleLoader__.load({
       "detail.tab.audit": "Audit",
       "detail.threadsEmpty":
         "No sessions belong to this project yet. Use “Add to project…” in a session's … menu.",
+      "detail.noDirHint":
+        "No project directory bound yet: threads run inside the plugin’s data directory (no isolation, and they cannot work on your repo). Bind a git repository above first — then each thread gets its own worktree.",
       "detail.threadState": "state: {state}",
       "detail.instructions": "Standing rules (instructions.md)",
       "detail.memoryIndex": "Memory index (MEMORY.md)",
@@ -221,8 +225,8 @@ window.__ModuleLoader__.load({
       "detail.dirSave": "Bind",
       "detail.dirGitHint": "Git repo: each thread gets its own worktree (isolated)",
       "detail.dirSharedHint":
-        "Not a git repo: threads **share this directory** (no worktree isolation — avoid two threads editing the same files)",
-      "detail.threadShared": "shared dir (not isolated)",
+        "Not a git repo: threads share this directory (no worktree isolation — avoid two threads editing the same files)",
+      "detail.threadShared": "not isolated",
       "detail.pause": "Pause project",
       "detail.resume": "Resume project",
       "detail.budget": "{today} threads today · {running} running",
@@ -296,7 +300,7 @@ window.__ModuleLoader__.load({
       "detail.grantAdd": "Add",
       "detail.purgeTitle": "Trash purge",
       "detail.purgeHint":
-        "Only purges entries in this project's trash that are **past the retention period**; preview first, then confirm. Requires the purgeAfterRetention switch.",
+        "Only purges entries in this project's trash past the retention period; preview first, then confirm. Requires the “Clean up expired trash entries” switch above.",
       "detail.purgePreview": "Preview purgeable",
       "detail.trashTitle": "Trash (restorable)",
       "detail.trashEmpty": "Trash is empty. Deleted projects land here first and can be restored.",
@@ -1330,6 +1334,7 @@ window.__ModuleLoader__.load({
           const rows = data.progress?.rows ?? [];
           const counts = data.progress?.counts ?? {};
           // 空列表也要给「建线程」入口：否则新项目只能靠会话菜单归属，没法从这里起线程
+          const noDir = !Array.isArray(props.project?.dirs) || props.project.dirs.length === 0;
           const composer = h(
             "div",
             { style: { display: "flex", gap: "8px", margin: "0 0 8px" } },
@@ -1360,6 +1365,16 @@ window.__ModuleLoader__.load({
             return h(
               "div",
               { "data-projects-threads": "", "data-projects-attention": "0" },
+              noDir
+                ? h(
+                    "div",
+                    {
+                      style: { ...styles.meta, margin: "0 0 8px" },
+                      "data-projects-no-dir-hint": "",
+                    },
+                    text(t, "detail.noDirHint"),
+                  )
+                : null,
               composer,
               h(
                 "p",
@@ -1863,7 +1878,12 @@ window.__ModuleLoader__.load({
               call(api.ctx, "updateProject", {
                 id: project.id,
                 patch: { policy: { ...project.policy, ...patch } },
-              }).then(() => load()),
+              }).then(() => {
+                load();
+                // 复选框的 checked 来自 props.project.policy（父级列表数据），
+                // 不刷新父级就会「勾了又弹回」——用户以为没生效（走查发现）
+                if (typeof props.onChanged === "function") props.onChanged();
+              }),
           }),
           // 仓库授权：直推保护分支需要 per-repo 首次授予（规格 §7.5 行 2），没有界面就只能手编 JSON
           h(
