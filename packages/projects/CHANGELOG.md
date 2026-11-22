@@ -1,5 +1,19 @@
 # @kangyishuai/dsh-projects
 
+## 0.6.1
+
+### Patch Changes
+
+- [#294](https://github.com/kangyishuai/dsh-plugins/pull/294) [`2421abd`](https://github.com/kangyishuai/dsh-plugins/commit/2421abd95925ae994cbed09cb4e07ed016006dbc) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 修 0.6.0 验收时发现的**自锁死路**：回收站只挂在项目详情页里，所以**删掉最后一个项目后就再也进不去回收站**——
+  恢复入口自己把门锁上了（回收站里明明有项目可恢复，但界面上没有任何入口）。
+  
+  - 面板新增面板级回收站（`PanelTrash`）：**项目列表为空时**仍能查看、恢复、彻底删除（含两步确认）
+  - 顺带修：`restoreProject` 恢复时**保留原状态**——之前一律写成 `active`，
+    把用户显式设过的 paused/archived 状态抹掉了（冒烟里归档/暂停两条断言因此红过）
+  
+  冒烟 62 → **67** 项，新增「项目清零后面板仍能进入回收站（防自锁）」——
+  这条是**真的删掉所有项目**再断言，不是跳过。
+
 ## 0.6.0
 
 ### Minor Changes
