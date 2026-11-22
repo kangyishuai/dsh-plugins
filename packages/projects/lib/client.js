@@ -2761,6 +2761,19 @@ window.__ModuleLoader__.load({
       const deleteState = useState({ confirming: false, busy: false, impact: null });
       const del = deleteState[0];
       const setDel = deleteState[1];
+      // 破坏性确认框要默认聚焦主按钮（ADR 0002 / conventions §7.4.2「回车即执行」）。
+      // 宿主的 useModalLayer 只服务它自己的 Modal 组件；这里的确认框是面板内联的，得自己聚焦。
+      // 主按钮 busy/disabled 时拿不到焦点，回落到第一个可用按钮（即「取消」）。
+      const deleteConfirmRef = useRef(null);
+      useEffect(() => {
+        if (del.confirming !== true) return;
+        const host = deleteConfirmRef.current;
+        if (!host) return;
+        const target =
+          host.querySelector("[data-modal-autofocus]") ||
+          host.querySelector("button:not([disabled])");
+        if (target && typeof target.focus === "function") target.focus();
+      }, [del.confirming]);
       const resolveApproval = useCallback(
         (/** @type {any} */ requestId, /** @type {any} */ status) => {
           call(api.ctx, "resolveApproval", { requestId, status }).then(
@@ -4389,6 +4402,7 @@ window.__ModuleLoader__.load({
               {
                 role: "alertdialog",
                 "aria-label": text(t, "detail.delete"),
+                ref: deleteConfirmRef,
                 style: {
                   border: `1px solid ${T.danger}`,
                   borderRadius: "10px",
