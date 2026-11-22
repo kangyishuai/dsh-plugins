@@ -679,3 +679,30 @@ failed to create session: Error: session header cwd must be an absolute path, go
 | L2 自治 + `long-task` 规则      | `executed:true`，真的新建线程（两段文本各建一个） |
 
 测试仓库用完即归档（`gh repo archive`）；本机 `dsh-projects-merge-e2e` 仍需要 `delete_repo` 权限才能真删。
+
+### 17.17 从 UI 走真实仓库的「批准 → 执行 → 真合并」（v0.9.1）
+
+上一节（17.16）用探针调 RPC 验证了链路；这一步换成**真实界面点击**：
+
+| 步骤       | UI 上的表现                                                                                                                       |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| 项目面板   | `1 个项目 · 1 个活跃 · 1 个线程`；详情里线程行显示 worktree 全路径                                                                |
+| 审批队列   | `待你批准的动作 / merge · UI 验收：合并这个 PR / 批准 / 拒绝`                                                                     |
+| 点「批准」 | 同一行变成 **执行**（体现"批准 ≠ 可执行"）                                                                                        |
+| 点「执行」 | `已执行（结果见审计）`，审批列表清空                                                                                              |
+| 审计页签   | `thread/created → wake/skipped → pr/opened → project/policy-changed → approval/requested → approval/resolved → approval/executed` |
+
+**GitHub 侧核对**（真实合并）：
+
+```
+PR #5  state=MERGED  mergedAt=2026-11-22T14:45:26Z  head=dsh/ui-1
+main   e5a07eab  "ui walkthrough commit (#5)"
+```
+
+前置条件写清楚，便于复现：仓库允许 squash、CI 已绿（`statusCheckRollup=SUCCESS`）、
+`merge.minApprovals = 0`、`danger.autoMerge = true`、PR 非 draft。缺任一条都会在 UI 里看到对应拒绝原因
+（`merge/not-approved`、`merge/ci-*`、`merge/method-*`）。
+
+**本次没走 UI 的部分**：项目/线程/worktree/PR/审批**的创建**是用探针插件（host RPC）预置的——
+UI 目前没有"发起 PR"或"请求危险动作"的入口，那是协调器工具的职责。UI 覆盖的是
+"看到 → 批准 → 执行 → 审计 → GitHub 真的合并"这一段。
