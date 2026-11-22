@@ -743,8 +743,37 @@ export class ProjectsService extends TypertRemoteService {
    */
   updateProject(id, patch) {
     const store = this.requireStore();
+    const before = store.getProject(id);
     const project = store.updateProject(id, patch);
     store.save();
+    // 安全面变更必须留痕：危险开关、自治等级、路由规则都直接影响"插件能替你做什么"
+    const afterDanger = project?.policy?.danger ?? {};
+    const beforeDanger = before?.policy?.danger ?? {};
+    const switched = [
+      "forcePushOwnBranch",
+      "pushProtectedBranch",
+      "autoMerge",
+      "trashAuto",
+      "purgeAfterRetention",
+      "editProfile",
+    ].filter((key) => (beforeDanger[key] === true) !== (afterDanger[key] === true));
+    const autonomyChanged =
+      String(before?.policy?.autonomy ?? "") !== String(project?.policy?.autonomy ?? "");
+    const routingChanged =
+      JSON.stringify(before?.policy?.routing ?? null) !==
+      JSON.stringify(project?.policy?.routing ?? null);
+    if (switched.length > 0 || autonomyChanged || routingChanged) {
+      store.appendAudit({
+        action: "project/policy-changed",
+        projectId: id,
+        switched: switched.map((key) => ({ key, on: afterDanger[key] === true })),
+        ...(autonomyChanged
+          ? { autonomy: { from: before?.policy?.autonomy, to: project?.policy?.autonomy } }
+          : {}),
+        ...(routingChanged ? { routing: "changed" } : {}),
+      });
+      store.save();
+    }
     return project;
   }
 
