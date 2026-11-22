@@ -57,7 +57,12 @@ pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体�
 | `memory.test.js`    | 记忆写入：幂等、单条与总量上限、时间戳注释、被拒时给出原因                                    |
 | `exec.test.js`      | 子进程封装：参数原样传递、失败返回 code 不抛、cwd 生效、命令不存在也不抛                      |
 
-## 2. web 端到端冒烟（78 项）
+## 2. web 端到端冒烟（102 项）
+
+> 0.10.0 面板改版后：新建走「入口 → 模态（两入口）→ 表单」，列表页新增搜索/排序/收藏，详情页改为
+> 主列 + 右栏（右栏为值行 + 编辑动作），并补了 toast、两列 DOM 顺序、值行无 input 等断言，故 78 → 102。
+> 旧版断言清单仍适用于 0.9.x，新增部分见 `scripts/smoke-projects.mjs` 中 `data-projects-new*` /
+> `data-projects-search` / `data-projects-sort` / `data-projects-pin` / `data-projects-rail-*` 相关断言。
 
 `pnpm smoke:projects` 在临时 home 里种子一个**真实 git 仓库**作为工作区，然后：
 
@@ -227,7 +232,8 @@ open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debuggin
 pnpm smoke:projects-desktop --require
 ```
 
-预期：`PASS 全部 11 项桌面回归断言通过`。在此之前它一直输出
+预期：`PASS 全部 14 项桌面回归断言通过`（live profile 里一个项目都没有时是 `12 PASS / 2 SKIP`，
+SKIP 只用于「详情页两列」这类数据分支，不计 PASS）。在此之前它一直输出
 `SKIP 插件未装进当前 live profile`。
 
 ### 9.4 真实 GitHub 上的远端写入（2026-11-21 已做）

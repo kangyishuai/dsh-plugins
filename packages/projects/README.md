@@ -12,8 +12,8 @@ Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/de
 > Details: `docs/runtime/0.2.2-rc.3.md` §11.24–§11.26.
 
 > **Status: M4 done, pre-1.0.** Projects, context injection, isolated parallel threads, an opt-in coordinator,
-> and a gated approval/executor layer are implemented, unit-tested (397 tests) and covered by a 78-assertion
-> web end-to-end smoke plus an 11-assertion desktop read-only regression.
+> and a gated approval/executor layer are implemented, unit-tested (406 tests) and covered by a 102-assertion
+> web end-to-end smoke plus a 14-assertion desktop read-only regression.
 > Remote writes (push / PR / merge) are wired and verified locally against a bare remote and a stub `gh`;
 > the real-GitHub effect still needs one release confirmation. Project **sharing** is deferred ([ADR 0018](../../docs/adr/0018-projects-defer-liveshare-sharing.md)).
 
