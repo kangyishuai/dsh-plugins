@@ -78,7 +78,8 @@ window.__ModuleLoader__.load({
       "detail.dirSave": "绑定",
       "detail.dirGitHint": "这是 git 仓库：线程会在这里建独立 worktree（隔离）",
       "detail.dirSharedHint":
-        "不是 git 仓库：线程会**共享这个目录**（没有 worktree 隔离，别让两个线程同时改同一批文件）",
+        "不是 git 仓库：线程会共享这个目录（没有 worktree 隔离，别让两个线程同时改同一批文件）",
+      "detail.dirInvalidHint": "需要绝对路径（以 / 开头）；相对路径无法作为会话目录，已拒绝保存。",
       "detail.threadShared": "共享目录（未隔离）",
       "detail.pause": "暂停项目",
       "detail.resume": "恢复项目",
@@ -1244,6 +1245,12 @@ window.__ModuleLoader__.load({
       const setDirInfo = dirInfoState[1];
       const saveDir = useCallback(() => {
         const value = String(dirDraft).trim();
+        // 相对路径/空值当场拒绝：以前会被静默存下来，直到建线程时才崩在宿主里，
+        // 报错还是"cwd must be an absolute path"，用户根本对不上号（验收时踩到）
+        if (value !== "" && !value.startsWith("/")) {
+          setDirInfo({ path: value, exists: false, isGit: false, writable: false, invalid: true });
+          return;
+        }
         call(api.ctx, "updateProject", {
           id: project.id,
           patch: { dirs: value === "" ? [] : [value] },
@@ -1711,10 +1718,21 @@ window.__ModuleLoader__.load({
           ? h(
               "div",
               {
-                style: { ...styles.meta, color: dirInfo.isGit ? T.text : T.accent },
-                "data-projects-dir-info": dirInfo.isGit ? "git" : "shared",
+                style: {
+                  ...styles.meta,
+                  color: dirInfo.invalid ? T.danger : dirInfo.isGit ? T.text : T.accent,
+                },
+                "data-projects-dir-info": dirInfo.invalid
+                  ? "invalid"
+                  : dirInfo.isGit
+                    ? "git"
+                    : "shared",
               },
-              dirInfo.isGit ? text(t, "detail.dirGitHint") : text(t, "detail.dirSharedHint"),
+              dirInfo.invalid
+                ? text(t, "detail.dirInvalidHint")
+                : dirInfo.isGit
+                  ? text(t, "detail.dirGitHint")
+                  : text(t, "detail.dirSharedHint"),
             )
           : null,
         (() => {
