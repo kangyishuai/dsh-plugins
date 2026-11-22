@@ -344,6 +344,10 @@ try {
     await page.waitForTimeout(500);
   }
   add("详情页显示预算用量", budgetText !== "", budgetText);
+  // 回收站不能只在项目详情里：最后一个项目被删后详情页进不去，恢复入口会自锁
+  // （0.6.0 验收时发现的死锁；这里断言"项目列表为空时面板仍有回收站出口"）
+
+
   // 空项目也必须给「建线程」入口（否则新项目在面板里无法起线程，只能靠会话菜单归属）
   const emptyComposer = await page.evaluate(() => {
     const empty = Boolean(document.querySelector("[data-projects-threads-empty]"));
@@ -960,6 +964,47 @@ try {
   const shot = await page.screenshot();
   const fs = await import("node:fs/promises");
   await fs.writeFile(${JSON.stringify(shotsDir)} + "/01-projects-panel.png", Buffer.from(shot, "base64"));
+  // 防自锁：删到 0 个项目后，面板必须仍能进回收站（否则恢复入口自己锁死）
+  const beforeSelfLock = await page.evaluate(() => document.querySelectorAll("[data-projects-row]").length);
+  for (let i = 0; i < beforeSelfLock; i += 1) {
+    await page.evaluate(() => {
+      const row = document.querySelector("[data-projects-row]");
+      if (row) row.click();
+    });
+    await page.waitForTimeout(1200);
+    await page.evaluate(() => document.querySelector("[data-projects-delete]")?.click());
+    await page.waitForTimeout(800);
+    await page.evaluate(() => document.querySelector("[data-projects-delete-confirm]")?.click());
+    await page.waitForTimeout(1500);
+    await page.evaluate(() => document.querySelector("[data-projects-detail-back]")?.click());
+    await page.waitForTimeout(800);
+  }
+  const emptyPanel = await page.evaluate(() => ({
+    rows: document.querySelectorAll("[data-projects-row]").length,
+    trash: Boolean(document.querySelector("[data-projects-trash]")),
+    trashRows: document.querySelectorAll("[data-projects-trash-row]").length,
+  }));
+  add(
+    "项目清零后面板仍能进入回收站（防自锁）",
+    emptyPanel.rows === 0 && emptyPanel.trash === true && emptyPanel.trashRows > 0,
+    JSON.stringify(emptyPanel),
+  );
+  // 把刚才删的项目恢复回来，别影响后面的宿主侧断言
+  // 只恢复"刚为防自锁检查删掉的"那些；留给宿主侧 manifest 断言的条目继续留在回收站
+  for (let i = 0; i < 20; i += 1) {
+    const done = await page.evaluate(() => {
+      const row = [...document.querySelectorAll("[data-projects-trash-row]")].find(
+        (n) => !(n.textContent || "").includes("smoke-to-delete"),
+      );
+      if (!row) return "no-more";
+      row.querySelector("[data-projects-trash-restore]")?.click();
+      return "clicked";
+    });
+    if (done === "no-more") break;
+    await page.waitForTimeout(1500);
+  }
+  const restoredBack = await page.evaluate(() => document.querySelectorAll("[data-projects-row]").length);
+  result.restoredAfterSelfLockCheck = restoredBack;
   result.projectName = name;
   await task.finish({ keep: [] });
 } catch (error) {

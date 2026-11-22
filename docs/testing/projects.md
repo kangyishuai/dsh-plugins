@@ -497,3 +497,18 @@ typert gateway: projects/purgeTrash: args fields do not match the descriptor: un
 **坑**：给 Remote 方法的参数加**行内** `/** @type */` 会让 SRC 网关拒绝注册该方法，
 运行时表现为 `typert gateway: ...` 而看不出是注册阶段的问题。一律用上方 JSDoc `@param`；
 `pnpm check` 的 SRC 守卫会拦住（`Remote 方法 X 的参数表里不能有行内类型注释`）。
+
+### 17.7 回收站必须有一个不依赖项目的入口（v0.6.1）
+
+0.6.0 验收时踩到自锁：回收站只渲染在**项目详情页**里，所以
+「删掉最后一个项目 → 没有任何项目 → 进不去详情页 → 回收站打不开 → 恢复不了」。
+功能明明有，路却断了。
+
+修法：面板加 `PanelTrash` 组件，在**项目列表为空时**渲染回收站（查看 / 恢复 / 彻底删除 / 清空），
+`data-projects-trash` 锚点相同。
+
+**顺带修的**：`store.restoreProject` 之前强制把状态写成 `active`，会把 `paused`/`archived` 抹掉；
+现在保留 manifest 里的原状态（冒烟里归档/暂停两条宿主侧断言曾因此变红）。
+
+冒烟断言「项目清零后面板仍能进入回收站（防自锁）」是**真删掉所有项目**再检查的，
+恢复时特意跳过留给 manifest 断言的那一条。
