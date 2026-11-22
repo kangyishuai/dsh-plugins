@@ -527,3 +527,17 @@ typert gateway: projects/purgeTrash: args fields do not match the descriptor: un
 
 **结论**：这类问题单测与常规冒烟都抓不到——只有"真的把数据清空/喂异常值"才暴露。
 冒烟因此新增三条：非 git 提示、名字截断、防自锁。
+
+### 17.9 目录绑定的输入校验（v0.7.x）
+
+验收 0.7.0 时我误把 `undefined/plain` 填进目录框，结果**保存成功**，直到建线程才崩：
+
+```
+failed to create session: Error: session header cwd must be an absolute path, got "undefined/plain"
+```
+
+这对用户是死胡同：界面说"绑定成功"，几秒后在完全不相干的位置报一句宿主错误。
+现在 `saveDir` 当场校验：非绝对路径（不以 `/` 开头）直接拒绝，`data-projects-dir-info="invalid"`
+并用危险色提示「需要绝对路径（以 / 开头）；相对路径无法作为会话目录，已拒绝保存」。
+
+**顺带**：非 git 提示里的 Markdown 星号（`**共享这个目录**`）会原样显示——界面不渲染 Markdown，已去掉。

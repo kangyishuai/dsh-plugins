@@ -358,6 +358,27 @@ try {
     dirInfoState === null || dirInfoState.kind === "shared" ? /共享|不隔离|share/iu.test(dirInfoState?.text || "") : true,
     JSON.stringify(dirInfoState),
   );
+  // 相对路径必须当场拒绝（否则会被静默存下来，建线程时才崩在宿主里）
+  const relativeRejected = await page.evaluate(() => {
+    const input = document.querySelector("[data-projects-dir-input]");
+    const save = document.querySelector("[data-projects-dir-save]");
+    if (!input || !save) return { ok: false, reason: "no-controls" };
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    setter.call(input, "relative/plain");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    save.click();
+    return { ok: true };
+  });
+  await page.waitForTimeout(900);
+  const invalidHint = await page.evaluate(() => {
+    const info = document.querySelector("[data-projects-dir-info]");
+    return info ? { kind: info.getAttribute("data-projects-dir-info"), text: (info.textContent || "").trim() } : null;
+  });
+  add(
+    "绑定相对路径当场拒绝并说明原因",
+    relativeRejected.ok === true && invalidHint?.kind === "invalid" && /绝对路径|absolute/iu.test(invalidHint?.text || ""),
+    JSON.stringify(invalidHint),
+  );
   // 空项目也必须给「建线程」入口（否则新项目在面板里无法起线程，只能靠会话菜单归属）
   const emptyComposer = await page.evaluate(() => {
     const empty = Boolean(document.querySelector("[data-projects-threads-empty]"));
