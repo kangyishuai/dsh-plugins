@@ -161,6 +161,31 @@ try {
   };
 
   // 详情页的「归档 / 删除」收在右上 ⋯ 菜单里：点菜单再点对应项（锚点没变，入口变了）
+  // 右栏折叠开关：按 data 属性值找节点（避免在模板里写带引号的属性选择器）
+  const toggleContext = async () => {
+    await page.evaluate(() => {
+      const node = [...document.querySelectorAll("[data-projects-rail-toggle]")].find(
+        (item) => item.getAttribute("data-projects-rail-toggle") === "context",
+      );
+      if (node) node.click();
+    });
+  };
+  const railSummaryFor = (id) =>
+    page.evaluate(
+      (target) =>
+        [...document.querySelectorAll("[data-projects-rail-summary]")].some(
+          (node) => node.getAttribute("data-projects-rail-summary") === target,
+        ),
+      id,
+    );
+  const expandedAttr = () =>
+    page.evaluate(() => {
+      const node = [...document.querySelectorAll("[data-projects-rail-toggle]")].find(
+        (item) => item.getAttribute("data-projects-rail-toggle") === "context",
+      );
+      return node ? node.getAttribute("aria-expanded") : null;
+    });
+
   const openDetailMenu = async () => {
     const clicked = await page.evaluate(() => {
       const button = document.querySelector("[data-projects-row-menu]");
@@ -400,13 +425,24 @@ try {
     tabs: [...document.querySelectorAll("[data-projects-tab]")].map((n) => n.getAttribute("data-projects-tab")),
     threadsTab: Boolean(document.querySelector("[data-projects-threads], [data-projects-threads-empty]")),
   }));
+  const detailCrash = await page.evaluate(
+    () => (document.querySelector("[data-projects-detail-crash]")?.textContent || "").slice(0, 300),
+  );
+  add("详情页没有渲染崩溃", detailCrash === "", detailCrash);
   add(
     "项目详情可打开且有三个页签",
     detailState.present && detailState.tabs.length === 3 && detailState.threadsTab,
     JSON.stringify({ detail, ...detailState }),
   );
 
+  // 详情页断言在宽窗（1440）下跑：宽窗=两列、右栏各段展开；窄窗折叠另有一条专门断言。
+  await page.cdp("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+  await page.waitForTimeout(500);
+
   // 先给项目绑定目录（否则线程没有隔离目标，会走「无目录」降级）
+  // Batch C：目录是「值行 + 编辑」，输入框只在点「编辑」后打开的模态里
+  await page.evaluate(() => document.querySelector("[data-projects-dir-edit]")?.click());
+  await page.waitForTimeout(400);
   const bound = await page.evaluate((dir) => {
     const input = document.querySelector("[data-projects-dir-input]");
     const button = document.querySelector("[data-projects-dir-save]");
@@ -479,6 +515,8 @@ try {
     JSON.stringify(dirInfoState),
   );
   // 相对路径必须当场拒绝（否则会被静默存下来，建线程时才崩在宿主里）
+  await page.evaluate(() => document.querySelector("[data-projects-dir-edit]")?.click());
+  await page.waitForTimeout(400);
   const relativeRejected = await page.evaluate(() => {
     const input = document.querySelector("[data-projects-dir-input]");
     const save = document.querySelector("[data-projects-dir-save]");
@@ -499,6 +537,20 @@ try {
     relativeRejected.ok === true && invalidHint?.kind === "invalid" && /绝对路径|absolute/iu.test(invalidHint?.text || ""),
     JSON.stringify(invalidHint),
   );
+  // 收尾：模态还开着（非法路径不关窗），把合法目录重新绑定一次——既关窗，也让后面的截图
+  // 不带着一条红色报错（这条路径是用户真会走的：改错 → 改回）。
+  await page.evaluate((dir) => {
+    const input = document.querySelector("[data-projects-dir-input]");
+    const save = document.querySelector("[data-projects-dir-save]");
+    if (!input || !save) return;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    setter.call(input, dir);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    save.click();
+  }, SMOKE_WORKSPACE_DIR);
+  await page.waitForTimeout(1500);
+  const dirEditorClosed = await page.evaluate(() => !document.querySelector("[data-projects-dir-input]"));
+  add("目录编辑模态保存成功后关闭（改错再改回也走同一条路）", dirEditorClosed === true, String(dirEditorClosed));
   // 空项目也必须给「建线程」入口（否则新项目在面板里无法起线程，只能靠会话菜单归属）
   const emptyComposer = await page.evaluate(() => {
     const empty = Boolean(document.querySelector("[data-projects-threads-empty]"));
@@ -522,6 +574,9 @@ try {
     statsText,
   );
   // 线程行要有可操作入口：看 worktree 路径、回收目录、移除追踪（两步确认）
+  // 线程行的「回收目录 / 移除追踪」收进行内 ⋯：先开菜单再数（锚点挂在菜单项上）
+  await page.evaluate(() => document.querySelector("[data-projects-thread-menu]")?.click());
+  await page.waitForTimeout(400);
   const threadActions = await page.evaluate(() => ({
     worktree: document.querySelectorAll("[data-projects-thread-worktree]").length,
     reclaim: document.querySelectorAll("[data-projects-thread-reclaim]").length,
@@ -533,12 +588,17 @@ try {
     JSON.stringify(threadActions),
   );
   const removeOnce = await page.evaluate(() => {
+    // 上一条断言已经把菜单打开了：先看菜单项在不在，别盲目 toggle 关掉它
+    if (!document.querySelector("[data-projects-thread-remove]")) {
+      document.querySelector("[data-projects-thread-menu]")?.click();
+    }
     const btn = document.querySelector("[data-projects-thread-remove]");
     if (!btn) return "no-button";
     btn.click();
     return "clicked";
   });
   await page.waitForTimeout(700);
+  // 两段确认：第一次点只换文案、菜单不关（产品行为），所以这里直接读同一个菜单项
   const removeConfirmLabel = await page.evaluate(
     () => (document.querySelector("[data-projects-thread-remove]")?.textContent || "").trim(),
   );
@@ -565,7 +625,8 @@ try {
     const fsp = await import("node:fs/promises");
     await fsp.writeFile(${JSON.stringify(shotsDir)} + "/04-detail.png", Buffer.from(detailShot2.data, "base64"));
   }
-  await page.cdp("Emulation.clearDeviceMetricsOverride", {});
+  await page.cdp("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+  await page.waitForTimeout(300);
 
   // 宽窗（1440）再拍一张：确认两列布局（主列 + 320 右栏）在宽面板下真的成立
   await page.cdp("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
@@ -573,21 +634,38 @@ try {
   {
     const wideShot = await page.cdp("Page.captureScreenshot", { format: "png" });
     const fsp = await import("node:fs/promises");
-    await fsp.writeFile(${JSON.stringify(shotsDir)} + "/05-detail-wide.png", Buffer.from(wideShot.data, "base64"));
+    await fsp.writeFile(${JSON.stringify(shotsDir)} +   "/05-detail-wide.png", Buffer.from(wideShot.data, "base64"));
   }
-  await page.cdp("Emulation.clearDeviceMetricsOverride", {});
+  await page.cdp("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+  await page.waitForTimeout(300);
 
-  // 详情页新增两块：仓库授权 + 回收站清理（都必须渲染出来）
+  // 详情页两块：仓库授权 + 回收站清理。Batch C：都是「值行 + 右侧动作」，输入只在编辑模态里
   const newBlocks = await page.evaluate(() => ({
     grants: Boolean(document.querySelector("[data-projects-grants]")),
-    grantInput: Boolean(document.querySelector("[data-projects-grant-input]")),
+    grantEdit: Boolean(document.querySelector("[data-projects-grant-edit]")),
     purge: Boolean(document.querySelector("[data-projects-purge]")),
     purgePreview: Boolean(document.querySelector("[data-projects-purge-preview]")),
   }));
+  await page.evaluate(() => document.querySelector("[data-projects-grant-edit]")?.click());
+  await page.waitForTimeout(400);
+  const grantEditor = await page.evaluate(() => ({
+    modal: Boolean(document.querySelector("[data-projects-grants-editor]")),
+    input: Boolean(document.querySelector("[data-projects-grant-input]")),
+    add: Boolean(document.querySelector("[data-projects-grant-add]")),
+  }));
+  await page.evaluate(() =>
+    document.querySelector("[data-projects-grants-editor] [data-projects-rail-editor-cancel]")?.click(),
+  );
   add(
-    "详情页有仓库授权与回收站清理入口",
-    newBlocks.grants && newBlocks.grantInput && newBlocks.purge && newBlocks.purgePreview,
-    JSON.stringify(newBlocks),
+    "详情页有仓库授权与回收站清理入口（输入只在编辑模态里）",
+    newBlocks.grants &&
+      newBlocks.grantEdit &&
+      newBlocks.purge &&
+      newBlocks.purgePreview &&
+      grantEditor.modal &&
+      grantEditor.input &&
+      grantEditor.add,
+    JSON.stringify({ newBlocks, grantEditor }),
   );
 
   // 清理预览：dry-run 不应删除任何东西，只报告条数
@@ -639,7 +717,8 @@ try {
         (sel) => Boolean(document.querySelector(sel)),
       ),
       instructions: Boolean(document.querySelector("[data-projects-instructions]")),
-      dirInput: Boolean(document.querySelector("[data-projects-dir-input]")),
+      // 目录现在是「值行 + 编辑」：值行常驻，输入框只在编辑模态里
+      dirRow: Boolean(document.querySelector("[data-projects-rail-dir]")),
       mainBeforeRail: following(main, rail),
       threadsBeforeRail: following(threads, rail),
       configIsAside: rail ? rail.tagName.toLowerCase() === "aside" : false,
@@ -651,13 +730,119 @@ try {
       layout.main === true &&
       layout.sections.every((value) => value === true) &&
       layout.instructions === true &&
-      layout.dirInput === true,
+      layout.dirRow === true,
     JSON.stringify(layout),
   );
   add(
     "线程列表在右栏之前（DOM 顺序，不再压线程）",
     layout.mainBeforeRail === true && layout.threadsBeforeRail === true && layout.configIsAside === true,
     JSON.stringify({ mainBeforeRail: layout.mainBeforeRail, threadsBeforeRail: layout.threadsBeforeRail }),
+  );
+
+  // —— Batch C ①：右栏是「值行 + 右侧动作」，不常驻输入框 ——
+  const railRows = await page.evaluate(() => {
+    const context = document.querySelector("[data-projects-rail-context]");
+    const inputs = context ? context.querySelectorAll("input:not([type=checkbox])").length : -1;
+    const rows = [
+      "[data-projects-rail-state]",
+      "[data-projects-rail-dir]",
+      "[data-projects-grants]",
+      "[data-projects-purge]",
+      "[data-projects-trash-count]",
+    ].map((sel) => Boolean(document.querySelector(sel)));
+    return {
+      inputs,
+      rows,
+      dirValue: (document.querySelector("[data-projects-rail-dir]")?.textContent || "").trim(),
+      overflow: (() => {
+        const value = document.querySelector("[data-projects-rail-dir] span:nth-child(2)") ||
+          document.querySelector("[data-projects-rail-dir]");
+        if (!value) return "";
+        const style = getComputedStyle(value);
+        return style.textOverflow + "|" + style.whiteSpace;
+      })(),
+    };
+  });
+  add(
+    "右栏值行只读：无常驻输入框，五个值行齐全",
+    railRows.inputs === 0 && railRows.rows.every((value) => value === true) && railRows.dirValue !== "",
+    JSON.stringify(railRows),
+  );
+  add(
+    "右栏长值单行截断（ellipsis/nowrap）",
+    railRows.overflow.startsWith("ellipsis|nowrap"),
+    railRows.overflow,
+  );
+
+  // 点「编辑」才出输入框（值行本身不可编辑）
+  const dirRowBefore = await page.evaluate(() => Boolean(document.querySelector("[data-projects-dir-input]")));
+  await page.evaluate(() => document.querySelector("[data-projects-dir-edit]")?.click());
+  await page.waitForTimeout(400);
+  const dirEditor = await page.evaluate(() => ({
+    modal: Boolean(document.querySelector("[data-projects-dir-editor]")),
+    input: Boolean(document.querySelector("[data-projects-dir-input]")),
+    save: Boolean(document.querySelector("[data-projects-dir-save]")),
+  }));
+  await page.evaluate(() =>
+    document.querySelector("[data-projects-dir-editor] [data-projects-rail-editor-cancel]")?.click(),
+  );
+  await page.waitForTimeout(300);
+  add(
+    "点目录「编辑」才打开输入（值行不常驻 input）",
+    dirRowBefore === false && dirEditor.modal === true && dirEditor.input === true && dirEditor.save === true,
+    JSON.stringify({ dirRowBefore, dirEditor }),
+  );
+
+  // —— Batch C ②：窄窗（800）右栏各段默认折叠成「标题 + 一行摘要 + ▸」——
+  await page.cdp("Emulation.setDeviceMetricsOverride", { width: 800, height: 900, deviceScaleFactor: 1, mobile: false });
+  await page.waitForTimeout(1200);
+  const narrowRail = await page.evaluate(() => ({
+    toggles: document.querySelectorAll("[data-projects-rail-toggle]").length,
+    row: Boolean(document.querySelector("[data-projects-rail-dir]")),
+  }));
+  const narrowCollapsed = await railSummaryFor("context");
+  await toggleContext();
+  await page.waitForTimeout(500);
+  const narrowExpanded = await page.evaluate(() => ({
+    row: Boolean(document.querySelector("[data-projects-rail-dir]")),
+  }));
+  const narrowExpandedSummary = await railSummaryFor("context");
+  const narrowExpandedAttr = await expandedAttr();
+  await page.cdp("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+  await page.waitForTimeout(500);
+  add(
+    "窄窗（800）右栏各段默认折叠，点 ▸ 才展开",
+    narrowRail.toggles >= 3 &&
+      narrowCollapsed === true &&
+      narrowRail.row === false &&
+      narrowExpanded.row === true &&
+      narrowExpandedSummary === false &&
+      narrowExpandedAttr === "true",
+    JSON.stringify({ narrowRail, narrowCollapsed, narrowExpanded, narrowExpandedSummary, narrowExpandedAttr }),
+  );
+
+  // —— Batch C ③：头部 pin / ⋯ 贴主列右缘（与主列同宽、同右缘）——
+  const headAlign = await page.evaluate(() => {
+    const head = document.querySelector("[data-projects-detail-head-main]");
+    const main = document.querySelector("[data-projects-detail-main]");
+    const pin = document.querySelector("[data-projects-pin]");
+    const menu = document.querySelector("[data-projects-row-menu]");
+    const right = (node) => (node ? node.getBoundingClientRect().right : Number.NaN);
+    const width = (node) => (node ? node.getBoundingClientRect().width : Number.NaN);
+    return {
+      head: Boolean(head) && Boolean(main),
+      widthDelta: Math.abs(width(head) - width(main)),
+      pinDelta: Math.abs(right(pin) - right(main)),
+      menuDelta: Math.abs(right(menu) - right(main)),
+    };
+  });
+  add(
+    "头部 pin/⋯ 贴主列右缘（不再贴页面右缘）",
+    headAlign.head === true &&
+      headAlign.widthDelta < 2 &&
+      headAlign.pinDelta < 40 &&
+      headAlign.menuDelta < 8,
+    JSON.stringify(headAlign),
   );
   // 展开后才看回收站（真实用户也要先展开）
   await page.evaluate(() => {
@@ -1000,7 +1185,8 @@ try {
   await page.cdp("Emulation.setDeviceMetricsOverride", { width: 800, height: 900, deviceScaleFactor: 1, mobile: false });
   await page.waitForTimeout(400);
   await listShot("03-list.png");
-  await page.cdp("Emulation.clearDeviceMetricsOverride", {});
+  await page.cdp("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+  await page.waitForTimeout(300);
 
   const rowsTotal = await page.evaluate(() => document.querySelectorAll("[data-projects-row]").length);
   const searched = await page.evaluate(() => {

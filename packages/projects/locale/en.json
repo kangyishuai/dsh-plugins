@@ -165,6 +165,17 @@
     "detail.memoryIndexHint": "MEMORY.md has content; sessions read it.",
     "detail.memoryEmptyHint": "No memory yet — say “remember…” in a session and it lands here.",
     "detail.moreActions": "More actions",
-    "detail.projectState": "Project state"
+    "detail.projectState": "Project state",
+    "detail.save": "Save",
+    "detail.edit": "Edit",
+    "detail.none": "Not set",
+    "detail.trashCount": "{count} items",
+    "detail.trashNone": "Empty",
+    "detail.grantsLabel": "Repo grants",
+    "detail.purgeLabel": "Purge",
+    "detail.trashLabel": "Trash",
+    "detail.projectState.active": "Active",
+    "detail.projectState.paused": "Paused",
+    "detail.projectState.archived": "Archived"
   }
 }

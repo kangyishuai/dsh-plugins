@@ -165,6 +165,17 @@
     "detail.memoryIndexHint": "MEMORY.md 索引里有内容，会话会读到。",
     "detail.memoryEmptyHint": "还没有记忆；会话里说「记住…」就会写进来。",
     "detail.moreActions": "更多操作",
-    "detail.projectState": "项目状态"
+    "detail.projectState": "项目状态",
+    "detail.save": "保存",
+    "detail.edit": "编辑",
+    "detail.none": "未设置",
+    "detail.trashCount": "{count} 项",
+    "detail.trashNone": "空",
+    "detail.grantsLabel": "仓库授权",
+    "detail.purgeLabel": "清理",
+    "detail.trashLabel": "回收站",
+    "detail.projectState.active": "进行中",
+    "detail.projectState.paused": "已暂停",
+    "detail.projectState.archived": "已归档"
   }
 }

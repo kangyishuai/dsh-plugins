@@ -244,6 +244,17 @@ window.__ModuleLoader__.load({
       "detail.memoryEmptyHint": "还没有记忆；会话里说「记住…」就会写进来。",
       "detail.moreActions": "更多操作",
       "detail.projectState": "项目状态",
+      "detail.save": "保存",
+      "detail.edit": "编辑",
+      "detail.none": "未设置",
+      "detail.trashCount": "{count} 项",
+      "detail.trashNone": "空",
+      "detail.grantsLabel": "仓库授权",
+      "detail.purgeLabel": "清理",
+      "detail.trashLabel": "回收站",
+      "detail.projectState.active": "进行中",
+      "detail.projectState.paused": "已暂停",
+      "detail.projectState.archived": "已归档",
       "detail.purged": "已清理 {count} 项，清单已写入 trash/",
     };
     var EN = {
@@ -465,6 +476,17 @@ window.__ModuleLoader__.load({
       "detail.memoryEmptyHint": "No memory yet — say “remember…” in a session and it lands here.",
       "detail.moreActions": "More actions",
       "detail.projectState": "Project state",
+      "detail.save": "Save",
+      "detail.edit": "Edit",
+      "detail.none": "Not set",
+      "detail.trashCount": "{count} items",
+      "detail.trashNone": "Empty",
+      "detail.grantsLabel": "Repo grants",
+      "detail.purgeLabel": "Purge",
+      "detail.trashLabel": "Trash",
+      "detail.projectState.active": "Active",
+      "detail.projectState.paused": "Paused",
+      "detail.projectState.archived": "Archived",
       "detail.purged": "Purged {count} entries; manifest written under trash/",
     };
     var PANEL_ID = "projects";
@@ -563,7 +585,7 @@ window.__ModuleLoader__.load({
       },
       pageTitle: {
         display: "block",
-        fontSize: "22px",
+        fontSize: "24px",
         fontWeight: 500,
         lineHeight: 1.2,
         letterSpacing: "0.01em",
@@ -822,7 +844,7 @@ window.__ModuleLoader__.load({
       detailTitle: {
         flex: "1 1 auto",
         minWidth: 0,
-        fontSize: "20px",
+        fontSize: "22px",
         fontWeight: 500,
         overflow: "hidden",
         textOverflow: "ellipsis",
@@ -856,6 +878,40 @@ window.__ModuleLoader__.load({
         overflow: "hidden",
       },
       railBodyFull: { color: T.dim, fontSize: "12px", lineHeight: 1.55 },
+      railRow: { display: "flex", alignItems: "center", gap: "8px", minWidth: 0, padding: "1px 0" },
+      railLabel: { flex: "none", width: "64px", color: T.faint, fontSize: "12px" },
+      railValue: {
+        flex: "1 1 auto",
+        minWidth: 0,
+        color: T.text,
+        fontSize: "12px",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      },
+      railToggle: {
+        flex: "none",
+        width: "14px",
+        padding: 0,
+        border: "none",
+        background: "transparent",
+        color: T.dim,
+        cursor: "pointer",
+        fontSize: "11px",
+      },
+      railTitleButton: {
+        flex: "1 1 auto",
+        minWidth: 0,
+        padding: 0,
+        border: "none",
+        background: "transparent",
+        color: T.text,
+        fontSize: "13px",
+        fontWeight: 500,
+        textAlign: "left",
+        cursor: "pointer",
+      },
+      headMain: { display: "flex", alignItems: "center", gap: "6px", minWidth: 0 },
       pill: {
         display: "inline-flex",
         alignItems: "center",
@@ -1040,6 +1096,167 @@ window.__ModuleLoader__.load({
               props.menu,
             )
           : null,
+      );
+    }
+
+    /** 右栏值行右侧的小按钮：只有动作，没有填充（值行保持只读观感）。 */
+    var smallButton = {
+      display: "inline-flex",
+      alignItems: "center",
+      padding: "2px 8px",
+      borderRadius: "6px",
+      border: `1px solid ${T.border}`,
+      background: "transparent",
+      color: T.dim,
+      fontSize: "12px",
+      cursor: "pointer",
+      flex: "none",
+    };
+
+    /**
+     * 右栏一段：标题 + 右侧小动作；窄窗（单列）时默认折叠成「标题 + 一行摘要 + ▸」。
+     * 折叠只影响**展示**，不影响任何写路径——展开/收起从不发 RPC。
+     * @param {{t: any, id: string, title: string, action?: any, summary?: any, collapsible?: boolean, body: any, attrs?: any}} props
+     */
+    function RailSection(props) {
+      var collapsible = props.collapsible === true;
+      var state = useState(!collapsible);
+      var open = state[0];
+      var setOpen = state[1];
+      useEffect(() => {
+        setOpen(!collapsible);
+      }, [collapsible, setOpen]);
+      return h(
+        "section",
+        { style: styles.railSection, ...(props.attrs || {}) },
+        h(
+          "div",
+          { style: styles.railHead },
+          collapsible
+            ? h(
+                "button",
+                {
+                  type: "button",
+                  style: styles.railToggle,
+                  "data-projects-rail-toggle": props.id,
+                  "aria-expanded": open ? "true" : "false",
+                  "aria-label": props.title,
+                  onClick: () => setOpen(!open),
+                },
+                open ? "▾" : "▸",
+              )
+            : null,
+          collapsible
+            ? h(
+                "button",
+                {
+                  type: "button",
+                  style: styles.railTitleButton,
+                  "data-projects-rail-title": props.id,
+                  onClick: () => setOpen(!open),
+                },
+                props.title,
+              )
+            : h("span", { style: styles.railTitle }, props.title),
+          props.action || null,
+        ),
+        open
+          ? props.body
+          : props.summary
+            ? h(
+                "div",
+                { style: styles.railBody, "data-projects-rail-summary": props.id },
+                props.summary,
+              )
+            : null,
+      );
+    }
+
+    /**
+     * 右栏一行：标签 + 值（单行截断，title 给全文）+ 右侧动作。
+     * 值行永远是只读的：编辑入口只在右侧按钮上，点开才出输入控件（右栏不常驻 input）。
+     * @param {{label: string, value: any, title?: string, action?: any, attrs?: any}} props
+     */
+    function RailRow(props) {
+      return h(
+        "div",
+        { style: styles.railRow, ...(props.attrs || {}) },
+        h("span", { style: styles.railLabel }, props.label),
+        h(
+          "span",
+          {
+            style: styles.railValue,
+            title: props.title === undefined ? String(props.value ?? "") : props.title,
+          },
+          props.value,
+        ),
+        props.action || null,
+      );
+    }
+
+    /**
+     * 右栏值行点「编辑」后打开的小模态（目录 / 仓库授权共用）。
+     * @param {{t: any, title: string, open: boolean, onClose: () => void, onSave?: any, saveLabel?: string, saveAttrs?: any, children: any, attrs?: any}} props
+     */
+    function RailEditor(props) {
+      if (!props.open) return null;
+      return h(
+        "div",
+        {
+          style: styles.backdrop,
+          ...(props.attrs || {}),
+          onMouseDown: (/** @type {any} */ event) => {
+            if (event.target === event.currentTarget) props.onClose();
+          },
+          onKeyDownCapture: (/** @type {any} */ event) => {
+            if (event.key === "Escape") {
+              event.stopPropagation();
+              props.onClose();
+            }
+          },
+        },
+        h(
+          "div",
+          {
+            role: "dialog",
+            "aria-modal": "true",
+            "aria-label": props.title,
+            style: styles.dialog,
+          },
+          h(
+            "div",
+            { style: styles.dialogHead },
+            h("span", { style: styles.dialogTitle }, props.title),
+          ),
+          props.children,
+          h(
+            "div",
+            { style: { display: "flex", gap: "8px", justifyContent: "flex-end" } },
+            h(
+              "button",
+              {
+                type: "button",
+                style: styles.secondaryButton,
+                "data-projects-rail-editor-cancel": "",
+                onClick: props.onClose,
+              },
+              text(props.t, "detail.cancel"),
+            ),
+            props.onSave
+              ? h(
+                  "button",
+                  {
+                    type: "button",
+                    style: styles.primaryButton,
+                    "data-projects-rail-editor-save": "",
+                    ...(props.saveAttrs || {}),
+                    onClick: props.onSave,
+                  },
+                  props.saveLabel || text(props.t, "detail.save"),
+                )
+              : null,
+          ),
+        ),
       );
     }
 
@@ -1961,7 +2178,7 @@ window.__ModuleLoader__.load({
           selectedProject ? null : h(PanelTrash, { api: api, t: t, onChanged: refresh }),
         ),
         selectedProject
-          ? h(ProjectDetail, {
+          ? h(ProjectDetailSafe, {
               api: api,
               t: t,
               project: selectedProject,
@@ -2832,7 +3049,11 @@ window.__ModuleLoader__.load({
               () => setDirInfo({ path: value, exists: true, isGit: false, writable: true }),
             );
           })
-          .then(() => load())
+          .then(() => {
+            load();
+            // 父级列表缓存着 project.dirs：不刷新，右栏「项目目录」值行会显示旧值
+            if (typeof props.onChanged === "function") props.onChanged();
+          })
           .catch((/** @type {any} */ error) => {
             setData((/** @type {any} */ prev) => ({
               ...prev,
@@ -2876,6 +3097,43 @@ window.__ModuleLoader__.load({
         { id: "audit", label: text(t, "detail.tab.audit") },
       ];
 
+      const budgetText = data.progress?.budget
+        ? text(t, "detail.budget", {
+            today: data.progress.budget.used?.today ?? 0,
+            running: data.progress.budget.used?.running ?? 0,
+          })
+        : "";
+      const projectStateText =
+        data.projectState === "archived"
+          ? text(t, "detail.projectState.archived")
+          : data.projectState === "paused"
+            ? text(t, "detail.projectState.paused")
+            : text(t, "detail.projectState.active");
+      const dirList = Array.isArray(project.dirs) ? project.dirs : [];
+      const dirSummary = dirList.length > 0 ? baseName(dirList[0]) : text(t, "detail.none");
+      // 值行点「编辑」才出输入控件（右栏不常驻 input）
+      const dirEditingState = useState(false);
+      const dirEditing = dirEditingState[0];
+      const setDirEditing = dirEditingState[1];
+      // 线程行的「⋯」：回收目录 / 移除追踪 收进来（锚点挂在菜单项上，语义不变）
+      const threadMenuState = useState("");
+      const threadMenu = threadMenuState[0];
+      const setThreadMenu = threadMenuState[1];
+      const threadHoverState = useState("");
+      const threadHover = threadHoverState[0];
+      const setThreadHover = threadHoverState[1];
+      const grantsEditingState = useState(false);
+      const grantsEditing = grantsEditingState[0];
+      const setGrantsEditing = grantsEditingState[1];
+      /** 目录编辑：路径非法时**不关窗**（让「必须绝对路径」的说明留在原位） */
+      const submitDir = () => {
+        const value = String(dirDraft).trim();
+        // 非法路径也要交给 saveDir：它只改 dirInfo（当场说明为什么不行），不写盘
+        saveDir();
+        if (value !== "" && !value.startsWith("/")) return; // 不关窗，让用户改
+        setDirEditing(false);
+      };
+
       // —— 详情页新增的本地状态（两列布局 / ⋯ 菜单 / 收藏 / 窄窗）——
       const menuState = useState(false);
       const menuOpen = menuState[0];
@@ -2913,7 +3171,7 @@ window.__ModuleLoader__.load({
         if (!node || typeof ResizeObserver !== "function") return undefined;
         const observer = new ResizeObserver((entries) => {
           const width = entries[0]?.contentRect?.width ?? 0;
-          if (width > 0) setNarrow(width < 760);
+          if (width > 0) setNarrow(width < 820);
         });
         observer.observe(node);
         return () => observer.disconnect();
@@ -2994,11 +3252,15 @@ window.__ModuleLoader__.load({
                   key: row.sessionId,
                   style: {
                     ...styles.row,
+                    position: "relative",
                     padding: "8px 4px",
                     cursor: "default",
                     alignItems: "flex-start",
+                    background: threadHover === row.sessionId ? T.hover : "transparent",
                   },
                   "data-projects-thread-row": row.sessionId,
+                  onMouseEnter: () => setThreadHover(String(row.sessionId)),
+                  onMouseLeave: () => setThreadHover(""),
                   "data-projects-thread-state": row.view.state,
                 },
                 // 状态点：颜色只表达状态，不承载信息（信息在胶囊与右侧摘要里）
@@ -3077,42 +3339,80 @@ window.__ModuleLoader__.load({
                     : null,
                   h(
                     "span",
-                    { style: { display: "flex", gap: "6px", flexWrap: "wrap" } },
-                    row.worktree
-                      ? h(
+                    {
+                      style: {
+                        position: "absolute",
+                        top: "4px",
+                        right: "4px",
+                        display: "inline-flex",
+                      },
+                    },
+                    h(Popover, {
+                      open: threadMenu === row.sessionId,
+                      onClose: () => setThreadMenu(""),
+                      anchor: h(
+                        "button",
+                        {
+                          type: "button",
+                          style: {
+                            ...styles.iconButton,
+                            flex: "none",
+                            opacity:
+                              threadHover === row.sessionId || threadMenu === row.sessionId
+                                ? 1
+                                : 0.45,
+                          },
+                          "data-projects-thread-menu": row.sessionId,
+                          "aria-label": text(t, "detail.moreActions"),
+                          "aria-haspopup": "menu",
+                          "aria-expanded": threadMenu === row.sessionId ? "true" : "false",
+                          onClick: () =>
+                            setThreadMenu(
+                              threadMenu === row.sessionId ? "" : String(row.sessionId),
+                            ),
+                        },
+                        uiIcon("more", "⋯", 16),
+                      ),
+                      menu: h(
+                        "div",
+                        { style: { display: "flex", flexDirection: "column", gap: "2px" } },
+                        row.worktree
+                          ? h(
+                              "button",
+                              {
+                                type: "button",
+                                role: "menuitem",
+                                style: menuItemStyle,
+                                "data-projects-thread-reclaim": row.sessionId,
+                                onClick: () => {
+                                  setThreadMenu("");
+                                  reclaimDir(row.sessionId);
+                                },
+                                disabled: threadAction.pending === row.sessionId,
+                              },
+                              text(t, "detail.threadReclaim"),
+                            )
+                          : null,
+                        h(
                           "button",
                           {
                             type: "button",
-                            style: {
-                              ...styles.secondaryButton,
-                              padding: "2px 10px",
-                              fontSize: "12px",
+                            role: "menuitem",
+                            style: { ...menuItemStyle, color: T.danger },
+                            "data-projects-thread-remove": row.sessionId,
+                            onClick: () => {
+                              // 两段确认：第一次点只把标签换成「确认移除？」，菜单不关，
+                              // 否则用户看不到自己点的是哪一步（锚点语义与旧 UI 一致）
+                              if (threadAction.pending === row.sessionId) setThreadMenu("");
+                              removeThread(row.sessionId);
                             },
-                            "data-projects-thread-reclaim": row.sessionId,
-                            onClick: () => reclaimDir(row.sessionId),
-                            disabled: threadAction.pending === row.sessionId,
                           },
-                          text(t, "detail.threadReclaim"),
-                        )
-                      : null,
-                    h(
-                      "button",
-                      {
-                        type: "button",
-                        style: {
-                          ...styles.secondaryButton,
-                          padding: "2px 10px",
-                          fontSize: "12px",
-                          color: T.danger,
-                          borderColor: T.danger,
-                        },
-                        "data-projects-thread-remove": row.sessionId,
-                        onClick: () => removeThread(row.sessionId),
-                      },
-                      threadAction.pending === row.sessionId
-                        ? text(t, "detail.threadRemoveConfirm")
-                        : text(t, "detail.threadRemove"),
-                    ),
+                          threadAction.pending === row.sessionId
+                            ? text(t, "detail.threadRemoveConfirm")
+                            : text(t, "detail.threadRemove"),
+                        ),
+                      ),
+                    }),
                   ),
                 ),
               ),
@@ -3251,103 +3551,116 @@ window.__ModuleLoader__.load({
             boxSizing: "border-box",
           },
         },
-        // —— 头部：返回 / 标题 / 收藏 / ⋯（编辑详情 · 归档 · 删除）——
+        // —— 头部：返回 / 标题 / 收藏 / ⋯ ——
+        // 头部与内容用同一套栅格：pin 与 ⋯ 贴**主列右缘**（1440 宽下不再跑到页面最右）。
         h(
           "div",
           {
-            style: styles.detailHead,
+            style: narrow ? styles.detailGridNarrow : styles.detailGrid,
             "data-projects-detail-head": "",
             "data-projects-state-actions": "",
           },
           h(
-            "button",
-            {
-              type: "button",
-              style: styles.iconButton,
-              "data-projects-detail-back": "",
-              "aria-label": text(t, "detail.back"),
-              onClick: () => props.onBack(),
-            },
-            "‹",
-          ),
-          h("span", { style: styles.detailTitle, "data-projects-detail-title": "" }, project.name),
-          h(
-            "button",
-            {
-              type: "button",
-              style: { ...styles.iconButton, color: pinned ? T.accentText : T.dim },
-              "data-projects-pin": "",
-              "data-pinned": pinned ? "true" : "false",
-              "aria-label": text(t, pinned ? "panel.unpin" : "panel.pin"),
-              "aria-pressed": pinned ? "true" : "false",
-              onClick: togglePin,
-            },
-            uiIcon(pinned ? "pin" : "unpin", "📌", 15),
-          ),
-          h(Popover, {
-            open: menuOpen,
-            onClose: () => setMenuOpen(false),
-            anchor: h(
+            "div",
+            { style: styles.headMain, "data-projects-detail-head-main": "" },
+            h(
               "button",
               {
                 type: "button",
                 style: styles.iconButton,
-                "data-projects-row-menu": "",
-                "aria-label": text(t, "detail.moreActions"),
-                "aria-haspopup": "menu",
-                "aria-expanded": menuOpen ? "true" : "false",
-                onClick: () => setMenuOpen(!menuOpen),
+                "data-projects-detail-back": "",
+                "aria-label": text(t, "detail.back"),
+                onClick: () => props.onBack(),
               },
-              uiIcon("more", "⋯", 16),
+              "‹",
             ),
-            menu: h(
-              "div",
+            h(
+              "span",
+              { style: styles.detailTitle, "data-projects-detail-title": "" },
+              project.name,
+            ),
+            h("span", { style: { flex: "1 1 auto" } }),
+            h(
+              "button",
               {
-                style: { display: "flex", flexDirection: "column", gap: "2px" },
-                "data-projects-row-menu-list": project.id,
+                type: "button",
+                style: { ...styles.iconButton, color: pinned ? T.accentText : T.dim },
+                "data-projects-pin": "",
+                "data-pinned": pinned ? "true" : "false",
+                "aria-label": text(t, pinned ? "panel.unpin" : "panel.pin"),
+                "aria-pressed": pinned ? "true" : "false",
+                onClick: togglePin,
               },
-              h(
-                "button",
-                {
-                  type: "button",
-                  role: "menuitem",
-                  style: menuItemStyle,
-                  "data-projects-row-menu-edit": "",
-                  onClick: () => {
-                    setMenuOpen(false);
-                    if (typeof props.onEditDetails === "function") props.onEditDetails(project);
-                  },
-                },
-                text(t, "panel.rowEdit"),
-              ),
-              h(
-                "button",
-                {
-                  type: "button",
-                  role: "menuitem",
-                  style: menuItemStyle,
-                  "data-projects-toggle-archive": "",
-                  onClick: toggleArchive,
-                },
-                stateIsArchived ? text(t, "detail.unarchive") : text(t, "panel.rowArchive"),
-              ),
-              h(
-                "button",
-                {
-                  type: "button",
-                  role: "menuitem",
-                  style: { ...menuItemStyle, color: T.danger },
-                  "data-projects-delete": "",
-                  disabled: del.busy,
-                  onClick: () => {
-                    setMenuOpen(false);
-                    askDelete();
-                  },
-                },
-                text(t, "detail.delete"),
-              ),
+              uiIcon(pinned ? "pin" : "unpin", "📌", 15),
             ),
-          }),
+            h(Popover, {
+              open: menuOpen,
+              onClose: () => setMenuOpen(false),
+              anchor: h(
+                "button",
+                {
+                  type: "button",
+                  style: styles.iconButton,
+                  "data-projects-row-menu": "",
+                  "aria-label": text(t, "detail.moreActions"),
+                  "aria-haspopup": "menu",
+                  "aria-expanded": menuOpen ? "true" : "false",
+                  onClick: () => setMenuOpen(!menuOpen),
+                },
+                uiIcon("more", "⋯", 16),
+              ),
+              menu: h(
+                "div",
+                {
+                  style: { display: "flex", flexDirection: "column", gap: "2px" },
+                  "data-projects-row-menu-list": project.id,
+                },
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    role: "menuitem",
+                    style: menuItemStyle,
+                    "data-projects-row-menu-edit": "",
+                    onClick: () => {
+                      setMenuOpen(false);
+                      if (typeof props.onEditDetails === "function") props.onEditDetails(project);
+                    },
+                  },
+                  text(t, "panel.rowEdit"),
+                ),
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    role: "menuitem",
+                    style: menuItemStyle,
+                    "data-projects-toggle-archive": "",
+                    onClick: toggleArchive,
+                  },
+                  stateIsArchived ? text(t, "detail.unarchive") : text(t, "panel.rowArchive"),
+                ),
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    role: "menuitem",
+                    style: { ...menuItemStyle, color: T.danger },
+                    "data-projects-delete": "",
+                    disabled: del.busy,
+                    onClick: () => {
+                      setMenuOpen(false);
+                      askDelete();
+                    },
+                  },
+                  text(t, "detail.delete"),
+                ),
+              ),
+            }),
+          ),
+          narrow
+            ? null
+            : h("span", { style: { minWidth: 0 }, "data-projects-detail-head-rail": "" }),
         ),
         h(
           "span",
@@ -3609,277 +3922,222 @@ window.__ModuleLoader__.load({
             ),
             body,
           ),
-          // —— 右栏：指令 / 记忆 / 上下文（常驻，可截图对照 Claude 的项目主页）——
+          // —— 右栏：指令 / 记忆 / 上下文 ——
+          // 一律「值行 + 右侧小动作」：右栏不常驻 input，点动作才开编辑（Batch C）；
+          // 窄窗（单列）时每段默认折叠成「标题 + 一行摘要 + ▸」，点开才展开。
           h(
             "aside",
             { style: styles.rail, "data-projects-config": "", "data-projects-rail": "" },
-            h(
-              "section",
-              {
-                style: { ...styles.railSection, borderTop: "none" },
-                "data-projects-rail-instructions": "",
-              },
-              h(
-                "div",
-                { style: styles.railHead },
-                h("span", { style: styles.railTitle }, text(t, "detail.section.instructions")),
-                h(
-                  "button",
-                  {
-                    type: "button",
-                    style: styles.iconButton,
-                    "data-projects-instructions-edit": "",
-                    "aria-label": text(t, "detail.instructionsEdit"),
-                    onClick: () => {
-                      setTab("memory");
-                      setMem((/** @type {any} */ prev) => ({
-                        ...prev,
-                        editing: true,
-                        draft: String(data.content?.instructions ?? ""),
-                        message: "",
-                      }));
-                    },
+            h(RailSection, {
+              t: t,
+              id: "instructions",
+              title: text(t, "detail.section.instructions"),
+              collapsible: narrow,
+              summary: String(content.instructions ?? "") || text(t, "detail.instructionsEmpty"),
+              attrs: { "data-projects-rail-instructions": "" },
+              action: h(
+                "button",
+                {
+                  type: "button",
+                  style: styles.iconButton,
+                  "data-projects-instructions-edit": "",
+                  "aria-label": text(t, "detail.instructionsEdit"),
+                  onClick: () => {
+                    setTab("memory");
+                    setMem((/** @type {any} */ prev) => ({
+                      ...prev,
+                      editing: true,
+                      draft: String(data.content?.instructions ?? ""),
+                      message: "",
+                    }));
                   },
-                  "✎",
-                ),
+                },
+                "✎",
               ),
-              h(
+              body: h(
                 "div",
                 {
-                  style: content.instructions ? styles.railBody : styles.railBody,
+                  style: styles.railBody,
                   "data-projects-instructions": "",
                   title: String(content.instructions ?? ""),
                 },
                 content.instructions || text(t, "detail.instructionsEmpty"),
               ),
-            ),
-            h(
-              "section",
-              { style: styles.railSection, "data-projects-rail-memory": "" },
-              h(
-                "div",
-                { style: styles.railHead },
-                h("span", { style: styles.railTitle }, text(t, "detail.section.memory")),
-                h(
-                  "button",
-                  {
-                    type: "button",
-                    style: { ...styles.secondaryButton, padding: "2px 10px", fontSize: "12px" },
-                    "data-projects-memory-open": "",
-                    onClick: () => setTab("memory"),
-                  },
-                  `${text(t, "detail.section.open")} ›`,
-                ),
-              ),
-              h(
-                "div",
-                { style: styles.railBodyFull, "data-projects-memory-count": "" },
-                text(t, "detail.memoryCount", { count: memoryEntries }),
-              ),
-              h(
-                "div",
-                { style: styles.railBodyFull, "data-projects-memory-status": "" },
-                data.content?.memoryIndex
-                  ? text(t, "detail.memoryIndexHint")
-                  : text(t, "detail.memoryEmptyHint"),
-              ),
-            ),
-            h(
-              "section",
-              { style: styles.railSection, "data-projects-rail-context": "" },
-              h(
-                "div",
-                { style: styles.railHead },
-                h("span", { style: styles.railTitle }, text(t, "detail.section.context")),
-                h(
-                  "span",
-                  { style: styles.meta, "data-projects-budget": "" },
-                  data.progress?.budget
-                    ? text(t, "detail.budget", {
-                        today: data.progress.budget.used?.today ?? 0,
-                        running: data.progress.budget.used?.running ?? 0,
-                      })
-                    : "",
-                ),
-              ),
-              h(
-                "div",
-                { style: { display: "flex", alignItems: "center", gap: "8px", minWidth: 0 } },
-                h(
-                  "span",
-                  { style: { ...styles.meta, flex: "1 1 auto" } },
-                  text(t, "detail.projectState"),
-                ),
-                h(
-                  "button",
-                  {
-                    type: "button",
-                    style: { ...styles.secondaryButton, padding: "2px 10px", fontSize: "12px" },
-                    "data-projects-toggle-pause": "",
-                    onClick: () => {
-                      const next =
-                        data.projectState === "paused" ? "resumeProject" : "pauseProject";
-                      call(api.ctx, next, { id: project.id }).then(
-                        () => load(),
-                        (error) => {
-                          setData((/** @type {any} */ prev) => ({
-                            ...prev,
-                            error: String(error?.message ?? error),
-                          }));
-                        },
-                      );
-                    },
-                  },
-                  data.projectState === "paused"
-                    ? text(t, "detail.resume")
-                    : text(t, "detail.pause"),
-                ),
-              ),
-              // 项目目录：绑定入口与「是 git 仓库 / 只是共享目录」的当场说明
-              h(
-                "div",
-                { style: { display: "flex", gap: "6px", alignItems: "center" } },
-                h("input", {
-                  style: { ...styles.input, fontSize: "12px" },
-                  value: dirDraft,
-                  placeholder: text(t, "detail.dirPlaceholder"),
-                  "data-projects-dir-input": "",
-                  onChange: (/** @type {any} */ event) => setDirDraft(event.target.value),
-                  onKeyDown: (/** @type {any} */ event) => {
-                    if (event.key === "Enter") saveDir();
-                  },
-                }),
-                h(
-                  "button",
-                  {
-                    type: "button",
-                    style: { ...styles.secondaryButton, padding: "4px 10px", fontSize: "12px" },
-                    "data-projects-dir-save": "",
-                    onClick: saveDir,
-                  },
-                  text(t, "detail.dirSave"),
-                ),
-              ),
-              dirInfo.path !== ""
-                ? h(
-                    "div",
-                    {
-                      style: {
-                        ...styles.meta,
-                        color: dirInfo.invalid ? T.danger : dirInfo.isGit ? T.text : T.accentText,
-                      },
-                      "data-projects-dir-info": dirInfo.invalid
-                        ? "invalid"
-                        : dirInfo.isGit
-                          ? "git"
-                          : "shared",
-                    },
-                    dirInfo.invalid
-                      ? text(t, "detail.dirInvalidHint")
-                      : dirInfo.isGit
-                        ? text(t, "detail.dirGitHint")
-                        : text(t, "detail.dirSharedHint"),
-                  )
-                : null,
-              // 仓库授权（直推保护分支的 per-repo 首次授予）
-              h(
-                "div",
+            }),
+            h(RailSection, {
+              t: t,
+              id: "memory",
+              title: text(t, "detail.section.memory"),
+              collapsible: narrow,
+              summary: text(t, "detail.memoryCount", { count: memoryEntries }),
+              attrs: { "data-projects-rail-memory": "" },
+              action: h(
+                "button",
                 {
-                  "data-projects-grants": "",
-                  style: { display: "flex", flexDirection: "column", gap: "6px", marginTop: "4px" },
+                  type: "button",
+                  style: { ...styles.secondaryButton, padding: "2px 10px", fontSize: "12px" },
+                  "data-projects-memory-open": "",
+                  onClick: () => setTab("memory"),
                 },
-                h("div", { style: styles.meta }, text(t, "detail.grantsTitle")),
+                `${text(t, "detail.section.open")} ›`,
+              ),
+              body: h(
+                "div",
+                { style: { display: "flex", flexDirection: "column", gap: "2px" } },
                 h(
                   "div",
-                  { style: styles.meta },
-                  grants.length > 0 ? grants.join(" · ") : text(t, "detail.grantsEmpty"),
+                  { style: styles.railBodyFull, "data-projects-memory-count": "" },
+                  text(t, "detail.memoryCount", { count: memoryEntries }),
                 ),
                 h(
                   "div",
-                  { style: { display: "flex", gap: "6px", alignItems: "center" } },
-                  h("input", {
-                    value: grantsDraft,
-                    placeholder: "owner/repo",
-                    "data-projects-grant-input": "",
-                    style: { ...styles.input, flex: 1, minWidth: 0, fontSize: "12px" },
-                    onInput: (/** @type {any} */ event) => setGrantsDraft(event.target.value),
-                  }),
-                  h(
+                  { style: styles.railBodyFull, "data-projects-memory-status": "" },
+                  data.content?.memoryIndex
+                    ? text(t, "detail.memoryIndexHint")
+                    : text(t, "detail.memoryEmptyHint"),
+                ),
+              ),
+            }),
+            h(RailSection, {
+              t: t,
+              id: "context",
+              title: text(t, "detail.section.context"),
+              collapsible: narrow,
+              summary: dirSummary,
+              attrs: { "data-projects-rail-context": "" },
+              action: h("span", { style: styles.meta, "data-projects-budget": "" }, budgetText),
+              body: h(
+                "div",
+                { style: { display: "flex", flexDirection: "column", gap: "8px" } },
+                // 项目状态：值 + 暂停/恢复
+                h(RailRow, {
+                  label: text(t, "detail.projectState"),
+                  value: projectStateText,
+                  attrs: { "data-projects-rail-state": "" },
+                  action: h(
                     "button",
                     {
                       type: "button",
-                      style: { ...styles.secondaryButton, padding: "4px 10px", fontSize: "12px" },
-                      "data-projects-grant-add": "",
+                      style: smallButton,
+                      "data-projects-toggle-pause": "",
                       onClick: () => {
-                        const slug = String(grantsDraft).trim();
-                        if (!/^[\w.-]+\/[\w.-]+$/u.test(slug)) return;
-                        setGrants([...grants, slug]);
-                        setGrantsDraft("");
+                        const next =
+                          data.projectState === "paused" ? "resumeProject" : "pauseProject";
+                        call(api.ctx, next, { id: project.id }).then(
+                          () => load(),
+                          (error) => {
+                            setData((/** @type {any} */ prev) => ({
+                              ...prev,
+                              error: String(error?.message ?? error),
+                            }));
+                          },
+                        );
                       },
                     },
-                    text(t, "detail.grantAdd"),
+                    data.projectState === "paused"
+                      ? text(t, "detail.resume")
+                      : text(t, "detail.pause"),
                   ),
-                ),
-                grants.length > 0
-                  ? h(
-                      "div",
-                      { style: { display: "flex", gap: "6px", flexWrap: "wrap" } },
-                      ...grants.map((/** @type {string} */ slug) =>
-                        h(
-                          "button",
-                          {
-                            key: slug,
-                            type: "button",
-                            style: { ...styles.button, fontSize: "11px" },
-                            "data-projects-grant-remove": slug,
-                            onClick: () => setGrants(grants.filter((item) => item !== slug)),
-                          },
-                          `${slug} ✕`,
-                        ),
-                      ),
-                    )
-                  : null,
-              ),
-              // 回收站清理：先预览再确认（dry-run 默认）
-              h(
-                "div",
-                {
-                  "data-projects-purge": "",
-                  style: { display: "flex", flexDirection: "column", gap: "6px", marginTop: "6px" },
-                },
-                h("div", { style: styles.meta }, text(t, "detail.purgeTitle")),
+                }),
+                // 项目目录：值行（单行截断）+ 编辑按钮 → 模态里出输入框
                 h(
                   "div",
-                  { style: { display: "flex", gap: "6px", alignItems: "center" } },
-                  h(
-                    "button",
-                    {
-                      type: "button",
-                      style: { ...styles.secondaryButton, padding: "4px 10px", fontSize: "12px" },
-                      disabled: purge.phase === "loading",
-                      "data-projects-purge-preview": "",
-                      onClick: previewPurge,
-                    },
-                    text(t, "detail.purgePreview"),
-                  ),
-                  purge.phase === "confirm"
-                    ? h(
-                        "button",
-                        {
-                          type: "button",
-                          style: {
-                            ...styles.secondaryButton,
-                            color: T.danger,
-                            padding: "4px 10px",
-                            fontSize: "12px",
-                          },
-                          "data-projects-purge-confirm": "",
-                          onClick: runPurge,
+                  { style: { display: "flex", flexDirection: "column", gap: "2px" } },
+                  h(RailRow, {
+                    label: text(t, "detail.dirLabel"),
+                    value: dirList.length > 0 ? dirList.join(" · ") : text(t, "detail.none"),
+                    title: dirList.join(" · "),
+                    attrs: { "data-projects-rail-dir": "" },
+                    action: h(
+                      "button",
+                      {
+                        type: "button",
+                        style: smallButton,
+                        "data-projects-dir-edit": "",
+                        onClick: () => {
+                          setDirDraft(dirList[0] ?? "");
+                          setDirEditing(true);
                         },
-                        text(t, "detail.purgeConfirm", { count: purge.eligible }),
+                      },
+                      text(t, "detail.edit"),
+                    ),
+                  }),
+                  dirInfo.path !== ""
+                    ? h(
+                        "div",
+                        {
+                          style: {
+                            ...styles.meta,
+                            color: dirInfo.invalid
+                              ? T.danger
+                              : dirInfo.isGit
+                                ? T.text
+                                : T.accentText,
+                          },
+                          "data-projects-dir-info": dirInfo.invalid
+                            ? "invalid"
+                            : dirInfo.isGit
+                              ? "git"
+                              : "shared",
+                        },
+                        dirInfo.invalid
+                          ? text(t, "detail.dirInvalidHint")
+                          : dirInfo.isGit
+                            ? text(t, "detail.dirGitHint")
+                            : text(t, "detail.dirSharedHint"),
                       )
                     : null,
                 ),
+                // 仓库授权：值行 + ＋（点开才出输入与删除）
+                h(RailRow, {
+                  label: text(t, "detail.grantsLabel"),
+                  value: grants.length > 0 ? grants.join(" · ") : text(t, "detail.none"),
+                  title: grants.join(" · "),
+                  attrs: { "data-projects-grants": "" },
+                  action: h(
+                    "button",
+                    {
+                      type: "button",
+                      style: smallButton,
+                      "data-projects-grant-edit": "",
+                      onClick: () => setGrantsEditing(true),
+                    },
+                    "＋",
+                  ),
+                }),
+                // 回收站清理：值行 + 预览/确认（两个都是动作，不是输入）
+                h(RailRow, {
+                  label: text(t, "detail.purgeLabel"),
+                  value: purge.message !== "" ? purge.message : text(t, "detail.purgeNothing"),
+                  attrs: { "data-projects-purge": "" },
+                  action: h(
+                    "span",
+                    { style: { display: "inline-flex", gap: "4px", flex: "none" } },
+                    h(
+                      "button",
+                      {
+                        type: "button",
+                        style: smallButton,
+                        disabled: purge.phase === "loading",
+                        "data-projects-purge-preview": "",
+                        onClick: previewPurge,
+                      },
+                      text(t, "detail.purgePreview"),
+                    ),
+                    purge.phase === "confirm"
+                      ? h(
+                          "button",
+                          {
+                            type: "button",
+                            style: { ...smallButton, color: T.danger, borderColor: T.danger },
+                            "data-projects-purge-confirm": "",
+                            onClick: runPurge,
+                          },
+                          text(t, "detail.purgeConfirm", { count: purge.eligible }),
+                        )
+                      : null,
+                  ),
+                }),
                 purge.message !== ""
                   ? h(
                       "div",
@@ -3887,143 +4145,244 @@ window.__ModuleLoader__.load({
                       purge.message,
                     )
                   : null,
-              ),
-              // 回收站（可恢复）：删除承诺"可恢复"，就必须给得出恢复入口（P0-2）
-              h(
-                "div",
-                {
-                  "data-projects-trash": "",
-                  style: { display: "flex", flexDirection: "column", gap: "6px", marginTop: "6px" },
-                },
-                h("div", { style: styles.meta }, text(t, "detail.trashTitle")),
-                trash.entries.length === 0
-                  ? h(
-                      "div",
-                      { style: styles.meta, "data-projects-trash-empty": "" },
-                      text(t, "detail.trashEmpty"),
-                    )
-                  : h(
-                      "div",
-                      { style: { display: "flex", flexDirection: "column", gap: "4px" } },
-                      trash.entries.slice(0, 8).map((/** @type {any} */ entry) =>
-                        h(
-                          "div",
-                          {
-                            key: entry.entryId,
-                            "data-projects-trash-row": entry.entryId,
-                            style: {
-                              display: "flex",
-                              gap: "6px",
-                              alignItems: "center",
-                              justifyContent: "space-between",
-                              flexWrap: "wrap",
-                            },
-                          },
-                          h(
-                            "span",
-                            {
-                              style: {
-                                ...styles.meta,
-                                minWidth: 0,
-                                flex: "1 1 120px",
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                              },
-                            },
-                            `${entry.name} · ${entry.threadCount} 个线程 · ${formatBytes(entry.sizeBytes)}`,
-                          ),
-                          h(
-                            "button",
-                            {
-                              type: "button",
-                              style: { ...styles.button, fontSize: "11px" },
-                              "data-projects-trash-restore": entry.entryId,
-                              onClick: () => restoreEntry(entry.entryId),
-                              disabled: entry.restorable !== true,
-                            },
-                            text(t, "detail.trashRestore"),
-                          ),
-                          h(
-                            "button",
-                            {
-                              type: "button",
-                              style: {
-                                ...styles.button,
-                                fontSize: "11px",
-                                borderColor: T.danger,
-                                color: T.danger,
-                              },
-                              "data-projects-trash-delete": entry.entryId,
-                              onClick: () => deleteEntry(entry),
-                            },
-                            pendingDelete.entryId === entry.entryId
-                              ? text(t, "detail.trashDeleteConfirm", {
-                                  size: formatBytes(entry.sizeBytes),
-                                })
-                              : text(t, "detail.trashDelete"),
-                          ),
-                        ),
-                      ),
-                    ),
-                trash.entries.length > 0
-                  ? h(
-                      "div",
-                      { style: { display: "flex", justifyContent: "flex-end" } },
-                      h(
-                        "button",
-                        {
-                          type: "button",
-                          style: {
-                            ...styles.button,
-                            fontSize: "11px",
-                            borderColor: T.danger,
-                            color: T.danger,
-                          },
-                          "data-projects-trash-empty": "",
-                          onClick: emptyAll,
-                        },
-                        pendingDelete.confirmAll
-                          ? text(t, "detail.trashEmptyConfirm", {
-                              count: trash.entries.length,
-                              size: formatBytes(
-                                trash.entries.reduce(
-                                  (/** @type {number} */ sum, /** @type {any} */ item) =>
-                                    sum + Number(item.sizeBytes ?? 0),
-                                  0,
-                                ),
-                              ),
-                            })
-                          : text(t, "detail.trashEmptyAll"),
-                      ),
-                    )
-                  : null,
-                trash.message !== ""
-                  ? h(
-                      "div",
-                      { style: styles.meta, "data-projects-trash-result": "" },
-                      trash.message,
-                    )
-                  : null,
-              ),
-              // 危险开关：宿主设置页在未登录 profile 里不渲染插件分节（验收发现），
-              // 而这些都是 per-project 策略，放在项目自己的上下文里更合理。
-              h(DangerSwitches, {
-                t: t,
-                policy: project.policy,
-                onChange: (/** @type {any} */ patch) =>
-                  call(api.ctx, "updateProject", {
-                    id: project.id,
-                    patch: { policy: { ...project.policy, ...patch } },
-                  }).then(() => {
-                    load();
-                    // 复选框的 checked 来自 props.project.policy（父级列表数据），
-                    // 不刷新父级就会「勾了又弹回」——用户以为没生效（走查发现）
-                    if (typeof props.onChanged === "function") props.onChanged();
+                // 回收站（可恢复）：值行 + 条目列表（列表本来就是行）
+                h(
+                  "div",
+                  { style: { display: "flex", flexDirection: "column", gap: "4px" } },
+                  h(RailRow, {
+                    label: text(t, "detail.trashLabel"),
+                    value:
+                      trash.entries.length > 0
+                        ? text(t, "detail.trashCount", { count: trash.entries.length })
+                        : text(t, "detail.trashNone"),
+                    attrs: { "data-projects-trash-count": "" },
                   }),
-              }),
-            ),
+                  h(
+                    "div",
+                    {
+                      "data-projects-trash": "",
+                      style: { display: "flex", flexDirection: "column", gap: "4px" },
+                    },
+                    trash.entries.length === 0
+                      ? h(
+                          "div",
+                          { style: styles.meta, "data-projects-trash-empty": "" },
+                          text(t, "detail.trashEmpty"),
+                        )
+                      : h(
+                          "div",
+                          { style: { display: "flex", flexDirection: "column", gap: "4px" } },
+                          trash.entries.slice(0, 8).map((/** @type {any} */ entry) =>
+                            h(
+                              "div",
+                              {
+                                key: entry.entryId,
+                                "data-projects-trash-row": entry.entryId,
+                                style: {
+                                  display: "flex",
+                                  gap: "6px",
+                                  alignItems: "center",
+                                  justifyContent: "space-between",
+                                  flexWrap: "wrap",
+                                },
+                              },
+                              h(
+                                "span",
+                                {
+                                  style: {
+                                    ...styles.meta,
+                                    minWidth: 0,
+                                    flex: "1 1 120px",
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap",
+                                  },
+                                  title: `${entry.name} · ${entry.threadCount} 个线程 · ${formatBytes(entry.sizeBytes)}`,
+                                },
+                                `${entry.name} · ${entry.threadCount} 个线程 · ${formatBytes(entry.sizeBytes)}`,
+                              ),
+                              h(
+                                "button",
+                                {
+                                  type: "button",
+                                  style: { ...smallButton, fontSize: "11px" },
+                                  "data-projects-trash-restore": entry.entryId,
+                                  onClick: () => restoreEntry(entry.entryId),
+                                  disabled: entry.restorable !== true,
+                                },
+                                text(t, "detail.trashRestore"),
+                              ),
+                              h(
+                                "button",
+                                {
+                                  type: "button",
+                                  style: {
+                                    ...smallButton,
+                                    fontSize: "11px",
+                                    borderColor: T.danger,
+                                    color: T.danger,
+                                  },
+                                  "data-projects-trash-delete": entry.entryId,
+                                  onClick: () => deleteEntry(entry),
+                                },
+                                pendingDelete.entryId === entry.entryId
+                                  ? text(t, "detail.trashDeleteConfirm", {
+                                      size: formatBytes(entry.sizeBytes),
+                                    })
+                                  : text(t, "detail.trashDelete"),
+                              ),
+                            ),
+                          ),
+                          trash.entries.length > 0
+                            ? h(
+                                "div",
+                                { style: { display: "flex", justifyContent: "flex-end" } },
+                                h(
+                                  "button",
+                                  {
+                                    type: "button",
+                                    style: {
+                                      ...smallButton,
+                                      fontSize: "11px",
+                                      borderColor: T.danger,
+                                      color: T.danger,
+                                    },
+                                    "data-projects-trash-empty": "",
+                                    onClick: emptyAll,
+                                  },
+                                  pendingDelete.confirmAll
+                                    ? text(t, "detail.trashEmptyConfirm", {
+                                        count: trash.entries.length,
+                                        size: formatBytes(
+                                          trash.entries.reduce(
+                                            (/** @type {number} */ sum, /** @type {any} */ item) =>
+                                              sum + Number(item.sizeBytes ?? 0),
+                                            0,
+                                          ),
+                                        ),
+                                      })
+                                    : text(t, "detail.trashEmptyAll"),
+                                ),
+                              )
+                            : null,
+                        ),
+                  ),
+                  trash.message !== ""
+                    ? h(
+                        "div",
+                        { style: styles.meta, "data-projects-trash-result": "" },
+                        trash.message,
+                      )
+                    : null,
+                ),
+                // 危险动作开关：本来就是「一行 + 展开」，保留 details 语义
+                h(DangerSwitches, {
+                  t: t,
+                  policy: project.policy,
+                  onChange: (/** @type {any} */ patch) =>
+                    call(api.ctx, "updateProject", {
+                      id: project.id,
+                      patch: { policy: { ...project.policy, ...patch } },
+                    }).then(() => {
+                      load();
+                      // 复选框的 checked 来自 props.project.policy（父级列表数据），
+                      // 不刷新父级就会「勾了又弹回」——用户以为没生效（走查发现）
+                      if (typeof props.onChanged === "function") props.onChanged();
+                    }),
+                }),
+              ),
+            }),
           ),
         ),
+        // 右栏值行的编辑入口：点「编辑 / ＋」才出输入（右栏本身不常驻 input）
+        h(RailEditor, {
+          t: t,
+          title: text(t, "detail.dirLabel"),
+          open: dirEditing,
+          attrs: { "data-projects-dir-editor": "" },
+          onClose: () => setDirEditing(false),
+          saveLabel: text(t, "detail.dirSave"),
+          saveAttrs: { "data-projects-dir-save": "" },
+          onSave: submitDir,
+          children: h(
+            "div",
+            { style: { display: "flex", flexDirection: "column", gap: "6px" } },
+            h("input", {
+              style: styles.input,
+              value: dirDraft,
+              placeholder: text(t, "detail.dirPlaceholder"),
+              "data-projects-dir-input": "",
+              onChange: (/** @type {any} */ event) => setDirDraft(event.target.value),
+              onKeyDown: (/** @type {any} */ event) => {
+                if (event.key === "Enter") submitDir();
+              },
+            }),
+            h("span", { style: styles.meta }, text(t, "detail.dirPlaceholder")),
+          ),
+        }),
+        h(RailEditor, {
+          t: t,
+          title: text(t, "detail.grantsLabel"),
+          open: grantsEditing,
+          attrs: { "data-projects-grants-editor": "" },
+          onClose: () => setGrantsEditing(false),
+          saveLabel: text(t, "detail.grantAdd"),
+          onSave: () => setGrantsEditing(false),
+          children: h(
+            "div",
+            { style: { display: "flex", flexDirection: "column", gap: "8px" } },
+            h(
+              "div",
+              { style: styles.meta },
+              grants.length > 0 ? grants.join(" · ") : text(t, "detail.grantsEmpty"),
+            ),
+            h(
+              "div",
+              { style: { display: "flex", gap: "6px", alignItems: "center" } },
+              h("input", {
+                style: styles.input,
+                value: grantsDraft,
+                placeholder: "owner/repo",
+                "data-projects-grant-input": "",
+                onInput: (/** @type {any} */ event) => setGrantsDraft(event.target.value),
+              }),
+              h(
+                "button",
+                {
+                  type: "button",
+                  style: styles.secondaryButton,
+                  "data-projects-grant-add": "",
+                  onClick: () => {
+                    const slug = String(grantsDraft).trim();
+                    if (!/^[\w.-]+\/[\w.-]+$/u.test(slug)) return;
+                    setGrants([...grants, slug]);
+                    setGrantsDraft("");
+                  },
+                },
+                text(t, "detail.grantAdd"),
+              ),
+            ),
+            grants.length > 0
+              ? h(
+                  "div",
+                  { style: { display: "flex", gap: "6px", flexWrap: "wrap" } },
+                  ...grants.map((/** @type {string} */ slug) =>
+                    h(
+                      "button",
+                      {
+                        key: slug,
+                        type: "button",
+                        style: { ...styles.button, fontSize: "11px" },
+                        "data-projects-grant-remove": slug,
+                        onClick: () => setGrants(grants.filter((item) => item !== slug)),
+                      },
+                      `${slug} ✕`,
+                    ),
+                  ),
+                )
+              : null,
+          ),
+        }),
         del.confirming
           ? h(
               "div",
@@ -4084,6 +4443,27 @@ window.__ModuleLoader__.load({
             )
           : null,
       );
+    }
+
+    /**
+     * 详情页渲染护栏：详情里抛错时只毁详情，不毁整个面板（列表/回收站入口还得在）。
+     * 与 ProjectsPanelSafe 同款：以函数调用让 hooks 归属本组件、异常可被 try/catch 捕获。
+     * @param {any} props
+     */
+    function ProjectDetailSafe(props) {
+      try {
+        return ProjectDetail(props);
+      } catch (error) {
+        return h(
+          "pre",
+          {
+            "data-projects-crash": "",
+            "data-projects-detail-crash": "",
+            style: { color: T.danger, whiteSpace: "pre-wrap", fontSize: "12px" },
+          },
+          String(/** @type {any} */ (error)?.stack || error),
+        );
+      }
     }
 
     /**
