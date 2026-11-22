@@ -76,6 +76,10 @@ window.__ModuleLoader__.load({
       "detail.dirLabel": "项目目录",
       "detail.dirPlaceholder": "绝对路径；线程会在这里建 worktree",
       "detail.dirSave": "绑定",
+      "detail.dirGitHint": "这是 git 仓库：线程会在这里建独立 worktree（隔离）",
+      "detail.dirSharedHint":
+        "不是 git 仓库：线程会**共享这个目录**（没有 worktree 隔离，别让两个线程同时改同一批文件）",
+      "detail.threadShared": "共享目录（未隔离）",
       "detail.pause": "暂停项目",
       "detail.resume": "恢复项目",
       "detail.budget": "今日 {today} 个线程 · 进行中 {running}",
@@ -211,6 +215,10 @@ window.__ModuleLoader__.load({
       "detail.dirLabel": "Project dir",
       "detail.dirPlaceholder": "Absolute path; threads create worktrees here",
       "detail.dirSave": "Bind",
+      "detail.dirGitHint": "Git repo: each thread gets its own worktree (isolated)",
+      "detail.dirSharedHint":
+        "Not a git repo: threads **share this directory** (no worktree isolation — avoid two threads editing the same files)",
+      "detail.threadShared": "shared dir (not isolated)",
       "detail.pause": "Pause project",
       "detail.resume": "Resume project",
       "detail.budget": "{today} threads today · {running} running",
@@ -590,7 +598,16 @@ window.__ModuleLoader__.load({
                       { style: styles.rowMain },
                       h(
                         "span",
-                        { style: styles.name },
+                        {
+                          style: {
+                            ...styles.name,
+                            minWidth: 0,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          },
+                          "data-projects-row-name": project.id,
+                        },
                         // 重名项目不可区分（走查撞到两条同名）：名字后带一小段 id 后缀
                         project.name,
                         h(
@@ -1222,21 +1239,34 @@ window.__ModuleLoader__.load({
       );
       const dirDraft = dirState[0];
       const setDirDraft = dirState[1];
+      const dirInfoState = useState({ path: "", exists: false, isGit: false, writable: false });
+      const dirInfo = dirInfoState[0];
+      const setDirInfo = dirInfoState[1];
       const saveDir = useCallback(() => {
         const value = String(dirDraft).trim();
         call(api.ctx, "updateProject", {
           id: project.id,
           patch: { dirs: value === "" ? [] : [value] },
-        }).then(
-          () => load(),
-          (error) => {
+        })
+          .then(() => {
+            // 绑完立刻探一次：非 git 目录意味着线程**不会隔离**，必须当场说清（走查发现静默降级）
+            if (value === "") {
+              setDirInfo({ path: "", exists: false, isGit: false, writable: false });
+              return;
+            }
+            call(api.ctx, "inspectDir", { options: { path: value } }).then(
+              (/** @type {any} */ info) => setDirInfo({ path: value, ...info }),
+              () => setDirInfo({ path: value, exists: true, isGit: false, writable: true }),
+            );
+          })
+          .then(() => load())
+          .catch((/** @type {any} */ error) => {
             setData((/** @type {any} */ prev) => ({
               ...prev,
               error: String(error?.message ?? error),
             }));
-          },
-        );
-      }, [api, dirDraft, load, project.id, setData]);
+          });
+      }, [api, dirDraft, load, project.id, setData, setDirInfo]);
 
       const createThread = useCallback(() => {
         const task = String(draft).trim();
@@ -1415,6 +1445,7 @@ window.__ModuleLoader__.load({
                     [
                       row.view.turn > 0 ? `turn ${row.view.turn}` : "",
                       row.branch ? String(row.branch) : "",
+                      row.isolated === false ? text(t, "detail.threadShared") : "",
                     ]
                       .filter((part) => part !== "")
                       .join(" · ") || "—",
@@ -1676,6 +1707,16 @@ window.__ModuleLoader__.load({
             text(t, "detail.dirSave"),
           ),
         ),
+        dirInfo.path !== ""
+          ? h(
+              "div",
+              {
+                style: { ...styles.meta, color: dirInfo.isGit ? T.text : T.accent },
+                "data-projects-dir-info": dirInfo.isGit ? "git" : "shared",
+              },
+              dirInfo.isGit ? text(t, "detail.dirGitHint") : text(t, "detail.dirSharedHint"),
+            )
+          : null,
         (() => {
           const all = Array.isArray(data.approvals) ? data.approvals : [];
           const pending = all.filter((/** @type {any} */ item) => item.status === "pending");

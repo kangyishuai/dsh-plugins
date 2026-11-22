@@ -3,6 +3,8 @@
 // 注意（docs/runtime/0.2.1-rc.5.md §6.10）：Remote 方法必须声明在**这个被导出的类自身原型**上，
 // 否则网关不会 claim 端点，所有 /api/projects/* 返回 404。
 import {
+  accessSync,
+  constants,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -428,6 +430,27 @@ export class ProjectsService extends TypertRemoteService {
    * @param {string} projectId
    * @param {string} text
    */
+  /**
+   * 探一下目录能不能当项目目录用（规格 §3.x）：是不是 git 仓库决定线程能不能隔离。
+   * 走查发现"绑了非 git 目录 → 线程静默降级成共享目录"，界面必须能如实告知。
+   * @param {{ path?: string }} [options]
+   */
+  inspectDir(options) {
+    const path = String(options?.path ?? "").trim();
+    if (path === "") return { exists: false, isGit: false, writable: false };
+    const exists = existsSync(path);
+    let writable = false;
+    if (exists) {
+      try {
+        accessSync(path, constants.W_OK);
+        writable = true;
+      } catch {
+        writable = false;
+      }
+    }
+    return { exists, isGit: exists && existsSync(join(path, ".git")), writable };
+  }
+
   /**
    * 保存项目常设规则（instructions.md）。走查发现「记忆」页签只读，用户没法自己写规则。
    * 有上限（20k 字符）：这个文件每次请求都会注入，太长会持续吃上下文。
@@ -1947,6 +1970,8 @@ export class ProjectsService extends TypertRemoteService {
         sessionId: thread.sessionId,
         branch: thread.branch ?? null,
         worktree: thread.worktree ?? null,
+        // 有没有独立 worktree 决定"隔不隔离"，界面要能如实显示（走查发现用户看不出来）
+        isolated: typeof thread.worktree === "string" && thread.worktree !== "",
         view: this.views.get(thread.sessionId) ?? initialView(),
         stats: { ...stats, commands: stats.commands.slice(-3) },
         summary: summarizeForRow({ stats }),
@@ -2141,4 +2166,5 @@ declareRemote(ProjectsService, "describe");
 declareRemote(ProjectsService, "getProjectContent");
 declareRemote(ProjectsService, "appendMemory");
 declareRemote(ProjectsService, "setProjectInstructions");
+declareRemote(ProjectsService, "inspectDir");
 declareRemote(ProjectsService, "listAudit");

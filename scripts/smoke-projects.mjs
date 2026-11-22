@@ -348,6 +348,16 @@ try {
   // （0.6.0 验收时发现的死锁；这里断言"项目列表为空时面板仍有回收站出口"）
 
 
+  // 边界：绑非 git 目录必须**当场**说明"线程共享目录、不隔离"（走查发现静默降级）
+  const dirInfoState = await page.evaluate(() => {
+    const info = document.querySelector("[data-projects-dir-info]");
+    return info ? { kind: info.getAttribute("data-projects-dir-info"), text: (info.textContent || "").trim() } : null;
+  });
+  add(
+    "非 git 目录绑定时如实说明未隔离",
+    dirInfoState === null || dirInfoState.kind === "shared" ? /共享|不隔离|share/iu.test(dirInfoState?.text || "") : true,
+    JSON.stringify(dirInfoState),
+  );
   // 空项目也必须给「建线程」入口（否则新项目在面板里无法起线程，只能靠会话菜单归属）
   const emptyComposer = await page.evaluate(() => {
     const empty = Boolean(document.querySelector("[data-projects-threads-empty]"));
@@ -719,6 +729,15 @@ try {
     rowIds.length > 0 && rowIds.every((id) => /^#[A-Za-z0-9_-]{4,}$/u.test(id)),
     JSON.stringify(rowIds.slice(0, 3)),
   );
+  // 长项目名必须截断，不许撑爆行高
+  const nameOverflow = await page.evaluate(() => {
+    const name = document.querySelector("[data-projects-row-name]");
+    if (!name) return "missing";
+    const style = getComputedStyle(name);
+    return style.textOverflow + "|" + style.overflow + "|" + style.whiteSpace;
+  });
+  add("超长项目名用省略号截断", String(nameOverflow).startsWith("ellipsis|hidden|nowrap"), String(nameOverflow));
+
 
 
   // 删除承诺"可恢复"，就必须能真的恢复回来。用一个**单独**的临时项目做往返，
