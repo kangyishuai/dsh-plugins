@@ -124,8 +124,29 @@ export async function reclaimThreadWorktree(input) {
       : ["rev-list", "--count", `${record.baseSha ?? "HEAD"}..HEAD`],
     worktree,
   );
+  // 已合并的线程：分支常被删掉（B5 就是这么做的），此时 `HEAD --not --remotes` 会把
+  // 这些提交重新算成"未推送"，于是 worktree 永远回收不掉——判据要能识别"内容已在主干里"。
+  let mergedIntoTarget = typeof record.mergedAt === "string" && record.mergedAt !== "";
+  if (!mergedIntoTarget && hasRemote) {
+    const head = await safeGit(
+      deps.runGit,
+      ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+      worktree,
+    );
+    const target = String(head.stdout ?? "")
+      .trim()
+      .replace(/^refs\/remotes\//u, "");
+    const candidate = target !== "" ? target : "origin/main";
+    const ancestor = await safeGit(
+      deps.runGit,
+      ["merge-base", "--is-ancestor", "HEAD", candidate],
+      worktree,
+    );
+    mergedIntoTarget = ancestor.code === 0;
+  }
   const verdict = shouldReclaim({
     statusText: status.code === 0 ? String(status.stdout ?? "") : "status-failed",
+    merged: mergedIntoTarget,
     unpushedCommits:
       unpushed.code === 0 ? Number(String(unpushed.stdout ?? "").trim() || "0") : Number.NaN,
     isCurrentSession: input.isCurrentSession === true,

@@ -315,3 +315,31 @@ describe("shouldDeleteBranchV2（规格 §7.7.5：不用 --merged 的三条判�
     assert.ok(!planDeleteBranch("dsh/p-1").includes("-D"));
   });
 });
+
+describe("shouldReclaim：已合并线程的回收（squash + 删分支后仍可回收）", () => {
+  const base = { statusText: "", unpushedCommits: 0, isCurrentSession: false };
+
+  it("工作区干净且无未推送 → 回收", () => {
+    assert.deepEqual(shouldReclaim(base), { ok: true, reason: "" });
+  });
+
+  it("已合并进远端主干 → 即使还有未推送提交也允许回收", () => {
+    // squash 合并 + 远端删分支之后，这些提交不再挂在任何 remote ref 上
+    assert.deepEqual(shouldReclaim({ ...base, unpushedCommits: 3, merged: true }), {
+      ok: true,
+      reason: "",
+    });
+  });
+
+  it("未合并且未推送 → 拒绝（内容只在本地）", () => {
+    assert.equal(shouldReclaim({ ...base, unpushedCommits: 2 }).reason, "unpushed-commits");
+  });
+
+  it("当前会话 / 脏工作区 仍一律拒绝（merged 也不放行）", () => {
+    assert.equal(
+      shouldReclaim({ ...base, merged: true, isCurrentSession: true }).reason,
+      "current-session",
+    );
+    assert.equal(shouldReclaim({ ...base, merged: true, statusText: " M f.txt" }).reason, "dirty");
+  });
+});

@@ -405,3 +405,58 @@ describe("reclaimThreadWorktree：未推送判据（修 base..HEAD 的缺陷）"
     assert.equal(result.reason, "unpushed-commits");
   });
 });
+
+describe("reclaimThreadWorktree：已合并线程（squash + 删分支）也能回收", () => {
+  it("线程被标记 mergedAt 后，即使提交已不在任何 remote ref 上，也允许回收", async () => {
+    const bare = join(root, "remote.git");
+    await runGit(["init", "-q", "--bare", bare], root);
+    await runGit(["remote", "add", "origin", bare], repo);
+    await runGit(["push", "-q", "-u", "origin", "main"], repo);
+
+    const store = new ProjectStore({ root: join(root, "data") }).load();
+    const project = store.createProject("payments", { dirs: [repo] });
+    const deps = { runGit, createSession: fakeSessions().createSession };
+    const thread = await createIsolatedThread({
+      store,
+      dataRoot: join(root, "data"),
+      projectId: project.id,
+      deps,
+    });
+    const worktree = String(thread.worktree ?? "");
+    writeFileSync(join(worktree, "work.txt"), "change\n", "utf8");
+    await runGit(["add", "."], worktree);
+    await runGit(
+      ["-c", "user.email=t@local", "-c", "user.name=t", "commit", "-qm", "work"],
+      worktree,
+    );
+    await runGit(["push", "-q", "-u", "origin", String(thread.branch)], worktree);
+
+    // squash 合并到 main，然后删掉远端分支：此时分支提交不再是 main 的祖先、也不在任何 remote ref 上
+    await runGit(["checkout", "-q", "main"], repo);
+    await runGit(["merge", "-q", "--squash", String(thread.branch)], repo);
+    await runGit(
+      ["-c", "user.email=t@local", "-c", "user.name=t", "commit", "-qm", "squash merge"],
+      repo,
+    );
+    await runGit(["push", "-q", "origin", "main"], repo);
+    await runGit(["push", "-q", "origin", "--delete", String(thread.branch)], repo);
+
+    // 未标记前：保守拒绝（内容无法证明已合并）
+    const before = await reclaimThreadWorktree({
+      store,
+      sessionId: thread.sessionId,
+      deps: { runGit },
+    });
+    assert.equal(before.reclaimed, false);
+    assert.equal(before.reason, "unpushed-commits");
+
+    // 标记 mergedAt（合并成功由插件写入）后：允许回收
+    store.setThreadWorktree(thread.sessionId, { mergedAt: new Date().toISOString() });
+    const after = await reclaimThreadWorktree({
+      store,
+      sessionId: thread.sessionId,
+      deps: { runGit },
+    });
+    assert.equal(after.reclaimed, true, `应允许回收：${after.reason}`);
+  });
+});

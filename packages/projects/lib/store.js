@@ -405,7 +405,7 @@ export class ProjectStore {
   /**
    * 记录线程的 worktree 归属（建 worktree 成功后调用）。
    * @param {string} sessionId
-   * @param {{ branch?: string|null, worktree?: string|null, baseSha?: string|null, lastPushedSha?: string|null, state?: string }} patch
+   * @param {{ branch?: string|null, worktree?: string|null, baseSha?: string|null, lastPushedSha?: string|null, state?: string, prNumber?: number, mergedAt?: string|null }} patch
    */
   setThreadWorktree(sessionId, patch) {
     const current = this.state.threads[sessionId];
@@ -419,6 +419,10 @@ export class ProjectStore {
     if (typeof patch.baseSha === "string" || patch.baseSha === null)
       current.baseSha = patch.baseSha;
     if (typeof patch.state === "string") current.state = patch.state;
+    // 线程 ↔ PR 关联：合并成功时据此标记，回收判据才敢放行 squash 合并的分支
+    if (Number.isFinite(patch.prNumber)) current.prNumber = Number(patch.prNumber);
+    if (typeof patch.mergedAt === "string" || patch.mergedAt === null)
+      current.mergedAt = patch.mergedAt;
     return { ...current };
   }
 

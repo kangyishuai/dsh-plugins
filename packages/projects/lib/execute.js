@@ -500,6 +500,16 @@ export async function executeApprovalCore(deps, requestId) {
     const ghArgs = planned.argv.slice(1); // 去掉 argv[0] 的 "gh"（planArgs 已带 --repo）
     const merged = await runGh(ghArgs);
     const ok = merged.code === 0;
+    if (ok) {
+      // squash 合并后分支 commit 不再是主干的祖先，回收判据证不出"已合并"。
+      // 合并成功这一刻是我们唯一确定知道的时点，记在线程上。
+      const prNumber = Number(approval.args?.prNumber);
+      for (const thread of store.listThreads(approval.projectId)) {
+        if (Number.isFinite(prNumber) && Number(thread.prNumber) === prNumber) {
+          store.setThreadWorktree(thread.sessionId, { mergedAt: new Date().toISOString() });
+        }
+      }
+    }
     const evidence = recoveryEvidence(approval.action, approval.args ?? {}, {
       stdout: merged.stdout,
     });

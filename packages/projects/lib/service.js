@@ -1880,6 +1880,8 @@ export class ProjectsService extends TypertRemoteService {
     }
 
     store.setThreadWakeState(sessionId, Number(thread.lastWakeTurn ?? 0));
+    // 记下 PR 号：合并成功时据此把线程标成"已合并"，回收判据才敢放行（squash 无法用祖先关系证明）
+    store.setThreadWorktree(sessionId, { prNumber });
     store.appendAudit({ action: "pr/opened", projectId, sessionId, prNumber, draft });
     store.save();
     return { opened: true, decision, prNumber, draft, argv: planned.argv };

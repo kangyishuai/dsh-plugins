@@ -110,12 +110,15 @@ export function isCleanStatus(statusText) {
 /**
  * 是否允许回收一个 worktree：三重判据，任一不满足就保留。
  * 宁可留垃圾，也不删用户的东西（ADR 0002）。
- * @param {{ statusText: string, unpushedCommits: number, isCurrentSession: boolean }} input
+ * @param {{ statusText: string, unpushedCommits: number, isCurrentSession?: boolean, merged?: boolean }} input
  * @returns {{ ok: boolean, reason: string }}
  */
 export function shouldReclaim(input) {
   if (input?.isCurrentSession === true) return { ok: false, reason: "current-session" };
   if (!isCleanStatus(input?.statusText ?? "")) return { ok: false, reason: "dirty" };
+  // 已经合并进远端主干的：内容安全落在主干里，分支被删也算"已推送"，可以回收。
+  // 否则 squash 合并 + 删分支之后，提交不再挂在任何 remote ref 上，worktree 永远回收不掉。
+  if (input?.merged === true) return { ok: true, reason: "" };
   const unpushed = Number(input?.unpushedCommits ?? 0);
   if (!Number.isFinite(unpushed) || unpushed > 0) return { ok: false, reason: "unpushed-commits" };
   return { ok: true, reason: "" };
