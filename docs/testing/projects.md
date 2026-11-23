@@ -79,8 +79,8 @@ pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体�
 > B2（把桩接通）再 +24，故 133 → 157。新增的 `data-*` 锚点与断言：
 > `data-projects-coordinator*`（项目页的协调者区：不是宿主 composer；空态 → 点「建协调者」→
 > 回读 `data-projects-coordinator-session` 非空；`compaction` 有无都要给出明确结论，这是 F10 的判空兜底）、
-> `data-projects-poll-state` + `data-projects-detail-realtime-ci`（F21：轮询状态可见；实验开关默认关，
-> 点开后在宿主 `storages/projects_ui.json` 里回读 `realtimeCi=true`）、
+> `data-projects-poll-state` + `data-projects-detail-realtime-ci`（F21：轮询状态可见；实验开关 **disabled** 且
+> `data-projects-detail-realtime-ci-implemented="no"`——实时监听未实现，盘上不允许出现 `realtimeCi=true` 的假状态）、
 > `data-projects-thread-expand` → `data-projects-thread-detail`（展开面板：`-start-card` 起始卡、
 > `-chips`/`-params` 行内 chip、`-tasks` + `-tasks-source`（无 todo 必须是 `none`，不编 0/0）、
 > `-steer-input`/`-steer`、`-model-row`（`available=yes|no` 显式降级）、
