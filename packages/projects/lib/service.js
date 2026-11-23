@@ -33,8 +33,24 @@ import { runCommand } from "./exec.js";
 import { executeApprovalCore } from "./execute.js";
 import { checkPreapproval } from "./executor.js";
 import { appendEntry } from "./memory.js";
-import { initialStats, observeEvent, parseNumstat, summarizeForRow } from "./observability.js";
-import { initialView, reduce, sortRows } from "./overview.js";
+import {
+  initialStats,
+  observeEvent,
+  parseNumstat,
+  summarizeForRow,
+  toolSummaryOf,
+} from "./observability.js";
+import {
+  estimateRemainingMs,
+  groupRows,
+  initialView,
+  mergeRecord,
+  pillCounts,
+  reduce,
+  settleState,
+  sortRows,
+  todoSummary,
+} from "./overview.js";
 import { resolveDataRoot } from "./paths.js";
 import { buildPersona } from "./persona.js";
 import { readProjectFiles } from "./project-files.js";
@@ -170,6 +186,21 @@ export class ProjectsService extends TypertRemoteService {
     this.stats = new Map();
     /** 每个线程会话最近一条 assistant 文本（唤醒信封要带它，M0 实测不带模型读不到结果）。 @type {Map<string, string>} */
     this.lastMessages = new Map();
+    /**
+     * 宿主实时状态缓存（F16/F31 的权威源 `state().pendingInput` + `list()` 的会话摘要）。
+     * 面板/通知器每隔几秒就会问一次；不去缓存的话每次都要把全部线程的 state 打一遍。
+     * @type {{ at: number, states: Map<string, any>, summaries: Map<string, any> }}
+     */
+    this.liveCache = { at: 0, states: new Map(), summaries: new Map() };
+    /**
+     * UI 状态（F63 首启一次 / F25 分组折叠）。优先 `storageDomain`（探针写验证过跨重启保留：
+     * `<DSH_HOME>/storages/projects_ui.json`），拿不到就退化成「本次宿主运行内有效」的内存值，
+     * 并在 RPC 回执里如实标 available:false（不假装已持久化）。
+     * @type {{ firstRunDone: boolean, collapsedGroups: Record<string, boolean> }}
+     */
+    this.uiStateFallback = { firstRunDone: false, collapsedGroups: {} };
+    /** @type {{ loaded: boolean, loading: Promise<any>|undefined, domain: any }} */
+    this.uiDomain = { loaded: false, loading: undefined, domain: null };
     /** @type {any} */
     this.agents = undefined;
     /** @type {any} */
@@ -290,6 +321,23 @@ export class ProjectsService extends TypertRemoteService {
       const previous = this.views.get(sessionId) ?? initialView();
       const next = reduce(previous, event);
       this.views.set(sessionId, next);
+      // 事件回写持久状态（F16 的 P0-1）：todo 快照 / 副标题 / 六态都落 projects.json，
+      // 面板没打开、宿主重启后仍读得到。只在真的变了才写盘（避免每个事件都原子写一次）。
+      try {
+        if (this.applyThreadEvent(sessionId, event, next)) this.store.save();
+      } catch (error) {
+        this.logger?.warn?.(
+          `[projects] thread state write-back failed: ${String(/** @type {any} */ (error)?.message ?? error).slice(0, 160)}`,
+        );
+      }
+      // 状态类事件会让实时缓存立刻过时：不清的话面板最多慢 2.5s 才看到「在跑/等你」变化
+      if (
+        ["turn/start", "turn/end", "interaction/pending", "interaction/cleared"].includes(
+          String(event?.type ?? ""),
+        )
+      ) {
+        this.liveCache = { at: 0, states: new Map(), summaries: new Map() };
+      }
       if (String(event?.type) === "assistant/message") {
         const text = extractText(event?.data?.message);
         if (text !== "") this.lastMessages.set(sessionId, text);
@@ -611,6 +659,11 @@ export class ProjectsService extends TypertRemoteService {
     try {
       const store = this.requireStore();
       if (!store.projectOfSession(sessionId)) return;
+      // 归档状态与宿主同步（F16：archived 必须跟着宿主 archive 走，否则面板和侧栏说法不一致）
+      if (store.state?.threads?.[sessionId]) {
+        const written = store.setThreadState(sessionId, "archived");
+        if (written.changed) store.save();
+      }
       const result = await reclaimThreadWorktree({
         store,
         sessionId,
@@ -644,15 +697,271 @@ export class ProjectsService extends TypertRemoteService {
     return this.store;
   }
 
+  /**
+   * 取一个宿主服务，**一律判 undefined**（Service.listService ⊃ 实际装载，见 scope-confirmed §12.3-6）。
+   * 用 `ctx.get` 而不是 inject：缺服务时插件要能降级，而不是整个激活失败。
+   * @param {string} name
+   * @returns {any}
+   */
+  hostService(name) {
+    try {
+      const ctx = /** @type {any} */ (this.ctx);
+      return typeof ctx?.get === "function" ? ctx.get(name) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * 读所有线程会话的实时状态（`state()` 的 pendingInput/running 是「等你」的权威源）
+   * 与会话摘要（`list()` 的 title/updatedAt，行标题与时长用）。
+   * 缓存 2.5s：面板与通知器会重复问，别每次都把 N 个会话打一遍。
+   * 任何一步失败都只是**没有那个事实**（调用方退回事件推导），绝不编造 running/pendingInput。
+   * @param {boolean} [force]
+   * @returns {Promise<{ states: Map<string, any>, summaries: Map<string, any> }>}
+   */
+  async liveSessionFacts(force = false) {
+    const now = Date.now();
+    if (!force && now - this.liveCache.at < 2500) {
+      return { states: this.liveCache.states, summaries: this.liveCache.summaries };
+    }
+    const sc = this.sessionController;
+    const tracked = this.store ? Object.keys(this.store.state?.threads ?? {}) : [];
+    /** @type {Map<string, any>} */
+    const states = new Map();
+    /** @type {Map<string, any>} */
+    const summaries = new Map();
+    // 硬上限：一个项目里堆上百个线程时不把宿主读穿；超出的行退回事件推导
+    const ids = tracked.slice(0, 200);
+    if (sc && typeof sc.state === "function") {
+      await Promise.all(
+        ids.map(async (sessionId) => {
+          try {
+            const value = await sc.state({ sessionId }, AbortSignal.timeout(1500));
+            if (value && typeof value === "object") states.set(sessionId, value);
+          } catch {
+            /* 冷会话/服务不可用：留空，交给事件推导与持久记录 */
+          }
+        }),
+      );
+    }
+    if (sc && typeof sc.list === "function") {
+      try {
+        const items = await sc.list(AbortSignal.timeout(4000));
+        for (const item of Array.isArray(items) ? items : []) {
+          const sessionId = String(item?.sessionId ?? "");
+          if (sessionId !== "") summaries.set(sessionId, item);
+        }
+      } catch {
+        /* 摘要拿不到只是少个标题，不影响状态 */
+      }
+    }
+    this.liveCache = { at: now, states, summaries };
+    return { states, summaries };
+  }
+
+  /**
+   * 把一条会话事件里的「可持久事实」写回线程记录（F16 的 P0-1：事件回写持久 state）。
+   * 只写变化过的字段；返回是否落盘。
+   * @param {string} sessionId
+   * @param {any} event
+   * @param {any} view
+   */
+  applyThreadEvent(sessionId, event, view) {
+    const store = this.store;
+    if (!store) return false;
+    const record = store.state?.threads?.[sessionId];
+    if (!record) return false;
+    const type = String(event?.type ?? "");
+    let dirty = false;
+    const at = Number(event?.at ?? event?.time ?? 0);
+
+    // 新一轮开始：上一轮的「已解决」不再成立（手动 resolve 的解除点）
+    if (
+      type === "turn/start" &&
+      typeof record.resolvedAt === "string" &&
+      record.resolvedAt !== ""
+    ) {
+      store.setThreadResolved(sessionId, false);
+      dirty = true;
+    }
+    if (type === "todo/write") {
+      const snapshot = todoSummary(event?.data);
+      if (snapshot !== null) {
+        const previous = record.todos;
+        if (!previous || previous.total !== snapshot.total || previous.done !== snapshot.done) {
+          store.setThreadTodos(sessionId, snapshot);
+          dirty = true;
+        }
+      }
+    }
+    // 副标题只从 tool/call 持久化（人可读、短）；assistant 文本只在内存里兜底，不落盘
+    if (type === "tool/call") {
+      const subtitle = toolSummaryOf(event?.data);
+      if (subtitle !== "" && subtitle !== record.subtitle) {
+        store.setThreadSubtitle(sessionId, subtitle);
+        dirty = true;
+      }
+    }
+    if (Number.isFinite(at) && at > 0) store.setThreadActivity(sessionId, at);
+
+    // 实时事实（pendingInput/running）在 progress 里统一结算；这里只用事件事实，
+    // 这样即使面板没打开，状态也会随事件回写。
+    const state = settleState({ view, record });
+    const written = store.setThreadState(sessionId, state);
+    if (written.changed) dirty = true;
+    return dirty;
+  }
+
+  /**
+   * UI 状态域（storageDomain）句柄：`open()` 只做一次；失败/缺失都返回 null 并降级。
+   * Domain 名一次性占用（同一进程别开两次）——所以这里用单飞（single-flight）。
+   * @returns {Promise<any|null>}
+   */
+  async uiDomainHandle() {
+    if (this.uiDomain.loaded) return this.uiDomain.domain;
+    if (this.uiDomain.loading) return this.uiDomain.loading;
+    this.uiDomain.loading = (async () => {
+      const sd = this.hostService("storageDomain");
+      if (!sd || typeof sd.open !== "function") return null;
+      try {
+        const domain = await sd.open({
+          name: "projects_ui",
+          version: 1,
+          global: {
+            // 探针实测：schema 只被 `.parse()` 调用，宿主不校验返回值
+            schema: { parse: (/** @type {any} */ value) => value },
+            initial: { firstRunDone: false, collapsedGroups: {} },
+          },
+          tables: {},
+        });
+        return domain ?? null;
+      } catch (error) {
+        this.logger?.warn?.(
+          `[projects] storageDomain unavailable: ${String(/** @type {any} */ (error)?.message ?? error).slice(0, 160)}`,
+        );
+        return null;
+      }
+    })();
+    this.uiDomain.domain = await this.uiDomain.loading;
+    this.uiDomain.loaded = true;
+    this.uiDomain.loading = undefined;
+    return this.uiDomain.domain;
+  }
+
+  /** @param {any} value @returns {Record<string, boolean>} */
+  normalizeCollapsed(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    /** @type {Record<string, boolean>} */
+    const out = {};
+    for (const [key, on] of Object.entries(value)) {
+      if (typeof key === "string" && key !== "" && on === true) out[key] = true;
+    }
+    return out;
+  }
+
+  /**
+   * 读 UI 状态（F63/F25）：**回读值**，不带推断。
+   * @returns {Promise<{ available: boolean, firstRunDone: boolean, collapsedGroups: Record<string, boolean> }>}
+   */
+  async uiStateInternal() {
+    const domain = await this.uiDomainHandle();
+    let firstRunDone = this.uiStateFallback.firstRunDone === true;
+    let collapsedGroups = this.normalizeCollapsed(this.uiStateFallback.collapsedGroups);
+    if (domain && typeof domain.global?.get === "function") {
+      try {
+        const value = domain.global.get() ?? {};
+        firstRunDone = value.firstRunDone === true;
+        collapsedGroups = this.normalizeCollapsed(value.collapsedGroups);
+        // 回读值才是真源：同步内存副本，降级时仍用最后一次读到的值
+        this.uiStateFallback = { firstRunDone, collapsedGroups };
+      } catch {
+        /* 读失败：用内存值，available 仍为 true（域在，只是这次没读到） */
+      }
+    }
+    return { available: Boolean(domain), firstRunDone, collapsedGroups };
+  }
+
+  /**
+   * 写 UI 状态并返回**回读值**（避免"假开关"）。
+   * @param {{ firstRunDone?: boolean, collapsedGroups?: Record<string, boolean> }} patch
+   * @returns {Promise<{ available: boolean, firstRunDone: boolean, collapsedGroups: Record<string, boolean> }>}
+   */
+  async writeUiState(patch) {
+    const current = await this.uiStateInternal();
+    const next = {
+      firstRunDone:
+        typeof patch?.firstRunDone === "boolean" ? patch.firstRunDone : current.firstRunDone,
+      collapsedGroups:
+        patch?.collapsedGroups && typeof patch.collapsedGroups === "object"
+          ? this.normalizeCollapsed(patch.collapsedGroups)
+          : current.collapsedGroups,
+    };
+    this.uiStateFallback = { ...next };
+    const domain = await this.uiDomainHandle();
+    if (domain && typeof domain.global?.set === "function") {
+      try {
+        domain.global.set(next);
+      } catch (error) {
+        this.logger?.warn?.(`[projects] ui state write failed: ${String(error).slice(0, 160)}`);
+      }
+    }
+    return this.uiStateInternal();
+  }
+
   // ---- Remote：只读 ----
 
-  listProjects() {
+  /**
+   * 项目列表（F1/F31）：顺带给出线程数、未读数与「需要你」计数。
+   * 未读由宿主的 `state().pendingInput`（权威）与手动标记（thread.unread）共同派生；
+   * 宿主服务拿不到时退回事件推导，**不编造** waiting/unread。
+   * @returns {Promise<any[]>}
+   */
+  async listProjects() {
     const store = this.requireStore();
-    // 顺带给出线程数：面板要用它显示「N 个线程」，避免每个项目再发一次 RPC。
-    return store.listProjects().map((/** @type {any} */ project) => ({
-      ...project,
-      threadCount: store.listThreads(project.id).length,
-    }));
+    const facts = await this.liveSessionFacts();
+    const archivedIds = new Set(
+      Array.isArray(this.workspaceRegistry?.archivedSessionIds)
+        ? this.workspaceRegistry.archivedSessionIds.map(String)
+        : [],
+    );
+    return store.listProjects().map((/** @type {any} */ project) => {
+      const threads = store.listThreads(project.id);
+      let waiting = 0;
+      let working = 0;
+      let failed = 0;
+      let unread = 0;
+      for (const thread of threads) {
+        const live = facts.states.get(thread.sessionId);
+        const pendingInput = Array.isArray(live?.pendingInput) ? live.pendingInput : [];
+        const view = mergeRecord(this.views.get(thread.sessionId), thread);
+        const running = live?.running === true || (live === undefined && view.state === "working");
+        const hostArchived = archivedIds.has(thread.sessionId);
+        const state = hostArchived
+          ? "archived"
+          : settleState({
+              view,
+              record:
+                !hostArchived && thread.state === "archived"
+                  ? { ...thread, state: "idle" }
+                  : thread,
+              running,
+              pendingInput,
+            });
+        if (state === "waiting-user") waiting += 1;
+        if (state === "working") working += 1;
+        if (state === "failed") failed += 1;
+        if (pendingInput.length > 0 || thread.unread === true) unread += 1;
+      }
+      return {
+        ...project,
+        threadCount: threads.length,
+        waiting,
+        working,
+        failed,
+        unread,
+      };
+    });
   }
 
   /** @param {string} id */
@@ -822,6 +1131,102 @@ export class ProjectsService extends TypertRemoteService {
     });
     store.save();
     return project;
+  }
+
+  /**
+   * 手动 Resolve / 重开（F29）。自动 resolve（autoResolveDays）留给 B6，本批只写字段不执行。
+   * 返回**回读值**：客户端据此更新，而不是自己猜。
+   * @param {string} sessionId
+   * @param {boolean} resolved
+   */
+  resolveThread(sessionId, resolved) {
+    const store = this.requireStore();
+    const id = String(sessionId ?? "");
+    const project = store.projectOfSession(id);
+    if (!project) throw new Error(`projects: unknown thread ${id}`);
+    const record = store.setThreadResolved(id, resolved === true);
+    store.appendAudit({
+      action: resolved === true ? "thread/resolved" : "thread/reopened",
+      projectId: project.id,
+      sessionId: id,
+    });
+    store.save();
+    // 内存视图同步：否则下一次 progress 会拿旧视图把状态推回去。
+    // resolve 是用户对「失败/完成」的显式确认，因此要一起清掉失败标记——否则
+    // deriveState 的 `failed > resolved` 会立刻把刚点的「已解决」弹回失败。
+    // `resolvedAt` 仍是我们唯一持久化的事实；重开后失败事实留在会话日志里（B2 由 replay 重建）。
+    const view = this.views.get(id) ?? initialView();
+    this.views.set(id, {
+      ...view,
+      resolved: resolved === true,
+      archived: false,
+      lastTurnFailed: resolved === true ? false : view.lastTurnFailed,
+      lastAttemptFailed: false,
+      state: resolved === true ? "done" : "idle",
+      unread: false,
+    });
+    this.liveCache = { at: 0, states: new Map(), summaries: new Map() };
+    return {
+      ok: true,
+      sessionId: id,
+      state: record.state,
+      resolvedAt: record.resolvedAt,
+      readback: store.state?.threads?.[id]?.state ?? record.state,
+    };
+  }
+
+  /**
+   * 标记未读 / 已读（F31）。宿主没有 read 概念，只能存插件自己的 flag；
+   * 「等你」的圆点由 pendingInput 派生，不受这里影响（两件事，不混）。
+   * @param {string} sessionId
+   * @param {boolean} unread
+   */
+  setThreadUnread(sessionId, unread) {
+    const store = this.requireStore();
+    const id = String(sessionId ?? "");
+    const project = store.projectOfSession(id);
+    if (!project) throw new Error(`projects: unknown thread ${id}`);
+    const record = store.setThreadUnread(id, unread === true);
+    store.appendAudit({
+      action: unread === true ? "thread/marked-unread" : "thread/marked-read",
+      projectId: project.id,
+      sessionId: id,
+    });
+    store.save();
+    return {
+      ok: true,
+      sessionId: id,
+      unread: record.unread,
+      readback: store.state?.threads?.[id]?.unread === true,
+    };
+  }
+
+  /**
+   * UI 状态（F63 首启是否已看过 / F25 分组折叠）：storageDomain 持久化，跨重启保留。
+   * @returns {Promise<{ available: boolean, firstRunDone: boolean, collapsedGroups: Record<string, boolean> }>}
+   */
+  uiState() {
+    return this.uiStateInternal();
+  }
+
+  /** @param {boolean} done */
+  async setFirstRunDone(done) {
+    return this.writeUiState({ firstRunDone: done === true });
+  }
+
+  /**
+   * 折叠/展开一个 Overview 分组（F25）。`group` 是 STATE_GROUPS 的 id。
+   * @param {string} group
+   * @param {boolean} collapsed
+   */
+  async setGroupCollapsed(group, collapsed) {
+    const id = String(group ?? "").trim();
+    if (id === "") throw new Error("projects: group id is required");
+    const snapshot = await this.uiStateInternal();
+    const collapsedGroups = { ...snapshot.collapsedGroups };
+    if (collapsed === true) collapsedGroups[id] = true;
+    else delete collapsedGroups[id];
+    return this.writeUiState({ collapsedGroups });
   }
 
   /** @param {string} id */
@@ -2014,36 +2419,150 @@ export class ProjectsService extends TypertRemoteService {
   }
 
   /**
-   * 线程进度（面板用）：状态由持久事件归约，按「需要我」优先排序。
-   * @param {string} projectId
+   * 组装一行 Overview 数据（F25/F26/F27）。
+   * 六态 = 宿主实时事实（archived/pendingInput/running）+ 事件归约 + 持久记录；
+   * 步进 = todo/write 快照（没有就是 null，UI 显示「—」）；副标题 = 最近 tool/call（没有留空）。
+   * @param {any} thread
+   * @param {{ states: Map<string, any>, summaries: Map<string, any> }} facts
+   * @param {Set<string>} archivedIds
+   * @param {number} now
+   * @returns {any}
    */
-  progress(projectId) {
+  buildThreadRow(thread, facts, archivedIds, now) {
+    const sessionId = String(thread.sessionId);
+    const live = facts.states.get(sessionId);
+    const summary = facts.summaries.get(sessionId);
+    const view = mergeRecord(this.views.get(sessionId), thread);
+    const pendingInput = Array.isArray(live?.pendingInput) ? live.pendingInput.map(String) : [];
+    const running = live?.running === true || (live === undefined && view.state === "working");
+    const hostArchived = archivedIds.has(sessionId);
+    // 宿主侧 unarchive 之后记录里可能还留着 archived：以宿主为准（archive 可逆）
+    const record =
+      !hostArchived && thread.state === "archived" ? { ...thread, state: "idle" } : thread;
+    const state = hostArchived ? "archived" : settleState({ view, record, running, pendingInput });
+    const stats = this.stats.get(sessionId) ?? initialStats();
+    const persistedTodos = thread.todos && Number(thread.todos.total) > 0 ? thread.todos : null;
+    const todos = view.todos.total > 0 ? view.todos : persistedTodos;
+    const steps =
+      todos && Number(todos.total) > 0
+        ? {
+            done: Math.min(Number(todos.done) || 0, Number(todos.total)),
+            total: Number(todos.total),
+          }
+        : null;
+    // `~Nm` 是**估计**（已观测每步耗时 × 剩余步数），样本不足时 null（UI 不显示）
+    const estimateMs = estimateRemainingMs({
+      todos: steps,
+      steps: stats.steps,
+      firstActivityAt: view.firstActivityAt,
+      lastActivityAt: view.lastActivityAt,
+    });
+    const createdAtMs = Date.parse(String(thread.createdAt ?? ""));
+    const resolvedAtMs = Date.parse(String(thread.resolvedAt ?? ""));
+    const durationMs = Number.isFinite(createdAtMs)
+      ? Math.max(0, (Number.isFinite(resolvedAtMs) ? resolvedAtMs : now) - createdAtMs)
+      : null;
+    return {
+      sessionId,
+      branch: thread.branch ?? null,
+      worktree: thread.worktree ?? null,
+      dir: thread.dir ?? null,
+      // 有没有独立 worktree 决定"隔不隔离"，界面要能如实显示（走查发现用户看不出来）
+      isolated: typeof thread.worktree === "string" && thread.worktree !== "",
+      // 会话标题（list() 的 title 投影）；没有就留空，由 UI 退化显示分支/短 id
+      title: String(summary?.projections?.values?.title ?? ""),
+      view: { ...view, state, pendingInput },
+      stats: { ...stats, commands: stats.commands.slice(-3) },
+      summary: summarizeForRow({ stats }),
+      subtitle: view.subtitle || thread.subtitle || "",
+      steps,
+      estimateMs,
+      // 未读：等你（pendingInput 权威）或用户手动标记；两者都不是就没有圆点
+      unread: pendingInput.length > 0 || thread.unread === true,
+      manualUnread: thread.unread === true,
+      resolvedAt: thread.resolvedAt ?? null,
+      prNumber: Number.isFinite(thread.prNumber) ? Number(thread.prNumber) : null,
+      durationMs,
+      createdAt: thread.createdAt ?? null,
+      pendingInput,
+    };
+  }
+
+  /**
+   * 把行里的可持久事实写回记录（只写变化；返回是否脏）。
+   * @param {any} thread @param {any} row
+   */
+  persistRowFacts(thread, row) {
+    const store = this.store;
+    if (!store) return false;
+    const sessionId = String(thread.sessionId);
+    let dirty = false;
+    if (
+      row.steps &&
+      (!thread.todos ||
+        thread.todos.total !== row.steps.total ||
+        thread.todos.done !== row.steps.done)
+    ) {
+      store.setThreadTodos(sessionId, row.steps);
+      dirty = true;
+    }
+    if (row.subtitle !== "" && row.subtitle !== thread.subtitle) {
+      store.setThreadSubtitle(sessionId, row.subtitle);
+      dirty = true;
+    }
+    if (row.view.lastActivityAt > 0) {
+      const iso = new Date(row.view.lastActivityAt).toISOString();
+      if (thread.lastActivityAt !== iso) {
+        store.setThreadActivity(sessionId, row.view.lastActivityAt);
+        dirty = true;
+      }
+    }
+    const written = store.setThreadState(sessionId, row.view.state);
+    if (written.changed) dirty = true;
+    return dirty;
+  }
+
+  /**
+   * 线程进度（面板用）：六态由宿主实时事实 + 持久事件共同结算，按「需要我」优先排序；
+   * 同时给出分组（F25）与药丸条计数（F26）。异步：要读宿主 `state()/list()`，
+   * 两者任一不可用都退回事件推导（降级，不报错）。
+   * @param {string} projectId
+   * @returns {Promise<any>}
+   */
+  async progress(projectId) {
     const store = this.requireStore();
     const threads = store.listThreads(projectId);
+    const facts = await this.liveSessionFacts();
+    const archivedIds = new Set(
+      Array.isArray(this.workspaceRegistry?.archivedSessionIds)
+        ? this.workspaceRegistry.archivedSessionIds.map(String)
+        : [],
+    );
+    const now = Date.now();
+    let dirty = false;
     const rows = threads.map((/** @type {any} */ thread) => {
-      const stats = this.stats.get(thread.sessionId) ?? initialStats();
-      return {
-        sessionId: thread.sessionId,
-        branch: thread.branch ?? null,
-        worktree: thread.worktree ?? null,
-        // 有没有独立 worktree 决定"隔不隔离"，界面要能如实显示（走查发现用户看不出来）
-        isolated: typeof thread.worktree === "string" && thread.worktree !== "",
-        view: this.views.get(thread.sessionId) ?? initialView(),
-        stats: { ...stats, commands: stats.commands.slice(-3) },
-        summary: summarizeForRow({ stats }),
-      };
+      const row = this.buildThreadRow(thread, facts, archivedIds, now);
+      try {
+        if (this.persistRowFacts(thread, row)) dirty = true;
+      } catch (error) {
+        this.logger?.warn?.(
+          `[projects] row state persist failed: ${String(/** @type {any} */ (error)?.message ?? error).slice(0, 160)}`,
+        );
+      }
+      return row;
     });
+    if (dirty) store.save();
     const sorted = sortRows(rows);
-    /** @type {Record<string, number>} */
-    const counts = { "waiting-user": 0, failed: 0, working: 0, done: 0, idle: 0 };
-    for (const row of rows) counts[row.view.state] = (counts[row.view.state] ?? 0) + 1;
+    const counts = pillCounts(rows);
     const project = store.getProject(projectId);
     const budget = checkThreadBudget({ project, threads, now: Date.now() });
     return {
       rows: sorted,
       counts,
+      groups: groupRows(sorted),
+      pills: counts,
       total: rows.length,
-      attention: counts["waiting-user"] + counts.failed,
+      attention: (counts["waiting-user"] ?? 0) + (counts.failed ?? 0),
       budget: {
         ok: budget.ok,
         reason: budget.reason,
@@ -2051,8 +2570,29 @@ export class ProjectsService extends TypertRemoteService {
         limits: project?.budget ?? null,
         tokensToday: store.tokenUsageToday(projectId, Date.now()),
       },
+      usageDays: this.usageDays(projectId),
       projectState: project?.state ?? "active",
     };
+  }
+
+  /**
+   * 最近 7 天 token 用量（F28/U10 的迷你图）。宿主没有用量 API，这是我们自己按天记的分桶；
+   * 没跑过模型的日期是 0（真实值，不是缺数据）。
+   * @param {string} projectId
+   * @returns {{ date: string, tokens: number }[]}
+   */
+  usageDays(projectId) {
+    const store = this.store;
+    const bucket = store?.state?.usage?.[projectId];
+    const days = bucket && typeof bucket.days === "object" ? bucket.days : {};
+    /** @type {{ date: string, tokens: number }[]} */
+    const out = [];
+    const now = Date.now();
+    for (let offset = 6; offset >= 0; offset -= 1) {
+      const date = new Date(now - offset * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      out.push({ date, tokens: Number(days[date]) || 0 });
+    }
+    return out;
   }
 
   /** 诊断：哪些会话已挂上项目上下文（只读，供冒烟/排障）。 */
@@ -2201,6 +2741,11 @@ declareRemote(ProjectsService, "resumeProject");
 declareRemote(ProjectsService, "archiveProject");
 declareRemote(ProjectsService, "unarchiveProject");
 declareRemote(ProjectsService, "setProjectPinned");
+declareRemote(ProjectsService, "resolveThread");
+declareRemote(ProjectsService, "setThreadUnread");
+declareRemote(ProjectsService, "uiState");
+declareRemote(ProjectsService, "setFirstRunDone");
+declareRemote(ProjectsService, "setGroupCollapsed");
 declareRemote(ProjectsService, "reconcileWakes");
 declareRemote(ProjectsService, "purgeTrash");
 declareRemote(ProjectsService, "cleanupBranches");

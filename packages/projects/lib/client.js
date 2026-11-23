@@ -256,6 +256,80 @@ window.__ModuleLoader__.load({
       "detail.projectState.paused": "已暂停",
       "detail.projectState.archived": "已归档",
       "detail.purged": "已清理 {count} 项，清单已写入 trash/",
+      "detail.archivedLabel": "归档时间",
+      "detail.carousel": "{index} / {total}",
+      "detail.carouselNext": "下一条",
+      "detail.carouselPrev": "上一条",
+      "detail.dirLimit": "最多 {count} 个目录（已加 {used} 个）",
+      "detail.dirRemove": "移除目录",
+      "detail.durationDays": "{days} 天",
+      "detail.durationHours": "{hours} 小时",
+      "detail.durationMinutes": "{minutes} 分钟",
+      "detail.emptyOverview": "没有在等你的事。",
+      "detail.groupCollapseAll": "全部折叠",
+      "detail.groupExpandAll": "全部展开",
+      "detail.groupMenu": "分组操作",
+      "detail.groupOnly": "只看这一组",
+      "detail.markRead": "标记已读",
+      "detail.markUnread": "标记未读",
+      "detail.notificationCount": "{count} 条待处理",
+      "detail.overview": "总览",
+      "detail.pillAll": "全部",
+      "detail.pillClear": "清除过滤",
+      "detail.pillWorkingEta": "~{minutes}m",
+      "detail.prBadge": "#{number}",
+      "detail.remove": "移除",
+      "detail.reopen": "重开",
+      "detail.reopened": "已重开",
+      "detail.reposLabel": "关联仓库",
+      "detail.resolve": "标记已解决",
+      "detail.resolved": "已标记解决（可重开）",
+      "detail.settings": "项目设置",
+      "detail.settingsHint": "插件设置入口在宿主「设置 → 插件 → 项目」里。",
+      "detail.sparkHint": "最近 7 天的 token 用量",
+      "detail.steps": "{done}/{total}",
+      "detail.stepsHint": "这个线程还没有任务清单（todo）；没有就不显示比例。",
+      "detail.stepsNone": "—",
+      "detail.switch": "切换项目",
+      "detail.switchEmpty": "没有其它项目",
+      "detail.welcome": "Welcome back, {name}.",
+      "detail.welcomeAnon": "Welcome back.",
+      "detail.welcomeCta": "派一件事",
+      "detail.welcomeIdle": "没有在等你的事。",
+      "detail.welcomeWaiting": "有 {count} 个线程在等你。",
+      "detail.welcomeWorking": "有 {count} 个线程在跑。",
+      "panel.archivedAt": "已归档 · {date}",
+      "panel.firstRun.bullet1": "一段对话可以分叉成多条线程，各自独立推进。",
+      "panel.firstRun.bullet2": "线程知道你的仓库、目录和常设指令，不用重复交代。",
+      "panel.firstRun.bullet3": "后台线程会继续跑，你回来看结果就行。",
+      "panel.firstRun.bullet4": "线程也可以跑在本机目录里，改的代码留在你的机器上。",
+      "panel.firstRun.cta": "开始使用",
+      "panel.firstRun.dismiss": "稍后再说",
+      "panel.firstRun.title": "项目现在是一段对话",
+      "panel.new.contextCount": "{dirs} 个目录 · {repos} 个仓库",
+      "panel.new.contextLabel": "Context（目录 / 仓库）",
+      "panel.new.contextLimit": "最多 {count} 个",
+      "panel.new.dirAdd": "添加目录",
+      "panel.new.iconLabel": "图标（可选）",
+      "panel.new.invalidRepo": "仓库要写成 owner/repo",
+      "panel.new.repoAdd": "添加仓库",
+      "panel.new.repoPlaceholder": "owner/repo，例如 acme/api",
+      "panel.rowUnread": "未读",
+      "panel.unread": "{count} 条未读",
+      "panel.waiting": "{count} 个在等你",
+      "panel.working": "{count} 个在跑",
+      "detail.state.resolved": "待审",
+      "detail.state.archived": "已归档",
+      "detail.pill.waiting-user": "等你",
+      "detail.pill.failed": "失败",
+      "detail.pill.working": "在跑",
+      "detail.pill.resolved": "待审",
+      "detail.pill.idle": "空闲",
+      "detail.group.waiting-user": "等你",
+      "detail.group.working": "在跑",
+      "detail.group.resolved": "待审",
+      "detail.group.idle": "空闲",
+      "detail.group.archived": "已归档",
     };
     var EN = {
       title: "Projects",
@@ -488,9 +562,90 @@ window.__ModuleLoader__.load({
       "detail.projectState.paused": "Paused",
       "detail.projectState.archived": "Archived",
       "detail.purged": "Purged {count} entries; manifest written under trash/",
+      "detail.archivedLabel": "Archived at",
+      "detail.carousel": "{index} / {total}",
+      "detail.carouselNext": "Next",
+      "detail.carouselPrev": "Previous",
+      "detail.dirLimit": "Up to {count} folders ({used} added)",
+      "detail.dirRemove": "Remove folder",
+      "detail.durationDays": "{days} d",
+      "detail.durationHours": "{hours} h",
+      "detail.durationMinutes": "{minutes} min",
+      "detail.emptyOverview": "Nothing is waiting on you.",
+      "detail.groupCollapseAll": "Collapse all",
+      "detail.groupExpandAll": "Expand all",
+      "detail.groupMenu": "Group actions",
+      "detail.groupOnly": "Only this group",
+      "detail.markRead": "Mark read",
+      "detail.markUnread": "Mark unread",
+      "detail.notificationCount": "{count} pending",
+      "detail.overview": "Overview",
+      "detail.pillAll": "All",
+      "detail.pillClear": "Clear filter",
+      "detail.pillWorkingEta": "~{minutes}m",
+      "detail.prBadge": "#{number}",
+      "detail.remove": "Remove",
+      "detail.reopen": "Reopen",
+      "detail.reopened": "Reopened",
+      "detail.reposLabel": "Repos",
+      "detail.resolve": "Mark resolved",
+      "detail.resolved": "Marked resolved (reopenable)",
+      "detail.settings": "Project settings",
+      "detail.settingsHint": "Plugin settings live under Settings → Plugins → Projects.",
+      "detail.sparkHint": "Tokens used in the last 7 days",
+      "detail.steps": "{done}/{total}",
+      "detail.stepsHint": "This thread has no todo list yet, so no step count is shown.",
+      "detail.stepsNone": "—",
+      "detail.switch": "Switch project",
+      "detail.switchEmpty": "No other projects",
+      "detail.welcome": "Welcome back, {name}.",
+      "detail.welcomeAnon": "Welcome back.",
+      "detail.welcomeCta": "Start a thread",
+      "detail.welcomeIdle": "Nothing is waiting on you.",
+      "detail.welcomeWaiting": "{count} threads are waiting on you.",
+      "detail.welcomeWorking": "{count} threads are running.",
+      "panel.archivedAt": "Archived · {date}",
+      "panel.firstRun.bullet1":
+        "One conversation can branch into multiple threads that move independently.",
+      "panel.firstRun.bullet2":
+        "Threads know your repos, folders and standing instructions, so you never repeat yourself.",
+      "panel.firstRun.bullet3": "Background threads keep running; come back and read the result.",
+      "panel.firstRun.bullet4":
+        "Threads can run in local folders too — your code stays on your machine.",
+      "panel.firstRun.cta": "Get started",
+      "panel.firstRun.dismiss": "Later",
+      "panel.firstRun.title": "A project is now a conversation",
+      "panel.new.contextCount": "{dirs} folders · {repos} repos",
+      "panel.new.contextLabel": "Context (folders / repos)",
+      "panel.new.contextLimit": "Up to {count}",
+      "panel.new.dirAdd": "Add folder",
+      "panel.new.iconLabel": "Icon (optional)",
+      "panel.new.invalidRepo": "Repos must be written as owner/repo",
+      "panel.new.repoAdd": "Add repo",
+      "panel.new.repoPlaceholder": "owner/repo, e.g. acme/api",
+      "panel.rowUnread": "Unread",
+      "panel.unread": "{count} unread",
+      "panel.waiting": "{count} waiting on you",
+      "panel.working": "{count} running",
+      "detail.state.resolved": "Ready for review",
+      "detail.state.archived": "Archived",
+      "detail.pill.waiting-user": "Needs you",
+      "detail.pill.failed": "Failed",
+      "detail.pill.working": "Working",
+      "detail.pill.resolved": "Review",
+      "detail.pill.idle": "Idle",
+      "detail.group.waiting-user": "Needs you",
+      "detail.group.working": "Working",
+      "detail.group.resolved": "Ready for review",
+      "detail.group.idle": "Idle",
+      "detail.group.archived": "Archived",
     };
     var PANEL_ID = "projects";
     var SERVICE = "projects";
+    /** F35：项目目录上限（前后端各拦一道：宿主 store 也会拒 >10）。 */
+    var MAX_CONTEXT_DIRS = 10;
+    /** F2：关联仓库上限。 */
+    var MAX_CONTEXT_REPOS = 10;
 
     /** 设计变量：全部取自宿主主题 token，前景/底色成对（plugin-conventions §2）。
      *  Claude 那边的层次（画布 → 卡片 → 输入框 → hover）映射到宿主的 bg-base → layer-1/2/3 → interactive-bg-hover。 */
@@ -929,6 +1084,161 @@ window.__ModuleLoader__.load({
         display: "inline-block",
         flex: "none",
       },
+      // —— B1：Overview 药丸条 / 分组 / 行解剖 / Welcome 头 ——
+      badge: {
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        minWidth: "18px",
+        height: "18px",
+        padding: "0 5px",
+        borderRadius: "999px",
+        background: T.accent,
+        color: T.accentText,
+        fontSize: "11px",
+        fontWeight: 600,
+        flex: "none",
+      },
+      archiveBadge: {
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "1px 8px",
+        borderRadius: "999px",
+        border: `1px solid ${T.borderSoft}`,
+        color: T.faint,
+        fontSize: "11px",
+        flex: "none",
+        whiteSpace: "nowrap",
+      },
+      pillBar: {
+        display: "flex",
+        alignItems: "center",
+        gap: "6px",
+        flexWrap: "wrap",
+        padding: "2px 0 6px",
+      },
+      filterPill: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "6px",
+        padding: "3px 10px",
+        borderRadius: "999px",
+        border: `1px solid ${T.borderSoft}`,
+        background: "transparent",
+        color: T.dim,
+        fontSize: "12px",
+        cursor: "pointer",
+        flex: "none",
+      },
+      pillActive: {
+        border: `1px solid ${T.accentText}`,
+        background: T.accent,
+        color: T.text,
+      },
+      pillCount: { fontVariantNumeric: "tabular-nums", fontWeight: 600, color: T.text },
+      welcome: {
+        display: "flex",
+        alignItems: "flex-end",
+        gap: "12px",
+        padding: "6px 2px 10px",
+        minWidth: 0,
+        flexWrap: "wrap",
+      },
+      welcomeTitle: {
+        fontSize: "20px",
+        fontWeight: 500,
+        lineHeight: 1.25,
+        letterSpacing: "0.01em",
+        minWidth: 0,
+      },
+      welcomeSub: { color: T.dim, fontSize: "12px", marginTop: "2px", minWidth: 0 },
+      spark: { display: "flex", alignItems: "flex-end", gap: "2px", height: "22px", flex: "none" },
+      sparkBar: { width: "4px", borderRadius: "2px", background: T.border },
+      groupHead: {
+        display: "flex",
+        alignItems: "center",
+        gap: "6px",
+        padding: "6px 2px",
+        marginTop: "4px",
+        minWidth: 0,
+      },
+      groupToggle: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "6px",
+        border: "none",
+        background: "transparent",
+        color: T.text,
+        fontSize: "13px",
+        fontWeight: 600,
+        padding: "2px 4px",
+        borderRadius: "6px",
+        cursor: "pointer",
+        minWidth: 0,
+      },
+      groupCount: {
+        color: T.dim,
+        fontSize: "12px",
+        fontVariantNumeric: "tabular-nums",
+        fontWeight: 400,
+      },
+      groupBody: { display: "flex", flexDirection: "column", gap: "2px" },
+      carousel: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "2px",
+        marginLeft: "auto",
+        color: T.faint,
+        fontSize: "11px",
+        flex: "none",
+      },
+      rowTitle: {
+        fontWeight: 500,
+        minWidth: 0,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      },
+      rowSub: {
+        color: T.dim,
+        fontSize: "12px",
+        minWidth: 0,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      },
+      rowRight: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "8px",
+        flex: "none",
+        color: T.faint,
+        fontSize: "11px",
+        fontVariantNumeric: "tabular-nums",
+      },
+      stepRing: { flex: "none", display: "inline-block" },
+      switchList: { display: "flex", flexDirection: "column", gap: "2px", minWidth: "220px" },
+      switchRow: {
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
+        padding: "6px 8px",
+        borderRadius: "6px",
+        border: "none",
+        background: "transparent",
+        color: T.text,
+        fontSize: "13px",
+        cursor: "pointer",
+        textAlign: "left",
+        minWidth: 0,
+      },
+      emptyCta: {
+        display: "flex",
+        flexDirection: "column",
+        gap: "6px",
+        alignItems: "flex-start",
+        padding: "10px 2px",
+      },
       composerCard: {
         display: "flex",
         flexDirection: "column",
@@ -1321,6 +1631,83 @@ window.__ModuleLoader__.load({
      * 是否存在（它不点开模态），卸载会让那条断言变成假失败（锚点语义保留）。
      * @param {any} props
      */
+    /**
+     * 首启引导（F63/U21）：一次性说明「项目现在是一段对话」+ 4 条 bullet。
+     * 排在宿主自己的「预览版说明」之后：宿主对话框关掉、面板渲染出来后才可能走到这里；
+     * 是否已看过由宿主 storageDomain 的 firstRunDone 决定（跨重启只出现一次）。
+     * @param {any} props
+     */
+    function FirstRunGuide(props) {
+      var t = props.t;
+      if (props.open !== true) return null;
+      var bullets = [
+        text(t, "panel.firstRun.bullet1"),
+        text(t, "panel.firstRun.bullet2"),
+        text(t, "panel.firstRun.bullet3"),
+        text(t, "panel.firstRun.bullet4"),
+      ];
+      return h(
+        "div",
+        {
+          style: styles.backdrop,
+          "data-projects-firstrun": "open",
+          "data-projects-firstrun-persisted": props.available === true ? "yes" : "no",
+        },
+        h(
+          "div",
+          {
+            style: { ...styles.dialog, maxWidth: "520px" },
+            role: "dialog",
+            "aria-modal": "true",
+            "aria-labelledby": "projects-firstrun-title",
+            "data-projects-firstrun-dialog": "",
+          },
+          h(
+            "div",
+            { style: styles.dialogTitle, id: "projects-firstrun-title" },
+            text(t, "panel.firstRun.title"),
+          ),
+          h(
+            "ul",
+            { style: { margin: 0, paddingLeft: "18px", color: T.dim, lineHeight: 1.7 } },
+            bullets.map((line, index) =>
+              h(
+                "li",
+                { key: String(index), "data-projects-firstrun-bullet": String(index + 1) },
+                line,
+              ),
+            ),
+          ),
+          h(
+            "div",
+            { style: { display: "flex", gap: "8px", justifyContent: "flex-end" } },
+            h(
+              "button",
+              {
+                type: "button",
+                style: styles.secondaryButton,
+                "data-projects-firstrun-close": "",
+                onClick: props.onDone,
+              },
+              text(t, "panel.firstRun.dismiss"),
+            ),
+            h(
+              "button",
+              {
+                type: "button",
+                style: styles.primaryButton,
+                "data-modal-autofocus": "",
+                "data-projects-firstrun-cta": "",
+                onClick: props.onDone,
+              },
+              text(t, "panel.firstRun.cta"),
+            ),
+          ),
+        ),
+      );
+    }
+
+    /** @param {any} props */
     function NewProjectModal(props) {
       var t = props.t;
       var form = props.form;
@@ -1337,6 +1724,84 @@ window.__ModuleLoader__.load({
       var close = () => patch({ open: false, mode: "" });
       var submit = () => onSubmit();
       var nameValue = String(form.name ?? "");
+      // —— F2 Context 多选：目录（≤10）+ 仓库 owner/repo（≤10）——
+      var dirs = Array.isArray(form.dirs) ? form.dirs : [];
+      var repos = Array.isArray(form.repos) ? form.repos : [];
+      var addDir = () => {
+        var value = String(form.dirDraft ?? "").trim();
+        if (value === "") return;
+        if (dirs.includes(value)) {
+          patch({ dirDraft: "" });
+          return;
+        }
+        if (dirs.length >= MAX_CONTEXT_DIRS) {
+          patch({ error: text(t, "panel.new.contextLimit", { count: MAX_CONTEXT_DIRS }) });
+          return;
+        }
+        patch({ dirs: [...dirs, value], dirDraft: "", error: "" });
+      };
+      var addRepo = () => {
+        var value = String(form.repoDraft ?? "")
+          .trim()
+          .replace(/^https?:\/\/github\.com\//u, "")
+          .replace(/\/+$/u, "");
+        if (value === "") return;
+        if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(value)) {
+          patch({ error: text(t, "panel.new.invalidRepo") });
+          return;
+        }
+        if (repos.includes(value)) {
+          patch({ repoDraft: "" });
+          return;
+        }
+        if (repos.length >= MAX_CONTEXT_REPOS) {
+          patch({ error: text(t, "panel.new.contextLimit", { count: MAX_CONTEXT_REPOS }) });
+          return;
+        }
+        patch({ repos: [...repos, value], repoDraft: "", error: "" });
+      };
+      var chips = (/** @type {string[]} */ list, /** @type {string} */ kind) =>
+        h(
+          "div",
+          {
+            style: { display: "flex", flexWrap: "wrap", gap: "4px", minWidth: 0 },
+            "data-projects-new-context-items": kind,
+          },
+          list.map((item) =>
+            h(
+              "span",
+              {
+                key: `${kind}:${item}`,
+                style: { ...styles.dirBadge, gap: "4px" },
+                "data-projects-new-context-item": `${kind}:${item}`,
+              },
+              kind === "dir" ? baseName(item) : item,
+              h(
+                "button",
+                {
+                  type: "button",
+                  style: {
+                    border: "none",
+                    background: "transparent",
+                    color: T.faint,
+                    cursor: "pointer",
+                    padding: "0 2px",
+                    fontSize: "12px",
+                  },
+                  "aria-label": text(t, "detail.remove"),
+                  "data-projects-new-context-remove": `${kind}:${item}`,
+                  onClick: () =>
+                    patch(
+                      kind === "dir"
+                        ? { dirs: dirs.filter((/** @type {string} */ dir) => dir !== item) }
+                        : { repos: repos.filter((/** @type {string} */ repo) => repo !== item) },
+                    ),
+                },
+                "×",
+              ),
+            ),
+          ),
+        );
       var title = text(t, "panel.new.title");
       return h(
         "div",
@@ -1493,16 +1958,91 @@ window.__ModuleLoader__.load({
                 onChange: (/** @type {any} */ event) => patch({ goal: event.target.value }),
               }),
             ),
+            // —— F2 Context 多选：目录 ≤10（逐个 workspaceRoot）+ 仓库 owner/repo ——
+            h(
+              "div",
+              { style: styles.fieldLabel },
+              h(
+                "div",
+                { style: { display: "flex", alignItems: "center", gap: "6px" } },
+                h("span", { style: styles.meta }, text(t, "panel.new.contextLabel")),
+                h(
+                  "span",
+                  {
+                    style: { ...styles.meta, marginLeft: "auto" },
+                    "data-projects-new-context-count": "",
+                  },
+                  text(t, "panel.new.contextCount", { dirs: dirs.length, repos: repos.length }),
+                ),
+              ),
+              chips(dirs, "dir"),
+              h(
+                "div",
+                { style: { display: "flex", gap: "6px" } },
+                h("input", {
+                  style: styles.input,
+                  value: String(form.dirDraft ?? ""),
+                  placeholder: text(t, "panel.new.dirPlaceholder"),
+                  "data-projects-new-dir": "",
+                  onChange: (/** @type {any} */ event) => patch({ dirDraft: event.target.value }),
+                  onKeyDown: (/** @type {any} */ event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      addDir();
+                    }
+                  },
+                }),
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    style: styles.secondaryButton,
+                    "data-projects-new-dir-add": "",
+                    onClick: addDir,
+                  },
+                  text(t, "panel.new.dirAdd"),
+                ),
+              ),
+              chips(repos, "repo"),
+              h(
+                "div",
+                { style: { display: "flex", gap: "6px" } },
+                h("input", {
+                  style: styles.input,
+                  value: String(form.repoDraft ?? ""),
+                  placeholder: text(t, "panel.new.repoPlaceholder"),
+                  "data-projects-new-repo": "",
+                  onChange: (/** @type {any} */ event) => patch({ repoDraft: event.target.value }),
+                  onKeyDown: (/** @type {any} */ event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      addRepo();
+                    }
+                  },
+                }),
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    style: styles.secondaryButton,
+                    "data-projects-new-repo-add": "",
+                    onClick: addRepo,
+                  },
+                  text(t, "panel.new.repoAdd"),
+                ),
+              ),
+            ),
             h(
               "label",
               { style: styles.fieldLabel },
-              h("span", { style: styles.meta }, text(t, "panel.new.dirLabel")),
+              h("span", { style: styles.meta }, text(t, "panel.new.iconLabel")),
               h("input", {
                 style: styles.input,
-                value: String(form.dir ?? ""),
-                placeholder: text(t, "panel.new.dirPlaceholder"),
-                "data-projects-new-dir": "",
-                onChange: (/** @type {any} */ event) => patch({ dir: event.target.value }),
+                value: String(form.icon ?? ""),
+                placeholder: "🚀",
+                maxLength: 8,
+                "data-projects-new-icon": "",
+                onChange: (/** @type {any} */ event) => patch({ icon: event.target.value }),
               }),
             ),
             h(
@@ -1597,19 +2137,41 @@ window.__ModuleLoader__.load({
         mode: "",
         name: "",
         goal: "",
-        dir: "",
+        // F2 Context 多选：目录（≤10，逐个 workspaceRoot）+ 仓库（owner/repo）+ 图标
+        dirs: [],
+        dirDraft: "",
+        repos: [],
+        repoDraft: "",
+        icon: "",
         instructions: "",
         busy: false,
         error: "",
       });
       var createForm = createState[0];
       var setCreateForm = createState[1];
-      var editState = useState({ project: null, name: "", goal: "", busy: false, error: "" });
+      var editState = useState({
+        project: null,
+        name: "",
+        goal: "",
+        icon: "",
+        busy: false,
+        error: "",
+      });
       var editForm = editState[0];
       var setEditForm = editState[1];
       var deleteState = useState({ project: null, impact: null, busy: false, error: "" });
       var rowDelete = deleteState[0];
       var setRowDelete = deleteState[1];
+      // F63 首启引导：一次性。默认 done=true，避免 RPC 回来之前闪一下引导框。
+      // 真正的值来自宿主 storageDomain（projects_ui.firstRunDone，跨重启保留）。
+      var firstRunState = useState({
+        loaded: false,
+        done: true,
+        available: false,
+        dismissed: false,
+      });
+      var firstRun = firstRunState[0];
+      var setFirstRun = firstRunState[1];
 
       var dismissToast = useCallback((/** @type {string} */ id) => {
         setToasts((/** @type {any} */ prev) =>
@@ -1627,6 +2189,26 @@ window.__ModuleLoader__.load({
         [setToasts],
       );
 
+      /**
+       * 关掉首启引导并落盘 firstRunDone（F63）。
+       * storageDomain 不可用时只在本进程内生效——回执里的 available=false 就是"没持久化"的证据。
+       */
+      var finishFirstRun = useCallback(() => {
+        setFirstRun((/** @type {any} */ prev) => ({ ...prev, dismissed: true, done: true }));
+        call(api.ctx, "setFirstRunDone", { done: true }).then(
+          (/** @type {any} */ readback) => {
+            setFirstRun((/** @type {any} */ prev) => ({
+              ...prev,
+              done: readback?.firstRunDone !== false,
+              available: readback?.available === true,
+            }));
+          },
+          () => {
+            /* 写失败：本次运行内不再打扰，下次启动会再出现（比假装写成功更诚实） */
+          },
+        );
+      }, [api, setFirstRun]);
+
       var refresh = useCallback(() => {
         setView((/** @type {any} */ prev) => ({
           loading: true,
@@ -1634,7 +2216,11 @@ window.__ModuleLoader__.load({
           projects: prev.projects,
           describe: prev.describe,
         }));
-        return Promise.all([call(api.ctx, "listProjects"), call(api.ctx, "describe")]).then(
+        return Promise.all([
+          call(api.ctx, "listProjects"),
+          call(api.ctx, "describe"),
+          call(api.ctx, "uiState"),
+        ]).then(
           (values) => {
             setView({
               loading: false,
@@ -1642,6 +2228,17 @@ window.__ModuleLoader__.load({
               projects: values[0] || [],
               describe: values[1] || null,
             });
+            var ui = values[2];
+            if (ui && typeof ui === "object") {
+              setFirstRun((/** @type {any} */ prev) => ({
+                ...prev,
+                loaded: true,
+                done: ui.firstRunDone !== false,
+                available: ui.available === true,
+              }));
+            } else {
+              setFirstRun((/** @type {any} */ prev) => ({ ...prev, loaded: true }));
+            }
           },
           (error) => {
             setView({
@@ -1758,10 +2355,12 @@ window.__ModuleLoader__.load({
         var value = String(createForm.name ?? "").trim();
         if (value === "" || createForm.busy) return;
         setCreateForm((/** @type {any} */ prev) => ({ ...prev, busy: true, error: "" }));
-        var dir = String(createForm.dir ?? "").trim();
         var input = {
           goal: String(createForm.goal ?? "").trim(),
-          dirs: dir === "" ? [] : [dir],
+          // F2：Context 多选（目录 ≤10 / 仓库 / 图标）一次提交，后端 store 再收敛一遍
+          dirs: Array.isArray(createForm.dirs) ? createForm.dirs : [],
+          repos: Array.isArray(createForm.repos) ? createForm.repos : [],
+          icon: String(createForm.icon ?? "").trim(),
         };
         call(api.ctx, "createProject", { name: value, input })
           .then((created) => {
@@ -1779,7 +2378,11 @@ window.__ModuleLoader__.load({
               mode: "",
               name: "",
               goal: "",
-              dir: "",
+              dirs: [],
+              dirDraft: "",
+              repos: [],
+              repoDraft: "",
+              icon: "",
               instructions: "",
               busy: false,
               error: "",
@@ -1807,10 +2410,22 @@ window.__ModuleLoader__.load({
         setEditForm((/** @type {any} */ prev) => ({ ...prev, busy: true, error: "" }));
         call(api.ctx, "updateProject", {
           id: target.id,
-          patch: { name, goal: String(editForm.goal ?? "") },
+          // F1：图标也在这里改（短标记，不是图片）
+          patch: {
+            name,
+            goal: String(editForm.goal ?? ""),
+            icon: String(editForm.icon ?? ""),
+          },
         }).then(
           () => {
-            setEditForm({ project: null, name: "", goal: "", busy: false, error: "" });
+            setEditForm({
+              project: null,
+              name: "",
+              goal: "",
+              icon: "",
+              busy: false,
+              error: "",
+            });
             pushToast(text(t, "panel.toastUpdated", { name }));
             void refresh();
           },
@@ -1899,8 +2514,14 @@ window.__ModuleLoader__.load({
       var row = (/** @type {any} */ project) => {
         var archived = project.state === "archived";
         var pinned = project.pinned === true;
+        // F1/F31：等待数来自宿主 pendingInput（权威），未读数来自 pendingInput + 手动标记
+        var waiting = Number(project.waiting || 0);
+        var working = Number(project.working || 0);
+        var unread = Number(project.unread || 0);
         var meta = [
           text(t, "panel.threads", { count: Number(project.threadCount || 0) }),
+          waiting > 0 ? text(t, "panel.waiting", { count: waiting }) : "",
+          working > 0 && waiting === 0 ? text(t, "panel.working", { count: working }) : "",
           relativeLabel(t, project.updatedAt),
           archived ? text(t, "panel.state.archived") : "",
         ]
@@ -1920,6 +2541,8 @@ window.__ModuleLoader__.load({
             "data-pinned": pinned ? "true" : "false",
             "data-projects-state": project.state,
             "data-row-state": archived ? "archived" : "active",
+            "data-projects-row-waiting": String(waiting),
+            "data-projects-row-unread-count": String(unread),
             onMouseEnter: () => setHovered(project.id),
             onMouseLeave: () => setHovered(""),
             onClick: () => setSelectedId(project.id),
@@ -1931,12 +2554,42 @@ window.__ModuleLoader__.load({
                 uiIcon("pin", "📌", 13),
               )
             : null,
+          // 状态点：有「等你」显示绿点（与详情页行一致），只在跑显示蓝点；
+          // 纯视觉，语义由 meta 与 aria-label 承担
+          waiting > 0 || working > 0
+            ? h("span", {
+                style: {
+                  ...styles.dot,
+                  background: waiting > 0 ? T.success : T.accentText,
+                  marginTop: 0,
+                },
+                "data-projects-row-dot": waiting > 0 ? "waiting" : "working",
+                "aria-hidden": "true",
+              })
+            : null,
+          unread > 0
+            ? h(
+                "span",
+                {
+                  style: { ...styles.badge, "data-projects-row-unread": project.id },
+                  title: text(t, "panel.unread", { count: unread }),
+                },
+                String(unread),
+              )
+            : null,
           h(
             "div",
             { style: styles.rowMain },
             h(
               "span",
               { style: styles.name, "data-projects-row-name": project.id },
+              project.icon
+                ? h(
+                    "span",
+                    { style: { marginRight: "6px" }, "data-projects-row-icon": project.id },
+                    String(project.icon),
+                  )
+                : null,
               project.name,
               h(
                 "span",
@@ -1955,6 +2608,15 @@ window.__ModuleLoader__.load({
                 )
               : null,
             h("span", { style: styles.meta, "data-projects-row-meta": project.id }, meta),
+            archived
+              ? h(
+                  "span",
+                  { style: styles.archiveBadge, "data-projects-row-archived": project.id },
+                  project.archivedAt
+                    ? text(t, "panel.archivedAt", { date: relativeLabel(t, project.archivedAt) })
+                    : text(t, "panel.state.archived"),
+                )
+              : null,
           ),
           Array.isArray(project.dirs) && project.dirs.length > 0
             ? h(
@@ -2182,6 +2844,9 @@ window.__ModuleLoader__.load({
               api: api,
               t: t,
               project: selectedProject,
+              // F7 项目切换器：详情页标题栏直接换项目，不用先回列表
+              projects: projects,
+              onSwitchProject: (/** @type {string} */ id) => setSelectedId(id),
               onBack: () => {
                 setSelectedId(null);
                 // 详情页里建了线程/改了目录，回列表必须刷新，否则面板还显示旧线程数（走查发现）
@@ -2199,6 +2864,7 @@ window.__ModuleLoader__.load({
                   project: target,
                   name: String(target.name ?? ""),
                   goal: String(target.goal ?? ""),
+                  icon: String(target.icon ?? ""),
                   busy: false,
                   error: "",
                 }),
@@ -2209,6 +2875,13 @@ window.__ModuleLoader__.load({
           form: createForm,
           setForm: setCreateForm,
           onSubmit: submitCreate,
+        }),
+        // F63 首启引导（一次性）：与宿主的「预览版说明」共用同一条用户旅程，排在它之后
+        h(FirstRunGuide, {
+          t: t,
+          open: firstRun.loaded === true && firstRun.done === false && firstRun.dismissed !== true,
+          available: firstRun.available === true,
+          onDone: finishFirstRun,
         }),
         editForm.project
           ? h(
@@ -2269,6 +2942,23 @@ window.__ModuleLoader__.load({
                       setEditForm((/** @type {any} */ prev) => ({
                         ...prev,
                         goal: event.target.value,
+                      })),
+                  }),
+                ),
+                h(
+                  "label",
+                  { style: styles.fieldLabel },
+                  h("span", { style: styles.meta }, text(t, "panel.new.iconLabel")),
+                  h("input", {
+                    style: styles.input,
+                    value: String(editForm.icon ?? ""),
+                    placeholder: "🚀",
+                    maxLength: 8,
+                    "data-projects-edit-icon": "",
+                    onChange: (/** @type {any} */ event) =>
+                      setEditForm((/** @type {any} */ prev) => ({
+                        ...prev,
+                        icon: event.target.value,
                       })),
                   }),
                 ),
@@ -2555,6 +3245,7 @@ window.__ModuleLoader__.load({
     /**
      * @param {{api: any, t: any, project: any, onBack: () => void, onDeleted?: () => void, onChanged?: () => void, onToast?: (message: string) => void, onEditDetails?: (project: any) => void}} props
      */
+    /** @param {any} props */
     function ProjectDetail(props) {
       const api = props.api;
       const t = props.t;
@@ -2576,37 +3267,59 @@ window.__ModuleLoader__.load({
       const data = dataState[0];
       const setData = dataState[1];
 
-      const load = useCallback(() => {
-        setData((/** @type {any} */ prev) => ({ ...prev, loading: true, error: "" }));
-        Promise.all([
-          call(api.ctx, "progress", { projectId: project.id }),
-          call(api.ctx, "getProjectContent", { projectId: project.id }),
-          call(api.ctx, "listAudit", { projectId: project.id }),
-          call(api.ctx, "listApprovals", { projectId: project.id }),
-        ]).then(
-          (values) => {
-            setData({
-              loading: false,
-              error: "",
-              threads: Array.isArray(values[0]?.rows) ? values[0].rows : [],
-              progress: values[0] || null,
-              projectState: values[0]?.projectState ?? project.state,
-              content: values[1] || null,
-              audit: Array.isArray(values[2]) ? values[2] : [],
-              approvals: Array.isArray(values[3]) ? values[3] : [],
-            });
-          },
-          (error) => {
-            setData({
-              loading: false,
-              error: String(error?.message ?? error),
-              threads: [],
-              content: null,
-              audit: [],
-            });
-          },
-        );
-      }, [api, project.id]);
+      const load = useCallback(
+        (/** @type {boolean} */ silent) => {
+          // 静默刷新：后台轮询不把整页切回「加载中…」，否则行/锚点会周期性消失
+          if (silent !== true) {
+            setData((/** @type {any} */ prev) => ({ ...prev, loading: true, error: "" }));
+          }
+          Promise.all([
+            call(api.ctx, "progress", { projectId: project.id }),
+            call(api.ctx, "getProjectContent", { projectId: project.id }),
+            call(api.ctx, "listAudit", { projectId: project.id }),
+            call(api.ctx, "listApprovals", { projectId: project.id }),
+            call(api.ctx, "uiState"),
+          ]).then(
+            (values) => {
+              setData({
+                loading: false,
+                error: "",
+                threads: Array.isArray(values[0]?.rows) ? values[0].rows : [],
+                progress: values[0] || null,
+                projectState: values[0]?.projectState ?? project.state,
+                content: values[1] || null,
+                audit: Array.isArray(values[2]) ? values[2] : [],
+                approvals: Array.isArray(values[3]) ? values[3] : [],
+                ui: values[4] || null,
+              });
+              // F25 折叠状态存宿主 storageDomain（跨重启保留）；读不到就当全部展开。
+              // 只在首次加载时套用：否则 5s 轮询会用旧值把用户刚点的折叠弹回去。
+              if (collapsedInitRef.current !== true) {
+                collapsedInitRef.current = true;
+                if (values[4] && typeof values[4].collapsedGroups === "object") {
+                  setCollapsedGroups({ ...values[4].collapsedGroups });
+                }
+              }
+            },
+            (error) => {
+              setData({
+                loading: false,
+                error: String(error?.message ?? error),
+                threads: [],
+                content: null,
+                audit: [],
+              });
+            },
+          );
+        },
+        [api, project.id],
+      );
+      // Overview 自己会变（线程跑完一轮、宿主 pendingInput 出现）：5s 静默刷新一次。
+      // 不切 loading、只更新数据；事件驱动的实时化（去掉轮询）留给 B2 的 replay 修复。
+      useEffect(() => {
+        const timer = setInterval(() => load(true), 5000);
+        return () => clearInterval(timer);
+      }, [load]);
       const [threadAction, setThreadAction] = useState({ pending: "", message: "", ok: null });
       const reclaimDir = useCallback(
         (/** @type {string} */ sessionId) => {
@@ -3039,6 +3752,13 @@ window.__ModuleLoader__.load({
       const dirInfoState = useState({ path: "", exists: false, isGit: false, writable: false });
       const dirInfo = dirInfoState[0];
       const setDirInfo = dirInfoState[1];
+      const dirEditingState = useState(false);
+      const dirEditing = dirEditingState[0];
+      const setDirEditing = dirEditingState[1];
+      // F35 多目录编辑：pending 列表在保存前只改本地；保存时一次性写回（≤10）
+      const dirPendingState = useState([]);
+      const dirPending = dirPendingState[0];
+      const setDirPending = dirPendingState[1];
       const saveDir = useCallback(() => {
         const value = String(dirDraft).trim();
         // 相对路径/空值当场拒绝：以前会被静默存下来，直到建线程时才崩在宿主里，
@@ -3047,19 +3767,38 @@ window.__ModuleLoader__.load({
           setDirInfo({ path: value, exists: false, isGit: false, writable: false, invalid: true });
           return;
         }
+        // F35：pending 列表 + 本次输入一次写回；去重、上限 10（后端也会拒）
+        const next = [...(Array.isArray(dirPending) ? dirPending : [])];
+        if (value !== "" && !next.includes(value)) {
+          if (next.length >= MAX_CONTEXT_DIRS) {
+            setDirInfo({
+              path: value,
+              exists: false,
+              isGit: false,
+              writable: false,
+              invalid: true,
+            });
+            if (typeof props.onToast === "function") {
+              props.onToast(text(t, "detail.dirLimit", { count: MAX_CONTEXT_DIRS }));
+            }
+            return;
+          }
+          next.push(value);
+        }
+        const primary = next[0] ?? "";
         call(api.ctx, "updateProject", {
           id: project.id,
-          patch: { dirs: value === "" ? [] : [value] },
+          patch: { dirs: next },
         })
           .then(() => {
             // 绑完立刻探一次：非 git 目录意味着线程**不会隔离**，必须当场说清（走查发现静默降级）
-            if (value === "") {
+            if (primary === "") {
               setDirInfo({ path: "", exists: false, isGit: false, writable: false });
               return;
             }
-            call(api.ctx, "inspectDir", { options: { path: value } }).then(
-              (/** @type {any} */ info) => setDirInfo({ path: value, ...info }),
-              () => setDirInfo({ path: value, exists: true, isGit: false, writable: true }),
+            call(api.ctx, "inspectDir", { options: { path: primary } }).then(
+              (/** @type {any} */ info) => setDirInfo({ path: primary, ...info }),
+              () => setDirInfo({ path: primary, exists: true, isGit: false, writable: true }),
             );
           })
           .then(() => {
@@ -3073,7 +3812,7 @@ window.__ModuleLoader__.load({
               error: String(error?.message ?? error),
             }));
           });
-      }, [api, dirDraft, load, project.id, setData, setDirInfo]);
+      }, [api, dirDraft, dirPending, load, project.id, props, setData, setDirInfo, t]);
 
       const createThread = useCallback(() => {
         const task = String(draft).trim();
@@ -3125,9 +3864,6 @@ window.__ModuleLoader__.load({
       const dirList = Array.isArray(project.dirs) ? project.dirs : [];
       const dirSummary = dirList.length > 0 ? baseName(dirList[0]) : text(t, "detail.none");
       // 值行点「编辑」才出输入控件（右栏不常驻 input）
-      const dirEditingState = useState(false);
-      const dirEditing = dirEditingState[0];
-      const setDirEditing = dirEditingState[1];
       // 线程行的「⋯」：回收目录 / 移除追踪 收进来（锚点挂在菜单项上，语义不变）
       const threadMenuState = useState("");
       const threadMenu = threadMenuState[0];
@@ -3160,6 +3896,178 @@ window.__ModuleLoader__.load({
       const setNarrow = narrowState[1];
       const content = data.content || {};
       const counts = data.progress?.counts ?? {};
+      const pills = data.progress?.pills ?? counts;
+      // —— B1 Overview（F25/F26/F27/F28/F29/F31）：药丸过滤 / 分组折叠 / 组内轮播 / 切换器 ——
+      const filterState = useState("");
+      const filter = filterState[0];
+      const setFilter = filterState[1];
+      const collapsedState = useState({});
+      const collapsedGroups = collapsedState[0];
+      const setCollapsedGroups = collapsedState[1];
+      const carouselState = useState({});
+      const carousel = carouselState[0];
+      const setCarousel = carouselState[1];
+      const switcherState = useState(false);
+      const switcherOpen = switcherState[0];
+      const setSwitcherOpen = switcherState[1];
+      const groupMenuState = useState("");
+      const groupMenu = groupMenuState[0];
+      const setGroupMenu = groupMenuState[1];
+      const threadInputRef = useRef(null);
+      const collapsedInitRef = useRef(false);
+      // F28 `Welcome back, {名}.`：宿主账号没有注入到插件 client（settings.section 之外），
+      // 只能走 deepseekAccount/getState 这个 Remote 试读；未登录/未挂载时如实退化成
+      // 「Welcome back.」（不拿项目名冒充人名）。
+      const userNameState = useState("");
+      const userName = userNameState[0];
+      const setUserName = userNameState[1];
+      useEffect(() => {
+        let cancelled = false;
+        const rpc = api.ctx?.connection?.rpc;
+        if (!rpc || typeof rpc.call !== "function") return undefined;
+        Promise.resolve(rpc.call("/api", "deepseekAccount/getState", { args: { _request: {} } }))
+          .then((/** @type {any} */ result) => {
+            if (cancelled) return;
+            const value =
+              result && typeof result === "object" && "value" in result ? result.value : result;
+            const candidates = [
+              value?.profile?.name,
+              value?.account?.name,
+              value?.details?.name,
+              value?.user?.name,
+              value?.name,
+            ];
+            const picked = candidates.find(
+              (/** @type {unknown} */ item) => typeof item === "string" && item.trim() !== "",
+            );
+            if (typeof picked === "string") setUserName(picked.trim().slice(0, 40));
+          })
+          .catch(() => {
+            /* 未登录/服务未挂载：没有名字就不显示名字 */
+          });
+        return () => {
+          cancelled = true;
+        };
+      }, [api]);
+
+      /** F25：折叠一个分组并落盘（storageDomain；失败只影响"下次还折叠"）。 */
+      const setGroupCollapsed = useCallback(
+        (/** @type {string} */ groupId, /** @type {boolean} */ collapsed) => {
+          setCollapsedGroups((/** @type {any} */ prev) => {
+            const next = { ...prev };
+            if (collapsed) next[groupId] = true;
+            else delete next[groupId];
+            return next;
+          });
+          call(api.ctx, "setGroupCollapsed", { group: groupId, collapsed }).catch(() => {});
+        },
+        [api, setCollapsedGroups],
+      );
+      const collapseAllGroups = useCallback(
+        (/** @type {boolean} */ collapsed) => {
+          /** @type {Record<string, boolean>} */
+          const next = {};
+          const groups = Array.isArray(data.progress?.groups) ? data.progress.groups : [];
+          for (const group of groups) {
+            if (collapsed) next[String(group.id)] = true;
+            call(api.ctx, "setGroupCollapsed", {
+              group: String(group.id),
+              collapsed,
+            }).catch(() => {});
+          }
+          setCollapsedGroups(next);
+        },
+        [api, data.progress, setCollapsedGroups],
+      );
+      /** F26：药丸点击 = 过滤该状态；再点一次清除。 */
+      const toggleFilter = useCallback(
+        (/** @type {string} */ state) => {
+          setFilter((/** @type {any} */ prev) => (prev === state ? "" : state));
+          setCarousel({});
+        },
+        [setFilter, setCarousel],
+      );
+      /** F29：手动 resolve / 重开。回执带回读值，面板不自己猜状态。 */
+      const resolveRow = useCallback(
+        (/** @type {string} */ sessionId, /** @type {boolean} */ resolved) => {
+          setThreadMenu("");
+          setThreadAction({ pending: sessionId, message: "", ok: null });
+          call(api.ctx, "resolveThread", { sessionId, resolved }).then(
+            (/** @type {any} */ result) => {
+              setThreadAction({
+                pending: "",
+                ok: true,
+                message:
+                  result?.readback === "resolved"
+                    ? text(t, "detail.resolved")
+                    : text(t, "detail.reopened"),
+              });
+              load();
+            },
+            (/** @type {any} */ error) =>
+              setThreadAction({
+                pending: "",
+                ok: false,
+                message: text(t, "detail.threadActionFailed", {
+                  reason: String(error?.message ?? error),
+                }),
+              }),
+          );
+        },
+        [api, load, setThreadAction, t],
+      );
+      /** F31：手动标记未读/已读（与 pendingInput 的「等你」圆点分开）。 */
+      const markUnread = useCallback(
+        (/** @type {string} */ sessionId, /** @type {boolean} */ unread) => {
+          setThreadMenu("");
+          call(api.ctx, "setThreadUnread", { sessionId, unread }).then(
+            () => load(),
+            (/** @type {any} */ error) =>
+              setThreadAction({
+                pending: "",
+                ok: false,
+                message: text(t, "detail.threadActionFailed", {
+                  reason: String(error?.message ?? error),
+                }),
+              }),
+          );
+        },
+        [api, load, setThreadAction, t],
+      );
+      /** U14：组内前后切换（轮播位置只影响高亮，不过滤数据）。 */
+      const moveCarousel = useCallback(
+        (
+          /** @type {string} */ groupId,
+          /** @type {number} */ delta,
+          /** @type {number} */ count,
+        ) => {
+          if (count <= 0) return;
+          setCarousel((/** @type {any} */ prev) => ({
+            ...prev,
+            [groupId]: (((Number(prev[groupId] ?? 0) + delta) % count) + count) % count,
+          }));
+        },
+        [setCarousel],
+      );
+      /** 时长（U12 右侧元信息）：分钟 / 小时 / 天，没有 createdAt 就不显示。 */
+      const durationLabel = useCallback(
+        (/** @type {number|null} */ ms) => {
+          if (!(Number(ms) > 0)) return "";
+          const minutes = Math.max(1, Math.round(Number(ms) / 60_000));
+          if (minutes < 60) return text(t, "detail.durationMinutes", { minutes });
+          const hours = Math.round(minutes / 60);
+          if (hours < 24) return text(t, "detail.durationHours", { hours });
+          return text(t, "detail.durationDays", { days: Math.round(hours / 24) });
+        },
+        [t],
+      );
+      const groupLabel = useCallback(
+        (/** @type {string} */ id) => {
+          const value = t(`detail.group.${id}`);
+          return typeof value === "string" && !value.startsWith("detail.") ? value : id;
+        },
+        [t],
+      );
       const hasDir = Array.isArray(props.project?.dirs) && props.project.dirs.length > 0;
       const stateIsArchived = data.projectState === "archived";
       // 收藏状态优先读持久值（props.project 来自父级列表），本地只做乐观覆盖
@@ -3234,202 +4142,590 @@ window.__ModuleLoader__.load({
         );
       }, [api, data.projectState, load, project.id, project.name, props, setData, setMenuOpen, t]);
 
+      /**
+       * U17 步进环：SVG 环形进度（done/total）。没有 todo 时**不传进来**——行里显示「—」，
+       * 不画 0/0 的空环（硬要求：没有数据就说没有）。
+       * @param {number} done @param {number} total
+       */
+      const stepRing = (done, total) => {
+        const size = 18;
+        const stroke = 2.5;
+        const radius = (size - stroke) / 2;
+        const circumference = 2 * Math.PI * radius;
+        const ratio = total > 0 ? Math.min(1, Math.max(0, done / total)) : 0;
+        return h(
+          "svg",
+          {
+            width: size,
+            height: size,
+            viewBox: `0 0 ${size} ${size}`,
+            style: { display: "block" },
+            "data-projects-step-ring": `${done}/${total}`,
+            "aria-hidden": "true",
+          },
+          h("circle", {
+            cx: size / 2,
+            cy: size / 2,
+            r: radius,
+            fill: "none",
+            stroke: T.border,
+            strokeWidth: stroke,
+          }),
+          h("circle", {
+            cx: size / 2,
+            cy: size / 2,
+            r: radius,
+            fill: "none",
+            stroke: T.accentText,
+            strokeWidth: stroke,
+            strokeLinecap: "round",
+            strokeDasharray: `${(circumference * ratio).toFixed(2)} ${circumference.toFixed(2)}`,
+            transform: `rotate(-90 ${size / 2} ${size / 2})`,
+          }),
+        );
+      };
+
+      /**
+       * F27/U12 行解剖：状态点 + 标题 + 副标题（最近 tool/call，没有就留空）+ 右侧元信息
+       * （步进 n/m、PR 徽章、通知数、时长）+ 行内菜单（resolve/未读/回收/移除）。
+       * 既有锚点（thread-row / -state / -dot / -pill / -stats / -worktree / -menu /
+       * -reclaim / -remove）保持不变：冒烟与桌面回归靠它们定位。
+       * @param {any} row @param {boolean} focused
+       */
+      const threadRowView = (row, focused) => {
+        const state = String(row.view?.state ?? "idle");
+        const stateColor =
+          state === "failed"
+            ? T.danger
+            : state === "working"
+              ? T.accentText
+              : state === "waiting-user"
+                ? T.success
+                : state === "resolved"
+                  ? T.accentText
+                  : T.faint;
+        const title =
+          String(row.title ?? "") !== ""
+            ? String(row.title)
+            : row.view?.turn > 0
+              ? `turn ${row.view.turn} · ${row.branch ? String(row.branch) : String(row.sessionId).slice(0, 12)}`
+              : String(row.sessionId).slice(0, 20);
+        const steps = row.steps && Number(row.steps.total) > 0 ? row.steps : null;
+        const duration = durationLabel(row.durationMs);
+        const notifications = Array.isArray(row.view?.pendingInput)
+          ? row.view.pendingInput.length
+          : 0;
+        return h(
+          "div",
+          {
+            key: row.sessionId,
+            style: {
+              ...styles.row,
+              position: "relative",
+              padding: "8px 4px",
+              cursor: "default",
+              alignItems: "flex-start",
+              background: threadHover === row.sessionId ? T.hover : "transparent",
+              borderRadius: "8px",
+              outline: focused ? `1px solid ${T.borderSoft}` : "none",
+            },
+            "data-projects-thread-row": row.sessionId,
+            "data-projects-thread-state": state,
+            "data-projects-thread-unread": row.unread === true ? "true" : "false",
+            "data-projects-thread-focused": focused ? "true" : "false",
+            onMouseEnter: () => setThreadHover(String(row.sessionId)),
+            onMouseLeave: () => setThreadHover(""),
+          },
+          // 状态点：颜色只表达状态；未读时加一圈光晕（F31）
+          h("span", {
+            style: {
+              ...styles.dot,
+              marginTop: "5px",
+              background: stateColor,
+              boxShadow: row.unread === true ? `0 0 0 3px ${T.accent}` : "none",
+            },
+            "data-projects-thread-dot": state,
+            "aria-hidden": "true",
+          }),
+          h(
+            "div",
+            { style: styles.rowMain },
+            h(
+              "span",
+              { style: { display: "flex", alignItems: "center", gap: "8px", minWidth: 0 } },
+              h(
+                "span",
+                {
+                  style: styles.rowTitle,
+                  title: String(row.sessionId),
+                  "data-projects-thread-title": row.sessionId,
+                },
+                title,
+              ),
+              h(
+                "span",
+                { style: styles.pill, "data-projects-thread-pill": state },
+                text(t, `detail.state.${state}`),
+              ),
+              row.manualUnread === true
+                ? h(
+                    "span",
+                    {
+                      style: { ...styles.badge, minWidth: "14px", height: "14px" },
+                      title: text(t, "panel.rowUnread"),
+                      "data-projects-thread-unread-badge": row.sessionId,
+                    },
+                    "•",
+                  )
+                : null,
+            ),
+            // 副标题 = 最近一条 tool/call 的可读摘要；没有就留空（不编）
+            String(row.subtitle ?? "") !== ""
+              ? h(
+                  "span",
+                  { style: styles.rowSub, "data-projects-thread-subtitle": row.sessionId },
+                  String(row.subtitle),
+                )
+              : null,
+            // 可观测摘要（规格 §7.7.3）：步骤/工具/diff/tokens，缺失显式 n/a
+            row.summary
+              ? h(
+                  "span",
+                  { style: styles.meta, "data-projects-thread-stats": "" },
+                  String(row.summary),
+                )
+              : null,
+            row.worktree
+              ? h(
+                  "span",
+                  {
+                    style: {
+                      ...styles.meta,
+                      minWidth: 0,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    },
+                    "data-projects-thread-worktree": row.sessionId,
+                    title: String(row.worktree),
+                  },
+                  text(t, "detail.threadWorktree", { path: String(row.worktree) }),
+                )
+              : null,
+          ),
+          // 右侧元信息（U12）：步进 n/m → PR 徽章 → 通知数 → 时长
+          h(
+            "div",
+            {
+              style: {
+                ...styles.rowRight,
+                alignSelf: "flex-start",
+                justifyContent: "flex-end",
+                flexWrap: "wrap",
+                gap: "8px",
+                paddingTop: "2px",
+                // 给行尾 ⋯ 留位：右侧元信息不能压在菜单按钮下面
+                paddingRight: "26px",
+                maxWidth: "45%",
+              },
+              "data-projects-thread-meta": row.sessionId,
+            },
+            h(
+              "span",
+              {
+                style: { display: "inline-flex", alignItems: "center", gap: "4px" },
+                "data-projects-thread-steps": row.sessionId,
+                "data-projects-thread-steps-state": steps === null ? "none" : "count",
+                title: steps === null ? text(t, "detail.stepsHint") : undefined,
+              },
+              steps === null ? null : stepRing(steps.done, steps.total),
+              h(
+                "span",
+                {
+                  style: {
+                    fontVariantNumeric: "tabular-nums",
+                    color: steps === null ? T.faint : T.text,
+                  },
+                },
+                steps === null
+                  ? text(t, "detail.stepsNone")
+                  : text(t, "detail.steps", { done: steps.done, total: steps.total }),
+              ),
+            ),
+            row.prNumber
+              ? h(
+                  "span",
+                  { style: styles.archiveBadge, "data-projects-thread-pr": row.sessionId },
+                  text(t, "detail.prBadge", { number: row.prNumber }),
+                )
+              : null,
+            notifications > 0
+              ? h(
+                  "span",
+                  {
+                    style: styles.badge,
+                    title: text(t, "detail.notificationCount", { count: notifications }),
+                    "data-projects-thread-notifications": row.sessionId,
+                  },
+                  String(notifications),
+                )
+              : null,
+            duration !== ""
+              ? h(
+                  "span",
+                  { style: styles.meta, "data-projects-thread-duration": row.sessionId },
+                  duration,
+                )
+              : null,
+          ),
+          h(
+            "span",
+            {
+              style: {
+                position: "absolute",
+                top: "4px",
+                right: "4px",
+                display: "inline-flex",
+              },
+            },
+            h(Popover, {
+              open: threadMenu === row.sessionId,
+              onClose: () => setThreadMenu(""),
+              anchor: h(
+                "button",
+                {
+                  type: "button",
+                  style: {
+                    ...styles.iconButton,
+                    flex: "none",
+                    opacity:
+                      threadHover === row.sessionId || threadMenu === row.sessionId ? 1 : 0.45,
+                  },
+                  "data-projects-thread-menu": row.sessionId,
+                  "aria-label": text(t, "detail.moreActions"),
+                  "aria-haspopup": "menu",
+                  "aria-expanded": threadMenu === row.sessionId ? "true" : "false",
+                  onClick: () =>
+                    setThreadMenu(threadMenu === row.sessionId ? "" : String(row.sessionId)),
+                },
+                uiIcon("more", "⋯", 16),
+              ),
+              menu: h(
+                "div",
+                { style: { display: "flex", flexDirection: "column", gap: "2px" } },
+                // F29：手动 resolve / 重开（自动 resolve 是 B6）
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    role: "menuitem",
+                    style: menuItemStyle,
+                    "data-projects-thread-resolve": row.sessionId,
+                    "data-projects-thread-resolve-target":
+                      state === "resolved" ? "reopen" : "resolve",
+                    onClick: () => resolveRow(row.sessionId, state !== "resolved"),
+                  },
+                  state === "resolved" ? text(t, "detail.reopen") : text(t, "detail.resolve"),
+                ),
+                // F31：标记未读 / 已读
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    role: "menuitem",
+                    style: menuItemStyle,
+                    "data-projects-thread-unread-toggle": row.sessionId,
+                    onClick: () => markUnread(row.sessionId, row.manualUnread !== true),
+                  },
+                  row.manualUnread === true
+                    ? text(t, "detail.markRead")
+                    : text(t, "detail.markUnread"),
+                ),
+                row.worktree
+                  ? h(
+                      "button",
+                      {
+                        type: "button",
+                        role: "menuitem",
+                        style: menuItemStyle,
+                        "data-projects-thread-reclaim": row.sessionId,
+                        onClick: () => {
+                          setThreadMenu("");
+                          reclaimDir(row.sessionId);
+                        },
+                        disabled: threadAction.pending === row.sessionId,
+                      },
+                      text(t, "detail.threadReclaim"),
+                    )
+                  : null,
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    role: "menuitem",
+                    style: { ...menuItemStyle, color: T.danger },
+                    "data-projects-thread-remove": row.sessionId,
+                    onClick: () => {
+                      // 两段确认：第一次点只把标签换成「确认移除？」，菜单不关，
+                      // 否则用户看不到自己点的是哪一步（锚点语义与旧 UI 一致）
+                      if (threadAction.pending === row.sessionId) setThreadMenu("");
+                      removeThread(row.sessionId);
+                    },
+                  },
+                  threadAction.pending === row.sessionId
+                    ? text(t, "detail.threadRemoveConfirm")
+                    : text(t, "detail.threadRemove"),
+                ),
+              ),
+            }),
+          ),
+        );
+      };
+
       const body = (() => {
         if (data.loading) return h("p", { style: styles.empty }, text(t, "detail.loading"));
         if (data.error !== "")
           return h("p", { style: styles.error, "data-projects-detail-error": "" }, data.error);
         if (tab === "threads") {
           const rows = data.progress?.rows ?? [];
-          // composer / 派活输入 / 结果提示都已经在**主列顶部**（详情页两列布局）：
-          // 页签体里只留线程行本身，否则同一批锚点会出现两份（菜单和输入会点到隐藏的那一份）。
-          if (rows.length === 0)
+          const visibleRows =
+            filter === ""
+              ? rows
+              : rows.filter((/** @type {any} */ row) => row.view.state === filter);
+          const visibleIds = new Set(
+            /** @type {any[]} */ (visibleRows).map((row) => String(row.sessionId)),
+          );
+          const groups = (Array.isArray(data.progress?.groups) ? data.progress.groups : [])
+            .map((/** @type {any} */ group) => ({
+              ...group,
+              rows: (Array.isArray(group.rows) ? group.rows : []).filter((/** @type {any} */ row) =>
+                visibleIds.has(String(row.sessionId)),
+              ),
+            }))
+            .filter((/** @type {any} */ group) => group.rows.length > 0);
+          const focusComposer = () => {
+            if (threadInputRef.current && typeof threadInputRef.current.focus === "function") {
+              threadInputRef.current.focus();
+            }
+          };
+          if (rows.length === 0) {
+            // U23 空态：一句解释 + 下一步 CTA（不再只有一句话）
             return h(
               "div",
               { "data-projects-threads": "", "data-projects-attention": "0" },
               h(
-                "p",
-                { style: styles.empty, "data-projects-threads-empty": "" },
-                text(t, "detail.threadsEmpty"),
+                "div",
+                { style: styles.emptyCta, "data-projects-threads-empty": "" },
+                h("span", { style: styles.name }, text(t, "detail.emptyOverview")),
+                h("span", { style: styles.emptyHint }, text(t, "detail.threadsEmpty")),
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    style: styles.primaryButton,
+                    "data-projects-empty-cta": "",
+                    onClick: focusComposer,
+                  },
+                  text(t, "detail.welcomeCta"),
+                ),
               ),
             );
+          }
+          if (visibleRows.length === 0) {
+            // 药丸过滤后为空：仍然给一句 Claude 原文结构的空态 + 清除过滤的出口
+            return h(
+              "div",
+              {
+                "data-projects-threads": "",
+                "data-projects-attention": String(data.progress?.attention ?? 0),
+                "data-projects-filter": filter,
+              },
+              h(
+                "div",
+                { style: styles.emptyCta, "data-projects-empty-overview": "" },
+                h("span", { style: styles.name }, text(t, "detail.emptyOverview")),
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    style: styles.secondaryButton,
+                    "data-projects-empty-overview-clear": "",
+                    onClick: () => setFilter(""),
+                  },
+                  text(t, "detail.pillClear"),
+                ),
+              ),
+            );
+          }
           return h(
             "div",
             {
               "data-projects-threads": "",
               "data-projects-attention": String(data.progress?.attention ?? 0),
+              "data-projects-filter": filter,
             },
-            rows.map((/** @type {any} */ row) =>
-              h(
+            groups.map((/** @type {any} */ group) => {
+              const collapsed = collapsedGroups[group.id] === true;
+              const position = Math.min(
+                Number(carousel[group.id] ?? 0),
+                Math.max(0, group.rows.length - 1),
+              );
+              const focusedId = group.rows[position]?.sessionId;
+              return h(
                 "div",
-                {
-                  key: row.sessionId,
-                  style: {
-                    ...styles.row,
-                    position: "relative",
-                    padding: "8px 4px",
-                    cursor: "default",
-                    alignItems: "flex-start",
-                    background: threadHover === row.sessionId ? T.hover : "transparent",
-                  },
-                  "data-projects-thread-row": row.sessionId,
-                  onMouseEnter: () => setThreadHover(String(row.sessionId)),
-                  onMouseLeave: () => setThreadHover(""),
-                  "data-projects-thread-state": row.view.state,
-                },
-                // 状态点：颜色只表达状态，不承载信息（信息在胶囊与右侧摘要里）
-                h("span", {
-                  style: {
-                    ...styles.dot,
-                    marginTop: "5px",
-                    background:
-                      row.view.state === "failed"
-                        ? T.danger
-                        : row.view.state === "working"
-                          ? T.accentText
-                          : row.view.state === "waiting-user"
-                            ? T.success
-                            : T.faint,
-                  },
-                  "data-projects-thread-dot": row.view.state,
-                  "aria-hidden": "true",
-                }),
+                { key: `group:${group.id}`, "data-projects-group-section": group.id },
+                // U11 分组头：▾ + 名称 + 计数 + 菜单；U14 轮播在右侧
                 h(
                   "div",
-                  { style: styles.rowMain },
+                  {
+                    style: styles.groupHead,
+                    "data-projects-group": group.id,
+                    "data-projects-group-count": String(group.rows.length),
+                    "data-projects-group-collapsed": collapsed ? "true" : "false",
+                  },
                   h(
-                    "span",
+                    "button",
                     {
-                      style: { display: "flex", alignItems: "center", gap: "8px", minWidth: 0 },
-                      title: String(row.sessionId),
-                    },
-                    h(
-                      "span",
-                      { style: styles.name },
-                      row.view.turn > 0
-                        ? `turn ${row.view.turn} · ${row.branch ? String(row.branch) : String(row.sessionId).slice(0, 12)}`
-                        : String(row.sessionId).slice(0, 20),
-                    ),
-                    h(
-                      "span",
-                      { style: styles.pill, "data-projects-thread-pill": row.view.state },
-                      text(t, `detail.state.${row.view.state}`),
-                    ),
-                  ),
-                  h(
-                    "span",
-                    { style: styles.meta },
-                    [
-                      row.branch && row.view.turn > 0 ? String(row.branch) : "",
-                      row.isolated === false ? text(t, "detail.threadShared") : "",
-                      row.view.turn > 0 ? `turn ${row.view.turn}` : "",
-                    ]
-                      .filter((part) => part !== "")
-                      .join(" · ") || "—",
-                  ),
-                  // 可观测摘要（规格 §7.7.3）：步骤/工具/diff/tokens，缺失显式 n/a
-                  row.summary
-                    ? h(
-                        "span",
-                        { style: styles.meta, "data-projects-thread-stats": "" },
-                        String(row.summary),
-                      )
-                    : null,
-                  row.worktree
-                    ? h(
-                        "span",
-                        {
-                          style: {
-                            ...styles.meta,
-                            minWidth: 0,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                          },
-                          "data-projects-thread-worktree": row.sessionId,
-                          title: String(row.worktree),
-                        },
-                        text(t, "detail.threadWorktree", { path: String(row.worktree) }),
-                      )
-                    : null,
-                  h(
-                    "span",
-                    {
-                      style: {
-                        position: "absolute",
-                        top: "4px",
-                        right: "4px",
-                        display: "inline-flex",
-                      },
-                    },
-                    h(Popover, {
-                      open: threadMenu === row.sessionId,
-                      onClose: () => setThreadMenu(""),
-                      anchor: h(
-                        "button",
-                        {
-                          type: "button",
-                          style: {
-                            ...styles.iconButton,
-                            flex: "none",
-                            opacity:
-                              threadHover === row.sessionId || threadMenu === row.sessionId
-                                ? 1
-                                : 0.45,
-                          },
-                          "data-projects-thread-menu": row.sessionId,
-                          "aria-label": text(t, "detail.moreActions"),
-                          "aria-haspopup": "menu",
-                          "aria-expanded": threadMenu === row.sessionId ? "true" : "false",
-                          onClick: () =>
-                            setThreadMenu(
-                              threadMenu === row.sessionId ? "" : String(row.sessionId),
-                            ),
-                        },
-                        uiIcon("more", "⋯", 16),
+                      type: "button",
+                      style: styles.groupToggle,
+                      "data-projects-group-toggle": group.id,
+                      "aria-expanded": collapsed ? "false" : "true",
+                      "aria-label": text(
+                        t,
+                        collapsed ? "detail.groupExpand" : "detail.groupCollapse",
                       ),
-                      menu: h(
-                        "div",
-                        { style: { display: "flex", flexDirection: "column", gap: "2px" } },
-                        row.worktree
-                          ? h(
-                              "button",
-                              {
-                                type: "button",
-                                role: "menuitem",
-                                style: menuItemStyle,
-                                "data-projects-thread-reclaim": row.sessionId,
-                                onClick: () => {
-                                  setThreadMenu("");
-                                  reclaimDir(row.sessionId);
-                                },
-                                disabled: threadAction.pending === row.sessionId,
-                              },
-                              text(t, "detail.threadReclaim"),
-                            )
-                          : null,
+                      onClick: () => setGroupCollapsed(group.id, !collapsed),
+                    },
+                    h(
+                      "span",
+                      {
+                        style: {
+                          color: T.dim,
+                          width: "12px",
+                          display: "inline-block",
+                          fontSize: "11px",
+                          lineHeight: 1,
+                        },
+                      },
+                      collapsed ? "▸" : "▾",
+                    ),
+                    h("span", {}, groupLabel(group.id)),
+                    h(
+                      "span",
+                      { style: styles.groupCount, "data-projects-group-badge": group.id },
+                      String(group.rows.length),
+                    ),
+                  ),
+                  group.rows.length > 1
+                    ? h(
+                        "span",
+                        { style: styles.carousel, "data-projects-carousel": group.id },
                         h(
                           "button",
                           {
                             type: "button",
-                            role: "menuitem",
-                            style: { ...menuItemStyle, color: T.danger },
-                            "data-projects-thread-remove": row.sessionId,
-                            onClick: () => {
-                              // 两段确认：第一次点只把标签换成「确认移除？」，菜单不关，
-                              // 否则用户看不到自己点的是哪一步（锚点语义与旧 UI 一致）
-                              if (threadAction.pending === row.sessionId) setThreadMenu("");
-                              removeThread(row.sessionId);
-                            },
+                            style: styles.iconButton,
+                            "data-projects-carousel-prev": group.id,
+                            "aria-label": text(t, "detail.carouselPrev"),
+                            onClick: () => moveCarousel(group.id, -1, group.rows.length),
                           },
-                          threadAction.pending === row.sessionId
-                            ? text(t, "detail.threadRemoveConfirm")
-                            : text(t, "detail.threadRemove"),
+                          "‹",
                         ),
+                        h(
+                          "span",
+                          { "data-projects-carousel-position": group.id },
+                          text(t, "detail.carousel", {
+                            index: position + 1,
+                            total: group.rows.length,
+                          }),
+                        ),
+                        h(
+                          "button",
+                          {
+                            type: "button",
+                            style: styles.iconButton,
+                            "data-projects-carousel-next": group.id,
+                            "aria-label": text(t, "detail.carouselNext"),
+                            onClick: () => moveCarousel(group.id, 1, group.rows.length),
+                          },
+                          "›",
+                        ),
+                      )
+                    : null,
+                  h(Popover, {
+                    open: groupMenu === group.id,
+                    onClose: () => setGroupMenu(""),
+                    anchor: h(
+                      "button",
+                      {
+                        type: "button",
+                        style: styles.iconButton,
+                        "data-projects-group-menu": group.id,
+                        "aria-label": text(t, "detail.groupMenu"),
+                        "aria-haspopup": "menu",
+                        "aria-expanded": groupMenu === group.id ? "true" : "false",
+                        onClick: () => setGroupMenu(groupMenu === group.id ? "" : group.id),
+                      },
+                      uiIcon("more", "⋯", 14),
+                    ),
+                    menu: h(
+                      "div",
+                      { style: { display: "flex", flexDirection: "column", gap: "2px" } },
+                      h(
+                        "button",
+                        {
+                          type: "button",
+                          role: "menuitem",
+                          style: menuItemStyle,
+                          "data-projects-group-collapse-all": "",
+                          onClick: () => {
+                            setGroupMenu("");
+                            collapseAllGroups(true);
+                          },
+                        },
+                        text(t, "detail.groupCollapseAll"),
                       ),
-                    }),
-                  ),
+                      h(
+                        "button",
+                        {
+                          type: "button",
+                          role: "menuitem",
+                          style: menuItemStyle,
+                          "data-projects-group-expand-all": "",
+                          onClick: () => {
+                            setGroupMenu("");
+                            collapseAllGroups(false);
+                          },
+                        },
+                        text(t, "detail.groupExpandAll"),
+                      ),
+                      h(
+                        "button",
+                        {
+                          type: "button",
+                          role: "menuitem",
+                          style: menuItemStyle,
+                          "data-projects-group-only": group.id,
+                          onClick: () => {
+                            setGroupMenu("");
+                            setFilter(filter === group.id ? "" : group.id);
+                          },
+                        },
+                        text(t, "detail.groupOnly"),
+                      ),
+                    ),
+                  }),
                 ),
-              ),
-            ),
+                collapsed
+                  ? null
+                  : h(
+                      "div",
+                      { style: styles.groupBody, "data-projects-group-body": group.id },
+                      group.rows.map((/** @type {any} */ row) =>
+                        threadRowView(row, group.rows.length > 1 && row.sessionId === focusedId),
+                      ),
+                    ),
+              );
+            }),
           );
         }
         if (tab === "memory") {
@@ -3587,10 +4883,139 @@ window.__ModuleLoader__.load({
               },
               "‹",
             ),
+            // F7/U2：标题即项目切换器（下拉换项目，不用先回列表）
+            h(Popover, {
+              open: switcherOpen,
+              onClose: () => setSwitcherOpen(false),
+              anchor: h(
+                "button",
+                {
+                  type: "button",
+                  style: {
+                    ...styles.detailTitle,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    border: "none",
+                    background: "transparent",
+                    color: T.text,
+                    cursor: "pointer",
+                    padding: 0,
+                    minWidth: 0,
+                  },
+                  "data-projects-switcher": "",
+                  "data-projects-detail-title": "",
+                  "aria-haspopup": "menu",
+                  "aria-expanded": switcherOpen ? "true" : "false",
+                  "aria-label": text(t, "detail.switch"),
+                  title: text(t, "detail.switch"),
+                  onClick: () => setSwitcherOpen(!switcherOpen),
+                },
+                project.icon
+                  ? h("span", { "data-projects-detail-icon": "" }, String(project.icon))
+                  : null,
+                h(
+                  "span",
+                  {
+                    style: {
+                      minWidth: 0,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    },
+                  },
+                  project.name,
+                ),
+                h("span", { style: { color: T.dim, fontSize: "12px" } }, "▾"),
+              ),
+              menu: h(
+                "div",
+                { style: styles.switchList, "data-projects-switcher-menu": "" },
+                (Array.isArray(props.projects) ? props.projects : []).map(
+                  (/** @type {any} */ candidate) =>
+                    h(
+                      "button",
+                      {
+                        type: "button",
+                        key: candidate.id,
+                        role: "menuitem",
+                        style: {
+                          ...styles.switchRow,
+                          background: candidate.id === project.id ? T.hover : "transparent",
+                        },
+                        "data-projects-switcher-option": candidate.id,
+                        onClick: () => {
+                          setSwitcherOpen(false);
+                          if (
+                            candidate.id !== project.id &&
+                            typeof props.onSwitchProject === "function"
+                          ) {
+                            props.onSwitchProject(candidate.id);
+                          }
+                        },
+                      },
+                      candidate.icon ? h("span", {}, String(candidate.icon)) : null,
+                      h(
+                        "span",
+                        {
+                          style: {
+                            minWidth: 0,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          },
+                        },
+                        String(candidate.name),
+                      ),
+                      candidate.id === project.id
+                        ? h("span", { style: { marginLeft: "auto", color: T.accentText } }, "✓")
+                        : null,
+                    ),
+                ),
+                (Array.isArray(props.projects) ? props.projects : []).length === 0
+                  ? h("span", { style: styles.meta }, text(t, "detail.switchEmpty"))
+                  : null,
+              ),
+            }),
+            // U2：Overview（清过滤/展开分组，回到总览）
             h(
-              "span",
-              { style: styles.detailTitle, "data-projects-detail-title": "" },
-              project.name,
+              "button",
+              {
+                type: "button",
+                style: { ...styles.secondaryButton, padding: "2px 10px", fontSize: "12px" },
+                "data-projects-overview": "",
+                onClick: () => {
+                  setFilter("");
+                  setCarousel({});
+                  collapseAllGroups(false);
+                  if (
+                    threadInputRef.current &&
+                    typeof threadInputRef.current.scrollIntoView === "function"
+                  ) {
+                    threadInputRef.current.scrollIntoView({ block: "start", behavior: "smooth" });
+                  }
+                },
+              },
+              text(t, "detail.overview"),
+            ),
+            // U2：⚙。宿主没有暴露"打开插件设置"的 client API（未验证），拿不到就明说去哪里找。
+            h(
+              "button",
+              {
+                type: "button",
+                style: styles.iconButton,
+                "data-projects-settings": "",
+                "aria-label": text(t, "detail.settings"),
+                title: text(t, "detail.settings"),
+                onClick: () => {
+                  const opened =
+                    typeof api.openSettings === "function" ? api.openSettings() : false;
+                  if (opened !== true && typeof props.onToast === "function") {
+                    props.onToast(text(t, "detail.settingsHint"));
+                  }
+                },
+              },
+              "⚙",
             ),
             h("span", { style: { flex: "1 1 auto" } }),
             h(
@@ -3711,10 +5136,131 @@ window.__ModuleLoader__.load({
                   text(t, "detail.noDirHint"),
                 )
               : null,
+            // —— F28/U10：Welcome 头（大字 + 状态句 + 7 日 token 迷你图）——
+            (() => {
+              const waiting = Number(pills["waiting-user"] ?? 0);
+              const working = Number(pills.working ?? 0);
+              const statusSentence =
+                waiting > 0
+                  ? text(t, "detail.welcomeWaiting", { count: waiting })
+                  : working > 0
+                    ? text(t, "detail.welcomeWorking", { count: working })
+                    : text(t, "detail.welcomeIdle");
+              const usageDays = Array.isArray(data.progress?.usageDays)
+                ? data.progress.usageDays
+                : [];
+              const peak = usageDays.reduce(
+                (/** @type {number} */ max, /** @type {any} */ item) =>
+                  Math.max(max, Number(item?.tokens) || 0),
+                0,
+              );
+              return h(
+                "div",
+                { style: styles.welcome, "data-projects-welcome": "" },
+                h(
+                  "div",
+                  { style: { minWidth: 0, flex: "1 1 auto" } },
+                  h(
+                    "div",
+                    { style: styles.welcomeTitle, "data-projects-welcome-title": "" },
+                    userName !== ""
+                      ? text(t, "detail.welcome", { name: userName })
+                      : text(t, "detail.welcomeAnon"),
+                  ),
+                  h(
+                    "div",
+                    { style: styles.welcomeSub, "data-projects-welcome-status": "" },
+                    statusSentence,
+                  ),
+                ),
+                usageDays.length > 0
+                  ? h(
+                      "div",
+                      {
+                        style: styles.spark,
+                        "data-projects-spark": "",
+                        title: text(t, "detail.sparkHint"),
+                      },
+                      usageDays.map((/** @type {any} */ item) =>
+                        h("span", {
+                          key: String(item.date),
+                          "data-projects-spark-bar": String(item.date),
+                          style: {
+                            ...styles.sparkBar,
+                            height:
+                              peak > 0
+                                ? `${Math.max(3, Math.round(((Number(item.tokens) || 0) / peak) * 22))}px`
+                                : "3px",
+                            background: Number(item.tokens) > 0 ? T.accentText : T.border,
+                          },
+                        }),
+                      ),
+                    )
+                  : null,
+              );
+            })(),
+            // —— F26/U13 药丸条：5 类计数 + 在跑的时间估计；点击 = 过滤该状态 ——
+            h(
+              "div",
+              { style: styles.pillBar, "data-projects-pills": "", "data-projects-counts": "" },
+              h(
+                "button",
+                {
+                  type: "button",
+                  style: { ...styles.filterPill, ...(filter === "" ? styles.pillActive : {}) },
+                  "data-projects-pill": "all",
+                  "data-projects-pill-active": filter === "" ? "true" : "false",
+                  "aria-pressed": filter === "" ? "true" : "false",
+                  onClick: () => {
+                    setFilter("");
+                    setCarousel({});
+                  },
+                },
+                text(t, "detail.pillAll"),
+              ),
+              (() => {
+                const estimates = (Array.isArray(data.threads) ? data.threads : [])
+                  .filter(
+                    (/** @type {any} */ row) =>
+                      row.view?.state === "working" && Number(row.estimateMs) > 0,
+                  )
+                  .map((/** @type {any} */ row) => Number(row.estimateMs));
+                const eta = estimates.length > 0 ? Math.min(...estimates) : 0;
+                return ["waiting-user", "failed", "working", "resolved", "idle"].map((state) => {
+                  const count = Number(pills[state] ?? 0);
+                  const active = filter === state;
+                  return h(
+                    "button",
+                    {
+                      type: "button",
+                      key: state,
+                      style: { ...styles.filterPill, ...(active ? styles.pillActive : {}) },
+                      "data-projects-pill": state,
+                      "data-projects-pill-count": String(count),
+                      "data-projects-pill-active": active ? "true" : "false",
+                      "aria-pressed": active ? "true" : "false",
+                      onClick: () => toggleFilter(state),
+                    },
+                    text(t, `detail.pill.${state}`),
+                    h("span", { style: styles.pillCount }, String(count)),
+                    state === "working" && eta > 0
+                      ? h(
+                          "span",
+                          { style: { color: T.dim }, "data-projects-pill-eta": "" },
+                          text(t, "detail.pillWorkingEta", {
+                            minutes: Math.max(1, Math.round(eta / 60_000)),
+                          }),
+                        )
+                      : null,
+                  );
+                });
+              })(),
+            ),
             h(
               "div",
               { style: styles.composerCard, "data-projects-composer": "" },
               h("input", {
+                ref: threadInputRef,
                 style: {
                   ...styles.input,
                   border: "none",
@@ -3809,14 +5355,6 @@ window.__ModuleLoader__.load({
                   })(),
                 )
               : null,
-            h(
-              "div",
-              { style: styles.meta, "data-projects-counts": "" },
-              ["waiting-user", "failed", "working", "done", "idle"]
-                .filter((state) => (counts[state] ?? 0) > 0)
-                .map((state) => `${text(t, `detail.state.${state}`)} ${counts[state]}`)
-                .join(" · "),
-            ),
             (() => {
               const all = Array.isArray(data.approvals) ? data.approvals : [];
               const pending = all.filter((/** @type {any} */ item) => item.status === "pending");
@@ -4052,6 +5590,25 @@ window.__ModuleLoader__.load({
                       : text(t, "detail.pause"),
                   ),
                 }),
+                // F1：归档时间只对归档项目显示（不伪造未归档的时间）
+                data.projectState === "archived"
+                  ? h(RailRow, {
+                      label: text(t, "detail.archivedLabel"),
+                      value: project.archivedAt
+                        ? relativeLabel(t, project.archivedAt)
+                        : text(t, "detail.none"),
+                      attrs: { "data-projects-archived-at": "" },
+                    })
+                  : null,
+                // F2：关联仓库（owner/repo）；没有就不显示这一行
+                Array.isArray(project.repos) && project.repos.length > 0
+                  ? h(RailRow, {
+                      label: text(t, "detail.reposLabel"),
+                      value: project.repos.join(" · "),
+                      title: project.repos.join(" · "),
+                      attrs: { "data-projects-repos": "" },
+                    })
+                  : null,
                 // 项目目录：值行（单行截断）+ 编辑按钮 → 模态里出输入框
                 h(
                   "div",
@@ -4068,7 +5625,9 @@ window.__ModuleLoader__.load({
                         style: smallButton,
                         "data-projects-dir-edit": "",
                         onClick: () => {
-                          setDirDraft(dirList[0] ?? "");
+                          // 打开时把现有目录装进 pending：删除/新增都在这一次保存里生效
+                          setDirPending([...dirList]);
+                          setDirDraft("");
                           setDirEditing(true);
                         },
                       },
@@ -4320,6 +5879,58 @@ window.__ModuleLoader__.load({
           children: h(
             "div",
             { style: { display: "flex", flexDirection: "column", gap: "6px" } },
+            (Array.isArray(dirPending) ? dirPending : []).length > 0
+              ? h(
+                  "div",
+                  {
+                    style: { display: "flex", flexDirection: "column", gap: "2px" },
+                    "data-projects-dir-list": "",
+                  },
+                  dirPending.map((/** @type {any} */ item) =>
+                    h(
+                      "span",
+                      {
+                        key: String(item),
+                        style: {
+                          ...styles.dirBadge,
+                          maxWidth: "100%",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "6px",
+                        },
+                        "data-projects-dir-item": String(item),
+                      },
+                      h(
+                        "span",
+                        { style: { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" } },
+                        String(item),
+                      ),
+                      h(
+                        "button",
+                        {
+                          type: "button",
+                          style: {
+                            border: "none",
+                            background: "transparent",
+                            color: T.faint,
+                            cursor: "pointer",
+                            padding: "0 2px",
+                          },
+                          "aria-label": text(t, "detail.dirRemove"),
+                          "data-projects-dir-remove": String(item),
+                          onClick: () =>
+                            setDirPending(
+                              (Array.isArray(dirPending) ? dirPending : []).filter(
+                                (candidate) => candidate !== item,
+                              ),
+                            ),
+                        },
+                        "×",
+                      ),
+                    ),
+                  ),
+                )
+              : null,
             h("input", {
               style: styles.input,
               value: dirDraft,
@@ -4330,7 +5941,14 @@ window.__ModuleLoader__.load({
                 if (event.key === "Enter") submitDir();
               },
             }),
-            h("span", { style: styles.meta }, text(t, "detail.dirPlaceholder")),
+            h(
+              "span",
+              { style: styles.meta, "data-projects-dir-limit": "" },
+              text(t, "detail.dirLimit", {
+                count: MAX_CONTEXT_DIRS,
+                used: Array.isArray(dirPending) ? dirPending.length : 0,
+              }),
+            ),
           ),
         }),
         h(RailEditor, {
@@ -5055,7 +6673,26 @@ window.__ModuleLoader__.load({
       c.effect(() => c.locale.register(NS, { zh: ZH, en: EN }), "projects: dictionaries");
       var t = c.locale.bind(NS);
       /** 给组件用的句柄：组件里拿不到 ctx，统一从这里取。 */
-      var api = { ctx: c, t: t };
+      var api = {
+        ctx: c,
+        t: t,
+        /** U2 ⚙：宿主没有已验证的「打开插件设置」client API；有就调，没有返回 false 交给 UI 说明。 */
+        openSettings: () => {
+          try {
+            if (typeof c.selectSettings === "function") {
+              c.selectSettings();
+              return true;
+            }
+            if (typeof c.openSettings === "function") {
+              c.openSettings();
+              return true;
+            }
+          } catch (_error) {
+            /* 未验证的 API：失败就当没有 */
+          }
+          return false;
+        },
+      };
 
       c.effect(
         () =>

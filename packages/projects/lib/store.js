@@ -23,13 +23,24 @@ export const FORMAT_VERSION = 1;
  * @property {{minApprovals:number, maxDiffFiles:number, maxDiffLines:number}} merge 合并门槛
  */
 
+/** 项目 Context 的上限（F2/F35）。宿主侧没有目录数配额，这个上限是产品约束 + 防误贴一大串路径。 */
+export const MAX_DIRS = 10;
+/** 项目可关联的 GitHub 仓库上限（F2 的 Context 多选里的「仓库」维度）。 */
+export const MAX_REPOS = 10;
+/** 图标是短标记（emoji 或一两个字符），不是图片路径。 */
+export const MAX_ICON_LENGTH = 8;
+
 /**
  * @typedef {object} ProjectRecord
  * @property {string} id
  * @property {string} name
  * @property {string} goal
+ * @property {string} icon 项目图标（F1；短标记，默认空串 = 不显示）
  * @property {'active'|'paused'|'archived'} state
- * @property {string[]} dirs
+ * @property {string|null} archivedAt 归档时间（F1；未归档为 null）
+ * @property {string[]} dirs 项目目录（F35：≤10，全部生效）
+ * @property {string[]} repos 关联仓库 owner/repo（F2）
+ * @property {number|null} autoResolveDays 自动 resolve 天数（F29；B1 只占位，B6 才执行）
  * @property {string|null} coordinatorSessionId
  * @property {ProjectPolicy} policy
  * @property {{dailyTokens:number|null, maxThreadsPerDay:number|null, maxStepsPerThread:number|null}} budget
@@ -41,7 +52,14 @@ export const FORMAT_VERSION = 1;
 /**
  * @typedef {object} ThreadRecord
  * @property {string} projectId
- * @property {'idle'|'working'|'waiting'|'done'|'failed'} state
+ * @property {'idle'|'working'|'waiting'|'done'|'failed'|'resolved'|'archived'} state
+ *   六态里 resolved/archived 是插件域（宿主无原语），其余由事件回写。
+ * @property {string|null} resolvedAt 手动 resolve 时间（F29）
+ * @property {boolean} unread 手动标记的未读（F31；宿主无 read 概念，只能插件存）
+ * @property {{total:number, done:number}|null} todos 最近一次 todo/write 快照（F27）
+ * @property {string} subtitle 最近一条 tool/call 的可读摘要（F27；空串 = 没有，不编）
+ * @property {string|null} lastActivityAt 最近活动时间（ISO；重启后仍能算时长）
+ * @property {string|null} dir 该线程实际使用的项目目录（F35 多目录）
  * @property {string|null} branch
  * @property {string|null} lastPushedSha
  * @property {string|null} baseSha
@@ -144,6 +162,67 @@ function iso(now = Date.now()) {
   return new Date(now).toISOString();
 }
 
+/**
+ * 目录列表收敛：只留字符串、去空、去重、按上限截断（F35）。
+ * 不校验绝对路径（那是 UI 的事）；这里只保证存进去的形状是干净的。
+ * @param {unknown} value
+ * @returns {string[]}
+ */
+export function normalizeDirs(value) {
+  if (!Array.isArray(value)) return [];
+  /** @type {string[]} */
+  const out = [];
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const path = item.trim();
+    if (path === "" || out.includes(path)) continue;
+    out.push(path);
+    if (out.length >= MAX_DIRS) break;
+  }
+  return out;
+}
+
+/**
+ * 仓库列表收敛：只认 `owner/repo` 形状，去重、按上限截断（F2）。
+ * @param {unknown} value
+ * @returns {string[]}
+ */
+export function normalizeRepos(value) {
+  if (!Array.isArray(value)) return [];
+  /** @type {string[]} */
+  const out = [];
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const name = item
+      .trim()
+      .replace(/^https?:\/\/github\.com\//u, "")
+      .replace(/\/+$/u, "");
+    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(name)) continue;
+    if (out.includes(name)) continue;
+    out.push(name);
+    if (out.length >= MAX_REPOS) break;
+  }
+  return out;
+}
+
+/**
+ * 图标收敛：短标记（emoji / 一两个字符）；空串表示不显示。
+ * @param {unknown} value
+ * @returns {string}
+ */
+export function normalizeIcon(value) {
+  if (typeof value !== "string") return "";
+  return value.trim().slice(0, MAX_ICON_LENGTH);
+}
+
+/** @param {unknown} value @returns {number|null} */
+function normalizeAutoResolveDays(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const days = Math.trunc(value);
+  if (days < 1 || days > 365) return null;
+  return days;
+}
+
 /** @param {string} path @returns {any} */
 function emptyState(path) {
   return {
@@ -180,10 +259,16 @@ export function normalize(raw, root) {
         id,
         name: typeof project.name === "string" ? project.name : id,
         goal: typeof project.goal === "string" ? project.goal : "",
+        icon: normalizeIcon(project.icon),
         state: ["active", "paused", "archived"].includes(project.state) ? project.state : "active",
-        dirs: Array.isArray(project.dirs)
-          ? project.dirs.filter((/** @type {unknown} */ d) => typeof d === "string")
-          : [],
+        // 归档时间：旧数据没有就补 null；state=archived 但没有时间的老数据也补 null（不伪造时间）
+        archivedAt:
+          project.state === "archived" && typeof project.archivedAt === "string"
+            ? project.archivedAt
+            : null,
+        dirs: normalizeDirs(project.dirs),
+        repos: normalizeRepos(project.repos),
+        autoResolveDays: normalizeAutoResolveDays(project.autoResolveDays),
         coordinatorSessionId:
           typeof project.coordinatorSessionId === "string" ? project.coordinatorSessionId : null,
         policy: normalizePolicy(project.policy),
@@ -214,9 +299,23 @@ export function normalize(raw, root) {
       state.threads[sessionId] = {
         ...thread,
         projectId: thread.projectId,
-        state: ["idle", "working", "waiting", "done", "failed"].includes(thread.state)
+        state: ["idle", "working", "waiting", "done", "failed", "resolved", "archived"].includes(
+          thread.state,
+        )
           ? thread.state
           : "idle",
+        resolvedAt: typeof thread.resolvedAt === "string" ? thread.resolvedAt : null,
+        unread: thread.unread === true,
+        todos:
+          thread.todos && Number.isFinite(thread.todos.total) && Number.isFinite(thread.todos.done)
+            ? {
+                total: Math.max(0, Math.trunc(thread.todos.total)),
+                done: Math.max(0, Math.trunc(thread.todos.done)),
+              }
+            : null,
+        subtitle: typeof thread.subtitle === "string" ? thread.subtitle.slice(0, 120) : "",
+        lastActivityAt: typeof thread.lastActivityAt === "string" ? thread.lastActivityAt : null,
+        dir: typeof thread.dir === "string" ? thread.dir : null,
         branch: typeof thread.branch === "string" ? thread.branch : null,
         lastPushedSha: typeof thread.lastPushedSha === "string" ? thread.lastPushedSha : null,
         baseSha: typeof thread.baseSha === "string" ? thread.baseSha : null,
@@ -294,7 +393,7 @@ export class ProjectStore {
     return this;
   }
 
-  /** @param {string} name @param {{goal?: string, dirs?: string[], template?: boolean}} [input] */
+  /** @param {string} name @param {{goal?: string, icon?: string, dirs?: string[], repos?: string[], autoResolveDays?: number|null, template?: boolean}} [input] */
   createProject(name, input = {}) {
     const trimmed = String(name ?? "").trim();
     if (trimmed === "") throw new Error("projects: project name is required");
@@ -304,8 +403,12 @@ export class ProjectStore {
       id,
       name: trimmed,
       goal: typeof input.goal === "string" ? input.goal : "",
+      icon: normalizeIcon(input.icon),
       state: "active",
-      dirs: Array.isArray(input.dirs) ? input.dirs.filter((d) => typeof d === "string") : [],
+      archivedAt: null,
+      dirs: normalizeDirs(input.dirs),
+      repos: normalizeRepos(input.repos),
+      autoResolveDays: normalizeAutoResolveDays(input.autoResolveDays),
       coordinatorSessionId: null,
       pinned: false,
       policy: defaultPolicy(),
@@ -333,7 +436,7 @@ export class ProjectStore {
 
   /**
    * @param {string} id
-   * @param {Partial<{name: string, goal: string, state: string, dirs: string[], coordinatorSessionId: string|null, pinned: boolean, policy: any, persona: string, budget: any}>} patch
+   * @param {Partial<{name: string, goal: string, icon: string, state: string, dirs: string[], repos: string[], autoResolveDays: number|null, coordinatorSessionId: string|null, pinned: boolean, policy: any, persona: string, budget: any}>} patch
    */
   updateProject(id, patch) {
     const current = this.state.projects[id];
@@ -341,10 +444,39 @@ export class ProjectStore {
     const next = { ...current };
     if (typeof patch.name === "string" && patch.name.trim() !== "") next.name = patch.name.trim();
     if (typeof patch.goal === "string") next.goal = patch.goal;
+    if (typeof patch.icon === "string") next.icon = normalizeIcon(patch.icon);
     if (typeof patch.pinned === "boolean") next.pinned = patch.pinned;
-    if (["active", "paused", "archived"].includes(String(patch.state))) next.state = patch.state;
-    if (Array.isArray(patch.dirs))
-      next.dirs = patch.dirs.filter((/** @type {unknown} */ d) => typeof d === "string");
+    if (patch.autoResolveDays === null || typeof patch.autoResolveDays === "number") {
+      next.autoResolveDays = normalizeAutoResolveDays(patch.autoResolveDays);
+    }
+    if (["active", "paused", "archived"].includes(String(patch.state))) {
+      next.state = patch.state;
+      // 归档时间（F1）由状态迁移自动维护：进归档记时间，离开归档清掉。
+      if (next.state === "archived") {
+        next.archivedAt =
+          typeof current.archivedAt === "string" ? current.archivedAt : iso(this.now());
+      } else {
+        next.archivedAt = null;
+      }
+    }
+    if (Array.isArray(patch.dirs)) {
+      const requested = patch.dirs.filter(
+        (/** @type {unknown} */ d) => typeof d === "string" && d.trim() !== "",
+      );
+      if (requested.length > MAX_DIRS) {
+        throw new Error(`projects: at most ${MAX_DIRS} project dirs (got ${requested.length})`);
+      }
+      next.dirs = normalizeDirs(patch.dirs);
+    }
+    if (Array.isArray(patch.repos)) {
+      const requested = patch.repos.filter(
+        (/** @type {unknown} */ r) => typeof r === "string" && r.trim() !== "",
+      );
+      if (requested.length > MAX_REPOS) {
+        throw new Error(`projects: at most ${MAX_REPOS} repos (got ${requested.length})`);
+      }
+      next.repos = normalizeRepos(patch.repos);
+    }
     if (patch.coordinatorSessionId === null || typeof patch.coordinatorSessionId === "string") {
       next.coordinatorSessionId = patch.coordinatorSessionId;
     }
@@ -395,6 +527,12 @@ export class ProjectStore {
     this.state.threads[sessionId] = {
       projectId,
       state: current?.state ?? "idle",
+      resolvedAt: current?.resolvedAt ?? null,
+      unread: current?.unread === true,
+      todos: current?.todos ?? null,
+      subtitle: current?.subtitle ?? "",
+      lastActivityAt: current?.lastActivityAt ?? null,
+      dir: current?.dir ?? null,
       branch: current?.branch ?? null,
       worktree: current?.worktree ?? null,
       seq: current?.seq ?? 0,
@@ -565,6 +703,93 @@ export class ProjectStore {
     const current = this.state.threads[sessionId];
     if (!current) throw new Error(`projects: unknown thread ${sessionId}`);
     current.lastWakeTurn = Number.isInteger(turn) ? turn : (current.lastWakeTurn ?? 0);
+    return { ...current };
+  }
+
+  /**
+   * 事件回写持久状态（F16 的 P0-1 修复）：只有真的变了才返回 changed=true，
+   * 调用方据此决定要不要落盘（避免每个事件都写一次 projects.json）。
+   * @param {string} sessionId
+   * @param {string} state 六态之一
+   * @returns {{ changed: boolean, state: string, record: any }}
+   */
+  setThreadState(sessionId, state) {
+    const current = this.state.threads[sessionId];
+    if (!current) throw new Error(`projects: unknown thread ${sessionId}`);
+    const allowed = ["idle", "working", "waiting", "done", "failed", "resolved", "archived"];
+    const next = allowed.includes(state) ? state : current.state;
+    const changed = next !== current.state;
+    if (changed) current.state = next;
+    // resolvedAt 只由 setThreadResolved / setThreadState('resolved') 维护；
+    // 这里刻意不因为「临时变成 failed/working」就清掉它——清不清是事件层的决定。
+    return { changed, state: current.state, record: { ...current } };
+  }
+
+  /**
+   * 手动 resolve / 重开（F29）。自动 resolve 留给 B6（autoResolveDays 只是占位）。
+   * @param {string} sessionId @param {boolean} resolved
+   * @returns {any} 回读的线程记录
+   */
+  setThreadResolved(sessionId, resolved) {
+    const current = this.state.threads[sessionId];
+    if (!current) throw new Error(`projects: unknown thread ${sessionId}`);
+    current.state = resolved ? "resolved" : "idle";
+    current.resolvedAt = resolved ? iso(this.now()) : null;
+    return { ...current };
+  }
+
+  /**
+   * 手动标记未读（F31）。宿主没有 read 概念，只能插件自己存。
+   * @param {string} sessionId @param {boolean} unread
+   */
+  setThreadUnread(sessionId, unread) {
+    const current = this.state.threads[sessionId];
+    if (!current) throw new Error(`projects: unknown thread ${sessionId}`);
+    current.unread = unread === true;
+    return { ...current };
+  }
+
+  /**
+   * 记录 todo/write 的整表快照（F27 的步进 n/m）。
+   * @param {string} sessionId @param {{total:number, done:number}|null} todos
+   */
+  setThreadTodos(sessionId, todos) {
+    const current = this.state.threads[sessionId];
+    if (!current) throw new Error(`projects: unknown thread ${sessionId}`);
+    current.todos = todos ?? null;
+    return { ...current };
+  }
+
+  /**
+   * 记录行副标题（最近一条 tool/call 的可读摘要）。空串表示没有，不编。
+   * @param {string} sessionId @param {string} subtitle
+   */
+  setThreadSubtitle(sessionId, subtitle) {
+    const current = this.state.threads[sessionId];
+    if (!current) throw new Error(`projects: unknown thread ${sessionId}`);
+    current.subtitle = String(subtitle ?? "").slice(0, 120);
+    return { ...current };
+  }
+
+  /**
+   * 最近活动时间（ISO）。重启后行时长/`~Nm` 估计要用它。
+   * @param {string} sessionId @param {number} at 毫秒时间戳
+   */
+  setThreadActivity(sessionId, at) {
+    const current = this.state.threads[sessionId];
+    if (!current) throw new Error(`projects: unknown thread ${sessionId}`);
+    if (Number.isFinite(at) && at > 0) current.lastActivityAt = iso(at);
+    return { ...current };
+  }
+
+  /**
+   * 记录该线程实际使用的项目目录（F35 多目录）。
+   * @param {string} sessionId @param {string|null} dir
+   */
+  setThreadDir(sessionId, dir) {
+    const current = this.state.threads[sessionId];
+    if (!current) throw new Error(`projects: unknown thread ${sessionId}`);
+    current.dir = typeof dir === "string" && dir !== "" ? dir : null;
     return { ...current };
   }
 

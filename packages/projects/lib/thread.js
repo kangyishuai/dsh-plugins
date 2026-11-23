@@ -38,6 +38,7 @@ import {
  *   worktree: string|null,
  *   branch: string|null,
  *   baseSha: string|null,
+ *   dir: string,
  *   warning: string,
  * }>}
  */
@@ -47,8 +48,13 @@ export async function createIsolatedThread(input) {
   if (!project) throw new Error(`projects: unknown project ${projectId}`);
   if (project.state === "archived") throw new Error(`projects: project ${projectId} is archived`);
 
-  const primaryDir =
-    Array.isArray(project.dirs) && project.dirs.length > 0 ? project.dirs[0] : dataRoot;
+  // F35 多目录：dirs[] 全部生效。线程按顺序找**第一个可用**的 git 仓库建 worktree；
+  // 都不是 git 仓库时退回第一个目录（共享目录，界面会如实标「未隔离」）。
+  // 不在这里逐个 dir 都建 worktree：一个线程只有一个 cwd（宿主 create 的 cwd 出生即固定）。
+  const candidates =
+    Array.isArray(project.dirs) && project.dirs.length > 0
+      ? project.dirs.filter((/** @type {unknown} */ dir) => typeof dir === "string" && dir !== "")
+      : [dataRoot];
   const index = store.listThreads(projectId).length + 1;
 
   /** 依次尝试：只有「是 git 仓库 + worktree add 成功」才隔离。 */
@@ -57,12 +63,20 @@ export async function createIsolatedThread(input) {
   let branch = null;
   let baseSha = null;
   let warning = "";
+  let primaryDir = candidates[0] ?? dataRoot;
+  let repoRoot = "";
 
-  const probe = await safeGit(deps.runGit, ["rev-parse", "--show-toplevel"], primaryDir);
-  if (probe.code !== 0) {
+  for (const candidate of candidates) {
+    const probe = await safeGit(deps.runGit, ["rev-parse", "--show-toplevel"], candidate);
+    if (probe.code === 0) {
+      primaryDir = candidate;
+      repoRoot = String(probe.stdout ?? "").trim() || candidate;
+      break;
+    }
+  }
+  if (repoRoot === "") {
     warning = "not-a-git-repository";
   } else {
-    const repoRoot = String(probe.stdout ?? "").trim() || primaryDir;
     const head = await safeGit(deps.runGit, ["rev-parse", "HEAD"], repoRoot);
     const candidatePath = worktreePath({ repoRoot, projectId, index });
     const candidateBranch = branchName({ projectName: project.name, index });
@@ -86,10 +100,12 @@ export async function createIsolatedThread(input) {
   });
   const sessionId = String(createdSession.sessionId);
   store.attachThread(sessionId, projectId);
+  // 记录线程实际落在哪个目录（多目录时 UI 要能说清「这条线程跑在哪个 root」）
+  store.setThreadDir(sessionId, primaryDir);
   if (isolated) {
     store.setThreadWorktree(sessionId, { worktree, branch, baseSha, state: "idle" });
   }
-  return { sessionId, isolated, worktree, branch, baseSha, warning };
+  return { sessionId, isolated, worktree, branch, baseSha, dir: primaryDir, warning };
 }
 
 /**

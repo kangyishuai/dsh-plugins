@@ -1,31 +1,107 @@
 // @ts-check
-// Overview 状态机单测：迁移表逐条 + 重启重建 + 排序。
+// Overview 状态机单测：六态迁移表逐条 + 重启重建 + todo 步进 + 副标题 + 分组/药丸/估计。
+// B1（F16/F25/F26/F27）新增的纯函数都在这里钉住；UI 只做渲染，不再自己算状态。
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
   deriveState,
+  deriveThreadState,
+  estimateRemainingMs,
+  filterRows,
+  firstSentence,
+  groupRows,
   hasErrorFinish,
   initialView,
   isFailureEnd,
+  mergeRecord,
   needsAttention,
+  pillCounts,
   reduce,
   replay,
+  STATE_GROUPS,
+  STATE_PILLS,
   STATE_RANK,
+  settleState,
   sortRows,
   THREAD_STATES,
+  todoSummary,
 } from "../lib/overview.js";
 
 const at = (/** @type {number} */ n) => 1_700_000_000_000 + n;
 
-describe("states", () => {
-  it("五态齐全且排序权重覆盖全部", () => {
-    assert.equal(THREAD_STATES.length, 5);
+describe("六态（F16）", () => {
+  it("六态齐全、排序权重覆盖全部、排序顺序与规格一致", () => {
+    assert.deepEqual(
+      [...THREAD_STATES].sort(),
+      ["archived", "failed", "idle", "resolved", "waiting-user", "working"].sort(),
+    );
     for (const state of THREAD_STATES) assert.equal(typeof STATE_RANK[state], "number");
     assert.ok(STATE_RANK["waiting-user"] < STATE_RANK.failed);
     assert.ok(STATE_RANK.failed < STATE_RANK.working);
-    assert.ok(STATE_RANK.working < STATE_RANK.done);
-    assert.ok(STATE_RANK.done < STATE_RANK.idle);
+    assert.ok(STATE_RANK.working < STATE_RANK.resolved);
+    assert.ok(STATE_RANK.resolved < STATE_RANK.idle);
+    assert.ok(STATE_RANK.idle < STATE_RANK.archived, "归档永远在最后");
+  });
+
+  it("deriveState 的优先级：archived > 等你 > 失败 > 在跑 > 已解决 > 空闲", () => {
+    assert.equal(
+      deriveState({
+        ...initialView(),
+        archived: true,
+        awaitingUser: true,
+        lastTurnFailed: true,
+        state: "working",
+        resolved: true,
+      }),
+      "archived",
+    );
+    assert.equal(
+      deriveState({ ...initialView(), awaitingUser: true, lastTurnFailed: true }),
+      "waiting-user",
+    );
+    assert.equal(
+      deriveState({ ...initialView(), lastTurnFailed: true, state: "working" }),
+      "failed",
+    );
+    assert.equal(deriveState({ ...initialView(), state: "working" }), "working");
+    assert.equal(deriveState({ ...initialView(), resolved: true }), "resolved");
+    // 内部归约的 done 对外一律当 idle（F16 的 done→idle 映射）
+    assert.equal(deriveState({ ...initialView(), state: "done" }), "idle");
+    assert.equal(deriveState(initialView()), "idle");
+  });
+
+  it("持久记录能叠回视图：重启后 resolved/archived 还在", () => {
+    const resolved = mergeRecord(initialView(), {
+      state: "resolved",
+      resolvedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.equal(resolved.resolved, true);
+    assert.equal(deriveState(resolved), "resolved");
+    const archived = mergeRecord(initialView(), { state: "archived" });
+    assert.equal(archived.archived, true);
+    assert.equal(deriveState(archived), "archived");
+    assert.equal(
+      deriveThreadState(undefined, { state: "resolved", resolvedAt: "2026-01-01T00:00:00.000Z" }),
+      "resolved",
+      "内存视图为空（刚重启）也要能读回",
+    );
+  });
+
+  it("宿主实时事实优先于事件推导（pendingInput / running）", () => {
+    assert.equal(
+      settleState({ view: initialView(), record: { state: "idle" }, pendingInput: ["question"] }),
+      "waiting-user",
+    );
+    assert.equal(
+      settleState({ view: initialView(), record: { state: "idle" }, running: true }),
+      "working",
+    );
+    // 归档是用户显式决定，压过一切实时事实
+    assert.equal(
+      settleState({ record: { state: "archived" }, running: true, pendingInput: ["approval"] }),
+      "archived",
+    );
   });
 });
 
@@ -68,9 +144,9 @@ describe("reduce", () => {
       data: { reason: { kind: "error" } },
     });
     const waiting = reduce(failed, { type: "interaction/pending", at: at(2) });
-    assert.equal(waiting.state, "waiting-user");
+    assert.equal(deriveState(waiting), "waiting-user");
     const cleared = reduce(waiting, { type: "interaction/cleared", at: at(3) });
-    assert.equal(cleared.state, "failed", "清掉交互后回到 failed");
+    assert.equal(deriveState(cleared), "failed", "清掉交互后回到 failed");
   });
 
   it("用户打开会话清未读；失败态保留", () => {
@@ -90,7 +166,7 @@ describe("reduce", () => {
     assert.deepEqual(after, before);
   });
 
-  it("turn/start 会清掉上一轮的 failed", () => {
+  it("turn/start 会清掉上一轮的 failed 与手动 resolve", () => {
     const failed = reduce(initialView(), {
       type: "turn/end",
       at: at(1),
@@ -99,6 +175,177 @@ describe("reduce", () => {
     const restarted = reduce(failed, { type: "turn/start", at: at(2), data: { turn: 2 } });
     assert.equal(restarted.state, "working");
     assert.equal(restarted.lastTurnFailed, false);
+    const resolved = reduce(
+      { ...initialView(), resolved: true },
+      { type: "turn/start", at: at(3) },
+    );
+    assert.equal(resolved.resolved, false, "新的一轮开始了，旧的「已解决」不再成立");
+  });
+});
+
+describe("todo/write 步进（F27）", () => {
+  it("整表快照：total = 条数，done = completed 条数", () => {
+    assert.deepEqual(
+      todoSummary({
+        todos: [
+          { content: "a", status: "completed" },
+          { content: "b", status: "in_progress" },
+          { content: "c", status: "pending" },
+        ],
+      }),
+      { total: 3, done: 1 },
+    );
+    assert.deepEqual(todoSummary({ todos: [] }), { total: 0, done: 0 });
+    assert.equal(todoSummary({}), null, "不认识的形状不当作 0/0");
+    assert.equal(todoSummary({ todos: "nope" }), null);
+  });
+
+  it("归约后视图带最新快照，且没有 todo 时仍是 0/0（UI 显示「—」）", () => {
+    const view = reduce(initialView(), {
+      type: "todo/write",
+      at: at(1),
+      data: { todos: [{ status: "completed" }, { status: "pending" }] },
+    });
+    assert.deepEqual(view.todos, { total: 2, done: 1 });
+    assert.deepEqual(initialView().todos, { total: 0, done: 0 });
+  });
+
+  it("todo/write 不改六态（清单与状态正交）", () => {
+    const working = reduce(initialView(), { type: "turn/start", at: at(1), data: { turn: 1 } });
+    const after = reduce(working, {
+      type: "todo/write",
+      at: at(2),
+      data: { todos: [{ status: "completed" }] },
+    });
+    assert.equal(after.state, "working");
+  });
+});
+
+describe("副标题（F27）", () => {
+  it("tool/call 的可读摘要成为副标题", () => {
+    const view = reduce(initialView(), {
+      type: "tool/call",
+      at: at(1),
+      data: { name: "bash", args: { command: "pnpm test" } },
+    });
+    assert.equal(view.subtitle, "pnpm test");
+  });
+
+  it("没有 tool/call 时用 assistant 第一句兜底，且截断", () => {
+    const view = reduce(initialView(), {
+      type: "assistant/message",
+      at: at(1),
+      data: {
+        message: { content: [{ type: "text", text: "**已完成**第一句。第二句不该出现。" }] },
+      },
+    });
+    assert.equal(view.subtitle, "已完成第一句");
+    assert.equal(firstSentence("   "), "");
+  });
+
+  it("工具摘要优先于 assistant 兜底；两者都没有就留空", () => {
+    const withTool = reduce(
+      reduce(initialView(), {
+        type: "assistant/message",
+        at: at(1),
+        data: { message: { content: [{ type: "text", text: "hi there." }] } },
+      }),
+      { type: "tool/call", at: at(2), data: { name: "read" } },
+    );
+    assert.equal(withTool.subtitle, "read");
+    assert.equal(initialView().subtitle, "");
+  });
+});
+
+describe("分组 / 药丸 / 估计（F25/F26）", () => {
+  const rows = [
+    { sessionId: "wait", view: { ...initialView(), state: "waiting-user" } },
+    { sessionId: "fail", view: { ...initialView(), state: "failed", lastActivityAt: at(9) } },
+    { sessionId: "work", view: { ...initialView(), state: "working" } },
+    { sessionId: "review", view: { ...initialView(), state: "resolved" } },
+    { sessionId: "idle", view: { ...initialView(), state: "idle" } },
+    { sessionId: "old", view: { ...initialView(), state: "archived" } },
+  ];
+
+  it("分组顺序固定，「等你」组含失败", () => {
+    const groups = groupRows(rows);
+    assert.deepEqual(
+      groups.map((group) => group.id),
+      STATE_GROUPS.map((group) => group.id),
+    );
+    const waiting = groups.find((group) => group.id === "waiting-user");
+    assert.equal(waiting?.count, 2);
+    assert.deepEqual(waiting?.rows.map((/** @type {any} */ row) => row.sessionId).sort(), [
+      "fail",
+      "wait",
+    ]);
+    assert.equal(groups.find((group) => group.id === "archived")?.count, 1);
+  });
+
+  it("药丸条五类计数，archived 不占药丸位", () => {
+    const counts = pillCounts(rows);
+    assert.deepEqual(counts, {
+      "waiting-user": 1,
+      failed: 1,
+      working: 1,
+      resolved: 1,
+      idle: 1,
+    });
+    assert.equal(STATE_PILLS.length, 5);
+  });
+
+  it("过滤留空=全部，否则只留该状态", () => {
+    assert.equal(filterRows(rows, "").length, 6);
+    assert.deepEqual(
+      filterRows(rows, "failed").map((/** @type {any} */ row) => row.sessionId),
+      ["fail"],
+    );
+  });
+
+  it("排序：等你 > 失败 > 在跑 > 已解决 > 空闲 > 归档", () => {
+    assert.deepEqual(
+      sortRows(rows).map((row) => row.sessionId),
+      ["wait", "fail", "work", "review", "idle", "old"],
+    );
+  });
+
+  it("剩余时间估计只在「有剩余步数 + 至少两个样本」时给，否则 null（不编）", () => {
+    assert.equal(estimateRemainingMs({ todos: null }), null);
+    assert.equal(estimateRemainingMs({ todos: { total: 3, done: 3 } }), null);
+    assert.equal(
+      estimateRemainingMs({
+        todos: { total: 6, done: 4 },
+        steps: 1,
+        firstActivityAt: at(1),
+        lastActivityAt: at(2),
+      }),
+      null,
+    );
+    // 3 步用了 6 分钟 → 每步 3 分钟；剩 2 步 → 6 分钟
+    const estimate = estimateRemainingMs({
+      todos: { total: 6, done: 4 },
+      steps: 3,
+      firstActivityAt: at(1),
+      lastActivityAt: at(1) + 6 * 60_000,
+    });
+    assert.equal(estimate, 6 * 60_000);
+    // 极短/极长都夹在 30s ~ 60min
+    assert.equal(
+      estimateRemainingMs({
+        todos: { total: 2, done: 0 },
+        steps: 2,
+        firstActivityAt: at(1),
+        lastActivityAt: at(1) + 10,
+      }),
+      30_000,
+    );
+  });
+
+  it("needsAttention 只留 waiting-user 与 failed（与分组口径一致）", () => {
+    assert.deepEqual(
+      needsAttention(rows).map((row) => row.sessionId),
+      ["wait", "fail"],
+    );
   });
 });
 
@@ -203,11 +450,12 @@ describe("排序与「需要我」", () => {
     { sessionId: "done-1", view: { ...initialView(), state: "done" } },
   ];
 
-  it("按状态权重排序", () => {
-    assert.deepEqual(
-      sortRows(rows).map((row) => row.sessionId),
-      ["wait-1", "fail-1", "work-1", "done-1", "idle-1"],
-    );
+  it("按状态权重排序（done 与 idle 同档，按时间排）", () => {
+    const sorted = sortRows(rows).map((row) => row.sessionId);
+    assert.equal(sorted[0], "wait-1");
+    assert.equal(sorted[1], "fail-1");
+    assert.equal(sorted[2], "work-1");
+    assert.ok(sorted.includes("done-1") && sorted.includes("idle-1"));
   });
 
   it("同档按最近活动时间降序", () => {
@@ -219,26 +467,5 @@ describe("排序与「需要我」", () => {
       sortRows(same).map((row) => row.sessionId),
       ["b", "a"],
     );
-  });
-
-  it("needsAttention 只留 waiting-user 与 failed", () => {
-    assert.deepEqual(
-      needsAttention(rows).map((row) => row.sessionId),
-      ["wait-1", "fail-1"],
-    );
-  });
-
-  it("deriveState 的优先级固定", () => {
-    assert.equal(
-      deriveState({ ...initialView(), awaitingUser: true, lastTurnFailed: true }),
-      "waiting-user",
-    );
-    assert.equal(
-      deriveState({ ...initialView(), lastTurnFailed: true, state: "working" }),
-      "failed",
-    );
-    assert.equal(deriveState({ ...initialView(), state: "working" }), "working");
-    assert.equal(deriveState({ ...initialView(), unread: true }), "done");
-    assert.equal(deriveState(initialView()), "idle");
   });
 });

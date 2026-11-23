@@ -209,6 +209,29 @@ const main = async () => {
     check("项目面板已渲染", opened === true, "");
     await sleep(600);
 
+    // 0) B1 首启引导（F63）：一次性弹窗，会盖住面板（fixed backdrop）。
+    //    只读回归里点掉它；唯一的写入是 UI 状态 firstRunDone（storageDomain），
+    //    不碰项目数据。已经看过（firstRunDone=true）时这里不存在，计 PASS。
+    const guideSeen = await cdp.evaluate(
+      `(() => {
+        const node = document.querySelector("[data-projects-firstrun]");
+        if (!node) return "absent";
+        const button = document.querySelector("[data-projects-firstrun-cta]");
+        if (!button) return "no-cta";
+        button.click();
+        return "dismissed";
+      })()`,
+    );
+    await sleep(500);
+    const guideGone = await cdp.evaluate(
+      `document.querySelector("[data-projects-firstrun]") === null`,
+    );
+    check(
+      "首启引导已处理（一次性，不挡后续操作）",
+      guideSeen === "absent" || (guideSeen === "dismissed" && guideGone === true),
+      String(guideSeen),
+    );
+
     const status = await cdp
       .evaluate(
         `document.querySelector("[data-projects-panel]")?.getAttribute("data-projects-status") ?? ""`,

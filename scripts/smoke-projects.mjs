@@ -80,10 +80,12 @@ async function waitForBoot(logPath, timeoutMs) {
 /**
  * 浏览器脚本：以字符串拼出，避免内层模板插值。
  * @param {string} url @param {string} shotsDir @param {string} workspaceDir
+ * @param {string} secondDir
  */
-function browserScript(url, shotsDir, workspaceDir) {
+function browserScript(url, shotsDir, workspaceDir, secondDir) {
   return `
 const SMOKE_WORKSPACE_DIR = ${JSON.stringify(workspaceDir)};
+const SMOKE_SECOND_DIR = ${JSON.stringify(secondDir)};
 const result = { checks: [], fatal: "" };
 const add = (name, ok, detail) => result.checks.push({ name, ok: Boolean(ok), detail: String(detail || "") });
 try {
@@ -218,6 +220,31 @@ try {
   add("项目面板已渲染", true, "");
 
   await page.waitForTimeout(1200);
+  // —— F63/U21 首启引导：一次性（firstRunDone 存宿主 storageDomain），4 bullet + CTA ——
+  const firstRun = await page.evaluate(() => {
+    const node = document.querySelector("[data-projects-firstrun]");
+    return node
+      ? {
+          state: node.getAttribute("data-projects-firstrun"),
+          persisted: node.getAttribute("data-projects-firstrun-persisted"),
+          dialog: Boolean(document.querySelector("[data-projects-firstrun-dialog]")),
+          bullets: document.querySelectorAll("[data-projects-firstrun-bullet]").length,
+          cta: Boolean(document.querySelector("[data-projects-firstrun-cta]")),
+        }
+      : null;
+  });
+  add(
+    "首启引导出现（4 条 bullet + CTA）",
+    firstRun?.state === "open" && firstRun.dialog === true && firstRun.bullets === 4 && firstRun.cta === true,
+    JSON.stringify(firstRun),
+  );
+  await page.evaluate(() => document.querySelector("[data-projects-firstrun-cta]")?.click());
+  await page.waitForTimeout(700);
+  const firstRunClosed = await page.evaluate(
+    () => document.querySelector("[data-projects-firstrun]") === null,
+  );
+  add("点「开始使用」后首启引导关闭", firstRunClosed === true, String(firstRunClosed));
+
   const status = await page.evaluate(() => document.querySelector("[data-projects-panel]")?.getAttribute("data-projects-status") || "");
   add("状态锚点可解析", /^(loading|ready)\\|\\d+\\|(ok|error)\\|\\S*$/.test(status), status);
 
@@ -300,6 +327,58 @@ try {
     () => document.querySelector("[data-projects-create]")?.disabled === false,
   );
   add("填了项目名后创建按钮可用（唯一门槛）", filledEnabled === true, String(filledEnabled));
+
+  // —— F2 Context 多选：目录 + 仓库都能加（≤10 上限由后端 store 再拦一道）——
+  const contextTyped = await page.evaluate(() => {
+    const set = (sel, value) => {
+      const el = document.querySelector(sel);
+      if (!el) return false;
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+      setter.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      return true;
+    };
+    return {
+      dir: set("[data-projects-new-dir]", "/tmp/projects-smoke-context"),
+      repo: set("[data-projects-new-repo]", "acme/api"),
+    };
+  });
+  await page.waitForTimeout(300);
+  await page.evaluate(() => document.querySelector("[data-projects-new-dir-add]")?.click());
+  await page.waitForTimeout(300);
+  await page.evaluate(() => document.querySelector("[data-projects-new-repo-add]")?.click());
+  await page.waitForTimeout(300);
+  const contextState = await page.evaluate(() => ({
+    count: (document.querySelector("[data-projects-new-context-count]")?.textContent || "").trim(),
+    dirs: document.querySelectorAll('[data-projects-new-context-item^="dir:"]').length,
+    repos: document.querySelectorAll('[data-projects-new-context-item^="repo:"]').length,
+    icon: Boolean(document.querySelector("[data-projects-new-icon]")),
+  }));
+  add(
+    "新建项目有 Context 多选（目录 + 仓库可加入）",
+    contextTyped.dir === true &&
+      contextTyped.repo === true &&
+      contextState.dirs === 1 &&
+      contextState.repos === 1 &&
+      contextState.icon === true,
+    JSON.stringify({ contextTyped, contextState }),
+  );
+  // 加入后能移除（不做「只加不减」的多选）；移除目录，仓库留下以验证落盘
+  await page.evaluate(() => document.querySelector('[data-projects-new-context-remove^="dir:"]')?.click());
+  await page.waitForTimeout(250);
+  const contextRemoved = await page.evaluate(
+    () => document.querySelectorAll('[data-projects-new-context-item^="dir:"]').length,
+  );
+  add("Context 条目可以移除", contextRemoved === 0, String(contextRemoved));
+  // —— F1 图标：创建时给一个短标记，列表行与 projects.json 都要能看到 ——
+  await page.evaluate(() => {
+    const input = document.querySelector("[data-projects-new-icon]");
+    if (!input) return;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    setter.call(input, "🚀");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await page.waitForTimeout(300);
   await page.evaluate(() => document.querySelector("[data-projects-create]")?.click());
   let after = { rows: 0, created: false, summary: "", error: "", modal: "", toast: "" };
   for (let i = 0; i < 24; i += 1) {
@@ -322,10 +401,22 @@ try {
   add("新建成功后出现 toast 并点名项目", after.toast.includes(name), after.toast.slice(0, 80));
   add("新建后摘要计数增加", /\\d+/u.test(after.summary), after.summary);
   add("新建没有报错条", after.error === "", after.error);
+  const rowIcon = await page.evaluate((target) => {
+    const row = [...document.querySelectorAll("[data-projects-row]")].find((node) =>
+      (node.innerText || "").includes(target),
+    );
+    const icon = row?.querySelector("[data-projects-row-icon]");
+    return icon ? (icon.textContent || "").trim() : "";
+  }, name);
+  add("列表行显示项目图标（F1）", rowIcon === "🚀", rowIcon);
   // toast 3.5s 自动消失：必须断言「真的消失」，不能只断言出现过
   await page.waitForTimeout(4200);
   const toastGone = await page.evaluate(() => document.querySelectorAll("[data-projects-toast]").length === 0);
   add("toast 在 4 秒内自动消失", toastGone === true, String(toastGone));
+  const firstRunAgain = await page.evaluate(() =>
+    Boolean(document.querySelector("[data-projects-firstrun]")),
+  );
+  add("首启引导不会在同一宿主再次出现", firstRunAgain === false, String(firstRunAgain));
 
   // 会话行菜单：先建一个会话（临时 home 已种工作区），再打开它的「…」菜单归属到项目。
   const createdSession = await page.evaluate(() => {
@@ -482,6 +573,283 @@ try {
   );
   add("线程计数/需要我 可断言", attention !== null && attention !== undefined, String(attention));
 
+  // —— F16/F25/F26/F27/F28/F31：Overview 六态 / 分组 / 药丸 / 步进 / 副标题 / Welcome ——
+  // 线程由 createThread 建（会投递一条 prompt）；临时 home 没有模型凭据，
+  // 这一轮必然以 MISSING_CREDENTIAL 失败 —— 正好验证「事件回写持久六态」。
+  let overview = null;
+  for (let i = 0; i < 60; i += 1) {
+    overview = await page.evaluate(() => {
+      const row = document.querySelector("[data-projects-thread-row]");
+      if (!row) return null;
+      const pills = {};
+      for (const node of document.querySelectorAll("[data-projects-pill]")) {
+        pills[node.getAttribute("data-projects-pill")] = Number(
+          node.getAttribute("data-projects-pill-count"),
+        );
+      }
+      return {
+        state: row.getAttribute("data-projects-thread-state"),
+        stepsState:
+          document
+            .querySelector("[data-projects-thread-steps]")
+            ?.getAttribute("data-projects-thread-steps-state") || "",
+        stepsText: (document.querySelector("[data-projects-thread-steps]")?.textContent || "").trim(),
+        subtitle: Boolean(document.querySelector("[data-projects-thread-subtitle]")),
+        pills,
+        pillsCount: document.querySelectorAll("[data-projects-pill]").length,
+        groups: [...document.querySelectorAll("[data-projects-group]")].map((node) => ({
+          id: node.getAttribute("data-projects-group"),
+          count: Number(node.getAttribute("data-projects-group-count")),
+        })),
+        welcome: (document.querySelector("[data-projects-welcome-title]")?.textContent || "").trim(),
+        status: (document.querySelector("[data-projects-welcome-status]")?.textContent || "").trim(),
+        spark: document.querySelectorAll("[data-projects-spark-bar]").length,
+      };
+    });
+    if (overview?.state && overview.state !== "working" && overview.state !== "idle") break;
+    await page.waitForTimeout(500);
+  }
+  add(
+    "线程六态由事件回写（失败轮 → failed）",
+    overview?.state === "failed",
+    JSON.stringify(overview?.state),
+  );
+  add(
+    "Overview 药丸条：5 类 + 全部，计数可断言",
+    overview?.pillsCount === 6 &&
+      overview.pills.failed === 1 &&
+      Object.keys(overview.pills).filter((key) => key !== "all").length === 5,
+    JSON.stringify(overview?.pills),
+  );
+  add(
+    "分组头带计数，且「等你」组收失败",
+    (overview?.groups || []).some((group) => group.id === "waiting-user" && group.count >= 1),
+    JSON.stringify(overview?.groups),
+  );
+  add(
+    "没有 todo 时步进显示「—」而不是 0/0",
+    overview?.stepsState === "none" && overview?.stepsText === "—",
+    JSON.stringify({ stepsState: overview?.stepsState, stepsText: overview?.stepsText }),
+  );
+  add("副标题缺数据时留空（不编）", overview?.subtitle === false, String(overview?.subtitle));
+  add(
+    "Welcome 头 + 状态句 + 7 日迷你图",
+    (overview?.welcome || "").includes("Welcome back") &&
+      (overview?.status || "") !== "" &&
+      overview?.spark === 7,
+    JSON.stringify({ welcome: overview?.welcome, status: overview?.status, spark: overview?.spark }),
+  );
+
+  // F26：点药丸 = 过滤；「全部」= 清除
+  await page.evaluate(() => document.querySelector('[data-projects-pill="failed"]')?.click());
+  await page.waitForTimeout(400);
+  const filtered = await page.evaluate(() => ({
+    filter: document.querySelector("[data-projects-threads]")?.getAttribute("data-projects-filter"),
+    states: [...document.querySelectorAll("[data-projects-thread-row]")].map((row) =>
+      row.getAttribute("data-projects-thread-state"),
+    ),
+  }));
+  add(
+    "点药丸按状态过滤（failed）",
+    filtered.filter === "failed" &&
+      filtered.states.length > 0 &&
+      filtered.states.every((state) => state === "failed"),
+    JSON.stringify(filtered),
+  );
+  // 空态：过滤一个计数为 0 的状态 → 「没有在等你的事。」+ 清除过滤出口
+  const emptyPill = await page.evaluate(() => {
+    const pill = [...document.querySelectorAll("[data-projects-pill]")].find(
+      (node) =>
+        node.getAttribute("data-projects-pill") !== "all" &&
+        node.getAttribute("data-projects-pill-count") === "0",
+    );
+    if (!pill) return "no-pill";
+    pill.click();
+    return pill.getAttribute("data-projects-pill");
+  });
+  await page.waitForTimeout(400);
+  const emptyState = await page.evaluate(() => ({
+    present: Boolean(document.querySelector("[data-projects-empty-overview]")),
+    text: document.querySelector("[data-projects-empty-overview]")?.textContent || "",
+  }));
+  add(
+    "过滤为空时给「没有在等你的事。」空态",
+    emptyPill !== "no-pill" && emptyState.present && emptyState.text.includes("没有在等你的事"),
+    JSON.stringify({ emptyPill, emptyState }),
+  );
+  await page.evaluate(() => document.querySelector("[data-projects-empty-overview-clear]")?.click());
+  await page.waitForTimeout(400);
+  const filterCleared = await page.evaluate(
+    () => document.querySelector("[data-projects-threads]")?.getAttribute("data-projects-filter"),
+  );
+  add("清除过滤后回到完整列表", filterCleared === "", String(filterCleared));
+
+  // F25/U11：分组折叠（折叠后行不渲染；再点展开）
+  const rowsBeforeCollapse = await page.evaluate(
+    () => document.querySelectorAll("[data-projects-thread-row]").length,
+  );
+  await page.evaluate(() =>
+    document.querySelector('[data-projects-group-toggle="waiting-user"]')?.click(),
+  );
+  await page.waitForTimeout(600);
+  const collapsedState = await page.evaluate(() => ({
+    attr: document
+      .querySelector('[data-projects-group="waiting-user"]')
+      ?.getAttribute("data-projects-group-collapsed"),
+    body: Boolean(document.querySelector('[data-projects-group-body="waiting-user"]')),
+    rows: document.querySelectorAll("[data-projects-thread-row]").length,
+  }));
+  add(
+    "分组可折叠（折叠后该组行不渲染）",
+    collapsedState.attr === "true" &&
+      collapsedState.body === false &&
+      collapsedState.rows === rowsBeforeCollapse - 1,
+    JSON.stringify({ rowsBeforeCollapse, collapsedState }),
+  );
+  // 折叠状态跨「返回→再进详情」保留（F25：存宿主 storageDomain）
+  await page.evaluate(() => document.querySelector("[data-projects-detail-back]")?.click());
+  await page.waitForTimeout(1200);
+  await page.evaluate(() => document.querySelector("[data-projects-row]")?.click());
+  await page.waitForTimeout(1800);
+  const persistedCollapse = await page.evaluate(() =>
+    document
+      .querySelector('[data-projects-group="waiting-user"]')
+      ?.getAttribute("data-projects-group-collapsed"),
+  );
+  add(
+    "分组折叠状态跨进详情保留（storageDomain）",
+    persistedCollapse === "true",
+    String(persistedCollapse),
+  );
+  await page.evaluate(() =>
+    document.querySelector('[data-projects-group-toggle="waiting-user"]')?.click(),
+  );
+  await page.waitForTimeout(500);
+
+  // F7 项目切换器：标题即下拉，菜单里有项目且当前项打勾
+  await page.evaluate(() => document.querySelector("[data-projects-switcher]")?.click());
+  await page.waitForTimeout(450);
+  const switcherOptions = await page.evaluate(() => ({
+    open: Boolean(document.querySelector("[data-projects-switcher-menu]")),
+    options: document.querySelectorAll("[data-projects-switcher-option]").length,
+    current: document.querySelector("[data-projects-detail]")?.getAttribute("data-projects-detail"),
+  }));
+  add(
+    "标题栏项目切换器可打开（F7/U2）",
+    switcherOptions.open === true && switcherOptions.options >= 1,
+    JSON.stringify(switcherOptions),
+  );
+  await page.evaluate(() => document.querySelector("[data-projects-switcher]")?.click());
+
+  // F29：手动 Resolve / 重开（自动 resolve 留给 B6；这里只验手动）
+  const openThreadMenu = async () => {
+    await page.evaluate(() => document.querySelector("[data-projects-thread-menu]")?.click());
+    await page.waitForTimeout(450);
+  };
+  await openThreadMenu();
+  const resolveClicked = await page.evaluate(() => {
+    const button = document.querySelector("[data-projects-thread-resolve]");
+    if (!button) return "no-button";
+    button.click();
+    return "clicked";
+  });
+  await page.waitForTimeout(1600);
+  const resolvedState = await page.evaluate(() => {
+    const pills = {};
+    for (const node of document.querySelectorAll("[data-projects-pill]")) {
+      pills[node.getAttribute("data-projects-pill")] = Number(
+        node.getAttribute("data-projects-pill-count"),
+      );
+    }
+    return {
+      state: document.querySelector("[data-projects-thread-row]")?.getAttribute(
+        "data-projects-thread-state",
+      ),
+      resolved: pills.resolved,
+      group: Number(
+        document
+          .querySelector('[data-projects-group="resolved"]')
+          ?.getAttribute("data-projects-group-count") || 0,
+      ),
+    };
+  });
+  add(
+    "手动 Resolve 生效（行/药丸/分组一致）",
+    resolveClicked === "clicked" &&
+      resolvedState.state === "resolved" &&
+      resolvedState.resolved === 1 &&
+      resolvedState.group === 1,
+    JSON.stringify({ resolveClicked, resolvedState }),
+  );
+  // 重开：状态不再是 resolved（失败轮的事实保留，所以会回到 failed）
+  await openThreadMenu();
+  const reopenClicked = await page.evaluate(() => {
+    const button = document.querySelector("[data-projects-thread-resolve]");
+    if (!button) return "no-button";
+    button.click();
+    return "clicked";
+  });
+  await page.waitForTimeout(1600);
+  const reopenedState = await page.evaluate(() =>
+    document.querySelector("[data-projects-thread-row]")?.getAttribute("data-projects-thread-state"),
+  );
+  add(
+    "重开后不再显示已解决",
+    reopenClicked === "clicked" && reopenedState !== "resolved",
+    JSON.stringify({ reopenClicked, reopenedState }),
+  );
+
+  // F31：手动标记未读 → 行首圆点；再标记已读清掉
+  await openThreadMenu();
+  await page.evaluate(() => document.querySelector("[data-projects-thread-unread-toggle]")?.click());
+  await page.waitForTimeout(1400);
+  const unreadOn = await page.evaluate(() => ({
+    row: document
+      .querySelector("[data-projects-thread-row]")
+      ?.getAttribute("data-projects-thread-unread"),
+    badge: Boolean(document.querySelector("[data-projects-thread-unread-badge]")),
+  }));
+  add(
+    "标记未读出现圆点（F31）",
+    unreadOn.row === "true" && unreadOn.badge === true,
+    JSON.stringify(unreadOn),
+  );
+  await openThreadMenu();
+  await page.evaluate(() => document.querySelector("[data-projects-thread-unread-toggle]")?.click());
+  await page.waitForTimeout(1400);
+  const unreadOff = await page.evaluate(() =>
+    document.querySelector("[data-projects-thread-row]")?.getAttribute("data-projects-thread-unread"),
+  );
+  add("标记已读清掉圆点", unreadOff === "false", String(unreadOff));
+
+  // F35：多目录 —— 在既有目录之上再加一个，rail 值行与落盘都要有两个
+  await page.evaluate(() => document.querySelector("[data-projects-dir-edit]")?.click());
+  await page.waitForTimeout(450);
+  const dirLimitText = await page.evaluate(
+    () => (document.querySelector("[data-projects-dir-limit]")?.textContent || "").trim(),
+  );
+  await page.evaluate((dir) => {
+    const input = document.querySelector("[data-projects-dir-input]");
+    if (!input) return;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    setter.call(input, dir);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }, SMOKE_SECOND_DIR);
+  await page.waitForTimeout(400);
+  await page.evaluate(() => document.querySelector("[data-projects-dir-save]")?.click());
+  await page.waitForTimeout(1600);
+  const multiDir = await page.evaluate(() => ({
+    rail: (document.querySelector("[data-projects-rail-dir]")?.textContent || "").trim(),
+    editorClosed: document.querySelector("[data-projects-dir-input]") === null,
+  }));
+  add(
+    "多目录：第二个目录加入后 rail 同时显示两个",
+    multiDir.editorClosed === true &&
+      multiDir.rail.includes("workspace2") &&
+      multiDir.rail.includes("workspace"),
+    JSON.stringify({ dirLimitText, multiDir }),
+  );
+
   // 暂停项目：UI 只断言按钮存在与可点，**状态变化由宿主侧 projects.json 断言**（更硬）
   const pauseClicked = await page.evaluate(() => {
     const button = document.querySelector("[data-projects-toggle-pause]");
@@ -607,7 +975,16 @@ try {
     removeOnce === "clicked" && /确认|confirm/iu.test(removeConfirmLabel),
     removeConfirmLabel.slice(0, 40),
   );
-  // 留一张详情页截图：线程行摘要与「仓库授权 / 回收站清理」两块新 UI 都在这一屏
+  // 留一张详情页截图：线程行摘要与「仓库授权 / 回收站清理」两块新 UI 都在这一屏。
+  // 截图前先关掉所有 popover（Esc），并把面板滚回顶部——否则截图里挂着一个菜单。
+  await page.evaluate(() =>
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+  );
+  await page.waitForTimeout(400);
+  await page.evaluate(() => {
+    const panel = document.querySelector("[data-projects-panel]");
+    if (panel) panel.scrollTop = 0;
+  });
   {
     // ego 的 page.screenshot() 在本版本返回空数据；直接走 CDP 更可靠
     const detailShot = await page.cdp("Page.captureScreenshot", { format: "png" });
@@ -1595,9 +1972,63 @@ try {
 
   await page.evaluate(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
   await page.waitForTimeout(600);
-  const shot = await page.screenshot();
-  const fs = await import("node:fs/promises");
-  await fs.writeFile(${JSON.stringify(shotsDir)} + "/01-projects-panel.png", Buffer.from(shot, "base64"));
+  // 列表页截图：宽窗（1440）+ 滚回顶部，用 CDP 取（ego 的 page.screenshot 本版本返回空数据）
+  await page.cdp("Emulation.setDeviceMetricsOverride", {
+    width: 1440,
+    height: 900,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  await page.waitForTimeout(500);
+  await page.evaluate(() => {
+    const panel = document.querySelector("[data-projects-panel]");
+    if (panel) panel.scrollTop = 0;
+  });
+  {
+    const listShot = await page.cdp("Page.captureScreenshot", { format: "png" });
+    const fs = await import("node:fs/promises");
+    await fs.writeFile(
+      ${JSON.stringify(shotsDir)} + "/01-projects-panel.png",
+      Buffer.from(listShot.data, "base64"),
+    );
+  }
+  // F7 项目切换器（真切换）：进一个项目详情，用标题下拉换到另一个项目
+  const switchIds = await page.evaluate(() =>
+    [...document.querySelectorAll("[data-projects-row]")].map((node) =>
+      node.getAttribute("data-projects-row"),
+    ),
+  );
+  if (switchIds.length >= 2) {
+    await page.evaluate(() => document.querySelector("[data-projects-row]")?.click());
+    await page.waitForTimeout(1600);
+    const switchBefore = await page.evaluate(() =>
+      document.querySelector("[data-projects-detail]")?.getAttribute("data-projects-detail"),
+    );
+    await page.evaluate(() => document.querySelector("[data-projects-switcher]")?.click());
+    await page.waitForTimeout(450);
+    const switchTarget = switchIds.find((id) => id !== switchBefore) || "";
+    const switchClicked = await page.evaluate((id) => {
+      const button = [...document.querySelectorAll("[data-projects-switcher-option]")].find(
+        (node) => node.getAttribute("data-projects-switcher-option") === id,
+      );
+      if (!button) return "no-option";
+      button.click();
+      return "clicked";
+    }, switchTarget);
+    await page.waitForTimeout(1600);
+    const switchAfter = await page.evaluate(() =>
+      document.querySelector("[data-projects-detail]")?.getAttribute("data-projects-detail"),
+    );
+    add(
+      "项目切换器真的换项目（F7）",
+      switchClicked === "clicked" && switchAfter === switchTarget && switchAfter !== switchBefore,
+      JSON.stringify({ switchIds, switchBefore, switchTarget, switchClicked, switchAfter }),
+    );
+    await page.evaluate(() => document.querySelector("[data-projects-detail-back]")?.click());
+    await page.waitForTimeout(1200);
+  } else {
+    add("项目切换器真的换项目（F7）", false, JSON.stringify({ switchIds }));
+  }
   // 防自锁：删到 0 个项目后，面板必须仍能进回收站（否则恢复入口自己锁死）
   const beforeSelfLock = await page.evaluate(() => document.querySelectorAll("[data-projects-row]").length);
   for (let i = 0; i < beforeSelfLock; i += 1) {
@@ -1755,6 +2186,11 @@ const main = async () => {
     }
 
     const SMOKE_WORKSPACE_DIR = workspaceDir;
+    // F35 多目录：第二个真实目录（不需要是 git 仓库；只验证「dirs[] 全部生效」与落盘）
+    const secondDirRaw = join(work, "workspace2");
+    await mkdir(secondDirRaw, { recursive: true });
+    await writeFile(join(secondDirRaw, "seed.txt"), "seed2\n", "utf8");
+    const SMOKE_SECOND_DIR = await realpath(secondDirRaw);
     const logPath = join(work, "host.log");
     host = spawn("dsh", ["--profile", PROFILE, "--port", "0", "--no-open"], {
       env,
@@ -1779,6 +2215,7 @@ const main = async () => {
       `http://127.0.0.1:${boot.port}/?token=${boot.token}`,
       shotsDir,
       SMOKE_WORKSPACE_DIR,
+      SMOKE_SECOND_DIR,
     );
     await writeFile(browserFile, source);
 
@@ -1849,6 +2286,74 @@ const main = async () => {
         parsed === null
           ? ""
           : JSON.stringify(Object.values(parsed.projects ?? {})[0]?.policy ?? {}).slice(0, 160),
+    });
+    const projectByName = Object.values(parsed?.projects ?? {}).find(
+      (/** @type {any} */ project) => project?.name === result.projectName,
+    );
+    checks.push({
+      name: "项目图标与关联仓库落盘（F1/F2）",
+      ok:
+        projectByName?.icon === "🚀" &&
+        Array.isArray(projectByName?.repos) &&
+        projectByName.repos.includes("acme/api"),
+      detail: JSON.stringify({ icon: projectByName?.icon, repos: projectByName?.repos }),
+    });
+    checks.push({
+      name: "归档时间字段存在且未归档为 null（F1）",
+      ok:
+        projectByName !== undefined &&
+        (projectByName.archivedAt === null || typeof projectByName.archivedAt === "string"),
+      detail: String(projectByName?.archivedAt),
+    });
+    checks.push({
+      name: "多目录落盘（F35：两个目录都在）",
+      ok:
+        Array.isArray(projectByName?.dirs) &&
+        projectByName.dirs.length >= 2 &&
+        projectByName.dirs.some((/** @type {any} */ dir) => String(dir).includes("workspace2")),
+      detail: JSON.stringify(projectByName?.dirs),
+    });
+    const threadRecord = Object.values(parsed?.threads ?? {}).find(
+      (/** @type {any} */ thread) => thread?.projectId === projectByName?.id,
+    );
+    checks.push({
+      name: "线程六态由事件回写持久记录（F16）",
+      ok:
+        threadRecord !== undefined &&
+        ["waiting-user", "failed", "working", "resolved", "idle", "archived"].includes(
+          String(threadRecord?.state),
+        ),
+      detail: String(threadRecord?.state),
+    });
+    checks.push({
+      name: "线程 todo/副标题缺数据时留空（F27）",
+      ok:
+        threadRecord !== undefined &&
+        (threadRecord.todos === null || typeof threadRecord.todos === "object") &&
+        typeof threadRecord.subtitle === "string",
+      detail: JSON.stringify({
+        todos: threadRecord?.todos,
+        subtitle: threadRecord?.subtitle,
+      }),
+    });
+    checks.push({
+      name: "线程 resolvedAt 字段可回读（F29）",
+      ok:
+        threadRecord !== undefined &&
+        (threadRecord.resolvedAt === null || typeof threadRecord.resolvedAt === "string"),
+      detail: String(threadRecord?.resolvedAt),
+    });
+    const uiStoreText = await readIfExists(join(home, "storages", "projects_ui.json"));
+    let uiStore = null;
+    try {
+      uiStore = JSON.parse(uiStoreText);
+    } catch {
+      uiStore = null;
+    }
+    checks.push({
+      name: "首启 firstRunDone 落 storageDomain（F63）",
+      ok: uiStore?.global?.firstRunDone === true,
+      detail: uiStoreText.slice(0, 200),
     });
     const leftovers = (await readdir(join(home, "projects")).catch(() => [])).filter((name) =>
       String(name).includes(".tmp-"),

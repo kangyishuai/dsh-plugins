@@ -20,10 +20,11 @@ export function initialStats() {
 
 /**
  * 从命令类工具的参数里取命令名（宿主 `tool/call` 的入参形状不保证，取不到就记工具名）。
+ * 同时用做 Overview 行副标题（F27/U12）：它必须是「人话、短、可读」，所以取第一行并截断。
  * @param {any} data
  * @returns {string}
  */
-function commandNameOf(data) {
+export function toolSummaryOf(data) {
   const args = data?.args ?? data?.input ?? data?.call?.args ?? null;
   const raw =
     (typeof args?.command === "string" && args.command) ||
@@ -60,7 +61,7 @@ export function observeEvent(stats, event) {
   }
 
   if (type === "tool/call") {
-    const name = commandNameOf(data);
+    const name = toolSummaryOf(data);
     const commands = [...base.commands, { name, ok: null }].slice(-RECENT_COMMANDS);
     return {
       ...base,
