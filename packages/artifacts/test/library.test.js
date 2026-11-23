@@ -19,6 +19,7 @@ import {
   createArtifactStore,
   latestBytes,
   MAX_BYTES,
+  slugify,
   summarizeArtifacts,
 } from "../lib/store.js";
 
@@ -902,6 +903,25 @@ test("回收站同名 id：目录名（trashKey）是权威键，恢复不了的
     assert.equal(purged.ok, true);
     assert.deepEqual(purged.purged, [keys[1]]);
     assert.deepEqual((await lib.library.trash()).artifacts, []);
+  } finally {
+    await lib.cleanup();
+  }
+});
+
+test("点开头的标题（.env audit / .gitignore）能发布，id 不含前导点", async () => {
+  const lib = await makeLibrary();
+  try {
+    for (const title of [".env audit", ".gitignore report", "..hidden notes", "..."]) {
+      const meta = await lib.store.create({ title, html: "<p>dot</p>" });
+      assert.equal(meta.title, title);
+      assert.equal(meta.id.startsWith("."), false, `${title} → unsafe id ${meta.id}`);
+      assert.equal(meta.id.includes("/"), false);
+      const latest = await lib.library.latest({ id: meta.id });
+      assert.equal(latest.ok, true, `${title} should be previewable`);
+      assert.equal(latest.html, "<p>dot</p>");
+    }
+    assert.equal(slugify(".env audit"), "env-audit");
+    assert.equal(slugify("..."), "artifact");
   } finally {
     await lib.cleanup();
   }

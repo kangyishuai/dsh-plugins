@@ -8,6 +8,7 @@
 // 漏一条 declareRemote 只会让那**一个**端点 404（docs/runtime/0.2.2-rc.3.md §12.6），
 // test/remote-declarations.test.js 用静态对账拦住这种漏写。
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
+import { describeAudit, formatAudit } from "./audit.js";
 import { createArtifactLibrary, LIBRARY_METHODS } from "./library.js";
 import { createRouteHandler } from "./route.js";
 import { createArtifactStore, resolveDataRoot } from "./store.js";
@@ -53,8 +54,6 @@ export class ArtifactsService extends TypertRemoteService {
     this.dataRoot = resolveDataRoot(this.config);
     this.store = createArtifactStore({ root: this.dataRoot });
     this.library = createArtifactLibrary({ store: this.store, routePrefix: ROUTE_PREFIX });
-    /** @type {any} 最近一次契约层结果：`try/finally` 里的审计日志靠它（异常时是上一轮的值，故每次先清空）。 */
-    this.lastAudit = undefined;
 
     // Cordis 的服务必须在 inject 作用域里取：直接读 ctx.webServer 会抛 "cannot get property without inject"。
     /** @type {any} */
@@ -118,23 +117,15 @@ export class ArtifactsService extends TypertRemoteService {
 
   /**
    * 审计日志（ADR 0002 §4）：破坏性操作必须留痕——做了什么、影响多少、是否 dry-run。
-   * `lastAudit` 记最近一次契约层结果，`try/finally` 里即使正常返回也能拿到它。
-   * @param {string} action
-   * @param {any} result
+   * 记录由纯函数 `describeAudit()` 生成、结果存在**每次调用的局部变量**里：
+   * 不要退回到 `this.lastAudit` 之类的共享字段，并发时会串号（见 ./audit.js 头部）。
+   * @param {import("./audit.js").AuditRecord} record
    * @returns {void}
    */
-  audit(action, result) {
-    if (result?.ok !== true) {
-      this.logger.warn?.(`[artifacts] ${action} failed`, result?.code ?? "(no envelope)");
-      return;
-    }
-    this.logger.info?.(`[artifacts] ${action}`, {
-      dryRun: result.dryRun === true,
-      count: result.count,
-      bytes: result.bytes,
-      ids: result.ids,
-      processed: result.removed ?? result.restored ?? result.purged ?? result.processed,
-    });
+  audit(record) {
+    if (record.level === "warn")
+      this.logger.warn?.(formatAudit(record), record.code, record.fields);
+    else this.logger.info?.(formatAudit(record), record.fields);
   }
 
   // ---- Remote 方法：全部转交 ./library.js ---------------------------------
@@ -174,12 +165,17 @@ export class ArtifactsService extends TypertRemoteService {
    */
   async archive(request) {
     // try/finally：即使契约层意外抛出（真实 bug / 宿主序列化失败），审计也要落一条。
-    this.lastAudit = undefined;
+    // 结果与异常都是**本次调用的局部变量**——并发调用不会读到彼此的状态。
+    /** @type {{ result?: any, failure?: unknown }} */
+    const call = {};
     try {
-      this.lastAudit = await this.library.archive(request ?? {});
-      return this.lastAudit;
+      call.result = await this.library.archive(request ?? {});
+      return call.result;
+    } catch (error) {
+      call.failure = error;
+      throw error;
     } finally {
-      this.audit("archive", this.lastAudit);
+      this.audit(describeAudit("archive", call.result, call.failure));
     }
   }
 
@@ -190,12 +186,17 @@ export class ArtifactsService extends TypertRemoteService {
    */
   async remove(request) {
     // try/finally：即使契约层意外抛出（真实 bug / 宿主序列化失败），审计也要落一条。
-    this.lastAudit = undefined;
+    // 结果与异常都是**本次调用的局部变量**——并发调用不会读到彼此的状态。
+    /** @type {{ result?: any, failure?: unknown }} */
+    const call = {};
     try {
-      this.lastAudit = await this.library.remove(request ?? {});
-      return this.lastAudit;
+      call.result = await this.library.remove(request ?? {});
+      return call.result;
+    } catch (error) {
+      call.failure = error;
+      throw error;
     } finally {
-      this.audit("remove", this.lastAudit);
+      this.audit(describeAudit("remove", call.result, call.failure));
     }
   }
 
@@ -206,12 +207,17 @@ export class ArtifactsService extends TypertRemoteService {
    */
   async restore(request) {
     // try/finally：即使契约层意外抛出（真实 bug / 宿主序列化失败），审计也要落一条。
-    this.lastAudit = undefined;
+    // 结果与异常都是**本次调用的局部变量**——并发调用不会读到彼此的状态。
+    /** @type {{ result?: any, failure?: unknown }} */
+    const call = {};
     try {
-      this.lastAudit = await this.library.restore(request ?? {});
-      return this.lastAudit;
+      call.result = await this.library.restore(request ?? {});
+      return call.result;
+    } catch (error) {
+      call.failure = error;
+      throw error;
     } finally {
-      this.audit("restore", this.lastAudit);
+      this.audit(describeAudit("restore", call.result, call.failure));
     }
   }
 
@@ -230,12 +236,17 @@ export class ArtifactsService extends TypertRemoteService {
    */
   async purge(request) {
     // try/finally：即使契约层意外抛出（真实 bug / 宿主序列化失败），审计也要落一条。
-    this.lastAudit = undefined;
+    // 结果与异常都是**本次调用的局部变量**——并发调用不会读到彼此的状态。
+    /** @type {{ result?: any, failure?: unknown }} */
+    const call = {};
     try {
-      this.lastAudit = await this.library.purge(request ?? {});
-      return this.lastAudit;
+      call.result = await this.library.purge(request ?? {});
+      return call.result;
+    } catch (error) {
+      call.failure = error;
+      throw error;
     } finally {
-      this.audit("purge", this.lastAudit);
+      this.audit(describeAudit("purge", call.result, call.failure));
     }
   }
 }

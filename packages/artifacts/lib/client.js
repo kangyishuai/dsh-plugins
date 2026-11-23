@@ -716,6 +716,25 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * 调试钩子开关：只有显式打开时才把 `window.__dshArtifactsOpenTab` 挂出去，
+     * 发布包里默认**没有**任何 window 全局（与仓库其它插件一致）。
+     * 打开方式二选一：`localStorage["dsh-artifacts:debug"] = "1"`，或页面 URL 带 `?debug=1`。
+     * @returns {boolean}
+     */
+    function debugHookEnabled() {
+      try {
+        if (window.localStorage.getItem("dsh-artifacts:debug") === "1") return true;
+      } catch {
+        // 隐私模式/localStorage 不可读：看 URL。
+      }
+      try {
+        return /[?&]debug=1(?:&|$)/u.test(String(window.location?.search ?? ""));
+      } catch {
+        return false;
+      }
+    }
+
     /** @returns {string | undefined} */
     function readLast() {
       try {
@@ -777,15 +796,18 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * E2E 钩子：把「用参数打开页签」暴露给冒烟脚本（只暴露导航，不暴露任何数据/服务）。
-       * 用途见 docs/testing/artifacts.md §1.3：冒烟要断言"按 projectId 过滤的库视图"与多类型预览，
-       * 而页面上下文没有别的入口能带 params 打开页签。生产 UI 不依赖它。
+       * E2E 调试钩子：把「用参数打开页签」挂到 window（只暴露导航，不暴露数据/服务）。
+       * 冒烟要断言"按 projectId 过滤的库视图"与多类型预览，而页面上下文没有别的入口能带 params
+       * 打开页签。**默认不挂**，需 `debugHookEnabled()`：`dsh-artifacts:debug=1` 或 `?debug=1`。
+       * 用法见 docs/testing/artifacts.md §1.3。
        */
-      try {
-        /** @type {any} */ (window).__dshArtifactsOpenTab = (/** @type {any} */ params) =>
-          open(params?.id, params?.projectId);
-      } catch {
-        // 只读/受限沙箱里挂不上：忽略（只有冒烟会用到）。
+      if (debugHookEnabled()) {
+        try {
+          /** @type {any} */ (window).__dshArtifactsOpenTab = (/** @type {any} */ params) =>
+            open(params?.id, params?.projectId);
+        } catch {
+          // 只读/受限沙箱里挂不上：忽略（只有冒烟会用到）。
+        }
       }
 
       ctx.effect(

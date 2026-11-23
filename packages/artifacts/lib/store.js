@@ -154,6 +154,9 @@ export function slugify(title) {
   const base = String(title ?? "")
     .trim()
     .toLowerCase()
+    // 点开头的标题（`.env audit`、`.gitignore report`）在生成侧就收敛掉前导点：
+    // id 校验严格要求"不以点开头"（防隐藏目录/`..` 穿越），不能反过来把它当非法输入拒掉。
+    .replace(/^\.+/u, "")
     .replace(/[\s/\\:*?"<>|]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 40);
