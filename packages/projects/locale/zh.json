@@ -27,7 +27,6 @@
     "detail.loading": "加载中…",
     "detail.tab.threads": "线程 ({count})",
     "detail.tab.memory": "记忆",
-    "detail.tab.audit": "审计",
     "detail.threadsEmpty": "还没有线程。在上面输入一个任务就能新建线程；也可以回到会话行，用「…」菜单把已有会话归属到本项目。",
     "detail.threadState": "状态：{state}",
     "detail.instructions": "常设规则（instructions.md）",
@@ -326,6 +325,7 @@
     "settings.usageEmpty": "还没有可统计的用量。",
     "settings.debugTitle": "Debug access",
     "settings.debugRows": "项目 {projects} · 活跃 {active} · 已挂上下文 {attached} 个会话",
+    "settings.auditTitle": "审计（最近 {count} 条）",
     "settings.ghCheck": "检查 GitHub 连接",
     "settings.ghChecking": "检查中…",
     "settings.ghOk": "GitHub：{message}",
@@ -489,6 +489,11 @@
     "library.searchEmpty": "没有匹配的文件名。",
     "library.searchFailed": "搜索失败",
     "library.truncated": "已截断",
+    "library.railOpen": "打开 Library",
+    "library.railBack": "返回线程列表",
+    "library.railHint": "Library 从页签外迁：右栏入口打开，主列渲染，再点同一行收起（页签上限 3）",
+    "library.railSummary": "{files} 个文件 · {artifacts} 个产物",
+    "library.railLoading": "打开查看",
     "b3.folderWorktreeHint": "merge 在项目目录里跑；push-branch 在线程 worktree 里跑——worktree 继承它所属项目目录的授权。",
     "library.openPanelUnavailable": "打开失败：宿主未提供右栏面板服务（sidebarRight）。"
   }

@@ -66,6 +66,7 @@ window.__ModuleLoader__.load({
       "settings.usageEmpty": "还没有可统计的用量。",
       "settings.debugTitle": "Debug access",
       "settings.debugRows": "项目 {projects} · 活跃 {active} · 已挂上下文 {attached} 个会话",
+      "settings.auditTitle": "审计（最近 {count} 条）",
       "settings.ghCheck": "检查 GitHub 连接",
       "settings.ghChecking": "检查中…",
       "settings.ghOk": "GitHub：{message}",
@@ -215,7 +216,6 @@ window.__ModuleLoader__.load({
       "detail.loading": "加载中…",
       "detail.tab.threads": "线程 ({count})",
       "detail.tab.memory": "记忆",
-      "detail.tab.audit": "审计",
       "detail.threadsEmpty":
         "还没有线程。在上面输入一个任务就能新建线程；也可以回到会话行，用「…」菜单把已有会话归属到本项目。",
       "detail.noDirHint":
@@ -534,6 +534,12 @@ window.__ModuleLoader__.load({
       "library.searchEmpty": "没有匹配的文件名。",
       "library.searchFailed": "搜索失败",
       "library.truncated": "已截断",
+      "library.railOpen": "打开 Library",
+      "library.railBack": "返回线程列表",
+      "library.railHint":
+        "Library 从页签外迁：右栏入口打开，主列渲染，再点同一行收起（页签上限 3）",
+      "library.railSummary": "{files} 个文件 · {artifacts} 个产物",
+      "library.railLoading": "打开查看",
       "b3.folderWorktreeHint":
         "merge 在项目目录里跑；push-branch 在线程 worktree 里跑——worktree 继承它所属项目目录的授权。",
     };
@@ -635,7 +641,6 @@ window.__ModuleLoader__.load({
       "detail.loading": "Loading…",
       "detail.tab.threads": "Threads ({count})",
       "detail.tab.memory": "Memory",
-      "detail.tab.audit": "Audit",
       "detail.threadsEmpty":
         "No sessions belong to this project yet. Use “Add to project…” in a session's … menu.",
       "detail.noDirHint":
@@ -942,6 +947,7 @@ window.__ModuleLoader__.load({
       "settings.debugTitle": "Debug access",
       "settings.debugRows":
         "{projects} projects · {active} active · {attached} sessions with context",
+      "settings.auditTitle": "Audit (latest {count})",
       "settings.ghCheck": "Check GitHub connection",
       "settings.ghChecking": "Checking…",
       "settings.ghOk": "GitHub: {message}",
@@ -1074,6 +1080,12 @@ window.__ModuleLoader__.load({
       "library.searchEmpty": "No matching file names.",
       "library.searchFailed": "Search failed",
       "library.truncated": "truncated",
+      "library.railOpen": "Open Library",
+      "library.railBack": "Back to threads",
+      "library.railHint":
+        "Library moved out of the tabs: open it from the rail, it renders in the main column, click the same rail row again to collapse (tabs cap at 3)",
+      "library.railSummary": "{files} files · {artifacts} artifacts",
+      "library.railLoading": "Open to view",
       "b3.folderWorktreeHint":
         "merge runs in the project folder; push-branch runs in the thread worktree, which inherits the authorization of the project folder it came from.",
     };
@@ -4248,7 +4260,6 @@ window.__ModuleLoader__.load({
         error: "",
         threads: [],
         content: null,
-        audit: [],
       });
       const data = dataState[0];
       const setData = dataState[1];
@@ -4262,7 +4273,7 @@ window.__ModuleLoader__.load({
           Promise.all([
             call(api.ctx, "progress", { projectId: project.id }),
             call(api.ctx, "getProjectContent", { projectId: project.id }),
-            call(api.ctx, "listAudit", { projectId: project.id }),
+            // 审计不再进详情页（§7.3 外迁到设置 Debug），这里不再轮询 listAudit。
             call(api.ctx, "listApprovals", { projectId: project.id }),
             call(api.ctx, "uiState"),
             // B2：协调者区（F9/F11）+ 模型目录（F24）
@@ -4286,15 +4297,14 @@ window.__ModuleLoader__.load({
                 progress: values[0] || null,
                 projectState: values[0]?.projectState ?? project.state,
                 content: values[1] || null,
-                audit: Array.isArray(values[2]) ? values[2] : [],
-                approvals: Array.isArray(values[3]) ? values[3] : [],
-                ui: values[4] || null,
-                coordinator: values[5] || null,
-                models: values[6] || null,
-                poll: values[7] || null,
-                liveProject: values[8] || null,
+                approvals: Array.isArray(values[2]) ? values[2] : [],
+                ui: values[3] || null,
+                coordinator: values[4] || null,
+                models: values[5] || null,
+                poll: values[6] || null,
+                liveProject: values[7] || null,
                 routines: (() => {
-                  const view = values[9];
+                  const view = values[8];
                   if (!view || view.available === false)
                     return { count: 0, summary: "宿主 schedule 不可用" };
                   const count = Array.isArray(view.routines) ? view.routines.length : 0;
@@ -4303,15 +4313,15 @@ window.__ModuleLoader__.load({
                     summary: count === 0 ? "还没有定时任务" : `${count} 个定时任务`,
                   };
                 })(),
-                reminders: values[10] || null,
-                library: values[11] || null,
+                reminders: values[9] || null,
+                library: values[10] || null,
               });
               // F25 折叠状态存宿主 storageDomain（跨重启保留）；读不到就当全部展开。
               // 只在首次加载时套用：否则 5s 轮询会用旧值把用户刚点的折叠弹回去。
               if (collapsedInitRef.current !== true) {
                 collapsedInitRef.current = true;
-                if (values[4] && typeof values[4].collapsedGroups === "object") {
-                  setCollapsedGroups({ ...values[4].collapsedGroups });
+                if (values[3] && typeof values[3].collapsedGroups === "object") {
+                  setCollapsedGroups({ ...values[3].collapsedGroups });
                 }
               }
             },
@@ -4321,7 +4331,6 @@ window.__ModuleLoader__.load({
                 error: String(error?.message ?? error),
                 threads: [],
                 content: null,
-                audit: [],
               });
             },
           );
@@ -5135,6 +5144,8 @@ window.__ModuleLoader__.load({
         return out;
       })();
 
+      // 页签最多 3 个（docs/plugin-conventions.md §7.3）：Library 走右栏入口、审计进设置 Debug，
+      // 两者都不再占页签，页签只剩「线程 / 记忆 / Routines」。
       const tabs = [
         {
           id: "threads",
@@ -5143,12 +5154,18 @@ window.__ModuleLoader__.load({
           }),
         },
         { id: "memory", label: text(t, "detail.tab.memory") },
-        // U9：视图页签。Library 先占位（artifacts 0.2 才接入），Routines 在 B4 落地。
-        { id: "library", label: "Library" },
         { id: "routines", label: "Routines" },
-        { id: "audit", label: text(t, "detail.tab.audit") },
       ];
 
+      // 右栏 Library 行的一行摘要（文件面 + 产物面；数据没到就说「打开查看」）
+      const libraryRailSummary = (() => {
+        const library = data.library;
+        if (!library) return text(t, "library.railLoading");
+        return text(t, "library.railSummary", {
+          files: Number(library.files?.total || 0),
+          artifacts: Number(library.artifacts?.summary?.count || 0),
+        });
+      })();
       const budgetText = data.progress?.budget
         ? text(t, "detail.budget", {
             today: data.progress.budget.used?.today ?? 0,
@@ -6259,13 +6276,44 @@ window.__ModuleLoader__.load({
         if (data.error !== "")
           return h("p", { style: styles.error, "data-projects-detail-error": "" }, data.error);
         if (tab === "library") {
-          return h(LibraryView, {
-            api: api,
-            t: t,
-            project: project,
-            library: data.library,
-            onChanged: load,
-          });
+          // Library 不再是页签（§7.3 页签 ≤3）：右栏入口打开后**在主列**渲染，
+          // 主列顶部给「返回线程列表」，再点同一 rail 行也能收起。
+          return h(
+            "div",
+            {
+              style: { display: "flex", flexDirection: "column", gap: "10px" },
+              "data-projects-library-main": "",
+            },
+            h(
+              "div",
+              {
+                style: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" },
+                "data-projects-library-breadcrumb": "",
+              },
+              h(
+                "button",
+                {
+                  type: "button",
+                  style: { ...styles.secondaryButton, padding: "2px 10px", fontSize: "12px" },
+                  "data-projects-library-back": "",
+                  onClick: () => setTab("threads"),
+                },
+                `‹ ${text(t, "library.railBack")}`,
+              ),
+              h(
+                "span",
+                { style: styles.meta, "data-projects-library-rail-hint": "" },
+                text(t, "library.railHint"),
+              ),
+            ),
+            h(LibraryView, {
+              api: api,
+              t: t,
+              project: project,
+              library: data.library,
+              onChanged: load,
+            }),
+          );
         }
         // B4 · F36：Routines 视图（六档频率 + Run now + History + 成本提示）+ F30 提醒
         if (tab === "routines") {
@@ -6618,28 +6666,8 @@ window.__ModuleLoader__.load({
             ),
           );
         }
-        if (data.audit.length === 0)
-          return h(
-            "p",
-            { style: styles.empty, "data-projects-audit-empty": "" },
-            text(t, "detail.auditEmpty"),
-          );
-        return h(
-          "div",
-          { "data-projects-audit": "" },
-          data.audit.map((/** @type {any} */ entry, /** @type {any} */ index) =>
-            h(
-              "div",
-              { key: String(index), style: styles.row },
-              h(
-                "div",
-                { style: styles.rowMain },
-                h("span", { style: styles.name }, String(entry.action || entry.kind || "?")),
-                h("span", { style: styles.meta }, String(entry.at || "")),
-              ),
-            ),
-          ),
-        );
+        // 审计已外迁到设置分节 Debug 区（§7.3：审计/诊断这类进设置页），详情页不再有审计视图。
+        return null;
       })();
 
       return h(
@@ -7600,6 +7628,34 @@ window.__ModuleLoader__.load({
                     ? text(t, "detail.memoryIndexHint")
                     : text(t, "detail.memoryEmptyHint"),
                 ),
+              ),
+            }),
+            h(RailSection, {
+              t: t,
+              id: "library",
+              title: text(t, "library.title"),
+              collapsible: narrow,
+              summary: libraryRailSummary,
+              attrs: { "data-projects-rail-library": "" },
+              // Library 从页签外迁成右栏一行入口（§7.3 页签 ≤3）：点开在主列渲染，
+              // 再点一次同一行收起回线程列表。
+              action: h(
+                "button",
+                {
+                  type: "button",
+                  style: { ...styles.secondaryButton, padding: "2px 10px", fontSize: "12px" },
+                  "data-projects-library-open": "",
+                  "aria-pressed": tab === "library" ? "true" : "false",
+                  onClick: () => setTab(tab === "library" ? "threads" : "library"),
+                },
+                tab === "library"
+                  ? `‹ ${text(t, "library.railBack")}`
+                  : `${text(t, "library.railOpen")} ›`,
+              ),
+              body: h(
+                "div",
+                { style: styles.railBodyFull, "data-projects-library-rail-summary": "" },
+                libraryRailSummary,
               ),
             }),
             h(RailSection, {
@@ -9790,6 +9846,8 @@ window.__ModuleLoader__.load({
         usage: null,
         content: null,
         gh: null,
+        // 审计从项目页签外迁到这里（§7.3：审计/诊断进设置页）
+        audit: [],
         message: "",
         busy: "",
         draft: null,
@@ -9806,8 +9864,14 @@ window.__ModuleLoader__.load({
         Promise.all([
           call(api.ctx, "usageView", { projectId: selectedForB3Id }).catch(() => null),
           call(api.ctx, "getProjectContent", { projectId: selectedForB3Id }).catch(() => null),
+          call(api.ctx, "listAudit", { projectId: selectedForB3Id }).catch(() => null),
         ]).then((/** @type {any} */ values) => {
-          setB3((/** @type {any} */ prev) => ({ ...prev, usage: values[0], content: values[1] }));
+          setB3((/** @type {any} */ prev) => ({
+            ...prev,
+            usage: values[0],
+            content: values[1],
+            audit: Array.isArray(values[2]) ? values[2] : [],
+          }));
         });
       }, [api, selectedForB3Id]);
       useEffect(() => {
@@ -10151,6 +10215,59 @@ window.__ModuleLoader__.load({
           ),
         ),
         b3Message,
+        // 审计（原项目详情「审计」页签）：审计/诊断属于设置页，不再占项目页签（§7.3）。
+        // 最多列最近 100 条（与 listAudit 的截断一致，新的在前）：设置页不是审计浏览器，
+        // 全量留给 listAudit 的调用方（工具/脚本）。
+        h(
+          "div",
+          {
+            style: {
+              marginTop: "4px",
+              paddingTop: "6px",
+              borderTop: `1px solid ${T.borderSoft}`,
+              display: "flex",
+              flexDirection: "column",
+              gap: "4px",
+            },
+            "data-projects-settings-audit": "",
+          },
+          h(
+            "div",
+            { style: { color: T.dim, fontSize: "12px" }, "data-projects-audit-title": "" },
+            text(t, "settings.auditTitle", {
+              count: Array.isArray(b3.audit) ? b3.audit.length : 0,
+            }),
+          ),
+          Array.isArray(b3.audit) && b3.audit.length > 0
+            ? h(
+                "div",
+                { "data-projects-audit": "" },
+                b3.audit
+                  .slice(-100)
+                  .reverse()
+                  .map((/** @type {any} */ entry, /** @type {any} */ index) =>
+                    h(
+                      "div",
+                      {
+                        key: String(index),
+                        style: { display: "flex", gap: "8px", alignItems: "baseline" },
+                        "data-projects-audit-row": String(entry.action || entry.kind || "?"),
+                      },
+                      h(
+                        "span",
+                        { style: { ...styles.name, minWidth: 0 } },
+                        String(entry.action || entry.kind || "?"),
+                      ),
+                      h("span", { style: styles.meta }, String(entry.at || "")),
+                    ),
+                  ),
+              )
+            : h(
+                "p",
+                { style: styles.empty, "data-projects-audit-empty": "" },
+                text(t, "detail.auditEmpty"),
+              ),
+        ),
       );
       var sectionPanel = h(
         "div",

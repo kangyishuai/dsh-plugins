@@ -57,7 +57,7 @@ pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体�
 | `memory.test.js`    | 记忆写入：幂等、单条与总量上限、时间戳注释、被拒时给出原因                                    |
 | `exec.test.js`      | 子进程封装：参数原样传递、失败返回 code 不抛、cwd 生效、命令不存在也不抛                      |
 
-## 2. web 端到端冒烟（248 项）
+## 2. web 端到端冒烟（250 项）
 
 > 0.10.0 面板改版后：新建走「入口 → 模态（两入口）→ 表单」，列表页新增搜索/排序/收藏，详情页改为
 > 主列 + 右栏（右栏为值行 + 编辑动作），并补了 toast、两列 DOM 顺序、值行无 input 等断言，故 78 → 102。
@@ -173,6 +173,35 @@ pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体�
 > **P0-4 routing 契约**没有 UI 面可断言（走审批执行路径），由 `test/settings.test.js` 锁：字符串 `when`
 > 明确拒绝、对象 `when` 写入后能被 `matchRules()`/`decideRoute()` 真命中、`defaultRules()` 自己满足契约。
 
+> **页签收敛（3 页签，UI 规范 §7.3）+2，故 248 → 250。**
+> 项目主页的 5 个页签（`threads / memory / library / routines / audit`）收到 3 个
+> （`threads / memory / routines`）：**Library** 变成右栏一行入口
+> （`data-projects-rail-library` + `data-projects-library-open`），点开在**主列**
+> `data-projects-library-main` 里渲染同一份 `LibraryView`，`data-projects-library-back`
+> 或再点同一右栏行收起；**审计**移到设置 Debug 区
+> （`data-projects-settings-audit`，列表仍用 `data-projects-audit` / `-audit-empty`）。
+> 被改写的断言（逐条）：
+> 1. 「项目详情可打开且有**五个**视图页签」→「恰好**三个**页签
+>    （threads/memory/routines）且不含 library/audit」（数量不变）：
+>    从「5 个页签都在」改为「3 个页签 + 旧页签不再存在」。
+> 2. 「Library 页签渲染真实视图」→「Library 从**右栏入口**打开并在
+>    **主列**渲染真实视图（不再是页签；B5 已落地）」（数量不变，
+>    断言强度从「有视图」升到「右栏入口 + 主列渲染 + back 回线程列表」）。
+> 3. B5 那组 Library 断言的打开方式从 `openTab("library")` 改为点
+>    `data-projects-library-open`，收尾从点 threads 页签改为点 `data-projects-library-back`
+>    （断言本身不变）。
+> 4. 「审计页签可渲染（空态也算）」→「审计在设置 Debug 区渲染
+>    （原项目详情页签，空态也算）」（数量不变，渲染位置改到设置）。
+> 5. 「危险开关变更写审计（project/policy-changed）」→「同一条审计在
+>    设置 **Debug** 区回读（先在设置里选到冒烟项目）」（数量不变）。
+> 6. **新增**：「Library/审计已外迁：详情页无这两个页签，右栏有 Library
+>    入口且无审计残留锚点」。
+> 7. **新增**：「Library 右栏行可再次点击收起（aria-pressed 跟随，
+>    不占页签）」。
+> 对应的 `data-projects-library*` 旧锚点全部保留（只外包了
+> `data-projects-library-main`），因此 Library 数据面的 9 条断言一字未改。
+
+
 `pnpm smoke:projects` 在临时 home 里种子一个**真实 git 仓库**作为工作区，然后：
 
 1. 打开「项目」面板 → 断言导航入口、面板、`data-projects-status` 锚点、本地化摘要
@@ -195,9 +224,34 @@ open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debuggin
 pnpm smoke:projects-desktop --require
 ```
 
-断言：插件 client 半已加载（按 `window.__DSH_BOOT__.entries`）、侧栏有「项目」入口、
+默认**严格只读**（不建、不删、不写 live profile）。断言：
+插件 client 半已加载（按 `window.__DSH_BOOT__.entries`）、侧栏有「项目」入口、
 面板渲染且无 `data-projects-crash`、状态锚点可解析、摘要不是裸 key、新建控件存在（**不提交**）、
-设置分节出现、关闭后界面仍可用。
+**详情页两列**（`data-projects-detail-grid` / `-main` / `-rail`，右栏在主列右侧）、
+**6 个状态药丸 + 3 个页签**（`data-projects-pill` × 6、`data-projects-tab` 恰好为
+`threads|memory|routines`）、**Library 只在右栏有入口、审计不在详情页**、
+右栏三段（指令/记忆/上下文）、详情可返回列表、
+**设置四个分区 + Debug 区里的审计**（`data-projects-settings-nav-item` 恰好
+`general,memory,usage,debug`、`data-projects-settings-debug`、`data-projects-audit-title` /
+`data-projects-audit`）、关闭后界面仍可用。
+
+数据分支的诚实计数：
+- live profile 里**一个项目都没有** 时，详情页那四条进 `SKIP`，并写明原因
+  （“需要覆盖时加 `--create`”），不把跳过伪装成 PASS；
+- 设置页被禁用（`cordis.patch.yml` 里 `ui-settings enabled:false`）时，设置那两条进 `SKIP`；
+  能打开就真断言（不再是“渲染了就算 PASS”）。
+
+**`--create`（显式授权写入，默认关）**：用 UI 从零建一个
+`smoke-desktop-<ts>` 临时项目 → 跑上面的详情页断言 → 再用同一套 UI
+「详情 ⋯ → 删除 → 确认 → 回收站 → 彻底删除」，最后断言盘上
+`projects.json`（默认 `~/.dsh/projects`，可用 `DSH_PROJECTS_DATA_ROOT` / `DSH_HOME` 覆盖）
+里已没有这个项目，且列表里也不再出现。四条新断言：建项目 /
+删除进回收站 / 回收站两步彻底删除 / 盘上校验。
+
+> 本次（页签收敛 + `--create`）**未真跑桌面回归**：需要 live profile + 带
+> `--remote-debugging-port` 重启桌面版，本阶段只做了 `node --check`、
+> `pnpm verify` 与 web 冒烟；下次重启后用 `pnpm smoke:projects-desktop --require`
+> （只读，可加 `--create`）以实跑结果为准。
 
 未装进当前 live profile 时默认 **SKIP**，加 `--require` 则 **FAIL**（发版门禁用它）。
 

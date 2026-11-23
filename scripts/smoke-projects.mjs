@@ -702,7 +702,8 @@ try {
   await page.waitForSelector("[data-projects-panel]", { timeout: 15000 });
   await page.waitForTimeout(1200);
 
-  // 项目详情：点项目行 → 三个页签（线程/记忆/审计）都可切换，返回后回到列表。
+  // 项目详情：点项目行 → 三个页签（线程/记忆/Routines）都可切换，返回后回到列表。
+  // §7.3 页签上限 3：Library 改成右栏入口、审计进设置 Debug（下面各自断言）。
   const detail = await page.evaluate(() => {
     const row = document.querySelector("[data-projects-row]");
     if (!row) return "no-row";
@@ -730,18 +731,47 @@ try {
   );
   add("详情页没有渲染崩溃", detailCrash === "", detailCrash);
   add(
-    "项目详情可打开且有五个视图页签",
+    "项目详情可打开且恰好三个页签（线程/记忆/Routines；§7.3 上限 3）",
     detailState.present &&
-      detailState.tabs.length === 5 &&
-      ["threads", "memory", "library", "routines", "audit"].every((id) =>
-        detailState.tabs.includes(id),
-      ) &&
+      detailState.tabs.length === 3 &&
+      ["threads", "memory", "routines"].every((id) => detailState.tabs.includes(id)) &&
+      !detailState.tabs.includes("library") &&
+      !detailState.tabs.includes("audit") &&
       detailState.threadsTab,
     JSON.stringify({ detail, ...detailState }),
   );
 
-  // U9：Library / Routines 是「视图页签」而不是隐藏功能——点开要有明确占位说明。
+  // 外迁后不能有残留：详情页里既不该有 audit 页签，也不该有 Library 页签。
+  const movedOut = await page.evaluate(() => {
+    const tabs = [...document.querySelectorAll("[data-projects-tab]")].map((n) =>
+      n.getAttribute("data-projects-tab"),
+    );
+    return {
+      tabs,
+      auditTab: Boolean(document.querySelector('[data-projects-tab="audit"]')),
+      libraryTab: Boolean(document.querySelector('[data-projects-tab="library"]')),
+      auditInDetail: Boolean(
+        document.querySelector("[data-projects-detail] [data-projects-audit], [data-projects-detail] [data-projects-audit-empty]"),
+      ),
+      libraryRail: Boolean(document.querySelector("[data-projects-library-open]")),
+      railLibraryRow: Boolean(document.querySelector("[data-projects-rail-library]")),
+    };
+  });
+  add(
+    "Library/审计已外迁：详情页无这两个页签，右栏有 Library 入口且无审计残留锚点",
+    movedOut.tabs.length === 3 &&
+      movedOut.auditTab === false &&
+      movedOut.libraryTab === false &&
+      movedOut.auditInDetail === false &&
+      movedOut.libraryRail === true &&
+      movedOut.railLibraryRow === true,
+    JSON.stringify(movedOut),
+  );
+
+  // U9：Library / Routines 都是真实视图。Library 不再是页签（§7.3）：
+  // 点右栏 data-projects-library-open → 主列 data-projects-library-main 渲染 → back 收起。
   const u9 = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const openTab = (id) => {
       const node = document.querySelector('[data-projects-tab="' + id + '"]');
       if (!node) return false;
@@ -768,22 +798,44 @@ try {
         note: document.querySelector("[data-projects-routines-cost]")?.textContent || "",
       };
     };
-    const clickedLibrary = openTab("library");
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    const libraryOpen = document.querySelector("[data-projects-library-open]");
+    const clickedLibrary = Boolean(libraryOpen);
+    if (libraryOpen) libraryOpen.click();
+    await wait(600);
     const library = readLibrary();
+    const inMain = Boolean(
+      document.querySelector("[data-projects-library-main] [data-projects-library]"),
+    );
+    const libraryBack = Boolean(document.querySelector("[data-projects-library-back]"));
+    document.querySelector("[data-projects-library-back]")?.click();
+    await wait(600);
+    const backToThreads =
+      Boolean(document.querySelector("[data-projects-threads], [data-projects-threads-empty]")) &&
+      !document.querySelector("[data-projects-library-main]");
     const clickedRoutines = openTab("routines");
-    await new Promise((resolve) => setTimeout(resolve, 900));
+    await wait(900);
     const routines = readRoutines();
     openTab("threads");
-    return { clickedLibrary, clickedRoutines, library, routines };
+    return {
+      clickedLibrary,
+      clickedRoutines,
+      library,
+      inMain,
+      libraryBack,
+      backToThreads,
+      routines,
+    };
   });
   add(
-    "Library 页签渲染真实视图（B5 已落地，不再是「待接入」占位）",
+    "Library 从右栏入口打开并在主列渲染真实视图（不再是页签；B5 已落地）",
     u9.clickedLibrary === true &&
+      u9.inMain === true &&
+      u9.libraryBack === true &&
+      u9.backToThreads === true &&
       u9.library?.kind === "library" &&
       u9.library.note === "" &&
       u9.library.present === true,
-    JSON.stringify(u9.library),
+    JSON.stringify({ library: u9.library, inMain: u9.inMain, backToThreads: u9.backToThreads }),
   );
   add(
     "Routines 页签给出成本口径（每次投递跑一次模型，B4 已落地不是占位）",
@@ -792,6 +844,40 @@ try {
       u9.routines.available !== "" &&
       u9.routines.note.includes("跑一次模型"),
     JSON.stringify(u9.routines),
+  );
+
+  // Library 右栏行是开关：再点同一行收起（回线程列表），
+  // aria-pressed 跟随状态——它是右栏入口，不是页签。
+  const libraryToggle = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const rail = () => document.querySelector("[data-projects-library-open]");
+    if (!rail()) return { ok: false, reason: "no-rail" };
+    rail().click();
+    await wait(700);
+    const openedInMain = Boolean(document.querySelector("[data-projects-library-main]"));
+    const pressedOpen = rail()?.getAttribute("aria-pressed") ?? "";
+    rail()?.click();
+    await wait(700);
+    return {
+      ok: true,
+      openedInMain,
+      pressedOpen,
+      closed: !document.querySelector("[data-projects-library-main]"),
+      pressedClosed: rail()?.getAttribute("aria-pressed") ?? "",
+      threadsVisible: Boolean(
+        document.querySelector("[data-projects-threads], [data-projects-threads-empty]"),
+      ),
+    };
+  });
+  add(
+    "Library 右栏行可再次点击收起（aria-pressed 跟随，回到线程列表、不占页签）",
+    libraryToggle.ok === true &&
+      libraryToggle.openedInMain === true &&
+      libraryToggle.pressedOpen === "true" &&
+      libraryToggle.closed === true &&
+      libraryToggle.pressedClosed === "false" &&
+      libraryToggle.threadsVisible === true,
+    JSON.stringify(libraryToggle),
   );
   await page.waitForTimeout(600);
 
@@ -1927,15 +2013,8 @@ try {
     checkedAfter === true,
     JSON.stringify({ toggledNow, checkedAfter }),
   );
-  // 安全面变更必须写审计
-  await page.evaluate(() => document.querySelector('[data-projects-tab="audit"]')?.click());
-  await page.waitForTimeout(1200);
-  const auditForPolicy = await page.evaluate(() => (document.querySelector("[data-projects-audit]")?.innerText || "").trim());
-  add(
-    "危险开关变更写审计（project/policy-changed）",
-    auditForPolicy.includes("project/policy-changed"),
-    auditForPolicy.split(String.fromCharCode(10)).slice(0, 4).join(" | "),
-  );
+  // 安全面变更必须写审计：断言随审计一起搬到设置 Debug 分区（见下面的设置分节那两条），
+  // 项目详情页已不再有审计页签（§7.3 页签 ≤3）。
   // 把开关关回去，别影响后续断言
   await page.evaluate(() => {
     const tab = document.querySelector('[data-projects-tab="threads"]');
@@ -2534,7 +2613,10 @@ try {
       if (node) node.click();
       return Boolean(node);
     };
-    const clicked = openTab("library");
+    // Library 已从页签外迁：改点右栏入口，主列 data-projects-library-main 渲染（§7.3 页签 ≤3）。
+    const libraryOpen = q("[data-projects-library-open]");
+    const clicked = Boolean(libraryOpen);
+    if (libraryOpen) libraryOpen.click();
     await wait(1400);
     const root = q("[data-projects-library]");
     const searchNote = q("[data-projects-library-search-note]")?.textContent || "";
@@ -2627,8 +2709,8 @@ try {
       Buffer.from(shot.data, "base64"),
     );
   }
-  await page.evaluate(() => document.querySelector('[data-projects-tab="threads"]')?.click());
-  await page.waitForTimeout(500);
+  await page.evaluate(() => document.querySelector("[data-projects-library-back]")?.click());
+  await page.waitForTimeout(700);
 
   // —— F37：记忆碎片 UI（记忆页签里有列表 + 新增入口；交互写盘由单测与 RPC 覆盖）——
   const b3frag = await page.evaluate(async () => {
@@ -2717,19 +2799,8 @@ try {
     JSON.stringify({ appendResult: appendResult.slice(0, 20), indexed: memoryIndexText.includes("冒烟追加的一条记忆") }),
   );
 
-  const auditTab = await page.evaluate(() => {
-    const tab = document.querySelector('[data-projects-tab="audit"]');
-    if (!tab) return "no-tab";
-    tab.click();
-    return "clicked";
-  });
-  await page.waitForTimeout(900);
-  const auditSeen = await page.evaluate(() =>
-    Boolean(document.querySelector("[data-projects-audit], [data-projects-audit-empty]")),
-  );
-  add("审计页签可渲染（空态也算）", auditSeen === true, String(auditTab));
-
-  // 回到「线程」页签（上面的记忆/审计页签会替换掉这块 UI）
+  // 审计列表的渲染断言已随功能搬到设置 Debug 分区（见「审计在设置 Debug 分区渲染」）。
+  // 回到「线程」页签（上面的记忆页签会替换掉这块 UI）
   await page.evaluate(() => {
     const tab = document.querySelector('[data-projects-tab="threads"]');
     if (tab) tab.click();
@@ -3812,7 +3883,7 @@ try {
   );
   // —— B3：设置四分区（F41/U19）+ 预算（F22）+ Usage（F49）+ Debug access（F50）+
   //        通知开关（F58）+ GitHub 检查（F4）+ 模板补全（F5）——
-  const b3Settings = await page.evaluate(async () => {
+  const b3Settings = await page.evaluate(async (projectName) => {
     const q = (sel) => document.querySelector(sel);
     const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     // 设置页的 projects 数据是异步加载的：等预算输入出现在 DOM 再读默认值。
@@ -3820,6 +3891,21 @@ try {
       if (q('[data-projects-budget-input="maxThreadsPerDay"]')) break;
       await wait(200);
     }
+    // 设置页自带项目选择器：先明确选到冒烟项目，否则审计读到的是别的项目的记录。
+    const pickSmokeProject = () => {
+      const select = q("[data-projects-policy-project]");
+      if (!select) return "no-select";
+      const option = [...select.options].find((item) =>
+        (item.textContent || "").includes(projectName),
+      );
+      if (!option) return "no-option";
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set;
+      setter.call(select, option.value);
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      return option.value;
+    };
+    const pickedProject = pickSmokeProject();
+    await wait(1200);
     const navItems = [...document.querySelectorAll("[data-projects-settings-nav-item]")].map((node) =>
       node.getAttribute("data-projects-settings-nav-item"),
     );
@@ -3856,8 +3942,9 @@ try {
       text: q("[data-projects-settings-usage]")?.innerText || "",
       hasTokens: Boolean(q("[data-projects-usage-tokens]")),
     };
+    const archiveAuditText = (node) => (node ? node.innerText || "" : "").trim().slice(0, 4000);
     const clickedDebug = clickNav("debug");
-    await wait(800);
+    await wait(1200);
     const notify = [...document.querySelectorAll("[data-projects-notify-pref]")].map((node) => ({
       key: node.getAttribute("data-projects-notify-pref"),
       checked: node.checked === true,
@@ -3870,11 +3957,16 @@ try {
       const again = q('[data-projects-notify-pref="completed"]');
       notifyAfter = again && again.checked ? "on" : "off";
     }
+    const auditBox = q("[data-projects-audit]");
     const debug = {
       clicked: clickedDebug,
       section: section(),
       title: q("[data-projects-debug-access]")?.textContent || "",
       rows: q("[data-projects-debug-rows]")?.textContent || "",
+      // 审计（原项目详情「审计」页签）现在渲染在设置 Debug 分区
+      auditPresent: Boolean(auditBox || q("[data-projects-audit-empty]")),
+      auditTitle: q("[data-projects-audit-title]")?.textContent || "",
+      auditText: archiveAuditText(auditBox),
     };
     // GitHub 检查的 RPC 最长 30s；且结果只在 Debug 分区渲染，必须在**停留于该分区**时轮询。
     // 这里只记录按钮是否存在，点击/轮询放到外层（那时会把分区切回 Debug）。
@@ -3899,8 +3991,21 @@ try {
     };
     clickNav("general");
     await wait(300);
-    return { navItems, budget, saved, afterSave, usage, debug, notify, notifyAfter, gh, memory, sectionAfter: section() };
-  });
+    return {
+      navItems,
+      budget,
+      saved,
+      afterSave,
+      usage,
+      debug,
+      notify,
+      notifyAfter,
+      gh,
+      memory,
+      pickedProject,
+      sectionAfter: section(),
+    };
+  }, name);
   if (b3SettingsSeen) {
     // 回到 Debug 分区并点一次检查（结果元素只在该分区渲染）。
     await page.evaluate(async () => {
@@ -3989,6 +4094,22 @@ try {
         /项目/u.test(b3Settings.debug.rows),
       JSON.stringify(b3Settings.debug),
     );
+    // §7.3：审计不再是项目页签，改在设置 Debug 分区渲染（原「审计页签可渲染」）。
+    add(
+      "审计在设置 Debug 分区渲染（原项目详情页签，空态也算）",
+      b3Settings.debug.auditPresent === true &&
+        /审计|Audit/u.test(String(b3Settings.debug.auditTitle)),
+      JSON.stringify({
+        present: b3Settings.debug.auditPresent,
+        title: b3Settings.debug.auditTitle,
+      }),
+    );
+    // 原「危险开关变更写审计（project/policy-changed）」：同一份审计换个渲染位置回读。
+    add(
+      "危险开关变更写审计（project/policy-changed，设置 Debug 分区回读）",
+      b3Settings.debug.auditText.includes("project/policy-changed"),
+      String(b3Settings.debug.auditText).slice(0, 200),
+    );
     add(
       "GitHub 连接检查给出可读结论（不崩溃、不只是空）",
       typeof b3Settings.gh === "string" && b3Settings.gh.trim().length > 0,
@@ -4026,6 +4147,8 @@ try {
       "预算写→回读闭环（改成 7 后保存并回读）",
       "Usage 分区显示 token，且**不显示金额**",
       "Debug 分区命名为 Debug access 并给出诊断计数",
+      "审计在设置 Debug 分区渲染（原项目详情页签，空态也算）",
+      "危险开关变更写审计（project/policy-changed，设置 Debug 分区回读）",
       "GitHub 连接检查给出可读结论（不崩溃、不只是空）",
       "通知开关默认「失败/等你开、完成关」，可切换并回读",
       "Memory 分区显示指令/记忆/碎片计数并提供模板补全入口",

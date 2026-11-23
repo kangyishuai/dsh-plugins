@@ -8,18 +8,22 @@
 //   # 2) 跑（发版门禁加 --require：连不上端口时失败而不是跳过）
 //   pnpm smoke:projects-desktop --require
 //
-// 默认**只读**：只切会话、开关对话框/面板，不执行破坏性操作，因此可以直接跑在真实 profile 上。
-// 需要写东西的流程请单独开一个 --deep 模式，并要求显式传入专用目录。
+// 默认**只读**：只切会话、开关对话框/面板，不创建/不删除任何东西，因此可以直接跑在真实 profile 上。
+//   pnpm smoke:projects-desktop            # 只读：live profile 里有项目就真断言详情页，没有就 SKIP
+//   pnpm smoke:projects-desktop --create   # 显式授权写入：用 UI 建一个临时项目 → 断言 → 删除 → 彻底删除
+// `--create` 会写 live profile（建一个 `smoke-desktop-<ts>` 的临时项目，收尾在回收站里彻底删除，
+// 并断言盘上 `projects.json` 里已没有它），所以**默认关**。
 //
-// 断言覆盖（最多 17 项，全部只读）：
+// 断言覆盖：
 //   连接桌面 UI / 插件 client 半已加载 / 宿主首启对话框处理 / 侧栏「项目」入口 / 面板渲染 /
 //   B1 首启引导只断言存在不点击（**不写 live profile 的 firstRunDone**）/ data-projects-status 形状 /
-//   无渲染崩溃 / 摘要已本地化 / 新建控件存在（不提交）/ 详情页三段（有项目行时才跑）/
-//   设置分节（设置页被禁用时容忍跳过）/ Esc 关闭后界面仍可用 / 截图落盘。
-// 注：本批（B1 P1-5）改的是断言口径，**没有复跑**；下次 `pnpm gate projects` 时以实跑结果为准。
+//   无渲染崩溃 / 摘要已本地化 / 新建控件存在（不提交）/
+//   详情页两列栅格 + 6 个状态药丸 + 3 个页签（§7.3）+ Library 右栏入口 + 审计不在详情页 /
+//   设置四个分区 + 审计在 Debug 分区（设置页被禁用时如实 SKIP）/ Esc 关闭后界面仍可用 / 截图落盘。
+//   `--create` 另有：建临时项目 / 删除进回收站 / 彻底删除 / 盘上 projects.json 校验。
 // 未装进 live profile 时默认 SKIP（门禁加 --require 则失败）。
-import { mkdir, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -85,7 +89,12 @@ async function connect(port) {
 
 const main = async () => {
   const { values } = parseArgs({
-    options: { port: { type: "string" }, require: { type: "boolean", default: false } },
+    options: {
+      port: { type: "string" },
+      require: { type: "boolean", default: false },
+      // 默认只读；--create 会用 UI 建一个临时项目、断言完再删除（写 live profile，故默认关）
+      create: { type: "boolean", default: false },
+    },
     allowPositionals: false,
   });
   const port = Number(values.port ?? process.env.DSH_CDP_PORT ?? 9222);
@@ -319,41 +328,165 @@ const main = async () => {
     );
     await sleep(400);
 
-    // 3b) 详情页两列（数据分支：live profile 里没有项目时 SKIP，而不是伪 PASS）
-    const rowOpened = await cdp.evaluate(`(() => {
-      const row = document.querySelector("[data-projects-row] button, [data-projects-row]");
-      if (!row) return "no-row";
-      row.click();
-      return "clicked";
-    })()`);
+    // 3b) 详情页两列 + 6 个状态药丸 + 3 个页签（§7.3：页签最多 3；Library 走右栏入口、审计进设置）。
+    //     **默认只读**：拿 live profile 里已有的项目断言；一个项目都没有时如实 SKIP（不伪 PASS）。
+    //     --create：先用 UI 从零建一个临时项目，断言完再用同一套 UI「删除 → 回收站 → 彻底删除」，
+    //               最后断言盘上 projects.json 里已没有它（因此这个开关默认关）。
+    const tempName = `smoke-desktop-${Date.now().toString(36)}`;
+    let projectName = "";
+
+    /** 详情页快照：两列栅格 / 药丸 / 页签 / 右栏三段 / 外迁后的入口。 */
+    const detailSnapshot = () =>
+      cdp.evaluate(`(() => {
+        const grid = document.querySelector("[data-projects-detail-grid]");
+        const main = document.querySelector("[data-projects-detail-main]");
+        const rail = document.querySelector("[data-projects-rail]");
+        const detail = document.querySelector("[data-projects-detail]");
+        const text = (detail && detail.innerText) || "";
+        const left = (node) => (node ? node.getBoundingClientRect().left : Number.NaN);
+        return {
+          detail: Boolean(detail),
+          grid: Boolean(grid),
+          main: Boolean(main),
+          rail: Boolean(rail),
+          // 两列：右栏在主列右侧。窄窗（容器 < 820px，见 client 的 gridRef）
+          // 会折成单列，那时只能断言三个锚点都在；宽窗时必须是并排。
+          gridWidth: grid ? Math.round(grid.getBoundingClientRect().width) : 0,
+          twoColumn: Boolean(grid) && Boolean(main) && Boolean(rail) && left(rail) > left(main),
+          pills: document.querySelectorAll("[data-projects-pill]").length,
+          tabs: [...document.querySelectorAll("[data-projects-tab]")].map((node) =>
+            node.getAttribute("data-projects-tab"),
+          ),
+          libraryOpen: Boolean(document.querySelector("[data-projects-library-open]")),
+          auditInDetail: Boolean(
+            document.querySelector("[data-projects-audit], [data-projects-audit-empty]"),
+          ),
+          hasInstructions: Boolean(document.querySelector("[data-projects-instructions]")),
+          hasContextSection: /指令|Instructions/u.test(text) && /记忆|Memory/u.test(text) && /上下文|Context/u.test(text),
+          hasThreads: Boolean(document.querySelector("[data-projects-threads], [data-projects-threads-empty]")),
+        };
+      })()`);
+
+    if (values.create === true) {
+      const created = await cdp.evaluate(`(async () => {
+        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const name = ${JSON.stringify(tempName)};
+        const openButton = document.querySelector("[data-projects-new]");
+        if (!openButton) return "no-new-button";
+        openButton.click();
+        for (let i = 0; i < 25; i += 1) {
+          const modal = document.querySelector("[data-projects-new-modal]");
+          if (modal && modal.getAttribute("data-projects-new-modal") === "open") break;
+          await wait(200);
+        }
+        const scratch = document.querySelector("[data-projects-new-scratch]");
+        if (!scratch) return "no-scratch-entry";
+        scratch.click();
+        await wait(400);
+        const input = document.querySelector("[data-projects-create-input]");
+        if (!input) return "no-input";
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+        setter.call(input, name);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        await wait(300);
+        const button = document.querySelector("[data-projects-create]");
+        if (!button || button.disabled === true) return "create-disabled";
+        button.click();
+        for (let i = 0; i < 40; i += 1) {
+          const rows = [...document.querySelectorAll("[data-projects-row]")];
+          if (rows.some((row) => ((row && row.innerText) || "").includes(name))) return "created";
+          await wait(250);
+        }
+        return "no-row";
+      })()`);
+      projectName = created === "created" ? tempName : "";
+      check(
+        "--create：用 UI 从零建一个临时项目（smoke-desktop-<ts>）",
+        created === "created",
+        String(created),
+      );
+    }
+
+    const rowOpened = await cdp.evaluate(
+      projectName === ""
+        ? `(() => {
+            const row = document.querySelector("[data-projects-row] button, [data-projects-row]");
+            if (!row) return "no-row";
+            row.click();
+            return "clicked";
+          })()`
+        : `(() => {
+            const name = ${JSON.stringify(projectName)};
+            const row = [...document.querySelectorAll("[data-projects-row]")].find((node) =>
+              ((node && node.innerText) || "").includes(name),
+            );
+            if (!row) return "no-row";
+            const clickable = row.querySelector("button") || row;
+            clickable.click();
+            return "clicked";
+          })()`,
+    );
     if (rowOpened === "no-row") {
-      skip("详情页两列（主列 + 右栏）", "live profile 没有项目，属于数据分支");
+      if (values.create === true) {
+        check("详情页两列（主列 + 右栏）", false, "临时项目建好后找不到项目行");
+      } else {
+        skip(
+          "详情页两列（主列 + 右栏）",
+          "live profile 没有项目（只读默认不创建；需要覆盖时加 --create）",
+        );
+      }
     } else {
       let detailSeen = false;
       for (let i = 0; i < 25; i += 1) {
         detailSeen = await cdp.evaluate(
-          `Boolean(document.querySelector("[data-projects-detail]"))`,
+          `Boolean(document.querySelector("[data-projects-detail-grid]"))`,
         );
         if (detailSeen === true) break;
         await sleep(200);
       }
-      const rail = await cdp.evaluate(`(() => {
-        const detail = document.querySelector("[data-projects-detail]");
-        if (!detail) return null;
-        const text = detail.innerText || "";
-        return {
-          hasInstructions: Boolean(document.querySelector("[data-projects-instructions]")),
-          hasContextSection: /指令/u.test(text) && /记忆/u.test(text) && /上下文/u.test(text),
-          hasThreads: Boolean(document.querySelector("[data-projects-threads]")),
-        };
-      })()`);
+      const snap = await detailSnapshot();
+      check(
+        "详情页是两列栅格（data-projects-detail-grid/main/rail）",
+        detailSeen === true &&
+          snap.detail === true &&
+          snap.grid === true &&
+          snap.main === true &&
+          snap.rail === true &&
+          (snap.twoColumn === true || snap.gridWidth < 820),
+        JSON.stringify({
+          detailSeen,
+          grid: snap.grid,
+          main: snap.main,
+          rail: snap.rail,
+          gridWidth: snap.gridWidth,
+          twoColumn: snap.twoColumn,
+        }),
+      );
+      check(
+        "详情页有 6 个状态药丸 + 3 个页签（线程/记忆/Routines，§7.3 上限 3）",
+        snap.pills === 6 &&
+          Array.isArray(snap.tabs) &&
+          snap.tabs.length === 3 &&
+          ["threads", "memory", "routines"].every((id) => snap.tabs.includes(id)) &&
+          !snap.tabs.includes("library") &&
+          !snap.tabs.includes("audit"),
+        JSON.stringify({ pills: snap.pills, tabs: snap.tabs }),
+      );
+      check(
+        "Library 走右栏入口、审计不在详情页（§7.3 外迁后无残留）",
+        snap.libraryOpen === true && snap.auditInDetail === false,
+        JSON.stringify({ libraryOpen: snap.libraryOpen, auditInDetail: snap.auditInDetail }),
+      );
       check(
         "详情页渲染主列 + 右栏三段（指令/记忆/上下文）",
-        detailSeen === true &&
-          rail?.hasInstructions === true &&
-          rail?.hasContextSection === true &&
-          rail?.hasThreads === true,
-        JSON.stringify({ detailSeen, rail }),
+        snap.hasInstructions === true &&
+          snap.hasContextSection === true &&
+          snap.hasThreads === true,
+        JSON.stringify({
+          hasInstructions: snap.hasInstructions,
+          hasContextSection: snap.hasContextSection,
+          hasThreads: snap.hasThreads,
+        }),
       );
       const back = await cdp.evaluate(`(() => {
         const button = document.querySelector("[data-projects-detail-back]");
@@ -361,8 +494,103 @@ const main = async () => {
         button.click();
         return "clicked";
       })()`);
-      await sleep(500);
+      await sleep(600);
       check("详情页可返回列表", back !== "no-button", String(back));
+
+      if (projectName !== "") {
+        // —— --create 收尾：同一套 UI 删除 → 回收站 → 彻底删除 → 盘上校验 ——
+        const deleted = await cdp.evaluate(`(async () => {
+          const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+          const name = ${JSON.stringify(projectName)};
+          const row = [...document.querySelectorAll("[data-projects-row]")].find((node) =>
+            ((node && node.innerText) || "").includes(name),
+          );
+          if (!row) return "no-row";
+          (row.querySelector("button") || row).click();
+          for (let i = 0; i < 25; i += 1) {
+            if (document.querySelector("[data-projects-detail]")) break;
+            await wait(200);
+          }
+          const menu = document.querySelector("[data-projects-row-menu]");
+          if (!menu) return "no-menu";
+          menu.click();
+          await wait(500);
+          const del = document.querySelector("[data-projects-delete]");
+          if (!del) return "no-delete-item";
+          del.click();
+          for (let i = 0; i < 30; i += 1) {
+            if (document.querySelector("[data-projects-delete-confirm-panel]")) break;
+            await wait(200);
+          }
+          const confirm = document.querySelector("[data-projects-delete-confirm]");
+          if (!confirm) return "no-confirm";
+          confirm.click();
+          for (let i = 0; i < 40; i += 1) {
+            if (!document.querySelector("[data-projects-detail]")) return "deleted";
+            await wait(250);
+          }
+          return "still-open";
+        })()`);
+        check(
+          "--create：详情 ⋯ → 删除 → 确认（项目进入回收站）",
+          deleted === "deleted",
+          String(deleted),
+        );
+        const purged = await cdp.evaluate(`(async () => {
+          const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+          const name = ${JSON.stringify(projectName)};
+          const findRow = () =>
+            [...document.querySelectorAll("[data-projects-trash-row]")].find((node) =>
+              ((node && node.innerText) || "").includes(name),
+            );
+          for (let i = 0; i < 40; i += 1) {
+            const row = findRow();
+            if (row) {
+              const button = row.querySelector("[data-projects-trash-delete]");
+              if (!button) return "no-trash-button";
+              button.click();
+              await wait(700);
+              const again = findRow();
+              const confirmButton = again ? again.querySelector("[data-projects-trash-delete]") : null;
+              if (!confirmButton) return "gone-before-confirm";
+              confirmButton.click();
+              for (let j = 0; j < 40; j += 1) {
+                await wait(250);
+                if (!findRow()) return "purged";
+              }
+              return "still-in-trash";
+            }
+            await wait(250);
+          }
+          return "no-trash-row";
+        })()`);
+        check("--create：回收站里彻底删除（两步确认）", purged === "purged", String(purged));
+        const stillListed = await cdp.evaluate(`(() => {
+          const name = ${JSON.stringify(projectName)};
+          return [...document.querySelectorAll("[data-projects-row]")].some((node) =>
+            ((node && node.innerText) || "").includes(name),
+          );
+        })()`);
+        // 盘上校验：数据根与宿主一致（DSH_HOME/projects 或 ~/.dsh/projects，可用
+        // DSH_PROJECTS_DATA_ROOT 覆盖——只读回归不写 profile，这里只读 projects.json）。
+        const dataRoot =
+          process.env.DSH_PROJECTS_DATA_ROOT ||
+          (process.env.DSH_HOME
+            ? join(process.env.DSH_HOME, "projects")
+            : join(homedir(), ".dsh", "projects"));
+        const projectsFile = join(dataRoot, "projects.json");
+        let raw = "";
+        for (let i = 0; i < 20; i += 1) {
+          raw = await readFile(projectsFile, "utf8").catch(() => "");
+          if (raw !== "" && !raw.includes(projectName)) break;
+          await sleep(250);
+        }
+        check(
+          "--create：盘上 projects.json 里已没有这个临时项目",
+          raw !== "" && !raw.includes(projectName) && stillListed === false,
+          JSON.stringify({ dataRoot, readable: raw !== "", stillListed }),
+        );
+      }
     }
     await cdp.screenshot(join(SHOTS, "01b-projects-list.png"));
 
@@ -383,14 +611,68 @@ const main = async () => {
       if (settingsSeen === true) break;
       await sleep(200);
     }
+    if (settingsSeen !== true) {
+      // 设置页可能停在别的分节：尽力点一下「项目 / Projects」再等一轮（点不到就如实 SKIP）。
+      await cdp.evaluate(`(() => {
+        const cell = [...document.querySelectorAll("button, [role=tab], [role=menuitem]")].find(
+          (node) => /^(项目|Projects)\b/.test(((node.textContent || "").trim())),
+        );
+        if (cell) cell.click();
+      })()`);
+      for (let i = 0; i < 15; i += 1) {
+        settingsSeen = await cdp.evaluate(
+          `Boolean(document.querySelector("[data-projects-settings]"))`,
+        );
+        if (settingsSeen === true) break;
+        await sleep(200);
+      }
+    }
     // 有些 live profile 会把设置页整体禁用（cordis.patch.yml 里 ui-settings enabled:false）。
     // 那不是「通过」：渲染了就真断言，没渲染就如实 SKIP（计数行不把跳过冒充覆盖）。
+    // 打开就真断言（不是「渲染了就算过」）；打不开才 SKIP，并且把跳过写进计数行。
+    const settingsSnap =
+      settingsSeen === true
+        ? await cdp.evaluate(`(async () => {
+            const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            const nav = [...document.querySelectorAll("[data-projects-settings-nav-item]")].map(
+              (node) => node.getAttribute("data-projects-settings-nav-item"),
+            );
+            const debugNav = document.querySelector('[data-projects-settings-nav-item="debug"]');
+            if (debugNav) debugNav.click();
+            await wait(1200);
+            return {
+              panel: Boolean(document.querySelector("[data-projects-settings]")),
+              sections: document.querySelector("[data-projects-settings]")?.getAttribute("data-projects-settings-section") || "",
+              nav,
+              debugPanel: Boolean(document.querySelector("[data-projects-settings-debug]")),
+              auditTitle: document.querySelector("[data-projects-audit-title]")?.textContent || "",
+              audit: Boolean(document.querySelector("[data-projects-audit], [data-projects-audit-empty]")),
+            };
+          })()`)
+        : null;
     if (settingsSeen === true) {
-      check("设置页出现「项目」分节", true, "rendered");
+      check(
+        "设置页出现「项目」分节（四个分区，Debug 可进入）",
+        settingsSnap?.panel === true &&
+          Array.isArray(settingsSnap.nav) &&
+          settingsSnap.nav.join(",") === "general,memory,usage,debug" &&
+          settingsSnap.sections === "debug" &&
+          settingsSnap.debugPanel === true,
+        JSON.stringify(settingsSnap),
+      );
+      check(
+        "审计在设置 Debug 分区（原项目详情页签外迁；空态也算）",
+        settingsSnap?.audit === true && /审计|Audit/u.test(String(settingsSnap.auditTitle)),
+        JSON.stringify({ audit: settingsSnap?.audit, title: settingsSnap?.auditTitle }),
+      );
     } else if (openedSettings === "no-button") {
-      skip("设置页出现「项目」分节", "找不到设置入口（该 profile/宿主版本没有设置页）");
+      const reason = "找不到设置入口（该 profile/宿主版本没有设置页）";
+      skip("设置页出现「项目」分节（四个分区，Debug 可进入）", reason);
+      skip("审计在设置 Debug 分区（原项目详情页签外迁；空态也算）", reason);
     } else {
-      skip("设置页出现「项目」分节", `点开设置入口后没有项目分节（${openedSettings}）`);
+      const reason = `点开设置入口后没有项目分节（${openedSettings}）`;
+      skip("设置页出现「项目」分节（四个分区，Debug 可进入）", reason);
+      skip("审计在设置 Debug 分区（原项目详情页签外迁；空态也算）", reason);
     }
     await cdp.screenshot(join(SHOTS, "02-projects-settings.png"));
 

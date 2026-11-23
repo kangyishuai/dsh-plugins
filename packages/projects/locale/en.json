@@ -27,7 +27,6 @@
     "detail.loading": "Loading…",
     "detail.tab.threads": "Threads ({count})",
     "detail.tab.memory": "Memory",
-    "detail.tab.audit": "Audit",
     "detail.threadsEmpty": "No sessions belong to this project yet. Use “Add to project…” in a session's … menu.",
     "detail.threadState": "state: {state}",
     "detail.instructions": "Standing rules (instructions.md)",
@@ -326,6 +325,7 @@
     "settings.usageEmpty": "No usage to report yet.",
     "settings.debugTitle": "Debug access",
     "settings.debugRows": "{projects} projects · {active} active · {attached} sessions with context",
+    "settings.auditTitle": "Audit (latest {count})",
     "settings.ghCheck": "Check GitHub connection",
     "settings.ghChecking": "Checking…",
     "settings.ghOk": "GitHub: {message}",
@@ -489,6 +489,11 @@
     "library.searchEmpty": "No matching file names.",
     "library.searchFailed": "Search failed",
     "library.truncated": "truncated",
+    "library.railOpen": "Open Library",
+    "library.railBack": "Back to threads",
+    "library.railHint": "Library moved out of the tabs: open it from the rail, it renders in the main column, click the same rail row again to collapse (tabs cap at 3)",
+    "library.railSummary": "{files} files · {artifacts} artifacts",
+    "library.railLoading": "Open to view",
     "b3.folderWorktreeHint": "merge runs in the project folder; push-branch runs in the thread worktree, which inherits the authorization of the project folder it came from.",
     "library.openPanelUnavailable": "Could not open: the host did not provide the right-side panel service (sidebarRight)."
   }
