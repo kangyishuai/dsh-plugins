@@ -44,16 +44,48 @@ export function paletteFor(text) {
 }
 
 /**
- * 从 HTML 里抽第一个标题（h1–h3 或 <title>），用来给封面做副标题。
+ * 从正文里抽第一行标题，用来给封面做副标题。
  * 只做字符串扫描，不解析 DOM——封面生成要能在 host 侧同步完成。
+ * `kind` 决定扫描方式：html 找 `<h1>`/`<title>`，markdown 找 `# 标题`，
+ * json 找顶层 `title`/`name` 字段，csv 取首行，image 没有正文。
  * @param {string} html
+ * @param {string} [kind]
  * @returns {string}
  */
-export function firstHeading(html) {
+export function firstHeading(html, kind = "html") {
   const source = String(html ?? "");
+  if (kind === "markdown") {
+    const htmlHeading = firstHeading(source, "html");
+    const markdown = /^[ \t]{0,3}#{1,3}[ \t]+(.+)$/mu.exec(source)?.[1] ?? "";
+    const picked = markdown.trim() === "" ? htmlHeading : markdown;
+    return cleanupHeading(picked);
+  }
+  if (kind === "json") {
+    try {
+      const parsed = JSON.parse(source);
+      for (const key of ["title", "name", "heading", "summary"]) {
+        if (parsed !== null && typeof parsed === "object" && typeof parsed[key] === "string")
+          return cleanupHeading(parsed[key]);
+      }
+    } catch {
+      // 不是合法 JSON：退化成首行文本。
+    }
+    return cleanupHeading(source.split("\n").find((line) => line.trim() !== "") ?? "");
+  }
+  if (kind === "csv") {
+    return cleanupHeading(source.split("\n").find((line) => line.trim() !== "") ?? "");
+  }
   const heading = /<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>/iu.exec(source);
   const raw = heading?.[1] ?? /<title[^>]*>([\s\S]*?)<\/title>/iu.exec(source)?.[1] ?? "";
-  return decodeEntities(raw.replace(/<[^>]*>/gu, " "))
+  return cleanupHeading(raw);
+}
+
+/**
+ * @param {string} raw
+ * @returns {string}
+ */
+function cleanupHeading(raw) {
+  return decodeEntities(String(raw).replace(/<[^>]*>/gu, " "))
     .replace(/\s+/gu, " ")
     .trim()
     .slice(0, 80);
@@ -127,7 +159,8 @@ export function wrapTitle(text, maxUnits = 18, maxLines = 2) {
  */
 export function createCoverSvg(input) {
   const title = String(input?.title ?? "").trim() || "Artifact";
-  const heading = firstHeading(String(input?.html ?? ""));
+  const kind = String(input?.kind ?? "").trim();
+  const heading = firstHeading(String(input?.html ?? ""), kind);
   const palette = paletteFor(String(input?.id ?? title));
   const lines = wrapTitle(title, 16, 2);
   const titleMarkup = lines
@@ -141,7 +174,6 @@ export function createCoverSvg(input) {
     heading === ""
       ? ""
       : `<text x="24" y="${subtitleY}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans CJK SC', sans-serif" font-size="12" fill="${palette.ink}" opacity="0.78">${escapeXml(heading.slice(0, 46))}</text>`;
-  const kind = String(input?.kind ?? "").trim();
   const badge =
     kind === ""
       ? ""

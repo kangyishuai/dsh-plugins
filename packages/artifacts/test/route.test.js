@@ -141,3 +141,91 @@ test("handler 内部异常被吞成 500，不冒泡", async () => {
   await handler(req, res);
   assert.equal(res.statusCode, 500);
 });
+
+/** 1x1 透明 PNG：验证图片走原始字节，不被 UTF-8 转码破坏。 */
+const PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+test("多类型 Content-Type：markdown/csv 走 text/plain，json 走 application/json", async () => {
+  const handler = createRouteHandler({ store, connection: () => undefined });
+  const cases = [
+    { kind: "markdown", content: "# hi", type: /text\/plain/u, ext: "md" },
+    { kind: "csv", content: "a,b\n1,2\n", type: /text\/plain/u, ext: "csv" },
+    { kind: "json", content: '{"a":1}', type: /application\/json/u, ext: "json" },
+  ];
+  for (const item of cases) {
+    const meta = await store.create({
+      title: `Route ${item.kind}`,
+      kind: item.kind,
+      content: item.content,
+    });
+    const { req, res, headers } = fakeExchange({ url: `/artifacts/${meta.id}` });
+    await handler(req, res);
+    assert.equal(res.statusCode, 200);
+    assert.match(headers["content-type"], item.type);
+    assert.equal(headers["x-artifact-kind"], item.kind);
+    assert.equal(headers["x-content-type-options"], "nosniff");
+    assert.equal(res.body, item.content);
+    // 非 html 类型不给 html 的 CSP（那条 CSP 会禁掉页面样式，对文本没意义）。
+    assert.equal(headers["content-security-policy"], undefined);
+  }
+});
+
+test("图片：送原始字节，Content-Type 来自 MIME，并带沙箱 CSP", async () => {
+  const meta = await store.create({ title: "Route image", kind: "image", data: PNG });
+  const handler = createRouteHandler({ store, connection: () => undefined });
+  const { req, res, headers } = fakeExchange({ url: `/artifacts/${meta.id}` });
+  await handler(req, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(headers["content-type"], "image/png");
+  assert.equal(headers["x-artifact-kind"], "image");
+  assert.match(headers["content-security-policy"], /sandbox/u);
+  assert.deepEqual(res.body, PNG);
+});
+
+test("download=1：加 attachment 并带版本与扩展名", async () => {
+  const meta = await store.create({ title: "Export", kind: "markdown", content: "# x" });
+  await store.append(meta.id, { content: "# y" });
+  const handler = createRouteHandler({ store, connection: () => undefined });
+  const { req, res, headers } = fakeExchange({ url: `/artifacts/${meta.id}?v=1&download=1` });
+  await handler(req, res);
+  assert.equal(res.statusCode, 200);
+  assert.match(headers["content-disposition"], /^attachment;/u);
+  assert.match(headers["content-disposition"], /v1\.md/u);
+  assert.equal(res.body, "# x");
+});
+
+test("归档的 artifact 仍可读（保留只读），但不再能追加", async () => {
+  const meta = await store.create({ title: "Archived", html: "<h1>frozen</h1>" });
+  await store.archive(meta.id, true);
+  const handler = createRouteHandler({ store, connection: () => undefined });
+  const { req, res, headers } = fakeExchange({ url: `/artifacts/${meta.id}` });
+  await handler(req, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body, "<h1>frozen</h1>");
+  assert.equal(headers["x-artifact-version"], "1");
+});
+
+test("编码斜杠 / 穿越 / 点开头 id 一律 400，绝不落进文件系统", async () => {
+  const handler = createRouteHandler({ store, connection: () => undefined });
+  const bad = [
+    "/artifacts/..%2Foutside",
+    "/artifacts/%2e%2e%2foutside",
+    "/artifacts/foo%2Fbar",
+    "/artifacts/foo%5Cbar",
+    "/artifacts/.hidden",
+    "/artifacts/..%2F..%2Fetc%2Fpasswd",
+  ];
+  for (const url of bad) {
+    const { req, res } = fakeExchange({ url });
+    await handler(req, res);
+    assert.equal(res.statusCode, 400, `${url} should be 400, got ${res.statusCode}`);
+    assert.equal(res.body, "bad artifact id");
+  }
+  // 正常 id 不受影响：未知 id 仍是 404（不是 400）。
+  const { req, res } = fakeExchange({ url: "/artifacts/nope-000000" });
+  await handler(req, res);
+  assert.equal(res.statusCode, 404);
+});
