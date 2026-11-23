@@ -20,7 +20,12 @@ import { promisify } from "node:util";
 
 // Node 侧直接复用插件的读路径做「冷启动」验证：同一份 projects.json，
 // 经过 ProjectStore.load() + deriveThreadState() 还能读出 failed（P0-2 的端到端证据）。
-import { deriveThreadState, THREAD_STATES } from "../packages/projects/lib/overview.js";
+import {
+  deriveThreadState,
+  hydrateThreadView,
+  replay,
+  THREAD_STATES,
+} from "../packages/projects/lib/overview.js";
 import { ProjectStore } from "../packages/projects/lib/store.js";
 
 const exec = promisify(execFile);
@@ -1433,6 +1438,45 @@ try {
     await page.waitForTimeout(500);
   }
   add("详情页显示预算用量", budgetText !== "", budgetText);
+
+  // —— F29：自动 resolve（设置页可能被宿主禁用 → 详情右栏必须有真能写的入口）——
+  const autoResolveBefore = await page.evaluate(() => {
+    const row = document.querySelector("[data-projects-auto-resolve]");
+    const select = document.querySelector("[data-projects-auto-resolve-select]");
+    return {
+      project: (document.querySelector("[data-projects-detail-title]")?.textContent || "").trim(),
+      present: Boolean(row) && Boolean(select),
+      value: (row && row.getAttribute("data-projects-auto-resolve")) || "",
+      options: select ? select.options.length : 0,
+    };
+  });
+  add(
+    "F29 自动 resolve 在详情右栏可配且默认关（设置页被禁用也够得着）",
+    autoResolveBefore.present && autoResolveBefore.value === "off" && autoResolveBefore.options >= 2,
+    JSON.stringify(autoResolveBefore),
+  );
+  const autoResolveIf = await page.evaluate(async () => {
+    const select = document.querySelector("[data-projects-auto-resolve-select]");
+    if (!select) return { changed: false, value: "" };
+    select.value = "7";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    const row = document.querySelector("[data-projects-auto-resolve]");
+    return {
+      changed: true,
+      value: (row && row.getAttribute("data-projects-auto-resolve")) || "",
+    };
+  });
+  add(
+    "F29 自动 resolve 改成 7 天后 UI 回读一致（不是假开关）",
+    autoResolveIf.changed === true && autoResolveIf.value === "7",
+    JSON.stringify(autoResolveIf),
+  );
+  result.autoResolve = {
+    projectName: autoResolveBefore.project,
+    before: autoResolveBefore.value,
+    after: autoResolveIf.value,
+  };
   // 回收站不能只在项目详情里：最后一个项目被删后详情页进不去，恢复入口会自锁
   // （0.6.0 验收时发现的死锁；这里断言"项目列表为空时面板仍有回收站出口"）
 
@@ -1505,6 +1549,57 @@ try {
     "线程行显示可观测摘要（步骤/工具/diff/tokens）",
     /步/u.test(statsText) && /(工具|diff|tokens)/u.test(statsText),
     statsText,
+  );
+
+  // —— P0-3：行摘要的 diff 必须来自真实 git numstat（以前 progress 只传 stats，恒 n/a）——
+  const diffTarget = await page.evaluate(() => {
+    const node = document.querySelector("[data-projects-thread-worktree]");
+    const row = node && node.closest("[data-projects-thread-row]");
+    const stats = row && row.querySelector("[data-projects-thread-stats]");
+    return {
+      sessionId: (row && row.getAttribute("data-projects-thread-row")) || "",
+      worktree: (node && node.getAttribute("title")) || "",
+      stats: (stats && stats.textContent ? stats.textContent : "").trim(),
+      diff: (stats && stats.getAttribute("data-projects-thread-diff")) || "",
+    };
+  });
+  add(
+    "未改动时行摘要如实给出 diff 计数、不是恒 n/a（P0-3）",
+    diffTarget.sessionId !== "" &&
+      /diff\\s+\\d+\\s*文件/u.test(diffTarget.stats) &&
+      !/diff n\\/a/u.test(diffTarget.stats),
+    JSON.stringify(diffTarget),
+  );
+  let diffWriter = "no-worktree";
+  if (diffTarget.worktree !== "") {
+    const fsp = await import("node:fs/promises");
+    const seedFile = diffTarget.worktree + "/seed.txt";
+    const before = await fsp.readFile(seedFile, "utf8").catch(() => "seed\\n");
+    await fsp.writeFile(seedFile, before + "smoke-diff-line-1\\nsmoke-diff-line-2\\n", "utf8");
+    diffWriter = "written";
+  }
+  let diffAfter = null;
+  for (let i = 0; i < 15; i += 1) {
+    diffAfter = await page.evaluate((sessionId) => {
+      const row = document.querySelector('[data-projects-thread-row="' + sessionId + '"]');
+      const stats = row && row.querySelector("[data-projects-thread-stats]");
+      return stats
+        ? {
+            text: (stats.textContent || "").trim(),
+            diff: stats.getAttribute("data-projects-thread-diff") || "",
+          }
+        : null;
+    }, diffTarget.sessionId);
+    if (diffAfter && diffAfter.diff === "1:2:0") break;
+    await page.waitForTimeout(1000);
+  }
+  add(
+    "工作区真改 2 行后行摘要显示 diff 1 文件 +2/-0（P0-3：坏实现恒 n/a 会红）",
+    diffWriter === "written" &&
+      diffAfter !== null &&
+      diffAfter.diff === "1:2:0" &&
+      /\\+2\\/-0/u.test(diffAfter.text),
+    JSON.stringify({ target: diffTarget, after: diffAfter, writer: diffWriter }),
   );
   // 线程行要有可操作入口：看 worktree 路径、回收目录、移除追踪（两步确认）
   // 线程行的「回收目录 / 移除追踪」收进行内 ⋯：先开菜单再数（锚点挂在菜单项上）
@@ -4325,7 +4420,9 @@ const main = async () => {
     const raw = await new Promise((resolvePromise) => {
       const child = spawn("ego-browser", ["nodejs"], { stdio: ["pipe", "pipe", "pipe"] });
       let out = "";
-      const timer = setTimeout(() => child.kill("SIGTERM"), 420_000);
+      // 420s 在 238 条断言时已经贴边；B6 又加了几段轮询，超时只会伪装成 INFRA（没有断言失败信息）。
+      // 调宽到 600s：只是「浏览器脚本预算」，不放宽任何断言。
+      const timer = setTimeout(() => child.kill("SIGTERM"), 600_000);
       child.stdout.on("data", (c) => {
         out += String(c);
       });
@@ -4629,6 +4726,35 @@ const main = async () => {
       ok: coldState === "resolved" && coldState === String(result.finalThread?.state ?? ""),
       detail: JSON.stringify({ coldState, uiFinal: result.finalThread?.state ?? null }),
     });
+    // —— P0-2：启动 replay（修复前 replay() 全仓零调用者，重启后视图归零）——
+    const replayEvents = Array.isArray(threadRecord?.events) ? threadRecord.events : [];
+    const replayView = replay(replayEvents);
+    checks.push({
+      name: "持久事件 journal 落盘且含轮起止（P0-2：启动 replay 的事实源）",
+      ok:
+        replayEvents.length > 0 &&
+        replayEvents.some(
+          (/** @type {any} */ event) => String(event?.type ?? "") === "turn/start",
+        ) &&
+        replayEvents.some((/** @type {any} */ event) => String(event?.type ?? "") === "turn/end"),
+      detail: JSON.stringify(
+        replayEvents.map((/** @type {any} */ event) => event?.type).slice(0, 8),
+      ),
+    });
+    // 真实启动路径 = hydrateThreadView（replay + 人工 resolve 覆盖）；坏实现不落事件回放 → idle
+    const hydrated = hydrateThreadView(threadRecord, replayEvents);
+    checks.push({
+      name: "启动 replay 后视图非 idle，且冷启动六态与 UI 最后显示一致（P0-2）",
+      ok:
+        replayView.state !== "idle" &&
+        deriveThreadState(hydrated, threadRecord) === String(result.finalThread?.state ?? ""),
+      detail: JSON.stringify({
+        replayed: replayView.state,
+        lastTurnFailed: replayView.lastTurnFailed,
+        hydrated: deriveThreadState(hydrated, threadRecord),
+        uiFinal: result.finalThread?.state ?? null,
+      }),
+    });
     checks.push({
       name: "线程 dir 落盘且是项目目录之一（多目录时能说清跑在哪个 root，P1-7 写入侧）",
       ok:
@@ -4704,6 +4830,63 @@ const main = async () => {
     const auditActions = Array.isArray(parsed?.audit)
       ? parsed.audit.map((/** @type {any} */ entry) => String(entry?.action ?? ""))
       : [];
+    // —— F29：自动 resolve 的落盘/审计/RPC 三面证据 ——
+    const autoResolveTitle = String(result.autoResolve?.projectName ?? "");
+    const autoResolveProject =
+      autoResolveTitle === ""
+        ? undefined
+        : Object.values(parsed?.projects ?? {}).find((/** @type {any} */ project) =>
+            autoResolveTitle.includes(String(project?.name ?? "")),
+          );
+    checks.push({
+      name: "F29 自动 resolve 设置落盘为 7 天，且与 UI 两次回读一致（写→回读）",
+      ok:
+        autoResolveProject !== undefined &&
+        autoResolveProject.autoResolveDays === 7 &&
+        result.autoResolve?.before === "off" &&
+        result.autoResolve?.after === "7",
+      detail: JSON.stringify({
+        project: autoResolveProject?.name ?? null,
+        store: autoResolveProject?.autoResolveDays ?? null,
+        ui: result.autoResolve ?? null,
+      }),
+    });
+    checks.push({
+      name: "F29 自动 resolve 设置写审计（project/auto-resolve 可追溯）",
+      ok: auditActions.includes("project/auto-resolve"),
+      detail: auditActions
+        .filter((/** @type {string} */ action) => action.startsWith("project/"))
+        .slice(-6)
+        .join(","),
+    });
+    checks.push({
+      name: "F29 自动 resolve 不误伤刚配的近期线程（无 thread/auto-resolved 审计）",
+      ok: !auditActions.includes("thread/auto-resolved"),
+      detail: JSON.stringify(
+        (parsed?.audit ?? [])
+          .filter((/** @type {any} */ entry) => entry?.action === "thread/auto-resolved")
+          .slice(0, 2),
+      ),
+    });
+    try {
+      const autoCheck = await hostRpc(boot.port, boot.token, "projects/checkAutoResolve", {});
+      const value = autoCheck.value ?? autoCheck.json ?? null;
+      checks.push({
+        name: "F29 checkAutoResolve RPC 真跑检查且不 resolve 近期线程（RPC 可达）",
+        ok:
+          value?.ok === true &&
+          Array.isArray(value.resolved) &&
+          value.resolved.length === 0 &&
+          Number(value.checked) >= 1,
+        detail: JSON.stringify({ status: autoCheck.status, value }).slice(0, 400),
+      });
+    } catch (error) {
+      checks.push({
+        name: "F29 checkAutoResolve RPC 真跑检查且不 resolve 近期线程（RPC 可达）",
+        ok: false,
+        detail: errorText(error).slice(0, 300),
+      });
+    }
     checks.push({
       name: "协调者创建写审计（F9：coordinator/created 可追溯）",
       ok: auditActions.includes("coordinator/created"),

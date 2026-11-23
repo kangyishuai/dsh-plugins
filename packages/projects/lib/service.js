@@ -21,6 +21,7 @@ import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 import { registerProjectContext } from "./attach.js";
 import { buildFixTask, errorSignature, shouldContinueFix } from "./autofix.js";
 import { buildPrText, nextPrAction, parsePrNumber, planPrCreate } from "./autopr.js";
+import { autoResolveDaysOf, planAutoResolve } from "./autoresolve.js";
 import {
   checkStepBudget,
   checkThreadBudget,
@@ -51,8 +52,10 @@ import {
   toolSummaryOf,
 } from "./observability.js";
 import {
+  compactEvent,
   estimateRemainingMs,
   groupRows,
+  hydrateThreadView,
   initialView,
   mergeRecord,
   pillCounts,
@@ -353,6 +356,11 @@ export class ProjectsService extends TypertRemoteService {
     this.reminderTimers = new Map();
     /** @type {{ at: number, armed: number, overdue: number }} */
     this.reminderArming = { at: 0, armed: 0, overdue: 0 };
+    /** F29：每日自动 resolve 的 timer 句柄（dispose 时清掉）。 @type {any} */
+    this.autoResolveTimer = null;
+    /** P0-3：线程 diff 摘要缓存（sessionId → {key, at, diff}）。progress 每 5s 轮询，
+     * 不缓存的话每行每 5s 都 spawn 一次 git。 @type {Map<string, {key: string, at: number, diff: any}>} */
+    this.diffCache = new Map();
     /** @type {any} */
     this.agents = undefined;
     /** @type {any} */
@@ -438,6 +446,11 @@ export class ProjectsService extends TypertRemoteService {
       );
       // F30：启动即恢复计时（关机期间到点的提醒在这里补触发；随后 armReminders 再排其余）。
       this.armReminders();
+      // P0-2：用持久事件重建 Overview（重启后视图不再归零）。
+      this.hydrateViews();
+      // F29：启动先检查一次自动 resolve，之后每日一次（timer 在 dispose 时清掉）。
+      this.runAutoResolve(Date.now());
+      this.startAutoResolveTimer();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn?.(`[projects] store unavailable: ${message}`);
@@ -499,10 +512,32 @@ export class ProjectsService extends TypertRemoteService {
       const previous = this.views.get(sessionId) ?? initialView();
       const next = reduce(previous, event);
       this.views.set(sessionId, next);
+      // P0-2：把「可回放的最小事实」追加进 projects.json，重启后由 replay() 重建同一份视图。
+      // 只有结构性事件（轮/待处理/会话开关）立刻落盘，正文类事件等下一次状态变化一起刷——
+      // 否则每条 assistant/message 都原子写一次 projects.json，写盘比事件还密。
+      let journaledNow = false;
+      try {
+        const compact = compactEvent(event);
+        if (compact && this.store.appendThreadEvent(sessionId, compact)) {
+          journaledNow = [
+            "turn/start",
+            "turn/end",
+            "todo/write",
+            "interaction/pending",
+            "interaction/cleared",
+            "session/opened",
+            "session/activity",
+          ].includes(String(event?.type ?? ""));
+        }
+      } catch (error) {
+        this.logger?.warn?.(
+          `[projects] replay journal failed: ${String(/** @type {any} */ (error)?.message ?? error).slice(0, 160)}`,
+        );
+      }
       // 事件回写持久状态（F16 的 P0-1）：todo 快照 / 副标题 / 六态都落 projects.json，
       // 面板没打开、宿主重启后仍读得到。只在真的变了才写盘（避免每个事件都原子写一次）。
       try {
-        if (this.applyThreadEvent(sessionId, event, next)) this.store.save();
+        if (this.applyThreadEvent(sessionId, event, next) || journaledNow) this.store.save();
       } catch (error) {
         this.logger?.warn?.(
           `[projects] thread state write-back failed: ${String(/** @type {any} */ (error)?.message ?? error).slice(0, 160)}`,
@@ -539,6 +574,11 @@ export class ProjectsService extends TypertRemoteService {
       }
     });
     ctx.effect?.(() => () => {
+      // F29：自动 resolve 的每日检查随应用关闭即停（不留悬挂 timer）
+      if (this.autoResolveTimer !== null && this.autoResolveTimer !== undefined) {
+        clearInterval(this.autoResolveTimer);
+        this.autoResolveTimer = null;
+      }
       // F21：应用关闭即停（不留定时器，也不让 gh 子进程继续跑）
       this.prPoll.running = false;
       if (this.prPoll.timer !== null) {
@@ -1407,7 +1447,154 @@ export class ProjectsService extends TypertRemoteService {
   }
 
   /**
-   * 手动 Resolve / 重开（F29）。自动 resolve（autoResolveDays）留给 B6，本批只写字段不执行。
+   * 把一个会话的内存视图标成「已解决」（手动 resolve 与自动 resolve 共用）。
+   * @param {string} sessionId
+   */
+  markViewResolved(sessionId) {
+    const view = this.views.get(sessionId) ?? initialView();
+    this.views.set(sessionId, {
+      ...view,
+      resolved: true,
+      archived: false,
+      lastTurnFailed: false,
+      lastAttemptFailed: false,
+      awaitingUser: false,
+      state: "done",
+      unread: false,
+    });
+  }
+
+  /**
+   * P0-2：用盘上的持久事件重建 Overview（service 构造时调用一次）。
+   * 事件来源是 store 的 `thread.events`（`compactEvent` 收敛后的最小事实）；
+   * 拿不到事件的旧数据回退到记录本身（`mergeRecord`），所以升级后不会丢已写的状态。
+   * @returns {{ restored: number, failed: number }}
+   */
+  hydrateViews() {
+    const store = this.store;
+    if (!store) return { restored: 0, failed: 0 };
+    let restored = 0;
+    let failed = 0;
+    for (const project of store.listProjects()) {
+      for (const thread of store.listThreads(project.id)) {
+        const sessionId = String(thread?.sessionId ?? "");
+        if (sessionId === "") continue;
+        try {
+          const view = hydrateThreadView(thread, thread.events);
+          this.views.set(sessionId, view);
+          if (view.lastActivityAt > 0) restored += 1;
+          if (view.lastTurnFailed === true) failed += 1;
+        } catch (error) {
+          failed += 1;
+          this.logger?.warn?.(
+            `[projects] replay failed for ${sessionId.slice(0, 18)}: ${String(/** @type {any} */ (error)?.message ?? error).slice(0, 120)}`,
+          );
+        }
+      }
+    }
+    if (restored > 0) {
+      this.logger?.info?.(`[projects] replayed ${restored} thread view(s) from persisted events`);
+    }
+    return { restored, failed };
+  }
+
+  /**
+   * F29：每日一次的自动 resolve 检查（启动时也跑一次）。
+   * 只改「无活动 ≥ N 天」的线程；写审计 `thread/auto-resolved` 并同步内存视图
+   * （否则下一次 progress 会拿旧的失败视图把状态推回去）。
+   * @param {number} [now]
+   * @returns {{ ok: true, checked: number, resolved: { projectId: string, sessionId: string, days: number, idleDays: number }[] }}
+   */
+  runAutoResolve(now = Date.now()) {
+    const store = this.requireStore();
+    const projects = store.listProjects();
+    const plan = planAutoResolve(projects, store.state?.threads ?? {}, now);
+    if (plan.targets.length === 0) return { ok: true, checked: plan.checked, resolved: [] };
+    /** @type {{ projectId: string, sessionId: string, days: number, idleDays: number }[]} */
+    const done = [];
+    for (const target of plan.targets) {
+      try {
+        store.setThreadResolved(target.sessionId, true);
+        store.appendAudit({
+          action: "thread/auto-resolved",
+          projectId: target.projectId,
+          sessionId: target.sessionId,
+          days: target.days,
+          idleDays: target.idleDays,
+        });
+        this.markViewResolved(target.sessionId);
+        done.push(target);
+      } catch (error) {
+        this.logger?.warn?.(
+          `[projects] auto resolve failed for ${target.sessionId.slice(0, 18)}: ${String(/** @type {any} */ (error)?.message ?? error).slice(0, 120)}`,
+        );
+      }
+    }
+    if (done.length > 0) store.save();
+    return { ok: true, checked: plan.checked, resolved: done };
+  }
+
+  /**
+   * RPC 入口：手动跑一次自动 resolve 检查（设置页/排障/冒烟用；与每日 timer 同一份逻辑）。
+   */
+  checkAutoResolve() {
+    return this.runAutoResolve(Date.now());
+  }
+
+  /** F29：每日一次的 timer（幂等；dispose 时清掉）。 */
+  startAutoResolveTimer() {
+    if (this.autoResolveTimer !== null && this.autoResolveTimer !== undefined) return;
+    const timer = setInterval(
+      () => {
+        try {
+          this.runAutoResolve(Date.now());
+        } catch (error) {
+          this.logger?.warn?.(
+            `[projects] auto resolve timer failed: ${String(/** @type {any} */ (error)?.message ?? error).slice(0, 160)}`,
+          );
+        }
+      },
+      24 * 60 * 60 * 1000,
+    );
+    // Node 里 unref 让测试/CLI 进程能退出；宿主进程不靠这个 timer 存活。
+    timer?.unref?.();
+    this.autoResolveTimer = timer;
+  }
+
+  /**
+   * F29：设置「N 天无活动自动 resolve」（null = 关）。返回回读值，UI 不自己猜。
+   * 设置页可能被宿主禁用，所以项目详情右栏也能改（同一个 RPC）。
+   * Remote 的位置参数按**形参名**传（Typert 网关口径），所以签名保持扁平：
+   * `{ projectId, days }`，不要包一层 `input`（包了 RPC 会拿不到实参）。
+   * @param {string} projectId
+   * @param {number|null} days
+   */
+  setAutoResolveDays(projectId, days) {
+    const store = this.requireStore();
+    const id = String(projectId ?? "");
+    const project = store.getProject(id);
+    if (!project) throw new Error(`projects: unknown project ${id}`);
+    const raw = days ?? null;
+    const normalized = raw === null ? null : autoResolveDaysOf(raw);
+    if (raw !== null && normalized === null) {
+      throw new Error("projects: autoResolveDays must be an integer in 1..365 or null");
+    }
+    const updated = store.updateProject(id, { autoResolveDays: normalized });
+    store.appendAudit({
+      action: "project/auto-resolve",
+      projectId: id,
+      days: updated.autoResolveDays,
+    });
+    store.save();
+    return {
+      ok: true,
+      projectId: id,
+      autoResolveDays: updated.autoResolveDays,
+    };
+  }
+
+  /**
+   * 手动 Resolve / 重开（F29）。自动 resolve（autoResolveDays）见 runAutoResolve。
    * 返回**回读值**：客户端据此更新，而不是自己猜。
    * @param {string} sessionId
    * @param {boolean} resolved
@@ -1427,17 +1614,18 @@ export class ProjectsService extends TypertRemoteService {
     // 内存视图同步：否则下一次 progress 会拿旧视图把状态推回去。
     // resolve 是用户对「失败/完成」的显式确认，因此要一起清掉失败标记——否则
     // deriveState 的 `failed > resolved` 会立刻把刚点的「已解决」弹回失败。
-    // `resolvedAt` 仍是我们唯一持久化的事实；重开后失败事实留在会话日志里（B2 由 replay 重建）。
-    const view = this.views.get(id) ?? initialView();
-    this.views.set(id, {
-      ...view,
-      resolved: resolved === true,
-      archived: false,
-      lastTurnFailed: resolved === true ? false : view.lastTurnFailed,
-      lastAttemptFailed: false,
-      state: resolved === true ? "done" : "idle",
-      unread: false,
-    });
+    // `resolvedAt` 仍是我们唯一持久化的事实；重开后由 replay + applyRecordResolution 重建。
+    if (resolved === true) this.markViewResolved(id);
+    else {
+      const view = this.views.get(id) ?? initialView();
+      this.views.set(id, {
+        ...view,
+        resolved: false,
+        archived: false,
+        state: view.lastTurnFailed ? "failed" : "idle",
+        unread: false,
+      });
+    }
     this.liveCache = { at: 0, states: new Map(), summaries: new Map() };
     return {
       ok: true,
@@ -2460,6 +2648,59 @@ export class ProjectsService extends TypertRemoteService {
   }
 
   /**
+   * 一次线程的 diff 摘要（P0-3）。
+   * 口径：`git diff --numstat <baseSha>`——**故意不带 `..HEAD`**，让工作区里还没提交的
+   * 改动也算「这一线程改了什么」；只算提交的话，线程刚写完文件面板上仍是 n/a（冒烟亲测）。
+   * 找不到 worktree / git 失败一律返回 null（UI 显示 n/a，不编 0）。
+   * 带 5s 缓存：progress 每 5s 轮询一次，不缓存的话每行每 5s spawn 一次 git。
+   * @param {any} thread
+   * @param {{ force?: boolean }} [options]
+   * @returns {Promise<{files: number, added: number, removed: number}|null>}
+   */
+  async diffOfThread(thread, options) {
+    const sessionId = String(thread?.sessionId ?? "");
+    const worktree = typeof thread?.worktree === "string" ? thread.worktree : "";
+    if (worktree === "") return null;
+    const base = String(thread?.baseSha ?? "");
+    const key = `${worktree}|${base}`;
+    const now = Date.now();
+    const cached = this.diffCache.get(sessionId);
+    if (options?.force !== true && cached && cached.key === key && now - cached.at < 5000) {
+      return cached.diff;
+    }
+    let diff = null;
+    try {
+      const numstat = await runGit(["diff", "--numstat", base === "" ? "HEAD~1" : base], worktree);
+      if (numstat.code === 0) diff = parseNumstat(numstat.stdout);
+    } catch {
+      diff = null; // git 不可用/目录没了：如实 n/a
+    }
+    this.diffCache.set(sessionId, { key, at: now, diff });
+    return diff;
+  }
+
+  /**
+   * 给一批线程算 diff 摘要（并行；单行失败不影响其它行）。
+   * @param {any[]} threads
+   * @returns {Promise<Map<string, any>>}
+   */
+  async diffSummaries(threads) {
+    /** @type {Map<string, any>} */
+    const diffs = new Map();
+    await Promise.all(
+      (Array.isArray(threads) ? threads : []).map(async (thread) => {
+        const sessionId = String(thread?.sessionId ?? "");
+        try {
+          diffs.set(sessionId, await this.diffOfThread(thread));
+        } catch {
+          diffs.set(sessionId, null);
+        }
+      }),
+    );
+    return diffs;
+  }
+
+  /**
    * 单个线程的可观测明细（规格 §7.7.3）：事件累积的步骤/命令/tokens，加 worktree 的 diff 摘要。
    * diff 用 `git diff --numstat <base>..HEAD` 现算；拿不到就给 null，让面板显示 n/a。
    * @param {string} projectId
@@ -2473,13 +2714,9 @@ export class ProjectsService extends TypertRemoteService {
     if (!thread) throw new Error(`projects: unknown thread ${sessionId}`);
     const stats = this.stats.get(sessionId) ?? initialStats();
 
-    let diff = null;
-    const worktree = typeof thread.worktree === "string" ? thread.worktree : "";
-    if (worktree !== "") {
-      const base = thread.baseSha ?? "HEAD~1";
-      const numstat = await runGit(["diff", "--numstat", `${base}..HEAD`], worktree);
-      if (numstat.code === 0) diff = parseNumstat(numstat.stdout);
-    }
+    // P0-3：diff 与 progress 行摘要共用同一条路径（含工作区未提交改动），
+    // 否则详情页和行摘要会对同一个线程给出两个不同的「改了多少」。
+    const diff = await this.diffOfThread(thread, { force: true });
 
     const stepVerdict = checkStepBudget({
       maxSteps: store.getProject(projectId)?.budget?.maxStepsPerThread,
@@ -2765,7 +3002,7 @@ export class ProjectsService extends TypertRemoteService {
    * @param {number} now
    * @returns {any}
    */
-  buildThreadRow(thread, facts, archivedIds, now) {
+  buildThreadRow(thread, facts, archivedIds, now, diff = null) {
     const sessionId = String(thread.sessionId);
     const live = facts.states.get(sessionId);
     const summary = facts.summaries.get(sessionId);
@@ -2811,7 +3048,9 @@ export class ProjectsService extends TypertRemoteService {
       title: String(thread.title || summary?.projections?.values?.title || ""),
       view: { ...view, state, pendingInput },
       stats: { ...stats, commands: stats.commands.slice(-3) },
-      summary: summarizeForRow({ stats }),
+      // P0-3：行摘要里的 diff 来自真实 git numstat（以前这里只传 stats，文案恒 `diff n/a`）
+      diff: diff ?? null,
+      summary: summarizeForRow({ stats, diff }),
       subtitle: view.subtitle || thread.subtitle || "",
       steps,
       estimateMs,
@@ -2882,9 +3121,18 @@ export class ProjectsService extends TypertRemoteService {
         : [],
     );
     const now = Date.now();
+    // P0-3：先把每行 worktree 的 diff 摘要算好（带缓存），再组装行；
+    // 否则行摘要里 `diff n/a` 恒真，用户永远看不到「这一线程改了什么」。
+    const diffs = await this.diffSummaries(threads);
     let dirty = false;
     const rows = threads.map((/** @type {any} */ thread) => {
-      const row = this.buildThreadRow(thread, facts, archivedIds, now);
+      const row = this.buildThreadRow(
+        thread,
+        facts,
+        archivedIds,
+        now,
+        diffs.get(String(thread.sessionId)) ?? null,
+      );
       try {
         if (this.persistRowFacts(thread, row)) dirty = true;
       } catch (error) {
@@ -5248,6 +5496,8 @@ declareRemote(ProjectsService, "archiveProject");
 declareRemote(ProjectsService, "unarchiveProject");
 declareRemote(ProjectsService, "setProjectPinned");
 declareRemote(ProjectsService, "resolveThread");
+declareRemote(ProjectsService, "checkAutoResolve");
+declareRemote(ProjectsService, "setAutoResolveDays");
 declareRemote(ProjectsService, "setThreadUnread");
 declareRemote(ProjectsService, "uiState");
 declareRemote(ProjectsService, "setFirstRunDone");

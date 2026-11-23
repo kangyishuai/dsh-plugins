@@ -369,6 +369,114 @@ export function replay(events) {
 }
 
 /**
+ * 每个线程最多持久化多少条可归约事件（P0-2）。
+ * 这是「重启后重建视图」的最小事实集：只留 reduce 认的事件，正文/参数一律不落盘，
+ * 80 条足够覆盖最近几轮（旧事件被裁掉后视图仍由更早的持久记录兜底）。
+ */
+export const REPLAY_EVENT_CAP = 80;
+
+/**
+ * 把一条宿主 `session/event` 收敛成「可持久化、可回放」的最小形状。
+ * 不认识的 / 对视图没有影响的事件返回 null（不占盘、不写 projects.json）。
+ *
+ * 为什么不是原样存：`assistant/message` 带整段正文、`tool/call` 带完整参数，
+ * 直接落盘会把 projects.json 撑爆。这里只保留 reduce 真正读的字段，
+ * 且**先摘要再存**——重启后回放出来的是同一份事实，不是另一套推导。
+ * @param {{ type?: string, at?: number, time?: number, data?: any }} event
+ * @returns {{ type: string, at?: number, data?: any } | null}
+ */
+export function compactEvent(event) {
+  const type = String(event?.type ?? "");
+  const rawAt = Number.isFinite(event?.at) ? Number(event.at) : Number(event?.time ?? 0);
+  const stamp = rawAt > 0 ? { type, at: rawAt } : { type };
+  switch (type) {
+    case "turn/start": {
+      const turn = Number(event?.data?.turn);
+      return { ...stamp, data: { turn: Number.isFinite(turn) ? turn : 0 } };
+    }
+    case "assistant/attempt": {
+      // 非 error 的 attempt 不改变视图（只是加一个步骤计数），不落盘；
+      // error 的 attempt 决定 `lastAttemptFailed`，用最小 finish 形状保留这个事实。
+      if (!hasErrorFinish(event?.data)) return null;
+      return {
+        ...stamp,
+        data: { stream: [{ chunk: { type: "finish", reason: { kind: "error" } } }] },
+      };
+    }
+    case "assistant/message": {
+      // 只有「还没有副标题」时才当兜底；存第一句已经够回放出同样的副标题。
+      const sentence = firstSentence(assistantText(event?.data?.message));
+      if (sentence === "") return null;
+      return { ...stamp, data: { message: { content: [{ type: "text", text: sentence }] } } };
+    }
+    case "tool/call": {
+      const summary = toolSummaryOf(event?.data);
+      // 存摘要而不是原始 args：`toolSummaryOf` 读到 `data.name` 会原样返回它。
+      return summary === "" ? null : { ...stamp, data: { name: summary } };
+    }
+    case "todo/write": {
+      // 形状不认识就不存（否则回放会把「没有快照」错误地变成 0/0）
+      if (!Array.isArray(event?.data?.todos)) return null;
+      return { ...stamp, data: { todos: todoItems(event?.data) } };
+    }
+    case "turn/end": {
+      return { ...stamp, data: isFailureEnd(event) ? { reason: { kind: "error" } } : {} };
+    }
+    case "interaction/pending":
+    case "interaction/cleared":
+    case "session/opened":
+    case "session/activity":
+      return { ...stamp };
+    default:
+      return null;
+  }
+}
+
+/**
+ * 把「用户显式 resolve」叠到回放出来的视图上（P0-2 冷启动）。
+ * 语义：resolve 发生在最后一次活动**之后**才算数；之后又有活动（事件更晚），
+ * 旧的 resolve 已经过期——否则重启后会出现「点了已解决又自己弹回失败」的幽灵态。
+ * @param {ThreadView} view
+ * @param {any} record
+ * @returns {ThreadView}
+ */
+export function applyRecordResolution(view, record) {
+  const base = view ?? initialView();
+  const resolvedAtMs = Date.parse(String(record?.resolvedAt ?? ""));
+  if (!Number.isFinite(resolvedAtMs)) return base;
+  if (base.lastActivityAt > 0 && resolvedAtMs < base.lastActivityAt) return base;
+  return {
+    ...base,
+    resolved: true,
+    lastTurnFailed: false,
+    lastAttemptFailed: false,
+    awaitingUser: false,
+    state: "done",
+    unread: false,
+  };
+}
+
+/**
+ * 冷启动重建一个线程的视图（service 构造时调用）。
+ * 数据源是**持久事件**（store 的 `thread.events`）+ 线程记录里的人工事实（resolved/archived）。
+ * 只在记录与事件都为空时返回 idle——「重启后视图归零」正是 P0-2 要修的病。
+ * @param {any} record
+ * @param {readonly any[]} [events]
+ * @returns {ThreadView}
+ */
+export function hydrateThreadView(record, events) {
+  const replayed = replay(events ?? []);
+  const resolvedAtMs = Date.parse(String(record?.resolvedAt ?? ""));
+  // resolve 之后又跑过一轮：盘的 resolvedAt 已过期，不能再拿它盖住最新事实
+  const stale = Number.isFinite(resolvedAtMs) && replayed.lastActivityAt > resolvedAtMs;
+  const effective =
+    stale && record && typeof record === "object"
+      ? { ...record, resolvedAt: null, state: record.state === "resolved" ? "idle" : record.state }
+      : record;
+  return mergeRecord(applyRecordResolution(replayed, effective), effective);
+}
+
+/**
  * 行级剩余时间估计（F26 的 `~Nm`）。
  * 口径：本线程已观测到的「每步耗时」× 剩余步数；只有 1 个样本时不给估计。
  * 它是**估计**，UI 必须写 `~`，没有数据就整段不显示（不编）。

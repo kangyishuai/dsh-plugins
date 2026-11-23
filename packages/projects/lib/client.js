@@ -409,6 +409,9 @@ window.__ModuleLoader__.load({
       "detail.memoryIndexHint": "MEMORY.md 索引里有内容，会话会读到。",
       "detail.memoryEmptyHint": "还没有记忆；会话里说「记住…」就会写进来。",
       "detail.moreActions": "更多操作",
+      "detail.autoResolve": "自动 resolve",
+      "detail.autoResolveOff": "关",
+      "detail.autoResolveDays": "{days} 天无活动",
       "detail.projectState": "项目状态",
       "detail.save": "保存",
       "detail.edit": "编辑",
@@ -819,6 +822,9 @@ window.__ModuleLoader__.load({
       "detail.memoryIndexHint": "MEMORY.md has content; sessions read it.",
       "detail.memoryEmptyHint": "No memory yet — say “remember…” in a session and it lands here.",
       "detail.moreActions": "More actions",
+      "detail.autoResolve": "Auto-resolve",
+      "detail.autoResolveOff": "Off",
+      "detail.autoResolveDays": "{days} days idle",
       "detail.projectState": "Project state",
       "detail.save": "Save",
       "detail.edit": "Edit",
@@ -5152,6 +5158,10 @@ window.__ModuleLoader__.load({
       const grantsEditingState = useState(false);
       const grantsEditing = grantsEditingState[0];
       const setGrantsEditing = grantsEditingState[1];
+      // F29：自动 resolve 的读回值（RPC 回执优先于 props，避免「点了没变」的假开关）
+      const autoResolveState = useState(null);
+      const autoResolveLocal = autoResolveState[0];
+      const setAutoResolveLocal = autoResolveState[1];
       /** 目录编辑：路径非法时**不关窗**（让「必须绝对路径」的说明留在原位） */
       const submitDir = () => {
         const value = String(dirDraft).trim();
@@ -5603,7 +5613,14 @@ window.__ModuleLoader__.load({
             row.summary
               ? h(
                   "span",
-                  { style: styles.meta, "data-projects-thread-stats": "" },
+                  {
+                    style: styles.meta,
+                    "data-projects-thread-stats": "",
+                    // P0-3：真实 diff 单独给一个锚点，冒烟不用解析自然语言文案
+                    "data-projects-thread-diff": row.diff
+                      ? `${row.diff.files}:${row.diff.added}:${row.diff.removed}`
+                      : "",
+                  },
                   String(row.summary),
                 )
               : null,
@@ -7664,6 +7681,61 @@ window.__ModuleLoader__.load({
                       : text(t, "detail.pause"),
                   ),
                 }),
+                // F29：自动 resolve（N 天无活动）。设置页可能被宿主禁用，
+                // 所以同时在这里给一个真能写的入口（同一个 RPC，写审计 + 回读）。
+                (() => {
+                  const days = autoResolveLocal ?? project.autoResolveDays ?? null;
+                  const options = [
+                    ["", text(t, "detail.autoResolveOff")],
+                    ["3", text(t, "detail.autoResolveDays", { days: 3 })],
+                    ["7", text(t, "detail.autoResolveDays", { days: 7 })],
+                    ["14", text(t, "detail.autoResolveDays", { days: 14 })],
+                    ["30", text(t, "detail.autoResolveDays", { days: 30 })],
+                  ];
+                  return h(RailRow, {
+                    label: text(t, "detail.autoResolve"),
+                    value:
+                      days === null
+                        ? text(t, "detail.autoResolveOff")
+                        : text(t, "detail.autoResolveDays", { days }),
+                    attrs: {
+                      "data-projects-auto-resolve": days === null ? "off" : String(days),
+                    },
+                    action: h(
+                      "select",
+                      {
+                        style: {
+                          ...styles.input,
+                          flex: "0 0 auto",
+                          width: "auto",
+                          padding: "2px 6px",
+                          fontSize: "12px",
+                        },
+                        value: days === null ? "" : String(days),
+                        "data-projects-auto-resolve-select": "",
+                        onChange: (/** @type {any} */ event) => {
+                          const next = String(event.target.value);
+                          call(api.ctx, "setAutoResolveDays", {
+                            projectId: project.id,
+                            days: next === "" ? null : Number(next),
+                          }).then(
+                            (/** @type {any} */ result) => {
+                              setAutoResolveLocal(result?.autoResolveDays ?? null);
+                              load(true);
+                            },
+                            (/** @type {any} */ error) => {
+                              setData((/** @type {any} */ prev) => ({
+                                ...prev,
+                                error: String(error?.message ?? error),
+                              }));
+                            },
+                          );
+                        },
+                      },
+                      options.map(([value, label]) => h("option", { key: value, value }, label)),
+                    ),
+                  });
+                })(),
                 // F1：归档时间只对归档项目显示（不伪造未归档的时间）
                 data.projectState === "archived"
                   ? h(RailRow, {

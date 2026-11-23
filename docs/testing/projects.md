@@ -57,7 +57,7 @@ pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体�
 | `memory.test.js`    | 记忆写入：幂等、单条与总量上限、时间戳注释、被拒时给出原因                                    |
 | `exec.test.js`      | 子进程封装：参数原样传递、失败返回 code 不抛、cwd 生效、命令不存在也不抛                      |
 
-## 2. web 端到端冒烟（238 项）
+## 2. web 端到端冒烟（248 项）
 
 > 0.10.0 面板改版后：新建走「入口 → 模态（两入口）→ 表单」，列表页新增搜索/排序/收藏，详情页改为
 > 主列 + 右栏（右栏为值行 + 编辑动作），并补了 toast、两列 DOM 顺序、值行无 input 等断言，故 78 → 102。
@@ -150,6 +150,28 @@ pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体�
 > P2 once 凭据改到「所有闸通过 + 占位成功」之后消费、执行没落地时回滚（`test/service-execute.test.js`
 > 覆盖 switch-off / repo-unknown / no-worktree 三条拒绝路径）、文件夹闸按实际 cwd 所属目录求 mode；
 > P2 `listMemoryFragments` 先校验项目存在（单测静态守卫 + 冒烟真实 RPC 各一条）。
+
+> **B6（收尾：F29 自动 resolve + 三个接线 P0）+10，故 238 → 248。** 新增断言与「坏实现为什么红」：
+> - **F29 自动 resolve**（浏览器）：`data-projects-auto-resolve` + `-select` 在详情右栏存在、默认 `off`、
+>   选项 ≥2 → 改成 7 天后 `-select` 回读 `7`（断言「UI 回读一致」而不是只断言派发过 change）。
+>   若只写字段不接 UI，第一条红；若控件是假开关（onChange 没接 RPC / RPC 拿不到实参），第二条红。
+>   （宿主侧）`projects.json` 里该项目 `autoResolveDays === 7` 且与 UI 两次回读一致；审计出现
+>   `project/auto-resolve`；自动 resolve **不误伤**：审计里没有 `thread/auto-resolved`，
+>   `projects/checkAutoResolve` RPC 返回 `{ok:true, checked>=1, resolved:[]}`。
+>   若启动/每日检查误判近期线程，第三条红；若 RPC 没接线，第四条 RPC 直接非 200/无回执红。
+> - **P0-2 启动 replay**：线程记录里 `events` 非空且含 `turn/start` + `turn/end`；`hydrateThreadView()`
+>   （replay + 人工 resolve 覆盖）重建出的六态与 UI 最终态一致（`resolved`）。只把 `replay()` 写好却不在
+>   `hydrateViews()` 里调用 → `hydrateThreadView` 拿不到事件、视图归零为 `idle`，第二条红。
+> - **P0-3 threadStats 接进行摘要**：先把隔离线程 worktree 的 `seed.txt` 追加 2 行；未改动时行摘要必须是
+>   `diff N 文件`（不是恒 `diff n/a`），改动后 `data-projects-thread-diff` 精确回读 `1:2:0` 且文案含
+>   `+2/-0`。`progress()` 若继续只传 `stats`（不传 `diff`），两条都会停在 `n/a`。
+> 单测侧（`test/autoresolve.test.js` / `test/replay.test.js`）固定边界：刚好 N 天命中、差 1ms 不命中、
+> 超过命中、关闭/非法值一律不命中、已 resolved/归档/无时间事实不动、真实 store 冷启动 + 幂等；
+> 以及 `compactEvent` 只留可回放最小事实（正文/参数不进盘）、新 store → replay 非 idle、
+> resolve 覆盖与「resolve 后又有新活动则旧 resolve 过期」、journal 上限 80、旧数据无 `events` 仍可读、
+> service 启动路径源码守卫（`hydrateViews()` / `appendThreadEvent`）。
+> **P0-4 routing 契约**没有 UI 面可断言（走审批执行路径），由 `test/settings.test.js` 锁：字符串 `when`
+> 明确拒绝、对象 `when` 写入后能被 `matchRules()`/`decideRoute()` 真命中、`defaultRules()` 自己满足契约。
 
 `pnpm smoke:projects` 在临时 home 里种子一个**真实 git 仓库**作为工作区，然后：
 

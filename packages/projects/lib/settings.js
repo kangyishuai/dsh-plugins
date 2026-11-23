@@ -6,6 +6,56 @@
 export const EDITABLE_KEYS = Object.freeze(["persona", "routing", "goal"]);
 
 /**
+ * 路由规则 `when` 的合法形状（审计 G15/N23 的契约统一）。
+ * `routing.js` 的匹配器只认**对象**条件（`{textMatches,textMaxChars,isQuestion,threadState}`）；
+ * B1 时这里却要求字符串，于是真实规则（含 `defaultRules()` 自己）永远进不了审批写路径。
+ * 白名单化后判据只有一份：`matchRule` 读哪些键，这里就允许哪些键。
+ */
+export const ROUTE_WHEN_KEYS = Object.freeze([
+  "textMatches",
+  "textMaxChars",
+  "isQuestion",
+  "threadState",
+]);
+
+/**
+ * 校验并收敛一条规则的 `when` 条件。
+ * @param {any} when
+ * @returns {{ ok: true, when: Record<string, any> } | { ok: false, reason: string }}
+ */
+export function normalizeRoutingWhen(when) {
+  if (!when || typeof when !== "object" || Array.isArray(when)) {
+    return { ok: false, reason: "settings/routing-when-must-be-object" };
+  }
+  /** @type {Record<string, any>} */
+  const clean = {};
+  for (const [key, value] of Object.entries(when)) {
+    if (!ROUTE_WHEN_KEYS.includes(key)) {
+      return { ok: false, reason: `settings/routing-when-unknown:${key}` };
+    }
+    if (key === "textMatches" || key === "threadState") {
+      if (typeof value !== "string") {
+        return { ok: false, reason: `settings/routing-when-bad-type:${key}` };
+      }
+      clean[key] = value;
+      continue;
+    }
+    if (key === "textMaxChars") {
+      if (!Number.isFinite(value) || Number(value) < 0) {
+        return { ok: false, reason: `settings/routing-when-bad-type:${key}` };
+      }
+      clean[key] = Number(value);
+      continue;
+    }
+    if (typeof value !== "boolean") {
+      return { ok: false, reason: `settings/routing-when-bad-type:${key}` };
+    }
+    clean[key] = value;
+  }
+  return { ok: true, when: clean };
+}
+
+/**
  * 明确禁止的键（规格 §7.5 行 5b：改审批/预算/审计开关本身 = 自我提权）。
  * 命中就拒绝，且要给出可读理由。
  */
@@ -47,16 +97,28 @@ export function sanitizeSettingsPatch(patch) {
         return { ok: false, reason: "settings/routing-must-be-object" };
       }
       const rules = Array.isArray(value.rules) ? value.rules : [];
+      /** @type {any[]} */
+      const normalized = [];
       for (const rule of rules) {
         const shape = rule && typeof rule === "object" ? rule : {};
-        if (typeof shape.id !== "string" || typeof shape.when !== "string") {
+        if (typeof shape.id !== "string" || shape.id === "") {
           return { ok: false, reason: "settings/routing-rule-shape" };
         }
         if (typeof shape.action !== "string") {
           return { ok: false, reason: "settings/routing-rule-shape" };
         }
+        const checked = normalizeRoutingWhen(shape.when);
+        if (!checked.ok) return { ok: false, reason: checked.reason };
+        normalized.push({
+          id: shape.id,
+          when: checked.when,
+          action: shape.action,
+          ...(typeof shape.titleTemplate === "string"
+            ? { titleTemplate: shape.titleTemplate }
+            : {}),
+        });
       }
-      clean.routing = { rules, fallback: value.fallback !== false };
+      clean.routing = { rules: normalized, fallback: value.fallback !== false };
       continue;
     }
     clean[key] = value;

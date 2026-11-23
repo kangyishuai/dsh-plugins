@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import { DEFAULT_BUDGET } from "./budget.js";
 import { mergeArtifactRefs, normalizeArtifactRef } from "./library.js";
 import { DEFAULT_NOTIFY_PREFS } from "./notify.js";
-import { THREAD_STATES } from "./overview.js";
+import { REPLAY_EVENT_CAP, THREAD_STATES } from "./overview.js";
 import { DEFAULT_REMINDER_MODE, normalizeReminder } from "./reminders.js";
 import { MAX_ROUTINES, normalizeRoutine } from "./routines.js";
 import { defaultRules } from "./routing.js";
@@ -109,6 +109,7 @@ export function isThreadState(value) {
  * @property {string|null} baseSha
  * @property {string|null} worktree
  * @property {number} seq
+ * @property {Array<{type: string, at?: number, data?: any}>} events 可回放的持久事件（P0-2；只存 reduce 认的字段）
  */
 
 /** 危险动作开关的默认值：全部关闭（"归档"是可逆动作，由 state 表达，不在此列）。 */
@@ -509,6 +510,19 @@ export function normalize(raw, root) {
           : null,
         headRefOid: typeof thread.headRefOid === "string" ? thread.headRefOid : null,
         seq: Number.isInteger(thread.seq) ? thread.seq : 0,
+        // P0-2：重启后靠这串事件重建 Overview。只收敛已知形状（type 字符串 + 可选数字 at），
+        // 不认识/损坏的条目丢弃——它们是缓存性质的事实，丢了顶多视图旧一点，不能让整份数据读不出来。
+        events: (Array.isArray(thread.events) ? thread.events : [])
+          .filter(
+            (/** @type {any} */ item) =>
+              item && typeof item === "object" && typeof item.type === "string" && item.type !== "",
+          )
+          .slice(-REPLAY_EVENT_CAP)
+          .map((/** @type {any} */ item) => ({
+            type: item.type,
+            ...(Number.isFinite(item.at) ? { at: Number(item.at) } : {}),
+            ...(item.data && typeof item.data === "object" ? { data: item.data } : {}),
+          })),
         createdAt: typeof thread.createdAt === "string" ? thread.createdAt : iso(),
         lastWakeTurn: Number.isInteger(thread.lastWakeTurn) ? thread.lastWakeTurn : 0,
         autoFixRound: Number.isInteger(thread.autoFixRound) ? thread.autoFixRound : 0,
@@ -769,6 +783,7 @@ export class ProjectStore {
       autoFixRound: current?.autoFixRound ?? 0,
       autoFixSignature: current?.autoFixSignature ?? "",
       autoFixChanged: current?.autoFixChanged ?? [],
+      events: Array.isArray(current?.events) ? current.events : [],
     };
     return { ...this.state.threads[sessionId] };
   }
@@ -1306,6 +1321,25 @@ export class ProjectStore {
     if (!current) throw new Error(`projects: unknown thread ${sessionId}`);
     if (Number.isFinite(at) && at > 0) current.lastActivityAt = iso(at);
     return { ...current };
+  }
+
+  /**
+   * 追加一条可回放的持久事件（P0-2）。只留尾部 REPLAY_EVENT_CAP 条，
+   * 返回是否真的写了（调用方据此决定要不要落盘）。
+   * @param {string} sessionId
+   * @param {{ type: string, at?: number, data?: any }} event
+   * @returns {boolean}
+   */
+  appendThreadEvent(sessionId, event) {
+    const current = this.state.threads[sessionId];
+    if (!current) return false;
+    if (!event || typeof event.type !== "string" || event.type === "") return false;
+    if (!Array.isArray(current.events)) current.events = [];
+    current.events.push(event);
+    if (current.events.length > REPLAY_EVENT_CAP) {
+      current.events = current.events.slice(-REPLAY_EVENT_CAP);
+    }
+    return true;
   }
 
   /**
