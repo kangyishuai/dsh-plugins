@@ -248,10 +248,16 @@ pnpm smoke:projects-desktop --require
 里已没有这个项目，且列表里也不再出现。四条新断言：建项目 /
 删除进回收站 / 回收站两步彻底删除 / 盘上校验。
 
-> 本次（页签收敛 + `--create`）**未真跑桌面回归**：需要 live profile + 带
-> `--remote-debugging-port` 重启桌面版，本阶段只做了 `node --check`、
-> `pnpm verify` 与 web 冒烟；下次重启后用 `pnpm smoke:projects-desktop --require`
-> （只读，可加 `--create`）以实跑结果为准。
+> **2026-11-24 实跑（DSH 0.2.2-rc.5，live profile，重启后）**：
+> `pnpm smoke:projects-desktop --require` → **15 PASS / 1 SKIP / 0 FAIL**（唯一 SKIP 是详情页，目录里没有项目）；
+> `pnpm smoke:projects-desktop --require --create` → **24 PASS / 0 SKIP / 0 FAIL**（建临时项目 → 断言 → 删除 → 彻底删除 → 盘上核验零残留）。
+>
+> 实跑踩到并修掉的两个脚本坑（都会伪装成“功能没做”）：
+> 1. **设置入口在左下角账户菜单里**（「设置 ⌘ ,」是 `[role=menuitem]`），不是独立按钮；菜单项文本带快捷键后缀
+>    （`设置⌘,`），所以正则不能加 `\b`（中文无词边界），否则永远匹配不到。
+> 2. **关模态不能靠 `document.dispatchEvent(Escape)`**：新建项目模态的 `onKeyDownCapture` 只在焦点位于模态内部时
+>    触发；模态没关掉时遮罩会吃掉后续点击（表现为“设置入口找不到”）。改为点 `[data-projects-new-close]` 并加一条
+>    「模态可关闭」断言。同理，点项目行要 `row.click()`，点行内第一个按钮会落到 pin/⋯ 上，进不了详情。
 
 未装进当前 live profile 时默认 **SKIP**，加 `--require` 则 **FAIL**（发版门禁用它）。
 

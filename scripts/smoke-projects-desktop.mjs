@@ -322,11 +322,27 @@ const main = async () => {
       emptyName === true && createDisabled === true,
       String(createDisabled),
     );
-    // 关掉模态（Esc），后续断言不应被遮罩影响
-    await cdp.evaluate(
-      `document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))`,
+    // 关掉模态：点 ✕。**不能靠 document 上派发 Esc**——模态的 onKeyDownCapture 只在焦点位于
+    // 模态内部时触发，派发到 document 不冒泡下去（实测：模态一直开着，后面点账户菜单全被遮罩吃掉）。
+    const modalClosed = await cdp.evaluate(`(async () => {
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const isOpen = () =>
+        document.querySelector('[data-projects-new-modal="open"]') !== null;
+      if (!isOpen()) return "already-closed";
+      const close = document.querySelector("[data-projects-new-close]");
+      if (close) close.click();
+      for (let i = 0; i < 20; i += 1) {
+        if (!isOpen()) return "closed";
+        await wait(150);
+      }
+      return "still-open";
+    })()`);
+    check(
+      "新建项目模态可关闭（✕ 生效，后续断言不被遮罩影响）",
+      modalClosed === "closed" || modalClosed === "already-closed",
+      String(modalClosed),
     );
-    await sleep(400);
+    await sleep(300);
 
     // 3b) 详情页两列 + 6 个状态药丸 + 3 个页签（§7.3：页签最多 3；Library 走右栏入口、审计进设置）。
     //     **默认只读**：拿 live profile 里已有的项目断言；一个项目都没有时如实 SKIP（不伪 PASS）。
@@ -410,10 +426,10 @@ const main = async () => {
     const rowOpened = await cdp.evaluate(
       projectName === ""
         ? `(() => {
-            const row = document.querySelector("[data-projects-row] button, [data-projects-row]");
+            const row = document.querySelector("[data-projects-row]");
             if (!row) return "no-row";
             row.click();
-            return "clicked";
+            return "clicked-row";
           })()`
         : `(() => {
             const name = ${JSON.stringify(projectName)};
@@ -421,9 +437,9 @@ const main = async () => {
               ((node && node.innerText) || "").includes(name),
             );
             if (!row) return "no-row";
-            const clickable = row.querySelector("button") || row;
-            clickable.click();
-            return "clicked";
+            // 行本身带 onClick；点行内的第一个按钮会点到 pin/⋯（实测进不了详情）
+            row.click();
+            return "clicked-row";
           })()`,
     );
     if (rowOpened === "no-row") {
@@ -443,6 +459,14 @@ const main = async () => {
         );
         if (detailSeen === true) break;
         await sleep(200);
+      }
+      // 线程区在 tab 内容里，比头部晚一拍渲染：等它出现再取快照，否则 hasThreads 会假红。
+      for (let i = 0; i < 20; i += 1) {
+        const ready = await cdp.evaluate(
+          `Boolean(document.querySelector("[data-projects-threads], [data-projects-threads-empty]"))`,
+        );
+        if (ready === true) break;
+        await sleep(150);
       }
       const snap = await detailSnapshot();
       check(
@@ -506,7 +530,7 @@ const main = async () => {
             ((node && node.innerText) || "").includes(name),
           );
           if (!row) return "no-row";
-          (row.querySelector("button") || row).click();
+          row.click();
           for (let i = 0; i < 25; i += 1) {
             if (document.querySelector("[data-projects-detail]")) break;
             await wait(200);
@@ -595,7 +619,40 @@ const main = async () => {
     await cdp.screenshot(join(SHOTS, "01b-projects-list.png"));
 
     // 4) 设置分节
-    const openedSettings = await cdp.evaluate(`(() => {
+    // 先清掉可能残留的弹窗/菜单（新建项目模态、宿主菜单等），否则账户菜单点不动。
+    for (let i = 0; i < 2; i += 1) {
+      await cdp.evaluate(
+        `document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))`,
+      );
+      await sleep(250);
+    }
+    const openedSettings = await cdp.evaluate(`(async () => {
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      if (document.querySelector("[data-projects-settings]")) return "already-open";
+      // 设置入口在**左下角账户菜单**里（0.2.2-rc.5 实测：「设置 ⌘ ,」是菜单项，不是独立按钮）。
+      // 弹窗/菜单残留会让第一次点击落空，所以最多重试 3 次，并且以「菜单真的出现」为准。
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const trigger =
+          document.querySelector('button[aria-label="账号菜单"], button[aria-label="Account menu"]') ||
+          [...document.querySelectorAll("button[aria-haspopup='menu']")].at(-1);
+        if (!trigger) break;
+        trigger.click();
+        for (let i = 0; i < 10; i += 1) {
+          if (document.querySelector("[role=menu]")) break;
+          await wait(120);
+        }
+        const item = [...document.querySelectorAll("[role=menuitem]")].find((node) =>
+          /^(设置|Settings)/.test(((node.textContent || "").trim())),
+        );
+        if (item) {
+          item.click();
+          await wait(700);
+          return "account-menu";
+        }
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        await wait(250);
+      }
+      // 兜底：有些版本把设置放成独立按钮
       const button = [...document.querySelectorAll("button")].find((b) =>
         /设置|Settings/u.test((b.getAttribute("aria-label") || "") + " " + (b.textContent || "") + " " + (b.getAttribute("title") || "")),
       );
@@ -612,14 +669,22 @@ const main = async () => {
       await sleep(200);
     }
     if (settingsSeen !== true) {
-      // 设置页可能停在别的分节：尽力点一下「项目 / Projects」再等一轮（点不到就如实 SKIP）。
-      await cdp.evaluate(`(() => {
-        const cell = [...document.querySelectorAll("button, [role=tab], [role=menuitem]")].find(
-          (node) => /^(项目|Projects)\b/.test(((node.textContent || "").trim())),
+      // 设置页默认停在「账号与余额」：在**设置弹窗内**点「项目」分节再等一轮。
+      // 注意不能全局搜按钮——侧栏也有一个「项目」入口，点它会顶掉设置弹窗（实测踩过）。
+      await cdp.evaluate(`(async () => {
+        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const dialog = [...document.querySelectorAll("[role=dialog], dialog")].find((node) =>
+          /设置|Settings/u.test((node.textContent || "").slice(0, 200)),
+        );
+        if (!dialog) return "no-dialog";
+        const cell = [...dialog.querySelectorAll("button, [role=tab], [role=menuitem], [role=button]")].find(
+          (node) => /^(项目|Projects)/u.test(((node.textContent || "").trim())),
         );
         if (cell) cell.click();
+        await wait(500);
+        return cell ? "clicked-section" : "no-section";
       })()`);
-      for (let i = 0; i < 15; i += 1) {
+      for (let i = 0; i < 20; i += 1) {
         settingsSeen = await cdp.evaluate(
           `Boolean(document.querySelector("[data-projects-settings]"))`,
         );
@@ -676,11 +741,22 @@ const main = async () => {
     }
     await cdp.screenshot(join(SHOTS, "02-projects-settings.png"));
 
-    // 5) 关闭设置并回到会话，确认界面未崩
-    await cdp.evaluate(
-      `document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))`,
-    );
-    await sleep(500);
+    // 5) 关闭设置并回到会话，确认界面未崩（优先点宿主弹窗自带的关闭按钮）
+    await cdp.evaluate(`(async () => {
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const dialog = [...document.querySelectorAll("[role=dialog], dialog")].find((node) =>
+        /设置|Settings/u.test((node.textContent || "").slice(0, 120)),
+      );
+      const close = dialog
+        ? [...dialog.querySelectorAll("button")].find((node) =>
+            /^(关闭|Close)$/.test((node.textContent || "").trim()),
+          )
+        : null;
+      if (close) close.click();
+      else document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      await wait(400);
+    })()`);
+    await sleep(400);
     const bodyLength = await cdp.evaluate(`document.body.innerText.trim().length`);
     check(
       "关闭后界面仍可用",
