@@ -13,6 +13,7 @@
 import { execFile, spawn } from "node:child_process";
 import { createWriteStream, existsSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -29,6 +30,123 @@ const PKG_DIR = join(REPO, "packages", "projects");
 const PACKAGE = "@kangyishuai/dsh-projects";
 const PROFILE = "proj";
 const sleep = (/** @type {number} */ ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * INFRA：基础设施自检失败。**不要**把它混进断言计数——端口没起来、projects.json 没落盘
+ * 这类问题会让后面几十条断言连锁变红，看起来像代码坏了，实际是环境没就绪。
+ * 打印 `INFRA` 并 fail-fast（非零退出），门禁只认 PASS/FAIL 计数行。
+ * @param {string} message @param {unknown} [detail]
+ * @returns {never}
+ */
+function infraFail(message, detail) {
+  console.error(`INFRA ${message}`);
+  if (detail !== undefined && String(detail) !== "") console.error(String(detail).slice(-2000));
+  process.exit(1);
+}
+
+/** 宿主端口必须真的可连（比「日志里打印了地址」更硬）。 */
+async function assertHostPort(/** @type {number} */ port) {
+  const ok = await new Promise((resolve) => {
+    const socket = connect({ host: "127.0.0.1", port }, () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.setTimeout(2000, () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.on("error", () => resolve(false));
+  });
+  if (!ok) infraFail(`宿主端口 ${port} 不可用（进程起了但没监听）`);
+}
+
+/** 每次 RPC 一个唯一 rpcId（网关按它配对响应）。 */
+let rpcCounter = 0;
+
+/**
+ * 直连宿主 RPC：`token → cookie → POST /api/<namespace>/<method>`（docs/runtime 0.2.2-rc.5 §18）。
+ * wire 形状是完整的 client-request 信封（`{ type, rpcId, method, payload:{ args } }`），
+ * 只发 `{ args }` 会被网关拒成 `gateway/bad-request`。
+ * 用来验证「UI 不可达但契约必须成立」的行为（未知 projectId 拒绝、once 时序、Library 回读）。
+ * @param {number} port @param {string} token @param {string} method @param {Record<string, unknown>} args
+ */
+async function hostRpc(port, token, method, args) {
+  const base = `http://127.0.0.1:${port}`;
+  const handshake = await fetch(`${base}/?token=${encodeURIComponent(token)}`, {
+    redirect: "manual",
+  });
+  const cookies = (handshake.headers.getSetCookie?.() ?? []).map((item) => item.split(";")[0]);
+  rpcCounter += 1;
+  const rpcId = `smoke-${Date.now().toString(36)}-${rpcCounter}`;
+  const response = await fetch(`${base}/api/${method}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: cookies.join("; ") },
+    body: JSON.stringify({ type: "client-request", rpcId, method, payload: { args } }),
+  });
+  const text = await response.text();
+  let json = null;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    json = null;
+  }
+  const envelope =
+    json && typeof json === "object" && json.result && typeof json.result === "object"
+      ? json.result
+      : json;
+  const value =
+    envelope && typeof envelope === "object" && "value" in envelope ? envelope.value : envelope;
+  const error =
+    envelope && typeof envelope === "object" && envelope.ok === false ? envelope.error : null;
+  return { status: response.status, json, value, error, text };
+}
+
+/** catch 变量在 useUnknownInCatchVariables 下是 unknown：统一取一句话错误文案。 */
+function errorText(/** @type {unknown} */ error) {
+  return String(/** @type {any} */ (error)?.message ?? error);
+}
+
+/** 从 client.js 抽运行时字典键（与单测 locale-parity 同一份事实，冒烟再验一次线上口径）。 */
+async function runtimeDictionaryKeys(/** @type {string} */ name) {
+  const source = await readFile(join(REPO, "packages", "projects", "lib", "client.js"), "utf8");
+  const marker = `var ${name} = {`;
+  const start = source.indexOf(marker);
+  const open = source.indexOf("{", start);
+  let depth = 0;
+  let index = open;
+  let quote = "";
+  let escaped = false;
+  for (; index < source.length; index += 1) {
+    const char = source[index];
+    if (quote !== "") {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === quote) quote = "";
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") {
+      quote = char;
+      continue;
+    }
+    if (char === "{") depth += 1;
+    else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) break;
+    }
+  }
+  // 求值对象是 packages/projects/lib/client.js 里的对象字面量（只含字符串常量），不来自外部输入。
+  // biome-ignore lint/security/noGlobalEval: 见上一行说明
+  const evaluate = /** @type {(code: string) => Record<string, string>} */ (eval);
+  return Object.keys(evaluate(`(${source.slice(open, index + 1)})`));
+}
+
+/** @param {"zh"|"en"} lang */
+async function localeKeys(lang) {
+  const raw = JSON.parse(
+    await readFile(join(REPO, "packages", "projects", "locale", `${lang}.json`), "utf8"),
+  );
+  return Object.keys(raw.projects ?? {});
+}
 
 /** @param {string} message */
 function fail(message) {
@@ -459,8 +577,14 @@ try {
     return icon ? (icon.textContent || "").trim() : "";
   }, name);
   add("列表行显示项目图标（F1）", rowIcon === "🚀", rowIcon);
-  // toast 3.5s 自动消失：必须断言「真的消失」，不能只断言出现过
-  await page.waitForTimeout(4200);
+  // toast 3.5s 自动消失：必须断言「真的消失」，不能只断言出现过。
+  // 用轮询而不是固定 4.2s：慢机器上固定等待会偶发「还没消失」的假红。
+  await waitUntil(
+    async () =>
+      (await page.evaluate(() => document.querySelectorAll("[data-projects-toast]").length)) === 0,
+    12000,
+    300,
+  );
   const toastGone = await page.evaluate(() => document.querySelectorAll("[data-projects-toast]").length === 0);
   add("toast 在 4 秒内自动消失", toastGone === true, String(toastGone));
   const firstRunAgain = await page.evaluate(() =>
@@ -477,7 +601,12 @@ try {
     button.click();
     return "clicked";
   });
-  await page.waitForTimeout(2500);
+  await waitUntil(
+    async () =>
+      (await page.evaluate(() => document.querySelectorAll('[role="treeitem"]').length)) > 0,
+    15000,
+    300,
+  );
   const rowSeen = await page.evaluate(() => document.querySelectorAll('[role="treeitem"]').length);
   add("侧栏出现会话行", rowSeen > 0, JSON.stringify({ createdSession, rows: rowSeen }));
 
@@ -538,7 +667,11 @@ try {
     const option = document.querySelector("[data-projects-attach-option]");
     if (option) option.click();
   });
-  await page.waitForTimeout(1800);
+  await waitUntil(
+    async () => (await page.evaluate(() => Boolean(document.querySelector("[data-projects-attach-list]")))) === true,
+    15000,
+    300,
+  );
   const menuError = await page.evaluate(() => {
     const list = document.querySelector("[data-projects-attach-list]");
     return list ? (list.textContent || "").slice(0, 120) : "";
@@ -560,7 +693,17 @@ try {
     row.click();
     return "clicked";
   });
-  await page.waitForTimeout(1500);
+  await waitUntil(
+    async () =>
+      (await page.evaluate(
+        () =>
+          Boolean(
+            document.querySelector("[data-projects-threads], [data-projects-threads-empty]"),
+          ),
+      )) === true,
+    20000,
+    300,
+  );
   const detailState = await page.evaluate(() => ({
     present: Boolean(document.querySelector("[data-projects-detail]")),
     tabs: [...document.querySelectorAll("[data-projects-tab]")].map((n) => n.getAttribute("data-projects-tab")),
@@ -1078,9 +1221,18 @@ try {
   );
   // 折叠状态跨「返回→再进详情」保留（F25：存宿主 storageDomain）
   await page.evaluate(() => document.querySelector("[data-projects-detail-back]")?.click());
-  await page.waitForTimeout(1200);
+  await waitUntil(
+    async () => (await page.evaluate(() => document.querySelectorAll("[data-projects-row]").length)) > 0,
+    15000,
+    300,
+  );
   await page.evaluate(() => document.querySelector("[data-projects-row]")?.click());
-  await page.waitForTimeout(1800);
+  await waitUntil(
+    async () =>
+      (await page.evaluate(() => Boolean(document.querySelector("[data-projects-group]")))) === true,
+    15000,
+    300,
+  );
   const persistedCollapse = await page.evaluate(() =>
     document
       .querySelector('[data-projects-group="waiting-user"]')
@@ -2208,6 +2360,60 @@ try {
       Buffer.from(shot.data, "base64"),
     );
   }
+
+  // —— B5 · F33/F34/U15：Library 视图 + 部署特有 effort（max/xhigh/off）——
+  await page.evaluate(() => document.querySelector('[data-projects-tab="threads"]')?.click());
+  await page.waitForTimeout(500);
+  const effortDeploy = await page.evaluate(async () => {
+    const q = (sel) => document.querySelector(sel);
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const setText = (sel, value) => {
+      const input = q(sel);
+      if (!input) return false;
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+      setter.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      return true;
+    };
+    // 上一段 B3 用例可能已经把「手填」展开过：只在输入框不在时才点开关，避免把它又关掉。
+    if (!q("[data-projects-thread-effort-manual]")) {
+      q("[data-projects-thread-manual-toggle]")?.click();
+      await wait(400);
+    }
+    const original = JSON.parse(
+      q("[data-projects-thread-defaults]")?.getAttribute("data-projects-thread-defaults-value") || "{}",
+    );
+    const rows = [];
+    for (const effort of ["max", "xhigh", "off"]) {
+      setText("[data-projects-thread-model-manual]", "smoke-provider|smoke-model");
+      setText("[data-projects-thread-effort-manual]", effort);
+      await wait(250);
+      q("[data-projects-thread-defaults-save]")?.click();
+      await wait(900);
+      const readback = JSON.parse(
+        q("[data-projects-thread-defaults]")?.getAttribute("data-projects-thread-defaults-value") || "{}",
+      );
+      rows.push({ effort, readback: String(readback.reasoningEffort || "") });
+    }
+    // 复原成这轮 UI 最初选的默认值：后面的 Node 断言按那组值逐字段比对 projects.json。
+    setText(
+      "[data-projects-thread-model-manual]",
+      original.provider && original.model ? original.provider + "|" + original.model : "",
+    );
+    setText("[data-projects-thread-effort-manual]", String(original.reasoningEffort || ""));
+    await wait(250);
+    q("[data-projects-thread-defaults-save]")?.click();
+    await wait(700);
+    return { rows, original };
+  });
+  add(
+    "F42 部署特有 effort：max/xhigh/off 经手填写入并回读，不再被三档白名单清空（B3 复审 P0）",
+    Array.isArray(effortDeploy.rows) &&
+      effortDeploy.rows.length === 3 &&
+      effortDeploy.rows.every((row) => row.readback === row.effort),
+    JSON.stringify(effortDeploy.rows),
+  );
+  result.effortDeploy = effortDeploy.rows;
 
   // —— F37：记忆碎片 UI（记忆页签里有列表 + 新增入口；交互写盘由单测与 RPC 覆盖）——
   const b3frag = await page.evaluate(async () => {
@@ -3987,7 +4193,14 @@ const main = async () => {
       console.error(boot.text.slice(-3000));
       return;
     }
-    console.log(`宿主已启动：http://127.0.0.1:${boot.port}`);
+    // —— 基础设施自检（INFRA）——
+    // 端口不可用 / 插件没激活时，后面几十条断言会连锁变红，看起来像代码坏了。
+    // 这类问题一律打印 INFRA 并 fail-fast，不混进断言计数。
+    if (/did not activate|failed to activate|cannot find module/iu.test(boot.text)) {
+      infraFail("宿主启动了但有插件未激活（projects 包这次没装上？）", boot.text.slice(-4000));
+    }
+    await assertHostPort(boot.port);
+    console.log(`宿主已启动并监听：http://127.0.0.1:${boot.port}`);
 
     const shotsDir = join(work, "shots");
     await mkdir(shotsDir, { recursive: true });
@@ -4020,9 +4233,9 @@ const main = async () => {
 
     const match = String(raw).match(/SMOKE_RESULT (\{.*\})/u);
     if (!match) {
-      fail("浏览器脚本没有返回结果");
-      console.error(String(raw).slice(-3000));
-      return;
+      // 页面/浏览器层没跑起来（崩溃、超时、CDP 断连）属于基础设施问题：
+      // 以前报「代码坏了」混进 FAIL 计数，复盘时会误判。这里 INFRA fail-fast。
+      infraFail("浏览器脚本没有返回结果（页面/浏览器层没就绪）", String(raw).slice(-4000));
     }
     const result = JSON.parse(match[1]);
     if (result.fatal) fail(`浏览器脚本异常：${result.fatal}`);
@@ -4035,6 +4248,9 @@ const main = async () => {
     // Node 侧：宿主真的落盘了，且没有残留临时文件
     const storePath = join(home, "projects", "projects.json");
     const storeText = await readIfExists(storePath);
+    // projects.json 没落盘 = 插件的落盘路径整条没跑通（数据根不可写/激活失败），
+    // 不是某一条断言的问题：INFRA fail-fast，避免把 20+ 条回读断言变成噪音。
+    if (storeText === "") infraFail("projects.json 未落盘（插件没有写出元数据）", storePath);
     checks.push({
       name: "宿主侧已写出 projects.json",
       ok: storeText !== "",
@@ -4657,8 +4873,168 @@ const main = async () => {
       detail: leftovers.join(","),
     });
 
+    // ===== B3 复审修复 + B5 Library 的直连 RPC 证据（token → cookie → POST /api）=====
+    // A2：runtime 字典（client.js ZH/EN）与 locale/{zh,en}.json 键集一致——现场曾缺 44 键。
+    try {
+      const runtimeZh = await runtimeDictionaryKeys("ZH");
+      const runtimeEn = await runtimeDictionaryKeys("EN");
+      const localeZh = await localeKeys("zh");
+      const localeEn = await localeKeys("en");
+      const missingZh = runtimeZh.filter((key) => !localeZh.includes(key));
+      const missingEn = runtimeEn.filter((key) => !localeEn.includes(key));
+      checks.push({
+        name: "locale/zh.json 与 runtime ZH 字典键集一致（B3 复审 P1：44 键已补齐）",
+        ok: missingZh.length === 0 && localeZh.length === runtimeZh.length,
+        detail: JSON.stringify({
+          runtime: runtimeZh.length,
+          locale: localeZh.length,
+          missing: missingZh,
+        }),
+      });
+      checks.push({
+        name: "locale/en.json 与 runtime EN 字典键集一致",
+        ok: missingEn.length === 0 && localeEn.length === runtimeEn.length,
+        detail: JSON.stringify({
+          runtime: runtimeEn.length,
+          locale: localeEn.length,
+          missing: missingEn,
+        }),
+      });
+      const zhRaw = JSON.parse(
+        await readFile(join(REPO, "packages", "projects", "locale", "zh.json"), "utf8"),
+      ).projects;
+      checks.push({
+        name: "实时 CI 开关文案如实写「未实现」，不再承诺会建临时 webhook（B3 复审 P1）",
+        ok:
+          /未实现/u.test(String(zhRaw["settings.realtimeCiHint"] ?? "")) &&
+          !/会建临时 ?webhook|创建临时 ?webhook/u.test(
+            String(zhRaw["settings.realtimeCiHint"] ?? ""),
+          ) &&
+          !/已开启/u.test(String(zhRaw["settings.realtimeCiOn"] ?? "")),
+        detail: JSON.stringify({
+          hint: zhRaw["settings.realtimeCiHint"],
+          on: zhRaw["settings.realtimeCiOn"],
+        }),
+      });
+    } catch (error) {
+      checks.push({
+        name: "locale 与 runtime 字典一致性检查可执行",
+        ok: false,
+        detail: errorText(error).slice(0, 300),
+      });
+    }
+
+    // A1：max/xhigh/off 三次写入必须留下审计（store 是唯一真源；UI 回读已在浏览器里断言）。
+    try {
+      const audit = await hostRpc(boot.port, boot.token, "projects/listAudit", {
+        projectId: projectByName?.id ?? "",
+      });
+      const entries = Array.isArray(audit.value)
+        ? audit.value
+        : Array.isArray(audit.value?.entries)
+          ? audit.value.entries
+          : [];
+      const efforts = entries
+        .filter((/** @type {any} */ entry) => entry?.action === "thread/defaults")
+        .map((/** @type {any} */ entry) => String(entry?.defaults?.reasoningEffort ?? ""));
+      const wanted = ["max", "xhigh", "off"];
+      checks.push({
+        name: "F42 审计留下 max/xhigh/off 三次写入（B3 复审 P0 的落盘证据）",
+        ok: wanted.every((effort) => efforts.includes(effort)),
+        detail: JSON.stringify({ efforts: efforts.slice(-8), status: audit.status }),
+      });
+    } catch (error) {
+      checks.push({
+        name: "F42 审计留下 max/xhigh/off 三次写入（B3 复审 P0 的落盘证据）",
+        ok: false,
+        detail: errorText(error).slice(0, 300),
+      });
+    }
+
+    // A6：未知 projectId 必须被拒（路径拼接前校验，不能拿 ../ 枚举 dataRoot 外的目录）。
+    try {
+      const fragment = await hostRpc(boot.port, boot.token, "projects/listMemoryFragments", {
+        projectId: "../escape",
+      });
+      const message = JSON.stringify(fragment.error ?? fragment.text ?? "");
+      checks.push({
+        name: "F37 未知 projectId 的 listMemoryFragments 被拒（B3 复审 P2：不能枚举 dataRoot 外）",
+        ok: fragment.status >= 400 || /unknown project|not found/iu.test(message),
+        detail: JSON.stringify({ status: fragment.status, error: fragment.error ?? null }),
+      });
+    } catch (error) {
+      checks.push({
+        name: "F37 未知 projectId 的 listMemoryFragments 被拒（B3 复审 P2）",
+        ok: false,
+        detail: errorText(error).slice(0, 300),
+      });
+    }
+
+    // A4：被拒的动作不烧掉 once 凭据（复审 P2）——真实 RPC 走「授权 → 申请 → 批准 → 执行 → 回读」。
+    try {
+      const createdProject = await hostRpc(boot.port, boot.token, "projects/createProject", {
+        name: `smoke-once-${Date.now().toString(36)}`,
+        input: { dirs: [SMOKE_WORKSPACE_DIR] },
+      });
+      const onceProject = createdProject.value ?? {};
+      const authorized = await hostRpc(boot.port, boot.token, "projects/authorizeFolder", {
+        projectId: onceProject.id,
+        path: SMOKE_WORKSPACE_DIR,
+        decision: "once",
+      });
+      const requested = await hostRpc(boot.port, boot.token, "projects/requestAction", {
+        projectId: onceProject.id,
+        request: { action: "merge", args: { prNumber: 1 }, reason: "smoke: once 时序" },
+      });
+      const requestId = requested.value?.requestId ?? "";
+      if (requestId !== "") {
+        await hostRpc(boot.port, boot.token, "projects/resolveApproval", {
+          requestId,
+          status: "approved",
+        });
+        const executed = await hostRpc(boot.port, boot.token, "projects/executeApproval", {
+          requestId,
+        });
+        const readback = await hostRpc(boot.port, boot.token, "projects/getProject", {
+          id: onceProject.id,
+        });
+        const grant = readback.value?.policy?.folderAuth?.[SMOKE_WORKSPACE_DIR] ?? null;
+        checks.push({
+          name: "F55 动作被拒（switch-off）时 once 凭据未被消费（B3 复审 P2）",
+          ok:
+            authorized.value?.ok === true &&
+            executed.value?.executed === false &&
+            String(executed.value?.reason ?? "") === "switch-off" &&
+            grant?.used === false,
+          detail: JSON.stringify({
+            authorized: authorized.value ?? null,
+            executed: executed.value ?? null,
+            grant,
+          }),
+        });
+      } else {
+        checks.push({
+          name: "F55 动作被拒（switch-off）时 once 凭据未被消费（B3 复审 P2）",
+          ok: false,
+          detail: JSON.stringify({ requested: requested.error ?? requested.value ?? null }),
+        });
+      }
+    } catch (error) {
+      checks.push({
+        name: "F55 动作被拒（switch-off）时 once 凭据未被消费（B3 复审 P2）",
+        ok: false,
+        detail: errorText(error).slice(0, 300),
+      });
+    }
+
     const shots = await readdir(shotsDir).catch(() => []);
+    // 归档：临时 work 目录会被删掉，截图统一复制到 SHOTS_OUT 供人工/报告引用。
+    await mkdir(SHOTS_OUT, { recursive: true }).catch(() => {});
+    for (const shot of shots) {
+      await cp(join(shotsDir, shot), join(SHOTS_OUT, shot)).catch(() => {});
+    }
     checks.push({ name: "已保存截图", ok: shots.length > 0, detail: shots.join(",") });
+    console.log(`截图归档：${SHOTS_OUT}`);
 
     for (const item of checks) {
       console.log(

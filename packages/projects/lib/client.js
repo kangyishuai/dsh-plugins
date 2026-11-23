@@ -496,6 +496,8 @@ window.__ModuleLoader__.load({
       "detail.group.resolved": "待审",
       "detail.group.idle": "空闲",
       "detail.group.archived": "已归档",
+      "b3.folderWorktreeHint":
+        "merge 在项目目录里跑；push-branch 在线程 worktree 里跑——worktree 继承它所属项目目录的授权。",
     };
     var EN = {
       title: "Projects",
@@ -994,6 +996,8 @@ window.__ModuleLoader__.load({
       "detail.dirInvalidHint":
         "An absolute path is required (starting with /); relative paths cannot be a session directory, so the save was rejected.",
       "detail.configTitle": "Advanced settings (repository access / trash)",
+      "b3.folderWorktreeHint":
+        "merge runs in the project folder; push-branch runs in the thread worktree, which inherits the authorization of the project folder it came from.",
     };
     var PANEL_ID = "projects";
     var SERVICE = "projects";
@@ -10181,6 +10185,14 @@ window.__ModuleLoader__.load({
                   },
                   h("span", { style: styles.name, title: dir }, baseName(dir)),
                   h("span", { style: styles.meta }, text(t, "b3.folderCopy")),
+                  h(
+                    "span",
+                    {
+                      style: { ...styles.meta, color: T.faint },
+                      "data-projects-folder-cwd-hint": dir,
+                    },
+                    text(t, "b3.folderWorktreeHint"),
+                  ),
                   h(
                     "span",
                     {

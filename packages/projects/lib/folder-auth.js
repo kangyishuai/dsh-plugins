@@ -96,3 +96,26 @@ export function consumeOnceFolderGrant(policy, path) {
     reason: "",
   };
 }
+
+/**
+ * 回滚一次消费：动作没有成功落地时，把 `used` 还原成 `false`，让同一张一次性凭据还能重试。
+ * 这是 B3 复审 P2 的第二半：消费时序移到「所有闸通过 + 占位成功」之后，但执行分支里
+ * 仍有 no-worktree / repo-unknown / 命令失败这类拒绝路径——那些路径不该烧掉授权。
+ * @param {any} policy @param {string} path
+ * @returns {{ ok: boolean, policy: any }}
+ */
+export function rollbackOnceFolderGrant(policy, path) {
+  const target = String(path ?? "").trim();
+  const record = policy?.folderAuth?.[target];
+  if (record?.mode !== "once" || record.used !== true) return { ok: false, policy };
+  return {
+    ok: true,
+    policy: {
+      ...(policy ?? {}),
+      folderAuth: {
+        ...(policy?.folderAuth ?? {}),
+        [target]: { ...record, used: false, rollbackAt: new Date().toISOString() },
+      },
+    },
+  };
+}

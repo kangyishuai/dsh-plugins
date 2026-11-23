@@ -14,13 +14,18 @@ import {
   recoveryEvidence,
   shouldRetryPreflight,
 } from "./executor.js";
-import { consumeOnceFolderGrant, folderAuthSummary } from "./folder-auth.js";
+import {
+  consumeOnceFolderGrant,
+  folderAuthSummary,
+  rollbackOnceFolderGrant,
+} from "./folder-auth.js";
 import {
   checkForcePushPrereqs,
   checkProtectedPushPrereqs,
   countCollaborators,
 } from "./git-push.js";
 import { applySettingsPatch, sanitizeSettingsPatch } from "./settings.js";
+import { WORKTREE_DIR } from "./worktree.js";
 
 /**
  * @typedef {object} ExecuteDeps
@@ -41,32 +46,91 @@ export const FOLDER_GATED_ACTIONS = Object.freeze([
 ]);
 
 /**
+ * F55：动作**实际在哪个目录里跑**——闸门按它求 mode，而不是一律按 `dirs[0]`。
+ *
+ * `merge` 的 gh 命令在 `dirs[0]` 里跑；`push-branch` 却在**线程 worktree** 里跑，
+ * worktree 位于 `<repoParent>/.dsh-worktrees/<repoName>/<projectId>-<n>`（仓库的兄弟目录）。
+ * 语义：worktree **继承**它所属项目目录的授权——按本插件自己的 worktree 命名规则反查
+ * 是哪个 `dirs[i]` 生出来的；反查不到才退回 `dirs[0]`（并在审计里标 inherited=false）。
+ * @param {any} project @param {string} action @param {{ worktree?: string }} [context]
+ * @returns {{ dir: string, cwd: string, inherited: boolean }}
+ */
+export function actionDirectory(project, action, context = {}) {
+  const dirs = Array.isArray(project?.dirs)
+    ? project.dirs.map((/** @type {any} */ dir) => String(dir ?? "")).filter(Boolean)
+    : [];
+  const primary = dirs[0] ?? "";
+  const worktree =
+    typeof context?.worktree === "string" && context.worktree !== "" ? context.worktree : "";
+  if (String(action) !== "push-branch" || worktree === "") {
+    return { dir: primary, cwd: primary, inherited: false };
+  }
+  for (const dir of dirs) {
+    const clean = dir.replace(/\/+$/u, "");
+    const parts = clean.split("/");
+    const repoName = parts[parts.length - 1] || "repo";
+    const parent = parts.slice(0, -1).join("/") || "/";
+    const stem = `${parent}/${WORKTREE_DIR}/${repoName}/`;
+    if (worktree.startsWith(stem)) return { dir, cwd: worktree, inherited: true };
+  }
+  // 反查不到（旧数据 / 用户手动改过 worktree）：按主目录授权判，但如实标 inherited=false。
+  return { dir: primary, cwd: worktree, inherited: false };
+}
+
+/**
  * F55：文件夹授权闸（三键不再是死记录）。
  * 语义对齐授权卡：
  *  - `unset`   → 放行（旧行为；没授权过不等于拒绝，避免升级后所有动作被拦）
  *  - `default` → 长期放行，不消费
  *  - `deny`    → 拒绝执行（命令不会发出去）
- *  - `once`    → 本次放行并**立刻消费**（`used=true` 落盘）；同一目录下一次执行被拒
- * @param {any} store @param {any} project @param {string} action
- * @returns {{ ok: true, mode: string, dir: string } | { ok: false, mode: string, dir: string, reason: string }}
+ *  - `once`    → 本次放行，但**这里不消费**：凭据要等所有闸通过、占位成功后才落 `used=true`。
+ *                B3 复审 P2 修复：以前在 checkExecutable 之前就消费，动作被拒时授权被烧掉。
+ * @param {any} project @param {string} action @param {{ worktree?: string }} [context]
+ * @returns {{ ok: true, mode: string, dir: string, cwd: string, inherited: boolean, consume: boolean } | { ok: false, mode: string, dir: string, cwd: string, inherited: boolean, reason: string }}
  */
-export function folderGate(store, project, action) {
-  if (!FOLDER_GATED_ACTIONS.includes(String(action))) return { ok: true, mode: "n/a", dir: "" };
-  const dir =
-    Array.isArray(project?.dirs) && project.dirs.length > 0 ? String(project.dirs[0] ?? "") : "";
-  if (dir === "") return { ok: true, mode: "unset", dir: "" };
-  const summary = folderAuthSummary(project?.policy, dir);
-  if (summary.mode === "unset") return { ok: true, mode: "unset", dir };
-  if (summary.mode === "deny") return { ok: false, mode: "deny", dir, reason: "folder/denied" };
-  if (summary.mode === "default") return { ok: true, mode: "default", dir };
-  const consumed = consumeOnceFolderGrant(project?.policy, dir);
-  if (consumed.ok !== true) {
-    return { ok: false, mode: "once", dir, reason: "folder/once-already-used" };
+export function folderGate(project, action, context = {}) {
+  if (!FOLDER_GATED_ACTIONS.includes(String(action))) {
+    return {
+      ok: true,
+      mode: "n/a",
+      dir: "",
+      cwd: "",
+      inherited: false,
+      consume: false,
+    };
   }
-  store.updateProject(project.id, { policy: consumed.policy });
-  store.appendAudit({ action: "folder/once-consumed", projectId: project.id, path: dir });
-  store.save();
-  return { ok: true, mode: "once", dir };
+  const target = actionDirectory(project, action, context);
+  if (target.dir === "") {
+    return { ok: true, mode: "unset", dir: "", cwd: "", inherited: false, consume: false };
+  }
+  const summary = folderAuthSummary(project?.policy, target.dir);
+  if (summary.mode === "unset") {
+    return { ok: true, mode: "unset", ...target, consume: false };
+  }
+  if (summary.mode === "deny") {
+    return {
+      ok: false,
+      mode: "deny",
+      dir: target.dir,
+      cwd: target.cwd,
+      inherited: target.inherited,
+      reason: "folder/denied",
+    };
+  }
+  if (summary.mode === "default") {
+    return { ok: true, mode: "default", ...target, consume: false };
+  }
+  if (summary.allowed !== true) {
+    return {
+      ok: false,
+      mode: "once",
+      dir: target.dir,
+      cwd: target.cwd,
+      inherited: target.inherited,
+      reason: "folder/once-already-used",
+    };
+  }
+  return { ok: true, mode: "once", ...target, consume: true };
 }
 
 /**
@@ -109,8 +173,23 @@ export async function executeApprovalCore(deps, requestId) {
     return { executed: false, reason: "project-missing" }; // 同样在占位之前
   }
 
+  // push-branch 的 cwd 在线程 worktree 里（不是 dirs[0]）：先取出线程，闸门按**实际 cwd**
+  // 所属目录求 mode（worktree 继承其项目目录的授权，见 actionDirectory）。
+  const gateSessionId = String(approval.args?.sessionId ?? approval.args?.threadSessionId ?? "");
+  const gateThread =
+    approval.action === "push-branch"
+      ? store
+          .listThreads(approval.projectId)
+          .find((/** @type {any} */ item) => item.sessionId === gateSessionId)
+      : null;
+  const gateWorktree =
+    typeof gateThread?.worktree === "string" && gateThread.worktree !== ""
+      ? gateThread.worktree
+      : "";
+
   // F55：文件夹授权闸（deny / once / default 三键真的影响执行）。
-  const folder = folderGate(store, project, approval.action);
+  // once **不在这里消费**：要等 checkExecutable + 占位都通过后再落 used（复审 P2）。
+  const folder = folderGate(project, approval.action, { worktree: gateWorktree });
   if (!folder.ok) {
     store.appendAudit({
       action: "approval/execution-refused",
@@ -120,6 +199,7 @@ export async function executeApprovalCore(deps, requestId) {
       reason: folder.reason,
       folderMode: folder.mode,
       folderPath: folder.dir,
+      folderCwd: folder.cwd,
     });
     store.save();
     return { executed: false, reason: folder.reason }; // 闸门在占位之前，无需释放
@@ -165,11 +245,34 @@ export async function executeApprovalCore(deps, requestId) {
     store.save();
     return { executed: false, reason }; // 占位失败：不释放（本来就没占上）
   }
-  // 统一收口：本次调用结束后，成功的落 executedAt，其余一律释放占位。
+  /** 本次调用是否消费了一张 once 凭据（用于失败回滚）。 */
+  let onceConsumed = false;
+  /**
+   * 执行没落地时把 once 还原：授权是「同意这一次动作」，动作没发生就不该算用掉。
+   * 覆盖 no-worktree / repo-unknown / 命令失败等**占位之后**才发现的拒绝路径。
+   */
+  const rollbackOnce = () => {
+    if (onceConsumed !== true) return;
+    const live = store.getProject(approval.projectId);
+    const rolled = rollbackOnceFolderGrant(live?.policy, folder.dir);
+    if (rolled.ok === true) {
+      store.updateProject(approval.projectId, { policy: rolled.policy });
+      store.appendAudit({
+        action: "folder/once-rolled-back",
+        projectId: approval.projectId,
+        path: folder.dir,
+        reason: "execution-not-completed",
+      });
+    }
+  };
+  // 统一收口：本次调用结束后，成功的落 executedAt，其余一律释放占位并回滚 once。
   const settle = (/** @type {any} */ result) => {
     try {
       if (result?.executed === true) store.markApprovalExecuted(requestId, result.evidence ?? null);
-      else store.releaseApproval(requestId);
+      else {
+        store.releaseApproval(requestId);
+        rollbackOnce();
+      }
       store.save();
     } catch {
       /* 收口失败不该盖掉真实结果 */
@@ -218,14 +321,40 @@ export async function executeApprovalCore(deps, requestId) {
     return settle({ executed: false, reason: planned.error });
   }
 
+  // once 凭据：**所有闸通过且占位成功之后**才消费。此前任何拒绝路径都不会烧掉授权。
+  // 并发两张申请抢同一张一次性凭据：后到的这里 consume 失败 → settle 释放占位。
+  if (folder.consume === true) {
+    const consumedOnce = consumeOnceFolderGrant(project.policy, folder.dir);
+    if (consumedOnce.ok !== true) {
+      store.appendAudit({
+        action: "approval/execution-refused",
+        projectId: approval.projectId,
+        requestId,
+        dangerAction: approval.action,
+        reason: "folder/once-already-used",
+        folderMode: folder.mode,
+        folderPath: folder.dir,
+      });
+      store.save();
+      return settle({ executed: false, reason: "folder/once-already-used" });
+    }
+    store.updateProject(project.id, { policy: consumedOnce.policy });
+    onceConsumed = true;
+    store.appendAudit({
+      action: "folder/once-consumed",
+      projectId: project.id,
+      path: folder.dir,
+      cwd: folder.cwd,
+      inherited: folder.inherited === true,
+      afterClaim: true,
+    });
+    store.save();
+  }
+
   // push-branch：在工作树里跑真实 git（argv 数组，不经 shell），只推我们自己的分支
   if (approval.action === "push-branch") {
-    const sessionId = String(approval.args?.sessionId ?? approval.args?.threadSessionId ?? "");
-    const thread = store
-      .listThreads(approval.projectId)
-      .find((/** @type {any} */ item) => item.sessionId === sessionId);
-    const worktree =
-      typeof thread?.worktree === "string" && thread.worktree !== "" ? thread.worktree : "";
+    const thread = gateThread;
+    const worktree = gateWorktree;
     if (worktree === "") {
       store.appendAudit({
         action: "approval/execution-refused",
@@ -306,7 +435,7 @@ export async function executeApprovalCore(deps, requestId) {
       if (forcedOk) {
         const head = await runGit(["rev-parse", "HEAD"], worktree);
         if (head.code === 0) {
-          store.setThreadWorktree(sessionId, { lastPushedSha: String(head.stdout).trim() });
+          store.setThreadWorktree(gateSessionId, { lastPushedSha: String(head.stdout).trim() });
         }
       }
       store.save();
@@ -322,7 +451,7 @@ export async function executeApprovalCore(deps, requestId) {
     if (ok) {
       const head = await runGit(["rev-parse", "HEAD"], worktree);
       if (head.code === 0) {
-        store.setThreadWorktree(sessionId, { lastPushedSha: String(head.stdout).trim() });
+        store.setThreadWorktree(gateSessionId, { lastPushedSha: String(head.stdout).trim() });
       }
     }
     const evidence = recoveryEvidence(approval.action, { branch }, { stdout: pushed.stdout });

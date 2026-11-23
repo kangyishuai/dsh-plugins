@@ -208,3 +208,34 @@ describe("F30 reminders 落盘", () => {
     assert.deepEqual(store.listReminders(projectId), []);
   });
 });
+
+// B3 复审 P0：effort 白名单把本部署的 max/xhigh/off 静默清空（UI 还提示已保存）。
+// 修法：删白名单，非空即收（合法性由调用方按 modelCatalog.reasoning.efforts 校验）。
+describe("F42 线程默认 effort：部署枚举（max/xhigh/off）不被白名单吃掉", () => {
+  it("setThreadDefaults 收 max/xhigh/off，落盘冷启动后还在；空串仍表示继承", () => {
+    const { store, projectId } = freshProject();
+    for (const effort of ["max", "xhigh", "off"]) {
+      const written = store.setThreadDefaults(projectId, {
+        provider: "smoke-provider",
+        model: "smoke-model",
+        reasoningEffort: effort,
+      });
+      assert.equal(written.defaults.reasoningEffort, effort, `${effort} 不能在内核层被清空`);
+      assert.equal(written.defaults.provider, "smoke-provider");
+      store.save();
+      const reloaded = new ProjectStore({ root });
+      reloaded.load();
+      assert.equal(
+        reloaded.getProject(projectId).threadDefaults.reasoningEffort,
+        effort,
+        `${effort} 必须能从 projects.json 冷启动读回`,
+      );
+    }
+    // 空串 = 继承宿主默认（这条语义没变）
+    const cleared = store.setThreadDefaults(projectId, { reasoningEffort: "" });
+    assert.equal(cleared.defaults.reasoningEffort, "");
+    // 超长脏值只截断，不会把整条记录变成不可读
+    const long = store.setThreadDefaults(projectId, { reasoningEffort: "x".repeat(200) });
+    assert.equal(long.defaults.reasoningEffort.length, 40);
+  });
+});

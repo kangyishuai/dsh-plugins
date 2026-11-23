@@ -169,3 +169,22 @@ describe("F3 记忆目录读取（生产代码真读盘，不是自己 filter �
     if (!badSlug.ok) assert.equal(badSlug.reason, "fragment/invalid-slug");
   });
 });
+
+describe("F37 listMemoryFragments 的项目存在性校验（B3 复审 P2）", () => {
+  it("service 层先 getProject 再碰文件系统（未知 projectId 不落到 fs 路径拼接）", () => {
+    // 为什么是静态断言：lib/service.js 顶层 import 了宿主包，单测环境装不到；
+    // 运行时证据由 `pnpm smoke:projects` 用真实 RPC 打未知 projectId 补上。
+    const source = readFileSync(join(import.meta.dirname, "..", "lib", "service.js"), "utf8");
+    const start = source.indexOf("listMemoryFragments(projectId) {");
+    assert.ok(start > 0, "找不到 listMemoryFragments 方法");
+    const body = source.slice(start, source.indexOf("\n  }", start));
+    assert.match(body, /const store = this\.requireStore\(\);/u);
+    assert.match(body, /if \(!store\.getProject\(id\)\) throw new Error/u);
+    assert.match(body, /unknown project/u);
+    // 校验必须发生在 listFragments 之前，否则路径拼接已经发生（`../` 可枚举 dataRoot 外）
+    assert.ok(
+      body.indexOf("getProject(id)") < body.indexOf("return listFragments"),
+      "存在性校验必须在 listFragments 调用之前",
+    );
+  });
+});

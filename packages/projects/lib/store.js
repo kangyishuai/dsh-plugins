@@ -42,8 +42,15 @@ export const MAX_GOAL_CHARS = 8_000;
 /** F23：线程标题上限（右键重命名）。 */
 export const MAX_THREAD_TITLE_CHARS = 120;
 
-/** F42：线程默认模型/effort 的合法 effort 词表（与宿主 selectModel 对齐）。 */
-export const THREAD_EFFORTS = Object.freeze(["", "low", "medium", "high"]);
+/**
+ * F42：线程默认 effort 的**上限**（只防超长垃圾，不做枚举白名单）。
+ *
+ * 为什么没有白名单：`reasoningEffort` 是**部署与模型给的枚举**，不是宿主的固定三档。
+ * 本机实测默认档是 `max`，另有 `xhigh` / `off`；以前写死 ["low","medium","high"]
+ * 会把这些值**静默清空**（normalizeThreadDefaults 丢值），而 UI 还提示「已保存」。
+ * 合法性由写路径对照 modelCatalog.reasoning.efforts 校验（拿不到目录时按非空即收）。
+ */
+export const MAX_EFFORT_LENGTH = 40;
 
 /**
  * 线程记录里允许持久化的 state 词表。
@@ -353,7 +360,7 @@ export function normalizeNotifyPrefs(value) {
  * @param {string} root
  */
 /**
- * F42：线程默认模型/effort 归一：只认字符串，effort 必须在词表内。
+ * F42：线程默认模型/effort 归一：只认字符串；effort 非空即收（部署枚举，不写死档位）。
  * @param {unknown} value
  * @returns {{ provider: string, model: string, reasoningEffort: string }}
  */
@@ -361,11 +368,15 @@ export function normalizeThreadDefaults(value) {
   const source = value && typeof value === "object" ? /** @type {any} */ (value) : {};
   const provider = typeof source.provider === "string" ? source.provider.trim() : "";
   const model = typeof source.model === "string" ? source.model.trim() : "";
-  const effort = typeof source.reasoningEffort === "string" ? source.reasoningEffort.trim() : "";
+  const effort =
+    typeof source.reasoningEffort === "string"
+      ? source.reasoningEffort.trim().slice(0, MAX_EFFORT_LENGTH)
+      : "";
   return {
     provider,
     model,
-    reasoningEffort: THREAD_EFFORTS.includes(effort) ? effort : "",
+    // 非空即收：白名单会丢部署特有的档位（max/xhigh/off）；空串 = 继承宿主默认。
+    reasoningEffort: effort,
   };
 }
 

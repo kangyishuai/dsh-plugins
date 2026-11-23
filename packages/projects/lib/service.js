@@ -3525,10 +3525,16 @@ export class ProjectsService extends TypertRemoteService {
 
   /**
    * F37：列出记忆碎片（标题从索引行取，读不到标题就用 slug）。
+   *
+   * 复审 P2：必须**先校验项目存在**再碰文件系统——`projectId` 直接拼进
+   * `<dataRoot>/<projectId>/memory/fragments/`，不校验就能用 `../` 枚举 dataRoot 外的目录名。
    * @param {string} projectId
    */
   listMemoryFragments(projectId) {
-    return listFragments(this.dataRoot, String(projectId ?? ""));
+    const store = this.requireStore();
+    const id = String(projectId ?? "");
+    if (!store.getProject(id)) throw new Error(`projects: unknown project ${id}`);
+    return listFragments(this.dataRoot, id);
   }
 
   /**

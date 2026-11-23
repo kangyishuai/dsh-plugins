@@ -293,3 +293,130 @@ describe("executeApproval：其余分支不会掉进 deferred", () => {
     assert.equal(ok.executed, true);
   });
 });
+
+// —— B3 复审 P2：once 凭据必须在所有闸通过、占位成功之后才消费 ——
+describe("F55 once 凭据的消费时序（复审 P2）", () => {
+  /** 把某目录的一次性授权写进 policy（模拟授权卡点了 Allow once）。 */
+  const grantOnce = (
+    /** @type {any} */ store,
+    /** @type {any} */ project,
+    /** @type {string} */ dir,
+  ) => {
+    const current = store.getProject(project.id);
+    store.updateProject(project.id, {
+      policy: {
+        ...current.policy,
+        folderAuth: {
+          ...(current.policy.folderAuth ?? {}),
+          [dir]: { mode: "once", at: "now", used: false },
+        },
+      },
+    });
+    store.save();
+  };
+  const grantOf = (
+    /** @type {any} */ store,
+    /** @type {any} */ project,
+    /** @type {string} */ dir,
+  ) => store.getProject(project.id).policy.folderAuth[dir];
+
+  it("动作被拒（switch-off）时 once 不被烧掉：凭据还在，重试仍可用；放行后才标 used", async () => {
+    const { deps, store, project } = makeDeps();
+    grantOnce(store, project, root);
+    const requestId = approvedRequest(store, project.id, "merge", { prNumber: 1 });
+    const refused = await executeApprovalCore(deps, requestId);
+    assert.equal(refused.executed, false);
+    assert.equal(refused.reason, "switch-off");
+    assert.equal(grantOf(store, project, root).used, false, "被拒时 once 不能被消费");
+    const auditOf = (/** @type {string} */ action) =>
+      store.state.audit.filter(
+        (/** @type {any} */ item) => item.action === action && item.projectId === project.id,
+      );
+    const consumedAudits = () => auditOf("folder/once-consumed");
+    assert.deepEqual(consumedAudits(), [], "被拒时不能留下消费审计");
+    assert.ok(!approvalOf(store, requestId).claimedAt, "被拒后不能留占位");
+
+    // 打开开关后同一张申请重试：一次通过，凭据这时才消费。
+    const current = store.getProject(project.id);
+    store.updateProject(project.id, {
+      policy: { ...current.policy, danger: { ...current.policy.danger, autoMerge: true } },
+    });
+    store.save();
+    const retried = await executeApprovalCore(deps, requestId);
+    assert.equal(retried.executed, true);
+    assert.equal(grantOf(store, project, root).used, true, "放行后 once 必须标 used");
+    assert.equal(consumedAudits().length, 1);
+    assert.equal(consumedAudits()[0].afterClaim, true);
+  });
+
+  it("占位后才发现没有 worktree：once 消费后回滚，凭据仍可用于重试", async () => {
+    const { deps, store, project } = makeDeps({ danger: { forcePushOwnBranch: true } });
+    grantOnce(store, project, root);
+    const requestId = approvedRequest(store, project.id, "push-branch", { branch: "dsh/demo-1" });
+    const refused = await executeApprovalCore(deps, requestId);
+    assert.equal(refused.executed, false);
+    assert.equal(refused.reason, "no-worktree");
+    assert.equal(grantOf(store, project, root).used, false, "没落地就不能算用掉");
+    const audit = store.state.audit.filter(
+      (/** @type {any} */ item) => item.projectId === project.id,
+    );
+    assert.equal(
+      audit.filter((/** @type {any} */ item) => item.action === "folder/once-consumed").length,
+      1,
+    );
+    assert.equal(
+      audit.filter((/** @type {any} */ item) => item.action === "folder/once-rolled-back").length,
+      1,
+      "回滚要留审计，方便解释「为什么还能再试一次」",
+    );
+    assert.ok(!approvalOf(store, requestId).claimedAt);
+  });
+
+  it("动作被拒（merge/repo-unknown）时同样不消费 once", async () => {
+    const { deps, store, project } = makeDeps({ danger: { autoMerge: true } });
+    grantOnce(store, project, root);
+    const requestId = approvedRequest(store, project.id, "merge", { prNumber: 1 });
+    // 让 remote 解析失败：fakeGit 只有在 remote get-url origin 时返回仓库，这里换成空目录
+    const broken = { ...deps, runGit: async () => ({ code: 1, stdout: "", stderr: "" }) };
+    const refused = await executeApprovalCore(broken, requestId);
+    assert.equal(refused.executed, false);
+    assert.equal(refused.reason, "merge/repo-unknown");
+    assert.equal(grantOf(store, project, root).used, false, "repo 解析失败不能烧掉 once");
+    // repo 解析发生在消费之前：这条路径上凭据连碰都没碰（更强）。
+    assert.equal(
+      store.state.audit.filter(
+        (/** @type {any} */ item) =>
+          item.projectId === project.id && item.action === "folder/once-consumed",
+      ).length,
+      0,
+    );
+  });
+});
+
+// —— B3 复审 P2：文件夹闸按「实际 cwd 所属目录」求 mode，不再一律 dirs[0] ——
+describe("F55 闸门目录语义（复审 P2）", () => {
+  it("push-branch 的 worktree 继承它所属的项目目录（第二个目录的授权也生效）", async () => {
+    const { actionDirectory, folderGate } = await import("../lib/execute.js");
+    const project = {
+      id: "p1",
+      dirs: ["/w/one", "/w/two"],
+      policy: { folderAuth: { "/w/two": { mode: "deny", used: false } } },
+    };
+    const target = actionDirectory(project, "push-branch", {
+      worktree: "/w/.dsh-worktrees/two/p1-1",
+    });
+    assert.equal(target.dir, "/w/two");
+    assert.equal(target.cwd, "/w/.dsh-worktrees/two/p1-1");
+    assert.equal(target.inherited, true);
+    const gate = folderGate(project, "push-branch", { worktree: "/w/.dsh-worktrees/two/p1-1" });
+    assert.equal(gate.ok, false);
+    assert.equal(gate.reason, "folder/denied");
+    assert.equal(gate.dir, "/w/two");
+    // merge 仍按 dirs[0]
+    assert.equal(actionDirectory(project, "merge").dir, "/w/one");
+    // 反查不到时退回 dirs[0]，并如实标 inherited=false（不假装知道）
+    const unknown = actionDirectory(project, "push-branch", { worktree: "/elsewhere/wt" });
+    assert.equal(unknown.dir, "/w/one");
+    assert.equal(unknown.inherited, false);
+  });
+});
