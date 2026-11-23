@@ -106,6 +106,10 @@ window.__ModuleLoader__.load({
       "b3.modelSave": "保存默认",
       "b3.modelSaved": "线程默认模型已保存",
       "b3.modelUnavailable": "宿主没有暴露模型目录",
+      "b3.modelManual": "provider|model（手填）",
+      "b3.effortManual": "effort（手填）",
+      "b3.modelManualToggle": "手填模型 / effort",
+      "b3.modelManualHint": "目录不可用时手填；保存写的就是这两个值。",
       "b3.sessionsTitle": "从会话开线程",
       "b3.sessionsLoad": "列出最近会话",
       "b3.sessionsAttach": "挂为线程",
@@ -869,6 +873,127 @@ window.__ModuleLoader__.load({
       "detail.group.resolved": "Ready for review",
       "detail.group.idle": "Idle",
       "detail.group.archived": "Archived",
+
+      "settings.nav.general": "General",
+      "settings.nav.memory": "Memory",
+      "settings.nav.usage": "Usage",
+      "settings.nav.debug": "Debug",
+      "settings.sectionTitle": "Settings sections",
+      "settings.budget": "Budget (threads/day / concurrent / steps / tokens)",
+      "settings.budgetSave": "Save budget",
+      "settings.budgetSaved": "Budget saved: {budget}",
+      "settings.budgetUnlimited": "unlimited",
+      "settings.memoryTitle": "Memory and instructions",
+      "settings.memoryCounts":
+        "Instructions {instructions} chars · memory index {memory} chars · {fragments} fragments",
+      "settings.memoryTemplate": "Fill in project template (managed AGENTS.md block)",
+      "settings.memoryTemplateDone": "Template written: {path}",
+      "settings.usageTitle": "Usage",
+      "settings.usageNote":
+        "The host exposes no pricing API: this counts tokens and context usage only, never money.",
+      "settings.usageTokens": "Today {today} tokens · last 7 days {total} tokens",
+      "settings.usageContext":
+        "Context: instructions {instructions} chars · memory {memory} chars · {fragments} fragments",
+      "settings.usageThreads":
+        "{total} threads · {today} created today · {working} running · {waiting} waiting on you",
+      "settings.usageEmpty": "No usage to report yet.",
+      "settings.debugTitle": "Debug access",
+      "settings.debugRows":
+        "{projects} projects · {active} active · {attached} sessions with context",
+      "settings.ghCheck": "Check GitHub connection",
+      "settings.ghChecking": "Checking…",
+      "settings.ghOk": "GitHub: {message}",
+      "settings.ghFail": "GitHub: {message} ({hint})",
+      "settings.notifyTitle": "Notifications (per project)",
+      "settings.notifyFailed": "Failed",
+      "settings.notifyWaiting": "Waiting on you",
+      "settings.notifyCompleted": "Completed",
+      "settings.notifySaved": "Notification switches saved",
+      "detail.goalCounter": "{count} / 8,000",
+      "detail.fragmentsTitle": "Memory fragments (separate files)",
+      "detail.fragmentAdd": "Add fragment",
+      "detail.fragmentTitlePlaceholder": "Fragment title, e.g. deployment notes",
+      "detail.fragmentTextPlaceholder":
+        "One paragraph is enough: the model reads this file when it needs details",
+      "detail.fragmentAdded": "Fragment added: {slug}",
+      "detail.fragmentForget": "Forget",
+      "detail.fragmentForgotten": "Forgotten",
+      "detail.fragmentPreview": "Preview",
+      "detail.fragmentEmpty":
+        "No fragments yet. Add one to turn memory from a paragraph into searchable files.",
+      "detail.entriesTitle": "Memory entries",
+      "detail.entriesEmpty": "No memory entries yet.",
+      "detail.entryForget": "Forget this entry",
+      "b3.folderTitle": "Local folder access",
+      "b3.folderCopy": "Commands can run in the folder you choose without asking every time.",
+      "b3.folderDeny": "Deny",
+      "b3.folderDefault": "Set as default folder",
+      "b3.folderOnce": "Allow once",
+      "b3.folderUnset": "Not granted yet",
+      "b3.folderDefaultTag": "Default folder",
+      "b3.folderDeniedTag": "Denied",
+      "b3.folderOnceUsed": "One-time grant already used",
+      "b3.folderSaved": "Recorded: {decision}",
+      "b3.folderNoDir": "Bind a folder under “project directories” first, then grant access.",
+      "b3.modelTitle": "Thread default model",
+      "b3.model": "Thread model",
+      "b3.effort": "Thread effort",
+      "b3.modelInherit": "Inherit host default",
+      "b3.modelSave": "Save defaults",
+      "b3.modelSaved": "Thread default model saved",
+      "b3.modelUnavailable": "The host exposes no model catalog",
+      "b3.modelManual": "provider|model (manual)",
+      "b3.effortManual": "effort (manual)",
+      "b3.modelManualToggle": "Type model / effort manually",
+      "b3.modelManualHint":
+        "Type these when no catalog is available; Save writes exactly these values.",
+      "b3.sessionsTitle": "Start a thread from a session",
+      "b3.sessionsLoad": "List recent sessions",
+      "b3.sessionsAttach": "Attach as thread",
+      "b3.sessionsEmpty": "No recent sessions to attach.",
+      "b3.sessionsAttached": "Attached as thread: {id}",
+      "b3.mentionTitle": "@ mention",
+      "b3.mentionRegistered": "@ source registered (lists this project's threads and project name)",
+      "b3.mentionUnavailable": "@ source unavailable (this deployment has no inputTriggers)",
+      "b3.fragAdd": "Add fragment",
+      "b3.fragTitlePh": "Fragment title",
+      "b3.fragTextPh": "One paragraph is enough; the model reads this file when it needs details",
+      "b3.fragAdded": "Fragment added: {slug}",
+      "b3.fragForget": "Forget",
+      "b3.fragPreview": "Preview",
+      "b3.fragEmpty": "No fragments yet.",
+      "b3.fragLimit": "{count} / {limit} fragments",
+      "b3.entriesTitle": "Index entries (MEMORY.md)",
+      "b3.entriesEmpty": "No index entries yet.",
+      "b3.entryForget": "Forget this entry",
+      "b3.threadActions": "Thread actions",
+      "b3.actionRename": "Rename",
+      "b3.actionUnread": "Mark unread",
+      "b3.actionResolve": "Resolve",
+      "b3.actionReopen": "Reopen",
+      "b3.actionCopy": "Copy ID",
+      "b3.actionReclaim": "Reclaim directory",
+      "b3.actionDetach": "Stop tracking",
+      "b3.renamePlaceholder": "Thread title",
+      "b3.renameSave": "Save",
+      "b3.renamed": "Renamed",
+      "b3.copied": "ID copied",
+      "b3.actionDone": "Done",
+      "notify.completed": "{count} threads completed",
+      "detail.memoryEdit": "Edit standing rules",
+      "detail.memorySave": "Save rules",
+      "detail.memorySaving": "Saving…",
+      "detail.memorySaved": "Rules saved ({chars} chars)",
+      "detail.memoryCleared": "Rules cleared",
+      "detail.memorySaveFailed": "Save failed: {reason}",
+      "detail.memoryAppendPlaceholder":
+        "Append a memory (e.g. this repo's tests run with pnpm test)",
+      "detail.memoryAppend": "Append memory",
+      "detail.memoryAppended": "Memory appended",
+      "detail.memoryAppendDup": "Already remembered; nothing was written twice",
+      "detail.dirInvalidHint":
+        "An absolute path is required (starting with /); relative paths cannot be a session directory, so the save was rejected.",
+      "detail.configTitle": "Advanced settings (repository access / trash)",
     };
     var PANEL_ID = "projects";
     var SERVICE = "projects";
@@ -3640,6 +3765,9 @@ window.__ModuleLoader__.load({
             call(api.ctx, "coordinatorView", { projectId: project.id }),
             call(api.ctx, "modelCatalog"),
             call(api.ctx, "prPollState"),
+            // P0 复审：policy / threadDefaults 的写路径必须能回读——只刷 progress 不够，
+            // 父级传进来的 project 是打开详情那一刻的快照，得自己再取一次项目记录。
+            call(api.ctx, "getProject", { projectId: project.id }).catch(() => null),
           ]).then(
             (values) => {
               setData({
@@ -3655,6 +3783,7 @@ window.__ModuleLoader__.load({
                 coordinator: values[5] || null,
                 models: values[6] || null,
                 poll: values[7] || null,
+                liveProject: values[8] || null,
               });
               // F25 折叠状态存宿主 storageDomain（跨重启保留）；读不到就当全部展开。
               // 只在首次加载时套用：否则 5s 轮询会用旧值把用户刚点的折叠弹回去。
@@ -4865,6 +4994,34 @@ window.__ModuleLoader__.load({
         const notifications = Array.isArray(row.view?.pendingInput)
           ? row.view.pendingInput.length
           : 0;
+        // U18：宿主右键菜单（注册在 `projects.thread` target 族）。服务缺失时返回 false，
+        // 右键不拦截，自绘「⋯」菜单仍在。
+        /** @param {any} event */
+        const openHostThreadMenu = (event) => {
+          const menus = api.contextMenus;
+          if (!menus || typeof menus.open !== "function") return false;
+          try {
+            const rect = event?.currentTarget?.getBoundingClientRect?.();
+            const point =
+              rect && Number(event?.clientX) === 0 && Number(event?.clientY) === 0
+                ? { x: rect.left, y: rect.bottom }
+                : { x: Number(event?.clientX) || 0, y: Number(event?.clientY) || 0 };
+            menus.open(
+              {
+                kind: "projects.thread",
+                value: {
+                  sessionId: String(row.sessionId),
+                  title: title,
+                  resolved: state === "resolved",
+                },
+              },
+              point,
+            );
+            return true;
+          } catch (_error) {
+            return false;
+          }
+        };
         return h(
           "div",
           {
@@ -4885,8 +5042,12 @@ window.__ModuleLoader__.load({
             "data-projects-thread-resolved-at": String(row.resolvedAt ?? ""),
             "data-projects-thread-unread": row.unread === true ? "true" : "false",
             "data-projects-thread-focused": focused ? "true" : "false",
+            "data-projects-thread-host-menu": api.contextMenuReady === true ? "yes" : "no",
             onMouseEnter: () => setThreadHover(String(row.sessionId)),
             onMouseLeave: () => setThreadHover(""),
+            onContextMenu: (/** @type {any} */ event) => {
+              if (openHostThreadMenu(event)) event.preventDefault();
+            },
           },
           // 状态点：颜色只表达状态；未读时加一圈光晕（F31）
           h("span", {
@@ -5403,6 +5564,12 @@ window.__ModuleLoader__.load({
                   "aria-expanded": threadMenu === row.sessionId ? "true" : "false",
                   onClick: () =>
                     setThreadMenu(threadMenu === row.sessionId ? "" : String(row.sessionId)),
+                  onKeyDown: (/** @type {any} */ event) => {
+                    // U18：Shift+F10 打开宿主菜单（键盘用户与右键等价；宿主菜单自己管焦点）。
+                    if (event.key === "F10" && event.shiftKey && openHostThreadMenu(event)) {
+                      event.preventDefault();
+                    }
+                  },
                 },
                 uiIcon("more", "⋯", 16),
               ),
@@ -6876,7 +7043,7 @@ window.__ModuleLoader__.load({
                 h(B3ContextCard, {
                   api: api,
                   t: t,
-                  project: project,
+                  project: data.liveProject || project,
                   fragments: data.content?.fragments || [],
                   entries: data.content?.entries || [],
                   onChanged: load,
@@ -8043,7 +8210,7 @@ window.__ModuleLoader__.load({
             "data-projects-template-apply": "",
             onClick: () => {
               if (!selectedForB3) return;
-              call(api.ctx, "applyProjectTemplate", selectedForB3.id).then(
+              call(api.ctx, "applyProjectTemplate", { projectId: selectedForB3.id }).then(
                 (/** @type {any} */ result) => {
                   setB3((/** @type {any} */ prev) => ({
                     ...prev,
@@ -8589,10 +8756,45 @@ window.__ModuleLoader__.load({
       var dirs = Array.isArray(project.dirs) ? project.dirs : [];
       var folderAuth = project.policy?.folderAuth || {};
       var defaults = project.threadDefaults || { provider: "", model: "", reasoningEffort: "" };
-      var st = useState({ message: "", busy: "", catalog: null, sessions: null, rename: "" });
+      var st = useState({
+        message: "",
+        busy: "",
+        catalog: null,
+        sessions: null,
+        rename: "",
+        manualOpen: false,
+        /** F55：授权 RPC 回执里的 mode（宿主回读值），父级刷新前先用它渲染。 */
+        folderModes: {},
+        /** F42：setThreadDefaults 回执里的 defaults（宿主回读值），同样先于父级刷新。 */
+        savedDefaults: null,
+      });
       var view = st[0];
       var setView = st[1];
       var reload = props.onChanged;
+      // F42：下拉是**可写**的，选中值必须有自己的 state（不能回写 props 旧值——那是假保存）。
+      var pickedState = useState({
+        model: defaults.provider && defaults.model ? `${defaults.provider}|${defaults.model}` : "",
+        effort: defaults.reasoningEffort || "",
+      });
+      var picked = pickedState[0];
+      var setPicked = pickedState[1];
+      // F62：`@` 源是晚于插件就绪的服务，注册状态变化要能让这张卡重渲染（否则永远停在初始值）。
+      var mentionTick = useState(0);
+      var forceMention = mentionTick[1];
+      useEffect(() => {
+        if (typeof api.subscribeMentionSource !== "function") return undefined;
+        return api.subscribeMentionSource(() => {
+          forceMention((/** @type {number} */ n) => n + 1);
+        });
+      }, [api, forceMention]);
+      // 项目切换 / 宿主回读变化时，把下拉重置为盘上值。
+      useEffect(() => {
+        setPicked({
+          model:
+            defaults.provider && defaults.model ? `${defaults.provider}|${defaults.model}` : "",
+          effort: defaults.reasoningEffort || "",
+        });
+      }, [project.id, defaults.provider, defaults.model, defaults.reasoningEffort, setPicked]);
 
       useEffect(() => {
         call(api.ctx, "modelCatalog").then(
@@ -8615,24 +8817,50 @@ window.__ModuleLoader__.load({
           projectId: project.id,
           path: path,
           decision: decision,
-        }).then(() => {
+        }).then((/** @type {any} */ result) => {
           var label =
             decision === "default"
               ? text(t, "b3.folderDefault")
               : decision === "deny"
                 ? text(t, "b3.folderDeny")
                 : text(t, "b3.folderOnce");
+          // 服务端回执带 summary.mode（它自己从 store 回读）——先落到本地再等父级刷新。
+          var mode = String(result?.summary?.mode || result?.decision || decision);
+          setView((/** @type {any} */ prev) => ({
+            ...prev,
+            folderModes: { ...prev.folderModes, [path]: mode },
+          }));
           note(text(t, "b3.folderSaved", { decision: label }));
           if (typeof reload === "function") reload();
         }, fail);
       };
       var saveDefaults = () => {
+        var parts = String(picked.model || "").split("|");
+        var provider = parts.length > 1 ? parts[0] : "";
+        var modelId = parts.length > 1 ? parts.slice(1).join("|") : "";
         call(api.ctx, "setThreadDefaults", {
           projectId: project.id,
-          provider: defaults.provider || "",
-          model: defaults.model || "",
-          reasoningEffort: defaults.reasoningEffort || "",
-        }).then(() => {
+          provider: provider,
+          model: modelId,
+          reasoningEffort: String(picked.effort || ""),
+        }).then((/** @type {any} */ result) => {
+          // 回读盘上的值（不是把刚选的值再写一遍）：服务端返回 readback defaults。
+          var readback = result?.defaults || {};
+          setView((/** @type {any} */ prev) => ({
+            ...prev,
+            savedDefaults: {
+              provider: String(readback.provider ?? ""),
+              model: String(readback.model ?? ""),
+              reasoningEffort: String(readback.reasoningEffort ?? ""),
+            },
+          }));
+          setPicked({
+            model:
+              readback.provider && readback.model
+                ? `${readback.provider}|${readback.model}`
+                : String(picked.model || ""),
+            effort: String(readback.reasoningEffort ?? picked.effort ?? ""),
+          });
           note(text(t, "b3.modelSaved"));
           if (typeof reload === "function") reload();
         }, fail);
@@ -8656,47 +8884,70 @@ window.__ModuleLoader__.load({
           if (typeof reload === "function") reload();
         }, fail);
       };
-      // modelCatalog → <option>：结构不认识就只留「继承宿主默认」
+      // F42：modelCatalog → 可写的模型/effort 下拉。结构不认识就只留「继承宿主默认」。
+      /** @type {{ value: string, label: string }[]} */
       var options = [{ value: "", label: text(t, "b3.modelInherit") }];
+      /** @type {Record<string, string[]>} */
+      var effortByModel = {};
       var appendCatalogOptions = (/** @type {any} */ catalog) => {
-        var groups = [];
-        var gi = 0;
-        var mi = 0;
-        var group = /** @type {any} */ ({});
-        var models = [];
-        var model = /** @type {any} */ ({});
-        var id = "";
-        var provider = "";
         if (!catalog || typeof catalog !== "object") return;
-        groups = Array.isArray(catalog.groups)
-          ? catalog.groups
-          : Array.isArray(catalog.providers)
-            ? catalog.providers
-            : [];
-        for (gi = 0; gi < groups.length; gi += 1) {
-          group = groups[gi] || {};
-          models = Array.isArray(group.models) ? group.models : [];
-          for (mi = 0; mi < models.length; mi += 1) {
-            model = models[mi] || {};
-            id = String(model.id || model.model || "");
+        const groups = Array.isArray(catalog.groups) ? catalog.groups : [];
+        for (const group of groups) {
+          const models = Array.isArray(group?.models) ? group.models : [];
+          const provider = String(group?.id || group?.provider || "");
+          for (const model of models) {
+            const id = String(model?.id || model?.model || "");
             if (id === "") continue;
-            provider = String(group.id || group.provider || model.provider || "");
+            const value = provider === "" ? id : `${provider}|${id}`;
+            const rawEfforts =
+              model?.reasoning && Array.isArray(model.reasoning.efforts)
+                ? model.reasoning.efforts
+                : [];
+            const efforts = [];
+            for (const item of rawEfforts) {
+              const effortId =
+                typeof item === "string"
+                  ? item
+                  : String((item && (item.id || item.value || item.name)) || "");
+              if (effortId !== "") efforts.push(effortId);
+            }
             options.push({
-              value: `${provider}|${id}`,
-              label: (provider ? `${provider}/` : "") + id,
+              value: value,
+              label: (group.name ? `${String(group.name)}/` : provider ? `${provider}/` : "") + id,
             });
+            effortByModel[value] = efforts;
           }
         }
       };
       appendCatalogOptions(view.catalog);
-      var currentModel =
-        defaults.provider && defaults.model ? `${defaults.provider}|${defaults.model}` : "";
-      var effortOptions = ["", "low", "medium", "high"];
+      var effortChoices = (effortByModel[picked.model] || []).slice();
+      // 当前值不在目录里（部署换了 / 目录没暴露）也要留在选项里，不能把盘上的值吞掉。
+      if (picked.effort !== "" && effortChoices.indexOf(picked.effort) < 0) {
+        effortChoices.push(picked.effort);
+      }
+      // 目录统计（测试与 UI 共用）：下拉选项必须等于目录里的模型数 + 1（继承），
+      // 硬编码任何一条都会在这条等式上露馅。
+      var catalogStats = JSON.stringify({
+        groups: view.catalog && Array.isArray(view.catalog.groups) ? view.catalog.groups.length : 0,
+        models: options.length - 1,
+        failures:
+          view.catalog && Array.isArray(view.catalog.failures) ? view.catalog.failures.length : 0,
+        selectedEfforts: (effortByModel[picked.model] || []).length,
+      });
+      // 回读锚点：值来自宿主回读（props.project.threadDefaults），不是本地选择。
+      var defaultsReadback = JSON.stringify(
+        view.savedDefaults || {
+          provider: String(defaults.provider || ""),
+          model: String(defaults.model || ""),
+          reasoningEffort: String(defaults.reasoningEffort || ""),
+        },
+      );
       return h(
         "div",
         {
           style: { display: "flex", flexDirection: "column", gap: "8px" },
           "data-projects-b3-card": "",
+          "data-projects-mention-source-state": String(api.mentionSource || "unavailable"),
         },
         // F62：@ 源注册状态（注册失败也要诚实显示）
         h(
@@ -8767,7 +9018,7 @@ window.__ModuleLoader__.load({
             ? h("span", { style: styles.meta }, text(t, "b3.folderNoDir"))
             : dirs.map((/** @type {string} */ dir) => {
                 var record = folderAuth[dir] || null;
-                var mode = record?.mode ? String(record.mode) : "";
+                var mode = String(view.folderModes[dir] || record?.mode || "");
                 var stateLabel =
                   mode === "default"
                     ? text(t, "b3.folderDefaultTag")
@@ -8855,6 +9106,8 @@ window.__ModuleLoader__.load({
           {
             style: { display: "flex", flexDirection: "column", gap: "4px" },
             "data-projects-thread-defaults": "",
+            "data-projects-thread-defaults-value": defaultsReadback,
+            "data-projects-model-catalog": catalogStats,
           },
           h("span", { style: styles.name }, text(t, "b3.modelTitle")),
           h(
@@ -8873,12 +9126,21 @@ window.__ModuleLoader__.load({
               "select",
               {
                 style: styles.input,
-                value: currentModel,
+                value: picked.model,
                 "data-projects-thread-model": "",
-                disabled: true,
+                "data-projects-thread-model-count": String(options.length - 1),
+                onChange: (/** @type {any} */ event) => {
+                  var next = String(event.target.value || "");
+                  setPicked((/** @type {any} */ prev) => {
+                    var allowed = effortByModel[next] || [];
+                    var effort =
+                      prev.effort === "" || allowed.indexOf(prev.effort) >= 0 ? prev.effort : "";
+                    return { model: next, effort: effort };
+                  });
+                },
               },
               options.map((/** @type {any} */ option) =>
-                h("option", { key: option.value, value: option.value }, option.label),
+                h("option", { key: option.value || "inherit", value: option.value }, option.label),
               ),
             ),
           ),
@@ -8898,20 +9160,26 @@ window.__ModuleLoader__.load({
               "select",
               {
                 style: styles.input,
-                value: defaults.reasoningEffort || "",
+                value: picked.effort,
                 "data-projects-thread-effort": "",
-                disabled: true,
+                "data-projects-thread-effort-count": String(effortChoices.length),
+                onChange: (/** @type {any} */ event) => {
+                  var next = String(event.target.value || "");
+                  setPicked((/** @type {any} */ prev) => ({ ...prev, effort: next }));
+                },
               },
-              effortOptions.map((/** @type {string} */ value) =>
-                h(
-                  "option",
-                  { key: value || "inherit", value: value },
-                  value || text(t, "b3.modelInherit"),
+              [""]
+                .concat(effortChoices)
+                .map((/** @type {string} */ value) =>
+                  h(
+                    "option",
+                    { key: value || "inherit", value: value },
+                    value || text(t, "b3.modelInherit"),
+                  ),
                 ),
-              ),
             ),
           ),
-          // 下拉的可写入口：设置页可用时在设置里改；这里保证面板里也能改（详情右栏常驻只读值 + 一个写入按钮）
+          // 下拉自身就是可写路径；按钮把当前选择写给宿主，并回读宿主值（不是回写旧 props）。
           h(
             "div",
             { style: { display: "flex", gap: "6px", flexWrap: "wrap" } },
@@ -8936,6 +9204,51 @@ window.__ModuleLoader__.load({
               text(t, "b3.sessionsLoad"),
             ),
           ),
+          // 模型目录不可用（无凭据部署）时的**可写兜底**：手填 provider|model / effort。
+          // 默认收起（右栏值行应保持只读观感）；点「手填」才展开，保存写的就是这里看到的值。
+          h(
+            "button",
+            {
+              type: "button",
+              style: { ...styles.secondaryButton, alignSelf: "flex-start" },
+              "data-projects-thread-manual-toggle": "",
+              "aria-expanded": view.manualOpen ? "true" : "false",
+              onClick: () =>
+                setView((/** @type {any} */ prev) => ({ ...prev, manualOpen: !prev.manualOpen })),
+            },
+            text(t, "b3.modelManualToggle"),
+          ),
+          view.manualOpen
+            ? h(
+                "div",
+                { style: { display: "flex", gap: "6px", flexWrap: "wrap" } },
+                h("input", {
+                  type: "text",
+                  style: { ...styles.input, width: "170px" },
+                  value: picked.model,
+                  placeholder: text(t, "b3.modelManual"),
+                  "data-projects-thread-model-manual": "",
+                  onChange: (/** @type {any} */ event) =>
+                    setPicked((/** @type {any} */ prev) => ({
+                      ...prev,
+                      model: String(event.target.value || ""),
+                    })),
+                }),
+                h("input", {
+                  type: "text",
+                  style: { ...styles.input, width: "120px" },
+                  value: picked.effort,
+                  placeholder: text(t, "b3.effortManual"),
+                  "data-projects-thread-effort-manual": "",
+                  onChange: (/** @type {any} */ event) =>
+                    setPicked((/** @type {any} */ prev) => ({
+                      ...prev,
+                      effort: String(event.target.value || ""),
+                    })),
+                }),
+                h("span", { style: styles.meta }, text(t, "b3.modelManualHint")),
+              )
+            : null,
         ),
         // F3：从会话开线程
         view.sessions
@@ -9293,6 +9606,39 @@ window.__ModuleLoader__.load({
         ctx: c,
         t: t,
         mentionSource: "unavailable",
+        /** F62：注册状态变化的订阅者（ctx.inject 晚到，卡片要能重渲染）。
+         * @type {((status: string) => void)[]} */
+        mentionListeners: [],
+        /**
+         * F62：只有在 `registerSource()` **成功返回**之后才置 `registered`；
+         * 失败/服务缺失一律 `unavailable`（面板上照实显示，不假装注册过）。
+         * @param {"registered"|"unavailable"} status
+         */
+        setMentionSource: (status) => {
+          var next = String(status || "unavailable");
+          if (api.mentionSource === next) return;
+          api.mentionSource = next;
+          const listeners = api.mentionListeners.slice();
+          for (const listener of listeners) {
+            try {
+              listener(next);
+            } catch (_error) {
+              /* 订阅者异常不应影响注册本身 */
+            }
+          }
+        },
+        /** @param {(status: string) => void} listener */
+        subscribeMentionSource: (listener) => {
+          if (typeof listener !== "function") return () => {};
+          api.mentionListeners.push(listener);
+          return () => {
+            var at = api.mentionListeners.indexOf(listener);
+            if (at >= 0) api.mentionListeners.splice(at, 1);
+          };
+        },
+        /** U18：宿主 contextMenus 服务（晚到；缺失时自绘菜单照常可用）。 */
+        contextMenus: null,
+        contextMenuReady: false,
         /** U2 ⚙：宿主没有已验证的「打开插件设置」client API；有就调，没有返回 false 交给 UI 说明。 */
         openSettings: () => {
           try {
@@ -9380,71 +9726,114 @@ window.__ModuleLoader__.load({
 
       // F62：`@` 提及 provider（client 半唯一 seam：ctx.inputTriggers.registerSource）。
       // 候选来自 host RPC `mentionItems`（本项目的线程 + 项目名），插入形如 `@thread:<sessionId>`。
-      c.effect(() => {
-        // Cordis：未 inject 的服务属性访问会抛错（0.2.2-rc.3 实测），这里用 ctx.get 判空。
-        var svc = null;
-        try {
-          svc = typeof c.get === "function" ? c.get("inputTriggers") : c.inputTriggers;
-        } catch {
-          svc = null;
-        }
+      //
+      // `inputTriggers` 是**晚于插件就绪**的服务：用 `ctx.inject` 等它，不要写进 `exports.inject`
+      // ——后者缺服务会让整个插件不激活（docs/runtime/0.2.2-rc.2.md「晚于插件就绪的服务」）。
+      var mentionSpec = {
+        trigger: "@",
+        name: "projects",
+        order: 40,
+        showGroupTitle: false,
+        candidates: async (/** @type {any} */ _session, /** @type {any} */ request) => {
+          var items = await call(c, "mentionItems", {
+            query: String(request?.query || ""),
+          });
+          return (Array.isArray(items) ? items : []).map((/** @type {any} */ item) => {
+            var token = (item.kind === "thread" ? "thread:" : "project:") + String(item.id);
+            return {
+              name: token,
+              label: String(item.label || token),
+              description: String(item.detail || ""),
+              icon: item.kind === "thread" ? "session" : "folder",
+              value: token,
+            };
+          });
+        },
+        onPick: (/** @type {any} */ pick) => {
+          var token = String(pick?.candidate?.value || "");
+          var label = String(pick?.candidate?.label || token);
+          return {
+            insert: {
+              source: "projects",
+              ref: `@${token}`,
+              label: label,
+              appearance: "session",
+              clipboardText: `@${token}`,
+            },
+          };
+        },
+        codec: {
+          clipboardText: (/** @type {string} */ ref) => ref,
+          serialize: (/** @type {string} */ ref) =>
+            Promise.resolve(`<project-ref>${ref}</project-ref>`),
+        },
+      };
+      /** 注册一次 `@` 源；只有 registerSource 成功返回函数才算 registered。 */
+      var installMentionSource = (/** @type {any} */ svc) => {
         if (!svc || typeof svc.registerSource !== "function") {
-          api.mentionSource = "unavailable";
+          api.setMentionSource("unavailable");
           return () => {};
         }
-        var source = {
-          trigger: "@",
-          name: "projects",
-          order: 40,
-          showGroupTitle: false,
-          candidates: async (/** @type {any} */ _session, /** @type {any} */ request) => {
-            var items = await call(c, "mentionItems", {
-              query: String(request?.query || ""),
-            });
-            return (Array.isArray(items) ? items : []).map((/** @type {any} */ item) => {
-              var token = (item.kind === "thread" ? "thread:" : "project:") + String(item.id);
-              return {
-                name: token,
-                label: String(item.label || token),
-                description: String(item.detail || ""),
-                icon: item.kind === "thread" ? "session" : "folder",
-                value: token,
-              };
-            });
-          },
-          onPick: (/** @type {any} */ pick) => {
-            var token = String(pick?.candidate?.value || "");
-            var label = String(pick?.candidate?.label || token);
-            return {
-              insert: {
-                source: "projects",
-                ref: `@${token}`,
-                label: label,
-                appearance: "session",
-                clipboardText: `@${token}`,
-              },
-            };
-          },
-          codec: {
-            clipboardText: (/** @type {string} */ ref) => ref,
-            serialize: (/** @type {string} */ ref) =>
-              Promise.resolve(`<project-ref>${ref}</project-ref>`),
-          },
-        };
-        api.mentionSource = "registered";
-        return svc.registerSource(source);
-      }, "projects: @ mention source");
-
-      // F23/U18：线程右键菜单（自定义 target 族 `projects.thread`）。
-      // 内联动作在展开面板里也有等价入口（本机 smoke 的设置页可能被禁用，但右键贡献照样注册）。
-      c.effect(() => {
-        var menus = /** @type {any} */ (null);
+        /** @type {null | (() => void)} */
+        var dispose = null;
         try {
-          menus = typeof c.get === "function" ? c.get("contextMenus") : c.contextMenus;
-        } catch {
-          menus = null;
+          dispose = svc.registerSource(mentionSpec);
+        } catch (error) {
+          c.logger?.warn?.(`projects: @ source registration failed: ${String(error)}`);
+          api.setMentionSource("unavailable");
+          return () => {};
         }
-        if (!menus || typeof menus.register !== "function") return () => {};
+        if (typeof dispose !== "function") {
+          api.setMentionSource("unavailable");
+          return () => {};
+        }
+        const disposeMention = dispose;
+        api.setMentionSource("registered");
+        return () => {
+          try {
+            disposeMention();
+          } catch (_error) {
+            /* 卸载失败不影响插件其余部分 */
+          }
+          if (api.mentionSource === "registered") api.setMentionSource("unavailable");
+        };
+      };
+      if (typeof c.inject === "function") {
+        try {
+          c.inject(["inputTriggers"], (/** @type {any} */ scope) => {
+            var svc =
+              scope?.inputTriggers ??
+              (typeof scope?.get === "function" ? scope.get("inputTriggers") : null);
+            c.effect(() => installMentionSource(svc), "projects: @ mention source");
+          });
+        } catch (_error) {
+          api.setMentionSource("unavailable");
+        }
+      } else {
+        // 老宿主没有 ctx.inject：走同步取服务，拿不到就如实 unavailable。
+        c.effect(
+          () =>
+            installMentionSource(
+              (() => {
+                try {
+                  return typeof c.get === "function" ? c.get("inputTriggers") : c.inputTriggers;
+                } catch (_error) {
+                  return null;
+                }
+              })(),
+            ),
+          "projects: @ mention source",
+        );
+      }
+
+      // F23/U18：线程右键菜单。**真正接进宿主 `contextMenus`**（右键线程行 / ⋯ 上 Shift+F10）：
+      // 宿主菜单自带键盘导航、视口定位与键位提示；服务缺失时保留自绘「⋯」菜单，不丢入口。
+      // 与 `@` 源同理用 `ctx.inject` 等晚到的服务。
+      var installThreadMenus = (/** @type {any} */ menus) => {
+        if (!menus || typeof menus.register !== "function") {
+          api.contextMenuReady = false;
+          return () => {};
+        }
         var rpc = (/** @type {string} */ method, /** @type {any} */ args) => call(c, method, args);
         var notify = (/** @type {string} */ message) => {
           try {
@@ -9453,81 +9842,129 @@ window.__ModuleLoader__.load({
             /* 未验证的 API：提示失败不影响动作本身 */
           }
         };
-        return menus.register({
-          id: "projects.thread",
-          target: "projects.thread",
-          order: 200,
-          resolve: (/** @type {any} */ target) => {
-            var value = target && typeof target === "object" ? target : {};
-            var sessionId = String(value.sessionId || "");
-            if (sessionId === "") return [];
-            return [
-              {
-                id: "rename",
-                label: ZH["b3.actionRename"],
-                run: () => {
-                  var title = typeof value.title === "string" ? value.title : "";
-                  return rpc("renameThread", { sessionId: sessionId, title: title }).then(() => {
-                    notify(ZH["b3.renamed"]);
-                  });
+        /** @type {null | (() => void)} */
+        var dispose = /** @type {any} */ (
+          menus.register({
+            id: "projects.thread",
+            target: "projects.thread",
+            order: 200,
+            resolve: (/** @type {any} */ target) => {
+              // 宿主把 `{kind, value}` 的 value 传进来（registry.resolve 的约定）。
+              var value = target && typeof target === "object" ? target : {};
+              var sessionId = String(value.sessionId || "");
+              if (sessionId === "") return [];
+              return [
+                {
+                  id: "rename",
+                  label: text(t, "b3.actionRename"),
+                  run: () => {
+                    var title = typeof value.title === "string" ? value.title : "";
+                    return rpc("renameThread", { sessionId: sessionId, title: title }).then(() => {
+                      notify(text(t, "b3.renamed"));
+                    });
+                  },
                 },
-              },
-              {
-                id: "unread",
-                label: ZH["b3.actionUnread"],
-                run: () =>
-                  rpc("setThreadUnread", { sessionId: sessionId, unread: true }).then(() => {
-                    notify(ZH["b3.actionDone"]);
-                  }),
-              },
-              {
-                id: "resolve",
-                label: value.resolved ? ZH["b3.actionReopen"] : ZH["b3.actionResolve"],
-                run: () =>
-                  rpc("resolveThread", { sessionId: sessionId, resolved: !value.resolved }).then(
-                    () => {
-                      notify(ZH["b3.actionDone"]);
-                    },
-                  ),
-              },
-              {
-                id: "copy",
-                label: ZH["b3.actionCopy"],
-                run: () => {
-                  try {
-                    if (
-                      navigator.clipboard &&
-                      typeof navigator.clipboard.writeText === "function"
-                    ) {
-                      navigator.clipboard.writeText(sessionId);
+                {
+                  id: "unread",
+                  label: text(t, "b3.actionUnread"),
+                  run: () =>
+                    rpc("setThreadUnread", { sessionId: sessionId, unread: true }).then(() => {
+                      notify(text(t, "b3.actionDone"));
+                    }),
+                },
+                {
+                  id: "resolve",
+                  label: value.resolved ? text(t, "b3.actionReopen") : text(t, "b3.actionResolve"),
+                  run: () =>
+                    rpc("resolveThread", { sessionId: sessionId, resolved: !value.resolved }).then(
+                      () => {
+                        notify(text(t, "b3.actionDone"));
+                      },
+                    ),
+                },
+                {
+                  id: "copy",
+                  label: text(t, "b3.actionCopy"),
+                  run: () => {
+                    try {
+                      if (
+                        navigator.clipboard &&
+                        typeof navigator.clipboard.writeText === "function"
+                      ) {
+                        navigator.clipboard.writeText(sessionId);
+                      }
+                    } catch (_error) {
+                      /* 剪贴板不可用 */
                     }
-                  } catch (_error) {
-                    /* 剪贴板不可用 */
-                  }
-                  notify(ZH["b3.copied"]);
+                    notify(text(t, "b3.copied"));
+                  },
                 },
-              },
-              {
-                id: "reclaim",
-                label: ZH["b3.actionReclaim"],
-                separatorBefore: true,
-                run: () =>
-                  rpc("reclaimThread", { sessionId: sessionId }).then(() => {
-                    notify(ZH["b3.actionDone"]);
-                  }),
-              },
-              {
-                id: "detach",
-                label: ZH["b3.actionDetach"],
-                run: () =>
-                  rpc("detachThread", { sessionId: sessionId }).then(() => {
-                    notify(ZH["b3.actionDone"]);
-                  }),
-              },
-            ];
-          },
-        });
-      }, "projects: thread context menu");
+                {
+                  id: "reclaim",
+                  label: text(t, "b3.actionReclaim"),
+                  separatorBefore: true,
+                  run: () =>
+                    rpc("reclaimThread", { sessionId: sessionId }).then(() => {
+                      notify(text(t, "b3.actionDone"));
+                    }),
+                },
+                {
+                  id: "detach",
+                  label: text(t, "b3.actionDetach"),
+                  run: () =>
+                    rpc("detachThread", { sessionId: sessionId }).then(() => {
+                      notify(text(t, "b3.actionDone"));
+                    }),
+                },
+              ];
+            },
+          })
+        );
+        if (typeof dispose !== "function") {
+          api.contextMenuReady = false;
+          return () => {};
+        }
+        const disposeMenus = dispose;
+        api.contextMenus = menus;
+        api.contextMenuReady = true;
+        return () => {
+          try {
+            disposeMenus();
+          } catch (_error) {
+            /* 卸载失败不影响插件其余部分 */
+          }
+          if (api.contextMenus === menus) {
+            api.contextMenus = null;
+            api.contextMenuReady = false;
+          }
+        };
+      };
+      if (typeof c.inject === "function") {
+        try {
+          c.inject(["contextMenus"], (/** @type {any} */ scope) => {
+            var menus =
+              scope?.contextMenus ??
+              (typeof scope?.get === "function" ? scope.get("contextMenus") : null);
+            c.effect(() => installThreadMenus(menus), "projects: thread context menu");
+          });
+        } catch (_error) {
+          api.contextMenuReady = false;
+        }
+      } else {
+        c.effect(
+          () =>
+            installThreadMenus(
+              (() => {
+                try {
+                  return typeof c.get === "function" ? c.get("contextMenus") : c.contextMenus;
+                } catch (_error) {
+                  return null;
+                }
+              })(),
+            ),
+          "projects: thread context menu",
+        );
+      }
 
       c.effect(
         () =>

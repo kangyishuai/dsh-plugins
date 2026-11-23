@@ -38,18 +38,8 @@ import { executeApprovalCore } from "./execute.js";
 import { checkPreapproval } from "./executor.js";
 import { applyFolderDecision, consumeOnceFolderGrant, folderAuthSummary } from "./folder-auth.js";
 import { githubCheckResult, parseGhAuthStatus, parseGhRepoList } from "./github.js";
-import {
-  appendEntry,
-  fragmentIndexLine,
-  MEMORY_FRAGMENT_MAX_CHARS,
-  MEMORY_FRAGMENT_MAX_COUNT,
-  normalizeFragmentText,
-  normalizeFragmentTitle,
-  parseMemoryBlocks,
-  previewText,
-  removeMemoryBlock,
-  uniqueFragmentSlug,
-} from "./memory.js";
+import { appendEntry, parseMemoryBlocks } from "./memory.js";
+import { addFragment, forgetMemoryItem, listFragments, readFragment } from "./memory-store.js";
 import { buildMentionItems } from "./mentions.js";
 import { normalizeNotifyPatch } from "./notify.js";
 import {
@@ -132,23 +122,6 @@ function declareRemote(Proto, method) {
     throw new Error(`projects: cannot declare Remote method ${method}`);
   }
   initializers[0].call(Object.create(Proto.prototype));
-}
-
-/** 目录里碎片文件的名字（只认 .md）。 @param {string} dir @returns {string[]} */
-function listFragmentFiles(dir) {
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter((name) => typeof name === "string" && name.endsWith(".md") && !name.startsWith("."))
-    .sort();
-}
-
-/** @param {string} file @returns {string} */
-function statMtime(file) {
-  try {
-    return statSync(file).mtime.toISOString();
-  } catch {
-    return "";
-  }
 }
 
 /**
@@ -3410,47 +3383,20 @@ export class ProjectsService extends TypertRemoteService {
   addMemoryFragment(projectId, title, text) {
     const store = this.requireStore();
     if (!store.getProject(projectId)) throw new Error(`projects: unknown project ${projectId}`);
-    const normalizedTitle = normalizeFragmentTitle(title);
-    const body = normalizeFragmentText(text);
-    if (body.ok !== true) {
-      store.appendAudit({ action: "memory/fragment-rejected", projectId, reason: body.reason });
+    const result = addFragment(this.dataRoot, projectId, title, text);
+    if (result.ok !== true) {
+      store.appendAudit({ action: "memory/fragment-rejected", projectId, reason: result.reason });
       store.save();
-      return { ok: false, reason: body.reason };
+      return result;
     }
-    const dir = join(this.dataRoot, projectId, "memory", "fragments");
-    mkdirSync(dir, { recursive: true });
-    const existing = listFragmentFiles(dir);
-    if (existing.length >= MEMORY_FRAGMENT_MAX_COUNT) {
-      store.appendAudit({ action: "memory/fragment-rejected", projectId, reason: "too-many" });
-      store.save();
-      return { ok: false, reason: "fragment-too-many", limit: MEMORY_FRAGMENT_MAX_COUNT };
-    }
-    const finalTitle = normalizedTitle === "" ? `记忆 ${existing.length + 1}` : normalizedTitle;
-    const slug = uniqueFragmentSlug(
-      finalTitle,
-      existing.map((name) => name.replace(/\.md$/u, "")),
-    );
-    const file = join(dir, `${slug}.md`);
-    writeFileSync(file, `${body.text}\n`, { mode: 0o600, flag: "wx" });
-    const indexFile = join(this.dataRoot, projectId, "memory", "MEMORY.md");
-    const current = existsSync(indexFile) ? readFileSync(indexFile, "utf8") : "";
-    const line = fragmentIndexLine({ title: finalTitle, slug, text: body.text });
-    const appended = appendEntry(current, line, { at: new Date().toISOString() });
-    if (appended.ok !== true) {
-      rmSync(file, { force: true });
-      store.appendAudit({ action: "memory/fragment-rejected", projectId, reason: appended.reason });
-      store.save();
-      return { ok: false, reason: appended.reason };
-    }
-    writeFileSync(indexFile, appended.text, { mode: 0o600 });
     store.appendAudit({
       action: "memory/fragment-added",
       projectId,
-      slug,
-      chars: body.text.length,
+      slug: result.slug,
+      chars: result.chars,
     });
     store.save();
-    return { ok: true, slug, title: finalTitle, chars: body.text.length };
+    return result;
   }
 
   /**
@@ -3458,35 +3404,7 @@ export class ProjectsService extends TypertRemoteService {
    * @param {string} projectId
    */
   listMemoryFragments(projectId) {
-    const dir = join(this.dataRoot, String(projectId ?? ""), "memory", "fragments");
-    const indexFile = join(this.dataRoot, String(projectId ?? ""), "memory", "MEMORY.md");
-    const indexText = existsSync(indexFile) ? readFileSync(indexFile, "utf8") : "";
-    /** @type {Map<string, string>} */
-    const titles = new Map();
-    for (const block of parseMemoryBlocks(indexText)) {
-      if (block.fragment) titles.set(block.fragment.slug, block.fragment.title);
-    }
-    const files = listFragmentFiles(dir);
-    const fragments = files.map((name) => {
-      const slug = name.replace(/\.md$/u, "");
-      const full = join(dir, name);
-      const text = existsSync(full) ? readFileSync(full, "utf8") : "";
-      const info = previewText(text);
-      return {
-        slug,
-        title: titles.get(slug) ?? slug,
-        chars: info.chars,
-        preview: info.preview,
-        truncated: info.truncated,
-        updatedAt: statMtime(full),
-      };
-    });
-    return {
-      fragments,
-      totalChars: fragments.reduce((sum, item) => sum + item.chars, 0),
-      limit: MEMORY_FRAGMENT_MAX_COUNT,
-      maxChars: MEMORY_FRAGMENT_MAX_CHARS,
-    };
+    return listFragments(this.dataRoot, String(projectId ?? ""));
   }
 
   /**
@@ -3496,23 +3414,7 @@ export class ProjectsService extends TypertRemoteService {
   readMemoryFragment(projectId, slug) {
     const store = this.requireStore();
     if (!store.getProject(projectId)) throw new Error(`projects: unknown project ${projectId}`);
-    const safeSlug = String(slug ?? "").replace(/[^\p{Letter}\p{Number}._-]/gu, "");
-    if (safeSlug === "" || safeSlug.includes("/") || safeSlug.includes("..")) {
-      return { ok: false, reason: "fragment/invalid-slug" };
-    }
-    const file = join(this.dataRoot, projectId, "memory", "fragments", `${safeSlug}.md`);
-    if (!existsSync(file)) return { ok: false, reason: "fragment/not-found" };
-    const text = readFileSync(file, "utf8");
-    const info = this.listMemoryFragments(projectId).fragments.find(
-      (item) => item.slug === safeSlug,
-    );
-    return {
-      ok: true,
-      slug: safeSlug,
-      title: info ? info.title : safeSlug,
-      text,
-      ...previewText(text, 1200),
-    };
+    return readFragment(this.dataRoot, projectId, slug);
   }
 
   /**
@@ -3523,26 +3425,22 @@ export class ProjectsService extends TypertRemoteService {
   forgetMemory(projectId, kind, id) {
     const store = this.requireStore();
     if (!store.getProject(projectId)) throw new Error(`projects: unknown project ${projectId}`);
-    if (id === "") return { ok: false, reason: "forget/id-required" };
-    const indexFile = join(this.dataRoot, projectId, "memory", "MEMORY.md");
-    const current = existsSync(indexFile) ? readFileSync(indexFile, "utf8") : "";
-    const blocks = parseMemoryBlocks(current);
-    const target =
-      kind === "fragment"
-        ? blocks.find((block) => block.fragment?.slug === id)
-        : blocks.find((block) => block.id === id);
-    if (!target) return { ok: false, reason: "forget/not-found" };
-    const removed = removeMemoryBlock(current, target.id);
-    if (removed.ok !== true) return { ok: false, reason: "forget/failed" };
-    if (removed.text === "") rmSync(indexFile, { force: true });
-    else writeFileSync(indexFile, removed.text, { mode: 0o600 });
-    if (kind === "fragment") {
-      const file = join(this.dataRoot, projectId, "memory", "fragments", `${id}.md`);
-      if (existsSync(file)) rmSync(file, { force: true });
+    // 路径守卫在 memory-store：未知 kind、`../`、`..%2F`、绝对路径、非法块 id 一律拒绝。
+    const result = forgetMemoryItem(this.dataRoot, projectId, kind, id);
+    if (result.ok !== true) {
+      store.appendAudit({
+        action: "memory/forget-refused",
+        projectId,
+        kind,
+        id,
+        reason: result.reason,
+      });
+      store.save();
+      return result;
     }
-    store.appendAudit({ action: "memory/forgotten", projectId, kind, id });
+    store.appendAudit({ action: "memory/forgotten", projectId, kind: result.kind, id: result.id });
     store.save();
-    return { ok: true, kind, id, removed: removed.removed.slice(0, 200) };
+    return result;
   }
 
   /**
@@ -3813,27 +3711,38 @@ export class ProjectsService extends TypertRemoteService {
     const sc = this.sessionController;
     if (!sc || typeof sc.list !== "function")
       return { ok: false, reason: "sessions/unavailable", sessions: [] };
+    /** 把宿主 list 的几种回执形状归一成数组（P0 复审：0.2.2 返回 `{items}`）。 */
+    const normalizeList = (/** @type {any} */ value) => {
+      if (Array.isArray(value)) return value;
+      if (Array.isArray(value?.items)) return value.items;
+      if (Array.isArray(value?.sessions)) return value.sessions;
+      if (Array.isArray(value?.value?.items)) return value.value.items;
+      return [];
+    };
     /** @type {any[]} */
     let items = [];
+    /** @type {string} */
+    let lastError = "";
     try {
-      // typert 的 Remote 签名是 list(request, signal)；有的版本也接受只传 signal。
-      // 两种都试，仍然失败才如实返回 unavailable（不编造会话）。
-      const first = await sc.list({}, AbortSignal.timeout(4000));
-      items = Array.isArray(first) ? first : Array.isArray(first?.sessions) ? first.sessions : [];
-      if (items.length === 0) {
-        const second = await sc.list(AbortSignal.timeout(4000));
-        items = Array.isArray(second)
-          ? second
-          : Array.isArray(second?.sessions)
-            ? second.sessions
-            : [];
+      // typert 的 Remote 签名是 list(request, signal)；也兼容只传 signal 的版本。
+      // 两种**各自 try**：第一种抛错不能吃掉第二种（旧实现就是在 catch 里直接放弃）。
+      const attempts = [
+        () => sc.list({}, AbortSignal.timeout(4000)),
+        () => sc.list(AbortSignal.timeout(4000)),
+      ];
+      for (const attempt of attempts) {
+        try {
+          items = normalizeList(await attempt());
+        } catch (error) {
+          lastError = String(/** @type {any} */ (error)?.message ?? error);
+        }
+        if (items.length > 0) break;
       }
     } catch (error) {
-      return {
-        ok: false,
-        reason: `sessions/unavailable: ${String(/** @type {any} */ (error)?.message ?? error).slice(0, 80)}`,
-        sessions: [],
-      };
+      lastError = String(/** @type {any} */ (error)?.message ?? error);
+    }
+    if (items.length === 0 && lastError !== "") {
+      return { ok: false, reason: `sessions/unavailable: ${lastError.slice(0, 80)}`, sessions: [] };
     }
     const attached = new Set(
       store.listThreads(project.id).map((/** @type {any} */ thread) => thread.sessionId),

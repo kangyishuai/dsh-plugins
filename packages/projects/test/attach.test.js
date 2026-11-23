@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
 import { registerProjectContext } from "../lib/attach.js";
+import { instructionDirChain, readHostInstructions } from "../lib/host-instructions.js";
 import { MAX_FILE_CHARS, readProjectFiles } from "../lib/project-files.js";
 import { ProjectStore } from "../lib/store.js";
 
@@ -115,6 +116,70 @@ describe("registerProjectContext（全局注册 + 按会话求值）", () => {
       },
     });
     assert.equal(entry.text({ agent: { session: { id: "x" } } }), "");
+  });
+
+  it("F38：项目规则与宿主已注入的 AGENTS.md 重复段落被省略（真实读盘走生产 reader）", () => {
+    const repo = join(root, "repo");
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    const shared =
+      "很长的宿主规则甲，长度足够用来判断重复（第一段，来自 AGENTS.md）\n\n很长的宿主规则乙，长度足够用来判断重复（第二段）";
+    writeFileSync(join(repo, "AGENTS.md"), shared, "utf8");
+    store.updateProject(project.id, { dirs: [repo] });
+    mkdirSync(join(root, project.id), { recursive: true });
+    writeFileSync(
+      join(root, project.id, "instructions.md"),
+      `${shared}\n\n我们的独有规则：分支从 main 起`,
+      "utf8",
+    );
+    store.attachThread("session-ctx-dedupe", project.id);
+    /** @type {any} */
+    let entry = null;
+    registerProjectContext({
+      getStore: () => store,
+      getDataRoot: () => root,
+      register: (definition) => {
+        entry = definition;
+        return () => {};
+      },
+    });
+    const rendered = entry.text({ agent: { session: { id: "session-ctx-dedupe" } } });
+    // 重复段没有被抄第二遍，且注入里写明省略了几段（F38 的可解释输出）。
+    assert.doesNotMatch(rendered, /宿主规则甲/u);
+    assert.doesNotMatch(rendered, /宿主规则乙/u);
+    assert.match(rendered, /独有规则/u);
+    assert.match(rendered, /已省略 2 段与 AGENTS\.md 重复的规则/u);
+  });
+
+  it("F38：readHostInstructions 只读目录链上的 AGENTS.md/CLAUDE.md，重复路径去重", () => {
+    const repo = join(root, "repo2");
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    writeFileSync(join(repo, "AGENTS.md"), "根规则", "utf8");
+    writeFileSync(join(repo, "CLAUDE.md"), "根补充", "utf8");
+    const chain = instructionDirChain(join(repo, "sub"));
+    assert.equal(chain.includes(repo), true, "目录链应上溯到 git 根");
+    const read = readHostInstructions([join(repo, "sub"), repo], { dshHome: join(root, "nohome") });
+    assert.ok(read.text.includes("根规则"));
+    assert.ok(read.text.includes("根补充"));
+    assert.equal(new Set(read.files).size, read.files.length, "同一文件只读一次");
+  });
+
+  it("F38：读取失败/目录不存在时退化为空串，不影响注入", () => {
+    store.attachThread("session-ctx-nohost", project.id);
+    /** @type {any} */
+    let entry = null;
+    registerProjectContext({
+      getStore: () => store,
+      getDataRoot: () => root,
+      register: (definition) => {
+        entry = definition;
+        return () => {};
+      },
+      readHostInstructions: () => {
+        throw new Error("boom");
+      },
+    });
+    const rendered = entry.text({ agent: { session: { id: "session-ctx-nohost" } } });
+    assert.ok(rendered.includes("payments"), "宿主指令读取失败不能吃掉项目上下文");
   });
 
   it("每次求值都重新读盘（记忆写入后立即可见）", () => {

@@ -196,6 +196,62 @@ describe("executeApproval：合并的三道硬前提（B1）", () => {
   });
 });
 
+describe("F55 文件夹授权三键真的影响执行（不再是死记录）", () => {
+  /** 造一个带 folderAuth 的项目（dirs[0] 就是 root）。 */
+  const withFolder = (/** @type {string} */ mode) => {
+    const made = makeDeps({ danger: { autoMerge: true } });
+    const base = made.store.getProject(made.project.id);
+    made.store.updateProject(made.project.id, {
+      policy: {
+        ...base.policy,
+        folderAuth: { [root]: { mode, at: new Date().toISOString(), used: false } },
+      },
+    });
+    made.store.save();
+    return made;
+  };
+
+  it("deny → 拒绝执行，命令不会发出，申请占位也没占上", async () => {
+    setMode("ok");
+    const { deps, store, project } = withFolder("deny");
+    const requestId = approvedRequest(store, project.id, "merge", { prNumber: 1 });
+    const result = await executeApprovalCore(deps, requestId);
+    assert.equal(result.executed, false);
+    assert.equal(result.reason, "folder/denied");
+    assert.equal(approvalOf(store, requestId).claimedAt ?? null, null);
+  });
+
+  it("once → 首次放行并消费（used=true），同目录下一次被拒", async () => {
+    setMode("ok");
+    const { deps, store, project } = withFolder("once");
+    const first = approvedRequest(store, project.id, "merge", { prNumber: 1 });
+    const firstResult = await executeApprovalCore(deps, first);
+    assert.equal(firstResult.executed, true, JSON.stringify(firstResult));
+    assert.equal(store.getProject(project.id).policy.folderAuth[root].used, true);
+    const second = approvedRequest(store, project.id, "merge", { prNumber: 2 });
+    const secondResult = await executeApprovalCore(deps, second);
+    assert.equal(secondResult.executed, false);
+    assert.equal(secondResult.reason, "folder/once-already-used");
+  });
+
+  it("default → 长期放行：连续两次都执行，且不消费", async () => {
+    setMode("ok");
+    const { deps, store, project } = withFolder("default");
+    const first = approvedRequest(store, project.id, "merge", { prNumber: 1 });
+    const second = approvedRequest(store, project.id, "merge", { prNumber: 2 });
+    assert.equal((await executeApprovalCore(deps, first)).executed, true);
+    assert.equal((await executeApprovalCore(deps, second)).executed, true);
+    assert.equal(store.getProject(project.id).policy.folderAuth[root].used, false);
+  });
+
+  it("未授权（unset）保持旧行为：不拦", async () => {
+    setMode("ok");
+    const { deps, store, project } = makeDeps({ danger: { autoMerge: true } });
+    const requestId = approvedRequest(store, project.id, "merge", { prNumber: 1 });
+    assert.equal((await executeApprovalCore(deps, requestId)).executed, true);
+  });
+});
+
 describe("executeApproval：其余分支不会掉进 deferred", () => {
   it("change-settings 允许的键 → 真的执行", async () => {
     const { deps, store, project } = makeDeps({ danger: { editProfile: true } });

@@ -14,6 +14,7 @@ import {
   recoveryEvidence,
   shouldRetryPreflight,
 } from "./executor.js";
+import { consumeOnceFolderGrant, folderAuthSummary } from "./folder-auth.js";
 import {
   checkForcePushPrereqs,
   checkProtectedPushPrereqs,
@@ -31,6 +32,42 @@ import { applySettingsPatch, sanitizeSettingsPatch } from "./settings.js";
  * @property {(sessionId: string) => Promise<any>} reclaimThread
  * @property {(projectId: string) => Promise<any>} deleteProject
  */
+
+/** F55：会**在项目目录里跑命令**的危险动作（gh/git 的 cwd 就是项目目录）。 */
+export const FOLDER_GATED_ACTIONS = Object.freeze([
+  "merge",
+  "push-branch",
+  "push-protected-branch",
+]);
+
+/**
+ * F55：文件夹授权闸（三键不再是死记录）。
+ * 语义对齐授权卡：
+ *  - `unset`   → 放行（旧行为；没授权过不等于拒绝，避免升级后所有动作被拦）
+ *  - `default` → 长期放行，不消费
+ *  - `deny`    → 拒绝执行（命令不会发出去）
+ *  - `once`    → 本次放行并**立刻消费**（`used=true` 落盘）；同一目录下一次执行被拒
+ * @param {any} store @param {any} project @param {string} action
+ * @returns {{ ok: true, mode: string, dir: string } | { ok: false, mode: string, dir: string, reason: string }}
+ */
+export function folderGate(store, project, action) {
+  if (!FOLDER_GATED_ACTIONS.includes(String(action))) return { ok: true, mode: "n/a", dir: "" };
+  const dir =
+    Array.isArray(project?.dirs) && project.dirs.length > 0 ? String(project.dirs[0] ?? "") : "";
+  if (dir === "") return { ok: true, mode: "unset", dir: "" };
+  const summary = folderAuthSummary(project?.policy, dir);
+  if (summary.mode === "unset") return { ok: true, mode: "unset", dir };
+  if (summary.mode === "deny") return { ok: false, mode: "deny", dir, reason: "folder/denied" };
+  if (summary.mode === "default") return { ok: true, mode: "default", dir };
+  const consumed = consumeOnceFolderGrant(project?.policy, dir);
+  if (consumed.ok !== true) {
+    return { ok: false, mode: "once", dir, reason: "folder/once-already-used" };
+  }
+  store.updateProject(project.id, { policy: consumed.policy });
+  store.appendAudit({ action: "folder/once-consumed", projectId: project.id, path: dir });
+  store.save();
+  return { ok: true, mode: "once", dir };
+}
 
 /**
  * 执行一条已批准的申请（幂等占位、闸门、恢复证据、审计都在这里面）。
@@ -70,6 +107,22 @@ export async function executeApprovalCore(deps, requestId) {
     });
     store.save();
     return { executed: false, reason: "project-missing" }; // 同样在占位之前
+  }
+
+  // F55：文件夹授权闸（deny / once / default 三键真的影响执行）。
+  const folder = folderGate(store, project, approval.action);
+  if (!folder.ok) {
+    store.appendAudit({
+      action: "approval/execution-refused",
+      projectId: approval.projectId,
+      requestId,
+      dangerAction: approval.action,
+      reason: folder.reason,
+      folderMode: folder.mode,
+      folderPath: folder.dir,
+    });
+    store.save();
+    return { executed: false, reason: folder.reason }; // 闸门在占位之前，无需释放
   }
 
   const verdict = checkExecutable({

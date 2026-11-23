@@ -2,7 +2,7 @@
 // B3 单测：记忆碎片 / 16k 去重 / goal 上限 / 预算默认值 / 暂停语义 / 完成通知 /
 // 本地文件夹授权 / GitHub 连接检查 / 模板受管区块 / `@` 候选。
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -415,22 +415,6 @@ describe("F23 线程标题与 F58 偏好落盘", () => {
   });
 });
 
-describe("F3 记忆目录读取（服务层用同一套布局）", () => {
-  it("fragments 目录里的 .md 可枚举（忽略隐藏文件/其它扩展名）", () => {
-    const root = mkdtempSync(join(tmpdir(), "dsh-projects-b3c-"));
-    try {
-      const dir = join(root, "p1", "memory", "fragments");
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, "a.md"), "# a\n", "utf8");
-      writeFileSync(join(dir, ".DS_Store"), "x", "utf8");
-      writeFileSync(join(dir, "b.txt"), "x", "utf8");
-      const names = ["a.md"];
-      assert.deepEqual(
-        names.filter((name) => name.endsWith(".md")),
-        ["a.md"],
-      );
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-});
+// F3「记忆目录读取」的真实覆盖在 memory-store.test.js：`listFragments` / `readFragment` /
+// `listFragmentFiles` 都是生产代码，测试用 mkdtemp 真读盘。这里原来的实现只 filter 了一个
+// 字面量数组（不调用任何生产代码，恒真），删除以免误读为已覆盖。
