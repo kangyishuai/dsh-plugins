@@ -25,12 +25,12 @@ DSH_HOME="$H" dsh --profile web --port 0 --no-open
 
 ## 1. 自动化
 
-| 命令                                            | 覆盖什么                                                                                          | 前置                                    |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------- |
-| `pnpm --filter @kangyishuai/dsh-artifacts test` | 存储 9 条、封面 10 条、工具 14 条、路由 12 条、契约层 23 条、契约对账 4 条（共 72 条）            | 无                                      |
-| `pnpm verify`                                   | 上面全部 + lint/typecheck/check/check:docs/check:public                                           | 无                                      |
-| `pnpm smoke:artifacts`                          | 临时 home + 真实宿主 + 浏览器：库 → 面板 → 追加两版 → 原地刷新 → 刷新恢复 → 路由 200/401/404/封面 | 本机 `dsh`、`ego-browser`               |
-| `pnpm smoke:artifacts-desktop --require`        | 真实桌面版只读回归：插件已加载、页签类型存在、库能打开且不崩                                      | 桌面版 + `--remote-debugging-port=9222` |
+| 命令                                            | 覆盖什么                                                                                                                                                                         | 前置                                    |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| `pnpm --filter @kangyishuai/dsh-artifacts test` | 存储 9 条、封面 10 条、工具 14 条、路由 13 条、契约层 28 条、契约对账 6 条、审计 6 条（共 **86** 条）                                                                            | 无                                      |
+| `pnpm verify`                                   | 上面全部 + lint/typecheck/check/check:docs/check:public                                                                                                                          | 无                                      |
+| `pnpm smoke:artifacts`                          | 临时 home + 真实宿主 + 浏览器：库 → 面板 → 追加两版 → 原地刷新 → 刷新恢复 → **按 projectId 过滤的库视图** → **markdown/图片预览** → 路由 200/401/404/**400**/封面（**10 PASS**） | 本机 `dsh`、`ego-browser`               |
+| `pnpm smoke:artifacts-desktop --require`        | 真实桌面版只读回归：插件已加载、页签类型存在、库能打开且不崩                                                                                                                     | 桌面版 + `--remote-debugging-port=9222` |
 
 > 桌面回归是**发版前手工门禁**：CI 只跑 `pnpm smoke:artifacts`（web、临时 home）。
 > 验收桌面时临时安装，验完卸载，不把开发版留在共用 profile：
@@ -60,18 +60,22 @@ DSH_HOME="$H" dsh --profile web --port 0 --no-open
 | 8   | 稳定跨插件契约写进 conventions  | `remote-declarations.test.js`（service 方法集 == declareRemote == 契约表 == [conventions §8](../plugin-conventions.md#8-跨插件调用契约remote-api)） |
 | 9   | 面板按 projectId 过滤的列表视图 | `client.js` 的 `ArtifactLibrary`（`data-dsh-artifact-library-scope`）；桌面/冒烟手测（见 §2.6），Node 层无法覆盖 DOM                                |
 
-### 1.3 E2E 钩子（只给冒烟用）
+### 1.3 调试接口（默认关闭）
 
-`client.js` 暴露一个窗口函数，用来从页面上下文"带 params 打开页签"——这是冒烟断言"按 projectId 过滤的库视图"
-与多类型预览的唯一入口（正常 UI 没有带 params 的入口）：
+`client.js` 有一个**默认不挂**的窗口函数，用来从页面上下文"带 params 打开页签"——这是冒烟断言
+"按 projectId 过滤的库视图"与多类型预览的唯一入口（正常 UI 没有带 params 的入口）：
+
+- 打开方式（二选一）：`localStorage["dsh-artifacts:debug"] = "1"` 后刷新，或页面 URL 带 `?debug=1`；
+- 只有 `window.__dshArtifactsOpenTab`，参数 `{ id? , projectId? }`：
 
 ```js
 window.__dshArtifactsOpenTab({ id }); // 打开某个工件
 window.__dshArtifactsOpenTab({ projectId }); // 打开该项目的库视图
 ```
 
-它只转发页签导航（`openTab`），**不暴露数据、不暴露服务**；生产 UI 不依赖它。`scripts/smoke-artifacts.mjs`
-里的两条新断言用它，见 `docs/plugin-conventions.md` §8.5。
+它只转发页签导航（`openTab`），**不暴露数据、不暴露服务**；发布包默认没有任何 `window.__dsh*` 全局，
+生产 UI 不依赖它。`scripts/smoke-artifacts.mjs` 开头会写 `localStorage` 并重载一次来打开门禁，
+两条新断言用它；面板 params 的正式约定见 `docs/plugin-conventions.md` §8.5。
 
 ### 1.2 不启宿主、跑一遍跨插件契约（可复制）
 
@@ -124,13 +128,14 @@ pnpm verify
 
 ## 3.1 已知缺口 / backlog（本批不做）
 
-| 项                 | 说明                                                                                                                                    |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
-| i18n               | 插件 UI 文案（含 0.1.0 旧文案）目前是硬编码中文，`locale/` 只放插件标题；**本批明确不做 i18n**，需要整批搬进 `ctx.locale.register` 词典 |
-| `latest` 全量读    | 轮询每次都 `readFile` 整个版本文件；方向是先读 meta/stat，或加短缓存（大工件 1s 轮询的 I/O）                                            |
-| 封面 ETag          | 封面按 id 稳定，可加 `ETag`/`if-none-match`；现在每次重算 SVG                                                                           |
-| 列表分页默认 limit | 现在默认全量扫目录；加默认 limit 属契约语义变更，需契约版本 +1                                                                          |
-| 回收站 UI          | `trash`/`purge`/`restore` 只有 Remote，没有面板入口（ADR 0002 的"查看/清空"目前是 API 级）                                              |
+| 项                   | 说明                                                                                                                                    |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| i18n                 | 插件 UI 文案（含 0.1.0 旧文案）目前是硬编码中文，`locale/` 只放插件标题；**本批明确不做 i18n**，需要整批搬进 `ctx.locale.register` 词典 |
+| `latest` 全量读      | 轮询每次都 `readFile` 整个版本文件；方向是先读 meta/stat，或加短缓存（大工件 1s 轮询的 I/O）                                            |
+| 封面 ETag            | 封面按 id 稳定，可加 `ETag`/`if-none-match`；现在每次重算 SVG                                                                           |
+| 列表分页默认 limit   | 现在默认全量扫目录；加默认 limit 属契约语义变更，需契约版本 +1                                                                          |
+| 回收站 UI            | `trash`/`purge`/`restore` 只有 Remote，没有面板入口（ADR 0002 的"查看/清空"目前是 API 级）                                              |
+| 契约对账**反向**校验 | 现在只校验"§8.3 写了 → 源码里存在"；反过来"源码返回了没写进 §8 的字段"没有约束（多返回字段会静默漂移）                                  |
 
 ## 4. DSH 升级后额外检查
 
