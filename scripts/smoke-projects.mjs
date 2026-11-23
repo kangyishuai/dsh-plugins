@@ -598,12 +598,20 @@ try {
           }
         : null;
     };
+    const readRoutines = () => {
+      const root = document.querySelector("[data-projects-routines]");
+      if (!root) return null;
+      return {
+        available: root.getAttribute("data-projects-routines-available"),
+        note: document.querySelector("[data-projects-routines-cost]")?.textContent || "",
+      };
+    };
     const clickedLibrary = openTab("library");
     await new Promise((resolve) => setTimeout(resolve, 400));
     const library = readPlaceholder();
     const clickedRoutines = openTab("routines");
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    const routines = readPlaceholder();
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    const routines = readRoutines();
     openTab("threads");
     return { clickedLibrary, clickedRoutines, library, routines };
   });
@@ -615,9 +623,10 @@ try {
     JSON.stringify(u9.library),
   );
   add(
-    "Routines 页签给出 B4 落地说明与成本口径",
+    "Routines 页签给出成本口径（每次投递跑一次模型，B4 已落地不是占位）",
     u9.clickedRoutines === true &&
-      u9.routines?.kind === "routines" &&
+      typeof u9.routines?.available === "string" &&
+      u9.routines.available !== "" &&
       u9.routines.note.includes("跑一次模型"),
     JSON.stringify(u9.routines),
   );
@@ -2855,6 +2864,386 @@ try {
     JSON.stringify({ clickedRestore, backInList }),
   );
 
+  // ===== B4：F36 Routines / F30 双模式提醒（详情页右栏段 + Routines 视图）=====
+  // 这段是**自包含**的：自己从列表点进冒烟项目的详情页，跑完再返回列表，
+  // 不依赖前面 900 行 B1–B3 交互留下的页面状态（否则一次插入就把后面的记忆/回收站断言带崩）。
+  const b4Opened = await page.evaluate((projectName) => {
+    const rows = [...document.querySelectorAll("[data-projects-row]")];
+    const row = rows.find((node) => (node.textContent || "").includes(projectName));
+    if (!row) return "no-row";
+    row.click();
+    return "clicked";
+  }, name);
+  const b4Detail = await waitUntil(
+    () =>
+      page.evaluate(() =>
+        document.querySelector("[data-projects-detail]")
+          ? document.querySelector("[data-projects-detail]").getAttribute("data-projects-detail")
+          : "",
+      ),
+    12000,
+  );
+  add(
+    "B4 冒烟能重新打开项目详情页（自包含前置，不靠前面的页面状态）",
+    b4Opened === "clicked" && typeof b4Detail === "string" && b4Detail !== "",
+    JSON.stringify({ b4Opened, b4Detail }),
+  );
+  await page.evaluate(() => document.querySelector('[data-projects-tab="threads"]')?.click());
+  await page.waitForTimeout(600);
+  const b4Rail = await page.evaluate(() => ({
+    section: Boolean(document.querySelector("[data-projects-rail-routines]")),
+    count: (document.querySelector("[data-projects-rail-routines-count]")?.textContent || "").trim(),
+    open: Boolean(document.querySelector("[data-projects-rail-routines-open]")),
+    reminder: Boolean(document.querySelector("[data-projects-rail-reminder-open]")),
+  }));
+  add(
+    "详情右栏有「定时任务」段（计数 + 新建入口 + 提醒入口）",
+    b4Rail.section === true && b4Rail.open === true && b4Rail.reminder === true && /定时任务/u.test(b4Rail.count),
+    JSON.stringify(b4Rail),
+  );
+  await page.evaluate(() => document.querySelector('[data-projects-tab="routines"]')?.click());
+  const routinesReady = await waitUntil(
+    () =>
+      page.evaluate(() => {
+        const root = document.querySelector("[data-projects-routines]");
+        const value = root ? root.getAttribute("data-projects-routines-available") : "";
+        return value === "yes" || value === "no" ? value : "";
+      }),
+    12000,
+  );
+  const routinesIntro = await page.evaluate((ready) => ({
+    available: ready,
+    cost: (document.querySelector("[data-projects-routines-cost]")?.textContent || "").trim(),
+    frequency: [...(document.querySelector("[data-projects-routine-frequency]")?.options || [])].map(
+      (option) => option.value,
+    ),
+  }), routinesReady);
+  add(
+    "Routines 视图可用且写明成本（每次投递 = 一次模型调用 + 60 秒下限）",
+    routinesIntro.available === "yes" &&
+      /一次模型调用/u.test(routinesIntro.cost) &&
+      /60 秒/u.test(routinesIntro.cost),
+    JSON.stringify({ routinesReady, cost: routinesIntro.cost }),
+  );
+  add(
+    "Routines 六档频率齐全（manual/hourly/daily/weekdays/weekly/monthly）",
+    routinesIntro.frequency.join(",") === "manual,hourly,daily,weekdays,weekly,monthly",
+    JSON.stringify(routinesIntro.frequency),
+  );
+  if (routinesReady !== "yes") {
+    skipAdd("Routines 创建/停用/历史/删除", "宿主 schedule 不可用：" + String(routinesIntro.available));
+    skipAdd("提醒双模式（timer 触发 / schedule 计费）", "宿主 schedule 不可用");
+  } else {
+    // —— 创建一条自动档（daily 09:30）——
+    const routineCreated = await page.evaluate(async () => {
+      const set = (sel, value) => {
+        const el = document.querySelector(sel);
+        if (!el) return false;
+        const proto = el.tagName === "TEXTAREA" ? window.HTMLTextAreaElement : el.tagName === "SELECT" ? window.HTMLSelectElement : window.HTMLInputElement;
+        const setter = Object.getOwnPropertyDescriptor(proto.prototype, "value").set;
+        setter.call(el, value);
+        el.dispatchEvent(new Event(el.tagName === "SELECT" ? "change" : "input", { bubbles: true }));
+        return true;
+      };
+      const okName = set("[data-projects-routine-name]", "冒烟每日摘要");
+      const okText = set("[data-projects-routine-instructions]", "总结昨天合并的 PR。");
+      const okFreq = set("[data-projects-routine-frequency]", "daily");
+      const okTime = set("[data-projects-routine-time]", "09:30");
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      document.querySelector("[data-projects-routine-create]")?.click();
+      return { okName, okText, okFreq, okTime };
+    });
+    const routineRow = await waitUntil(
+      () =>
+        page.evaluate(() => {
+          const row = document.querySelector("[data-projects-routine]");
+          return row
+            ? {
+                id: row.getAttribute("data-projects-routine-id"),
+                status: row.getAttribute("data-projects-routine-status"),
+                text: (row.textContent || "").trim().slice(0, 200),
+              }
+            : null;
+        }),
+      20000,
+    );
+    add(
+      "Routines 创建写→回读（行出现且带宿主 status）",
+      routineCreated.okName === true &&
+        routineCreated.okFreq === true &&
+        routineRow !== null &&
+        routineRow.id !== "" &&
+        /每天 09:30/u.test(routineRow.text),
+      JSON.stringify({ routineCreated, routineRow }),
+    );
+    // —— History（宿主投递记录面板）——
+    await page.evaluate(() =>
+      document.querySelector("[data-projects-routine-history]")?.click(),
+    );
+    const routineHistory = await waitUntil(
+      () =>
+        page.evaluate(() => {
+          const panel = document.querySelector("[data-projects-routine-history-panel]");
+          return panel
+            ? {
+                id: panel.getAttribute("data-projects-routine-history-panel"),
+                count: panel.getAttribute("data-projects-routine-history-count"),
+                text: (panel.textContent || "").trim().slice(0, 120),
+              }
+            : null;
+        }),
+      10000,
+    );
+    add(
+      "Routines History 可回读（宿主投递面板打开，未投递时说清）",
+      routineHistory !== null &&
+        routineHistory.count === "0" &&
+        /还没有投递|投递/u.test(routineHistory.text),
+      JSON.stringify(routineHistory),
+    );
+    // —— 停用 → 回读按钮变「启用」——
+    await page.evaluate(() =>
+      document.querySelector("[data-projects-routine-toggle]")?.click(),
+    );
+    const routineToggled = await waitUntil(
+      () =>
+        page.evaluate(() => {
+          const button = document.querySelector("[data-projects-routine-toggle]");
+          return button && (button.textContent || "").includes("启用") ? "启用" : "";
+        }),
+      15000,
+    );
+    add("Routines 可停用且回读（按钮变「启用」）", routineToggled === "启用", String(routineToggled));
+    // —— 手动档：不建宿主任务，描述里写明「手动」——
+    const manualRoutine = await page.evaluate(async () => {
+      const set = (sel, value) => {
+        const el = document.querySelector(sel);
+        if (!el) return false;
+        const proto = el.tagName === "TEXTAREA" ? window.HTMLTextAreaElement : el.tagName === "SELECT" ? window.HTMLSelectElement : window.HTMLInputElement;
+        const setter = Object.getOwnPropertyDescriptor(proto.prototype, "value").set;
+        setter.call(el, value);
+        el.dispatchEvent(new Event(el.tagName === "SELECT" ? "change" : "input", { bubbles: true }));
+        return true;
+      };
+      set("[data-projects-routine-name]", "冒烟手动任务");
+      set("[data-projects-routine-instructions]", "只在点 Run now 时跑一次。");
+      set("[data-projects-routine-frequency]", "manual");
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      document.querySelector("[data-projects-routine-create]")?.click();
+      return true;
+    });
+    const manualRow = await waitUntil(
+      () =>
+        page.evaluate(() => {
+          const rows = [...document.querySelectorAll("[data-projects-routine]")];
+          const row = rows.find((node) => (node.textContent || "").includes("冒烟手动任务"));
+          return row ? (row.textContent || "").trim() : "";
+        }),
+      20000,
+    );
+    add(
+      "手动档不自动跑（描述写明「只有点 Run now」且不建宿主任务）",
+      manualRoutine === true && /手动：只有点 Run now/u.test(String(manualRow)),
+      String(manualRow).slice(0, 120),
+    );
+    // 截图：Routines 列表（成本提示 + 两条任务 + 历史面板）
+    {
+      const shot = await page.cdp("Page.captureScreenshot", { format: "png" });
+      const fs = await import("node:fs/promises");
+      await fs.writeFile(
+        ${JSON.stringify(shotsDir)} + "/09-b4-routines.png",
+        Buffer.from(shot.data, "base64"),
+      );
+    }
+    // —— 删除手动档（自动档留着给 Node 侧读盘）——
+    const deleted = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll("[data-projects-routine]")];
+      const row = rows.find((node) => (node.textContent || "").includes("冒烟手动任务"));
+      const button = row?.querySelector("[data-projects-routine-delete]");
+      if (!button) return "no-button";
+      button.click();
+      return "clicked";
+    });
+    const deletedGone = await waitUntil(
+      () =>
+        page.evaluate(() => {
+          const rows = [...document.querySelectorAll("[data-projects-routine]")];
+          return rows.some((node) => (node.textContent || "").includes("冒烟手动任务")) ? "" : "gone";
+        }),
+      15000,
+    );
+    add("Routines 可删除（宿主条目 + 本地记录一起走）", deleted === "clicked" && deletedGone === "gone", String(deleted));
+
+    // —— F30 提醒：对话框 + 双模式 + timer 真到点（1.2s）+ toast ——
+    const remindersIntro = await page.evaluate(() => ({
+      defaultMode: document
+        .querySelector("[data-projects-reminders]")
+        ?.getAttribute("data-projects-reminder-default"),
+      pending: document
+        .querySelector("[data-projects-reminders]")
+        ?.getAttribute("data-projects-reminder-pending"),
+      armed: document.querySelector("[data-projects-reminders]")?.getAttribute("data-projects-reminder-armed"),
+      options: [...document.querySelectorAll("[data-projects-reminder-default-option]")].map(
+        (node) => node.getAttribute("data-projects-reminder-default-option"),
+      ),
+    }));
+    add(
+      "提醒默认走本机计时（免费）且项目设置可选两种模式",
+      remindersIntro.defaultMode === "timer" &&
+        remindersIntro.options.join(",") === "timer,schedule",
+      JSON.stringify(remindersIntro),
+    );
+    await page.evaluate(() => document.querySelector("[data-projects-reminder-open]")?.click());
+    await page.waitForTimeout(500);
+    const dialog = await page.evaluate(() => {
+      const root = document.querySelector("[data-projects-reminder-dialog]");
+      return {
+        open: root ? root.getAttribute("data-projects-reminder-dialog") : "",
+        modes: [...document.querySelectorAll("[data-projects-reminder-mode]")].map((node) =>
+          node.getAttribute("data-projects-reminder-mode"),
+        ),
+        note: (document.querySelector("[data-projects-reminder-note]")?.textContent || "").trim(),
+      };
+    });
+    add(
+      "提醒对话框有双模式选择，timer 档写明「不花模型调用 / 关着不响」",
+      dialog.open === "open" &&
+        dialog.modes.join(",") === "timer,schedule" &&
+        /不花模型调用/u.test(dialog.note) &&
+        /关着/u.test(dialog.note),
+      JSON.stringify({ dialog }),
+    );
+    await page.evaluate(() =>
+      document.querySelector('[data-projects-reminder-mode="schedule"]')?.click(),
+    );
+    await page.waitForTimeout(300);
+    const scheduleNote = await page.evaluate(
+      () => (document.querySelector("[data-projects-reminder-note]")?.textContent || "").trim(),
+    );
+    add(
+      "切到 schedule 档后明示「到点会跑一次模型」",
+      /跑一次模型/u.test(scheduleNote) && /关着也会跑/u.test(scheduleNote),
+      scheduleNote.slice(0, 120),
+    );
+    await page.evaluate(() =>
+      document.querySelector('[data-projects-reminder-mode="timer"]')?.click(),
+    );
+    await page.waitForTimeout(200);
+    // 1.2 秒后到期：走的是「到期 → 写回 fired」的真实路径（等价于重启恢复里的补触发）
+    const reminderCreated = await page.evaluate(async () => {
+      const set = (sel, value) => {
+        const el = document.querySelector(sel);
+        if (!el) return false;
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+        setter.call(el, value);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        return true;
+      };
+      const okText = set("[data-projects-reminder-text]", "冒烟提醒：看一眼构建");
+      const okMinutes = set("[data-projects-reminder-minutes]", "0.02");
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      document.querySelector("[data-projects-reminder-submit]")?.click();
+      return { okText, okMinutes };
+    });
+    const reminderRow = await waitUntil(
+      () =>
+        page.evaluate(() => {
+          const row = document.querySelector("[data-projects-reminder-row]");
+          return row
+            ? {
+                id: row.getAttribute("data-projects-reminder-row"),
+                state: row.getAttribute("data-projects-reminder-state"),
+              }
+            : null;
+        }),
+      12000,
+    );
+    const reminderFired = await waitUntil(
+      () =>
+        page.evaluate(() => {
+          const row = document.querySelector("[data-projects-reminder-row]");
+          return row && row.getAttribute("data-projects-reminder-state") === "fired" ? "fired" : "";
+        }),
+      20000,
+    );
+    add(
+      "timer 提醒真到点：写回 fired + 未读（重启后不会重复响）",
+      reminderCreated.okText === true && reminderRow !== null && reminderFired === "fired",
+      JSON.stringify({ reminderCreated, reminderRow, reminderFired }),
+    );
+    const reminderToast = await waitUntil(
+      () =>
+        page.evaluate(() => {
+          const toast = document.querySelector("[data-projects-reminder-toast]");
+          return toast ? (toast.textContent || "").trim().slice(0, 80) : "";
+        }),
+      20000,
+    );
+    add(
+      "到点走 shell.overlay toast（提醒文案可见）",
+      typeof reminderToast === "string" && reminderToast.includes("冒烟提醒"),
+      String(reminderToast),
+    );
+    // 截图：提醒对话框（重新打开）
+    await page.evaluate(() => document.querySelector("[data-projects-reminder-open]")?.click());
+    await page.waitForTimeout(400);
+    {
+      const shot = await page.cdp("Page.captureScreenshot", { format: "png" });
+      const fs = await import("node:fs/promises");
+      await fs.writeFile(
+        ${JSON.stringify(shotsDir)} + "/10-b4-reminder-dialog.png",
+        Buffer.from(shot.data, "base64"),
+      );
+    }
+    // —— 取消：再建一条（60 分钟后）然后取消 ——
+    const cancelFlow = await page.evaluate(async () => {
+      const set = (sel, value) => {
+        const el = document.querySelector(sel);
+        if (!el) return false;
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+        setter.call(el, value);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        return true;
+      };
+      set("[data-projects-reminder-text]", "冒烟提醒：这条会被取消");
+      set("[data-projects-reminder-minutes]", "60");
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      document.querySelector("[data-projects-reminder-submit]")?.click();
+      for (let i = 0; i < 40; i += 1) {
+        const rows = [...document.querySelectorAll("[data-projects-reminder-row]")];
+        const row = rows.find((node) => (node.textContent || "").includes("这条会被取消"));
+        if (row) {
+          row.querySelector("[data-projects-reminder-cancel]")?.click();
+          return "clicked";
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      return "no-row";
+    });
+    const cancelled = await waitUntil(
+      () =>
+        page.evaluate(() => {
+          const rows = [...document.querySelectorAll("[data-projects-reminder-row]")];
+          const row = rows.find((node) => (node.textContent || "").includes("这条会被取消"));
+          return row && row.getAttribute("data-projects-reminder-state") === "cancelled" ? "cancelled" : "";
+        }),
+      20000,
+    );
+    add(
+      "提醒可取消（状态回读 cancelled，且不再触发）",
+      cancelFlow === "clicked" && cancelled === "cancelled",
+      JSON.stringify({ cancelFlow, cancelled }),
+    );
+    // 带出去给 Node 侧读盘（自动档 routine 故意留着）
+    result.b4RoutineId = routineRow?.id || (routineRow && routineRow.id) || "";
+    result.b4ReminderId = reminderRow?.id || "";
+    // 收尾：关掉对话框、回到列表，别把页面留在弹层/页签上（后面还有列表与设置断言）
+    await page.evaluate(() => document.querySelector("[data-projects-reminder-close]")?.click());
+    await page.waitForTimeout(300);
+  }
+  await page.evaluate(() => document.querySelector("[data-projects-detail-back]")?.click());
+  await page.waitForTimeout(1200);
+
   // 设置分节：本机 profile 的 cordis.patch.yml 可能把设置页整体禁用（该插件 enabled:false），
   // 那就无从打开——记录为 tolerated 而不是失败，真正的分节渲染由桌面回归在可打开的环境里覆盖。
   const openedSettings = await page.evaluate(() => {
@@ -3223,6 +3612,112 @@ try {
       skipAdd(name, "设置页未渲染，控件与写路径无从断言");
     }
   }
+  // ===== B4：F52 权限收窄开关（默认继承宿主；写→回读 current(session)）=====
+  // 设置页的 General 分区里有一张三选一卡（继承 / 收窄档 / 自定义），
+  // 写路径 setProjectPreset 会把档位套到现有会话并用 current(session) 回读。
+  {
+    const presetReady = await waitUntil(
+      () =>
+        page.evaluate(() =>
+          document.querySelector("[data-projects-preset]")
+            ? document
+                .querySelector("[data-projects-preset]")
+                .getAttribute("data-projects-preset-available")
+            : "",
+        ),
+      10000,
+    );
+    // 设置页有自己的项目选择器：先明确选到冒烟项目（否则预设写到了别的项目上）
+    const pickedProject = await page.evaluate(async (projectName) => {
+      const select = document.querySelector("[data-projects-policy-project]");
+      if (!select) return "no-select";
+      const option = [...select.options].find((item) => (item.textContent || "").includes(projectName));
+      if (!option) return "no-option";
+      select.value = option.value;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      return option.value;
+    }, name);
+    const before = await page.evaluate(() => {
+      const card = document.querySelector("[data-projects-preset]");
+      const options = [...document.querySelectorAll("[data-projects-preset-option]")].map((node) => ({
+        value: node.value,
+        text: (node.textContent || "").trim(),
+      }));
+      return {
+        available: card?.getAttribute("data-projects-preset-available"),
+        current: card?.getAttribute("data-projects-preset-current"),
+        options,
+        note: (document.querySelector("[data-projects-preset-note]")?.textContent || "").trim(),
+        readback: card?.getAttribute("data-projects-preset-readback") || "[]",
+      };
+    });
+    add(
+      "权限收窄默认「继承宿主」，选项来自宿主 catalog（名字不写死）",
+      presetReady === "yes" &&
+        before.available === "yes" &&
+        before.current === "" &&
+        before.options.some((option) => option.value === "") &&
+        before.options.filter((option) => option.value !== "").length >= 2 &&
+        /继承宿主/u.test(before.options[0]?.text || ""),
+      JSON.stringify({ presetReady, pickedProject, available: before.available, current: before.current, count: before.options.length }),
+    );
+    add(
+      "权限收窄明示「推/合并/删除永远需要你批准」且不绕过执行器",
+      /推 \\/ 合并 \\/ 删除永远需要你/u.test(before.note) &&
+        /不绕过|只影响/u.test(before.note),
+      before.note.slice(0, 140),
+    );
+    // 挑一个比宿主默认更窄的档（本部署默认 danger-full-access，所以窄档一定存在）
+    const narrow = before.options.find((option) => option.value !== "" && /更窄/u.test(option.text)) ||
+      before.options.find((option) => option.value !== "" && option.value !== "danger-full-access");
+    const chosenPreset = narrow ? narrow.value : "";
+    await page.evaluate(async (value) => {
+      const select = document.querySelector("[data-projects-preset-select]");
+      if (!select) return;
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set;
+      setter.call(select, value);
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      // 旧会话（协调器 + 线程）补应用一次，回读写进 data-projects-preset-readback
+      document.querySelector("[data-projects-preset-apply]")?.click();
+    }, chosenPreset);
+    const applied = await waitUntil(
+      () =>
+        page.evaluate((value) => {
+          const card = document.querySelector("[data-projects-preset]");
+          if (!card) return null;
+          const current = card.getAttribute("data-projects-preset-current");
+          const readback = JSON.parse(card.getAttribute("data-projects-preset-readback") || "[]");
+          const good = readback.filter((item) => item.ok === true && item.currentPreset === value);
+          return current === value && good.length >= 1
+            ? { current, applied: good.length, readback }
+            : null;
+        }, chosenPreset),
+      25000,
+    );
+    add(
+      "权限收窄写→回读：current(session) 等于所选档位",
+      chosenPreset !== "" && applied !== null && applied.current === chosenPreset,
+      JSON.stringify({ chosenPreset, applied: applied && { current: applied.current, applied: applied.applied, readback: applied.readback } }),
+    );
+    result.b4Preset = chosenPreset;
+    // 截图：权限收窄卡（含回读行）
+    await page.evaluate(() => {
+      const card = document.querySelector("[data-projects-preset]");
+      if (card && typeof card.scrollIntoView === "function") card.scrollIntoView({ block: "center" });
+    });
+    await page.waitForTimeout(400);
+    {
+      const shot = await page.cdp("Page.captureScreenshot", { format: "png" });
+      const fs = await import("node:fs/promises");
+      await fs.writeFile(
+        ${JSON.stringify(shotsDir)} + "/11-b4-preset.png",
+        Buffer.from(shot.data, "base64"),
+      );
+    }
+  }
+
   await page.waitForTimeout(600);
 
   await page.evaluate(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
@@ -3508,7 +4003,7 @@ const main = async () => {
     const raw = await new Promise((resolvePromise) => {
       const child = spawn("ego-browser", ["nodejs"], { stdio: ["pipe", "pipe", "pipe"] });
       let out = "";
-      const timer = setTimeout(() => child.kill("SIGTERM"), 300_000);
+      const timer = setTimeout(() => child.kill("SIGTERM"), 420_000);
       child.stdout.on("data", (c) => {
         out += String(c);
       });
@@ -3560,6 +4055,82 @@ const main = async () => {
       name: "元数据是合法 JSON 且格式版本为 1",
       ok: parsed !== null && parsed.format === 1,
       detail: parsed === null ? "parse failed" : `format=${parsed.format}`,
+    });
+    // ===== B4：F36 routines / F30 reminders / F52 preset 的落盘回读 =====
+    const b4Project =
+      parsed && typeof result.projectName === "string"
+        ? Object.values(parsed.projects ?? {}).find(
+            (/** @type {any} */ project) => project.name === result.projectName,
+          )
+        : undefined;
+    const b4Routines = Array.isArray(b4Project?.routines) ? b4Project.routines : [];
+    const b4Routine =
+      b4Routines.find((/** @type {any} */ item) => item.id === String(result.b4RoutineId ?? "")) ??
+      b4Routines[0];
+    checks.push({
+      name: "Routines 落盘：本地记录带宿主 scheduleId + 频率/时间（写→回读）",
+      ok:
+        b4Routine !== undefined &&
+        String(b4Routine.scheduleId ?? "") !== "" &&
+        b4Routine.frequency === "daily" &&
+        b4Routine.time === "09:30:00" &&
+        b4Routine.name === "冒烟每日摘要",
+      detail: JSON.stringify({
+        id: b4Routine?.id ?? "MISSING",
+        scheduleId: b4Routine?.scheduleId ?? null,
+        frequency: b4Routine?.frequency ?? null,
+        time: b4Routine?.time ?? null,
+      }),
+    });
+    checks.push({
+      name: "Routines 停用写→回读（本地 enabled=false，宿主 status 另在面板显示）",
+      ok: b4Routine !== undefined && b4Routine.enabled === false,
+      detail: JSON.stringify({ enabled: b4Routine?.enabled ?? null }),
+    });
+    checks.push({
+      name: "Routines 删除不留本地记录（手动档已删）",
+      ok:
+        b4Routines.length >= 1 &&
+        b4Routines.every((/** @type {any} */ item) => item.name !== "冒烟手动任务"),
+      detail: JSON.stringify(b4Routines.map((/** @type {any} */ item) => item.name)),
+    });
+    const b4Reminders = Array.isArray(b4Project?.reminders) ? b4Project.reminders : [];
+    const b4Fired = b4Reminders.find(
+      (/** @type {any} */ item) => item.mode === "timer" && item.state === "fired",
+    );
+    checks.push({
+      name: "提醒落盘：timer 到点写回 fired + firedAt + 未读/已通知（重启后不再重复响）",
+      ok:
+        b4Fired !== undefined &&
+        typeof b4Fired.firedAt === "string" &&
+        b4Fired.firedAt !== "" &&
+        // toast 弹过就会 ack（notified=true 且 unread 清掉）；没弹过则必须还是 unread。
+        // 两种都证明「落盘状态跟着真实投递走」，坏实现（不写回）会两个都不满足。
+        (b4Fired.notified === true || b4Fired.unread === true) &&
+        /冒烟提醒/u.test(String(b4Fired.text ?? "")),
+      detail: JSON.stringify({
+        firedAt: b4Fired?.firedAt ?? null,
+        unread: b4Fired?.unread ?? null,
+        state: b4Fired?.state ?? null,
+      }),
+    });
+    checks.push({
+      name: "提醒取消落盘：state=cancelled（取消后不会再触发）",
+      ok: b4Reminders.some(
+        (/** @type {any} */ item) =>
+          item.state === "cancelled" && /这条会被取消/u.test(String(item.text ?? "")),
+      ),
+      detail: JSON.stringify(
+        b4Reminders.map((/** @type {any} */ item) => `${item.mode}:${item.state}`),
+      ),
+    });
+    checks.push({
+      name: "权限收窄落盘：project.preset 等于 UI 所选档位（写→回读）",
+      ok:
+        b4Project !== undefined &&
+        String(result.b4Preset ?? "") !== "" &&
+        b4Project.preset === result.b4Preset,
+      detail: JSON.stringify({ store: b4Project?.preset ?? null, ui: result.b4Preset ?? null }),
     });
     checks.push({
       name: "默认策略是 L1 且危险开关全关",

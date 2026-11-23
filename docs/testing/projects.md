@@ -57,7 +57,7 @@ pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体�
 | `memory.test.js`    | 记忆写入：幂等、单条与总量上限、时间戳注释、被拒时给出原因                                    |
 | `exec.test.js`      | 子进程封装：参数原样传递、失败返回 code 不抛、cwd 生效、命令不存在也不抛                      |
 
-## 2. web 端到端冒烟（196 项）
+## 2. web 端到端冒烟（220 项）
 
 > 0.10.0 面板改版后：新建走「入口 → 模态（两入口）→ 表单」，列表页新增搜索/排序/收藏，详情页改为
 > 主列 + 右栏（右栏为值行 + 编辑动作），并补了 toast、两列 DOM 顺序、值行无 input 等断言，故 78 → 102。
@@ -93,7 +93,36 @@ pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体�
 > **冷启动读路径**（`ProjectStore.load()` + `deriveThreadState()`）与 UI 最后显示一致、
 > 线程 `dir` 是项目目录之一、`resolve`/`reopen` 写审计。
 
-> **B1 审查修复（同一分支，2026-11-23）**：上一版有 4 条宿主侧断言是恒真式（只校验「∈ 六态枚举」/
+> **B4（结构性三项：Routines / 权限收窄 / 双模式提醒）再 +24，故 196 → 220。** 新增锚点与断言：
+> `data-projects-rail-routines*`（详情右栏「定时任务」段：计数 + 新建入口 + 提醒入口）、
+> `data-projects-routines*`（可用性 `available=yes|no` 如实反映宿主 `schedule` 是否装载、成本提示里必须有
+> 「一次模型调用」与「60 秒」、六档频率枚举逐项等于 `manual,hourly,daily,weekdays,weekly,monthly`）、
+> `data-projects-routine*`（创建 daily 09:30 → 行出现且描述「每天 09:30」+ 宿主 status；History 面板
+> `-count=0` 且写明「还没有投递」——不编造投递；停用后按钮回读成「启用」；手动档描述必须有
+> 「只有点 Run now」且**不建宿主任务**；删除后行消失且盘上不留记录）、
+> `data-projects-reminder*`（默认模式 `timer` + 项目设置两档；对话框两模式按钮齐全，timer 档文案必须含
+> 「不花模型调用 / 关着不响」，切 schedule 后必须含「跑一次模型 / 关着也会跑」；`minutes=0.02` 创建后
+> **真到点**：行状态回读 `fired`、`shell.overlay` toast 出现「冒烟提醒」；再建一条 60 分钟的并取消，
+> 状态回读 `cancelled`）、
+> `data-projects-preset*`（默认 `current=""` 即「继承宿主」、选项来自宿主 `catalog()` 且带「更窄」标记、
+> 卡片必须写明「推 / 合并 / 删除永远需要你批准」且不绕过；选一个比宿主默认更窄的档 → `-current` 回读等于所选，
+> `-readback` 里至少有一个会话 `ok=true` 且 `currentPreset` 等于所选）。
+> 宿主侧另外断言：`routines[]` 落盘带宿主 `scheduleId`、频率 daily、时间被补成 `09:30:00`；
+> 停用后本地 `enabled=false`；手动档删干净；`reminders[]` 里 timer 那条 `state=fired` + `firedAt` + `unread=true`；
+> 取消那条 `state=cancelled`；`project.preset` 等于 UI 所选（写→回读）。
+> 覆盖不到的宿主侧行为（`schedule` 到点投递、重启后 timer 恢复）用单测固定：`test/routines.test.js`、
+> `test/reminders.test.js`（`planReminderRecovery` 覆盖「关机期间到点」）、`test/b4-store.test.js`。
+
+> **B4 反向验证（每条新断言为什么坏实现会红）**：Routines 的成本提示若被删，`/一次模型调用/` 与
+> `/60 秒/` 两条正则同时红；`describeRoutineFrequency` 若把 daily 写成「每天 09:30:00」而 UI 漏了截断，
+> 「每天 09:30」断言红；`schedule.create` 没被调用时行拿不到宿主 status（`data-projects-routine-status`
+> 会是 `manual` 而不是 `active/paused`）且 Node 侧 `scheduleId` 为空；timer 若没真起、或到点没写回，
+> `reminder-state` 永远停 `pending`、盘上 `firedAt` 为空；toast 若没接 `shell.overlay`，
+> `data-projects-reminder-toast` 不会出现；权限开关若只是「存了名字没应用」，`-readback` 里没有
+> `ok=true && currentPreset===所选`（我们会同时校验 current 与 readback 两处）；若把默认档写成
+> 「工作区可写」而不是继承，`-current` 初值断言直接红。
+
+> **B1 审查修复（同一分支，2026-11-23）**> **B1 审查修复（同一分支，2026-11-23）**：上一版有 4 条宿主侧断言是恒真式（只校验「∈ 六态枚举」/
 > 「`null` 或字符串」），已在上面替换成具体值 + 深比较；另外补了「冷启动读得回来」与「UI/盘上一致」两组，
 > 保证坏实现（永远不写回、写进去读不回）会 FAIL。批次记录见 `notes/projects/claude-borrow/progress.md`
 > （私有笔记，不在公开仓库）。
