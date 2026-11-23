@@ -57,7 +57,7 @@ pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体�
 | `memory.test.js`    | 记忆写入：幂等、单条与总量上限、时间戳注释、被拒时给出原因                                    |
 | `exec.test.js`      | 子进程封装：参数原样传递、失败返回 code 不抛、cwd 生效、命令不存在也不抛                      |
 
-## 2. web 端到端冒烟（157 项）
+## 2. web 端到端冒烟（196 项）
 
 > 0.10.0 面板改版后：新建走「入口 → 模态（两入口）→ 表单」，列表页新增搜索/排序/收藏，详情页改为
 > 主列 + 右栏（右栏为值行 + 编辑动作），并补了 toast、两列 DOM 顺序、值行无 input 等断言，故 78 → 102。
@@ -129,8 +129,8 @@ pnpm smoke:projects-desktop --require
 **2026-11-21 实测（DSH 0.2.2-rc.5）**：0.1.1 / 0.2.1 / 0.3.0 / 0.4.1 / 0.4.2 各跑过一次，都是 11 PASS / 0 SKIP / 0 FAIL
 （0.3.0 那次 web 冒烟同时是 52 项，门禁 64s 全绿）。
 0.2.1 那次是**装进 live profile 并重启桌面版之后**跑的（`pnpm gate:all --plugins projects --idle-session …`，
-64s 全绿）。该 profile 里 `ui-settings` 是 `enabled: false`，所以「设置页出现项目分节」这条按允许跳过处理——
-想验证设置页文案得先把设置页打开。
+64s 全绿）。live profile 里若 `ui-settings` 是 `enabled: false`，桌面回归的「设置页出现项目分节」不再计 PASS：
+渲染了就真断言，没渲染就进 `SKIP` 并计入末尾计数行（2026-11-23 起）。
 
 原始记录（0.1.1）：
 
@@ -175,18 +175,21 @@ pnpm gate:all --plugins projects --idle-session "<任一空闲会话标题的子
 | 失败在 `assistant/attempt` 而非 `turn/end` | 失败被当成功                             | 记住本轮 attempt 再在 `turn/end` 合并（§11.6） |
 | 归档不是 session 事件                      | 监听不到                                 | 用 `workspace/session-archived`（§11.7）       |
 
-## 6. 设置分节的已知局限
+## 6. 设置分节：临时 home 里真打开，不再「跳过计 PASS」
 
-`settings.section` 的断言依赖「设置页在本机 profile 里可用」。有些 profile 在
-`cordis.patch.yml` 里把 `ui-settings` 关掉（`config.enabled: false`），此时冒烟里的
-「设置里可编辑项目策略」「可切换自治级别」两条会**按跳过处理**，并在 detail 里写明原因。
+`settings.section` 的断言依赖「设置页在本机 profile 里可用」。本机 live profile 的
+`cordis.patch.yml` 把 `ui-settings` 写成 `config.enabled: false`，整份拷进临时 home 会把这个状态带过去。
 
-尝试过的做法与其失败原因（别重复踩）：
+现在的做法（**只改临时 home，不动 live profile**）：
 
-- 在临时 home 的 profile 副本里把 `enabled` 改成 `true` → **无效**：
-  `dsh plugin ... add` 会重写 `cordis.patch.yml`；即使放在 add 之后写，
-  设置页的导航入口也不出现（导航入口由该插件自己的 slot 注册产生，插件被关就不注册）。
-- 因此这两条的**权威覆盖**在「设置页可用的 profile」上做；默认 profile 上如实跳过。
+1. `dsh plugin add` 之后，把临时 home `cordis.patch.yml` 里 `ui-settings` 的 `enabled` 改成 `true`；
+2. web 客户端的设置入口没有稳定可读的按钮 label，冒烟用宿主自己的快捷键打开设置弹窗
+   （web 默认 `primary+alt+Comma`），再点「项目」分节，等待 `data-projects-settings` 渲染；
+3. 设置页若仍未渲染，这 14 条断言会进入**如实计数**的 `SKIP` 行（不计 PASS、不伪装覆盖），
+   计数行写成 `X PASS / Y SKIP / Z FAIL`。
+
+之前的“改 enabled 无效”结论来自旧尝试：问题不是配置没生效，而是**没有可点的设置入口**；
+用宿主快捷键打开设置弹窗后，`settings.section` 能正常渲染（本批次实测通过）。
 
 ## 7. 冒烟为什么会「导航失败」：cookie 按主机作用域
 
@@ -754,13 +757,14 @@ UI 目前没有"发起 PR"或"请求危险动作"的入口，那是协调器工�
 
 ## B3 · 本地优势 + 设置 + 记忆（2026-11-23）
 
-**自动化**：`node --test packages/projects`（B3 新增 19 条：记忆碎片索引/forget/预览、16k 去重与
-`<project-context>` 包裹、goal 8k 写入口拒绝、预算默认值与补丁规范化、**暂停仍注入上下文**、
-完成通知与按项目开关、文件夹授权三键（once 用掉即失效）、`gh` 三种失败态的解析、
-AGENTS.md 受管区块幂等合并、`@` 候选排序）。`pnpm smoke:projects` 新增 15 条：
-五个视图页签（Library/Routines 占位不假装有产物）、goal `x / 8,000` 计数与 `maxlength`、
-设置四分区/预算写→回读/Usage 无金额/Debug access 命名/GitHub 检查/通知开关/模板补全，
-以及宿主侧 `projects.json` 与 `AGENTS.md` 的三条落盘回读。
+**自动化**：`packages/projects` 单测 **502** 条（B3 之后新增：记忆碎片索引/forget/预览、
+`memory-store` 真读盘与路径守卫、16k 去重（注入时真读宿主 AGENTS.md）、`<project-context>` 包裹、
+goal 8k 写入口拒绝、预算默认值与补丁规范化、**暂停仍注入上下文**、完成通知与按项目开关、
+文件夹授权三键与**执行闸**（deny 拒绝 / once 消费 / default 长期）、`gh` 三种失败态的解析、
+AGENTS.md 受管区块幂等合并、`@` 候选排序）。`pnpm smoke:projects` 设置页相关 14 条在临时 home
+里**真跑**（见 §6）：四分区、预算写→回读、Usage 无金额、Debug access、GitHub 检查、
+通知开关、模板补全（两次点击仍幂等，回执写明 AGENTS.md 路径），以及宿主侧
+`projects.json` 的预算/通知/模板落盘回读。
 
 **手工（桌面版，本机保留一份真实交互记录的格式）**：
 
@@ -780,14 +784,36 @@ AGENTS.md 受管区块幂等合并、`@` 候选排序）。`pnpm smoke:projects`
 
 在详情页右栏「上下文」与记忆页签里补齐可达入口（因为本机 smoke profile 会禁用设置页）：
 
-| 区域         | 数据锚点                                                                   | 断言                                                                                                                                               |
-| ------------ | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 本地优势卡   | `data-projects-b3-card` / `data-projects-mention-source`                   | 卡片存在且 `@` 源为 `registered`                                                                                                                   |
-| 文件夹授权卡 | `data-projects-folder-card` / `-folder-decision` / `-folder-mode`          | 三键 Deny / Set as default folder / Allow once；点「设为默认」后 mode=default，且 `projects.json` 的 `policy.folderAuth[path].mode` 回读为 default |
-| 线程默认模型 | `data-projects-thread-model` / `-thread-effort` / `-thread-defaults-save`  | 两个下拉来自 `modelCatalog`；保存后 `threadDefaults` 落到 `projects.json`，新建线程时套用                                                          |
-| 从会话开线程 | `data-projects-recent-sessions` / `-recent-session` / `-attach-session`    | 列出最近会话并挂为线程；`threads` 里能按 sessionId 回读                                                                                            |
-| 线程动作     | `data-projects-thread-action`（rename/unread/resolve/copy/reclaim/detach） | 六项齐全；重命名写回 `thread.title`、标记未读写回 `unread`                                                                                         |
-| 记忆碎片     | `data-projects-frag` / `-frag-add` / `-frag-preview` / `-frag-forget`      | 新增→列出→预览→忘掉；忘掉后 `memory/fragments/` 为空                                                                                               |
+| 区域         | 数据锚点                                                                                                        | 断言                                                                                                                                                                                                                  |
+| ------------ | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 本地优势卡   | `data-projects-b3-card` / `data-projects-mention-source`                                                        | 卡片存在；`@` 源只有在 `ctx.inject(["inputTriggers"])` 的 `registerSource()` 成功后才显示 `registered`（冒烟断言该值）；候选 token 形如 `thread:<id>`/`project:<id>`，Node 侧回查 `projects.json` 证明指向真实记录    |
+| 文件夹授权卡 | `data-projects-folder-card` / `-folder-decision` / `-folder-mode`                                               | 三键 Deny / Set as default / Allow once；Deny→`mode=deny`、once→`mode=once`、「设为默认」→`mode=default` 逐一回读；`projects.json` 的 `policy.folderAuth[dir].mode=default` 与项目 `dirs` 对得上                      |
+| 线程默认模型 | `data-projects-thread-model` / `-thread-effort` / `-thread-defaults-save` / `-manual-toggle` / `-model-catalog` | 两个下拉可写，选项数量**逐项等于** `data-projects-model-catalog` 记录的目录模型数/effort 数（硬编码会不等）；目录为空（无凭据部署）时展开「手填」写具体值，保存后 UI 回读与 `projects.json.threadDefaults` 逐字段相等 |
+| 从会话开线程 | `data-projects-recent-sessions` / `-recent-session` / `-attach-session`                                         | 候选行数 > 0 且 id 来自 `recentSessions`（宿主 `list` 回执 `{items}`）；attach 的 sessionId 出现在线程行与 `projects.json.threads`                                                                                    |
+| 线程动作     | `data-projects-thread-action`（rename/unread/resolve/copy/reclaim/detach）+ `data-projects-thread-host-menu`    | 自绘「⋯」六项齐全；重命名/未读回读；行右键打开**宿主** `contextMenus`（重命名/复制可见，Esc 关闭），Shift+F10 等价                                                                                                    |
+| 记忆碎片     | `data-projects-frag` / `-frag-add` / `-frag-preview` / `-frag-forget`                                           | UI 入口存在；落盘/列表/预览/忘掉与 `../`、`..%2F`、绝对路径拒绝由 `memory-store.test.js` 用临时目录真跑                                                                                                               |
 
 截图：`notes/projects/claude-borrow/shots/b3/07-b3-context-card-and-thread-actions.png`、
 `08-b3-memory-fragments.png`。
+
+## B3 复审修复（2026-11-23）
+
+独立审查给了 5 P0 / 10 P1，逐条修复后的口径（每条都有可证伪断言或明确降级文案）：
+
+| #     | 问题                                          | 现在的证据                                                                                                                                                              |
+| ----- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P0-1  | `@` 源没生效（`c.get("inputTriggers")` 恒空） | 改用 `ctx.inject(["inputTriggers"])`，`registered` 只在 `registerSource()` 成功返回后置位；冒烟断言 `data-projects-mention-source=registered` + 候选 token 指向真实记录 |
+| P0-2  | 设置页 14 条「跳过计 PASS」                   | 临时 home 打开 `ui-settings` + 宿主快捷键开设置；14 条真跑，跑不了时计入 `SKIP`（`X PASS / Y SKIP / Z FAIL`）                                                           |
+| P0-3  | 线程默认模型没有可写路径                      | 两个下拉由 `modelCatalog` 动态生成且可写；目录为空时提供手填；断言选项数与目录数逐项相等                                                                                |
+| P0-4  | 默认模型写→回读恒真                           | UI 回读 = 刚写的手填/目录值；`projects.json.threadDefaults` 的 provider/model/effort 逐字段比对                                                                         |
+| P0-5  | 两条恒真断言                                  | 删掉不调生产代码的 F3 单测（真实覆盖在 `memory-store.test.js`）；`recentUi` 改为「候选行数 > 0 + attach 的 sessionId 落进 threads」                                     |
+| P1-6  | 注入去重死代码                                | `attach.js` 注入时用 `host-instructions.js` 真读宿主会加载的 AGENTS.md/CLAUDE.md（目录链到 git 根），单测用临时目录断言重复段被省略                                     |
+| P1-7  | Allow once 没有消费者                         | `folderAuth` 接进审批执行闸：deny 拒绝、once 首次放行并消费、default 长期、未授权保持旧行为；`service-execute.test.js` 三条                                             |
+| P1-8  | `applyProjectTemplate` 参数错                 | RPC 改传 `{ projectId }`；模板写入 AGENTS.md 可回读且两次调用只保留一份受管区块                                                                                         |
+| P1-9  | 宿主 contextMenus 死注册                      | 线程行右键/Shift+F10 调 `contextMenus.open()`；冒烟断言菜单项与 Esc 关闭；自绘「⋯」保留为降级                                                                           |
+| P1-10 | B3 文案缺 EN                                  | 106 个 key 补进 runtime EN 字典与 `locale/en.json`（与 zh 对齐）                                                                                                        |
+| P1-11 | `forgetMemory` 路径穿越                       | `memory-store.js` 加 slug/kind/块 id 守卫；单测覆盖 `../`、`..%2F`、绝对路径、反斜杠                                                                                    |
+| P1-12 | F37 服务层无测试                              | `memory-store.js` 根目录可注入，`memory-store.test.js` 真跑新增/列表/预览/忘掉/索引改写                                                                                 |
+| P1-13 | 文档夸大                                      | 本节与上方表格按实际断言重写；计数行以冒烟输出为准                                                                                                                      |
+| P1-14 | 冒烟不可重复                                  | 记忆/归档/删除/搜索四处固定等待改为轮询；同 commit 连跑两次计数一致                                                                                                     |
+| P1-15 | 桌面回归设置断言空话                          | 渲染了就真断言，没渲染就 `SKIP` 并计入计数行                                                                                                                            |

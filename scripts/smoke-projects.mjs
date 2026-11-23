@@ -91,8 +91,24 @@ function browserScript(url, shotsDir, workspaceDir, secondDir) {
   return `
 const SMOKE_WORKSPACE_DIR = ${JSON.stringify(workspaceDir)};
 const SMOKE_SECOND_DIR = ${JSON.stringify(secondDir)};
-const result = { checks: [], fatal: "" };
+const result = { checks: [], skips: [], fatal: "" };
 const add = (name, ok, detail) => result.checks.push({ name, ok: Boolean(ok), detail: String(detail || "") });
+const skipAdd = (name, detail) => result.skips.push({ name, detail: String(detail || "") });
+// 轮询等待：固定的 waitForTimeout 在慢机器/首次编译时会偶发不足（同 commit 两次跑结果不同）。
+const waitUntil = async (fn, timeout = 12000, step = 200) => {
+  const startedAt = Date.now();
+  for (;;) {
+    let value = null;
+    try {
+      value = await fn();
+    } catch (error) {
+      value = null;
+    }
+    if (value) return value;
+    if (Date.now() - startedAt >= timeout) return null;
+    await new Promise((resolve) => setTimeout(resolve, step));
+  }
+};
 try {
   const task = await taskSpace("smoke projects ${PROJECT_NAME_TOKEN}");
   const page = task.page("p1");
@@ -1696,9 +1712,15 @@ try {
     tab.click();
     return "clicked";
   });
-  await page.waitForTimeout(900);
-  const memorySeen = await page.evaluate(() =>
-    Boolean(document.querySelector("[data-projects-instructions]") && document.querySelector("[data-projects-memory-index]")),
+  const memorySeen = await waitUntil(
+    () =>
+      page.evaluate(() =>
+        Boolean(
+          document.querySelector("[data-projects-instructions]") &&
+            document.querySelector("[data-projects-memory-index]"),
+        ),
+      ),
+    12000,
   );
   add("记忆页签渲染规则与索引", memorySeen === true, String(memoryTab));
 
@@ -1716,6 +1738,9 @@ try {
     q("[data-projects-mention-load]")?.click();
     await wait(1200);
     result.mentionCandidates = all("[data-projects-mention-candidate]").length;
+    result.mentionTokens = all("[data-projects-mention-candidate]").map((node) =>
+      node.getAttribute("data-projects-mention-candidate"),
+    );
     const folderButtons = all("[data-projects-folder-decision]");
     result.folderButtons = folderButtons.map((n) => n.getAttribute("data-projects-folder-decision"));
     result.folderPath = folderButtons[0]?.getAttribute("data-projects-folder-path") || "";
@@ -1726,27 +1751,85 @@ try {
       defaultButton.click();
       await wait(1400);
     }
+    // 授权三键点「设为默认」（回读在下面用 Node 侧轮询，避免单次 evaluate 超 15s）。
     result.folderMode =
       q("[data-projects-folder-mode]")?.getAttribute("data-projects-folder-mode") || "";
-    result.hasModel = Boolean(q("[data-projects-thread-model]"));
-    result.hasEffort = Boolean(q("[data-projects-thread-effort]"));
-    q("[data-projects-thread-defaults-save]")?.click();
-    await wait(900);
-    q("[data-projects-recent-sessions]")?.click();
-    await wait(2500);
-    const recent = all("[data-projects-recent-session]");
-    result.recentCount = recent.length;
-    result.recentUi = Boolean(
-      q("[data-projects-recent-list]") ||
-        (q("[data-projects-b3-card]")?.innerText || "").includes("最近会话"),
+    result.folderMessage = q("[data-projects-b3-message]")?.textContent || "";
+    result.folderCardAttrs = all("[data-projects-folder-card]").map((node) =>
+      node.getAttribute("data-projects-folder-card"),
     );
-    const attach = recent.length > 0 ? recent[0].querySelector("[data-projects-attach-session]") : null;
-    result.attachId = attach ? attach.getAttribute("data-projects-attach-session") : "";
-    if (attach) {
-      attach.click();
-      await wait(1800);
+    // F42：两个下拉必须是**可写的**，选项来自 modelCatalog；选中值保存后由下面轮询回读。
+    const modelSel = q("[data-projects-thread-model]");
+    const effortSel = q("[data-projects-thread-effort]");
+    result.hasModel = Boolean(modelSel);
+    result.hasEffort = Boolean(effortSel);
+    result.modelDisabled = modelSel ? modelSel.disabled : null;
+    result.effortDisabled = effortSel ? effortSel.disabled : null;
+    result.modelOptions = modelSel ? [...modelSel.options].map((option) => option.value) : [];
+    result.modelOptionsInitial = result.modelOptions.slice();
+    const effortSelEarly = q("[data-projects-thread-effort]");
+    result.effortOptionsInitial = effortSelEarly
+      ? [...effortSelEarly.options].map((option) => option.value)
+      : [];
+    const catalogRaw =
+      q("[data-projects-thread-defaults]")?.getAttribute("data-projects-model-catalog") || "";
+    try {
+      result.modelCatalogStats = JSON.parse(catalogRaw);
+    } catch (_error) {
+      result.modelCatalogStats = null;
     }
-    // 线程动作：打开**最后一行**的既有「⋯」菜单（避开 F16/F29 断言用的那一行）
+    const targetModel = result.modelOptions.find((value) => value !== "") || "";
+    if (modelSel && targetModel !== "") {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set;
+      setter.call(modelSel, targetModel);
+      modelSel.dispatchEvent(new Event("change", { bubbles: true }));
+      await wait(400);
+    }
+    const effortSel2 = q("[data-projects-thread-effort]");
+    const effortValues = effortSel2 ? [...effortSel2.options].map((option) => option.value) : [];
+    const targetEffort = effortValues.find((value) => value !== "") || "";
+    if (effortSel2) {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set;
+      setter.call(effortSel2, targetEffort);
+      effortSel2.dispatchEvent(new Event("change", { bubbles: true }));
+      await wait(300);
+    }
+    result.effortOptions = effortValues;
+    // 目录为空（无凭据部署）时走手填：写入一组**具体值**，保存后逐字段回读。
+    const manualProvider = targetModel === "" ? "smoke-provider" : targetModel.split("|")[0] || "";
+    const manualModel =
+      targetModel === "" ? "smoke-model" : targetModel.split("|").slice(1).join("|");
+    const manualEffort = targetEffort === "" ? "high" : targetEffort;
+    result.defaultsPicked = {
+      provider: manualProvider,
+      modelId: manualModel,
+      effort: manualEffort,
+    };
+    if (targetModel === "") {
+      q("[data-projects-thread-manual-toggle]")?.click();
+      await wait(300);
+      const fillText = (selector, value) => {
+        const input = q(selector);
+        if (!input) return;
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+        setter.call(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      };
+      fillText("[data-projects-thread-model-manual]", manualProvider + "|" + manualModel);
+      fillText("[data-projects-thread-effort-manual]", manualEffort);
+      await wait(400);
+    }
+    q("[data-projects-thread-defaults-save]")?.click();
+    await wait(500);
+    return result;
+  });
+  // 线程动作（自绘「⋯」菜单 + 行内重命名）：单独一次 evaluate，避免和上面的轮询叠加超 15s。
+  const b3uiMenu = await page.evaluate(async () => {
+    const q = (sel) => document.querySelector(sel);
+    const all = (sel) => [...document.querySelectorAll(sel)];
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const result = {};
+
     const menuButtons = all("[data-projects-thread-menu]");
     const targetMenu = menuButtons[menuButtons.length - 1];
     if (targetMenu) targetMenu.click();
@@ -1808,25 +1891,286 @@ try {
     }
     return result;
   });
+  b3ui.menuItems = b3uiMenu.menuItems;
+  b3ui.renameRow = b3uiMenu.renameRow;
+  b3ui.copyRow = b3uiMenu.copyRow;
+  b3ui.renameSaved = b3uiMenu.renameSaved;
+  b3ui.renameMessage = b3uiMenu.renameMessage;
+  b3ui.renameReadback = b3uiMenu.renameReadback;
+  b3ui.actions = b3uiMenu.actions;
+  b3ui.actionTarget = b3uiMenu.actionTarget;
+
+  // U18：线程行右键 → 宿主 contextMenus（宿主菜单的渲染/关闭都在 Node 侧轮询）。
+  await page.evaluate(() =>
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+  );
+  await page.waitForTimeout(400);
+  b3ui.hostMenuReady = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll("[data-projects-thread-row]")];
+    const row = rows[rows.length - 1];
+    if (!row) return "";
+    const ready = row.getAttribute("data-projects-thread-host-menu") || "";
+    if (ready !== "yes") return ready;
+    const rect = row.getBoundingClientRect();
+    row.dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: Math.round(rect.left + 40),
+        clientY: Math.round(rect.top + 10),
+      }),
+    );
+    return ready;
+  });
+  if (b3ui.hostMenuReady === "yes") {
+    b3ui.hostMenuOpened = Boolean(
+      await waitUntil(
+        () => page.evaluate(() => document.querySelectorAll('[role="menu"]').length > 0),
+        8000,
+      ),
+    );
+    b3ui.hostMenuItems = await page.evaluate(() =>
+      [...document.querySelectorAll('[role="menuitem"]')].map((node) =>
+        (node.textContent || "").trim(),
+      ),
+    );
+    await page.evaluate(() =>
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+    );
+    await page.waitForTimeout(300);
+    b3ui.hostMenuClosed = Boolean(
+      await waitUntil(
+        () => page.evaluate(() => document.querySelectorAll('[role="menu"]').length === 0),
+        5000,
+      ),
+    );
+  }
+
+  // —— 单次 page.evaluate 有 15s 安全超时：写后回读/列表加载都在 Node 侧轮询 ——
+  const defaultsReadback = await waitUntil(
+    () =>
+      page.evaluate((picked) => {
+        const readback =
+          document
+            .querySelector("[data-projects-thread-defaults]")
+            ?.getAttribute("data-projects-thread-defaults-value") || "";
+        const message = document.querySelector("[data-projects-b3-message]")?.textContent || "";
+        try {
+          const parsed = JSON.parse(readback);
+          if (
+            message.includes("已保存") &&
+            String(parsed.provider) === String(picked.provider) &&
+            String(parsed.model) === String(picked.modelId) &&
+            String(parsed.reasoningEffort) === String(picked.effort)
+          ) {
+            return { readback, message };
+          }
+        } catch (_error) {
+          /* 还没写回 */
+        }
+        return null;
+      }, b3ui.defaultsPicked ?? { provider: "", modelId: "", effort: "" }),
+    15000,
+  );
+  b3ui.defaultsReadback = defaultsReadback?.readback ?? "";
+  b3ui.defaultsMessage = defaultsReadback?.message ?? "";
+  b3ui.folderMode = await waitUntil(
+    () =>
+      page.evaluate(() => {
+        const mode =
+          document.querySelector("[data-projects-folder-mode]")?.getAttribute("data-projects-folder-mode") ||
+          "";
+        return mode === "default" ? mode : null;
+      }),
+    8000,
+  ) || b3ui.folderMode;
+  if (b3ui.folderMode !== "default") {
+    // 一次重试：点三键后父级 reload 可能把卡片重建，第一次点击的 RPC 回写与重建竞争。
+    await page.evaluate(() =>
+      document.querySelector('[data-projects-folder-decision="default"]')?.click(),
+    );
+    b3ui.folderMode =
+      (await waitUntil(
+        () =>
+          page.evaluate(() => {
+            const mode =
+              document
+                .querySelector("[data-projects-folder-mode]")
+                ?.getAttribute("data-projects-folder-mode") || "";
+            return mode === "default" ? mode : null;
+          }),
+        6000,
+      )) || b3ui.folderMode;
+  }
+  // F55：三键都真的写进卡片（不只 default）——deny / once 逐一回读，最后恢复 default。
+  const clickFolderDecision = async (decision) => {
+    await page.evaluate((want) => {
+      document
+        .querySelector('[data-projects-folder-decision="' + want + '"]')
+        ?.click();
+    }, decision);
+    return waitUntil(
+      () =>
+        page.evaluate((want) => {
+          const mode =
+            document
+              .querySelector("[data-projects-folder-mode]")
+              ?.getAttribute("data-projects-folder-mode") || "";
+          return mode === want ? mode : null;
+        }, decision),
+      6000,
+    );
+  };
+  b3ui.folderDenyMode = await clickFolderDecision("deny");
+  b3ui.folderOnceMode = await clickFolderDecision("once");
+  b3ui.folderMode = (await clickFolderDecision("default")) || b3ui.folderMode;
+
+  await page.evaluate(() =>
+    document.querySelector("[data-projects-recent-sessions]")?.click(),
+  );
+  b3ui.recentIds = await waitUntil(
+    () =>
+      page.evaluate(() => {
+        const rows = [...document.querySelectorAll("[data-projects-recent-session]")];
+        return rows.length > 0
+          ? rows.map((node) => node.getAttribute("data-projects-recent-session") || "")
+          : null;
+      }),
+    12000,
+  ) || [];
+  b3ui.recentCount = b3ui.recentIds.length;
+  b3ui.recentUi = await page.evaluate(() =>
+    Boolean(document.querySelector("[data-projects-recent-list]")),
+  );
+  b3ui.attachId = await page.evaluate(
+    () =>
+      document
+        .querySelector("[data-projects-recent-session] [data-projects-attach-session]")
+        ?.getAttribute("data-projects-attach-session") || "",
+  );
+  b3ui.attachBecameThread = false;
+  if (b3ui.attachId !== "") {
+    await page.evaluate(() => {
+      const button = document.querySelector(
+        "[data-projects-recent-session] [data-projects-attach-session]",
+      );
+      if (button) button.click();
+    });
+    b3ui.attachBecameThread = Boolean(
+      await waitUntil(
+        () =>
+          page.evaluate(
+            (id) =>
+              [...document.querySelectorAll("[data-projects-thread-row]")].some(
+                (node) => node.getAttribute("data-projects-thread-row") === id,
+              ),
+            b3ui.attachId,
+          ),
+        12000,
+      ),
+    );
+  }
   add(
     "右栏「上下文」有本地优势卡，且 @ 候选（本项目线程/项目名）能列出",
     b3ui.card === true && b3ui.mentionCandidates > 0,
     JSON.stringify({ card: b3ui.card, mention: b3ui.mention, candidates: b3ui.mentionCandidates }),
   );
   add(
-    "本地文件夹授权卡三键齐全（Deny / Set as default folder / Allow once）",
-    [...new Set(b3ui.folderButtons)].sort().join(",") === "default,deny,once",
-    JSON.stringify({ buttons: b3ui.folderButtons, mode: b3ui.folderMode }),
+    "F62 @ 源真的注册进宿主 inputTriggers（data-projects-mention-source=registered）",
+    b3ui.mention === "registered",
+    JSON.stringify({ mention: b3ui.mention }),
   );
   add(
-    "线程默认模型 / effort 两个下拉存在（数据来自 modelCatalog）",
-    b3ui.hasModel === true && b3ui.hasEffort === true,
-    JSON.stringify({ model: b3ui.hasModel, effort: b3ui.hasEffort }),
+    "本地文件夹授权卡三键齐全（Deny / Set as default folder / Allow once）且「设为默认」回读 mode=default",
+    [...new Set(b3ui.folderButtons)].sort().join(",") === "default,deny,once" &&
+      b3ui.folderMode === "default",
+    JSON.stringify({
+      buttons: b3ui.folderButtons,
+      mode: b3ui.folderMode,
+      message: b3ui.folderMessage,
+      cards: b3ui.folderCardAttrs,
+    }),
   );
   add(
-    "「从会话开线程」入口能列出候选（空列表也给出明确空态）",
-    b3ui.recentUi === true,
-    JSON.stringify({ recentCount: b3ui.recentCount, attachId: b3ui.attachId, recentUi: b3ui.recentUi }),
+    "F55 「Deny」写入并回读 mode=deny",
+    b3ui.folderDenyMode === "deny",
+    JSON.stringify({ mode: b3ui.folderDenyMode }),
+  );
+  add(
+    "F55 「Allow once」写入并回读 mode=once",
+    b3ui.folderOnceMode === "once",
+    JSON.stringify({ mode: b3ui.folderOnceMode }),
+  );
+  add(
+    "线程默认模型 / effort 两个下拉可写，且选项数量与 modelCatalog 一致（不是硬编码）",
+    b3ui.hasModel === true &&
+      b3ui.hasEffort === true &&
+      b3ui.modelDisabled === false &&
+      b3ui.effortDisabled === false &&
+      b3ui.modelCatalogStats !== null &&
+      Array.isArray(b3ui.modelOptionsInitial) &&
+      b3ui.modelOptionsInitial.length === Number(b3ui.modelCatalogStats.models) + 1 &&
+      Array.isArray(b3ui.effortOptionsInitial) &&
+      b3ui.effortOptionsInitial.length === Number(b3ui.modelCatalogStats.selectedEfforts) + 1,
+    JSON.stringify({
+      model: b3ui.hasModel,
+      effort: b3ui.hasEffort,
+      modelDisabled: b3ui.modelDisabled,
+      effortDisabled: b3ui.effortDisabled,
+      modelOptions: (b3ui.modelOptionsInitial || []).length,
+      effortOptions: b3ui.effortOptionsInitial,
+      catalog: b3ui.modelCatalogStats,
+    }),
+  );
+  add(
+    "F42 线程默认模型写→回读：保存后 UI 回读值等于刚选的具体 provider/model/effort",
+    b3ui.defaultsPicked !== null &&
+      b3ui.defaultsPicked !== undefined &&
+      (() => {
+        try {
+          const readback = JSON.parse(b3ui.defaultsReadback || "{}");
+          return (
+            String(readback.provider) === String(b3ui.defaultsPicked.provider) &&
+            String(readback.model) === String(b3ui.defaultsPicked.modelId) &&
+            String(readback.reasoningEffort) === String(b3ui.defaultsPicked.effort)
+          );
+        } catch (_error) {
+          return false;
+        }
+      })(),
+    JSON.stringify({
+      picked: b3ui.defaultsPicked,
+      readback: b3ui.defaultsReadback,
+      message: b3ui.defaultsMessage,
+    }),
+  );
+  add(
+    "「从会话开线程」列出真实最近会话（recentSessions 的 id），并能挂成线程行",
+    b3ui.recentUi === true &&
+      b3ui.recentCount > 0 &&
+      b3ui.attachId !== "" &&
+      (b3ui.recentIds || []).every((id) => typeof id === "string" && id !== "") &&
+      b3ui.attachBecameThread === true,
+    JSON.stringify({
+      recentCount: b3ui.recentCount,
+      recentIds: (b3ui.recentIds || []).slice(0, 3),
+      attachId: b3ui.attachId,
+      attachBecameThread: b3ui.attachBecameThread,
+    }),
+  );
+  add(
+    "U18 线程行右键打开宿主 contextMenus（菜单项含重命名/复制，Esc 关闭）",
+    b3ui.hostMenuReady === "yes" &&
+      b3ui.hostMenuOpened === true &&
+      (b3ui.hostMenuItems || []).some((label) => label.includes("重命名") || /rename/iu.test(label)) &&
+      (b3ui.hostMenuItems || []).some((label) => label.includes("复制") || /copy/iu.test(label)) &&
+      b3ui.hostMenuClosed === true,
+    JSON.stringify({
+      ready: b3ui.hostMenuReady,
+      opened: b3ui.hostMenuOpened,
+      items: (b3ui.hostMenuItems || []).slice(0, 8),
+      closed: b3ui.hostMenuClosed,
+    }),
   );
   add(
     "线程右键菜单含重命名 / 复制 ID（其余四项沿用既有菜单）",
@@ -1885,7 +2229,9 @@ try {
     );
   }
   // 宿主侧回读要用的值（在同一个块作用域里带出去，避开 emit 点的块作用域边界）
-  result.__b3FolderPath = b3ui.folderPath;
+  result.__b3FolderPath = b3ui.folderPath || (b3ui.folderCardAttrs || [])[0] || "";
+  result.b3DefaultsPicked = b3ui.defaultsPicked ?? null;
+  result.b3MentionTokens = b3ui.mentionTokens ?? [];
   result.__b3AttachId = b3ui.attachId;
 
   // 走查发现记忆页签只读：现在应当能编辑规则并追加记忆
@@ -2026,7 +2372,17 @@ try {
     button.click();
     return "clicked";
   });
-  await page.waitForTimeout(2500);
+  // 归档是异步写盘 + toast：轮询到 toast 出现（或详情错误），不再赌固定 2.5s。
+  await waitUntil(
+    () =>
+      page.evaluate(() => {
+        const text = [...document.querySelectorAll("[data-projects-toast]")]
+          .map((node) => node.textContent || "")
+          .join(" ");
+        return /已归档|已恢复|Archived|Restored/u.test(text);
+      }),
+    12000,
+  );
   const detailError = await page.evaluate(
     () => (document.querySelector("[data-projects-detail-error]")?.textContent || "").trim(),
   );
@@ -2140,12 +2496,18 @@ try {
     const input = document.querySelector("[data-projects-search]");
     if (!input) return "no-input";
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-    setter.call(input, "smoke-to-");
+    setter.call(input, "smoke-to-archive");
     input.dispatchEvent(new Event("input", { bubbles: true }));
     return "typed";
   });
-  await page.waitForTimeout(500);
-  const searchMatched = await page.evaluate(() => document.querySelectorAll("[data-projects-row]").length);
+  const searchMatched = await waitUntil(
+    () =>
+      page.evaluate((total) => {
+        const count = document.querySelectorAll("[data-projects-row]").length;
+        return count === 1 && total > 1 ? count : 0;
+      }, rowsTotal),
+    10000,
+  );
   await page.evaluate(() => {
     const input = document.querySelector("[data-projects-search]");
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
@@ -2160,7 +2522,7 @@ try {
   }));
   add(
     "搜索即时过滤且命中项保留",
-    searched === "typed" && searchMatched > 0 && searchMatched < rowsTotal,
+    searched === "typed" && searchMatched === 1 && rowsTotal > 1,
     JSON.stringify({ rowsTotal, searchMatched }),
   );
   add(
@@ -2169,8 +2531,14 @@ try {
     JSON.stringify(searchMiss),
   );
   await page.evaluate(() => document.querySelector("[data-projects-search-clear]")?.click());
-  await page.waitForTimeout(600);
-  const clearedRows = await page.evaluate(() => document.querySelectorAll("[data-projects-row]").length);
+  const clearedRows = await waitUntil(
+    () =>
+      page.evaluate((total) => {
+        const count = document.querySelectorAll("[data-projects-row]").length;
+        return count === total ? count : 0;
+      }, rowsTotal),
+    10000,
+  );
   add("清空搜索后回到完整列表", clearedRows === rowsTotal, JSON.stringify({ clearedRows, rowsTotal }));
 
   // 排序菜单：三项 + 当前项打勾
@@ -2337,17 +2705,31 @@ try {
   await page.evaluate(() => document.querySelector("[data-projects-delete]")?.click());
   await page.waitForTimeout(900);
   await page.evaluate(() => document.querySelector("[data-projects-delete-confirm]")?.click());
-  await page.waitForTimeout(2200);
+  await waitUntil(
+    () =>
+      page.evaluate(
+        () =>
+          ![...document.querySelectorAll("[data-projects-row]")].some((node) =>
+            (node.textContent || "").includes("smoke-to-restore"),
+          ),
+      ),
+    15000,
+  );
 
   // 打开主项目，回收站里应能看到刚删的 smoke-to-restore
-  const openedMainForTrash = await page.evaluate(() => {
-    const row = [...document.querySelectorAll("[data-projects-row]")].find(
-      (node) => !(node.textContent || "").includes("smoke-to-restore"),
-    );
-    if (!row) return "no-row";
-    row.click();
-    return "clicked";
-  });
+  const openedMainForTrash =
+    (await waitUntil(
+      () =>
+        page.evaluate(() => {
+          const row = [...document.querySelectorAll("[data-projects-row]")].find(
+            (node) => !(node.textContent || "").includes("smoke-to-restore"),
+          );
+          if (!row) return null;
+          row.click();
+          return "clicked";
+        }),
+      10000,
+    )) || "no-row";
   await page.waitForTimeout(1800);
   await page.evaluate(() => {
     const details = document.querySelector("[data-projects-config]");
@@ -2386,7 +2768,16 @@ try {
   await page.evaluate(() => document.querySelector("[data-projects-delete]")?.click());
   await page.waitForTimeout(900);
   await page.evaluate(() => document.querySelector("[data-projects-delete-confirm]")?.click());
-  await page.waitForTimeout(2200);
+  await waitUntil(
+    () =>
+      page.evaluate(
+        () =>
+          ![...document.querySelectorAll("[data-projects-row]")].some((node) =>
+            (node.textContent || "").includes("smoke-to-purge"),
+          ),
+      ),
+    15000,
+  );
   // 打开主项目 → 展开高级设置 → 找到 smoke-to-purge 那一行
   await page.evaluate(() => {
     const row = [...document.querySelectorAll("[data-projects-row]")].find(
@@ -2474,18 +2865,66 @@ try {
     button.click();
     return "clicked";
   });
-  await page.waitForTimeout(1500);
-  const settingsSeen = await page.evaluate(() => Boolean(document.querySelector("[data-projects-settings]")));
+  let settingsOpened = openedSettings;
+  if (openedSettings === "no-entry") {
+    // web 客户端的设置入口不一定有可读 label。用宿主自己的快捷键打开设置弹窗
+    // （web: primary+alt+Comma），再点「项目」分节；分节被选中才会渲染 [data-projects-settings]。
+    await page.keyboard.press("ControlOrMeta+Alt+Comma");
+    const modalSeen = Boolean(
+      await waitUntil(
+        () =>
+          page.evaluate(() =>
+            Boolean(document.querySelector('[data-shortcut-modal="settings"]')),
+          ),
+        6000,
+      ),
+    );
+    if (modalSeen) {
+      settingsOpened = "shortcut";
+      await page.evaluate(() => {
+        const nav = document.querySelector('[data-shortcut-modal="settings"] nav');
+        if (!nav) return;
+        const cell = [...nav.querySelectorAll("button")].find((button) =>
+          /项目|Projects/u.test((button.textContent || "").trim()),
+        );
+        if (cell) cell.click();
+      });
+    }
+  }
+  const settingsSeen = Boolean(
+    await waitUntil(
+      () => page.evaluate(() => Boolean(document.querySelector("[data-projects-settings]"))),
+      8000,
+    ),
+  );
+  if (settingsSeen) {
+    add("设置页出现项目分节", true, "rendered");
+  } else {
+    skipAdd(
+      "设置页出现项目分节",
+      "设置入口=" +
+        settingsOpened +
+        "，打开后 8s 内没有 [data-projects-settings]",
+    );
+  }
+
   add(
-    "设置页出现项目分节",
-    settingsSeen || openedSettings === "no-entry",
-    settingsSeen ? "rendered" : "tolerated: " + openedSettings + "（设置页未启用）",
+    "设置页经入口或宿主快捷键打开，并选中「项目」分节",
+    settingsSeen === true && (settingsOpened === "shortcut" || settingsOpened === "clicked"),
+    JSON.stringify({ settingsOpened, settingsSeen }),
   );
 
   // 设置里的项目策略编辑器：默认折叠，但控件应在 DOM 里。
   // 注意：断言依赖「设置页在本机 profile 里可用」；某些 profile 把 ui-settings 关了
   // （cordis.patch.yml 里 enabled:false，且 dsh plugin add 会重写该文件），
   // 此时这两条按「跳过」处理，并在 detail 里写清原因——不假装覆盖过。
+  await waitUntil(
+    () =>
+      page.evaluate(() =>
+        Boolean(document.querySelector("[data-projects-policy-autonomy]")),
+      ),
+    8000,
+  );
   const policyUi = await page.evaluate(() => {
     const q = (sel) => document.querySelector(sel);
     const autonomy = q("[data-projects-policy-autonomy]");
@@ -2498,11 +2937,15 @@ try {
     };
   });
   const policyOk = policyUi.details && policyUi.autonomy && policyUi.persona && policyUi.fallback;
-  add(
-    settingsSeen ? "设置里可编辑项目策略（自治/人格/兜底）" : "设置里可编辑项目策略（设置页未启用，跳过）",
-    settingsSeen ? policyOk && policyUi.options.join(",") === "L0,L1,L2,L3" : true,
-    JSON.stringify(policyUi),
-  );
+  if (settingsSeen) {
+    add(
+      "设置里可编辑项目策略（自治/人格/兜底）",
+      policyOk && policyUi.options.join(",") === "L0,L1,L2,L3",
+      JSON.stringify(policyUi),
+    );
+  } else {
+    skipAdd("设置里可编辑项目策略（自治/人格/兜底）", "设置页未渲染，控件无从断言");
+  }
 
   const autonomyChanged = await page.evaluate(() => {
     const select = document.querySelector("[data-projects-policy-autonomy]");
@@ -2511,11 +2954,19 @@ try {
     select.dispatchEvent(new Event("change", { bubbles: true }));
     return "changed";
   });
-  add(
-    settingsSeen ? "可切换自治级别" : "可切换自治级别（设置页未启用，跳过）",
-    settingsSeen ? autonomyChanged === "changed" : true,
-    String(autonomyChanged),
-  );
+  if (settingsSeen) {
+    add("可切换自治级别", autonomyChanged === "changed", String(autonomyChanged));
+    // 断言完就改回 L1：宿主侧「默认策略是 L1」是针对所有项目的硬断言，不能把测试改动留在盘上。
+    await page.evaluate(() => {
+      const select = document.querySelector("[data-projects-policy-autonomy]");
+      if (!select) return;
+      select.value = "L1";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await page.waitForTimeout(1500);
+  } else {
+    skipAdd("可切换自治级别", "设置页未渲染，控件无从断言");
+  }
 
   // 危险开关：默认全关，且每项带风险说明（框架：动作可配置、授权来源不可伪造）
   const dangerUi = await page.evaluate(() => {
@@ -2527,26 +2978,38 @@ try {
       panel: Boolean(document.querySelector("[data-projects-policy-danger]")),
     };
   });
-  add(
-    settingsSeen ? "危险开关默认全关且六项齐全" : "危险开关默认全关（设置页未启用，跳过）",
-    settingsSeen
-      ? dangerUi.panel &&
-          dangerUi.count === 6 &&
-          dangerUi.anyOn === false &&
-          dangerUi.keys.join(",") ===
-            "forcePushOwnBranch,pushProtectedBranch,autoMerge,trashAuto,purgeAfterRetention,editProfile"
-      : true,
-    JSON.stringify(dangerUi),
-  );
-  await page.waitForTimeout(1200);
-  var b3SettingsSeen = await page.evaluate(() =>
-    Boolean(document.querySelector("[data-projects-settings-nav-item]")),
+  if (settingsSeen) {
+    add(
+      "危险开关默认全关且六项齐全",
+      dangerUi.panel &&
+        dangerUi.count === 6 &&
+        dangerUi.anyOn === false &&
+        dangerUi.keys.join(",") ===
+          "forcePushOwnBranch,pushProtectedBranch,autoMerge,trashAuto,purgeAfterRetention,editProfile",
+      JSON.stringify(dangerUi),
+    );
+  } else {
+    skipAdd("危险开关默认全关且六项齐全", "设置页未渲染，控件无从断言");
+  }
+  var b3SettingsSeen = Boolean(
+    await waitUntil(
+      () =>
+        page.evaluate(() =>
+          Boolean(document.querySelector("[data-projects-settings-nav-item]")),
+        ),
+      8000,
+    ),
   );
   // —— B3：设置四分区（F41/U19）+ 预算（F22）+ Usage（F49）+ Debug access（F50）+
   //        通知开关（F58）+ GitHub 检查（F4）+ 模板补全（F5）——
   const b3Settings = await page.evaluate(async () => {
     const q = (sel) => document.querySelector(sel);
     const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    // 设置页的 projects 数据是异步加载的：等预算输入出现在 DOM 再读默认值。
+    for (let i = 0; i < 25; i += 1) {
+      if (q('[data-projects-budget-input="maxThreadsPerDay"]')) break;
+      await wait(200);
+    }
     const navItems = [...document.querySelectorAll("[data-projects-settings-nav-item]")].map((node) =>
       node.getAttribute("data-projects-settings-nav-item"),
     );
@@ -2599,89 +3062,167 @@ try {
     }
     const debug = {
       clicked: clickedDebug,
+      section: section(),
       title: q("[data-projects-debug-access]")?.textContent || "",
       rows: q("[data-projects-debug-rows]")?.textContent || "",
     };
-    const ghButton = q("[data-projects-gh-check]");
-    let gh = "no-button";
-    if (ghButton) {
-      ghButton.click();
-      await wait(5000);
-      gh = q("[data-projects-gh-result]")?.textContent || "";
-    }
+    // GitHub 检查的 RPC 最长 30s；且结果只在 Debug 分区渲染，必须在**停留于该分区**时轮询。
+    // 这里只记录按钮是否存在，点击/轮询放到外层（那时会把分区切回 Debug）。
+    const gh = q("[data-projects-gh-check]") ? "deferred" : "no-button";
     const clickedMemory = clickNav("memory");
     await wait(600);
     const templateButton = q("[data-projects-template-apply]");
     let templateClicked = false;
+    let templateClicks = 0;
     if (templateButton) {
       templateButton.click();
       templateClicked = true;
-      await wait(1800);
+      templateClicks = 1;
+      await wait(1200);
     }
     const memory = {
       clicked: clickedMemory,
       counts: q("[data-projects-settings-memory-counts]")?.textContent || "",
       templateClicked,
+      templateClicks,
       result: q("[data-projects-settings-b3-result]")?.textContent || "",
     };
     clickNav("general");
     await wait(300);
     return { navItems, budget, saved, afterSave, usage, debug, notify, notifyAfter, gh, memory, sectionAfter: section() };
   });
-  add(
-    b3SettingsSeen ? "设置页面分四个分区（General/Memory/Usage/Debug）" : "设置页面分四个分区（设置页未启用，跳过）",
-    b3SettingsSeen ? b3Settings.navItems.join(",") === "general,memory,usage,debug" : true,
-    JSON.stringify(b3Settings.navItems),
-  );
-  add(
-    b3SettingsSeen ? "General 显示默认预算（日线程 20 / 并发 2 / 步数 60 / token 不限）" : "General 显示默认预算（设置页未启用，跳过）",
-    b3SettingsSeen ? b3Settings.budget.maxThreadsPerDay === "20" &&
-      b3Settings.budget.maxConcurrent === "2" &&
-      b3Settings.budget.maxStepsPerThread === "60" &&
-      b3Settings.budget.dailyTokens === "" : true,
-    JSON.stringify(b3Settings.budget),
-  );
-  add(
-    b3SettingsSeen ? "预算写→回读闭环（改成 7 后保存并回读）" : "预算写→回读闭环（设置页未启用，跳过）",
-    b3SettingsSeen ? b3Settings.saved.includes("预算已保存") && b3Settings.afterSave === "7" : true,
-    JSON.stringify({ saved: b3Settings.saved, afterSave: b3Settings.afterSave }),
-  );
-  add(
-    b3SettingsSeen ? "Usage 分区显示 token，且**不显示金额**" : "Usage 分区显示 token（设置页未启用，跳过）",
-    b3SettingsSeen ? b3Settings.usage.section === "usage" &&
-      b3Settings.usage.hasTokens === true &&
-      /token/iu.test(b3Settings.usage.text) &&
-      !/[¥$€]|USD|CNY|RMB/u.test(b3Settings.usage.text) : true,
-    JSON.stringify({ text: b3Settings.usage.text.slice(0, 120) }),
-  );
-  add(
-    b3SettingsSeen ? "Debug 分区命名为 Debug access 并给出诊断计数" : "Debug 分区命名（设置页未启用，跳过）",
-    b3SettingsSeen ? b3Settings.debug.section === "debug" &&
-      /Debug access/u.test(b3Settings.debug.title) &&
-      /项目/u.test(b3Settings.debug.rows) : true,
-    JSON.stringify(b3Settings.debug),
-  );
-  add(
-    b3SettingsSeen ? "GitHub 连接检查给出可读结论（不崩溃、不只是空）" : "GitHub 连接检查（设置页未启用，跳过）",
-    b3SettingsSeen ? typeof b3Settings.gh === "string" && b3Settings.gh.trim().length > 0 : true,
-    String(b3Settings.gh).slice(0, 120),
-  );
-  add(
-    b3SettingsSeen ? "通知开关默认「失败/等你开、完成关」，可切换并回读" : "通知开关（设置页未启用，跳过）",
-    b3SettingsSeen ? b3Settings.notify.length === 3 &&
-      b3Settings.notify.find((item) => item.key === "failed")?.checked === true &&
-      b3Settings.notify.find((item) => item.key === "waiting-user")?.checked === true &&
-      b3Settings.notify.find((item) => item.key === "completed")?.checked === false &&
-      b3Settings.notifyAfter === "on" : true,
-    JSON.stringify({ notify: b3Settings.notify, notifyAfter: b3Settings.notifyAfter }),
-  );
-  add(
-    b3SettingsSeen ? "Memory 分区显示指令/记忆/碎片计数并提供模板补全入口" : "Memory 分区（设置页未启用，跳过）",
-    b3SettingsSeen ? b3Settings.memory.clicked === true &&
-      /指令 d+ 字符/u.test(b3Settings.memory.counts) &&
-      b3Settings.memory.templateClicked === true : true,
-    JSON.stringify(b3Settings.memory),
-  );
+  if (b3SettingsSeen) {
+    // 回到 Debug 分区并点一次检查（结果元素只在该分区渲染）。
+    await page.evaluate(async () => {
+      const nav = document.querySelector('[data-projects-settings-nav-item="debug"]');
+      if (nav) nav.click();
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      const button = document.querySelector("[data-projects-gh-check]");
+      if (button && button.disabled === false) button.click();
+    });
+    // gh 检查结论：单独轮询（gh auth status 最长 30s 才超时，别用 15s 的短等待）。
+    let ghText = await waitUntil(
+      () =>
+        page.evaluate(() => {
+          const text = document.querySelector("[data-projects-gh-result]")?.textContent || "";
+          return text.trim() !== "" && !/检查中|Checking/u.test(text) ? text : null;
+        }),
+      35000,
+    );
+    if (!ghText) {
+      // 按钮可能被上一次检查的 busy 态挡住：明确等它可点，再点一次。
+      await waitUntil(
+        () =>
+          page.evaluate(() => {
+            const button = document.querySelector("[data-projects-gh-check]");
+            return button && button.disabled === false ? true : null;
+          }),
+        5000,
+      );
+      await page.evaluate(() => document.querySelector("[data-projects-gh-check]")?.click());
+      ghText = await waitUntil(
+        () =>
+          page.evaluate(() => {
+            const text = document.querySelector("[data-projects-gh-result]")?.textContent || "";
+            return text.trim() !== "" && !/检查中|Checking/u.test(text) ? text : null;
+          }),
+        30000,
+      );
+    }
+    b3Settings.gh = ghText || "";
+    // 模板幂等：回到 Memory 再点一次，受管区块应当仍只有一份（Node 侧数标记次数）。
+    if (b3Settings.memory.templateClicked === true) {
+      b3Settings.memory.templateClicks = 2;
+      await page.evaluate(async () => {
+        const nav = document.querySelector('[data-projects-settings-nav-item="memory"]');
+        if (nav) nav.click();
+        await new Promise((resolve) => setTimeout(resolve, 700));
+        document.querySelector("[data-projects-template-apply]")?.click();
+        await new Promise((resolve) => setTimeout(resolve, 1600));
+        const general = document.querySelector('[data-projects-settings-nav-item="general"]');
+        if (general) general.click();
+      });
+      b3Settings.memory.result = await page.evaluate(
+        () => document.querySelector("[data-projects-settings-b3-result]")?.textContent || "",
+      );
+    }
+    add(
+      "设置页面分四个分区（General/Memory/Usage/Debug）",
+      b3Settings.navItems.join(",") === "general,memory,usage,debug",
+      JSON.stringify(b3Settings.navItems),
+    );
+    add(
+      "General 显示默认预算（日线程 20 / 并发 2 / 步数 60 / token 不限）",
+      b3Settings.budget.maxThreadsPerDay === "20" &&
+        b3Settings.budget.maxConcurrent === "2" &&
+        b3Settings.budget.maxStepsPerThread === "60" &&
+        b3Settings.budget.dailyTokens === "",
+      JSON.stringify(b3Settings.budget),
+    );
+    add(
+      "预算写→回读闭环（改成 7 后保存并回读）",
+      b3Settings.saved.includes("预算已保存") && b3Settings.afterSave === "7",
+      JSON.stringify({ saved: b3Settings.saved, afterSave: b3Settings.afterSave }),
+    );
+    add(
+      "Usage 分区显示 token，且**不显示金额**",
+      b3Settings.usage.section === "usage" &&
+        b3Settings.usage.hasTokens === true &&
+        /token/iu.test(b3Settings.usage.text) &&
+        !/[¥$€]|USD|CNY|RMB/u.test(b3Settings.usage.text),
+      JSON.stringify({ text: b3Settings.usage.text.slice(0, 120) }),
+    );
+    add(
+      "Debug 分区命名为 Debug access 并给出诊断计数",
+      b3Settings.debug.section === "debug" &&
+        /Debug access/u.test(b3Settings.debug.title) &&
+        /项目/u.test(b3Settings.debug.rows),
+      JSON.stringify(b3Settings.debug),
+    );
+    add(
+      "GitHub 连接检查给出可读结论（不崩溃、不只是空）",
+      typeof b3Settings.gh === "string" && b3Settings.gh.trim().length > 0,
+      String(b3Settings.gh).slice(0, 120),
+    );
+    add(
+      "通知开关默认「失败/等你开、完成关」，可切换并回读",
+      b3Settings.notify.length === 3 &&
+        b3Settings.notify.find((item) => item.key === "failed")?.checked === true &&
+        b3Settings.notify.find((item) => item.key === "waiting-user")?.checked === true &&
+        b3Settings.notify.find((item) => item.key === "completed")?.checked === false &&
+        b3Settings.notifyAfter === "on",
+      JSON.stringify({ notify: b3Settings.notify, notifyAfter: b3Settings.notifyAfter }),
+    );
+    add(
+      "F5 模板补全回执写明 AGENTS.md 路径（两次调用仍幂等）",
+      b3Settings.memory.result.includes("AGENTS.md") &&
+        b3Settings.memory.templateClicks === 2,
+      JSON.stringify(b3Settings.memory),
+    );
+    add(
+      "Memory 分区显示指令/记忆/碎片计数并提供模板补全入口",
+      b3Settings.memory.clicked === true &&
+        /指令 \\d+ 字符/u.test(b3Settings.memory.counts) &&
+        b3Settings.memory.templateClicked === true &&
+        b3Settings.memory.templateClicks === 2,
+      JSON.stringify(b3Settings.memory),
+    );
+    result.b3TemplateResult = b3Settings.memory.result;
+    result.b3TemplateClicks = b3Settings.memory.templateClicks;
+  } else {
+    for (const name of [
+      "设置页面分四个分区（General/Memory/Usage/Debug）",
+      "General 显示默认预算（日线程 20 / 并发 2 / 步数 60 / token 不限）",
+      "预算写→回读闭环（改成 7 后保存并回读）",
+      "Usage 分区显示 token，且**不显示金额**",
+      "Debug 分区命名为 Debug access 并给出诊断计数",
+      "GitHub 连接检查给出可读结论（不崩溃、不只是空）",
+      "通知开关默认「失败/等你开、完成关」，可切换并回读",
+      "Memory 分区显示指令/记忆/碎片计数并提供模板补全入口",
+    ]) {
+      skipAdd(name, "设置页未渲染，控件与写路径无从断言");
+    }
+  }
   await page.waitForTimeout(600);
 
   await page.evaluate(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
@@ -2787,6 +3328,7 @@ try {
   result.restoredAfterSelfLockCheck = restoredBack;
   result.pinnedProject = name;
   result.projectName = name;
+  result.workspaceDir = SMOKE_WORKSPACE_DIR;
   await task.finish({ keep: [] });
 } catch (error) {
   result.fatal = String(error && error.message ? error.message : error).slice(0, 800);
@@ -2900,6 +3442,35 @@ const main = async () => {
       return;
     }
 
+    // P0/B3 复审：live profile 把 `ui-settings` 的 config.enabled 写成 false（设置页整个关掉），
+    // 整份拷进临时 home 后那 14 条设置断言就只能「跳过计 PASS」。**只改临时 home 的 patch 层**
+    // （不碰 live profile），把设置页打开让它们真跑；改不动时下面的断言会如实 SKIP。
+    const patchPath = join(profile, "cordis.patch.yml");
+    const patchBefore = await readIfExists(patchPath);
+    let patchAfter = patchBefore;
+    let settingsEnabledInTemp = false;
+    if (patchBefore !== "") {
+      const rewritten = [];
+      let inSettings = false;
+      for (const line of patchBefore.split("\n")) {
+        if (/^- id:\s*ui-settings\s*$/u.test(line)) inSettings = true;
+        else if (/^- id:/u.test(line)) inSettings = false;
+        if (inSettings && /^\s+enabled:\s*false\s*$/u.test(line)) {
+          rewritten.push(line.replace(/false/u, "true"));
+          settingsEnabledInTemp = true;
+          continue;
+        }
+        rewritten.push(line);
+      }
+      patchAfter = rewritten.join("\n");
+    }
+    if (patchAfter !== patchBefore) await writeFile(patchPath, patchAfter, "utf8");
+    console.log(
+      settingsEnabledInTemp
+        ? "临时 profile：已把 ui-settings 的 enabled 改成 true（只改临时 home）"
+        : "临时 profile：没有 ui-settings enabled:false 需要改写（设置页是否可用以断言为准）",
+    );
+
     const SMOKE_WORKSPACE_DIR = workspaceDir;
     // F35 多目录：第二个真实目录（不需要是 git 仓库；只验证「dirs[] 全部生效」与落盘）
     const secondDirRaw = join(work, "workspace2");
@@ -2963,6 +3534,8 @@ const main = async () => {
 
     /** @type {{ name: string, ok: boolean, detail: string }[]} */
     const checks = result.checks ?? [];
+    /** @type {{ name: string, detail: string }[]} */
+    const skips = result.skips ?? [];
 
     // Node 侧：宿主真的落盘了，且没有残留临时文件
     const storePath = join(home, "projects", "projects.json");
@@ -3357,46 +3930,122 @@ const main = async () => {
         threadIds.every((id) => Boolean(parsed.projects?.[parsed.threads[id]?.projectId])),
       detail: "",
     });
-    // —— B3 UI 宿主侧回读：线程默认模型 + 线程重命名 ——
+    // —— B3 UI 宿主侧回读：线程默认模型（**具体值**逐字段比对，不是 typeof object）——
     const b3UiProjects = Object.values(parsed?.projects ?? {});
-    const b3DefaultsOk = b3UiProjects.some(
-      (/** @type {any} */ project) =>
-        project?.threadDefaults && typeof project.threadDefaults === "object",
-    );
+    const pickedDefaults = result.b3DefaultsPicked ?? null;
+    const projectWithDefaults =
+      b3UiProjects.find(
+        (/** @type {any} */ project) =>
+          project?.name === result.projectName && project?.threadDefaults,
+      ) ??
+      b3UiProjects.find(
+        (/** @type {any} */ project) =>
+          project?.threadDefaults &&
+          String(project.threadDefaults.provider ?? "") ===
+            String(pickedDefaults?.provider ?? "") &&
+          String(project.threadDefaults.model ?? "") === String(pickedDefaults?.modelId ?? ""),
+      ) ??
+      null;
     checks.push({
-      name: "线程默认模型写→回读（threadDefaults 落到 projects.json）",
-      ok: b3DefaultsOk,
-      detail: "",
+      name: "线程默认模型写→回读（projects.json 逐字段等于 UI 选择）",
+      ok:
+        pickedDefaults !== null &&
+        projectWithDefaults !== null &&
+        String(projectWithDefaults.threadDefaults.provider ?? "") ===
+          String(pickedDefaults.provider ?? "") &&
+        String(projectWithDefaults.threadDefaults.model ?? "") ===
+          String(pickedDefaults.modelId ?? "") &&
+        String(projectWithDefaults.threadDefaults.reasoningEffort ?? "") ===
+          String(pickedDefaults.effort ?? ""),
+      detail: JSON.stringify({
+        picked: pickedDefaults,
+        stored: projectWithDefaults?.threadDefaults ?? null,
+        project: projectWithDefaults?.name ?? null,
+      }),
     });
     // —— B3：三项「写→回读」由宿主侧文件做硬证据（UI 只是按钮，盘上才算数）——
     const b3Budget = Object.values(parsed?.projects ?? {})
       .map((/** @type {any} */ project) => project?.budget)
       .find((/** @type {any} */ budget) => budget && Number(budget.maxThreadsPerDay) === 7);
+    // F55：授权卡「设为默认」必须落到某个项目目录的 policy.folderAuth[path].mode=default
+    const folderHit =
+      Object.values(parsed?.projects ?? {})
+        .map((/** @type {any} */ project) => ({
+          name: project?.name ?? "",
+          dirs: Array.isArray(project?.dirs) ? project.dirs : [],
+          entries: Object.entries(project?.policy?.folderAuth ?? {}),
+        }))
+        .map((/** @type {any} */ item) => {
+          const found = item.entries.find(
+            (/** @type {any} */ entry) =>
+              entry[1] && entry[1].mode === "default" && item.dirs.includes(entry[0]),
+          );
+          return found === undefined
+            ? null
+            : { project: item.name, path: found[0], record: found[1] };
+        })
+        .find((/** @type {any} */ item) => item !== null) ?? null;
     checks.push({
-      name:
-        result.settingsSeen === false
-          ? "预算改动在宿主侧落盘（设置页未启用，跳过）"
-          : "预算改动在宿主侧落盘（maxThreadsPerDay=7 可回读）",
-      ok:
-        result.settingsSeen === false
-          ? true
-          : Boolean(b3Budget) && b3Budget.maxConcurrent === 2 && b3Budget.maxStepsPerThread === 60,
-      detail: JSON.stringify(b3Budget ?? null),
+      name: "F55 授权卡「设为默认」落盘（policy.folderAuth[dir].mode=default）",
+      ok: folderHit !== null,
+      detail: JSON.stringify(folderHit),
     });
+    // F62：@ 候选 token 必须指向真实项目/线程（来自 host RPC mentionItems）
+    const mentionTokens = Array.isArray(result.b3MentionTokens) ? result.b3MentionTokens : [];
+    const mentionTokenOk = mentionTokens.some((/** @type {any} */ token) => {
+      const value = String(token);
+      const splitAt = value.indexOf(":");
+      const kind = value.slice(0, splitAt);
+      const id = value.slice(splitAt + 1);
+      if (kind === "thread") return Boolean(parsed?.threads?.[id]);
+      if (kind === "project")
+        return Object.values(parsed?.projects ?? {}).some(
+          (/** @type {any} */ project) => project?.id === id,
+        );
+      return false;
+    });
+    checks.push({
+      name: "F62 @ 候选 token 指向真实项目/线程（host RPC mentionItems）",
+      ok: mentionTokenOk,
+      detail: JSON.stringify(mentionTokens.slice(0, 4)),
+    });
+    // F3：从会话开线程 —— attach 的 sessionId 必须出现在 projects.json.threads
+    const attachedId = String(result.__b3AttachId ?? "");
+    checks.push({
+      name: "F3 从会话开线程：attach 的 sessionId 出现在 projects.json.threads",
+      ok: attachedId !== "" && Boolean(parsed?.threads?.[attachedId]),
+      detail: JSON.stringify({
+        attachedId,
+        threadCount: Object.keys(parsed?.threads ?? {}).length,
+      }),
+    });
+    if (result.settingsSeen === false) {
+      skips.push({
+        name: "预算改动在宿主侧落盘（maxThreadsPerDay=7 可回读）",
+        detail: "设置页未渲染，预算写路径没跑",
+      });
+    } else {
+      checks.push({
+        name: "预算改动在宿主侧落盘（maxThreadsPerDay=7 可回读）",
+        ok: Boolean(b3Budget) && b3Budget.maxConcurrent === 2 && b3Budget.maxStepsPerThread === 60,
+        detail: JSON.stringify(b3Budget ?? null),
+      });
+    }
     const b3Notify = Object.values(parsed?.projects ?? {})
       .map((/** @type {any} */ project) => project?.notifyPrefs)
       .find((/** @type {any} */ prefs) => prefs && prefs.completed === true);
-    checks.push({
-      name:
-        result.settingsSeen === false
-          ? "通知开关在宿主侧落盘（设置页未启用，跳过）"
-          : "通知开关在宿主侧落盘（completed=true 可回读）",
-      ok:
-        result.settingsSeen === false
-          ? true
-          : Boolean(b3Notify) && b3Notify.failed === true && b3Notify["waiting-user"] === true,
-      detail: JSON.stringify(b3Notify ?? null),
-    });
+    if (result.settingsSeen === false) {
+      skips.push({
+        name: "通知开关在宿主侧落盘（completed=true 可回读）",
+        detail: "设置页未渲染，通知开关没跑",
+      });
+    } else {
+      checks.push({
+        name: "通知开关在宿主侧落盘（completed=true 可回读）",
+        ok: Boolean(b3Notify) && b3Notify.failed === true && b3Notify["waiting-user"] === true,
+        detail: JSON.stringify(b3Notify ?? null),
+      });
+    }
     const b3DataRoot = join(home, "projects");
     const b3ProjectDirs = await readdir(b3DataRoot, { withFileTypes: true }).catch(() => []);
     const b3Agents = [];
@@ -3406,14 +4055,31 @@ const main = async () => {
       const text = await readIfExists(file);
       if (text.includes("dsh-projects:begin")) b3Agents.push(entry.name);
     }
-    checks.push({
-      name:
-        result.settingsSeen === false
-          ? "模板补全写入 AGENTS.md 受管区块（设置页未启用，跳过）"
-          : "模板补全写入 AGENTS.md 受管区块（可回读、幂等标记）",
-      ok: result.settingsSeen === false ? true : b3Agents.length === 1,
-      detail: b3Agents.join(","),
-    });
+    if (result.settingsSeen === false) {
+      skips.push({
+        name: "模板补全写入 AGENTS.md 受管区块（可回读、幂等）",
+        detail: "设置页未渲染，模板按钮没点",
+      });
+    } else {
+      // 项目可能有 dirs（模板写进 workspaceDir/AGENTS.md），也可能没有（写进 dataRoot/<id>/AGENTS.md）。
+      /** @type {string[]} */
+      const agentsFiles = [];
+      const pushIfManaged = async (/** @type {string} */ file) => {
+        const text = await readIfExists(file);
+        if (text !== "") agentsFiles.push(`${file}:${text.split("dsh-projects:begin").length - 1}`);
+      };
+      await pushIfManaged(join(result.workspaceDir ?? "", "AGENTS.md"));
+      for (const entry of b3ProjectDirs) {
+        if (!entry.isDirectory()) continue;
+        await pushIfManaged(join(b3DataRoot, entry.name, "AGENTS.md"));
+      }
+      const managedCounts = agentsFiles.map((item) => Number(item.split(":").pop() ?? "0"));
+      checks.push({
+        name: "模板补全写入 AGENTS.md 受管区块（可回读、幂等）",
+        ok: agentsFiles.length >= 1 && managedCounts.reduce((sum, count) => sum + count, 0) === 1,
+        detail: JSON.stringify({ agentsFiles, result: result.b3TemplateResult ?? null }),
+      });
+    }
     checks.push({
       name: "原子写没有残留 .tmp 文件",
       ok: leftovers.length === 0,
@@ -3428,15 +4094,23 @@ const main = async () => {
         (item.ok ? "PASS " : "FAIL ") + item.name + (item.ok ? "" : ` :: ${item.detail}`),
       );
     }
+    for (const item of skips) {
+      console.log(`SKIP ${item.name}${item.detail ? ` :: ${item.detail}` : ""}`);
+    }
     const failed = checks.filter((item) => item.ok === false).length;
+    const passed = checks.length - failed;
     console.log(`截图目录：${shotsDir}`);
     if (failed > 0) {
       fail(`${failed} 项 web 冒烟断言失败`);
     } else {
-      console.log(`PASS 全部 ${checks.length} 项 web 冒烟断言通过`);
+      console.log(
+        `PASS 全部 ${checks.length} 项 web 冒烟断言通过` +
+          (skips.length > 0 ? `（另有 ${skips.length} 项如实 SKIP）` : ""),
+      );
     }
     // 门禁靠这一行判定「跑过但零断言」的假绿（见 docs/plugin-conventions.md §6.1）。
-    console.log(`${checks.length - failed} PASS / 0 SKIP / ${failed} FAIL`);
+    // SKIP 不计入 PASS：设置页没开时宁可少算，也不把「跳过」伪装成覆盖。
+    console.log(`${passed} PASS / ${skips.length} SKIP / ${failed} FAIL`);
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
   } finally {

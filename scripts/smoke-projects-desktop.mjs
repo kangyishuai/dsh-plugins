@@ -383,12 +383,15 @@ const main = async () => {
       if (settingsSeen === true) break;
       await sleep(200);
     }
-    // 有些 profile 会把设置页整体禁用（cordis.patch.yml 里 ui-settings enabled:false），那就无从打开。
-    check(
-      "设置页出现「项目」分节",
-      settingsSeen === true || openedSettings === "no-button",
-      settingsSeen ? "rendered" : `tolerated: ${openedSettings}（设置页未启用）`,
-    );
+    // 有些 live profile 会把设置页整体禁用（cordis.patch.yml 里 ui-settings enabled:false）。
+    // 那不是「通过」：渲染了就真断言，没渲染就如实 SKIP（计数行不把跳过冒充覆盖）。
+    if (settingsSeen === true) {
+      check("设置页出现「项目」分节", true, "rendered");
+    } else if (openedSettings === "no-button") {
+      skip("设置页出现「项目」分节", "找不到设置入口（该 profile/宿主版本没有设置页）");
+    } else {
+      skip("设置页出现「项目」分节", `点开设置入口后没有项目分节（${openedSettings}）`);
+    }
     await cdp.screenshot(join(SHOTS, "02-projects-settings.png"));
 
     // 5) 关闭设置并回到会话，确认界面未崩
@@ -417,7 +420,7 @@ const main = async () => {
     if (!item.ok) failed += 1;
   }
   for (const item of skips) {
-    console.log("SKIP " + item.name + (item.detail ? ` :: ${item.detail}` : ""));
+    console.log(`SKIP ${item.name}${item.detail ? ` :: ${item.detail}` : ""}`);
   }
   console.log(`截图目录：${SHOTS}`);
   if (failed > 0) {
