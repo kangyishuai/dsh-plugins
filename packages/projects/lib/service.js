@@ -53,6 +53,14 @@ import {
 } from "./overview.js";
 import { resolveDataRoot } from "./paths.js";
 import { buildPersona } from "./persona.js";
+import {
+  nextPollDelay,
+  PR_LIST_FIELDS,
+  parsePrList,
+  planThreadPatches,
+  realtimeCiSpec,
+  shouldPollProject,
+} from "./pr-poll.js";
 import { readProjectFiles } from "./project-files.js";
 import { buildPurgeManifest, DEFAULT_RETENTION_DAYS, selectExpired } from "./purge.js";
 import { decideRoute } from "./routing.js";
@@ -63,6 +71,9 @@ import { buildCoordinatorTools, REQUESTABLE_ACTIONS } from "./tools.js";
 import { impactOf, TRASH_DIR, trashDirFor } from "./trash.js";
 import { buildEnvelope, createInjectionGuard, decideWake, pendingWakes } from "./wake.js";
 import { planDeleteBranch, shouldDeleteBranchV2 } from "./worktree.js";
+
+/** 协调器发言在内存里最多留多少条（F11 汇报渲染；只影响面板，不影响宿主持久化）。 */
+export const COORDINATOR_MESSAGE_CAP = 40;
 
 /**
  * 运行时不支持装饰器语法，用命令式方式登记 Remote（与 advisor / next-step 同法）。
@@ -193,12 +204,31 @@ export class ProjectsService extends TypertRemoteService {
      */
     this.liveCache = { at: 0, states: new Map(), summaries: new Map() };
     /**
+     * 协调器会话的最近发言（F11 汇报渲染）。只存内存：协调器的正文由宿主持久化，
+     * 我们只需要"面板打开时能看到最近几条 + 结论"，重启后靠宿主 replay 重建。
+     * projectId → [{role, text, at}]（每个项目最多 COORDINATOR_MESSAGE_CAP 条）。
+     * @type {Map<string, Array<{ role: string, text: string, at: number }>>}
+     */
+    this.coordinatorMessages = new Map();
+    /**
+     * F21 PR/CI 轮询状态（默认轮询：只对「有开放 PR 的项目」；应用关闭即停）。
+     * @type {{ timer: any, running: boolean, lastAt: number, lastResult: any, failures: number, inFlight: boolean }}
+     */
+    this.prPoll = {
+      timer: null,
+      running: false,
+      lastAt: 0,
+      lastResult: null,
+      failures: 0,
+      inFlight: false,
+    };
+    /**
      * UI 状态（F63 首启一次 / F25 分组折叠）。优先 `storageDomain`（探针写验证过跨重启保留：
      * `<DSH_HOME>/storages/projects_ui.json`），拿不到就退化成「本次宿主运行内有效」的内存值，
      * 并在 RPC 回执里如实标 available:false（不假装已持久化）。
-     * @type {{ firstRunDone: boolean, collapsedGroups: Record<string, boolean> }}
+     * @type {{ firstRunDone: boolean, collapsedGroups: Record<string, boolean>, realtimeCi?: boolean }}
      */
-    this.uiStateFallback = { firstRunDone: false, collapsedGroups: {} };
+    this.uiStateFallback = { firstRunDone: false, collapsedGroups: {}, realtimeCi: false };
     /** @type {{ loaded: boolean, loading: Promise<any>|undefined, domain: any }} */
     this.uiDomain = { loaded: false, loading: undefined, domain: null };
     /** @type {any} */
@@ -226,6 +256,17 @@ export class ProjectsService extends TypertRemoteService {
           );
         });
       }, 5000);
+      // F21：默认轮询 PR/CI（只对「有开放 PR 的项目」；30–90s 退避；应用关闭即停）。
+      // 延后到首屏之后再起，避免和冷会话唤醒抢 gh 子进程。
+      setTimeout(() => {
+        try {
+          if (this.prPoll?.running !== true) this.setPrPolling(true);
+        } catch (error) {
+          this.logger?.warn?.(
+            `[projects] pr polling not started: ${String(/** @type {any} */ (error)?.message ?? error).slice(0, 160)}`,
+          );
+        }
+      }, 20_000);
     });
 
     // 项目上下文：**全局注册一个按会话求值的条目**。
@@ -315,6 +356,19 @@ export class ProjectsService extends TypertRemoteService {
     ctx.on?.("session/event", (/** @type {any} */ session, /** @type {any} */ event) => {
       const sessionId = String(session?.id ?? "");
       if (sessionId === "" || !this.store) return;
+      // 协调器会话（F9/F11）：记最近发言，让项目页的协调者区能显示"结论"。
+      // 它不属于任何线程，所以不走下面的线程归约路径。
+      const coordinatorProject = this.store.projectOfCoordinatorSession?.(sessionId);
+      if (coordinatorProject) {
+        if (String(event?.type ?? "") === "assistant/message") {
+          const text = extractText(event?.data?.message);
+          if (text !== "") this.recordCoordinatorMessage(coordinatorProject.id, "assistant", text);
+        } else if (String(event?.type ?? "") === "user/message") {
+          const text = extractText(event?.data?.message);
+          if (text !== "") this.recordCoordinatorMessage(coordinatorProject.id, "user", text);
+        }
+        return;
+      }
       // 只跟项目线程，其它会话零开销
       if (!this.store.projectOfSession(sessionId)) return;
       this.stats.set(sessionId, observeEvent(this.stats.get(sessionId) ?? initialStats(), event));
@@ -361,6 +415,12 @@ export class ProjectsService extends TypertRemoteService {
       }
     });
     ctx.effect?.(() => () => {
+      // F21：应用关闭即停（不留定时器，也不让 gh 子进程继续跑）
+      this.prPoll.running = false;
+      if (this.prPoll.timer !== null) {
+        clearTimeout(this.prPoll.timer);
+        this.prPoll.timer = null;
+      }
       for (const dispose of this.attached.values()) {
         try {
           dispose();
@@ -862,30 +922,33 @@ export class ProjectsService extends TypertRemoteService {
 
   /**
    * 读 UI 状态（F63/F25）：**回读值**，不带推断。
-   * @returns {Promise<{ available: boolean, firstRunDone: boolean, collapsedGroups: Record<string, boolean> }>}
+   * @returns {Promise<{ available: boolean, firstRunDone: boolean, collapsedGroups: Record<string, boolean>, realtimeCi: boolean }>}
    */
   async uiStateInternal() {
     const domain = await this.uiDomainHandle();
     let firstRunDone = this.uiStateFallback.firstRunDone === true;
     let collapsedGroups = this.normalizeCollapsed(this.uiStateFallback.collapsedGroups);
+    // F21 实验档开关：默认关；写验证过的持久面同上（storageDomain 全局区）
+    let realtimeCi = /** @type {any} */ (this.uiStateFallback).realtimeCi === true;
     if (domain && typeof domain.global?.get === "function") {
       try {
         const value = domain.global.get() ?? {};
         firstRunDone = value.firstRunDone === true;
         collapsedGroups = this.normalizeCollapsed(value.collapsedGroups);
+        realtimeCi = value.realtimeCi === true;
         // 回读值才是真源：同步内存副本，降级时仍用最后一次读到的值
-        this.uiStateFallback = { firstRunDone, collapsedGroups };
+        this.uiStateFallback = { firstRunDone, collapsedGroups, realtimeCi };
       } catch {
         /* 读失败：用内存值，available 仍为 true（域在，只是这次没读到） */
       }
     }
-    return { available: Boolean(domain), firstRunDone, collapsedGroups };
+    return { available: Boolean(domain), firstRunDone, collapsedGroups, realtimeCi };
   }
 
   /**
    * 写 UI 状态并返回**回读值**（避免"假开关"）。
-   * @param {{ firstRunDone?: boolean, collapsedGroups?: Record<string, boolean> }} patch
-   * @returns {Promise<{ available: boolean, firstRunDone: boolean, collapsedGroups: Record<string, boolean> }>}
+   * @param {{ firstRunDone?: boolean, collapsedGroups?: Record<string, boolean>, realtimeCi?: boolean }} patch
+   * @returns {Promise<{ available: boolean, firstRunDone: boolean, collapsedGroups: Record<string, boolean>, realtimeCi: boolean }>}
    */
   async writeUiState(patch) {
     const current = await this.uiStateInternal();
@@ -896,6 +959,7 @@ export class ProjectsService extends TypertRemoteService {
         patch?.collapsedGroups && typeof patch.collapsedGroups === "object"
           ? this.normalizeCollapsed(patch.collapsedGroups)
           : current.collapsedGroups,
+      realtimeCi: typeof patch?.realtimeCi === "boolean" ? patch.realtimeCi : current.realtimeCi,
     };
     this.uiStateFallback = { ...next };
     const domain = await this.uiDomainHandle();
@@ -1814,6 +1878,53 @@ export class ProjectsService extends TypertRemoteService {
   }
 
   /**
+   * 记忆索引（MEMORY.md）单段落，用于 wake 信封（F10）。读不到就是空串。
+   * @param {any} project
+   * @returns {string}
+   */
+  renderMemoryIndexFor(project) {
+    try {
+      return String(readProjectFiles(this.dataRoot, project.id).memoryIndex ?? "").trim();
+    } catch {
+      return "";
+    }
+  }
+
+  /**
+   * 最近线程的一行摘要（F10）：除本次触发的线程外，最近活动的 3 个线程。
+   * 为什么要它：协调器只看单条信封时不知道"同类线程已经在跑"，容易重复派活。
+   * @param {any} project
+   * @param {string} excludeSessionId
+   * @returns {string}
+   */
+  renderRecentThreadFor(project, excludeSessionId) {
+    const store = this.store;
+    if (!store) return "";
+    const threads = /** @type {any[]} */ (store.listThreads(project.id))
+      .filter((/** @type {any} */ thread) => thread.sessionId !== excludeSessionId)
+      .map((/** @type {any} */ thread) => ({
+        ...thread,
+        view: this.views.get(String(thread.sessionId)) ?? null,
+        activity: Number(thread.lastActivityAt ? Date.parse(thread.lastActivityAt) : 0) || 0,
+      }))
+      .sort((/** @type {any} */ a, /** @type {any} */ b) => b.activity - a.activity)
+      .slice(0, 3);
+    if (threads.length === 0) return "";
+    return threads
+      .map((/** @type {any} */ thread) => {
+        const state = String(thread.view?.state ?? thread.state ?? "idle");
+        const title = String(thread.subtitle ?? "").trim() || String(thread.sessionId).slice(0, 12);
+        const branch =
+          typeof thread.branch === "string" && thread.branch !== "" ? ` · ${thread.branch}` : "";
+        const pr = Number.isInteger(Number(thread.prNumber))
+          ? ` · PR #${Number(thread.prNumber)}`
+          : "";
+        return `- ${title} (state=${state}${branch}${pr})`;
+      })
+      .join("\n");
+  }
+
+  /**
    * 确保项目有一个协调器会话（没有就建一个），返回会话 id。
    * @param {string} projectId
    */
@@ -1943,6 +2054,9 @@ export class ProjectsService extends TypertRemoteService {
           branch: thread.branch ?? null,
         },
         context: this.renderProjectContextFor(project),
+        // F10：协调者上下文 = 最近消息（report）+ 最近线程（recentThread）+ 记忆索引（memoryIndex）
+        memoryIndex: this.renderMemoryIndexFor(project),
+        recentThread: this.renderRecentThreadFor(project, sessionId),
         // 人格同样走信封：宿主的 runtime-context 投递不到协调器会话（§11.24）
         persona: buildPersona({
           projectName: project.name,
@@ -2482,6 +2596,11 @@ export class ProjectsService extends TypertRemoteService {
       manualUnread: thread.unread === true,
       resolvedAt: thread.resolvedAt ?? null,
       prNumber: Number.isFinite(thread.prNumber) ? Number(thread.prNumber) : null,
+      // F21/U16：CI 状态（轮询写回；没有就是 null，UI 不编颜色）
+      ciState: typeof thread.ciState === "string" ? thread.ciState : null,
+      headRefOid: typeof thread.headRefOid === "string" ? thread.headRefOid : null,
+      // F17：Tasks 逐项（todo/write 的整表快照），行内可展开看图
+      tasks: Array.isArray(view.todoItems) ? view.todoItems : [],
       durationMs,
       createdAt: thread.createdAt ?? null,
       pendingInput,
@@ -2728,6 +2847,505 @@ export class ProjectsService extends TypertRemoteService {
     store.save();
     return removed;
   }
+
+  // ================= B2：把桩接通（协调器 / 审批 / PR / thread 体验） =================
+
+  /**
+   * 记一条协调器发言（F11）。上限 COORDINATOR_MESSAGE_CAP 条，按时间顺序。
+   * @param {string} projectId @param {"assistant"|"user"} role @param {string} text
+   */
+  recordCoordinatorMessage(projectId, role, text) {
+    const cap = COORDINATOR_MESSAGE_CAP;
+    const list = this.coordinatorMessages.get(projectId) ?? [];
+    list.push({ role, text: String(text).slice(0, 4000), at: Date.now() });
+    while (list.length > cap) list.shift();
+    this.coordinatorMessages.set(projectId, list);
+  }
+
+  /**
+   * F9 + F11：给协调器发一句话，并把「它现在在哪、有没有新建会话」回读给面板。
+   * 不用裸 `approval.request`；投递走 `sessionController.prompt`（探针写验证过）。
+   * @param {string} projectId
+   * @param {string} text
+   */
+  async sendToCoordinator(projectId, text) {
+    await this.waitServices();
+    const store = this.requireStore();
+    const project = store.getProject(projectId);
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const input = String(text ?? "").trim();
+    if (input === "") throw new Error("projects: coordinator message requires text");
+    const created = await this.ensureCoordinator(projectId);
+    const sessionId = String(created.sessionId);
+    const sc = this.sessionController;
+    if (!sc) throw new Error("projects: session controller unavailable");
+    await sc.prompt(
+      {
+        requestId: `projects-coordinator-msg-${Date.now()}`,
+        sessionId,
+        mode: "queue",
+        content: [{ type: "text", text: input }],
+      },
+      new AbortController().signal,
+    );
+    this.recordCoordinatorMessage(projectId, "user", input);
+    store.appendAudit({
+      action: "coordinator/message",
+      projectId,
+      sessionId,
+      created: created.created === true,
+    });
+    store.save();
+    return { sessionId, sent: true, created: created.created === true, chars: input.length };
+  }
+
+  /**
+   * F11/U4：协调者区的读模型 —— 最近发言（含结论）+ 它引用的线程（chip 数据）。
+   * 线程 chip 带 state/branch/prNumber/tasks，让 client 不必再查一遍。
+   * @param {string} projectId
+   */
+  coordinatorView(projectId) {
+    const store = this.requireStore();
+    const project = store.getProject(projectId);
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const sessionId =
+      typeof project.coordinatorSessionId === "string" ? project.coordinatorSessionId : "";
+    const messages = (this.coordinatorMessages.get(projectId) ?? []).map((item) => ({
+      role: item.role,
+      text: item.text,
+      at: item.at,
+    }));
+    const rows = store.listThreads(projectId).map((/** @type {any} */ thread) => {
+      const view = mergeRecord(this.views.get(String(thread.sessionId)), thread);
+      return {
+        sessionId: String(thread.sessionId),
+        title: thread.subtitle || `turn ${Number(view.turn ?? 0)}`,
+        state: String(view.state ?? "idle"),
+        branch: thread.branch ?? null,
+        worktree: thread.worktree ?? null,
+        prNumber: Number.isInteger(Number(thread.prNumber)) ? Number(thread.prNumber) : null,
+        ciState: thread.ciState ?? null,
+        tasks: thread.todos ?? null,
+      };
+    });
+    return {
+      sessionId,
+      available: sessionId !== "",
+      messages,
+      threads: rows,
+      // 结论 = 最后一条 assistant 消息（协调者汇报的"上浮"内容）
+      conclusion: [...messages].reverse().find((item) => item.role === "assistant")?.text ?? "",
+      compaction: this.compactionStatus(),
+    };
+  }
+
+  /**
+   * F10：协调者上下文策略。`compaction` 是**部署相关**服务（live desktop 有，CLI/web profile
+   * 可能被 disabled），所以这里一律 `ctx.get()` 判空兜底，绝不假设它存在。
+   * @returns {{ available: boolean, mode: string, note: string }}
+   */
+  compactionStatus() {
+    const compaction = this.hostService("compaction");
+    if (!compaction) {
+      return { available: false, mode: "none", note: "compaction unavailable in this deployment" };
+    }
+    const mode =
+      typeof compaction.mode === "string"
+        ? compaction.mode
+        : typeof compaction.threshold === "number"
+          ? `threshold:${compaction.threshold}`
+          : "available";
+    return { available: true, mode, note: "" };
+  }
+
+  /**
+   * F13/F45：Restart —— 丢掉当前协调器会话，重开一个（旧会话不删，留着可追溯）。
+   * 为什么是"重开"而不是"重连"：宿主没有云端 worker（R1），会话是本机 session；
+   * Restart 的语义就是「换一个新会话继续」，当前那条回复会丢（与 Claude 相同结局）。
+   * @param {string} projectId
+   */
+  async restartCoordinator(projectId) {
+    await this.waitServices();
+    const store = this.requireStore();
+    const project = store.getProject(projectId);
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const previous =
+      typeof project.coordinatorSessionId === "string" ? project.coordinatorSessionId : "";
+    if (previous !== "") this.detachSession(previous);
+    store.updateProject(projectId, { coordinatorSessionId: null });
+    this.coordinatorMessages.delete(projectId);
+    store.appendAudit({
+      action: "coordinator/restart",
+      projectId,
+      previousSessionId: previous || null,
+      result: "detached",
+    });
+    store.save();
+    const created = await this.ensureCoordinator(projectId);
+    store.appendAudit({
+      action: "coordinator/restarted",
+      projectId,
+      sessionId: String(created.sessionId),
+      previousSessionId: previous || null,
+    });
+    store.save();
+    return {
+      restarted: true,
+      previousSessionId: previous,
+      sessionId: String(created.sessionId),
+      created: created.created === true,
+    };
+  }
+
+  /**
+   * F19：线程 steering —— 给运行中的线程插一句话（`mode:'steer'`，探针写验证过）。
+   * 线程没在跑时宿主会把 steer 排队；这里如实回读 running 状态，不假装"已经生效"。
+   * @param {string} sessionId
+   * @param {string} text
+   */
+  async steerThread(sessionId, text) {
+    await this.waitServices();
+    const store = this.requireStore();
+    const project = store.projectOfSession(sessionId);
+    if (!project) throw new Error(`projects: unknown thread ${sessionId}`);
+    const input = String(text ?? "").trim();
+    if (input === "") throw new Error("projects: steer requires text");
+    const sc = this.sessionController;
+    if (!sc) throw new Error("projects: session controller unavailable");
+    /** @type {any} */
+    let live = null;
+    try {
+      live = await sc.state({ sessionId }, AbortSignal.timeout(1500));
+    } catch {
+      live = null;
+    }
+    await sc.prompt(
+      {
+        requestId: `projects-steer-${Date.now()}`,
+        sessionId,
+        mode: "steer",
+        content: [{ type: "text", text: input }],
+      },
+      new AbortController().signal,
+    );
+    store.appendAudit({
+      action: "thread/steer",
+      projectId: project.id,
+      sessionId,
+      chars: input.length,
+    });
+    store.save();
+    return { steered: true, running: live?.running === true, chars: input.length };
+  }
+
+  /**
+   * F24/F42：宿主模型目录（分组 + 每个模型的 effort）。`ctx.get()` 判空，缺了就明说。
+   * @returns {Promise<{ available: boolean, groups: any[], reason: string }>}
+   */
+  async modelCatalog() {
+    await this.waitServices();
+    const sc = this.sessionController;
+    if (!sc || typeof sc.modelCatalog !== "function") {
+      return { available: false, groups: [], reason: "session-controller-unavailable" };
+    }
+    try {
+      const value = await sc.modelCatalog(new AbortController().signal);
+      const groups = Array.isArray(value)
+        ? value
+        : Array.isArray(value?.groups)
+          ? value.groups
+          : [];
+      return { available: true, groups, reason: "" };
+    } catch (error) {
+      return {
+        available: false,
+        groups: [],
+        reason: String(/** @type {any} */ (error)?.message ?? error).slice(0, 160),
+      };
+    }
+  }
+
+  /**
+   * F24：给一个线程换模型 / effort（转 `session/selectModel`），**回读** `modelSelection`。
+   * @param {string} projectId
+   * @param {string} sessionId
+   * @param {{ provider?: string, model?: string, reasoningEffort?: string }} input
+   */
+  async selectThreadModel(projectId, sessionId, input) {
+    await this.waitServices();
+    const store = this.requireStore();
+    const project = store.getProject(projectId);
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const thread = store
+      .listThreads(projectId)
+      .find((/** @type {any} */ item) => item.sessionId === sessionId);
+    if (!thread) throw new Error(`projects: unknown thread ${sessionId}`);
+    const provider = String(input?.provider ?? "").trim();
+    const model = String(input?.model ?? "").trim();
+    if (provider === "" || model === "") throw new Error("projects: provider and model required");
+    const sc = this.sessionController;
+    if (!sc || typeof sc.selectModel !== "function") {
+      throw new Error("projects: session controller unavailable");
+    }
+    /** @type {{ sessionId: string, provider: string, model: string, reasoningEffort?: string }} */
+    const params = { sessionId, provider, model };
+    const effort = String(input?.reasoningEffort ?? "").trim();
+    if (effort !== "") params.reasoningEffort = effort;
+    await sc.selectModel(params, new AbortController().signal);
+    // 回读：改完再问宿主，避免"假开关"
+    /** @type {any} */
+    let selection = null;
+    try {
+      await sc.state({ sessionId }, AbortSignal.timeout(1500));
+      const value =
+        typeof sc.projections === "function"
+          ? await sc.projections({ sessionId }, AbortSignal.timeout(1500))
+          : null;
+      selection = value?.modelSelection ?? null;
+    } catch {
+      selection = null;
+    }
+    store.appendAudit({
+      action: "thread/model",
+      projectId,
+      sessionId,
+      provider,
+      model,
+      reasoningEffort: effort || null,
+    });
+    store.save();
+    return { ok: true, sessionId, provider, model, reasoningEffort: effort || null, selection };
+  }
+
+  /**
+   * F17：线程的 Tasks 清单（todo/write 的整表快照 + 每项文案与状态）。
+   * 数据源：视图里最近一次 `todo/write`（宿主事件）与持久记录里的 n/m。
+   * @param {string} projectId
+   * @param {string} sessionId
+   */
+  threadTasks(projectId, sessionId) {
+    const store = this.requireStore();
+    const thread = store
+      .listThreads(projectId)
+      .find((/** @type {any} */ item) => item.sessionId === sessionId);
+    if (!thread) throw new Error(`projects: unknown thread ${sessionId}`);
+    const view = /** @type {any} */ (mergeRecord(this.views.get(String(sessionId)), thread));
+    const summary = /** @type {any} */ (mergeRecord(view.todos, thread.todos));
+    const items = Array.isArray(view.todoItems) ? view.todoItems : [];
+    return {
+      sessionId,
+      tasks: items.map((/** @type {any} */ item) => ({
+        content: String(item?.content ?? ""),
+        status: String(item?.status ?? ""),
+        done: String(item?.status ?? "") === "completed",
+      })),
+      done: Number(summary.done ?? 0),
+      total: Number(summary.total ?? 0),
+      source: items.length > 0 ? "todo/write" : summary.total > 0 ? "record" : "none",
+    };
+  }
+
+  /**
+   * F12/F20：Create PR 的按钮入口 —— 走既有 `openPr`，并回读线程的 PR/分支状态。
+   * 与 `openPr` 的区别只在语义：这里给面板一个"用户点了 Create PR"的窄接口，
+   * 档位由项目策略决定（默认 draft），不在 UI 里偷偷升级到 auto-merge。
+   * @param {string} projectId
+   * @param {string} sessionId
+   * @param {{ tier?: string, base?: string, repo?: string }} [options]
+   */
+  async createPr(projectId, sessionId, options) {
+    const store = this.requireStore();
+    const project = store.getProject(projectId);
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const tier = String(options?.tier ?? project.policy?.pr?.tier ?? "draft");
+    const result = await this.openPr(projectId, sessionId, { ...(options ?? {}), tier });
+    const thread = store
+      .listThreads(projectId)
+      .find((/** @type {any} */ item) => item.sessionId === sessionId);
+    return {
+      ...result,
+      tier,
+      branch: thread?.branch ?? null,
+      prNumber: thread?.prNumber ?? result?.prNumber ?? null,
+      ciState: thread?.ciState ?? null,
+    };
+  }
+
+  /**
+   * F21：轮询一轮所有项目的开放 PR（`gh pr list --json …`）。
+   * 默认档：只对有开放 PR 的项目、30–90s 退避、连续失败退避、应用关闭即停。
+   */
+  async pollPrs() {
+    if (this.prPoll.inFlight) return { skipped: true, reason: "in-flight", projects: [] };
+    this.prPoll.inFlight = true;
+    try {
+      const store = this.requireStore();
+      /** @type {Array<{ projectId: string, name: string, polled: boolean, reason: string, openPrs: number, rows: any[], patches: number }>} */
+      const projects = [];
+      for (const project of store.listProjects()) {
+        if (project.state !== "active") continue;
+        const threads = store.listThreads(project.id);
+        const verdict = shouldPollProject({
+          prTier: project.policy?.pr?.tier ?? "draft",
+          threads,
+        });
+        if (!verdict.poll) {
+          projects.push({
+            projectId: project.id,
+            name: project.name,
+            polled: false,
+            reason: verdict.reason,
+            openPrs: verdict.openPrs,
+            rows: [],
+            patches: 0,
+          });
+          continue;
+        }
+        const repoRoot =
+          Array.isArray(project.dirs) && project.dirs.length > 0 ? project.dirs[0] : "";
+        if (repoRoot === "") {
+          projects.push({
+            projectId: project.id,
+            name: project.name,
+            polled: false,
+            reason: "no-dir",
+            openPrs: verdict.openPrs,
+            rows: [],
+            patches: 0,
+          });
+          continue;
+        }
+        const gh = await runGh(["pr", "list", "--json", PR_LIST_FIELDS, "--limit", "30"], repoRoot);
+        const parsed =
+          gh.code === 0 ? parsePrList(gh.stdout) : { ok: false, rows: [], reason: "gh-failed" };
+        if (!parsed.ok) {
+          store.appendAudit({
+            action: "pr/poll-failed",
+            projectId: project.id,
+            reason: parsed.reason,
+          });
+          projects.push({
+            projectId: project.id,
+            name: project.name,
+            polled: false,
+            reason: parsed.reason,
+            openPrs: verdict.openPrs,
+            rows: [],
+            patches: 0,
+          });
+          continue;
+        }
+        const patches = planThreadPatches({ threads }, parsed.rows);
+        for (const patch of patches) {
+          try {
+            store.setThreadCi(patch.sessionId, patch);
+          } catch {
+            /* 线程可能在轮询期间被移除 */
+          }
+        }
+        if (patches.length > 0) store.save();
+        store.appendAudit({
+          action: "pr/polled",
+          projectId: project.id,
+          openPrs: verdict.openPrs,
+          changed: patches.length,
+        });
+        projects.push({
+          projectId: project.id,
+          name: project.name,
+          polled: true,
+          reason: "",
+          openPrs: verdict.openPrs,
+          rows: parsed.rows,
+          patches: patches.length,
+        });
+      }
+      const anyPolled = projects.some((item) => item.polled);
+      this.prPoll.failures = anyPolled ? 0 : this.prPoll.failures + 1;
+      this.prPoll.lastAt = Date.now();
+      const result = {
+        at: this.prPoll.lastAt,
+        projects,
+        nextDelayMs: nextPollDelay({ failures: this.prPoll.failures }),
+      };
+      this.prPoll.lastResult = result;
+      store.save();
+      return result;
+    } finally {
+      this.prPoll.inFlight = false;
+    }
+  }
+
+  /**
+   * F21：PR 轮询的状态回读（设置页/冒烟用）。
+   * @returns {{ running: boolean, lastAt: number, failures: number, nextDelayMs: number, projects: number }}
+   */
+  prPollState() {
+    const store = this.store;
+    let projects = 0;
+    try {
+      projects = store ? store.listProjects().length : 0;
+    } catch {
+      projects = 0;
+    }
+    return {
+      running: this.prPoll.running === true,
+      lastAt: this.prPoll.lastAt,
+      failures: this.prPoll.failures,
+      nextDelayMs: nextPollDelay({ failures: this.prPoll.failures }),
+      projects,
+    };
+  }
+
+  /**
+   * F21：起/停轮询定时器（幂等）。由宿主 `start()` 与设置开关驱动；dispose 时清掉。
+   * @param {boolean} [enabled]
+   */
+  setPrPolling(enabled) {
+    const on = enabled !== false;
+    if (this.prPoll.timer !== null) {
+      clearTimeout(this.prPoll.timer);
+      this.prPoll.timer = null;
+    }
+    this.prPoll.running = on;
+    if (!on) return this.prPollState();
+    const tick = async () => {
+      if (!this.prPoll.running) return;
+      try {
+        await this.pollPrs();
+      } catch (error) {
+        this.prPoll.failures += 1;
+        this.logger?.warn?.(
+          `[projects] pr poll failed: ${String(/** @type {any} */ (error)?.message ?? error).slice(0, 160)}`,
+        );
+      }
+      if (!this.prPoll.running) return;
+      const delay = nextPollDelay({ failures: this.prPoll.failures });
+      this.prPoll.timer = setTimeout(() => void tick(), delay);
+      if (typeof this.prPoll.timer?.unref === "function") this.prPoll.timer.unref();
+    };
+    this.prPoll.timer = setTimeout(() => void tick(), nextPollDelay({ failures: 0 }));
+    if (typeof this.prPoll.timer?.unref === "function") this.prPoll.timer.unref();
+    return this.prPollState();
+  }
+
+  /**
+   * F21：实验性实时监听的规格（前置条件 + 警示），面板照抄，不自己编文案。
+   * @returns {{ key: string, requires: string[], warning: string }}
+   */
+  realtimeCiSpec() {
+    return realtimeCiSpec();
+  }
+
+  /**
+   * F21：实验性实时监听开关（默认关）。**只落开关与回读值**，不偷偷起 webhook 子进程：
+   * 它会在仓库上建临时 webhook、需要管理员权限，必须用户明确知道后果。
+   * @param {boolean} enabled
+   */
+  async setRealtimeCi(enabled) {
+    const next = await this.writeUiState({ realtimeCi: enabled === true });
+    return { ...next, spec: realtimeCiSpec() };
+  }
 }
 
 declareRemote(ProjectsService, "listProjects");
@@ -2778,3 +3396,16 @@ declareRemote(ProjectsService, "appendMemory");
 declareRemote(ProjectsService, "setProjectInstructions");
 declareRemote(ProjectsService, "inspectDir");
 declareRemote(ProjectsService, "listAudit");
+declareRemote(ProjectsService, "sendToCoordinator");
+declareRemote(ProjectsService, "coordinatorView");
+declareRemote(ProjectsService, "restartCoordinator");
+declareRemote(ProjectsService, "steerThread");
+declareRemote(ProjectsService, "modelCatalog");
+declareRemote(ProjectsService, "selectThreadModel");
+declareRemote(ProjectsService, "threadTasks");
+declareRemote(ProjectsService, "createPr");
+declareRemote(ProjectsService, "pollPrs");
+declareRemote(ProjectsService, "prPollState");
+declareRemote(ProjectsService, "setPrPolling");
+declareRemote(ProjectsService, "setRealtimeCi");
+declareRemote(ProjectsService, "realtimeCiSpec");

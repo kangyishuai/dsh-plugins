@@ -70,6 +70,7 @@ export const STATE_PILLS = Object.freeze(["waiting-user", "failed", "working", "
  * @property {boolean} resolved 用户手动标记「已解决」（插件域，宿主无原语）
  * @property {boolean} archived 是否已归档（由线程记录派生）
  * @property {TodoSnapshot} todos 最近一次 todo/write 的整表快照（没有就是 0/0）
+ * @property {Array<{content: string, status: string}>} todoItems 同一快照的逐项明细（F17 的 ✓/◌）
  * @property {string} subtitle 最近一条 tool/call 的可读摘要（没有就留空，不编）
  */
 
@@ -87,8 +88,22 @@ export function initialView() {
     resolved: false,
     archived: false,
     todos: { total: 0, done: 0 },
+    todoItems: [],
     subtitle: "",
   };
+}
+
+/**
+ * todo/write 的逐项明细（F17）。只保留文案与状态，其余字段丢弃。
+ * @param {any} data
+ * @returns {Array<{content: string, status: string}>}
+ */
+export function todoItems(data) {
+  const list = Array.isArray(data?.todos) ? data.todos : [];
+  return list.slice(0, 200).map((/** @type {any} */ item) => ({
+    content: String(item?.content ?? "").slice(0, 200),
+    status: String(item?.status ?? ""),
+  }));
 }
 
 /**
@@ -249,7 +264,7 @@ export function reduce(view, event) {
     }
     case "todo/write": {
       const snapshot = todoSummary(event?.data);
-      if (snapshot !== null) next = { ...next, todos: snapshot };
+      if (snapshot !== null) next = { ...next, todos: snapshot, todoItems: todoItems(event?.data) };
       break;
     }
     case "interaction/pending": {

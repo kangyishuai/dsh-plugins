@@ -42,6 +42,60 @@ window.__ModuleLoader__.load({
       "settings.diag": "诊断",
       "settings.unavailable": "不可用",
       "settings.hint": "项目元数据与内容文件都在本机；不会写任何远端仓库。",
+      "detail.coordinator": "协调者",
+      "detail.coordinatorEmpty": "还没有对话。线程跑完后它会在这里向你汇报。",
+      "detail.coordinatorPlaceholder": "跟协调者说一句话，例如「帮我看下 CI 为什么红」",
+      "detail.coordinatorSend": "发送",
+      "detail.coordinatorSending": "发送中…",
+      "detail.coordinatorRestart": "重开会话",
+      "detail.coordinatorRestarted": "已重开会话（旧会话保留，可追溯）",
+      "detail.coordinatorCreate": "建协调者",
+      "detail.coordinatorCreated": "协调者会话已就绪",
+      "detail.coordinatorMsgSent": "已发送给协调者",
+      "detail.coordinatorConclusion": "结论",
+      "detail.coordinatorCompactionYes": "自动压缩可用（{mode}）",
+      "detail.coordinatorCompactionNo":
+        "本部署没有 compaction：协调者上下文不会自动压缩（会一直累积）",
+      "detail.threadExpand": "展开",
+      "detail.threadCollapse": "收起",
+      "detail.tasks": "Tasks",
+      "detail.tasksNone": "还没有任务清单（模型写 todo 后出现）",
+      "detail.tasksCount": "{done}/{total}",
+      "detail.steer": "插话",
+      "detail.steerPlaceholder": "给这个线程插一句（steering）",
+      "detail.steered": "已插话（线程在跑，立即生效）",
+      "detail.steeredQueued": "已插话（线程没在跑，宿主会排队）",
+      "detail.model": "模型",
+      "detail.modelNone": "这个部署没暴露模型目录",
+      "detail.modelSave": "应用",
+      "detail.modelSaved": "已切到 {model}",
+      "detail.prCreate": "Create PR",
+      "detail.prCreating": "正在开 PR…",
+      "detail.prCreated": "已开 PR #{number}",
+      "detail.prFailed": "开 PR 失败：{reason}",
+      "detail.prBranch": "分支 {branch}",
+      "detail.prCi": "CI {state}",
+      "detail.noBranch": "还没有分支（线程还没产出提交）",
+      "detail.ci.passing": "通过",
+      "detail.ci.failing": "失败",
+      "detail.ci.pending": "进行中",
+      "detail.ci.none": "无检查",
+      "detail.paramIsolated": "隔离 worktree",
+      "detail.paramShared": "共享目录",
+      "detail.paramNoDir": "未绑定目录",
+      "detail.approvalHint": "审批在协调器/线程里产生；这条线程的申请会出现在上面的审批队列里。",
+      "settings.restartRow": "重开协调器会话",
+      "settings.restartHint":
+        "丢掉当前协调器会话并重开一个（旧会话保留可追溯）；当前那条回复会丢。",
+      "settings.restartDone": "已重开（旧会话 {previous}…）",
+      "settings.realtimeCi": "实验性实时监听 CI/PR",
+      "settings.realtimeCiHint":
+        "默认关。开启会在该 GitHub 仓库上创建临时 webhook，需要仓库管理员权限；gh 官方标注仅供测试/开发。",
+      "settings.realtimeCiOn": "已开启（需要管理员权限，会建临时 webhook）",
+      "settings.realtimeCiOff": "已关闭，回到默认轮询",
+      "settings.pollState": "PR 轮询：{state} · 上次 {at} · 间隔 {delay}s",
+      "settings.pollRunning": "运行中",
+      "settings.pollStopped": "已停",
       "menu.attach": "归属到项目…",
       "menu.loading": "加载中…",
       "menu.empty": "还没有项目，先在项目面板里建一个",
@@ -355,6 +409,61 @@ window.__ModuleLoader__.load({
       "settings.unavailable": "Unavailable",
       "settings.hint":
         "Project metadata and content files stay local; no remote repository is written.",
+      "detail.coordinator": "Coordinator",
+      "detail.coordinatorEmpty": "No conversation yet. It reports here after a thread finishes.",
+      "detail.coordinatorPlaceholder": 'Say one line to the coordinator, e.g. "why is CI red?"',
+      "detail.coordinatorSend": "Send",
+      "detail.coordinatorSending": "Sending…",
+      "detail.coordinatorRestart": "Restart",
+      "detail.coordinatorRestarted": "Session restarted (the old one is kept for audit)",
+      "detail.coordinatorCreate": "Create coordinator",
+      "detail.coordinatorCreated": "Coordinator session is ready",
+      "detail.coordinatorMsgSent": "Sent to the coordinator",
+      "detail.coordinatorConclusion": "Conclusion",
+      "detail.coordinatorCompactionYes": "Auto-compaction available ({mode})",
+      "detail.coordinatorCompactionNo":
+        "No compaction in this deployment: coordinator context will keep growing",
+      "detail.threadExpand": "Expand",
+      "detail.threadCollapse": "Collapse",
+      "detail.tasks": "Tasks",
+      "detail.tasksNone": "No task list yet (appears once the model writes todos)",
+      "detail.tasksCount": "{done}/{total}",
+      "detail.steer": "Steer",
+      "detail.steerPlaceholder": "Steer this thread with one line",
+      "detail.steered": "Steered (thread running, applied immediately)",
+      "detail.steeredQueued": "Steered (thread idle, the host will queue it)",
+      "detail.model": "Model",
+      "detail.modelNone": "This deployment exposes no model catalog",
+      "detail.modelSave": "Apply",
+      "detail.modelSaved": "Switched to {model}",
+      "detail.prCreate": "Create PR",
+      "detail.prCreating": "Creating PR…",
+      "detail.prCreated": "Opened PR #{number}",
+      "detail.prFailed": "Create PR failed: {reason}",
+      "detail.prBranch": "Branch {branch}",
+      "detail.prCi": "CI {state}",
+      "detail.noBranch": "No branch yet (no commits from this thread)",
+      "detail.ci.passing": "passing",
+      "detail.ci.failing": "failing",
+      "detail.ci.pending": "pending",
+      "detail.ci.none": "no checks",
+      "detail.paramIsolated": "isolated worktree",
+      "detail.paramShared": "shared dir",
+      "detail.paramNoDir": "no dir",
+      "detail.approvalHint":
+        "Approvals are produced by the coordinator/thread; this thread's requests show up in the approval queue above.",
+      "settings.restartRow": "Restart coordinator session",
+      "settings.restartHint":
+        "Drop the current coordinator session and open a new one (the old one is kept for audit); the reply in flight is lost.",
+      "settings.restartDone": "Restarted (previous {previous}…)",
+      "settings.realtimeCi": "Experimental realtime CI/PR watch",
+      "settings.realtimeCiHint":
+        "Off by default. Enabling creates a temporary webhook on that GitHub repo and needs repo admin; gh marks this test/dev only.",
+      "settings.realtimeCiOn": "Enabled (needs admin; creates a temporary webhook)",
+      "settings.realtimeCiOff": "Disabled, back to default polling",
+      "settings.pollState": "PR poll: {state} · last {at} · interval {delay}s",
+      "settings.pollRunning": "running",
+      "settings.pollStopped": "stopped",
       "menu.attach": "Add to project…",
       "menu.loading": "Loading…",
       "menu.empty": "No projects yet — create one in the Projects panel first",
@@ -716,6 +825,105 @@ window.__ModuleLoader__.load({
     }
 
     var styles = {
+      // —— B2：协调者区 / thread chip / 展开面板 ——
+      coordinator: {
+        display: "flex",
+        flexDirection: "column",
+        gap: "6px",
+        border: `1px solid ${T.borderSoft}`,
+        borderRadius: "12px",
+        padding: "10px 12px",
+        background: T.panel ?? "transparent",
+        minWidth: 0,
+      },
+      coordinatorBubble: {
+        alignSelf: "flex-start",
+        maxWidth: "92%",
+        padding: "6px 10px",
+        borderRadius: "10px",
+        background: T.field ?? T.hover,
+        color: T.text,
+        fontSize: "12.5px",
+        whiteSpace: "pre-wrap",
+        minWidth: 0,
+      },
+      coordinatorBubbleUser: {
+        alignSelf: "flex-end",
+        maxWidth: "92%",
+        padding: "6px 10px",
+        borderRadius: "10px",
+        background: T.hover,
+        color: T.dim,
+        fontSize: "12.5px",
+        whiteSpace: "pre-wrap",
+        minWidth: 0,
+      },
+      conclusion: {
+        borderLeft: `2px solid ${T.accentText}`,
+        paddingLeft: "8px",
+        color: T.text,
+        fontSize: "12.5px",
+        display: "block",
+        minWidth: 0,
+      },
+      threadChip: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "6px",
+        maxWidth: "220px",
+        padding: "2px 8px 2px 6px",
+        borderRadius: "999px",
+        border: `1px solid ${T.border}`,
+        background: "transparent",
+        color: T.text,
+        fontSize: "11.5px",
+        minWidth: 0,
+      },
+      chipDot: {
+        display: "inline-block",
+        width: "6px",
+        height: "6px",
+        borderRadius: "999px",
+        flex: "none",
+      },
+      chipMeta: { color: T.dim, fontVariantNumeric: "tabular-nums", flex: "none" },
+      threadDetail: {
+        display: "flex",
+        flexDirection: "column",
+        gap: "6px",
+        marginTop: "6px",
+        padding: "8px 10px",
+        border: `1px solid ${T.borderSoft}`,
+        borderRadius: "10px",
+        minWidth: 0,
+      },
+      startCard: {
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
+        padding: "6px 8px",
+        borderRadius: "8px",
+        background: T.hover,
+        minWidth: 0,
+      },
+      inlineChip: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "4px",
+        padding: "1px 8px",
+        borderRadius: "6px",
+        border: `1px solid ${T.border}`,
+        color: T.dim,
+        fontSize: "11.5px",
+        minWidth: 0,
+      },
+      taskItem: {
+        display: "block",
+        color: T.text,
+        fontSize: "12px",
+        paddingLeft: "2px",
+        minWidth: 0,
+      },
       // —— 面板外框 / 列表页 ——
       root: {
         padding: 0,
@@ -3279,6 +3487,10 @@ window.__ModuleLoader__.load({
             call(api.ctx, "listAudit", { projectId: project.id }),
             call(api.ctx, "listApprovals", { projectId: project.id }),
             call(api.ctx, "uiState"),
+            // B2：协调者区（F9/F11）+ 模型目录（F24）
+            call(api.ctx, "coordinatorView", { projectId: project.id }),
+            call(api.ctx, "modelCatalog"),
+            call(api.ctx, "prPollState"),
           ]).then(
             (values) => {
               setData({
@@ -3291,6 +3503,9 @@ window.__ModuleLoader__.load({
                 audit: Array.isArray(values[2]) ? values[2] : [],
                 approvals: Array.isArray(values[3]) ? values[3] : [],
                 ui: values[4] || null,
+                coordinator: values[5] || null,
+                models: values[6] || null,
+                poll: values[7] || null,
               });
               // F25 折叠状态存宿主 storageDomain（跨重启保留）；读不到就当全部展开。
               // 只在首次加载时套用：否则 5s 轮询会用旧值把用户刚点的折叠弹回去。
@@ -3838,6 +4053,212 @@ window.__ModuleLoader__.load({
         load();
       }, [load]);
 
+      // —— B2 本地状态：协调者发送 / 线程展开 / steer / 模型 / Create PR ——
+      const coordinatorDraftState = useState("");
+      const coordinatorDraft = coordinatorDraftState[0];
+      const setCoordinatorDraft = coordinatorDraftState[1];
+      const coordinatorBusyState = useState(false);
+      const coordinatorBusy = coordinatorBusyState[0];
+      const setCoordinatorBusy = coordinatorBusyState[1];
+      const coordinatorMsgState = useState("");
+      const coordinatorMsg = coordinatorMsgState[0];
+      const setCoordinatorMsg = coordinatorMsgState[1];
+      const expandedState = useState("");
+      const expandedThread = expandedState[0];
+      const setExpandedThread = expandedState[1];
+      const steerDraftState = useState("");
+      const steerDraft = steerDraftState[0];
+      const setSteerDraft = steerDraftState[1];
+      const busyActionState = useState("");
+      const busyAction = busyActionState[0];
+      const setBusyAction = busyActionState[1];
+      const modelPickState = useState({});
+      const modelPick = modelPickState[0];
+      const setModelPick = modelPickState[1];
+
+      const sendCoordinator = useCallback(() => {
+        const value = String(coordinatorDraft).trim();
+        if (value === "" || coordinatorBusy) return;
+        setCoordinatorBusy(true);
+        setCoordinatorMsg("");
+        call(api.ctx, "sendToCoordinator", { projectId: project.id, text: value }).then(
+          (/** @type {any} */ result) => {
+            setCoordinatorBusy(false);
+            setCoordinatorDraft("");
+            setCoordinatorMsg(
+              result?.created === true
+                ? text(t, "detail.coordinatorCreated")
+                : text(t, "detail.coordinatorMsgSent"),
+            );
+            load(true);
+          },
+          (/** @type {any} */ error) => {
+            setCoordinatorBusy(false);
+            setCoordinatorMsg(String(error?.message ?? error).slice(0, 200));
+          },
+        );
+      }, [api, coordinatorBusy, coordinatorDraft, load, project.id, t]);
+
+      const createCoordinator = useCallback(() => {
+        if (coordinatorBusy) return;
+        setCoordinatorBusy(true);
+        setCoordinatorMsg("");
+        call(api.ctx, "ensureCoordinator", { projectId: project.id }).then(
+          (/** @type {any} */ result) => {
+            setCoordinatorBusy(false);
+            setCoordinatorMsg(
+              result?.created === true
+                ? text(t, "detail.coordinatorCreated")
+                : text(t, "detail.coordinatorMsgSent"),
+            );
+            load(true);
+          },
+          (/** @type {any} */ error) => {
+            setCoordinatorBusy(false);
+            setCoordinatorMsg(String(error?.message ?? error).slice(0, 200));
+          },
+        );
+      }, [api, coordinatorBusy, load, project.id, t]);
+
+      const restartCoordinator = useCallback(() => {
+        if (coordinatorBusy) return;
+        setCoordinatorBusy(true);
+        setCoordinatorMsg("");
+        call(api.ctx, "restartCoordinator", { projectId: project.id }).then(
+          () => {
+            setCoordinatorBusy(false);
+            setCoordinatorMsg(text(t, "detail.coordinatorRestarted"));
+            load(true);
+          },
+          (/** @type {any} */ error) => {
+            setCoordinatorBusy(false);
+            setCoordinatorMsg(String(error?.message ?? error).slice(0, 200));
+          },
+        );
+      }, [api, coordinatorBusy, load, project.id, t]);
+
+      const steerThreadNow = useCallback(
+        (/** @type {string} */ sessionId) => {
+          const value = String(steerDraft).trim();
+          if (value === "" || busyAction !== "") return;
+          setBusyAction(`steer:${sessionId}`);
+          call(api.ctx, "steerThread", { sessionId, text: value }).then(
+            (/** @type {any} */ result) => {
+              setBusyAction("");
+              setSteerDraft("");
+              setThreadAction({
+                pending: "",
+                ok: true,
+                message:
+                  result?.running === true
+                    ? text(t, "detail.steered")
+                    : text(t, "detail.steeredQueued"),
+              });
+              load(true);
+            },
+            (/** @type {any} */ error) => {
+              setBusyAction("");
+              setThreadAction({
+                pending: "",
+                ok: false,
+                message: String(error?.message ?? error).slice(0, 200),
+              });
+            },
+          );
+        },
+        [api, busyAction, load, setThreadAction, steerDraft, t],
+      );
+
+      const applyModel = useCallback(
+        (/** @type {string} */ sessionId, /** @type {any} */ option) => {
+          if (!option || busyAction !== "") return;
+          setBusyAction(`model:${sessionId}`);
+          call(api.ctx, "selectThreadModel", {
+            projectId: project.id,
+            sessionId,
+            input: { provider: option.provider, model: option.model },
+          }).then(
+            (/** @type {any} */ result) => {
+              setBusyAction("");
+              setThreadAction({
+                pending: "",
+                ok: true,
+                message: text(t, "detail.modelSaved", { model: String(result?.model ?? "") }),
+              });
+              load(true);
+            },
+            (/** @type {any} */ error) => {
+              setBusyAction("");
+              setThreadAction({
+                pending: "",
+                ok: false,
+                message: String(error?.message ?? error).slice(0, 200),
+              });
+            },
+          );
+        },
+        [api, busyAction, load, project.id, setThreadAction, t],
+      );
+
+      const createPrFor = useCallback(
+        (/** @type {string} */ sessionId) => {
+          if (busyAction !== "") return;
+          setBusyAction(`pr:${sessionId}`);
+          call(api.ctx, "createPr", { projectId: project.id, sessionId }).then(
+            (/** @type {any} */ result) => {
+              setBusyAction("");
+              const opened = result?.opened === true;
+              setThreadAction({
+                pending: "",
+                ok: opened,
+                message: opened
+                  ? text(t, "detail.prCreated", { number: Number(result?.prNumber ?? 0) })
+                  : text(t, "detail.prFailed", { reason: String(result?.reason ?? "?") }),
+              });
+              load(true);
+            },
+            (/** @type {any} */ error) => {
+              setBusyAction("");
+              setThreadAction({
+                pending: "",
+                ok: false,
+                message: String(error?.message ?? error).slice(0, 200),
+              });
+            },
+          );
+        },
+        [api, busyAction, load, project.id, setThreadAction, t],
+      );
+
+      // F24：把 modelCatalog 摊平成 <option>；结构不认识就返回空（UI 明说"没暴露"）
+      const modelOptions = (() => {
+        const groups = Array.isArray(data.models?.groups) ? data.models.groups : [];
+        /** @type {Array<{ key: string, provider: string, model: string, label: string }>} */
+        const out = [];
+        for (const group of groups) {
+          const models = Array.isArray(group?.models)
+            ? group.models
+            : Array.isArray(group?.items)
+              ? group.items
+              : [];
+          for (const model of models) {
+            const id =
+              typeof model === "string"
+                ? model
+                : String(model?.id ?? model?.model ?? model?.name ?? "");
+            if (id === "") continue;
+            const provider = String(group?.provider ?? group?.id ?? group?.name ?? "");
+            out.push({
+              key: `${provider}:${id}`,
+              provider,
+              model: id,
+              label: `${String(group?.label ?? group?.name ?? provider)}/${id}`,
+            });
+          }
+        }
+        return out;
+      })();
+
       const tabs = [
         {
           id: "threads",
@@ -4311,6 +4732,235 @@ window.__ModuleLoader__.load({
                   text(t, "detail.threadWorktree", { path: String(row.worktree) }),
                 )
               : null,
+            // —— U5/U6/U7/F17/F19/F24/F12/F20：展开后的线程面板 ——
+            expandedThread === row.sessionId
+              ? h(
+                  "div",
+                  { style: styles.threadDetail, "data-projects-thread-detail": row.sessionId },
+                  // U5 thread 起始卡（○ + 标题 + 副标题）
+                  h(
+                    "div",
+                    { style: styles.startCard, "data-projects-thread-start-card": row.sessionId },
+                    h("span", {
+                      style: { ...styles.chipDot, background: stateColor },
+                      "data-projects-thread-start-dot": state,
+                    }),
+                    h(
+                      "div",
+                      { style: { minWidth: 0 } },
+                      h("span", { style: styles.name }, title),
+                      h(
+                        "span",
+                        { style: styles.meta },
+                        String(row.subtitle ?? "") || text(t, "detail.stepsNone"),
+                      ),
+                    ),
+                  ),
+                  // U7 行内 chip（分支 / 参数 / 引用）
+                  h(
+                    "div",
+                    {
+                      style: { display: "flex", flexWrap: "wrap", gap: "6px" },
+                      "data-projects-thread-chips": row.sessionId,
+                    },
+                    row.branch
+                      ? h(
+                          "span",
+                          {
+                            style: styles.inlineChip,
+                            "data-projects-thread-branch": row.sessionId,
+                          },
+                          text(t, "detail.prBranch", { branch: String(row.branch) }),
+                        )
+                      : null,
+                    h(
+                      "span",
+                      { style: styles.inlineChip, "data-projects-thread-params": row.sessionId },
+                      `${row.isolated === true ? text(t, "detail.paramIsolated") : text(t, "detail.paramShared")} · ${
+                        String(row.dir ?? "") !== ""
+                          ? String(row.dir).split("/").pop()
+                          : text(t, "detail.paramNoDir")
+                      }`,
+                    ),
+                    row.prNumber
+                      ? h(
+                          "span",
+                          {
+                            style: styles.inlineChip,
+                            "data-projects-thread-pr-chip": row.sessionId,
+                          },
+                          text(t, "detail.prCi", {
+                            state: text(t, `detail.ci.${String(row.ciState ?? "none")}`),
+                          }),
+                        )
+                      : null,
+                  ),
+                  // F17 Tasks 清单（✓/◌ + n/m，来自 todo/write）
+                  h(
+                    "div",
+                    {
+                      style: { display: "flex", flexDirection: "column", gap: "2px" },
+                      "data-projects-thread-tasks": row.sessionId,
+                      "data-projects-thread-tasks-source":
+                        Array.isArray(row.tasks) && row.tasks.length > 0 ? "todo/write" : "none",
+                    },
+                    h(
+                      "span",
+                      { style: styles.meta, "data-projects-thread-tasks-count": row.sessionId },
+                      Array.isArray(row.tasks) && row.tasks.length > 0
+                        ? `${text(t, "detail.tasks")} · ${text(t, "detail.tasksCount", {
+                            done: Number(row.steps?.done ?? 0),
+                            total: Number(row.steps?.total ?? 0),
+                          })}`
+                        : `${text(t, "detail.tasks")} · ${text(t, "detail.stepsNone")}`,
+                    ),
+                    Array.isArray(row.tasks) && row.tasks.length > 0
+                      ? row.tasks.map((/** @type {any} */ task, /** @type {number} */ index) => {
+                          const done =
+                            task?.done === true || String(task?.status ?? "") === "completed";
+                          return h(
+                            "span",
+                            {
+                              key: String(index),
+                              style: styles.taskItem,
+                              "data-projects-thread-task": row.sessionId,
+                              "data-projects-task-status": done ? "done" : "open",
+                            },
+                            `${done ? "✓" : "◌"} ${String(task?.content ?? "").slice(0, 120)}`,
+                          );
+                        })
+                      : h("span", { style: styles.meta }, text(t, "detail.tasksNone")),
+                  ),
+                  // F19 steering（`mode:'steer'`）
+                  h(
+                    "div",
+                    { style: { display: "flex", gap: "6px", alignItems: "center" } },
+                    h("input", {
+                      style: styles.input,
+                      value: steerDraft,
+                      placeholder: text(t, "detail.steerPlaceholder"),
+                      "data-projects-thread-steer-input": row.sessionId,
+                      disabled: busyAction !== "",
+                      onChange: (/** @type {any} */ event) => setSteerDraft(event.target.value),
+                      onKeyDown: (/** @type {any} */ event) => {
+                        if (event.key === "Enter") steerThreadNow(String(row.sessionId));
+                      },
+                    }),
+                    h(
+                      "button",
+                      {
+                        type: "button",
+                        style: { ...styles.secondaryButton, padding: "2px 10px", fontSize: "12px" },
+                        "data-projects-thread-steer": row.sessionId,
+                        disabled: busyAction !== "" || String(steerDraft).trim() === "",
+                        onClick: () => steerThreadNow(String(row.sessionId)),
+                      },
+                      text(t, "detail.steer"),
+                    ),
+                  ),
+                  // F24 每线程模型（下拉来自 modelCatalog）
+                  h(
+                    "div",
+                    {
+                      style: { display: "flex", gap: "6px", alignItems: "center" },
+                      "data-projects-thread-model-row": row.sessionId,
+                      "data-projects-thread-model-available":
+                        modelOptions.length > 0 ? "yes" : "no",
+                    },
+                    h("span", { style: styles.meta }, text(t, "detail.model")),
+                    modelOptions.length > 0
+                      ? h(
+                          "select",
+                          {
+                            style: styles.input,
+                            "data-projects-thread-model": row.sessionId,
+                            value:
+                              modelPick[row.sessionId] ??
+                              `${modelOptions[0].provider}:${modelOptions[0].model}`,
+                            onChange: (/** @type {any} */ event) =>
+                              setModelPick((/** @type {any} */ prev) => ({
+                                ...prev,
+                                [row.sessionId]: event.target.value,
+                              })),
+                          },
+                          modelOptions.map((/** @type {any} */ option) =>
+                            h("option", { key: option.key, value: option.key }, option.label),
+                          ),
+                        )
+                      : h(
+                          "span",
+                          { style: styles.meta, "data-projects-thread-model-none": "" },
+                          text(t, "detail.modelNone"),
+                        ),
+                    modelOptions.length > 0
+                      ? h(
+                          "button",
+                          {
+                            type: "button",
+                            style: {
+                              ...styles.secondaryButton,
+                              padding: "2px 10px",
+                              fontSize: "12px",
+                            },
+                            "data-projects-thread-model-save": row.sessionId,
+                            disabled: busyAction !== "",
+                            onClick: () => {
+                              const key =
+                                modelPick[row.sessionId] ??
+                                `${modelOptions[0].provider}:${modelOptions[0].model}`;
+                              applyModel(
+                                String(row.sessionId),
+                                modelOptions.find(
+                                  (/** @type {any} */ option) => option.key === key,
+                                ),
+                              );
+                            },
+                          },
+                          text(t, "detail.modelSave"),
+                        )
+                      : null,
+                  ),
+                  // F12/U16：Create PR 条 + 分支条
+                  h(
+                    "div",
+                    {
+                      style: { display: "flex", gap: "6px", alignItems: "center" },
+                      "data-projects-branch-bar": row.sessionId,
+                    },
+                    h(
+                      "span",
+                      { style: styles.meta, "data-projects-branch-label": row.sessionId },
+                      row.branch
+                        ? text(t, "detail.prBranch", { branch: String(row.branch) })
+                        : text(t, "detail.noBranch"),
+                    ),
+                    h("span", { style: { flex: "1 1 auto" } }),
+                    h(
+                      "button",
+                      {
+                        type: "button",
+                        style: { ...styles.secondaryButton, padding: "2px 10px", fontSize: "12px" },
+                        "data-projects-create-pr": row.sessionId,
+                        disabled: busyAction !== "" || !row.branch,
+                        onClick: () => createPrFor(String(row.sessionId)),
+                      },
+                      busyAction === `pr:${row.sessionId}`
+                        ? text(t, "detail.prCreating")
+                        : text(t, "detail.prCreate"),
+                    ),
+                  ),
+                  // F18：审批在**线程里**产生；这里的按钮只是把"申请"入口暴露给用户
+                  h(
+                    "div",
+                    { style: { display: "flex", gap: "6px", alignItems: "center" } },
+                    h(
+                      "span",
+                      { style: styles.meta, "data-projects-thread-approval-hint": "" },
+                      text(t, "detail.approvalHint"),
+                    ),
+                  ),
+                )
+              : null,
           ),
           // 右侧元信息（U12）：步进 n/m → PR 徽章 → 通知数 → 时长
           h(
@@ -4329,6 +4979,23 @@ window.__ModuleLoader__.load({
               },
               "data-projects-thread-meta": row.sessionId,
             },
+            // U5/U6/U7 展开：起始卡 / 内联 chip / Tasks 清单 / steer / 模型 / Create PR
+            h(
+              "button",
+              {
+                type: "button",
+                style: { ...styles.secondaryButton, padding: "1px 8px", fontSize: "11px" },
+                "data-projects-thread-expand": row.sessionId,
+                "data-projects-thread-expanded":
+                  expandedThread === row.sessionId ? "true" : "false",
+                "aria-expanded": expandedThread === row.sessionId ? "true" : "false",
+                onClick: () =>
+                  setExpandedThread(expandedThread === row.sessionId ? "" : String(row.sessionId)),
+              },
+              expandedThread === row.sessionId
+                ? text(t, "detail.threadCollapse")
+                : text(t, "detail.threadExpand"),
+            ),
             h(
               "span",
               {
@@ -4357,6 +5024,25 @@ window.__ModuleLoader__.load({
                   { style: styles.archiveBadge, "data-projects-thread-pr": row.sessionId },
                   text(t, "detail.prBadge", { number: row.prNumber }),
                 )
+              : null,
+            // U16：PR 徽章的 CI 状态点（F21 轮询写回；没有就是 "none"，不编颜色）
+            row.prNumber
+              ? h("span", {
+                  style: {
+                    ...styles.chipDot,
+                    background:
+                      String(row.ciState) === "passing"
+                        ? T.success
+                        : String(row.ciState) === "failing"
+                          ? T.danger
+                          : String(row.ciState) === "pending"
+                            ? T.accentText
+                            : T.faint,
+                  },
+                  title: text(t, `detail.ci.${String(row.ciState ?? "none")}`),
+                  "data-projects-thread-pr-ci": row.sessionId,
+                  "data-projects-thread-pr-ci-state": String(row.ciState ?? "none"),
+                })
               : null,
             notifications > 0
               ? h(
@@ -5195,6 +5881,267 @@ window.__ModuleLoader__.load({
                           },
                         }),
                       ),
+                    )
+                  : null,
+              );
+            })(),
+            // —— U4/F9/F10/F11/F13：协调者区（**不是**宿主 composer）——
+            // 一个长期会话：你只跟它说话；它在线程跑完后汇报（结论上浮 + thread chip）。
+            // 没有会话时显示"建协调者"；compaction 缺失时如实说明（F10 的判空兜底）。
+            (() => {
+              const coordinator = data.coordinator || null;
+              const available = coordinator?.available === true;
+              const messages = Array.isArray(coordinator?.messages)
+                ? coordinator.messages.slice(-4)
+                : [];
+              const chips = (Array.isArray(coordinator?.threads) ? coordinator.threads : [])
+                .filter(
+                  (/** @type {any} */ item) =>
+                    (typeof item?.branch === "string" && item.branch !== "") ||
+                    Number.isInteger(Number(item?.prNumber)),
+                )
+                .slice(0, 4);
+              const compaction = coordinator?.compaction || null;
+              return h(
+                "div",
+                {
+                  style: styles.coordinator,
+                  "data-projects-coordinator": available ? "ready" : "empty",
+                  "data-projects-coordinator-available": available ? "yes" : "no",
+                  "data-projects-coordinator-session": String(coordinator?.sessionId ?? ""),
+                },
+                h(
+                  "div",
+                  { style: { display: "flex", alignItems: "center", gap: "8px", minWidth: 0 } },
+                  h(
+                    "span",
+                    { style: styles.name, "data-projects-coordinator-title": "" },
+                    text(t, "detail.coordinator"),
+                  ),
+                  available
+                    ? h(
+                        "span",
+                        { style: styles.pill, "data-projects-coordinator-state": "ready" },
+                        String(coordinator.sessionId).slice(0, 10),
+                      )
+                    : null,
+                  h("span", { style: { flex: "1 1 auto" } }),
+                  available
+                    ? h(
+                        "button",
+                        {
+                          type: "button",
+                          style: {
+                            ...styles.secondaryButton,
+                            padding: "2px 10px",
+                            fontSize: "12px",
+                          },
+                          "data-projects-coordinator-restart": "",
+                          disabled: coordinatorBusy,
+                          onClick: restartCoordinator,
+                        },
+                        text(t, "detail.coordinatorRestart"),
+                      )
+                    : h(
+                        "button",
+                        {
+                          type: "button",
+                          style: {
+                            ...styles.secondaryButton,
+                            padding: "2px 10px",
+                            fontSize: "12px",
+                          },
+                          "data-projects-coordinator-create": "",
+                          disabled: coordinatorBusy,
+                          onClick: createCoordinator,
+                        },
+                        text(t, "detail.coordinatorCreate"),
+                      ),
+                ),
+                compaction
+                  ? h(
+                      "div",
+                      {
+                        style: styles.meta,
+                        "data-projects-coordinator-compaction": compaction.available ? "yes" : "no",
+                        title: String(compaction.note || compaction.mode || ""),
+                      },
+                      compaction.available
+                        ? text(t, "detail.coordinatorCompactionYes", {
+                            mode: String(compaction.mode ?? ""),
+                          })
+                        : text(t, "detail.coordinatorCompactionNo"),
+                    )
+                  : null,
+                messages.length === 0
+                  ? h(
+                      "div",
+                      { style: styles.meta, "data-projects-coordinator-empty": "" },
+                      text(t, "detail.coordinatorEmpty"),
+                    )
+                  : messages.map((/** @type {any} */ item, /** @type {number} */ index) =>
+                      h(
+                        "div",
+                        {
+                          key: String(index),
+                          style:
+                            item.role === "assistant"
+                              ? styles.coordinatorBubble
+                              : styles.coordinatorBubbleUser,
+                          "data-projects-coordinator-message": String(item.role),
+                        },
+                        String(item.text ?? "").slice(0, 400),
+                      ),
+                    ),
+                String(coordinator?.conclusion ?? "") !== ""
+                  ? h(
+                      "div",
+                      { style: styles.conclusion, "data-projects-coordinator-report": "" },
+                      `${text(t, "detail.coordinatorConclusion")}：${String(
+                        coordinator.conclusion,
+                      ).slice(0, 400)}`,
+                    )
+                  : null,
+                chips.length > 0
+                  ? h(
+                      "div",
+                      {
+                        style: { display: "flex", flexWrap: "wrap", gap: "6px" },
+                        "data-projects-coordinator-chips": "",
+                      },
+                      chips.map((/** @type {any} */ chip) =>
+                        h(
+                          "span",
+                          {
+                            key: String(chip.sessionId),
+                            style: styles.threadChip,
+                            "data-projects-coordinator-chip": String(chip.sessionId),
+                            "data-projects-chip-branch": String(chip.branch ?? ""),
+                            "data-projects-chip-pr": Number.isInteger(Number(chip.prNumber))
+                              ? String(Number(chip.prNumber))
+                              : "",
+                          },
+                          h("span", {
+                            style: {
+                              ...styles.chipDot,
+                              background:
+                                String(chip.state) === "waiting-user"
+                                  ? T.success
+                                  : String(chip.state) === "working"
+                                    ? T.accentText
+                                    : String(chip.state) === "failed"
+                                      ? T.danger
+                                      : T.faint,
+                            },
+                            "data-projects-chip-dot": String(chip.state ?? "idle"),
+                          }),
+                          h(
+                            "span",
+                            {
+                              style: {
+                                minWidth: 0,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              },
+                            },
+                            String(chip.title || chip.sessionId).slice(0, 40),
+                          ),
+                          Number.isInteger(Number(chip.prNumber))
+                            ? h("span", { style: styles.chipMeta }, `#${Number(chip.prNumber)}`)
+                            : null,
+                        ),
+                      ),
+                    )
+                  : null,
+                // F21：轮询状态 + 实验性实时监听开关（**默认关**，说明会建临时 webhook）
+                h(
+                  "div",
+                  {
+                    style: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" },
+                    "data-projects-detail-poll-row": "",
+                  },
+                  h(
+                    "span",
+                    {
+                      style: styles.meta,
+                      "data-projects-poll-state":
+                        data.poll?.running === true ? "running" : "stopped",
+                    },
+                    text(t, "settings.pollState", {
+                      state:
+                        data.poll?.running === true
+                          ? text(t, "settings.pollRunning")
+                          : text(t, "settings.pollStopped"),
+                      at: data.poll?.lastAt
+                        ? new Date(Number(data.poll.lastAt)).toLocaleTimeString()
+                        : "—",
+                      delay: String(Math.round(Number(data.poll?.nextDelayMs ?? 30000) / 1000)),
+                    }),
+                  ),
+                  h(
+                    "label",
+                    {
+                      style: {
+                        display: "flex",
+                        gap: "6px",
+                        alignItems: "center",
+                        fontSize: "11.5px",
+                        color: T.dim,
+                        marginLeft: "auto",
+                      },
+                      title: text(t, "settings.realtimeCiHint"),
+                      "data-projects-detail-realtime-ci-row": "",
+                    },
+                    h("input", {
+                      type: "checkbox",
+                      checked: data.ui?.realtimeCi === true,
+                      "data-projects-detail-realtime-ci": "",
+                      onChange: (/** @type {any} */ event) => {
+                        const next = event.target.checked;
+                        call(api.ctx, "setRealtimeCi", { enabled: next }).then(
+                          () => load(true),
+                          (/** @type {any} */ error) =>
+                            setCoordinatorMsg(String(error?.message ?? error).slice(0, 160)),
+                        );
+                      },
+                    }),
+                    text(t, "settings.realtimeCi"),
+                  ),
+                ),
+                h(
+                  "div",
+                  { style: { display: "flex", gap: "6px", alignItems: "center" } },
+                  h("input", {
+                    style: styles.input,
+                    value: coordinatorDraft,
+                    placeholder: text(t, "detail.coordinatorPlaceholder"),
+                    "data-projects-coordinator-input": "",
+                    disabled: coordinatorBusy,
+                    onChange: (/** @type {any} */ event) => setCoordinatorDraft(event.target.value),
+                    onKeyDown: (/** @type {any} */ event) => {
+                      if (event.key === "Enter") sendCoordinator();
+                    },
+                  }),
+                  h(
+                    "button",
+                    {
+                      type: "button",
+                      style: styles.primaryButton,
+                      "data-projects-coordinator-send": "",
+                      disabled: coordinatorBusy,
+                      onClick: sendCoordinator,
+                    },
+                    coordinatorBusy
+                      ? text(t, "detail.coordinatorSending")
+                      : text(t, "detail.coordinatorSend"),
+                  ),
+                ),
+                coordinatorMsg !== ""
+                  ? h(
+                      "div",
+                      { style: styles.meta, "data-projects-coordinator-result": "" },
+                      coordinatorMsg,
                     )
                   : null,
               );
@@ -6478,8 +7425,19 @@ window.__ModuleLoader__.load({
       var view = state[0];
       var setView = state[1];
 
+      // B2：重启协调器（F45）+ 实验性实时监听（F21）+ 轮询状态回读
+      var ciView = useState({ ui: null, poll: null, spec: null, busy: "", message: "" });
+      var ci = ciView[0];
+      var setCi = ciView[1];
+
       var reload = useCallback(() => {
-        Promise.all([call(api.ctx, "describe"), call(api.ctx, "listProjects")]).then(
+        Promise.all([
+          call(api.ctx, "describe"),
+          call(api.ctx, "listProjects"),
+          call(api.ctx, "uiState"),
+          call(api.ctx, "prPollState"),
+          call(api.ctx, "realtimeCiSpec"),
+        ]).then(
           (values) => {
             var projects = Array.isArray(values[1]) ? values[1] : [];
             setView((/** @type {any} */ prev) => ({
@@ -6488,6 +7446,12 @@ window.__ModuleLoader__.load({
               error: null,
               projects: projects,
               selectedId: prev.selectedId || (projects[0] ? projects[0].id : ""),
+            }));
+            setCi((/** @type {any} */ prev) => ({
+              ...prev,
+              ui: values[2] || null,
+              poll: values[3] || null,
+              spec: values[4] || prev.spec,
             }));
           },
           (error) => {
@@ -6556,6 +7520,136 @@ window.__ModuleLoader__.load({
           });
         })(),
 
+        // —— B2/F45：Restart 行（丢掉当前协调器会话，重开一个）——
+        (() => {
+          var selectedForRestart = view.projects.find(
+            (/** @type {any} */ project) => project.id === view.selectedId,
+          );
+          var projectId = selectedForRestart ? selectedForRestart.id : "";
+          var coordinatorId = String(selectedForRestart?.coordinatorSessionId ?? "");
+          return h(
+            "div",
+            {
+              style: {
+                marginTop: "8px",
+                display: "flex",
+                gap: "8px",
+                alignItems: "center",
+                flexWrap: "wrap",
+              },
+              "data-projects-settings-restart-row": projectId,
+              "data-projects-settings-coordinator": coordinatorId,
+            },
+            h(
+              "button",
+              {
+                type: "button",
+                style: styles.button,
+                "data-projects-settings-restart": projectId,
+                disabled: projectId === "" || ci.busy !== "",
+                onClick: () => {
+                  if (projectId === "") return;
+                  setCi((/** @type {any} */ prev) => ({ ...prev, busy: "restart", message: "" }));
+                  call(api.ctx, "restartCoordinator", { projectId: projectId }).then(
+                    (/** @type {any} */ result) => {
+                      setCi((/** @type {any} */ prev) => ({
+                        ...prev,
+                        busy: "",
+                        message: text(t, "settings.restartDone", {
+                          previous: String(result?.previousSessionId ?? "").slice(0, 10),
+                        }),
+                      }));
+                      reload();
+                    },
+                    (/** @type {any} */ error) =>
+                      setCi((/** @type {any} */ prev) => ({
+                        ...prev,
+                        busy: "",
+                        message: String(error?.message ?? error).slice(0, 160),
+                      })),
+                  );
+                },
+              },
+              text(t, "settings.restartRow"),
+            ),
+            h(
+              "span",
+              { style: { color: T.dim, fontSize: "12px", minWidth: 0, flex: "1 1 220px" } },
+              text(t, "settings.restartHint"),
+            ),
+          );
+        })(),
+        // —— B2/F21：实验性实时监听开关（默认关）+ 轮询状态回读 ——
+        (() => {
+          var enabled = ci.ui?.realtimeCi === true;
+          var poll = ci.poll || null;
+          return h(
+            "div",
+            {
+              style: { marginTop: "8px", display: "flex", flexDirection: "column", gap: "2px" },
+              "data-projects-realtime-ci-row": "",
+              "data-projects-realtime-ci-state": enabled ? "on" : "off",
+              "data-projects-realtime-ci-persisted": ci.ui?.available === true ? "yes" : "no",
+            },
+            h(
+              "label",
+              { style: { display: "flex", gap: "6px", alignItems: "center" } },
+              h("input", {
+                type: "checkbox",
+                checked: enabled,
+                "data-projects-realtime-ci": "",
+                onChange: (/** @type {any} */ event) => {
+                  var next = event.target.checked;
+                  call(api.ctx, "setRealtimeCi", { enabled: next }).then(
+                    (/** @type {any} */ result) =>
+                      setCi((/** @type {any} */ prev) => ({
+                        ...prev,
+                        ui: result,
+                        spec: result?.spec ?? prev.spec,
+                        message: next
+                          ? text(t, "settings.realtimeCiOn")
+                          : text(t, "settings.realtimeCiOff"),
+                      })),
+                    (/** @type {any} */ error) =>
+                      setCi((/** @type {any} */ prev) => ({
+                        ...prev,
+                        message: String(error?.message ?? error).slice(0, 160),
+                      })),
+                  );
+                },
+              }),
+              text(t, "settings.realtimeCi"),
+            ),
+            h(
+              "span",
+              { style: { color: T.faint, fontSize: "11.5px", marginLeft: "20px" } },
+              ci.spec?.warning ? String(ci.spec.warning) : text(t, "settings.realtimeCiHint"),
+            ),
+            poll
+              ? h(
+                  "span",
+                  {
+                    style: { color: T.dim, fontSize: "11.5px", marginLeft: "20px" },
+                    "data-projects-poll-state": poll.running ? "running" : "stopped",
+                  },
+                  text(t, "settings.pollState", {
+                    state: poll.running
+                      ? text(t, "settings.pollRunning")
+                      : text(t, "settings.pollStopped"),
+                    at: poll.lastAt ? new Date(poll.lastAt).toLocaleTimeString() : "—",
+                    delay: String(Math.round(Number(poll.nextDelayMs ?? 30000) / 1000)),
+                  }),
+                )
+              : null,
+          );
+        })(),
+        ci.message !== ""
+          ? h(
+              "div",
+              { style: { marginTop: "6px", color: T.dim }, "data-projects-settings-b2-result": "" },
+              ci.message,
+            )
+          : null,
         h(
           "details",
           { style: { marginTop: "8px" }, "data-projects-policy": "" },

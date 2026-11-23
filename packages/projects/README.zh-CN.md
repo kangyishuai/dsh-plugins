@@ -26,6 +26,7 @@ DSH 按工作目录给会话分组，且模型看不到项目级记忆。本插�
 - **应用内通知** —— 全局 overlay 轮询，线程新出现失败或在等你时弹 toast；浏览器 Notification 默认不开。
 
 - **隔离的并行线程** —— 每个任务一个会话。项目目录是 Git 仓库时，线程拿到自己的 worktree（`<仓库同级>/.dsh-worktrees/<仓库名>/`）；不是仓库时**降级为共享目录**并明确告警，而不是建不出线程。
+- **把桩接通（B2）** —— 项目页有协调者区（一个长期会话：可建、可发一句话、可重开；**不是**宿主 composer），协调者汇报做结论上浮 + thread chip，上下文策略里 `compaction` 一律判空兜底，wake 信封新增「最近线程」「记忆索引」两段；线程内 Tasks 清单（来自宿主 `todo/write` 快照，`✓`/`◌` + n/m，没清单时显示 `none` 而不是 0/0）、线程内 steering（`prompt({mode:'steer'})`）、每线程模型 / effort（`session/selectModel`，下拉取 `modelCatalog`，改完回读 `modelSelection`）、Create PR 条 + PR 徽章（带 CI 状态点）、可展开的线程面板（起始卡、分支/参数 chip）；线程**不可跨项目移动**（`attachThread` 对「已属于别的项目」直接拒绝，只允许挂空槽或先 detach 再挂）；PR/CI 默认轮询（只对有开放 PR 的项目，30–90s 退避，应用关掉即停），设置与详情页各有一个「实验性实时监听」开关（默认关，写明会建临时 webhook、需要仓库管理员权限）。
 - **Overview / 项目主页（B1）** —— 六态（`等你 > 失败 > 在跑 > 待审 > 空闲`，另有 `归档`）由宿主 `state().pendingInput/running`、持久 `turn/end` 失败原因与插件自存的 `resolvedAt` 共同结算；分组头带计数、药丸条五类过滤（`~Nm` 只在能从已观测步进节奏估计时显示）、行副标题取最近一条 `tool/call` 的可读摘要、步进环取 `todo/write` 快照（没有 todo 就显示「—」，绝不用 0/0）、手动 resolve/重开与未读标记、`Welcome back` 头 + 7 日 token 迷你图、一次性首启引导（`firstRunDone` 存宿主 `storageDomain`）、项目切换器，以及 Context 多目录（每项目 ≤10）。
 - **「需要我」判定** —— `pendingInput` 与失败轮全部来自宿主/持久事件，不依赖模型自报；需要你处理的排在前面。
 - **协调器** —— 线程跑完一轮就给它送一封结构化唤醒信封（**带着线程的真实结果**），每轮最多一次。用户输入**先按扁平规则路由**（`{when, action}`），规则都不命中时才由模型提议。

@@ -640,6 +640,170 @@ try {
     JSON.stringify({ welcome: overview?.welcome, status: overview?.status, spark: overview?.spark }),
   );
 
+  // —— B2：协调者区（F9/F10/F11/F13）+ 展开面板（U5/U6/U7/F17/F19/F24/F12/F20）+ F21 轮询 ——
+  const coordinatorInitial = await page.evaluate(() => {
+    const area = document.querySelector("[data-projects-coordinator]");
+    return {
+      present: Boolean(area),
+      available: area?.getAttribute("data-projects-coordinator-available") || "",
+      input: Boolean(document.querySelector("[data-projects-coordinator-input]")),
+      send: Boolean(document.querySelector("[data-projects-coordinator-send]")),
+      restart: Boolean(document.querySelector("[data-projects-coordinator-restart]")),
+      compaction: document
+        .querySelector("[data-projects-coordinator-compaction]")
+        ?.getAttribute("data-projects-coordinator-compaction") || "",
+      empty: Boolean(document.querySelector("[data-projects-coordinator-empty]")),
+    };
+  });
+  add(
+    "项目页有协调者区（不是宿主 composer）+ 发送入口",
+    coordinatorInitial.present === true &&
+      coordinatorInitial.input === true &&
+      coordinatorInitial.send === true,
+    JSON.stringify(coordinatorInitial),
+  );
+  add(
+    "没建会话时协调者区显示空态，且 compaction 判空有明确结论",
+    coordinatorInitial.available === "no" &&
+      coordinatorInitial.empty === true &&
+      ["yes", "no"].includes(coordinatorInitial.compaction),
+    JSON.stringify(coordinatorInitial),
+  );
+  // F9：建协调者会话（写）→ 回读 available/session（读）
+  let coordinatorReady = null;
+  for (let i = 0; i < 40; i += 1) {
+    coordinatorReady = await page.evaluate(() => {
+      const area = document.querySelector("[data-projects-coordinator]");
+      return {
+        available: area?.getAttribute("data-projects-coordinator-available") || "",
+        session: area?.getAttribute("data-projects-coordinator-session") || "",
+        restart: Boolean(document.querySelector("[data-projects-coordinator-restart]")),
+      };
+    });
+    if (coordinatorReady.available === "yes" && coordinatorReady.session !== "") break;
+    if (i === 0) {
+      // 「建协调者」= ensureCoordinator（只建会话，**不发模型调用**）
+      await page.evaluate(() =>
+        document.querySelector("[data-projects-coordinator-create]")?.click(),
+      );
+    }
+    await page.waitForTimeout(700);
+  }
+  add(
+    "发一句话会给项目建出协调者会话（回读 session id）",
+    coordinatorReady?.available === "yes" && coordinatorReady?.session !== "",
+    JSON.stringify(coordinatorReady),
+  );
+
+  // 展开面板：U5 起始卡 / U7 chip / F17 Tasks / F19 steer / F24 模型 / F12 Create PR 条
+  await page.evaluate(() => document.querySelector("[data-projects-thread-expand]")?.click());
+  await page.waitForTimeout(600);
+  const expanded = await page.evaluate(() => ({
+    detail: Boolean(document.querySelector("[data-projects-thread-detail]")),
+    startCard: Boolean(document.querySelector("[data-projects-thread-start-card]")),
+    chips: Boolean(document.querySelector("[data-projects-thread-chips]")),
+    params: Boolean(document.querySelector("[data-projects-thread-params]")),
+    tasks: Boolean(document.querySelector("[data-projects-thread-tasks]")),
+    tasksSource:
+      document
+        .querySelector("[data-projects-thread-tasks]")
+        ?.getAttribute("data-projects-thread-tasks-source") || "",
+    steerInput: Boolean(document.querySelector("[data-projects-thread-steer-input]")),
+    steer: Boolean(document.querySelector("[data-projects-thread-steer]")),
+    modelRow: Boolean(document.querySelector("[data-projects-thread-model-row]")),
+    modelAvailable:
+      document
+        .querySelector("[data-projects-thread-model-row]")
+        ?.getAttribute("data-projects-thread-model-available") || "",
+    prButton: Boolean(document.querySelector("[data-projects-create-pr]")),
+    prButtonDisabled: document.querySelector("[data-projects-create-pr]")?.disabled === true,
+    branchBar: Boolean(document.querySelector("[data-projects-branch-bar]")),
+    branchLabel: (document.querySelector("[data-projects-branch-label]")?.textContent || "").trim(),
+  }));
+  add("线程行可展开，展开后有起始卡（U5）", expanded.detail && expanded.startCard, JSON.stringify(expanded));
+  add(
+    "展开面板给行内 chip（U7：参数 + 分支/无分支）",
+    expanded.chips === true && expanded.params === true,
+    JSON.stringify({ chips: expanded.chips, params: expanded.params }),
+  );
+  add(
+    "Tasks 清单有区块并标数据来源（F17：没有 todo 显示 none，不编 0/0）",
+    expanded.tasks === true && ["todo/write", "none"].includes(expanded.tasksSource),
+    JSON.stringify({ tasks: expanded.tasks, source: expanded.tasksSource }),
+  );
+  add(
+    "steering 输入 + 按钮（F19）",
+    expanded.steerInput === true && expanded.steer === true,
+    JSON.stringify({ input: expanded.steerInput, button: expanded.steer }),
+  );
+  add(
+    "每线程模型下拉或缺目录时有显式降级（F24）",
+    expanded.modelRow === true && ["yes", "no"].includes(expanded.modelAvailable),
+    JSON.stringify({ row: expanded.modelRow, available: expanded.modelAvailable }),
+  );
+  // 有分支 → 按钮可点；没分支 → 按钮禁用并写明原因（两种都必须自洽，不能只测一种）
+  const hasBranchLabel = /^分支 \\S+/u.test(String(expanded.branchLabel ?? ""));
+  add(
+    "Create PR 条 + 分支条（F12/F20/U16）：有分支可点、无分支时禁用并写明原因",
+    expanded.branchBar === true &&
+      expanded.prButton === true &&
+      expanded.branchLabel !== "" &&
+      expanded.prButtonDisabled === !hasBranchLabel,
+    JSON.stringify({
+      bar: expanded.branchBar,
+      disabled: expanded.prButtonDisabled,
+      label: expanded.branchLabel,
+    }),
+  );
+
+  // B2 证据截图：1440 宽详情页（协调者区 + 线程 chip + Tasks + PR/分支条）
+  await page.cdp("Emulation.setDeviceMetricsOverride", {
+    width: 1440,
+    height: 900,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  await page.waitForTimeout(500);
+  {
+    const b2Shot = await page.cdp("Page.captureScreenshot", { format: "png" });
+    const fsp = await import("node:fs/promises");
+    await fsp.writeFile(
+      ${JSON.stringify(shotsDir)} + "/06-b2-detail-1440.png",
+      Buffer.from(b2Shot.data, "base64"),
+    );
+  }
+
+  // F21：轮询状态可见 + 实验档开关写→读
+  const pollBefore = await page.evaluate(() => ({
+    state: document
+      .querySelector("[data-projects-poll-state]")
+      ?.getAttribute("data-projects-poll-state") || "",
+    toggle: Boolean(document.querySelector("[data-projects-detail-realtime-ci]")),
+    checked: document.querySelector("[data-projects-detail-realtime-ci]")?.checked === true,
+  }));
+  add(
+    "PR 轮询状态可见（F21：运行中/已停 + 间隔）",
+    ["running", "stopped"].includes(pollBefore.state) && pollBefore.toggle === true,
+    JSON.stringify(pollBefore),
+  );
+  await page.evaluate(() => {
+    const box = document.querySelector("[data-projects-detail-realtime-ci]");
+    if (box && !box.checked) box.click();
+  });
+  let realtimeAfter = null;
+  for (let i = 0; i < 20; i += 1) {
+    realtimeAfter = await page.evaluate(() => ({
+      checked: document.querySelector("[data-projects-detail-realtime-ci]")?.checked === true,
+    }));
+    if (realtimeAfter.checked) break;
+    await page.waitForTimeout(400);
+  }
+  add(
+    "实验性实时监听开关可写且回读为开（F21，默认关）",
+    pollBefore.checked === false && realtimeAfter?.checked === true,
+    JSON.stringify({ before: pollBefore.checked, after: realtimeAfter?.checked }),
+  );
+
   // F26：点药丸 = 过滤；「全部」= 清除
   await page.evaluate(() => document.querySelector('[data-projects-pill="failed"]')?.click());
   await page.waitForTimeout(400);
@@ -2354,6 +2518,47 @@ const main = async () => {
       name: "首启 firstRunDone 落 storageDomain（F63）",
       ok: uiStore?.global?.firstRunDone === true,
       detail: uiStoreText.slice(0, 200),
+    });
+    // —— B2：协调者会话 / 实时监听开关 / F15 跨项目移动 ——
+    const coordinatorProjects = Object.values(parsed?.projects ?? {}).filter(
+      (/** @type {any} */ project) =>
+        typeof project?.coordinatorSessionId === "string" && project.coordinatorSessionId !== "",
+    );
+    checks.push({
+      name: "协调者会话已落盘并可回读（F9：coordinatorSessionId 非空）",
+      ok: coordinatorProjects.length > 0,
+      detail: JSON.stringify(
+        coordinatorProjects.map((/** @type {any} */ project) => project.name).slice(0, 2),
+      ),
+    });
+    checks.push({
+      name: "实验性实时监听开关写→读为开且落到 storageDomain（F21）",
+      ok: uiStore?.global?.realtimeCi === true,
+      detail: JSON.stringify(uiStore?.global ?? null).slice(0, 200),
+    });
+    const threadList = Object.values(parsed?.threads ?? {});
+    checks.push({
+      name: "线程记录带 ciState/headRefOid 字段（F21/U16：null 也显式存在，不是缺字段）",
+      ok:
+        threadList.length > 0 &&
+        threadList.every(
+          (/** @type {any} */ thread) =>
+            "ciState" in thread &&
+            "headRefOid" in thread &&
+            (thread.ciState === null || typeof thread.ciState === "string"),
+        ),
+      detail: JSON.stringify(threadList.map((/** @type {any} */ thread) => thread.ciState)).slice(
+        0,
+        120,
+      ),
+    });
+    const auditActions = Array.isArray(parsed?.audit)
+      ? parsed.audit.map((/** @type {any} */ entry) => String(entry?.action ?? ""))
+      : [];
+    checks.push({
+      name: "协调者创建写审计（F9：coordinator/created 可追溯）",
+      ok: auditActions.includes("coordinator/created"),
+      detail: auditActions.slice(-6).join(","),
     });
     const leftovers = (await readdir(join(home, "projects")).catch(() => [])).filter((name) =>
       String(name).includes(".tmp-"),

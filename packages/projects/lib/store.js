@@ -320,6 +320,11 @@ export function normalize(raw, root) {
         lastPushedSha: typeof thread.lastPushedSha === "string" ? thread.lastPushedSha : null,
         baseSha: typeof thread.baseSha === "string" ? thread.baseSha : null,
         worktree: typeof thread.worktree === "string" ? thread.worktree : null,
+        // F21：PR 的 CI 状态与 head sha（轮询写回；旧数据缺字段就是 null，不伪造）
+        ciState: ["passing", "failing", "pending", "none"].includes(thread.ciState)
+          ? thread.ciState
+          : null,
+        headRefOid: typeof thread.headRefOid === "string" ? thread.headRefOid : null,
         seq: Number.isInteger(thread.seq) ? thread.seq : 0,
         createdAt: typeof thread.createdAt === "string" ? thread.createdAt : iso(),
         lastWakeTurn: Number.isInteger(thread.lastWakeTurn) ? thread.lastWakeTurn : 0,
@@ -520,10 +525,28 @@ export class ProjectStore {
     return this.updateProject(id, { state: "archived" });
   }
 
-  /** @param {string} sessionId @param {string} projectId */
+  /**
+   * 把会话挂进项目。F15：**线程不可跨项目移动**（Claude Projects 里 thread 属于一个项目，
+   * 移来移去会让审计/记忆/PR 归属全部失真）。规则：
+   *  - 空槽（没有归属记录）→ 允许挂；
+   *  - 已在本项目 → 幂等（保留既有字段）；
+   *  - 已在**另一个**项目 → 拒绝，并说清它在哪（要换项目必须先 detach）。
+   * 返回 `moved: false` 让调用方知道这不是一次"搬家"。
+   * @param {string} sessionId @param {string} projectId
+   */
   attachThread(sessionId, projectId) {
     if (!this.state.projects[projectId]) throw new Error(`projects: unknown project ${projectId}`);
     const current = this.state.threads[sessionId];
+    if (current && typeof current.projectId === "string" && current.projectId !== projectId) {
+      const error = new Error(
+        `projects: thread ${sessionId} already belongs to project ${current.projectId}; detach it first`,
+      );
+      // @ts-expect-error 附加字段：调用方/审计要能拿到"原来在哪"
+      error.code = "thread-in-other-project";
+      // @ts-expect-error 同上
+      error.currentProjectId = current.projectId;
+      throw error;
+    }
     this.state.threads[sessionId] = {
       projectId,
       state: current?.state ?? "idle",
@@ -535,6 +558,8 @@ export class ProjectStore {
       dir: current?.dir ?? null,
       branch: current?.branch ?? null,
       worktree: current?.worktree ?? null,
+      ciState: current?.ciState ?? null,
+      headRefOid: current?.headRefOid ?? null,
       seq: current?.seq ?? 0,
       createdAt: current?.createdAt ?? iso(this.now()),
       lastWakeTurn: current?.lastWakeTurn ?? 0,
@@ -582,6 +607,21 @@ export class ProjectStore {
     if (Number.isFinite(patch.prNumber)) current.prNumber = Number(patch.prNumber);
     if (typeof patch.mergedAt === "string" || patch.mergedAt === null)
       current.mergedAt = patch.mergedAt;
+    return { ...current };
+  }
+
+  /**
+   * 写回 PR 的 CI 状态（F21 轮询结果）。只接受四态，其余保持不变。
+   * @param {string} sessionId
+   * @param {{ ciState?: string, headRefOid?: string, prNumber?: number }} patch
+   */
+  setThreadCi(sessionId, patch) {
+    const current = this.state.threads[sessionId];
+    if (!current) throw new Error(`projects: unknown thread ${sessionId}`);
+    const allowed = ["passing", "failing", "pending", "none"];
+    if (allowed.includes(String(patch?.ciState ?? ""))) current.ciState = String(patch.ciState);
+    if (typeof patch?.headRefOid === "string") current.headRefOid = patch.headRefOid;
+    if (Number.isFinite(patch?.prNumber)) current.prNumber = Number(patch.prNumber);
     return { ...current };
   }
 
@@ -914,6 +954,20 @@ export class ProjectStore {
     const thread = this.state.threads[sessionId];
     if (!thread) return undefined;
     return this.getProject(thread.projectId);
+  }
+
+  /**
+   * 这个会话是不是某个项目的协调器？（F9/F11：协调器不属于任何线程）
+   * @param {string} sessionId
+   * @returns {any|undefined}
+   */
+  projectOfCoordinatorSession(sessionId) {
+    if (typeof sessionId !== "string" || sessionId === "") return undefined;
+    for (const project of Object.values(this.state.projects)) {
+      const anyProject = /** @type {any} */ (project);
+      if (anyProject.coordinatorSessionId === sessionId) return anyProject;
+    }
+    return undefined;
   }
 
   /** @param {string} projectId */

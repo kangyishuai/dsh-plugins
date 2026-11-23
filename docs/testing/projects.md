@@ -57,7 +57,7 @@ pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体�
 | `memory.test.js`    | 记忆写入：幂等、单条与总量上限、时间戳注释、被拒时给出原因                                    |
 | `exec.test.js`      | 子进程封装：参数原样传递、失败返回 code 不抛、cwd 生效、命令不存在也不抛                      |
 
-## 2. web 端到端冒烟（133 项）
+## 2. web 端到端冒烟（149 项）
 
 > 0.10.0 面板改版后：新建走「入口 → 模态（两入口）→ 表单」，列表页新增搜索/排序/收藏，详情页改为
 > 主列 + 右栏（右栏为值行 + 编辑动作），并补了 toast、两列 DOM 顺序、值行无 input 等断言，故 78 → 102。
@@ -74,6 +74,19 @@ pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体�
 > `data-projects-switcher*`（真切换项目）、`data-projects-dir-item/-remove/-limit`（多目录 ≤10）。
 > 宿主侧另外断言：线程六态与 `resolvedAt` 已回写 `projects.json`、项目 `icon/repos/dirs` 落盘、
 > `firstRunDone=true` 在宿主 storageDomain 里可回读。
+
+
+> B2（把桩接通）再 +16，故 133 → 149。新增的 `data-*` 锚点与断言：
+> `data-projects-coordinator*`（项目页的协调者区：不是宿主 composer；空态 → 点「建协调者」→
+> 回读 `data-projects-coordinator-session` 非空；`compaction` 有无都要给出明确结论，这是 F10 的判空兜底）、
+> `data-projects-poll-state` + `data-projects-detail-realtime-ci`（F21：轮询状态可见；实验开关默认关，
+> 点开后在宿主 `storages/projects_ui.json` 里回读 `realtimeCi=true`）、
+> `data-projects-thread-expand` → `data-projects-thread-detail`（展开面板：`-start-card` 起始卡、
+> `-chips`/`-params` 行内 chip、`-tasks` + `-tasks-source`（无 todo 必须是 `none`，不编 0/0）、
+> `-steer-input`/`-steer`、`-model-row`（`available=yes|no` 显式降级）、
+> `-create-pr` + `-branch-bar`（无分支时按钮禁用并写明原因））。
+> 宿主侧另外断言：`coordinatorSessionId` 落盘、`coordinator/created` 写审计、
+> 每条线程记录都带 `ciState`/`headRefOid` 字段（`null` 也显式存在，不是缺字段）。
 
 `pnpm smoke:projects` 在临时 home 里种子一个**真实 git 仓库**作为工作区，然后：
 
