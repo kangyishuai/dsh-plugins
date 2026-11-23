@@ -263,6 +263,14 @@ const task = await taskSpace(${JSON.stringify(space)});
 const page = await task.newPage();
 await page.goto(URL_, { timeout: 120000 });
 await page.waitForTimeout(2500);
+// 调试钩子默认不挂 window 全局（P2 复审）：写 localStorage 后重载一次，冒烟后面要用它开页签。
+await page.evaluate(() => {
+  try {
+    window.localStorage.setItem("dsh-artifacts:debug", "1");
+  } catch {}
+});
+await page.reload({ timeout: 120000 });
+await page.waitForTimeout(2500);
 await page.evaluate(() => {
   const b = [...document.querySelectorAll("button")].find((x) => (x.textContent || "").trim() === "继续");
   if (b) b.click();
