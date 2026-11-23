@@ -489,6 +489,7 @@
     "library.searchEmpty": "没有匹配的文件名。",
     "library.searchFailed": "搜索失败",
     "library.truncated": "已截断",
-    "b3.folderWorktreeHint": "merge 在项目目录里跑；push-branch 在线程 worktree 里跑——worktree 继承它所属项目目录的授权。"
+    "b3.folderWorktreeHint": "merge 在项目目录里跑；push-branch 在线程 worktree 里跑——worktree 继承它所属项目目录的授权。",
+    "library.openPanelUnavailable": "打开失败：宿主未提供右栏面板服务（sidebarRight）。"
   }
 }

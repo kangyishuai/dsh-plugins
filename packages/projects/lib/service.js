@@ -18,6 +18,8 @@ import { dirname, join } from "node:path";
 
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 
+import { artifactRefFromToolResult } from "./artifact-ref.js";
+
 import { registerProjectContext } from "./attach.js";
 import { buildFixTask, errorSignature, shouldContinueFix } from "./autofix.js";
 import { buildPrText, nextPrAction, parsePrNumber, planPrCreate } from "./autopr.js";
@@ -299,6 +301,8 @@ export class ProjectsService extends TypertRemoteService {
     this.coordinatorAgents = new Map();
     /** 协调器工具注册的清理函数。 @type {Map<string, (() => void)[]>} */
     this.coordinatorToolDisposers = new Map();
+    /** F33：等待结果的 artifact 工具调用（sessionId → callId 集合），结果回来后记录 projectId↔artifactId。 @type {Map<string, Map<string, number>>} */
+    this.pendingArtifactCalls = new Map();
     /** 每个线程会话的可观测统计（规格 §7.7.3：从事件累积，重启后从 0 起算）。 @type {Map<string, any>} */
     this.stats = new Map();
     /** 每个线程会话最近一条 assistant 文本（唤醒信封要带它，M0 实测不带模型读不到结果）。 @type {Map<string, string>} */
@@ -507,7 +511,42 @@ export class ProjectsService extends TypertRemoteService {
         return;
       }
       // 只跟项目线程，其它会话零开销
-      if (!this.store.projectOfSession(sessionId)) return;
+      const threadProjectForEvent = this.store.projectOfSession(sessionId);
+      if (!threadProjectForEvent) return;
+      // F33 产物归属：线程里调用 artifacts 的 `artifact` 工具成功后，把 id 记进项目的 artifactRefs。
+      // 只解析 tool/result 的文本消息（artifacts 工具返回 JSON），不读产物字节；失败绝不打断事件处理。
+      try {
+        const eventType = String(event?.type ?? "");
+        if (eventType === "tool/call") {
+          const callName = String(event?.data?.name ?? "");
+          const callId = String(event?.data?.callId ?? "");
+          if (callName === "artifact" && callId !== "") {
+            const pending = this.pendingArtifactCalls.get(sessionId) ?? new Map();
+            pending.set(callId, Date.now());
+            this.pendingArtifactCalls.set(sessionId, pending);
+          }
+        } else if (eventType === "tool/result") {
+          const callId = String(
+            event?.data?.message?.toolCallId ??
+              event?.data?.callId ??
+              event?.data?.message?.callId ??
+              "",
+          );
+          const pending = this.pendingArtifactCalls.get(sessionId);
+          if (pending && callId !== "" && pending.has(callId)) {
+            pending.delete(callId);
+            const ref = artifactRefFromToolResult(extractText(event?.data?.message), {
+              sessionId,
+              toolCallId: callId,
+            });
+            if (ref) this.recordArtifact(threadProjectForEvent.id, ref);
+          }
+        }
+      } catch (error) {
+        this.logger?.warn?.(
+          `[projects] artifact ref record failed: ${String(/** @type {any} */ (error)?.message ?? error).slice(0, 160)}`,
+        );
+      }
       this.stats.set(sessionId, observeEvent(this.stats.get(sessionId) ?? initialStats(), event));
       const previous = this.views.get(sessionId) ?? initialView();
       const next = reduce(previous, event);
@@ -579,6 +618,15 @@ export class ProjectsService extends TypertRemoteService {
         clearInterval(this.autoResolveTimer);
         this.autoResolveTimer = null;
       }
+      // F30：本机提醒的计时器也要随插件卸载清掉（之前只 unref，卸载后仍可能触发）
+      for (const timer of this.reminderTimers.values()) {
+        try {
+          clearTimeout(timer);
+        } catch {
+          /* ignore */
+        }
+      }
+      this.reminderTimers.clear();
       // F21：应用关闭即停（不留定时器，也不让 gh 子进程继续跑）
       this.prPoll.running = false;
       if (this.prPoll.timer !== null) {

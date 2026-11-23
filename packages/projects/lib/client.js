@@ -503,6 +503,7 @@ window.__ModuleLoader__.load({
       "library.meter": "{count} 个产物 · {bytes}",
       "library.openPanel": "打开产物库",
       "library.openPanelHint": "在右栏用 artifacts 面板打开这个项目的产物库",
+      "library.openPanelUnavailable": "打开失败：宿主未提供右栏面板服务（sidebarRight）。",
       "library.artifactsMissing": "产物库需要 dsh-artifacts 0.2；当前不可用，下面只列项目文件。",
       "library.artifactsTitle": "产物",
       "library.artifactsEmpty": "这个项目还没有产物。",
@@ -1040,6 +1041,8 @@ window.__ModuleLoader__.load({
       "library.meter": "{count} artifacts · {bytes}",
       "library.openPanel": "Open artifact library",
       "library.openPanelHint": "Open this project's artifacts in the right-side artifacts panel",
+      "library.openPanelUnavailable":
+        "Could not open: the host did not provide the right-side panel service (sidebarRight).",
       "library.artifactsMissing":
         "The artifact library needs dsh-artifacts 0.2; it is unavailable, so only project files are listed below.",
       "library.artifactsTitle": "Artifacts",
@@ -3956,7 +3959,7 @@ window.__ModuleLoader__.load({
       var count = Number(summary.count || artifactRows.length || 0);
       var bytes = Number(summary.bytes || 0);
       var loaded = library !== null && library !== undefined;
-      var st = useState({ query: "", busy: false, matches: null, error: "" });
+      var st = useState({ query: "", busy: false, matches: null, error: "", openNote: "" });
       var view = st[0];
       var setView = st[1];
 
@@ -3989,15 +3992,22 @@ window.__ModuleLoader__.load({
 
       var openArtifactPanel = () => {
         // 宿主右栏页签（docs/plugin-conventions §8.5）：拿不到就降级为内联提示，不假装打开了。
-        var sidebar = api.ctx?.sidebarRight;
+        // 服务要经 ctx.get 取（未声明在 exports.inject 里的服务直取属性不可靠，见 runtime §17.3）。
+        var sidebar =
+          typeof api.ctx?.get === "function" ? api.ctx.get("sidebarRight") : api.ctx?.sidebarRight;
         if (sidebar && typeof sidebar.openTab === "function") {
           try {
             sidebar.openTab("artifact", { params: { projectId: project.id } });
+            setView((/** @type {any} */ prev) => ({ ...prev, openNote: "" }));
             return true;
           } catch {
-            return false;
+            /* 落到下面的内联提示 */
           }
         }
+        setView((/** @type {any} */ prev) => ({
+          ...prev,
+          openNote: text(t, "library.openPanelUnavailable"),
+        }));
         return false;
       };
 
@@ -4054,6 +4064,13 @@ window.__ModuleLoader__.load({
             text(t, "library.openPanel"),
           ),
         ),
+        view.openNote
+          ? h(
+              "div",
+              { style: { ...styles.meta, color: T.danger }, "data-projects-library-open-note": "" },
+              view.openNote,
+            )
+          : null,
         // —— 产物面（降级时明示，不显示「没有产物」）——
         degraded
           ? h(

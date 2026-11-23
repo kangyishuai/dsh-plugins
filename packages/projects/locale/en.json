@@ -489,6 +489,7 @@
     "library.searchEmpty": "No matching file names.",
     "library.searchFailed": "Search failed",
     "library.truncated": "truncated",
-    "b3.folderWorktreeHint": "merge runs in the project folder; push-branch runs in the thread worktree, which inherits the authorization of the project folder it came from."
+    "b3.folderWorktreeHint": "merge runs in the project folder; push-branch runs in the thread worktree, which inherits the authorization of the project folder it came from.",
+    "library.openPanelUnavailable": "Could not open: the host did not provide the right-side panel service (sidebarRight)."
   }
 }

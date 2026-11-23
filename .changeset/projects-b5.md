@@ -11,4 +11,4 @@ feat(projects): B5 · Library / Artifacts（F33 / F34 / U15）+ B3 复审修复
 - **B3 复审 P1（locale 落后 44 键）**：`locale/{zh,en}.json` 补齐 runtime 字典缺失的 44 个键，`settings.realtimeCiHint/On/Off` 改成与 B2 一致的「未实现、不会建 webhook」；新增 `test/locale-parity.test.js` 锁 runtime↔locale 的键集与文案值，冒烟再验一次线上口径。
 - **B3 复审 P1（冒烟 flake）**：开局加**基础设施自检**——宿主端口不可连、插件未激活、`projects.json` 未落盘、浏览器脚本没有返回结果，一律打印 `INFRA` 并 fail-fast，不再把环境问题混进断言计数；把最有劣化风险的几处固定 `waitForTimeout`（toast 自动消失、会话行、归属菜单、详情打开、折叠状态回读）改成轮询等待。
 - **B3 复审 P2**：`once` 凭据改为**所有闸通过且占位成功之后**才消费，执行没落地时由 `settle` 回滚（`folder/once-rolled-back` 审计），动作被拒不再烧掉授权；文件夹闸按**实际 cwd 所属目录**求 mode（`push-branch` 的 worktree 继承其项目目录授权，反查不到才退回 `dirs[0]` 并标 `inherited:false`），授权卡补 cwd 语义说明；`listMemoryFragments` 先校验项目存在再拼路径（`../` 不能再枚举 dataRoot 外目录名）。
-- **验证**：`pnpm verify` EXIT=0（projects 单测 **572**，新增 17 条：locale parity 5 / Library 6 / once+cwd 4 / effort 1 / memory guard 1）；`pnpm smoke:projects` 见下一条报告计数（新增 ≥10 条断言，含 A 段每条修复与 B 段文件面/产物面写→回读、降级）。
+- **验证**：`pnpm verify` EXIT=0（projects 单测 **572**，新增 17 条：locale parity 5 / Library 6 / once+cwd 4 / effort 1 / memory guard 1）；`pnpm smoke:projects` **238 PASS / 0 SKIP / 0 FAIL**（新增 ≥10 条断言，含 A 段每条修复与 B 段文件面/产物面写→回读、降级）。
