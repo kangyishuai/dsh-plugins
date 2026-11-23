@@ -43,9 +43,20 @@ const sleep = (/** @type {number} */ ms) => new Promise((r) => setTimeout(r, ms)
  * @param {string} message @param {unknown} [detail]
  * @returns {never}
  */
+/** 宿主句柄：INFRA 早退时也要先杀掉，否则每轮失败都会留一个 150–280MB 的孤儿宿主。
+ * @type {import("node:child_process").ChildProcess | undefined}
+ */
+let activeHost;
+
+/** @param {string} message @param {any} [detail] @returns {never} */
 function infraFail(message, detail) {
   console.error(`INFRA ${message}`);
   if (detail !== undefined && String(detail) !== "") console.error(String(detail).slice(-2000));
+  try {
+    activeHost?.kill("SIGTERM");
+  } catch {
+    /* ignore */
+  }
   process.exit(1);
 }
 
@@ -3577,7 +3588,7 @@ try {
       20000,
     );
     add(
-      "timer 提醒真到点：写回 fired + 未读（重启后不会重复响）",
+      "timer 提醒真到点：写回 fired + 未读（重启去重由单测覆盖）",
       reminderCreated.okText === true && reminderRow !== null && reminderFired === "fired",
       JSON.stringify({ reminderCreated, reminderRow, reminderFired }),
     );
@@ -4383,7 +4394,7 @@ const main = async () => {
     await writeFile(join(secondDirRaw, "seed.txt"), "seed2\n", "utf8");
     const SMOKE_SECOND_DIR = await realpath(secondDirRaw);
     const logPath = join(work, "host.log");
-    host = spawn("dsh", ["--profile", PROFILE, "--port", "0", "--no-open"], {
+    activeHost = host = spawn("dsh", ["--profile", PROFILE, "--port", "0", "--no-open"], {
       env,
       stdio: ["ignore", "pipe", "pipe"],
     });
