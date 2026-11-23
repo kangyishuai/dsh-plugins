@@ -6,16 +6,30 @@
 
 非官方 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 插件，与 DeepSeek 官方无关。
 
-> **当前状态：机制已验证，功能开发中。** 下面三条行为都在临时 `DSH_HOME` 的真实 `dsh --profile web` 上实测过；驱动验证用的调试钩子还留在代码里，发版前必须删掉。验证范围见兼容性表。
+> **当前状态：机制已验证，接口已扩展，桌面复验待做。** 预览与版本这些行为在临时 `DSH_HOME` 的真实 `dsh --profile web` 上实测过；新增的库能力（项目归属、多类型、过滤、级联清理、跨插件契约）目前只有单元测试覆盖，桌面冒烟还没跑。验证范围见兼容性表。
 
 ## 它做什么
 
-- **一个工具、四个动词。** `artifact` 工具的 `action` 为 `publish`（新页面）、`append`（同一 id 追加版本）、`list`、`read`。正文走 `html` 参数，存在 DSH 数据根下，**不上传任何地方**。
-- **时间线只放摘要行。** 每次调用渲染成 `Artifact <id> 最新 vN [打开预览]`（`tool.call.toolview` keyed slot），页面正文不进会话日志。
-- **封面网格。** 没有选中工件时，页签显示「全部工件」：每张卡片配一张生成的 SVG 封面（`GET /artifacts/<id>/cover.svg`），含标题、按 id 取的色板、首屏标题作副标题、版本与体积。不依赖 headless 渲染器，没有常驻进程。
-- **右栏实时面板。** `artifact` 页签类型在 `sandbox="allow-scripts"` 里渲染最新版，并轮询宿主 Remote `artifacts/latest`；新版本只替换同一个 iframe 的 `srcDoc`，**不重建 iframe**。
+- **一个工具、四个动词。** `artifact` 工具的 `action` 为 `publish`（新工件）、`append`（同一 id 追加版本）、`list`、`read`。正文走 `content`（HTML 也可以用旧参数 `html`），存在 DSH 数据根下，**不上传任何地方**。
+- **五种类型、一个库。** `kind` = `html`（默认）/ `markdown` / `json` / `csv` / `image`。文本类型按 UTF-8 落盘、在面板里用 `<pre>` 预览；图片（PNG / JPEG / GIF / WebP / SVG）用 `data:` URL 或裸 base64 传入，按原始字节落盘，经只读路由用 `<img>` 预览。列表行都带 `kind`。
+- **归属与来源可追溯。** 每个工件记录调用方给的 `projectId` / `threadId`，以及从工具上下文推导的 `sessionId` / `toolCallId`：`meta.json` 记首次产生它的那次调用，每个版本另记自己的来源，所以能回答"这一版是哪次线程跑出来的"。
+- **查询与计量。** `artifacts/list` 支持按项目、会话、线程、类型、标题子串与时间窗过滤（条件 AND），并返回 `summary`：条数、字节、以及按项目的汇总。
+- **时间线只放摘要行。** 每次调用渲染成 `Artifact <id> 类型 最新 vN [打开预览]`（`tool.call.toolview` keyed slot），正文不进会话日志。
+- **库是列表，不再只有封面网格。** 没有选中工件时：每行一张生成的 SVG 封面（`GET /artifacts/<id>/cover.svg`）当缩略图，加标题 / 类型 / 版本 / 体积 / 项目 / 时间；顶部有 `n 条 · X KiB` 汇总、标题搜索框与类型过滤。页面还接受 `projectId` 参数——别的插件可以打开"本项目的产物"而不是全局库。
+- **右栏实时面板。** `artifact` 页签类型渲染最新版：html 用 `sandbox="allow-scripts"` 的 iframe，文本用 `<pre>`，图片用 `<img>`；轮询宿主 Remote `artifacts/latest`，新版本只替换同一个 iframe 的 `srcDoc`，**不重建 iframe**。
 - **旧行指向最新版。** 每一行都按 artifact id 打开面板，面板永远读最新版本——所以 v1 时创建的行，在页面更新到 v3 后打开就是 v3。
-- **只读 URL。** `GET /artifacts/<id>[?v=N]` 在宿主连接鉴权之后返回某个版本，带严格 `Content-Security-Policy`、`nosniff`、`no-store`。
+- **级联清理按 ADR 0002 来。** `artifacts/remove` 移进 `artifacts-trash/`（不是裸 `rm -rf`），`artifacts/restore` 能恢复，`artifacts/purge` 才是显式硬删；`artifacts/archive` 把工件标成只读（版本文件保留、拒绝追加）。每个破坏性调用都支持 `dryRun: true` 先报影响面（条数 / 字节 / ids）。
+- **只读 URL。** `GET /artifacts/<id>[?v=N][&download=1]` 在宿主连接鉴权之后返回某个版本，带 `Content-Security-Policy`、`nosniff`、`no-store`；`download=1` 变成附件下载。
+
+## 给其它插件用的库接口
+
+`artifacts` 同时是一个服务：别的插件通过**带版本的 Remote 契约**读产物，而不是去读本插件的存储目录。
+
+- host 半：`ctx.get("artifacts")` → 返回 `undefined` 就是"没装"（降级并明示，别把空列表当成"没有产物"），然后调 `list` / `latest` / `version` 等；
+- client 半：`ctx.connection.rpc.call("/api", "artifacts/list", { args: { request: { projectId } } })`；
+- 契约版本：`artifacts/2`，用 `artifacts/version` 探测。
+
+方法名、参数 schema、行形状、错误码与降级清单见 [docs/plugin-conventions.md §8](../../docs/plugin-conventions.md#8-跨插件调用契约remote-api)。
 
 ## 安装
 
@@ -49,15 +63,18 @@ dsh plugin --profile desktop add @kangyishuai/dsh-artifacts
 
 ## 限制
 
-- 单页、HTML 上限 2 MiB；没有后端、没有共享、没有评论。路由只发静态 markup（`script-src 'none'`），可交互页面在面板里预览，不通过 URL 提供。
+- 每个版本上限 2 MiB（按真实字节算，不按 base64 字符数）；没有后端、没有共享、没有评论。HTML 页面的 URL 带 `script-src 'none'`，可交互预览只在面板里；markdown / CSV 以 `text/plain` 送出，浏览器直接预览而不是下载。
+- 工件的类型在创建时固定：`append` 必须同类型（不同类型会被拒绝，不会悄悄混格式）。
+- **界面文案目前只有中文：本插件暂不做 i18n。** `locale/` 里只有插件标题；把全部文案搬进 `ctx.locale.register` 是独立一批。`artifact` 工具描述与所有接口字段是英文。
 - 面板可见时每秒轮询一次；推送通道属于后续优化。
 - 刷新后恢复的侧栏页签目前会丢导航参数，面板显示空态，需重新打开。已记录在调研笔记里。
 
 ## 兼容性
 
-| 插件  | 验证过的 DSH |
-| ----- | ------------ |
-| 0.0.0 | 0.2.2-rc.3   |
+| 插件  | 验证过的 DSH | 说明                                                                 |
+| ----- | ------------ | -------------------------------------------------------------------- |
+| 0.0.0 | 0.2.2-rc.3   | 预览/版本机制                                                        |
+| 0.2.0 | 0.2.2-rc.5   | `pnpm smoke:artifacts` 10/10（web，临时 `DSH_HOME`）；**桌面版待验** |
 
 ## 许可证
 

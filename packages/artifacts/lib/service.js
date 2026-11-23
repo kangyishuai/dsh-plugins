@@ -3,12 +3,17 @@
 //
 // Remote 方法必须声明在**导出的类自身原型**上（见 docs/runtime/0.2.1-rc.5.md §6.10），
 // 运行时不支持装饰器语法，所以用 declareRemote 的命令式写法（与 advisor / session-rewind 一致）。
+//
+// 方法体只是把请求交给 ./library.js（契约逻辑放那里，单测能直接覆盖）；这一层不做业务判断。
+// 漏一条 declareRemote 只会让那**一个**端点 404（docs/runtime/0.2.2-rc.3.md §12.6），
+// test/remote-declarations.test.js 用静态对账拦住这种漏写。
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
+import { createArtifactLibrary, LIBRARY_METHODS } from "./library.js";
 import { createRouteHandler } from "./route.js";
 import { createArtifactStore, resolveDataRoot } from "./store.js";
 import { createToolDefinition } from "./tool.js";
 
-/** 路由前缀：GET /artifacts/<id>[?v=N]。 */
+/** 路由前缀：GET /artifacts/<id>[?v=N][&download=1]。 */
 export const ROUTE_PREFIX = "/artifacts";
 
 /**
@@ -47,6 +52,9 @@ export class ArtifactsService extends TypertRemoteService {
     this.logger = ctx?.logger ?? console;
     this.dataRoot = resolveDataRoot(this.config);
     this.store = createArtifactStore({ root: this.dataRoot });
+    this.library = createArtifactLibrary({ store: this.store, routePrefix: ROUTE_PREFIX });
+    /** @type {any} 最近一次契约层结果：`try/finally` 里的审计日志靠它（异常时是上一轮的值，故每次先清空）。 */
+    this.lastAudit = undefined;
 
     // Cordis 的服务必须在 inject 作用域里取：直接读 ctx.webServer 会抛 "cannot get property without inject"。
     /** @type {any} */
@@ -109,53 +117,127 @@ export class ArtifactsService extends TypertRemoteService {
   }
 
   /**
-   * 客户端轮询用：只返回版本号与变更后的正文。
+   * 审计日志（ADR 0002 §4）：破坏性操作必须留痕——做了什么、影响多少、是否 dry-run。
+   * `lastAudit` 记最近一次契约层结果，`try/finally` 里即使正常返回也能拿到它。
+   * @param {string} action
+   * @param {any} result
+   * @returns {void}
+   */
+  audit(action, result) {
+    if (result?.ok !== true) {
+      this.logger.warn?.(`[artifacts] ${action} failed`, result?.code ?? "(no envelope)");
+      return;
+    }
+    this.logger.info?.(`[artifacts] ${action}`, {
+      dryRun: result.dryRun === true,
+      count: result.count,
+      bytes: result.bytes,
+      ids: result.ids,
+      processed: result.removed ?? result.restored ?? result.purged ?? result.processed,
+    });
+  }
+
+  // ---- Remote 方法：全部转交 ./library.js ---------------------------------
+  // 参数形状与返回信封见 docs/plugin-conventions.md §8（跨插件契约）。
+
+  /**
+   * 列表 + 汇总。参数 `{ projectId?, sessionId?, threadId?, kind?, title?, since?, until?,
+   * includeArchived?, onlyArchived?, limit? }`；不传 `projectId` = 全量。
+   * @param {any} [request]
+   * @returns {Promise<any>}
+   */
+  async list(request) {
+    return this.library.list(request ?? {});
+  }
+
+  /**
+   * 轮询/预览：`{ id, since? }`。
    * @param {any} [request]
    * @returns {Promise<any>}
    */
   async latest(request) {
-    const id = String(request?.id ?? "");
-    const since = Number(request?.since ?? 0);
-    const found = await this.store.read(id);
-    if (found === undefined)
-      return { ok: false, code: "artifacts/not-found", message: `unknown artifact: ${id}` };
-    const meta = found.meta;
-    const bytes = meta.versions[meta.versions.length - 1]?.bytes ?? 0;
-    if (Number.isInteger(since) && since === found.version) {
-      return { ok: true, id, title: meta.title, version: found.version, changed: false };
-    }
-    return {
-      ok: true,
-      id,
-      title: meta.title,
-      version: found.version,
-      versions: meta.versions.map((/** @type {any} */ item) => item.version),
-      bytes,
-      changed: true,
-      coverUrl: `${ROUTE_PREFIX}/${encodeURIComponent(id)}/cover.svg`,
-      html: found.html,
-    };
+    return this.library.latest(request ?? {});
   }
 
   /**
-   * 列表：面板与工具行都用它。
+   * 契约探针（无参数）：返回 contract / packageVersion / kinds / maxBytes / methods。
    * @returns {Promise<any>}
    */
-  async list() {
-    const rows = await this.store.list();
-    return {
-      ok: true,
-      artifacts: rows.map((/** @type {any} */ meta) => ({
-        id: meta.id,
-        title: meta.title,
-        latest: meta.latest,
-        bytes: meta.versions[meta.versions.length - 1]?.bytes ?? 0,
-        updatedAt: meta.updatedAt,
-        coverUrl: `${ROUTE_PREFIX}/${encodeURIComponent(meta.id)}/cover.svg`,
-      })),
-    };
+  async version() {
+    return this.library.version();
+  }
+
+  /**
+   * 归档/取消归档：`{ ids?, projectId?, archived?, dryRun? }`。
+   * @param {any} [request]
+   * @returns {Promise<any>}
+   */
+  async archive(request) {
+    // try/finally：即使契约层意外抛出（真实 bug / 宿主序列化失败），审计也要落一条。
+    this.lastAudit = undefined;
+    try {
+      this.lastAudit = await this.library.archive(request ?? {});
+      return this.lastAudit;
+    } finally {
+      this.audit("archive", this.lastAudit);
+    }
+  }
+
+  /**
+   * 级联清理（默认移入回收站）：`{ ids?, projectId?, dryRun? }`。
+   * @param {any} [request]
+   * @returns {Promise<any>}
+   */
+  async remove(request) {
+    // try/finally：即使契约层意外抛出（真实 bug / 宿主序列化失败），审计也要落一条。
+    this.lastAudit = undefined;
+    try {
+      this.lastAudit = await this.library.remove(request ?? {});
+      return this.lastAudit;
+    } finally {
+      this.audit("remove", this.lastAudit);
+    }
+  }
+
+  /**
+   * 从回收站恢复：`{ ids, dryRun? }`。
+   * @param {any} [request]
+   * @returns {Promise<any>}
+   */
+  async restore(request) {
+    // try/finally：即使契约层意外抛出（真实 bug / 宿主序列化失败），审计也要落一条。
+    this.lastAudit = undefined;
+    try {
+      this.lastAudit = await this.library.restore(request ?? {});
+      return this.lastAudit;
+    } finally {
+      this.audit("restore", this.lastAudit);
+    }
+  }
+
+  /**
+   * 回收站清单（无参数）。
+   * @returns {Promise<any>}
+   */
+  async trash() {
+    return this.library.trash();
+  }
+
+  /**
+   * 硬删回收站条目（不可恢复）：`{ ids?, projectId?, dryRun? }`。
+   * @param {any} [request]
+   * @returns {Promise<any>}
+   */
+  async purge(request) {
+    // try/finally：即使契约层意外抛出（真实 bug / 宿主序列化失败），审计也要落一条。
+    this.lastAudit = undefined;
+    try {
+      this.lastAudit = await this.library.purge(request ?? {});
+      return this.lastAudit;
+    } finally {
+      this.audit("purge", this.lastAudit);
+    }
   }
 }
 
-declareRemote(ArtifactsService, "latest");
-declareRemote(ArtifactsService, "list");
+for (const method of LIBRARY_METHODS) declareRemote(ArtifactsService, method);
