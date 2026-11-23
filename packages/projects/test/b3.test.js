@@ -37,7 +37,12 @@ import {
   removeMemoryBlock,
   uniqueFragmentSlug,
 } from "../lib/memory.js";
-import { buildMentionItems, normalizeMentionQuery } from "../lib/mentions.js";
+import {
+  buildMentionItems,
+  formatMentionToken,
+  normalizeMentionQuery,
+  parseMentionToken,
+} from "../lib/mentions.js";
 import {
   DEFAULT_NOTIFY_PREFS,
   diffAttention,
@@ -361,6 +366,15 @@ describe("F62 @ 提及候选", () => {
     assert.equal(normalizeMentionQuery("@  CI "), "ci");
     assert.equal(buildMentionItems({ projects, threads, limit: 1 }).length, 1);
     assert.equal(buildMentionItems({ projects, threads, query: "zzz" }).length, 0);
+    // 插入 token 的格式（client 的 inputTriggers source 用同一份规则）
+    assert.equal(formatMentionToken("thread", "s1"), "@thread:s1");
+    assert.equal(formatMentionToken("project", "p1"), "@project:p1");
+    assert.equal(formatMentionToken("thread", "  "), "");
+    assert.equal(formatMentionToken("other", "x"), "");
+    assert.deepEqual(parseMentionToken("@thread:s1"), { kind: "thread", id: "s1" });
+    assert.deepEqual(parseMentionToken("@project:p1"), { kind: "project", id: "p1" });
+    assert.equal(parseMentionToken("@file:x"), null);
+    assert.equal(parseMentionToken("plain"), null);
   });
 });
 

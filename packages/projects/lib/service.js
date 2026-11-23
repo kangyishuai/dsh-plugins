@@ -2858,6 +2858,25 @@ export class ProjectsService extends TypertRemoteService {
       },
     });
     store.save();
+    // F42：新线程套用项目级默认模型 / effort（空串 = 继承宿主默认，不强行 selectModel）
+    const defaults = project.threadDefaults ?? { provider: "", model: "" };
+    if (String(defaults.provider ?? "") !== "" && String(defaults.model ?? "") !== "") {
+      try {
+        await this.selectThreadModel(projectId, thread.sessionId, {
+          provider: defaults.provider,
+          model: defaults.model,
+          reasoningEffort: defaults.reasoningEffort || undefined,
+        });
+      } catch (error) {
+        store.appendAudit({
+          action: "thread/model-default-failed",
+          projectId,
+          sessionId: thread.sessionId,
+          reason: String(/** @type {any} */ (error)?.message ?? error).slice(0, 120),
+        });
+        store.save();
+      }
+    }
     if (typeof task === "string" && task.trim() !== "") {
       try {
         await sc.prompt(
@@ -3406,14 +3425,13 @@ export class ProjectsService extends TypertRemoteService {
   /**
    * F37：新增一条记忆碎片（独立 .md + MEMORY.md 索引行）。
    * 索引行与正文分开：MEMORY.md 始终短，正文按需读取。
-   * @param {{ projectId?: string, title?: string, text?: string }} options
+   * @param {string} projectId @param {string} [title] @param {string} [text]
    */
-  addMemoryFragment(options) {
+  addMemoryFragment(projectId, title, text) {
     const store = this.requireStore();
-    const projectId = String(options?.projectId ?? "");
     if (!store.getProject(projectId)) throw new Error(`projects: unknown project ${projectId}`);
-    const title = normalizeFragmentTitle(options?.title);
-    const body = normalizeFragmentText(options?.text);
+    const normalizedTitle = normalizeFragmentTitle(title);
+    const body = normalizeFragmentText(text);
     if (body.ok !== true) {
       store.appendAudit({ action: "memory/fragment-rejected", projectId, reason: body.reason });
       store.save();
@@ -3427,7 +3445,7 @@ export class ProjectsService extends TypertRemoteService {
       store.save();
       return { ok: false, reason: "fragment-too-many", limit: MEMORY_FRAGMENT_MAX_COUNT };
     }
-    const finalTitle = title === "" ? `记忆 ${existing.length + 1}` : title;
+    const finalTitle = normalizedTitle === "" ? `记忆 ${existing.length + 1}` : normalizedTitle;
     const slug = uniqueFragmentSlug(
       finalTitle,
       existing.map((name) => name.replace(/\.md$/u, "")),
@@ -3493,24 +3511,25 @@ export class ProjectsService extends TypertRemoteService {
 
   /**
    * F37：读一个碎片全文（UI 预览用）。
-   * @param {{ projectId?: string, slug?: string }} options
+   * @param {string} projectId @param {string} slug
    */
-  readMemoryFragment(options) {
+  readMemoryFragment(projectId, slug) {
     const store = this.requireStore();
-    const projectId = String(options?.projectId ?? "");
     if (!store.getProject(projectId)) throw new Error(`projects: unknown project ${projectId}`);
-    const slug = String(options?.slug ?? "").replace(/[^\p{Letter}\p{Number}._-]/gu, "");
-    if (slug === "" || slug.includes("/") || slug.includes("..")) {
+    const safeSlug = String(slug ?? "").replace(/[^\p{Letter}\p{Number}._-]/gu, "");
+    if (safeSlug === "" || safeSlug.includes("/") || safeSlug.includes("..")) {
       return { ok: false, reason: "fragment/invalid-slug" };
     }
-    const file = join(this.dataRoot, projectId, "memory", "fragments", `${slug}.md`);
+    const file = join(this.dataRoot, projectId, "memory", "fragments", `${safeSlug}.md`);
     if (!existsSync(file)) return { ok: false, reason: "fragment/not-found" };
     const text = readFileSync(file, "utf8");
-    const info = this.listMemoryFragments(projectId).fragments.find((item) => item.slug === slug);
+    const info = this.listMemoryFragments(projectId).fragments.find(
+      (item) => item.slug === safeSlug,
+    );
     return {
       ok: true,
-      slug,
-      title: info ? info.title : slug,
+      slug: safeSlug,
+      title: info ? info.title : safeSlug,
       text,
       ...previewText(text, 1200),
     };
@@ -3519,14 +3538,11 @@ export class ProjectsService extends TypertRemoteService {
   /**
    * F37：忘掉一条记忆。
    * kind=fragment：删碎片文件 + 索引行；kind=entry：只删索引里那一条（稳定 id）。
-   * @param {{ projectId?: string, kind?: string, id?: string }} options
+   * @param {string} projectId @param {string} kind @param {string} id
    */
-  forgetMemory(options) {
+  forgetMemory(projectId, kind, id) {
     const store = this.requireStore();
-    const projectId = String(options?.projectId ?? "");
     if (!store.getProject(projectId)) throw new Error(`projects: unknown project ${projectId}`);
-    const kind = String(options?.kind ?? "entry");
-    const id = String(options?.id ?? "");
     if (id === "") return { ok: false, reason: "forget/id-required" };
     const indexFile = join(this.dataRoot, projectId, "memory", "MEMORY.md");
     const current = existsSync(indexFile) ? readFileSync(indexFile, "utf8") : "";
@@ -3551,13 +3567,12 @@ export class ProjectsService extends TypertRemoteService {
 
   /**
    * F22：写项目预算（null = 不限）。返回**回读值**，避免假开关。
-   * @param {{ projectId?: string, budget?: any }} options
+   * @param {string} projectId @param {any} budget
    */
-  setBudget(options) {
+  setBudget(projectId, budget) {
     const store = this.requireStore();
-    const projectId = String(options?.projectId ?? "");
     if (!store.getProject(projectId)) throw new Error(`projects: unknown project ${projectId}`);
-    const normalized = normalizeBudgetPatch(options?.budget);
+    const normalized = normalizeBudgetPatch(budget);
     if (normalized.ok !== true) {
       store.appendAudit({ action: "budget/rejected", projectId, reason: normalized.reason });
       store.save();
@@ -3571,13 +3586,12 @@ export class ProjectsService extends TypertRemoteService {
 
   /**
    * F58：写项目的通知开关，返回回读值。
-   * @param {{ projectId?: string, prefs?: any }} options
+   * @param {string} projectId @param {any} prefs
    */
-  setNotifyPrefs(options) {
+  setNotifyPrefs(projectId, prefs) {
     const store = this.requireStore();
-    const projectId = String(options?.projectId ?? "");
     if (!store.getProject(projectId)) throw new Error(`projects: unknown project ${projectId}`);
-    const normalized = normalizeNotifyPatch(options?.prefs);
+    const normalized = normalizeNotifyPatch(prefs);
     if (normalized.ok !== true) {
       return { ok: false, reason: normalized.reason };
     }
@@ -3589,14 +3603,13 @@ export class ProjectsService extends TypertRemoteService {
 
   /**
    * F23：线程重命名（右键菜单）。返回回读值。
-   * @param {{ sessionId?: string, title?: string }} options
+   * @param {string} sessionId @param {string} title
    */
-  renameThread(options) {
+  renameThread(sessionId, title) {
     const store = this.requireStore();
-    const sessionId = String(options?.sessionId ?? "");
     if (!store.state?.threads?.[sessionId])
       throw new Error(`projects: unknown thread ${sessionId}`);
-    const result = store.setThreadTitle(sessionId, String(options?.title ?? ""));
+    const result = store.setThreadTitle(sessionId, String(title ?? ""));
     store.appendAudit({ action: "thread/renamed", sessionId, title: result.title });
     store.save();
     const readback = store.state.threads[sessionId];
@@ -3608,15 +3621,13 @@ export class ProjectsService extends TypertRemoteService {
    * - deny：记 denied（执行器不再为这个目录发起请求）
    * - default：落到本项目 store（跨重启保留）
    * - once：一次性凭据，语义对齐宿主 approval 的 `allowed-once`
-   * @param {{ projectId?: string, path?: string, decision?: string }} options
+   * @param {string} projectId @param {string} path @param {string} decision
    */
-  authorizeFolder(options) {
+  authorizeFolder(projectId, path, decision) {
     const store = this.requireStore();
-    const projectId = String(options?.projectId ?? "");
     const project = store.getProject(projectId);
     if (!project) throw new Error(`projects: unknown project ${projectId}`);
-    const path = String(options?.path ?? "").trim();
-    const result = applyFolderDecision(project.policy, path, options?.decision, this.now());
+    const result = applyFolderDecision(project.policy, path, decision, Date.now());
     if (result.ok !== true) return { ok: false, reason: result.reason };
     store.updateProject(projectId, { policy: result.policy });
     store.appendAudit({
@@ -3639,14 +3650,12 @@ export class ProjectsService extends TypertRemoteService {
 
   /**
    * F55：消费一张一次性凭据（用掉即失效）。
-   * @param {{ projectId?: string, path?: string }} options
+   * @param {string} projectId @param {string} path
    */
-  consumeFolderGrant(options) {
+  consumeFolderGrant(projectId, path) {
     const store = this.requireStore();
-    const projectId = String(options?.projectId ?? "");
     const project = store.getProject(projectId);
     if (!project) throw new Error(`projects: unknown project ${projectId}`);
-    const path = String(options?.path ?? "").trim();
     const result = consumeOnceFolderGrant(project.policy, path);
     if (result.ok !== true) return { ok: false, reason: result.reason };
     store.updateProject(projectId, { policy: result.policy });
@@ -3733,6 +3742,24 @@ export class ProjectsService extends TypertRemoteService {
   }
 
   /**
+   * F42：写项目级线程默认模型 / effort，返回回读值（空串 = 继承宿主默认）。
+   * @param {string} projectId @param {string} [provider] @param {string} [model] @param {string} [reasoningEffort]
+   */
+  setThreadDefaults(projectId, provider, model, reasoningEffort) {
+    const store = this.requireStore();
+    if (!store.getProject(projectId)) throw new Error(`projects: unknown project ${projectId}`);
+    const result = store.setThreadDefaults(projectId, {
+      provider: String(provider ?? ""),
+      model: String(model ?? ""),
+      reasoningEffort: String(reasoningEffort ?? ""),
+    });
+    store.appendAudit({ action: "thread/defaults", projectId, defaults: result.defaults });
+    store.save();
+    const readback = store.getProject(projectId);
+    return { ok: true, defaults: { ...(readback?.threadDefaults ?? result.defaults) } };
+  }
+
+  /**
    * F49：Usage 视图（token / 上下文占用，**不显示金额**：宿主没有价目 API）。
    * @param {string} projectId
    */
@@ -3799,6 +3826,7 @@ export class ProjectsService extends TypertRemoteService {
    * @param {string} projectId
    */
   async recentSessions(projectId) {
+    await this.waitServices();
     const store = this.requireStore();
     const project = store.getProject(String(projectId ?? ""));
     if (!project) throw new Error(`projects: unknown project ${projectId}`);
@@ -3808,7 +3836,18 @@ export class ProjectsService extends TypertRemoteService {
     /** @type {any[]} */
     let items = [];
     try {
-      items = await sc.list(AbortSignal.timeout(4000));
+      // typert 的 Remote 签名是 list(request, signal)；有的版本也接受只传 signal。
+      // 两种都试，仍然失败才如实返回 unavailable（不编造会话）。
+      const first = await sc.list({}, AbortSignal.timeout(4000));
+      items = Array.isArray(first) ? first : Array.isArray(first?.sessions) ? first.sessions : [];
+      if (items.length === 0) {
+        const second = await sc.list(AbortSignal.timeout(4000));
+        items = Array.isArray(second)
+          ? second
+          : Array.isArray(second?.sessions)
+            ? second.sessions
+            : [];
+      }
     } catch (error) {
       return {
         ok: false,
@@ -3907,3 +3946,4 @@ declareRemote(ProjectsService, "applyProjectTemplate");
 declareRemote(ProjectsService, "usageView");
 declareRemote(ProjectsService, "mentionItems");
 declareRemote(ProjectsService, "recentSessions");
+declareRemote(ProjectsService, "setThreadDefaults");

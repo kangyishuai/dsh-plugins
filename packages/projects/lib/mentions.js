@@ -73,3 +73,28 @@ export function buildMentionItems(input) {
   );
   return out.slice(0, limit).map(({ rank, at, ...rest }) => rest);
 }
+
+/**
+ * F62：插入 token 的格式（`@thread:<sessionId>` / `@project:<projectId>`）。
+ * client 的 `inputTriggers` source 用同一份规则（无构建插件不能 import，规则只有这一条，刻意保持极简）。
+ * @param {string} kind @param {unknown} id
+ * @returns {string} 空串表示 id 非法
+ */
+export function formatMentionToken(kind, id) {
+  const prefix = kind === "thread" ? "thread" : kind === "project" ? "project" : "";
+  const value = String(id ?? "").trim();
+  if (prefix === "" || value === "") return "";
+  return `@${prefix}:${value}`;
+}
+
+/**
+ * 解析 token 回 `{kind, id}`；不是本插件的 token 返回 null。
+ * @param {unknown} token
+ * @returns {{ kind: "thread"|"project", id: string } | null}
+ */
+export function parseMentionToken(token) {
+  const text = String(token ?? "").trim();
+  const match = text.match(/^@(?<kind>thread|project):(?<id>[^\s]+)$/u);
+  if (!match?.groups) return null;
+  return { kind: /** @type {any} */ (match.groups.kind), id: match.groups.id };
+}

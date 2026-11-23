@@ -39,6 +39,9 @@ export const MAX_GOAL_CHARS = 8_000;
 /** F23：线程标题上限（右键重命名）。 */
 export const MAX_THREAD_TITLE_CHARS = 120;
 
+/** F42：线程默认模型/effort 的合法 effort 词表（与宿主 selectModel 对齐）。 */
+export const THREAD_EFFORTS = Object.freeze(["", "low", "medium", "high"]);
+
 /**
  * 线程记录里允许持久化的 state 词表。
  *
@@ -156,6 +159,32 @@ export function normalizePolicy(raw, fallbackPolicy) {
         : typeof previous.persona === "string"
           ? previous.persona
           : "",
+    // F55：本地文件夹授权记录（path → {mode, at, used}）。只收敛已知 mode，其余原样丢弃。
+    folderAuth: (() => {
+      var merged = {
+        ...(previous.folderAuth && typeof previous.folderAuth === "object"
+          ? previous.folderAuth
+          : {}),
+        ...(policy.folderAuth && typeof policy.folderAuth === "object" ? policy.folderAuth : {}),
+      };
+      /** @type {Record<string, any>} */
+      var out = {};
+      /** @type {Record<string, any>} */
+      var mergedAny = merged;
+      /** @type {any} */
+      var record = null;
+      for (var key of Object.keys(mergedAny)) {
+        record = mergedAny[key];
+        if (!record || typeof record !== "object") continue;
+        if (!["deny", "default", "once"].includes(record.mode)) continue;
+        out[key] = {
+          mode: record.mode,
+          at: typeof record.at === "string" ? record.at : "",
+          used: record.used === true,
+        };
+      }
+      return out;
+    })(),
     merge: (() => {
       const raw = policy.merge ?? previous.merge ?? {};
       const num = (/** @type {any} */ value, /** @type {number} */ fallback) =>
@@ -300,6 +329,29 @@ export function normalizeNotifyPrefs(value) {
  * @param {any} raw
  * @param {string} root
  */
+/**
+ * F42：线程默认模型/effort 归一：只认字符串，effort 必须在词表内。
+ * @param {unknown} value
+ * @returns {{ provider: string, model: string, reasoningEffort: string }}
+ */
+export function normalizeThreadDefaults(value) {
+  const source = value && typeof value === "object" ? /** @type {any} */ (value) : {};
+  const provider = typeof source.provider === "string" ? source.provider.trim() : "";
+  const model = typeof source.model === "string" ? source.model.trim() : "";
+  const effort = typeof source.reasoningEffort === "string" ? source.reasoningEffort.trim() : "";
+  return {
+    provider,
+    model,
+    reasoningEffort: THREAD_EFFORTS.includes(effort) ? effort : "",
+  };
+}
+
+/**
+ * 把任意输入收敛成合法状态；不认识的字段保留（前向兼容），缺失的补齐。
+ * @param {any} raw
+ * @param {string} root
+ * @returns {any}
+ */
 export function normalize(raw, root) {
   const state = emptyState(root);
   if (!raw || typeof raw !== "object") return state;
@@ -359,6 +411,8 @@ export function normalize(raw, root) {
             : { ...DEFAULT_BUDGET },
         // F58：按项目的通知开关（失败/等你默认开，完成默认关）
         notifyPrefs: normalizeNotifyPrefs(project.notifyPrefs),
+        // F42：新建线程的默认模型 / effort（空串 = 继承宿主的默认模型）
+        threadDefaults: normalizeThreadDefaults(project.threadDefaults),
         // 旧数据没有 pinned：缺失即 false（不 bump formatVersion——纯增量可选字段，
         // 老版本读到 pinned 也只是忽略，两个方向都能读；破坏性变更才需要迁移步骤）。
         pinned: project.pinned === true,
@@ -499,6 +553,7 @@ export class ProjectStore {
       // F22：默认预算（日线程 20 / 并发 2 / 步数 60 / token 不限），不再是"全 null = 闸门不生效"
       budget: { ...DEFAULT_BUDGET },
       notifyPrefs: { ...DEFAULT_NOTIFY_PREFS },
+      threadDefaults: { provider: "", model: "", reasoningEffort: "" },
       createdAt: stamp,
       updatedAt: stamp,
     };
@@ -858,6 +913,23 @@ export class ProjectStore {
     current.state = resolved ? "resolved" : "idle";
     current.resolvedAt = resolved ? iso(this.now()) : null;
     return { ...current };
+  }
+
+  /**
+   * F42：写线程默认模型 / effort；空串表示「继承宿主默认」。
+   * @param {string} projectId @param {unknown} patch
+   * @returns {{ defaults: { provider: string, model: string, reasoningEffort: string } }}
+   */
+  setThreadDefaults(projectId, patch) {
+    const current = this.state.projects[projectId];
+    if (!current) throw new Error(`projects: unknown project ${projectId}`);
+    const merged = normalizeThreadDefaults({
+      ...normalizeThreadDefaults(current.threadDefaults),
+      ...(patch && typeof patch === "object" ? patch : {}),
+    });
+    current.threadDefaults = merged;
+    current.updatedAt = iso(this.now());
+    return { defaults: merged };
   }
 
   /**

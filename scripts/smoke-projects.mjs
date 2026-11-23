@@ -1628,6 +1628,192 @@ try {
   );
   add("记忆页签渲染规则与索引", memorySeen === true, String(memoryTab));
 
+  // —— B3 第二批 UI：授权卡 / 线程默认模型 / 从会话开线程 / 线程动作 / @ 源 ——
+  await page.evaluate(() => document.querySelector('[data-projects-tab="threads"]')?.click());
+  await page.waitForTimeout(700);
+  const b3ui = await page.evaluate(async () => {
+    const q = (sel) => document.querySelector(sel);
+    const all = (sel) => [...document.querySelectorAll(sel)];
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const result = {};
+    result.card = Boolean(q("[data-projects-b3-card]"));
+    result.mention =
+      q("[data-projects-mention-source]")?.getAttribute("data-projects-mention-source") || "";
+    q("[data-projects-mention-load]")?.click();
+    await wait(1200);
+    result.mentionCandidates = all("[data-projects-mention-candidate]").length;
+    const folderButtons = all("[data-projects-folder-decision]");
+    result.folderButtons = folderButtons.map((n) => n.getAttribute("data-projects-folder-decision"));
+    result.folderPath = folderButtons[0]?.getAttribute("data-projects-folder-path") || "";
+    const defaultButton = folderButtons.find(
+      (n) => n.getAttribute("data-projects-folder-decision") === "default",
+    );
+    if (defaultButton) {
+      defaultButton.click();
+      await wait(1400);
+    }
+    result.folderMode =
+      q("[data-projects-folder-mode]")?.getAttribute("data-projects-folder-mode") || "";
+    result.hasModel = Boolean(q("[data-projects-thread-model]"));
+    result.hasEffort = Boolean(q("[data-projects-thread-effort]"));
+    q("[data-projects-thread-defaults-save]")?.click();
+    await wait(900);
+    q("[data-projects-recent-sessions]")?.click();
+    await wait(2500);
+    const recent = all("[data-projects-recent-session]");
+    result.recentCount = recent.length;
+    result.recentUi = Boolean(
+      q("[data-projects-recent-list]") ||
+        (q("[data-projects-b3-card]")?.innerText || "").includes("最近会话"),
+    );
+    const attach = recent.length > 0 ? recent[0].querySelector("[data-projects-attach-session]") : null;
+    result.attachId = attach ? attach.getAttribute("data-projects-attach-session") : "";
+    if (attach) {
+      attach.click();
+      await wait(1800);
+    }
+    // 线程动作：打开**最后一行**的既有「⋯」菜单（避开 F16/F29 断言用的那一行）
+    const menuButtons = all("[data-projects-thread-menu]");
+    const targetMenu = menuButtons[menuButtons.length - 1];
+    if (targetMenu) targetMenu.click();
+    await wait(1200);
+    result.menuItems = all("[role=menuitem]").map((n) => n.textContent || "");
+    result.renameRow =
+      all("[data-projects-thread-rename]")[0]?.getAttribute("data-projects-thread-rename") || "";
+    result.copyRow =
+      all("[data-projects-thread-copy]")[0]?.getAttribute("data-projects-thread-copy") || "";
+    const renameButton = all("[data-projects-thread-rename]")[0];
+    if (renameButton) {
+      renameButton.click();
+      await wait(500);
+      const renameInput = q("[data-projects-thread-rename-input]");
+      if (renameInput) {
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+        setter.call(renameInput, "B3 重命名线程");
+        renameInput.dispatchEvent(new Event("input", { bubbles: true }));
+        await wait(300);
+        q("[data-projects-thread-rename-save]")?.click();
+        // 列表刷新走 progress RPC（含宿主 state 汇总），给足时间再回读
+        await wait(5000);
+        result.renameSaved = Boolean(q("[data-projects-thread-rename-message]"));
+        result.renameMessage =
+          q("[data-projects-thread-rename-message]")?.textContent || "";
+        result.renameTitle = "B3 重命名线程";
+        result.renameReadback = all("[data-projects-thread-title]").some(
+          (n) => (n.textContent || "").trim() === "B3 重命名线程",
+        );
+      }
+    }
+    result.actions = all("[data-projects-thread-action]").map((n) =>
+      n.getAttribute("data-projects-thread-action"),
+    );
+    result.actionTarget =
+      q("[data-projects-thread-rename-row]")?.getAttribute("data-projects-thread-rename-row") || "";
+    const unread = all("[data-projects-thread-action]").find(
+      (n) => n.getAttribute("data-projects-thread-action") === "unread",
+    );
+    if (unread) {
+      unread.click();
+      await wait(1300);
+    }
+    const renameToggle = all("[data-projects-thread-action]").find(
+      (n) => n.getAttribute("data-projects-thread-action") === "rename",
+    );
+    if (renameToggle) {
+      renameToggle.click();
+      await wait(500);
+    }
+    const renameInput = q("[data-projects-thread-rename-input]");
+    if (renameInput) {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+      setter.call(renameInput, "B3 重命名线程");
+      renameInput.dispatchEvent(new Event("input", { bubbles: true }));
+      await wait(300);
+      q("[data-projects-thread-rename-save]")?.click();
+      await wait(1400);
+    }
+    return result;
+  });
+  add(
+    "右栏「上下文」有本地优势卡，且 @ 候选（本项目线程/项目名）能列出",
+    b3ui.card === true && b3ui.mentionCandidates > 0,
+    JSON.stringify({ card: b3ui.card, mention: b3ui.mention, candidates: b3ui.mentionCandidates }),
+  );
+  add(
+    "本地文件夹授权卡三键齐全（Deny / Set as default folder / Allow once）",
+    [...new Set(b3ui.folderButtons)].sort().join(",") === "default,deny,once",
+    JSON.stringify({ buttons: b3ui.folderButtons, mode: b3ui.folderMode }),
+  );
+  add(
+    "线程默认模型 / effort 两个下拉存在（数据来自 modelCatalog）",
+    b3ui.hasModel === true && b3ui.hasEffort === true,
+    JSON.stringify({ model: b3ui.hasModel, effort: b3ui.hasEffort }),
+  );
+  add(
+    "「从会话开线程」入口能列出候选（空列表也给出明确空态）",
+    b3ui.recentUi === true,
+    JSON.stringify({ recentCount: b3ui.recentCount, attachId: b3ui.attachId, recentUi: b3ui.recentUi }),
+  );
+  add(
+    "线程右键菜单含重命名 / 复制 ID（其余四项沿用既有菜单）",
+    b3ui.menuItems.some((label) => label.includes("重命名")) &&
+      b3ui.menuItems.some((label) => label.includes("复制")) &&
+      b3ui.renameRow !== "" &&
+      b3ui.copyRow !== "",
+    JSON.stringify({ items: b3ui.menuItems, renameRow: b3ui.renameRow, copyRow: b3ui.copyRow }),
+  );
+  add(
+    "线程重命名写→回读（renameThread 后列表立即显示新标题）",
+    b3ui.renameReadback === true,
+    JSON.stringify({
+      saved: b3ui.renameSaved,
+      message: b3ui.renameMessage,
+      readback: b3ui.renameReadback,
+    }),
+  );
+
+  // 截图：授权卡 + 线程动作
+  {
+    const shot = await page.cdp("Page.captureScreenshot", { format: "png" });
+    const fs = await import("node:fs/promises");
+    await fs.writeFile(
+      ${JSON.stringify(shotsDir)} + "/07-b3-context-card-and-thread-actions.png",
+      Buffer.from(shot.data, "base64"),
+    );
+  }
+
+  // —— F37：记忆碎片 UI（记忆页签里有列表 + 新增入口；交互写盘由单测与 RPC 覆盖）——
+  const b3frag = await page.evaluate(async () => {
+    const q = (sel) => document.querySelector(sel);
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    q('[data-projects-tab="memory"]')?.click();
+    await wait(1000);
+    return {
+      add: Boolean(q("[data-projects-frag-add]")),
+      title: Boolean(q("[data-projects-frag-title]")),
+      count: Boolean(q("[data-projects-frag-count]")),
+      entries: Boolean(q("[data-projects-entry-empty]") || q("[data-projects-entry]")),
+    };
+  });
+  add(
+    "记忆页签有碎片列表与新增入口（标题/正文/计数）",
+    b3frag.add === true && b3frag.title === true && b3frag.count === true,
+    JSON.stringify(b3frag),
+  );
+
+  // 截图：记忆页签（碎片列表 + 新增入口 + 索引条目）
+  {
+    const shot = await page.cdp("Page.captureScreenshot", { format: "png" });
+    const fs = await import("node:fs/promises");
+    await fs.writeFile(
+      ${JSON.stringify(shotsDir)} + "/08-b3-memory-fragments.png",
+      Buffer.from(shot.data, "base64"),
+    );
+  }
+  // 宿主侧回读要用的值（在同一个块作用域里带出去，避开 emit 点的块作用域边界）
+  result.__b3FolderPath = b3ui.folderPath;
+  result.__b3AttachId = b3ui.attachId;
+
   // 走查发现记忆页签只读：现在应当能编辑规则并追加记忆
   const memEdit = await page.evaluate(() => {
     const btn = document.querySelector("[data-projects-memory-edit]");
@@ -3062,6 +3248,17 @@ const main = async () => {
       ok:
         parsed !== null &&
         threadIds.every((id) => Boolean(parsed.projects?.[parsed.threads[id]?.projectId])),
+      detail: "",
+    });
+    // —— B3 UI 宿主侧回读：线程默认模型 + 线程重命名 ——
+    const b3UiProjects = Object.values(parsed?.projects ?? {});
+    const b3DefaultsOk = b3UiProjects.some(
+      (/** @type {any} */ project) =>
+        project?.threadDefaults && typeof project.threadDefaults === "object",
+    );
+    checks.push({
+      name: "线程默认模型写→回读（threadDefaults 落到 projects.json）",
+      ok: b3DefaultsOk,
       detail: "",
     });
     // —— B3：三项「写→回读」由宿主侧文件做硬证据（UI 只是按钮，盘上才算数）——

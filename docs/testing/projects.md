@@ -775,3 +775,19 @@ AGENTS.md 受管区块幂等合并、`@` 候选排序）。`pnpm smoke:projects`
 **已知边界**：本机 web 冒烟 profile 把设置页禁用（`data-projects-settings` 不渲染），
 设置相关 8+3 条断言按仓库既有约定标为「设置页未启用，跳过」；它们在设置页可用的环境
 （桌面回归 / 打开 ui-settings 的 profile）里是真断言。冻结与非冻结的分界线写在这里，避免误读为全覆盖。
+
+## B3 第二批 UI（2026-11-23）
+
+在详情页右栏「上下文」与记忆页签里补齐可达入口（因为本机 smoke profile 会禁用设置页）：
+
+| 区域         | 数据锚点                                                                   | 断言                                                                                                                                               |
+| ------------ | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 本地优势卡   | `data-projects-b3-card` / `data-projects-mention-source`                   | 卡片存在且 `@` 源为 `registered`                                                                                                                   |
+| 文件夹授权卡 | `data-projects-folder-card` / `-folder-decision` / `-folder-mode`          | 三键 Deny / Set as default folder / Allow once；点「设为默认」后 mode=default，且 `projects.json` 的 `policy.folderAuth[path].mode` 回读为 default |
+| 线程默认模型 | `data-projects-thread-model` / `-thread-effort` / `-thread-defaults-save`  | 两个下拉来自 `modelCatalog`；保存后 `threadDefaults` 落到 `projects.json`，新建线程时套用                                                          |
+| 从会话开线程 | `data-projects-recent-sessions` / `-recent-session` / `-attach-session`    | 列出最近会话并挂为线程；`threads` 里能按 sessionId 回读                                                                                            |
+| 线程动作     | `data-projects-thread-action`（rename/unread/resolve/copy/reclaim/detach） | 六项齐全；重命名写回 `thread.title`、标记未读写回 `unread`                                                                                         |
+| 记忆碎片     | `data-projects-frag` / `-frag-add` / `-frag-preview` / `-frag-forget`      | 新增→列出→预览→忘掉；忘掉后 `memory/fragments/` 为空                                                                                               |
+
+截图：`notes/projects/claude-borrow/shots/b3/07-b3-context-card-and-thread-actions.png`、
+`08-b3-memory-fragments.png`。
