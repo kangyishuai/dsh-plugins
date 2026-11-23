@@ -10,6 +10,8 @@ import { dirname, join } from "node:path";
 import { DEFAULT_BUDGET } from "./budget.js";
 import { DEFAULT_NOTIFY_PREFS } from "./notify.js";
 import { THREAD_STATES } from "./overview.js";
+import { DEFAULT_REMINDER_MODE, normalizeReminder } from "./reminders.js";
+import { MAX_ROUTINES, normalizeRoutine } from "./routines.js";
 import { defaultRules } from "./routing.js";
 
 /** 当前元数据格式版本。任何不兼容变更都要 +1 并在 migrate() 里补一步。 */
@@ -74,6 +76,10 @@ export function isThreadState(value) {
  * @property {ProjectPolicy} policy
  * @property {{dailyTokens:number|null, maxThreadsPerDay:number|null, maxStepsPerThread:number|null}} budget
  * @property {boolean} pinned 收藏（个人视图状态；只影响列表排序，不触发其它动作）
+ * @property {string|null} preset F52 线程权限档位名（null = 继承宿主默认；**存名字不存 spec**）
+ * @property {'timer'|'schedule'} reminderDefault F30 新提醒的默认模式
+ * @property {any[]} routines F36 定时任务（本地记录 + scheduleId 指向宿主条目）
+ * @property {any[]} reminders F30 提醒（timer 落盘自恢复；schedule 记宿主 id）
  * @property {string} createdAt
  * @property {string} updatedAt
  */
@@ -430,6 +436,20 @@ export function normalize(raw, root) {
         notifyPrefs: normalizeNotifyPrefs(project.notifyPrefs),
         // F42：新建线程的默认模型 / effort（空串 = 继承宿主的默认模型）
         threadDefaults: normalizeThreadDefaults(project.threadDefaults),
+        // F52：权限档位名（空串 = 继承宿主）。名字的合法性由写入口 `catalog()` 校验，
+        // 读盘只收敛类型——部署换了 preset 名字，旧记录也不该让整份数据读不出来。
+        preset: typeof project.preset === "string" && project.preset !== "" ? project.preset : null,
+        // F30：新提醒默认模式（timer 免费；schedule 计费）
+        reminderDefault: ["timer", "schedule"].includes(project.reminderDefault)
+          ? project.reminderDefault
+          : DEFAULT_REMINDER_MODE,
+        // F36/F30：本地记录数组。**只收敛已知形状、保留未知字段**，旧数据缺失即空数组。
+        routines: (Array.isArray(project.routines) ? project.routines : [])
+          .map((/** @type {any} */ item) => normalizeRoutine(item))
+          .filter(Boolean),
+        reminders: (Array.isArray(project.reminders) ? project.reminders : [])
+          .map((/** @type {any} */ item) => normalizeReminder(item))
+          .filter(Boolean),
         // 旧数据没有 pinned：缺失即 false（不 bump formatVersion——纯增量可选字段，
         // 老版本读到 pinned 也只是忽略，两个方向都能读；破坏性变更才需要迁移步骤）。
         pinned: project.pinned === true,
@@ -576,6 +596,10 @@ export class ProjectStore {
       budget: { ...DEFAULT_BUDGET },
       notifyPrefs: { ...DEFAULT_NOTIFY_PREFS },
       threadDefaults: { provider: "", model: "", reasoningEffort: "" },
+      preset: null,
+      reminderDefault: DEFAULT_REMINDER_MODE,
+      routines: [],
+      reminders: [],
       createdAt: stamp,
       updatedAt: stamp,
     };
@@ -997,6 +1021,196 @@ export class ProjectStore {
     current.notifyPrefs = merged;
     current.updatedAt = iso(this.now());
     return { project: { ...current }, prefs: merged };
+  }
+
+  /**
+   * F52：写项目的线程权限档位名（空串/null = 继承宿主默认）。
+   * 只做形状收敛；名字是否在本部署的 `catalog()` 里由 service 校验（名字不能写死）。
+   * @param {string} projectId @param {unknown} preset
+   * @returns {{ project: any, preset: string|null }}
+   */
+  setProjectPreset(projectId, preset) {
+    const current = this.state.projects[projectId];
+    if (!current) throw new Error(`projects: unknown project ${projectId}`);
+    const value = String(preset ?? "").trim();
+    current.preset = value === "" ? null : value;
+    current.updatedAt = iso(this.now());
+    return { project: { ...current }, preset: current.preset };
+  }
+
+  /**
+   * F30：写新提醒的默认模式（timer / schedule）。
+   * @param {string} projectId @param {unknown} mode
+   * @returns {{ project: any, reminderDefault: string }}
+   */
+  setReminderDefault(projectId, mode) {
+    const current = this.state.projects[projectId];
+    if (!current) throw new Error(`projects: unknown project ${projectId}`);
+    const value = ["timer", "schedule"].includes(String(mode))
+      ? String(mode)
+      : DEFAULT_REMINDER_MODE;
+    current.reminderDefault = value;
+    current.updatedAt = iso(this.now());
+    return { project: { ...current }, reminderDefault: value };
+  }
+
+  /**
+   * F36：项目的定时任务列表（副本，调用方改不到仓储里）。
+   * @param {string} projectId
+   * @returns {any[]}
+   */
+  listRoutines(projectId) {
+    const current = this.state.projects[projectId];
+    if (!current) return [];
+    return (Array.isArray(current.routines) ? current.routines : []).map(
+      (/** @type {any} */ item) => ({
+        ...item,
+        history: Array.isArray(item.history)
+          ? item.history.map((/** @type {any} */ row) => ({ ...row }))
+          : [],
+      }),
+    );
+  }
+
+  /**
+   * F36：新增一条 routine（上限 `MAX_ROUTINES`，由调用方保证 id 唯一）。
+   * @param {string} projectId @param {any} routine
+   * @returns {{ routine: any, count: number }}
+   */
+  addRoutine(projectId, routine) {
+    const current = this.state.projects[projectId];
+    if (!current) throw new Error(`projects: unknown project ${projectId}`);
+    if (!Array.isArray(current.routines)) current.routines = [];
+    if (current.routines.length >= MAX_ROUTINES) {
+      throw new Error(
+        `projects: at most ${MAX_ROUTINES} routines (got ${current.routines.length})`,
+      );
+    }
+    const normalized = normalizeRoutine(routine);
+    if (!normalized) throw new Error("projects: invalid routine");
+    current.routines.push(normalized);
+    current.updatedAt = iso(this.now());
+    return { routine: { ...normalized }, count: current.routines.length };
+  }
+
+  /**
+   * F36：改一条 routine（开关 / lastRunAt / history）。
+   * @param {string} projectId @param {string} routineId @param {any} patch
+   * @returns {{ routine: any }}
+   */
+  patchRoutine(projectId, routineId, patch) {
+    const current = this.state.projects[projectId];
+    if (!current) throw new Error(`projects: unknown project ${projectId}`);
+    const list = Array.isArray(current.routines) ? current.routines : [];
+    const index = list.findIndex((/** @type {any} */ item) => item?.id === routineId);
+    if (index < 0) throw new Error(`projects: unknown routine ${routineId}`);
+    const merged = normalizeRoutine({
+      ...list[index],
+      ...(patch && typeof patch === "object" ? patch : {}),
+    });
+    if (!merged) throw new Error("projects: invalid routine patch");
+    list[index] = merged;
+    current.updatedAt = iso(this.now());
+    return {
+      routine: { ...merged, history: merged.history.map((/** @type {any} */ row) => ({ ...row })) },
+    };
+  }
+
+  /**
+   * F36：删一条 routine。
+   * @param {string} projectId @param {string} routineId
+   * @returns {{ removed: boolean, count: number }}
+   */
+  removeRoutine(projectId, routineId) {
+    const current = this.state.projects[projectId];
+    if (!current) throw new Error(`projects: unknown project ${projectId}`);
+    const list = Array.isArray(current.routines) ? current.routines : [];
+    const next = list.filter((/** @type {any} */ item) => item?.id !== routineId);
+    current.routines = next;
+    current.updatedAt = iso(this.now());
+    return { removed: next.length !== list.length, count: next.length };
+  }
+
+  /**
+   * F30：一个项目的提醒列表。
+   * @param {string} projectId
+   * @returns {any[]}
+   */
+  listReminders(projectId) {
+    const current = this.state.projects[projectId];
+    if (!current) return [];
+    return (Array.isArray(current.reminders) ? current.reminders : []).map(
+      (/** @type {any} */ item) => ({ ...item }),
+    );
+  }
+
+  /**
+   * F30：全部项目的提醒（启动时 arm 用）。
+   * @returns {any[]}
+   */
+  listAllReminders() {
+    /** @type {any[]} */
+    const out = [];
+    for (const [projectId, project] of Object.entries(this.state.projects)) {
+      for (const item of Array.isArray(/** @type {any} */ (project).reminders)
+        ? /** @type {any} */ (project).reminders
+        : []) {
+        out.push({ ...item, projectId });
+      }
+    }
+    return out;
+  }
+
+  /**
+   * F30：新增一条提醒。
+   * @param {string} projectId @param {any} reminder
+   * @returns {{ reminder: any }}
+   */
+  addReminder(projectId, reminder) {
+    const current = this.state.projects[projectId];
+    if (!current) throw new Error(`projects: unknown project ${projectId}`);
+    if (!Array.isArray(current.reminders)) current.reminders = [];
+    const normalized = normalizeReminder({ ...reminder, projectId });
+    if (!normalized) throw new Error("projects: invalid reminder");
+    current.reminders.push(normalized);
+    current.updatedAt = iso(this.now());
+    return { reminder: { ...normalized } };
+  }
+
+  /**
+   * F30：改一条提醒（fired / notified / cancelled / done）。
+   * @param {string} projectId @param {string} reminderId @param {any} patch
+   * @returns {{ reminder: any }}
+   */
+  patchReminder(projectId, reminderId, patch) {
+    const current = this.state.projects[projectId];
+    if (!current) throw new Error(`projects: unknown project ${projectId}`);
+    const list = Array.isArray(current.reminders) ? current.reminders : [];
+    const index = list.findIndex((/** @type {any} */ item) => item?.id === reminderId);
+    if (index < 0) throw new Error(`projects: unknown reminder ${reminderId}`);
+    const merged = normalizeReminder({
+      ...list[index],
+      ...(patch && typeof patch === "object" ? patch : {}),
+    });
+    if (!merged) throw new Error("projects: invalid reminder patch");
+    list[index] = merged;
+    current.updatedAt = iso(this.now());
+    return { reminder: { ...merged } };
+  }
+
+  /**
+   * F30：删一条提醒（取消后清理 / 过期清理）。
+   * @param {string} projectId @param {string} reminderId
+   * @returns {{ removed: boolean }}
+   */
+  removeReminder(projectId, reminderId) {
+    const current = this.state.projects[projectId];
+    if (!current) throw new Error(`projects: unknown project ${projectId}`);
+    const list = Array.isArray(current.reminders) ? current.reminders : [];
+    const next = list.filter((/** @type {any} */ item) => item?.id !== reminderId);
+    current.reminders = next;
+    current.updatedAt = iso(this.now());
+    return { removed: next.length !== list.length };
   }
 
   /**

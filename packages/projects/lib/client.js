@@ -3768,6 +3768,9 @@ window.__ModuleLoader__.load({
             // P0 复审：policy / threadDefaults 的写路径必须能回读——只刷 progress 不够，
             // 父级传进来的 project 是打开详情那一刻的快照，得自己再取一次项目记录。
             call(api.ctx, "getProject", { projectId: project.id }).catch(() => null),
+            // B4：右栏「定时任务」段的计数（F36）与提醒待触发数（F30）
+            call(api.ctx, "routinesView", { projectId: project.id }).catch(() => null),
+            call(api.ctx, "remindersView", { projectId: project.id }).catch(() => null),
           ]).then(
             (values) => {
               setData({
@@ -3784,6 +3787,17 @@ window.__ModuleLoader__.load({
                 models: values[6] || null,
                 poll: values[7] || null,
                 liveProject: values[8] || null,
+                routines: (() => {
+                  const view = values[9];
+                  if (!view || view.available === false)
+                    return { count: 0, summary: "宿主 schedule 不可用" };
+                  const count = Array.isArray(view.routines) ? view.routines.length : 0;
+                  return {
+                    count,
+                    summary: count === 0 ? "还没有定时任务" : `${count} 个定时任务`,
+                  };
+                })(),
+                reminders: values[10] || null,
               });
               // F25 折叠状态存宿主 storageDomain（跨重启保留）；读不到就当全部展开。
               // 只在首次加载时套用：否则 5s 轮询会用旧值把用户刚点的折叠弹回去。
@@ -5680,22 +5694,24 @@ window.__ModuleLoader__.load({
         if (data.loading) return h("p", { style: styles.empty }, text(t, "detail.loading"));
         if (data.error !== "")
           return h("p", { style: styles.error, "data-projects-detail-error": "" }, data.error);
-        if (tab === "library" || tab === "routines") {
+        if (tab === "library") {
           return h(
             "div",
             { "data-projects-view-placeholder": tab },
-            h("h3", { style: styles.name }, tab === "library" ? "Library" : "Routines"),
+            h("h3", { style: styles.name }, "Library"),
             h(
               "div",
               {
                 style: { ...styles.meta, marginTop: "4px" },
                 "data-projects-view-placeholder-note": "",
               },
-              tab === "library"
-                ? "待接入 artifacts：Library 会列出这个项目的产物与项目文件（B5，依赖 dsh-artifacts 0.2）。"
-                : "Routines 在 B4 落地：6 种频率 + Run now + History，并写明每次投递会跑一次模型。",
+              "待接入 artifacts：Library 会列出这个项目的产物与项目文件（B5，依赖 dsh-artifacts 0.2）。",
             ),
           );
+        }
+        // B4 · F36：Routines 视图（六档频率 + Run now + History + 成本提示）+ F30 提醒
+        if (tab === "routines") {
+          return h(RoutinesView, { api: api, t: t, project: project, onChanged: load });
         }
         if (tab === "threads") {
           const rows = data.progress?.rows ?? [];
@@ -7030,6 +7046,51 @@ window.__ModuleLoader__.load({
             }),
             h(RailSection, {
               t: t,
+              id: "routines",
+              title: "定时任务",
+              collapsible: narrow,
+              summary: data.routines?.summary || "打开查看",
+              attrs: { "data-projects-rail-routines": "" },
+              action: h(
+                "button",
+                {
+                  type: "button",
+                  style: { ...styles.secondaryButton, padding: "2px 10px", fontSize: "12px" },
+                  "data-projects-rail-routines-open": "",
+                  onClick: () => setTab("routines"),
+                },
+                "＋",
+              ),
+              body: h(
+                "div",
+                { style: { display: "flex", flexDirection: "column", gap: "2px" } },
+                h(
+                  "div",
+                  { style: styles.railBodyFull, "data-projects-rail-routines-count": "" },
+                  String(data.routines?.count ?? 0) +
+                    " 个定时任务 · " +
+                    String(data.reminders?.pendingCount ?? 0) +
+                    " 条提醒待触发",
+                ),
+                h(
+                  "div",
+                  { style: styles.railBodyFull },
+                  "每次到点投递都会跑一次模型（会花 token）；手动档不自动跑。",
+                ),
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    style: smallButton,
+                    "data-projects-rail-reminder-open": "",
+                    onClick: () => setTab("routines"),
+                  },
+                  "打开 Routines / 提醒",
+                ),
+              ),
+            }),
+            h(RailSection, {
+              t: t,
               id: "context",
               title: text(t, "detail.section.context"),
               collapsible: narrow,
@@ -7723,6 +7784,986 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // —— B4 · F36 Routines（六档频率 + Run now + History + 成本提示）——
+    // 数据全部来自 host `routinesView`（宿主 schedule 的状态 + 本地记录），
+    // 面板不自己算 cron、也不自己记「上次跑没跑」。
+    /** @param {any} props */
+    function RoutinesView(props) {
+      const api = props.api;
+      const project = props.project;
+      const [view, setView] = useState(null);
+      const [draft, setDraft] = useState({
+        name: "",
+        instructions: "",
+        frequency: "daily",
+        time: "09:00",
+        weekday: 1,
+        dayOfMonth: 1,
+      });
+      const [busy, setBusy] = useState("");
+      const [message, setMessage] = useState({ text: "", ok: null });
+      const [history, setHistory] = useState({ routineId: "", rows: [], retention: null });
+      const load = useCallback(() => {
+        call(api.ctx, "routinesView", { projectId: project.id }).then(
+          (/** @type {any} */ result) => setView(result),
+          (/** @type {any} */ error) =>
+            setView({ available: false, reason: String(error?.message ?? error), routines: [] }),
+        );
+      }, [api, project.id]);
+      useEffect(() => {
+        load();
+        const timer = setInterval(() => {
+          const doc = typeof document === "undefined" ? null : document;
+          if (doc?.hidden === true) return;
+          load();
+        }, 5000);
+        return () => clearInterval(timer);
+      }, [load]);
+      const report = (/** @type {any} */ textValue, /** @type {any} */ ok) =>
+        setMessage({ text: textValue, ok });
+      const runAction = (/** @type {any} */ label, /** @type {any} */ promise) => {
+        setBusy(label);
+        report("", null);
+        promise.then(
+          (/** @type {any} */ result) => {
+            setBusy("");
+            if (result && result.ok === false)
+              report(String(result.reason || `${label}失败`), false);
+            else report(`${String(label)}完成`, true);
+            load();
+          },
+          (/** @type {any} */ error) => {
+            setBusy("");
+            report(String(error?.message ?? error).slice(0, 200), false);
+          },
+        );
+      };
+      /** @type {any[]} */
+      const routines = Array.isArray(view?.routines) ? view.routines : [];
+      const frequencyOptions = [
+        ["manual", "手动（不自动跑）"],
+        ["hourly", "每小时"],
+        ["daily", "每天"],
+        ["weekdays", "工作日（周一至周五）"],
+        ["weekly", "每周"],
+        ["monthly", "每月"],
+      ];
+      const weekdayNames = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+      const automatic = draft.frequency !== "manual";
+      return h(
+        "div",
+        {
+          style: { display: "flex", flexDirection: "column", gap: "10px", minWidth: 0 },
+          "data-projects-routines": "",
+          "data-projects-routines-available": view ? (view.available ? "yes" : "no") : "loading",
+        },
+        h(
+          "div",
+          { style: styles.railBodyFull, "data-projects-routines-cost": "" },
+          view?.costHint || "每次到点投递都会跑一次模型（会花 token）。",
+        ),
+        view && view.available === false
+          ? h(
+              "div",
+              {
+                style: { ...styles.meta, color: T.danger },
+                "data-projects-routines-unavailable": "",
+              },
+              "宿主的 schedule 服务不可用（" +
+                String(view.reason || "unknown") +
+                "），定时任务无法创建。",
+            )
+          : null,
+        // —— 新建表单 ——
+        h(
+          "div",
+          {
+            style: {
+              display: "flex",
+              flexDirection: "column",
+              gap: "6px",
+              border: `1px solid ${T.borderSoft}`,
+              borderRadius: "10px",
+              padding: "8px 10px",
+            },
+          },
+          h("span", { style: styles.name }, "新建定时任务"),
+          h(
+            "label",
+            { style: styles.fieldLabel },
+            h("span", { style: styles.meta }, "名字"),
+            h("input", {
+              style: styles.input,
+              value: draft.name,
+              placeholder: "例如：每日站会摘要",
+              "data-projects-routine-name": "",
+              onChange: (/** @type {any} */ event) =>
+                setDraft((/** @type {any} */ prev) => ({ ...prev, name: event.target.value })),
+            }),
+          ),
+          h(
+            "label",
+            { style: styles.fieldLabel },
+            h("span", { style: styles.meta }, "指令（到点后作为提示词投递，会跑一次模型）"),
+            h("textarea", {
+              style: { ...styles.input, minHeight: "54px", resize: "vertical" },
+              value: draft.instructions,
+              placeholder: "例如：总结昨天合并的 PR，列出需要我确认的点。",
+              "data-projects-routine-instructions": "",
+              onChange: (/** @type {any} */ event) =>
+                setDraft((/** @type {any} */ prev) => ({
+                  ...prev,
+                  instructions: event.target.value,
+                })),
+            }),
+          ),
+          h(
+            "div",
+            { style: { display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "flex-end" } },
+            h(
+              "label",
+              { style: { ...styles.fieldLabel, flex: "1 1 150px" } },
+              h("span", { style: styles.meta }, "频率"),
+              h(
+                "select",
+                {
+                  style: styles.input,
+                  value: draft.frequency,
+                  "data-projects-routine-frequency": "",
+                  onChange: (/** @type {any} */ event) =>
+                    setDraft((/** @type {any} */ prev) => ({
+                      ...prev,
+                      frequency: event.target.value,
+                    })),
+                },
+                frequencyOptions.map((/** @type {any} */ option) =>
+                  h("option", { key: option[0], value: option[0] }, option[1]),
+                ),
+              ),
+            ),
+            h(
+              "label",
+              { style: { ...styles.fieldLabel, flex: "0 1 110px" } },
+              h("span", { style: styles.meta }, "时间（HH:mm）"),
+              h("input", {
+                style: styles.input,
+                value: draft.time,
+                "data-projects-routine-time": "",
+                onChange: (/** @type {any} */ event) =>
+                  setDraft((/** @type {any} */ prev) => ({ ...prev, time: event.target.value })),
+              }),
+            ),
+            draft.frequency === "weekly"
+              ? h(
+                  "label",
+                  { style: { ...styles.fieldLabel, flex: "0 1 110px" } },
+                  h("span", { style: styles.meta }, "星期几"),
+                  h(
+                    "select",
+                    {
+                      style: styles.input,
+                      value: String(draft.weekday),
+                      "data-projects-routine-weekday": "",
+                      onChange: (/** @type {any} */ event) =>
+                        setDraft((/** @type {any} */ prev) => ({
+                          ...prev,
+                          weekday: Number(event.target.value),
+                        })),
+                    },
+                    weekdayNames.map((/** @type {any} */ label, /** @type {any} */ index) =>
+                      h("option", { key: label, value: String(index) }, label),
+                    ),
+                  ),
+                )
+              : null,
+            draft.frequency === "monthly"
+              ? h(
+                  "label",
+                  { style: { ...styles.fieldLabel, flex: "0 1 110px" } },
+                  h("span", { style: styles.meta }, "每月几号（1–28）"),
+                  h("input", {
+                    style: styles.input,
+                    value: String(draft.dayOfMonth),
+                    "data-projects-routine-day": "",
+                    onChange: (/** @type {any} */ event) =>
+                      setDraft((/** @type {any} */ prev) => ({
+                        ...prev,
+                        dayOfMonth: Number(event.target.value),
+                      })),
+                  }),
+                )
+              : null,
+          ),
+          h(
+            "div",
+            { style: { display: "flex", gap: "6px", alignItems: "center" } },
+            h(
+              "button",
+              {
+                type: "button",
+                style: styles.primaryButton,
+                disabled: busy !== "",
+                "data-projects-routine-create": "",
+                onClick: () =>
+                  runAction(
+                    "创建",
+                    call(api.ctx, "createRoutine", {
+                      projectId: project.id,
+                      // 宿主网关按**参数名**包：方法与 `(projectId, input)` 对应，
+                      // 所以表单字段要落在 input 里（扁平传会被 gateway 判成 unexpected）。
+                      input: {
+                        name: draft.name,
+                        instructions: draft.instructions,
+                        frequency: draft.frequency,
+                        time: draft.time,
+                        weekday: draft.weekday,
+                        dayOfMonth: draft.dayOfMonth,
+                      },
+                    }),
+                  ),
+              },
+              busy === "创建" ? "正在创建…" : "创建",
+            ),
+            h(
+              "span",
+              { style: styles.meta },
+              automatic
+                ? "自动投递：到点会跑一次模型"
+                : "手动档：只有点 Run now 才跑（也会花一次模型调用）",
+            ),
+          ),
+          message.text !== ""
+            ? h(
+                "span",
+                {
+                  style: { ...styles.meta, color: message.ok === false ? T.danger : T.text },
+                  "data-projects-routine-message": "",
+                },
+                message.text,
+              )
+            : null,
+        ),
+        // —— 列表 ——
+        routines.length === 0
+          ? h(
+              "div",
+              { style: styles.railBodyFull, "data-projects-routines-empty": "" },
+              "还没有定时任务。上面建一个；手动档不会自己跑。",
+            )
+          : h(
+              "div",
+              { style: { display: "flex", flexDirection: "column", gap: "6px" } },
+              routines.map((/** @type {any} */ routine) =>
+                h(
+                  "div",
+                  {
+                    key: routine.id,
+                    style: {
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "4px",
+                      border: `1px solid ${T.borderSoft}`,
+                      borderRadius: "10px",
+                      padding: "8px 10px",
+                      minWidth: 0,
+                    },
+                    "data-projects-routine": routine.id,
+                    "data-projects-routine-id": routine.id,
+                  },
+                  h(
+                    "div",
+                    { style: { display: "flex", gap: "6px", alignItems: "center", minWidth: 0 } },
+                    h(
+                      "span",
+                      {
+                        style: {
+                          ...styles.name,
+                          flex: "1 1 auto",
+                          minWidth: 0,
+                          overflow: "hidden",
+                        },
+                        title: routine.name,
+                      },
+                      String(routine.name || routine.id),
+                    ),
+                    h(
+                      "span",
+                      {
+                        style: styles.meta,
+                        "data-projects-routine-status":
+                          routine.hostStatus || routine.status?.status || "",
+                      },
+                      routine.enabled === false ? "已停用" : String(routine.status?.label || ""),
+                    ),
+                  ),
+                  h("span", { style: styles.meta }, String(routine.description || "")),
+                  h(
+                    "span",
+                    { style: styles.meta, "data-projects-routine-lastdelivery": "" },
+                    routine.lastDelivery?.deliveredAt
+                      ? `最近投递：${String(routine.lastDelivery.deliveredAt)}`
+                      : routine.lastRunAt
+                        ? `最近 Run now：${String(routine.lastRunAt)}`
+                        : "还没有投递过",
+                  ),
+                  h(
+                    "div",
+                    { style: { display: "flex", gap: "6px", flexWrap: "wrap" } },
+                    h(
+                      "button",
+                      {
+                        type: "button",
+                        style: smallButton,
+                        disabled: busy !== "",
+                        "data-projects-routine-toggle": routine.id,
+                        onClick: () =>
+                          runAction(
+                            "切换",
+                            call(api.ctx, "setRoutineEnabled", {
+                              projectId: project.id,
+                              routineId: routine.id,
+                              enabled: routine.enabled === false,
+                            }),
+                          ),
+                      },
+                      routine.enabled === false ? "启用" : "停用",
+                    ),
+                    h(
+                      "button",
+                      {
+                        type: "button",
+                        style: smallButton,
+                        disabled: busy !== "",
+                        title: "会真的投递一次（= 一次模型调用）",
+                        "data-projects-routine-run": routine.id,
+                        onClick: () =>
+                          runAction(
+                            "Run now",
+                            call(api.ctx, "runRoutineNow", {
+                              projectId: project.id,
+                              routineId: routine.id,
+                            }),
+                          ),
+                      },
+                      "Run now",
+                    ),
+                    h(
+                      "button",
+                      {
+                        type: "button",
+                        style: smallButton,
+                        "data-projects-routine-history": routine.id,
+                        onClick: () => {
+                          call(api.ctx, "routineHistory", {
+                            projectId: project.id,
+                            routineId: routine.id,
+                          }).then(
+                            (/** @type {any} */ result) =>
+                              setHistory({
+                                routineId: routine.id,
+                                rows: Array.isArray(result?.rows) ? result.rows : [],
+                                retention: result?.retention ?? null,
+                                hostAvailable: result?.hostAvailable === true,
+                              }),
+                            (/** @type {any} */ error) =>
+                              setHistory({
+                                routineId: routine.id,
+                                rows: [],
+                                retention: null,
+                                error: String(error?.message ?? error),
+                              }),
+                          );
+                        },
+                      },
+                      "History",
+                    ),
+                    h(
+                      "button",
+                      {
+                        type: "button",
+                        style: { ...smallButton, color: T.danger },
+                        disabled: busy !== "",
+                        "data-projects-routine-delete": routine.id,
+                        onClick: () =>
+                          runAction(
+                            "删除",
+                            call(api.ctx, "deleteRoutine", {
+                              projectId: project.id,
+                              routineId: routine.id,
+                            }),
+                          ),
+                      },
+                      "删除",
+                    ),
+                  ),
+                  history.routineId === routine.id
+                    ? h(
+                        "div",
+                        {
+                          style: { display: "flex", flexDirection: "column", gap: "2px" },
+                          "data-projects-routine-history-panel": routine.id,
+                          "data-projects-routine-history-count": String(history.rows.length),
+                        },
+                        history.rows.length === 0
+                          ? h(
+                              "span",
+                              { style: styles.meta },
+                              "宿主侧还没有投递记录（History 只显示真实的投递）。",
+                            )
+                          : history.rows.map((/** @type {any} */ row, /** @type {any} */ index) =>
+                              h(
+                                "span",
+                                { key: index, style: styles.meta },
+                                [
+                                  String(row.at || ""),
+                                  String(row.status || ""),
+                                  String(row.message || ""),
+                                ]
+                                  .filter((part) => part !== "")
+                                  .join(" · "),
+                              ),
+                            ),
+                        history.retention
+                          ? h(
+                              "span",
+                              { style: styles.meta },
+                              "宿主保留：" +
+                                String(history.retention.days ?? "?") +
+                                " 天 / " +
+                                String(history.retention.records ?? "?") +
+                                " 条",
+                            )
+                          : null,
+                      )
+                    : null,
+                ),
+              ),
+            ),
+        h(RemindersPanel, { api: api, t: props.t, project: project }),
+      );
+    }
+
+    // —— B4 · F30 提醒（双模式：timer 免费 / schedule 计费）——
+    /** @param {any} props */
+    function RemindersPanel(props) {
+      const api = props.api;
+      const project = props.project;
+      const [view, setView] = useState(null);
+      const [form, setForm] = useState({
+        open: false,
+        mode: "",
+        text: "",
+        minutes: "5",
+        message: "",
+        ok: null,
+        busy: false,
+      });
+      const load = useCallback(() => {
+        call(api.ctx, "remindersView", { projectId: project.id }).then(
+          (/** @type {any} */ result) => setView(result),
+          (/** @type {any} */ error) =>
+            setView({ list: [], defaultMode: "timer", reason: String(error?.message ?? error) }),
+        );
+      }, [api, project.id]);
+      useEffect(() => {
+        load();
+        const timer = setInterval(() => {
+          const doc = typeof document === "undefined" ? null : document;
+          if (doc?.hidden === true) return;
+          load();
+        }, 5000);
+        return () => clearInterval(timer);
+      }, [load]);
+      const defaultMode = String(view?.defaultMode || "timer");
+      const openForm = () =>
+        setForm((/** @type {any} */ prev) => ({
+          ...prev,
+          open: true,
+          mode: defaultMode,
+          message: "",
+          ok: null,
+        }));
+      const patch = (/** @type {any} */ next) =>
+        setForm((/** @type {any} */ prev) => ({ ...prev, ...next }));
+      const submit = () => {
+        const minutes = Number(String(form.minutes).trim());
+        const dueAt = new Date(Date.now() + (Number.isFinite(minutes) ? minutes : 0) * 60_000);
+        patch({ busy: true, message: "", ok: null });
+        call(api.ctx, "createReminder", {
+          projectId: project.id,
+          input: {
+            at: dueAt.toISOString(),
+            text: form.text,
+            mode: form.mode || defaultMode,
+          },
+        }).then(
+          (/** @type {any} */ result) => {
+            if (result && result.ok === false) {
+              patch({ busy: false, ok: false, message: String(result.reason || "创建失败") });
+              return;
+            }
+            patch({
+              busy: false,
+              ok: true,
+              message: `已创建（${String(result?.mode || "")}）`,
+            });
+            load();
+          },
+          (/** @type {any} */ error) =>
+            patch({
+              busy: false,
+              ok: false,
+              message: String(error?.message ?? error).slice(0, 200),
+            }),
+        );
+      };
+      /** @type {any[]} */
+      const list = Array.isArray(view?.list) ? view.list : [];
+      /** @type {any[]} */
+      const active = list.filter((/** @type {any} */ item) => item.state === "pending");
+      /** @type {any[]} */
+      const fired = list.filter((/** @type {any} */ item) => item.state === "fired");
+      const modeNote =
+        (form.mode || defaultMode) === "schedule"
+          ? "计费：到点会跑一次模型（= 一次模型调用）；DSH 关着也会跑。"
+          : "免费：本机计时，不花模型调用；DSH 关着的时候不会响（重新打开后补一次）。";
+      return h(
+        "div",
+        {
+          style: {
+            display: "flex",
+            flexDirection: "column",
+            gap: "6px",
+            border: `1px solid ${T.borderSoft}`,
+            borderRadius: "10px",
+            padding: "8px 10px",
+            marginTop: "6px",
+          },
+          "data-projects-reminders": "",
+          "data-projects-reminder-default": defaultMode,
+          "data-projects-reminder-pending": String(view?.pendingCount ?? active.length),
+          "data-projects-reminder-unread": String(view?.unreadCount ?? 0),
+          "data-projects-reminder-armed": String(view?.armed?.armed ?? 0),
+        },
+        h(
+          "div",
+          { style: { display: "flex", gap: "6px", alignItems: "center", minWidth: 0 } },
+          h(
+            "span",
+            { style: { ...styles.name, flex: "1 1 auto" } },
+            "提醒（" +
+              String(active.length) +
+              " 条待触发" +
+              (fired.length > 0 ? ` · ${String(fired.length)} 条已响` : "") +
+              "）",
+          ),
+          h(
+            "button",
+            {
+              type: "button",
+              style: { ...styles.secondaryButton, padding: "2px 10px", fontSize: "12px" },
+              "data-projects-reminder-open": "",
+              onClick: openForm,
+            },
+            "＋ 新建提醒",
+          ),
+        ),
+        h(
+          "div",
+          { style: styles.railBodyFull },
+          "默认模式：" +
+            (defaultMode === "schedule" ? "定时任务（计费）" : "本机计时（免费）") +
+            " · 每条可以另选。本机计时由 DSH 进程负责，重启后按盘上到期时间自动恢复。",
+        ),
+        h(
+          "div",
+          { style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" } },
+          h("span", { style: styles.meta }, "项目默认："),
+          [
+            ["timer", "本机计时（免费）"],
+            ["schedule", "定时任务（计费）"],
+          ].map((/** @type {any} */ option) =>
+            h(
+              "button",
+              {
+                key: option[0],
+                type: "button",
+                "data-projects-reminder-default-option": option[0],
+                "aria-selected": defaultMode === option[0] ? "true" : "false",
+                style: {
+                  ...smallButton,
+                  ...(defaultMode === option[0]
+                    ? { borderColor: T.accentText, color: T.accentText }
+                    : {}),
+                },
+                onClick: () =>
+                  call(api.ctx, "setReminderDefault", {
+                    projectId: project.id,
+                    mode: option[0],
+                  }).then(() => load()),
+              },
+              option[1],
+            ),
+          ),
+        ),
+        form.open
+          ? h(
+              "div",
+              {
+                style: {
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "6px",
+                  border: `1px solid ${T.border}`,
+                  borderRadius: "10px",
+                  padding: "8px 10px",
+                },
+                role: "dialog",
+                "aria-modal": "true",
+                "data-projects-reminder-dialog": "open",
+              },
+              h(
+                "div",
+                { style: { display: "flex", gap: "6px", alignItems: "center" } },
+                h("span", { style: styles.name }, "新建提醒"),
+                h("span", { style: { flex: "1 1 auto" } }),
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    style: styles.iconButton,
+                    "data-projects-reminder-close": "",
+                    "aria-label": "关闭",
+                    onClick: () => patch({ open: false }),
+                  },
+                  "✕",
+                ),
+              ),
+              h(
+                "div",
+                { style: { display: "flex", gap: "6px", flexWrap: "wrap" } },
+                [
+                  ["timer", "免费（本机计时）"],
+                  ["schedule", "定时任务（到点跑模型）"],
+                ].map((/** @type {any} */ option) =>
+                  h(
+                    "button",
+                    {
+                      key: option[0],
+                      type: "button",
+                      "data-projects-reminder-mode": option[0],
+                      "aria-selected": (form.mode || defaultMode) === option[0] ? "true" : "false",
+                      style: {
+                        ...styles.button,
+                        borderColor:
+                          (form.mode || defaultMode) === option[0] ? T.accentText : T.border,
+                        color: (form.mode || defaultMode) === option[0] ? T.accentText : T.text,
+                      },
+                      onClick: () => patch({ mode: option[0] }),
+                    },
+                    option[1],
+                  ),
+                ),
+              ),
+              h("span", { style: styles.meta, "data-projects-reminder-note": "" }, modeNote),
+              h(
+                "label",
+                { style: styles.fieldLabel },
+                h("span", { style: styles.meta }, "提醒内容"),
+                h("input", {
+                  style: styles.input,
+                  value: form.text,
+                  placeholder: "例如：看一下构建结果",
+                  "data-projects-reminder-text": "",
+                  "data-modal-autofocus": "",
+                  onChange: (/** @type {any} */ event) => patch({ text: event.target.value }),
+                }),
+              ),
+              h(
+                "label",
+                { style: styles.fieldLabel },
+                h("span", { style: styles.meta }, "多少分钟后（0 = 立即）"),
+                h("input", {
+                  style: styles.input,
+                  value: form.minutes,
+                  inputMode: "decimal",
+                  "data-projects-reminder-minutes": "",
+                  onChange: (/** @type {any} */ event) => patch({ minutes: event.target.value }),
+                }),
+              ),
+              h(
+                "div",
+                { style: { display: "flex", gap: "6px", alignItems: "center" } },
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    style: styles.primaryButton,
+                    disabled: form.busy === true,
+                    "data-projects-reminder-submit": "",
+                    onClick: submit,
+                  },
+                  form.busy === true ? "正在创建…" : "创建",
+                ),
+                form.message !== ""
+                  ? h(
+                      "span",
+                      {
+                        style: { ...styles.meta, color: form.ok === false ? T.danger : T.text },
+                        "data-projects-reminder-message": "",
+                      },
+                      String(form.message),
+                    )
+                  : null,
+              ),
+            )
+          : null,
+        list.length > 0
+          ? h(
+              "div",
+              { style: { display: "flex", flexDirection: "column", gap: "2px" } },
+              list.map((reminder) =>
+                h(
+                  "div",
+                  {
+                    key: reminder.id,
+                    style: { display: "flex", gap: "6px", alignItems: "center", minWidth: 0 },
+                    "data-projects-reminder-row": reminder.id,
+                    "data-projects-reminder-state": String(reminder.state || ""),
+                  },
+                  h(
+                    "span",
+                    {
+                      style: { ...styles.meta, flex: "1 1 auto", minWidth: 0, overflow: "hidden" },
+                      title: String(reminder.text || ""),
+                    },
+                    String(reminder.text || "") +
+                      " · " +
+                      (reminder.mode === "schedule" ? "定时任务（计费）" : "本机计时（免费）") +
+                      " · " +
+                      String(reminder.remaining?.text || "") +
+                      (reminder.state === "fired" ? " · 已响" : ""),
+                  ),
+                  reminder.state === "pending"
+                    ? h(
+                        "button",
+                        {
+                          type: "button",
+                          style: smallButton,
+                          "data-projects-reminder-complete": reminder.id,
+                          onClick: () =>
+                            call(api.ctx, "completeReminder", {
+                              projectId: project.id,
+                              reminderId: reminder.id,
+                            }).then(() => load()),
+                        },
+                        "提前完成",
+                      )
+                    : null,
+                  reminder.state === "pending"
+                    ? h(
+                        "button",
+                        {
+                          type: "button",
+                          style: smallButton,
+                          "data-projects-reminder-cancel": reminder.id,
+                          onClick: () =>
+                            call(api.ctx, "cancelReminder", {
+                              projectId: project.id,
+                              reminderId: reminder.id,
+                            }).then(() => load()),
+                        },
+                        "取消",
+                      )
+                    : null,
+                ),
+              ),
+            )
+          : null,
+      );
+    }
+
+    // —— B4 · F52 权限收窄（默认「继承宿主」，只会收窄，不会放宽）——
+    /** @param {any} props */
+    function PermissionNarrowCard(props) {
+      const api = props.api;
+      const project = props.project;
+      const [view, setView] = useState(null);
+      const [busy, setBusy] = useState(false);
+      const [message, setMessage] = useState({ text: "", ok: null });
+      const load = useCallback(() => {
+        call(api.ctx, "permissionState", { projectId: project.id }).then(
+          (/** @type {any} */ result) => setView(result),
+          (/** @type {any} */ error) =>
+            setView({
+              catalog: { available: false, options: [], notes: [] },
+              sessions: [],
+              reason: String(error?.message ?? error),
+            }),
+        );
+      }, [api, project.id]);
+      useEffect(() => {
+        load();
+      }, [load]);
+      const catalog = view?.catalog ?? { available: false, options: [], notes: [] };
+      const current = view ? String(view.preset ?? "") : "";
+      const choose = (/** @type {any} */ next) => {
+        setBusy(true);
+        setMessage({ text: "", ok: null });
+        call(api.ctx, "setProjectPreset", { projectId: project.id, preset: next }).then(
+          (/** @type {any} */ result) => {
+            setBusy(false);
+            if (result && result.ok === false) {
+              setMessage({ text: String(result.reason || "设置失败"), ok: false });
+              return;
+            }
+            const applied = Array.isArray(result?.applied?.applied) ? result.applied.applied : [];
+            const okCount = applied.filter((/** @type {any} */ item) => item.ok === true).length;
+            const pending = applied.length - okCount;
+            setMessage({
+              text:
+                "已保存" +
+                (applied.length === 0
+                  ? "（新会话生效）"
+                  : "；回读成功 " +
+                    okCount +
+                    "/" +
+                    applied.length +
+                    (pending > 0 ? `（${pending} 条待应用）` : "")),
+              ok: pending === 0,
+            });
+            load();
+          },
+          (/** @type {any} */ error) => {
+            setBusy(false);
+            setMessage({ text: String(error?.message ?? error).slice(0, 200), ok: false });
+          },
+        );
+      };
+      /** @type {any[]} */
+      const sessions = Array.isArray(view?.sessions) ? view.sessions : [];
+      const lastApplied = sessions.find((/** @type {any} */ item) => item?.at) ?? null;
+      return h(
+        "div",
+        {
+          style: { display: "flex", flexDirection: "column", gap: "6px" },
+          "data-projects-preset": "",
+          "data-projects-preset-available": catalog.available ? "yes" : "no",
+          "data-projects-preset-current": current,
+          // 回读证据：每个会话的 {sessionId, kind, targetPreset, currentPreset, ok, mode}（原样给冒烟/排查用）
+          "data-projects-preset-readback": JSON.stringify(sessions),
+        },
+        h(
+          "div",
+          { style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" } },
+          h("span", { style: styles.meta }, "线程权限（只会收窄）"),
+          h(
+            "select",
+            {
+              style: { ...styles.input, flex: "1 1 200px" },
+              value: current,
+              disabled: busy || catalog.available !== true,
+              "data-projects-preset-select": "",
+              onChange: (/** @type {any} */ event) => {
+                const next = String(event.target.value);
+                if (next === current) return;
+                choose(next);
+              },
+            },
+            catalog.available
+              ? [catalog.inherit, ...(catalog.options ?? [])].map((/** @type {any} */ option) =>
+                  h(
+                    "option",
+                    {
+                      key: option.name,
+                      value: option.name,
+                      "data-projects-preset-option": option.name,
+                    },
+                    String(option.label) +
+                      (option.relation === "narrower" ? "（比宿主默认更窄）" : "") +
+                      (option.isDefault ? "（宿主默认）" : ""),
+                  ),
+                )
+              : h("option", { value: "" }, "宿主没有 permissionPresets，无法收窄"),
+          ),
+          h(
+            "button",
+            {
+              type: "button",
+              style: smallButton,
+              disabled: busy || catalog.available !== true,
+              "data-projects-preset-apply": "",
+              onClick: () => {
+                setBusy(true);
+                call(api.ctx, "applyProjectPreset", { projectId: project.id }).then(
+                  (/** @type {any} */ result) => {
+                    setBusy(false);
+                    const applied = Array.isArray(result?.applied) ? result.applied : [];
+                    setMessage({
+                      text:
+                        "已应用到 " +
+                        String(
+                          applied.filter((/** @type {any} */ item) => item.ok === true).length,
+                        ) +
+                        "/" +
+                        String(applied.length) +
+                        " 个现有会话",
+                      ok: applied.every((/** @type {any} */ item) => item.ok === true),
+                    });
+                    load();
+                  },
+                  (/** @type {any} */ error) => {
+                    setBusy(false);
+                    setMessage({ text: String(error?.message ?? error).slice(0, 200), ok: false });
+                  },
+                );
+              },
+            },
+            "应用到现有会话",
+          ),
+        ),
+        h(
+          "div",
+          { style: styles.meta, "data-projects-preset-note": "" },
+          "推 / 合并 / 删除永远需要你在面板里批准（插件执行器）；本开关只影响工具调用是否逐次询问，以及命令能否写到项目目录之外，不绕过任何一道闸门。",
+        ),
+        sessions.length > 0
+          ? h(
+              "div",
+              { style: styles.meta, "data-projects-preset-sessions": String(sessions.length) },
+              "现有会话回读：" +
+                String(sessions.filter((/** @type {any} */ item) => item.ok === true).length) +
+                "/" +
+                String(sessions.length) +
+                " 已生效" +
+                (lastApplied?.currentPreset
+                  ? `（current(session)=${String(lastApplied.currentPreset)}）`
+                  : "（句柄未就绪的会标「待应用」）"),
+            )
+          : null,
+        message.text !== ""
+          ? h(
+              "span",
+              {
+                style: { ...styles.meta, color: message.ok === false ? T.danger : T.text },
+                "data-projects-preset-message": "",
+              },
+              String(message.text),
+            )
+          : null,
+        (catalog.notes ?? []).length > 0
+          ? h(
+              "details",
+              { style: styles.meta },
+              h("summary", { style: { cursor: "pointer" } }, "边界说明"),
+              (catalog.notes ?? []).map((/** @type {any} */ note, /** @type {any} */ index) =>
+                h("div", { key: index, style: styles.meta }, `· ${String(note)}`),
+              ),
+            )
+          : null,
+      );
+    }
+
     /**
      * 全局通知：轮询各活跃项目的线程状态，新出现「失败 / 等你」时弹一条应用内 toast。
      * 不依赖浏览器 Notification（那条需要用户手势授权，默认不开）。
@@ -7734,6 +8775,10 @@ window.__ModuleLoader__.load({
       const state = useState(null);
       const notice = state[0];
       const setNotice = state[1];
+      // B4/F30：提醒到点后由宿主标记 fired+unread，这里轮询出来弹 toast（弹过就 ack）。
+      const reminderState = useState(null);
+      const reminderNotice = reminderState[0];
+      const setReminderNotice = reminderState[1];
       const previous = React.useRef({ threads: {}, projects: [] });
 
       useEffect(() => {
@@ -7811,14 +8856,87 @@ window.__ModuleLoader__.load({
       }, [api]);
 
       useEffect(() => {
+        let cancelled = false;
+        const tick = () => {
+          const doc = typeof document === "undefined" ? null : document;
+          if (doc?.hidden === true) return;
+          call(api.ctx, "allDueReminders").then(
+            (result) => {
+              if (cancelled) return;
+              const todo = Array.isArray(result?.todo) ? result.todo : [];
+              if (todo.length === 0) return;
+              setReminderNotice({
+                ids: todo.map((/** @type {any} */ item) => ({
+                  projectId: item.projectId,
+                  id: item.id,
+                })),
+                text: todo
+                  .map((/** @type {any} */ item) => String(item.text || ""))
+                  .filter((/** @type {string} */ line) => line !== "")
+                  .join(" · "),
+                at: Date.now(),
+              });
+              // 弹过就标 notified：关掉再开不重复弹（unread 标记仍在提醒列表里）
+              for (const item of todo) {
+                void call(api.ctx, "ackReminder", {
+                  projectId: item.projectId,
+                  reminderId: item.id,
+                }).catch(() => {});
+              }
+            },
+            () => {},
+          );
+        };
+        tick();
+        const timer = setInterval(tick, 3000);
+        return () => {
+          cancelled = true;
+          clearInterval(timer);
+        };
+      }, [api]);
+
+      useEffect(() => {
         if (!notice) return undefined;
         const timer = setTimeout(() => setNotice(null), 8000);
         return () => clearTimeout(timer);
       }, [notice]);
 
+      useEffect(() => {
+        if (!reminderNotice) return undefined;
+        const timer = setTimeout(() => setReminderNotice(null), 12000);
+        return () => clearTimeout(timer);
+      }, [reminderNotice]);
+
       return h(
         "div",
         { "data-projects-notifier": "", style: { display: "contents" } },
+        reminderNotice
+          ? h(
+              "div",
+              {
+                role: "status",
+                "data-projects-reminder-toast": String((reminderNotice.ids ?? []).length),
+                onClick: () => props.onOpen?.(),
+                style: {
+                  position: "fixed",
+                  right: "16px",
+                  bottom: notice ? "92px" : "16px",
+                  zIndex: 61,
+                  maxWidth: "320px",
+                  padding: "10px 12px",
+                  borderRadius: "8px",
+                  border: `1px solid ${T.border}`,
+                  background: T.bg,
+                  color: T.text,
+                  boxShadow: "0 6px 20px rgba(0,0,0,0.18)",
+                  fontSize: "13px",
+                  cursor: "pointer",
+                },
+              },
+              h("div", { style: { fontWeight: 600, marginBottom: "2px" } }, "提醒"),
+              h("div", { style: { color: T.dim } }, String(reminderNotice.text || "到点了")),
+            )
+          : null,
         notice
           ? h(
               "div",
@@ -8502,6 +9620,23 @@ window.__ModuleLoader__.load({
               policy: selectedForDanger.policy,
               onChange: applyPolicy,
             });
+          })(),
+
+          // —— B4/F52：线程权限收窄（默认「继承宿主」；写→回读在卡片里显示）——
+          (() => {
+            var selectedForPreset = view.projects.find(
+              (/** @type {any} */ item) => item.id === view.selectedId,
+            );
+            if (!selectedForPreset) return null;
+            return h(
+              "div",
+              { style: { marginTop: "8px" } },
+              h(PermissionNarrowCard, {
+                api: api,
+                t: t,
+                project: selectedForPreset,
+              }),
+            );
           })(),
 
           // —— B2/F45：Restart 行（丢掉当前协调器会话，重开一个）——

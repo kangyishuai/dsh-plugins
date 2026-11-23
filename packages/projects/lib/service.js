@@ -61,6 +61,15 @@ import {
   todoSummary,
 } from "./overview.js";
 import { resolveDataRoot } from "./paths.js";
+import {
+  fallbackSessionEvents,
+  INHERIT_PRESET,
+  inheritOption,
+  PRESET_SAFETY_NOTES,
+  planPresetApplication,
+  summarizeCatalog,
+  verifyPresetApplication,
+} from "./permission-narrow.js";
 import { buildPersona } from "./persona.js";
 import {
   nextPollDelay,
@@ -72,6 +81,32 @@ import {
 } from "./pr-poll.js";
 import { readProjectFiles } from "./project-files.js";
 import { buildPurgeManifest, DEFAULT_RETENTION_DAYS, selectExpired } from "./purge.js";
+import {
+  DEFAULT_REMINDER_MODE,
+  markCancelled,
+  markDone,
+  markFired,
+  newReminderId,
+  normalizeReminderMode,
+  planReminderRecovery,
+  purgeExpiredReminders,
+  REMINDER_MODE_OPTIONS,
+  remainingTime,
+  resolveReminderMode,
+  scheduleTimingFor,
+  validateReminderInput,
+} from "./reminders.js";
+import {
+  appendRoutineHistory,
+  buildRoutineTiming,
+  describeRoutineFrequency,
+  describeScheduleStatus,
+  historyFromDelivery,
+  MANUAL_COST_HINT,
+  newRoutineId,
+  ROUTINE_COST_HINT,
+  validateRoutineInput,
+} from "./routines.js";
 import { decideRoute } from "./routing.js";
 import { ProjectStore } from "./store.js";
 import {
@@ -155,6 +190,22 @@ async function runGit(args, cwd) {
  */
 async function runGh(args, cwd) {
   return runCommand("gh", args, { cwd });
+}
+
+/**
+ * 读一个宿主服务的 override（F52 兜底路径的回读：`approval.overrideOf` / `sandboxPolicy.overrideOf`）。
+ * 拿不到/调用失败一律返回 undefined——**不编造**，"读不到"和"没有 override"是两件事。
+ * @param {any} service @param {string} method @param {any} session
+ * @returns {string|undefined}
+ */
+function hostOverride(service, method, session) {
+  if (!service || typeof service[method] !== "function") return undefined;
+  try {
+    const value = service[method](session);
+    return typeof value === "string" && value !== "" ? value : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -257,6 +308,25 @@ export class ProjectsService extends TypertRemoteService {
     this.uiStateFallback = { firstRunDone: false, collapsedGroups: {}, realtimeCi: false };
     /** @type {{ loaded: boolean, loading: Promise<any>|undefined, domain: any }} */
     this.uiDomain = { loaded: false, loading: undefined, domain: null };
+    /**
+     * F52：会话句柄缓存（sessionId → Session）。`permissionPresets.set(session, name)` 收 Session，
+     * 而 `sessionController.create()` 只回 sessionId——句柄只能从 `agent/created` 的 `agent.session`
+     * 或 `sessions` 注册表拿，拿不到就如实标「待应用」，不假装已生效。
+     * @type {Map<string, any>}
+     */
+    this.sessionHandles = new Map();
+    /**
+     * F52：每个会话的「写→回读」结果（面板直接用，别让 UI 自己猜）。
+     * @type {Map<string, any>}
+     */
+    this.presetApplied = new Map();
+    /**
+     * F30：本机计时器的句柄（reminderId → Timeout）。重启后由 armReminders 按盘上记录重建。
+     * @type {Map<string, any>}
+     */
+    this.reminderTimers = new Map();
+    /** @type {{ at: number, armed: number, overdue: number }} */
+    this.reminderArming = { at: 0, armed: 0, overdue: 0 };
     /** @type {any} */
     this.agents = undefined;
     /** @type {any} */
@@ -340,6 +410,8 @@ export class ProjectsService extends TypertRemoteService {
       this.logger.info?.(
         `[projects] loaded ${this.store.listProjects().length} project(s) from ${this.store.file}`,
       );
+      // F30：启动即恢复计时（关机期间到点的提醒在这里补触发；随后 armReminders 再排其余）。
+      this.armReminders();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn?.(`[projects] store unavailable: ${message}`);
@@ -762,6 +834,30 @@ export class ProjectsService extends TypertRemoteService {
         undefined,
         "tools-skip",
         String(/** @type {any} */ (error)?.message ?? error).slice(0, 200),
+      );
+    }
+    // F52：agent 一出生就记住它的 Session 句柄（`permissionPresets.set/current` 收 Session），
+    // 并在这个会话属于某个项目（线程或协调器）时套用项目档位 → 回读写进 presetApplied。
+    // 放在工具挂载之后：那条路径有专门的守卫测试（零调用者回归），不能被新逻辑挡住。
+    try {
+      this.rememberSession(sessionId, agent?.session);
+      const store = this.store;
+      const owner =
+        store?.projectOfCoordinatorSession?.(sessionId) ?? store?.projectOfSession?.(sessionId);
+      const projectId = String(owner?.id ?? "");
+      if (projectId !== "" && typeof owner?.preset === "string" && owner.preset !== "") {
+        const kind = owner?.coordinatorSessionId === sessionId ? "coordinator" : "thread";
+        void this.applyPresetToSession(projectId, sessionId, kind).catch(
+          (/** @type {any} */ error) => {
+            this.logger?.warn?.(
+              `[projects] preset apply failed: ${String(error?.message ?? error).slice(0, 160)}`,
+            );
+          },
+        );
+      }
+    } catch (error) {
+      this.logger?.warn?.(
+        `[projects] preset handle skipped: ${String(/** @type {any} */ (error)?.message ?? error).slice(0, 160)}`,
       );
     }
   }
@@ -2077,6 +2173,20 @@ export class ProjectsService extends TypertRemoteService {
     store.updateProject(projectId, { coordinatorSessionId: sessionId });
     store.appendAudit({ action: "coordinator/created", projectId, sessionId });
     store.save();
+    // F52：协调器会话同样套用项目档位（句柄拿不到就标 pending，等 agent/created 或「应用」按钮补）
+    if (typeof project.preset === "string" && project.preset !== "") {
+      try {
+        await this.applyPresetToSession(projectId, sessionId, "coordinator");
+      } catch (error) {
+        store.appendAudit({
+          action: "preset/pending",
+          projectId,
+          sessionId,
+          reason: String(/** @type {any} */ (error)?.message ?? error).slice(0, 160),
+        });
+        store.save();
+      }
+    }
     // 显式挂人格：agent 是懒创建的，靠 agent/created 钩子会受时序影响。
     // 这里主动预热一轮（轻量文本）并在几秒内重试挂载；失败只记审计，不阻断。
     const attached = await this.warmUpCoordinator(projectId, sessionId);
@@ -2891,6 +3001,20 @@ export class ProjectsService extends TypertRemoteService {
       },
     });
     store.save();
+    // F52：新线程会话套用项目权限档位（默认 null = 继承宿主，什么都不做）
+    if (typeof project.preset === "string" && project.preset !== "") {
+      try {
+        await this.applyPresetToSession(projectId, thread.sessionId, "thread");
+      } catch (error) {
+        store.appendAudit({
+          action: "preset/pending",
+          projectId,
+          sessionId: thread.sessionId,
+          reason: String(/** @type {any} */ (error)?.message ?? error).slice(0, 160),
+        });
+        store.save();
+      }
+    }
     // F42：新线程套用项目级默认模型 / effort（空串 = 继承宿主默认，不强行 selectModel）
     const defaults = project.threadDefaults ?? { provider: "", model: "" };
     if (String(defaults.provider ?? "") !== "" && String(defaults.model ?? "") !== "") {
@@ -3758,6 +3882,1080 @@ export class ProjectsService extends TypertRemoteService {
       .slice(0, 20);
     return { ok: true, sessions };
   }
+
+  // ===== B4 · F52 权限收窄 / F36 Routines / F30 双模式提醒 =====
+  //
+  // 三件事共用一条原则：**写→回读**。RPC 返回里带宿主读回值（preset 的 current(session)、
+  // schedule 的 status/next、提醒的盘上状态），UI 只渲染回读值，不渲染"我刚写进去的东西"。
+
+  /** @returns {any} 宿主的 permissionPresets（按 `ctx.get()` 判空） */
+  permissionPresets() {
+    return this.hostService("permissionPresets");
+  }
+
+  /** @returns {any} 宿主的 schedule（按 `ctx.get()` 判空） */
+  scheduleHost() {
+    return this.hostService("schedule");
+  }
+
+  /** 宿主时区名（IANA）；拿不到就 UTC（宿主 side 换算，我们只传名字） */
+  hostTimeZone() {
+    try {
+      const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      return typeof zone === "string" && zone !== "" ? zone : "UTC";
+    } catch {
+      return "UTC";
+    }
+  }
+
+  /**
+   * 记住一个 Session 句柄（`permissionPresets.set/current` 收 Session，不收 sessionId）。
+   * @param {string} sessionId @param {any} session
+   */
+  rememberSession(sessionId, session) {
+    if (typeof sessionId !== "string" || sessionId === "") return;
+    if (!session || typeof session.append !== "function") return;
+    this.sessionHandles.set(sessionId, session);
+  }
+
+  /**
+   * 取会话句柄：先缓存，再试 `sessions` 注册表，最后 `sessionController.resolveAgent`。
+   * 三条路都不通就返回 undefined——调用方必须如实标「待应用」，不许假装已生效。
+   * @param {string} sessionId
+   * @returns {Promise<any|undefined>}
+   */
+  async sessionHandleFor(sessionId) {
+    const cached = this.sessionHandles.get(sessionId);
+    if (cached) return cached;
+    const sessions = this.hostService("sessions");
+    if (sessions && typeof sessions === "object") {
+      for (const method of ["get", "lookup", "resolve"]) {
+        const fn = /** @type {any} */ (sessions)[method];
+        if (typeof fn !== "function") continue;
+        try {
+          const found = await fn.call(sessions, sessionId);
+          if (found && typeof found.append === "function") {
+            this.sessionHandles.set(sessionId, found);
+            return found;
+          }
+        } catch {
+          /* 这条获取路径不通就试下一条 */
+        }
+      }
+    }
+    const sc = this.sessionController;
+    const resolveAgent = /** @type {any} */ (sc)?.resolveAgent;
+    if (typeof resolveAgent === "function") {
+      try {
+        const resolved = await resolveAgent.call(sc, sessionId);
+        const session = resolved?.agent?.session;
+        if (session && typeof session.append === "function") {
+          this.sessionHandles.set(sessionId, session);
+          return session;
+        }
+      } catch {
+        /* agent 可能还是懒创建的：留给 agent/created 钩子或「应用」按钮重试 */
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * F52：宿主的 catalog + 人话选项 + 本部署默认档。**名字一律来自 catalog，不写死**。
+   * @returns {any}
+   */
+  permissionCatalog() {
+    const presets = this.permissionPresets();
+    if (!presets || typeof presets.catalog !== "function") {
+      return {
+        available: false,
+        reason: "permission-presets-unavailable",
+        options: [],
+        defaultPreset: "",
+        notes: [...PRESET_SAFETY_NOTES],
+        inherit: inheritOption(
+          { kind: "custom", label: "未知", detail: "宿主没有 permissionPresets 服务" },
+          "",
+        ),
+      };
+    }
+    let catalog;
+    try {
+      catalog = presets.catalog();
+    } catch (error) {
+      return {
+        available: false,
+        reason: `permission-catalog-failed:${String(/** @type {any} */ (error)?.message ?? error).slice(0, 120)}`,
+        options: [],
+        defaultPreset: "",
+        notes: [...PRESET_SAFETY_NOTES],
+        inherit: inheritOption({ kind: "custom", label: "未知", detail: "" }, ""),
+      };
+    }
+    const summary = summarizeCatalog(catalog, (/** @type {string} */ name) =>
+      presets.resolve(name),
+    );
+    return {
+      available: true,
+      reason: "",
+      options: summary.options,
+      defaultPreset: summary.defaultPreset,
+      defaultHuman: summary.defaultHuman,
+      inherit: inheritOption(summary.defaultHuman, summary.defaultPreset),
+      notes: [...PRESET_SAFETY_NOTES],
+    };
+  }
+
+  /**
+   * F52：给一个会话套用项目档位（并回读）。返回的结构就是证据：
+   * `targetPreset` / `currentPreset` / `mode` / `ok` / `reason`。
+   * @param {string} projectId @param {string} sessionId @param {string} kind
+   * @returns {Promise<any>}
+   */
+  async applyPresetToSession(projectId, sessionId, kind) {
+    const store = this.requireStore();
+    const project = store.getProject(projectId);
+    const targetPreset = typeof project?.preset === "string" ? project.preset : "";
+    const record = {
+      sessionId,
+      kind,
+      projectId,
+      targetPreset,
+      currentPreset: "",
+      mode: "",
+      ok: false,
+      reason: "",
+      at: new Date().toISOString(),
+    };
+    if (targetPreset === INHERIT_PRESET) {
+      record.ok = true;
+      record.mode = "inherit";
+      record.reason = "inherit-host-default";
+      this.presetApplied.set(sessionId, record);
+      return record;
+    }
+    const presets = this.permissionPresets();
+    if (!presets) {
+      record.reason = "permission-presets-unavailable";
+      this.presetApplied.set(sessionId, record);
+      return record;
+    }
+    const session = await this.sessionHandleFor(sessionId);
+    if (!session) {
+      record.reason = "session-handle-unavailable";
+      this.presetApplied.set(sessionId, record);
+      store.appendAudit({
+        action: "preset/pending",
+        projectId,
+        sessionId,
+        kind,
+        preset: targetPreset,
+      });
+      store.save();
+      return record;
+    }
+    let names = [];
+    try {
+      const catalog = presets.catalog();
+      names = (Array.isArray(catalog?.options) ? catalog.options : []).map(
+        (/** @type {any} */ option) =>
+          typeof option === "string" ? option : String(option?.value ?? ""),
+      );
+    } catch {
+      names = [];
+    }
+    let spec;
+    try {
+      spec = typeof presets.resolve === "function" ? presets.resolve(targetPreset) : undefined;
+    } catch {
+      spec = undefined;
+    }
+    const plan = planPresetApplication({
+      preset: targetPreset,
+      catalogNames: names,
+      fallbackSpec: spec,
+    });
+    try {
+      if (plan.mode === "preset" && typeof presets.set === "function") {
+        presets.set(session, plan.name);
+        record.mode = "preset";
+      } else if (plan.mode === "fallback") {
+        // 没有匹配档位：用两个会话事件兜底（公开 Session API，不引宿主包）
+        for (const event of fallbackSessionEvents(plan.spec))
+          session.append(event.type, event.payload);
+        record.mode = "fallback";
+      } else {
+        record.mode = "invalid";
+        record.reason = plan.mode === "invalid" ? plan.reason : "preset/set-unavailable";
+      }
+    } catch (error) {
+      record.mode = record.mode || "error";
+      record.reason = String(/** @type {any} */ (error)?.message ?? error).slice(0, 160);
+    }
+    // 回读：preset 路径读 `current(session)`；兜底路径读 approval/sandbox 的 override
+    try {
+      const currentPreset = String(presets.current?.(session) ?? "");
+      record.currentPreset = currentPreset;
+      const currentSpec =
+        record.mode === "fallback" ? this.sessionOverrideSpec(session) : undefined;
+      const verdict = verifyPresetApplication({
+        targetPreset,
+        currentPreset,
+        targetSpec: spec,
+        currentSpec,
+      });
+      record.ok = verdict.ok;
+      if (!verdict.ok && record.reason === "") record.reason = verdict.reason;
+    } catch (error) {
+      record.reason = `preset/readback-failed:${String(/** @type {any} */ (error)?.message ?? error).slice(0, 120)}`;
+    }
+    this.presetApplied.set(sessionId, record);
+    store.appendAudit({
+      action: record.ok ? "preset/applied" : "preset/apply-failed",
+      projectId,
+      sessionId,
+      kind,
+      preset: targetPreset,
+      current: record.currentPreset,
+      mode: record.mode,
+      reason: record.reason,
+    });
+    store.save();
+    return record;
+  }
+
+  /**
+   * 兜底路径的回读：approval/sandbox 的 override（都收 Session，见 runtime §12）。
+   * @param {any} session
+   * @returns {{ sandbox: string, approval: string }|undefined}
+   */
+  sessionOverrideSpec(session) {
+    const approval = hostOverride(this.hostService("approval"), "overrideOf", session);
+    const sandbox = hostOverride(this.hostService("sandboxPolicy"), "overrideOf", session);
+    if (approval === undefined && sandbox === undefined) return undefined;
+    return { approval: approval ?? "", sandbox: sandbox ?? "" };
+  }
+
+  /**
+   * F52：把项目档位应用到协调器 + 全部线程（旧会话补应用）。返回逐会话回读结果。
+   * @param {string} projectId
+   * @returns {Promise<any>}
+   */
+  async applyProjectPreset(projectId) {
+    const store = this.requireStore();
+    const project = store.getProject(projectId);
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    /** @type {string[]} */
+    const targets = [];
+    if (typeof project.coordinatorSessionId === "string" && project.coordinatorSessionId !== "") {
+      targets.push(project.coordinatorSessionId);
+    }
+    for (const thread of store.listThreads(projectId)) {
+      if (thread?.state === "archived") continue;
+      targets.push(String(thread.sessionId));
+    }
+    /** @type {any[]} */
+    const applied = [];
+    /** @type {string[]} */
+    const pending = [];
+    for (const sessionId of targets) {
+      const kind = sessionId === project.coordinatorSessionId ? "coordinator" : "thread";
+      // eslint-disable-next-line no-await-in-loop -- 会话句柄获取是串行的宿主调用，逐条等更稳
+      const record = await this.applyPresetToSession(projectId, sessionId, kind);
+      applied.push(record);
+      if (!record.ok) pending.push(sessionId);
+    }
+    return {
+      projectId,
+      preset: project.preset ?? null,
+      applied,
+      pending,
+      at: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * F52：面板/冒烟用的读视图：目录 + 项目当前选择 + 每个会话的回读。
+   * @param {string} projectId
+   * @returns {Promise<any>}
+   */
+  async permissionState(projectId) {
+    const store = this.requireStore();
+    const project = store.getProject(projectId);
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const catalog = this.permissionCatalog();
+    /** @type {any[]} */
+    const sessions = [];
+    if (typeof project.coordinatorSessionId === "string" && project.coordinatorSessionId !== "") {
+      sessions.push({
+        sessionId: project.coordinatorSessionId,
+        kind: "coordinator",
+        ...(this.presetApplied.get(project.coordinatorSessionId) ?? {}),
+      });
+    }
+    for (const thread of store.listThreads(projectId)) {
+      const record = this.presetApplied.get(String(thread.sessionId));
+      sessions.push({
+        sessionId: thread.sessionId,
+        kind: "thread",
+        ...(record ?? {}),
+      });
+    }
+    return {
+      projectId,
+      preset: project.preset ?? null,
+      catalog,
+      sessions,
+      appliedCount: sessions.filter((/** @type {any} */ item) => item.ok === true).length,
+      pendingCount: sessions.filter((/** @type {any} */ item) => item.ok !== true).length,
+    };
+  }
+
+  /**
+   * F52：写项目档位（先 `catalog()` 校验名字，再写盘，再套用到现有会话并回读）。
+   * @param {string} projectId @param {unknown} preset
+   * @returns {Promise<any>}
+   */
+  async setProjectPreset(projectId, preset) {
+    const store = this.requireStore();
+    const project = store.getProject(projectId);
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const value = String(preset ?? "").trim();
+    const catalog = this.permissionCatalog();
+    if (value !== INHERIT_PRESET) {
+      if (!catalog.available) {
+        return {
+          ok: false,
+          reason: catalog.reason || "permission-presets-unavailable",
+          preset: project.preset ?? null,
+        };
+      }
+      const names = catalog.options.map((/** @type {any} */ option) => String(option.name));
+      if (!names.includes(value))
+        return {
+          ok: false,
+          reason: `preset/not-in-catalog:${value}`,
+          preset: project.preset ?? null,
+        };
+    }
+    const written = store.setProjectPreset(projectId, value);
+    store.appendAudit({
+      action: "preset/selected",
+      projectId,
+      preset: written.preset,
+      previous: project.preset ?? null,
+    });
+    store.save();
+    const applied = await this.applyProjectPreset(projectId);
+    return { ok: true, reason: "", preset: written.preset, applied, catalog };
+  }
+
+  // —— F36 Routines ——
+
+  /**
+   * 一条 routine 的宿主侧状态（`schedule.view`），拿不到就如实说没有。
+   * @param {string} scheduleId
+   * @returns {Promise<any|undefined>}
+   */
+  async scheduleEntry(scheduleId) {
+    if (scheduleId === "") return undefined;
+    const schedule = this.scheduleHost();
+    if (!schedule || typeof schedule.view !== "function") return undefined;
+    try {
+      return await schedule.view({ id: scheduleId });
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * F36：Routines 视图（列表 + 每条 routine 的宿主状态 + 历史 + 成本提示）。
+   * @param {string} projectId
+   * @returns {Promise<any>}
+   */
+  async routinesView(projectId) {
+    const store = this.requireStore();
+    const project = store.getProject(projectId);
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const schedule = this.scheduleHost();
+    const available = Boolean(schedule && typeof schedule.create === "function");
+    /** @type {any[]} */
+    const routines = [];
+    for (const routine of store.listRoutines(projectId)) {
+      const entry = await this.scheduleEntry(routine.scheduleId);
+      const status = describeScheduleStatus(entry, routine.enabled !== false);
+      routines.push({
+        ...routine,
+        description: describeRoutineFrequency(routine),
+        status,
+        lastDelivery: entry?.lastDelivery ?? null,
+        hostStatus: entry?.status ?? (routine.scheduleId === "" ? "manual" : "missing"),
+      });
+    }
+    return {
+      projectId,
+      available,
+      reason: available ? "" : "schedule-unavailable",
+      costHint: ROUTINE_COST_HINT,
+      manualHint: MANUAL_COST_HINT,
+      timeZone: this.hostTimeZone(),
+      routines,
+      projectDir:
+        Array.isArray(project.dirs) && project.dirs.length > 0 ? project.dirs[0] : this.dataRoot,
+    };
+  }
+
+  /**
+   * F36：新建 routine。先建宿主 schedule（自动档），再落本地记录；本地失败时把宿主条目删掉（补偿）。
+   * @param {string} projectId @param {any} input
+   * @returns {Promise<any>}
+   */
+  async createRoutine(projectId, input) {
+    const store = this.requireStore();
+    const project = store.getProject(projectId);
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const checked = validateRoutineInput({
+      ...(input && typeof input === "object" ? input : {}),
+      timeZone: this.hostTimeZone(),
+    });
+    if (!checked.ok) return { ok: false, reason: checked.reason };
+    const value = checked.value;
+    const timing = buildRoutineTiming(value.frequency, {
+      time: value.time,
+      weekday: value.weekday,
+      dayOfMonth: value.dayOfMonth,
+      timeZone: this.hostTimeZone(),
+    });
+    if (!timing.ok) return { ok: false, reason: timing.reason };
+    const routineId = newRoutineId();
+    /** @type {any} */
+    let scheduleId = "";
+    const schedule = this.scheduleHost();
+    if (timing.timing !== null) {
+      if (!schedule || typeof schedule.create !== "function") {
+        return { ok: false, reason: "schedule-unavailable" };
+      }
+      const cwd =
+        Array.isArray(project.dirs) && project.dirs.length > 0 ? project.dirs[0] : this.dataRoot;
+      try {
+        mkdirSync(cwd, { recursive: true });
+      } catch {
+        /* 目录已存在/无权限：宿主 create 会报出真正原因 */
+      }
+      try {
+        const created = await schedule.create({
+          title: `[${String(project.name ?? projectId)}] ${value.name}`.slice(0, 120),
+          prompt: value.instructions,
+          timing: timing.timing,
+          target: { kind: "new", create: { cwd } },
+        });
+        scheduleId = String(created?.id ?? "");
+      } catch (error) {
+        store.appendAudit({
+          action: "routine/create-failed",
+          projectId,
+          frequency: value.frequency,
+          reason: String(/** @type {any} */ (error)?.message ?? error).slice(0, 160),
+        });
+        store.save();
+        return {
+          ok: false,
+          reason: String(/** @type {any} */ (error)?.message ?? error).slice(0, 200),
+        };
+      }
+      if (scheduleId === "") return { ok: false, reason: "schedule/no-id" };
+    }
+    try {
+      const added = store.addRoutine(projectId, {
+        id: routineId,
+        name: value.name,
+        instructions: value.instructions,
+        frequency: value.frequency,
+        time: value.time ?? "09:00:00",
+        weekday: value.weekday,
+        dayOfMonth: value.dayOfMonth,
+        timeZone: this.hostTimeZone(),
+        cron: timing.expression,
+        enabled: true,
+        spaceId: String(projectId),
+        scheduleId,
+        createdAt: new Date().toISOString(),
+        lastRunAt: "",
+        history: [],
+      });
+      store.appendAudit({
+        action: "routine/created",
+        projectId,
+        routineId,
+        frequency: value.frequency,
+        scheduleId,
+      });
+      store.save();
+      const entry = await this.scheduleEntry(scheduleId);
+      return {
+        ok: true,
+        routine: {
+          ...added.routine,
+          description: describeRoutineFrequency(added.routine),
+          status: describeScheduleStatus(entry, true),
+        },
+        scheduleId,
+        timing: timing.timing,
+      };
+    } catch (error) {
+      // 补偿：本地没落成，宿主那条要撤掉，否则会静默继续花 token
+      if (scheduleId !== "" && schedule && typeof schedule.edit === "function") {
+        try {
+          await schedule.edit({ id: scheduleId, action: "delete" });
+        } catch {
+          /* 补偿失败：下面的错误里会带 routine 记录，让用户能在宿主侧清理 */
+        }
+      }
+      return {
+        ok: false,
+        reason: String(/** @type {any} */ (error)?.message ?? error).slice(0, 200),
+      };
+    }
+  }
+
+  /**
+   * F36：启停（宿主侧 paused/active + 本地 enabled 双写，回读宿主 status）。
+   * @param {string} projectId @param {string} routineId @param {boolean} enabled
+   * @returns {Promise<any>}
+   */
+  async setRoutineEnabled(projectId, routineId, enabled) {
+    const store = this.requireStore();
+    const routine = store
+      .listRoutines(projectId)
+      .find((/** @type {any} */ item) => item.id === routineId);
+    if (!routine) return { ok: false, reason: "routine/not-found" };
+    const schedule = this.scheduleHost();
+    let hostResult = "manual";
+    if (routine.scheduleId !== "") {
+      if (!schedule || typeof schedule.edit !== "function")
+        return { ok: false, reason: "schedule-unavailable" };
+      try {
+        await schedule.edit({
+          id: routine.scheduleId,
+          action: "update",
+          patch: { status: enabled === true ? "active" : "paused" },
+        });
+        hostResult = enabled === true ? "active" : "paused";
+      } catch (error) {
+        return {
+          ok: false,
+          reason: `schedule/edit-failed:${String(/** @type {any} */ (error)?.message ?? error).slice(0, 160)}`,
+        };
+      }
+    }
+    const updated = store.patchRoutine(projectId, routineId, { enabled: enabled === true });
+    store.appendAudit({
+      action: "routine/toggle",
+      projectId,
+      routineId,
+      enabled: enabled === true,
+      hostResult,
+    });
+    store.save();
+    const entry = await this.scheduleEntry(routine.scheduleId);
+    return {
+      ok: true,
+      routine: {
+        ...updated.routine,
+        description: describeRoutineFrequency(updated.routine),
+        status: describeScheduleStatus(entry, enabled === true),
+      },
+      hostResult,
+    };
+  }
+
+  /**
+   * F36：删除（先删宿主条目，再删本地；宿主删失败就不动本地，避免留下会花钱的孤儿）。
+   * @param {string} projectId @param {string} routineId
+   * @returns {Promise<any>}
+   */
+  async deleteRoutine(projectId, routineId) {
+    const store = this.requireStore();
+    const routine = store
+      .listRoutines(projectId)
+      .find((/** @type {any} */ item) => item.id === routineId);
+    if (!routine) return { ok: false, reason: "routine/not-found" };
+    const schedule = this.scheduleHost();
+    if (routine.scheduleId !== "") {
+      if (!schedule || typeof schedule.edit !== "function")
+        return { ok: false, reason: "schedule-unavailable" };
+      try {
+        await schedule.edit({ id: routine.scheduleId, action: "delete" });
+      } catch (error) {
+        return {
+          ok: false,
+          reason: `schedule/delete-failed:${String(/** @type {any} */ (error)?.message ?? error).slice(0, 160)}`,
+        };
+      }
+    }
+    const removed = store.removeRoutine(projectId, routineId);
+    store.appendAudit({
+      action: "routine/deleted",
+      projectId,
+      routineId,
+      removed: removed.removed,
+    });
+    store.save();
+    return { ok: true, ...removed };
+  }
+
+  /**
+   * F36：Run now（宿主 `schedule.run` 会真投递 = 真花一次模型调用；手动档也要有一个能跑的路径）。
+   * @param {string} projectId @param {string} routineId
+   * @returns {Promise<any>}
+   */
+  async runRoutineNow(projectId, routineId) {
+    const store = this.requireStore();
+    const project = store.getProject(projectId);
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const routine = store
+      .listRoutines(projectId)
+      .find((/** @type {any} */ item) => item.id === routineId);
+    if (!routine) return { ok: false, reason: "routine/not-found" };
+    const schedule = this.scheduleHost();
+    const at = new Date().toISOString();
+    if (routine.scheduleId !== "" && schedule && typeof schedule.run === "function") {
+      try {
+        await schedule.run({ id: routine.scheduleId });
+        store.patchRoutine(projectId, routineId, {
+          lastRunAt: at,
+          history: appendRoutineHistory(routine, {
+            at,
+            status: "run-now",
+            message: "通过宿主 schedule.run 投递（会跑一次模型）",
+            source: "run-now",
+          }),
+        });
+        store.appendAudit({ action: "routine/run-now", projectId, routineId, via: "schedule" });
+        store.save();
+        return { ok: true, via: "schedule", at };
+      } catch (error) {
+        const reason = String(/** @type {any} */ (error)?.message ?? error).slice(0, 200);
+        store.patchRoutine(projectId, routineId, {
+          history: appendRoutineHistory(routine, {
+            at,
+            status: "run-failed",
+            message: reason,
+            source: "run-now",
+          }),
+        });
+        store.appendAudit({ action: "routine/run-failed", projectId, routineId, reason });
+        store.save();
+        return { ok: false, reason };
+      }
+    }
+    // 手动档：没有宿主条目，直接往协调器会话投一条（协调器不存在就先建）
+    const coordinator = await this.ensureCoordinator(projectId);
+    const sessionId = String(coordinator?.sessionId ?? "");
+    if (sessionId === "") return { ok: false, reason: "routine/no-target-session" };
+    try {
+      await this.promptThread(sessionId, routine.instructions);
+      store.patchRoutine(projectId, routineId, {
+        lastRunAt: at,
+        history: appendRoutineHistory(routine, {
+          at,
+          status: "run-now",
+          message: `投递到协调器会话 ${sessionId.slice(0, 10)}（会跑一次模型）`,
+          source: "run-now",
+        }),
+      });
+      store.appendAudit({
+        action: "routine/run-now",
+        projectId,
+        routineId,
+        via: "coordinator",
+        sessionId,
+      });
+      store.save();
+      return { ok: true, via: "coordinator", sessionId, at };
+    } catch (error) {
+      const reason = String(/** @type {any} */ (error)?.message ?? error).slice(0, 200);
+      store.patchRoutine(projectId, routineId, {
+        history: appendRoutineHistory(routine, {
+          at,
+          status: "run-failed",
+          message: reason,
+          source: "run-now",
+        }),
+      });
+      store.save();
+      return { ok: false, reason };
+    }
+  }
+
+  /**
+   * F36：History（宿主 `schedule.history` 的投递记录 + 本地 Run now 记录，合起来按时间倒序）。
+   * @param {string} projectId @param {string} routineId
+   * @returns {Promise<any>}
+   */
+  async routineHistory(projectId, routineId) {
+    const store = this.requireStore();
+    const routine = store
+      .listRoutines(projectId)
+      .find((/** @type {any} */ item) => item.id === routineId);
+    if (!routine) return { ok: false, reason: "routine/not-found" };
+    const schedule = this.scheduleHost();
+    /** @type {any[]} */
+    const deliveries = [];
+    let retention = null;
+    let hostAvailable = false;
+    if (routine.scheduleId !== "" && schedule && typeof schedule.history === "function") {
+      try {
+        const result = await schedule.history({ id: routine.scheduleId, limit: 20 });
+        hostAvailable = true;
+        retention = result?.retention ?? null;
+        for (const record of Array.isArray(result?.records) ? result.records : []) {
+          deliveries.push({ ...historyFromDelivery(record), source: "host" });
+        }
+      } catch {
+        hostAvailable = false;
+      }
+    }
+    const local = (Array.isArray(routine.history) ? routine.history : []).map(
+      (/** @type {any} */ row) => ({ ...row, source: row.source || "local" }),
+    );
+    const rows = [...deliveries, ...local]
+      .filter((/** @type {any} */ row) => typeof row.at === "string" && row.at !== "")
+      .sort((/** @type {any} */ left, /** @type {any} */ right) => (left.at < right.at ? 1 : -1))
+      .slice(0, 20);
+    return {
+      ok: true,
+      routineId,
+      scheduleId: routine.scheduleId,
+      hostAvailable,
+      retention,
+      rows,
+    };
+  }
+
+  // —— F30 提醒（双模式） ——
+
+  /**
+   * F30：提醒视图（列表 + 默认模式 + 两种模式的成本差异 + 本机 arm 状态）。
+   * @param {string} projectId
+   * @returns {any}
+   */
+  remindersView(projectId) {
+    const store = this.requireStore();
+    const project = store.getProject(projectId);
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    // 过期清理只在读的时候做：pending 永不动，fired/cancelled/done 超 7 天清掉
+    const purged = purgeExpiredReminders(store.listReminders(projectId), Date.now());
+    if (purged.dropped.length > 0) {
+      for (const id of purged.dropped) store.removeReminder(projectId, id);
+      store.save();
+    }
+    const now = Date.now();
+    const list = purged.kept
+      .map((/** @type {any} */ reminder) => ({
+        ...reminder,
+        remaining: remainingTime(reminder.at, now),
+      }))
+      .sort((/** @type {any} */ left, /** @type {any} */ right) => (left.at < right.at ? -1 : 1));
+    const schedule = this.scheduleHost();
+    return {
+      projectId,
+      defaultMode: project.reminderDefault ?? DEFAULT_REMINDER_MODE,
+      options: REMINDER_MODE_OPTIONS,
+      list,
+      pendingCount: list.filter((/** @type {any} */ item) => item.state === "pending").length,
+      unreadCount: list.filter((/** @type {any} */ item) => item.state === "fired" && item.unread)
+        .length,
+      armed: this.reminderArming,
+      scheduleAvailable: Boolean(schedule && typeof schedule.create === "function"),
+    };
+  }
+
+  /**
+   * F30：改项目默认模式（timer 免费 / schedule 计费）。
+   * @param {string} projectId @param {unknown} mode
+   * @returns {any}
+   */
+  setReminderDefault(projectId, mode) {
+    const store = this.requireStore();
+    const value = normalizeReminderMode(mode);
+    if (value === "") return { ok: false, reason: "reminder/unknown-mode" };
+    const written = store.setReminderDefault(projectId, value);
+    store.appendAudit({ action: "reminder/default", projectId, mode: value });
+    store.save();
+    return { ok: true, reminderDefault: written.reminderDefault };
+  }
+
+  /**
+   * F30：新建提醒。
+   * - timer：只落本地 + 起 setTimeout（重启由 armReminders 恢复）；
+   * - schedule：转宿主 `schedule.create`（到点会跑一次模型），本地记 scheduleId。
+   * @param {string} projectId @param {any} input
+   * @returns {Promise<any>}
+   */
+  async createReminder(projectId, input) {
+    const store = this.requireStore();
+    const project = store.getProject(projectId);
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const mode = resolveReminderMode(project.reminderDefault, input?.mode);
+    const checked = validateReminderInput({ at: input?.at, text: input?.text, mode });
+    if (!checked.ok) return { ok: false, reason: checked.reason };
+    const value = checked.value;
+    const reminderId = newReminderId();
+    let scheduleId = "";
+    if (value.mode === "schedule") {
+      const schedule = this.scheduleHost();
+      if (!schedule || typeof schedule.create !== "function") {
+        return { ok: false, reason: "schedule-unavailable" };
+      }
+      const cwd =
+        Array.isArray(project.dirs) && project.dirs.length > 0 ? project.dirs[0] : this.dataRoot;
+      try {
+        mkdirSync(cwd, { recursive: true });
+      } catch {
+        /* 目录问题由宿主 create 报出真正原因 */
+      }
+      try {
+        const created = await schedule.create({
+          title: `提醒：${String(project.name ?? projectId)}`.slice(0, 120),
+          prompt: `提醒（${new Date(value.at).toLocaleString()}）：${value.text}`,
+          timing: scheduleTimingFor(value.at, Date.now(), this.hostTimeZone()),
+          target: { kind: "new", create: { cwd } },
+        });
+        scheduleId = String(created?.id ?? "");
+        if (scheduleId === "") return { ok: false, reason: "schedule/no-id" };
+      } catch (error) {
+        return {
+          ok: false,
+          reason: `schedule/create-failed:${String(/** @type {any} */ (error)?.message ?? error).slice(0, 160)}`,
+        };
+      }
+    }
+    const added = store.addReminder(projectId, {
+      id: reminderId,
+      projectId,
+      at: value.at,
+      text: value.text,
+      mode: value.mode,
+      state: "pending",
+      createdAt: new Date().toISOString(),
+      scheduleId,
+    });
+    store.appendAudit({
+      action: "reminder/created",
+      projectId,
+      reminderId,
+      mode: value.mode,
+      at: value.at,
+    });
+    store.save();
+    if (value.mode === "timer") this.armReminders();
+    return {
+      ok: true,
+      reminder: { ...added.reminder, remaining: remainingTime(value.at, Date.now()) },
+      mode: value.mode,
+      scheduleId,
+    };
+  }
+
+  /**
+   * F30：取消（schedule 模式同时删宿主条目）。
+   * @param {string} projectId @param {string} reminderId
+   * @returns {Promise<any>}
+   */
+  async cancelReminder(projectId, reminderId) {
+    const store = this.requireStore();
+    const reminder = store
+      .listReminders(projectId)
+      .find((/** @type {any} */ item) => item.id === reminderId);
+    if (!reminder) return { ok: false, reason: "reminder/not-found" };
+    if (reminder.state !== "pending")
+      return { ok: false, reason: `reminder/not-pending:${reminder.state}` };
+    if (reminder.scheduleId !== "") {
+      const schedule = this.scheduleHost();
+      if (schedule && typeof schedule.edit === "function") {
+        try {
+          await schedule.edit({ id: reminder.scheduleId, action: "delete" });
+        } catch (error) {
+          return {
+            ok: false,
+            reason: `schedule/delete-failed:${String(/** @type {any} */ (error)?.message ?? error).slice(0, 160)}`,
+          };
+        }
+      }
+    }
+    const patched = store.patchReminder(projectId, reminderId, markCancelled(reminder, Date.now()));
+    store.appendAudit({ action: "reminder/cancelled", projectId, reminderId });
+    store.save();
+    if (reminder.mode === "timer") this.armReminders();
+    return { ok: true, reminder: patched.reminder };
+  }
+
+  /**
+   * F30：提前完成（还没响就被处理掉；不会触发 toast）。
+   * @param {string} projectId @param {string} reminderId
+   * @returns {Promise<any>}
+   */
+  async completeReminder(projectId, reminderId) {
+    const store = this.requireStore();
+    const reminder = store
+      .listReminders(projectId)
+      .find((/** @type {any} */ item) => item.id === reminderId);
+    if (!reminder) return { ok: false, reason: "reminder/not-found" };
+    if (reminder.state === "pending" && reminder.scheduleId !== "") {
+      const schedule = this.scheduleHost();
+      if (schedule && typeof schedule.edit === "function") {
+        try {
+          await schedule.edit({ id: reminder.scheduleId, action: "delete" });
+        } catch (error) {
+          return {
+            ok: false,
+            reason: `schedule/delete-failed:${String(/** @type {any} */ (error)?.message ?? error).slice(0, 160)}`,
+          };
+        }
+      }
+    }
+    const patched = store.patchReminder(projectId, reminderId, markDone(reminder, Date.now()));
+    store.appendAudit({ action: "reminder/completed", projectId, reminderId });
+    store.save();
+    if (reminder.mode === "timer") this.armReminders();
+    return { ok: true, reminder: patched.reminder };
+  }
+
+  /**
+   * F30：到点但还没通知过的提醒（通知器轮询它来弹 toast；弹过就 ack）。
+   * @param {string} projectId
+   * @returns {any}
+   */
+  dueReminders(projectId) {
+    const store = this.requireStore();
+    const list = store.listReminders(projectId);
+    const unread = list.filter(
+      (/** @type {any} */ item) => item.state === "fired" && item.unread === true,
+    );
+    return {
+      projectId,
+      todo: unread.filter((/** @type {any} */ item) => item.notified !== true),
+      unreadCount: unread.length,
+      armed: this.reminderArming,
+    };
+  }
+
+  /**
+   * F30：**全部项目**的到点提醒（通知器只发一次 listProjects，但 toast 要跨项目）。
+   * @returns {any}
+   */
+  allDueReminders() {
+    if (!this.store) return { projects: [], todo: [], armed: this.reminderArming };
+    /** @type {any[]} */
+    const todo = [];
+    /** @type {any[]} */
+    const projects = [];
+    for (const project of this.store.listProjects()) {
+      const view = this.dueReminders(String(project.id));
+      if (view.todo.length > 0) {
+        projects.push({ projectId: project.id, name: project.name });
+        todo.push(
+          ...view.todo.map((/** @type {any} */ item) => ({ ...item, projectId: project.id })),
+        );
+      }
+    }
+    return { projects, todo, armed: this.reminderArming };
+  }
+
+  /**
+   * F30：toast 已展示 → 标 notified（避免关掉面板又弹一次）。
+   * @param {string} projectId @param {string} reminderId
+   * @returns {any}
+   */
+  ackReminder(projectId, reminderId) {
+    const store = this.requireStore();
+    const reminder = store
+      .listReminders(projectId)
+      .find((/** @type {any} */ item) => item.id === reminderId);
+    if (!reminder) return { ok: false, reason: "reminder/not-found" };
+    const patched = store.patchReminder(projectId, reminderId, { notified: true, unread: false });
+    store.save();
+    return { ok: true, reminder: patched.reminder };
+  }
+
+  /**
+   * F30：按盘上记录重建本机计时器。启动、创建/取消/完成之后都调一次（幂等）。
+   * 返回的 `armed/overdue` 是「现在有几条真的在等」的证据，UI 直接显示。
+   * @returns {{ at: number, armed: number, overdue: number }}
+   */
+  armReminders() {
+    for (const timer of this.reminderTimers.values()) {
+      try {
+        clearTimeout(timer);
+      } catch {
+        /* ignore */
+      }
+    }
+    this.reminderTimers.clear();
+    if (!this.store) {
+      this.reminderArming = { at: Date.now(), armed: 0, overdue: 0 };
+      return this.reminderArming;
+    }
+    const timers = this.store
+      .listAllReminders()
+      .filter(
+        (/** @type {any} */ reminder) => reminder.mode === "timer" && reminder.state === "pending",
+      );
+    const now = Date.now();
+    const plan = planReminderRecovery(timers, now);
+    for (const item of plan.arm) {
+      const reminder = timers.find((/** @type {any} */ record) => record.id === item.id);
+      if (!reminder) continue;
+      const projectId = String(reminder.projectId ?? "");
+      // setTimeout 的上限是 2^31-1 ms（约 24.8 天）；更远的先挂一段，到点再判断。
+      const delay = Math.min(item.delayMs, 2_000_000_000);
+      const timer = setTimeout(() => {
+        this.reminderTimers.delete(item.id);
+        this.fireReminder(projectId, item.id);
+      }, delay);
+      timer?.unref?.();
+      this.reminderTimers.set(item.id, timer);
+    }
+    this.reminderArming = { at: now, armed: plan.arm.length, overdue: plan.overdue.length };
+    this.logger?.info?.(
+      `[projects] reminders armed: ${plan.arm.length} (overdue ${plan.overdue.length})`,
+    );
+    return this.reminderArming;
+  }
+
+  /**
+   * F30：一条提醒到点。到期就写回盘（state=fired + unread），没到期就再排一次
+   * （`>>>` 上限导致的提前唤醒会走到这里；重启恢复的「关机期间到点」也是这条路径）。
+   * @param {string} projectId @param {string} reminderId
+   * @returns {any}
+   */
+  fireReminder(projectId, reminderId) {
+    const store = this.store;
+    if (!store) return { ok: false, reason: "store-unavailable" };
+    const reminder = store
+      .listReminders(projectId)
+      .find((/** @type {any} */ item) => item.id === reminderId);
+    if (reminder?.state !== "pending") return { ok: false, reason: "reminder/not-pending" };
+    const dueAt = Date.parse(String(reminder.at));
+    const now = Date.now();
+    if (Number.isFinite(dueAt) && dueAt > now) {
+      const timer = setTimeout(
+        () => {
+          this.reminderTimers.delete(reminderId);
+          this.fireReminder(projectId, reminderId);
+        },
+        Math.min(dueAt - now, 2_000_000_000),
+      );
+      timer?.unref?.();
+      this.reminderTimers.set(reminderId, timer);
+      return { ok: false, reason: "reminder/not-due-yet" };
+    }
+    const patched = store.patchReminder(projectId, reminderId, markFired(reminder, now));
+    store.appendAudit({ action: "reminder/fired", projectId, reminderId });
+    store.save();
+    return { ok: true, reminder: patched.reminder };
+  }
 }
 
 declareRemote(ProjectsService, "listProjects");
@@ -3836,3 +5034,24 @@ declareRemote(ProjectsService, "usageView");
 declareRemote(ProjectsService, "mentionItems");
 declareRemote(ProjectsService, "recentSessions");
 declareRemote(ProjectsService, "setThreadDefaults");
+// B4 · F52 权限收窄
+declareRemote(ProjectsService, "permissionCatalog");
+declareRemote(ProjectsService, "permissionState");
+declareRemote(ProjectsService, "setProjectPreset");
+declareRemote(ProjectsService, "applyProjectPreset");
+// B4 · F36 Routines
+declareRemote(ProjectsService, "routinesView");
+declareRemote(ProjectsService, "createRoutine");
+declareRemote(ProjectsService, "setRoutineEnabled");
+declareRemote(ProjectsService, "deleteRoutine");
+declareRemote(ProjectsService, "runRoutineNow");
+declareRemote(ProjectsService, "routineHistory");
+// B4 · F30 双模式提醒
+declareRemote(ProjectsService, "remindersView");
+declareRemote(ProjectsService, "setReminderDefault");
+declareRemote(ProjectsService, "createReminder");
+declareRemote(ProjectsService, "cancelReminder");
+declareRemote(ProjectsService, "completeReminder");
+declareRemote(ProjectsService, "dueReminders");
+declareRemote(ProjectsService, "allDueReminders");
+declareRemote(ProjectsService, "ackReminder");
