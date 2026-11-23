@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { dirname, join } from "node:path";
 
 import { DEFAULT_BUDGET } from "./budget.js";
+import { mergeArtifactRefs, normalizeArtifactRef } from "./library.js";
 import { DEFAULT_NOTIFY_PREFS } from "./notify.js";
 import { THREAD_STATES } from "./overview.js";
 import { DEFAULT_REMINDER_MODE, normalizeReminder } from "./reminders.js";
@@ -84,6 +85,7 @@ export function isThreadState(value) {
  * @property {{dailyTokens:number|null, maxThreadsPerDay:number|null, maxStepsPerThread:number|null}} budget
  * @property {boolean} pinned 收藏（个人视图状态；只影响列表排序，不触发其它动作）
  * @property {string|null} preset F52 线程权限档位名（null = 继承宿主默认；**存名字不存 spec**）
+ * @property {any[]} artifactRefs F33 项目产物的自存引用（id/标题/类型/版本/字节/时间/来源）
  * @property {'timer'|'schedule'} reminderDefault F30 新提醒的默认模式
  * @property {any[]} routines F36 定时任务（本地记录 + scheduleId 指向宿主条目）
  * @property {any[]} reminders F30 提醒（timer 落盘自恢复；schedule 记宿主 id）
@@ -454,6 +456,10 @@ export function normalize(raw, root) {
         reminderDefault: ["timer", "schedule"].includes(project.reminderDefault)
           ? project.reminderDefault
           : DEFAULT_REMINDER_MODE,
+        // F33：产物引用（自存映射）。旧数据缺失即空数组；非法条目丢弃，不让整份数据读不出来。
+        artifactRefs: (Array.isArray(project.artifactRefs) ? project.artifactRefs : [])
+          .map((/** @type {any} */ item) => normalizeArtifactRef(item))
+          .filter(Boolean),
         // F36/F30：本地记录数组。**只收敛已知形状、保留未知字段**，旧数据缺失即空数组。
         routines: (Array.isArray(project.routines) ? project.routines : [])
           .map((/** @type {any} */ item) => normalizeRoutine(item))
@@ -609,6 +615,8 @@ export class ProjectStore {
       threadDefaults: { provider: "", model: "", reasoningEffort: "" },
       preset: null,
       reminderDefault: DEFAULT_REMINDER_MODE,
+      // F33：项目产出的产物引用（我们自存的 projectId↔artifactId 映射；artifacts meta 不保证有）
+      artifactRefs: [],
       routines: [],
       reminders: [],
       createdAt: stamp,
@@ -977,6 +985,38 @@ export class ProjectStore {
     current.state = resolved ? "resolved" : "idle";
     current.resolvedAt = resolved ? iso(this.now()) : null;
     return { ...current };
+  }
+
+  /**
+   * F33：记录一条产物引用（projectId↔artifactId 的自存映射）。
+   * 发布产物时在项目线程里调用；同 id 后写覆盖前写（版本上涨），最多 MAX_ARTIFACT_REFS 条。
+   * @param {string} projectId @param {unknown} ref
+   * @returns {{ refs: any[], ref: any } | null} null = 引用不合法（不写盘）
+   */
+  recordArtifact(projectId, ref) {
+    const current = this.state.projects[projectId];
+    if (!current) throw new Error(`projects: unknown project ${projectId}`);
+    const normalized = normalizeArtifactRef(ref);
+    if (normalized === null) return null;
+    current.artifactRefs = mergeArtifactRefs(current.artifactRefs, normalized);
+    current.updatedAt = iso(this.now());
+    return {
+      refs: current.artifactRefs.map((/** @type {any} */ item) => ({ ...item })),
+      ref: normalized,
+    };
+  }
+
+  /**
+   * F33：读项目的产物引用（按最近更新排序）。
+   * @param {string} projectId
+   * @returns {any[]}
+   */
+  listArtifactRefs(projectId) {
+    const current = this.state.projects[projectId];
+    if (!current) return [];
+    return (Array.isArray(current.artifactRefs) ? current.artifactRefs : []).map(
+      (/** @type {any} */ item) => ({ ...item }),
+    );
   }
 
   /**

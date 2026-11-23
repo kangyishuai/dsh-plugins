@@ -38,6 +38,7 @@ import { executeApprovalCore } from "./execute.js";
 import { checkPreapproval } from "./executor.js";
 import { applyFolderDecision, consumeOnceFolderGrant, folderAuthSummary } from "./folder-auth.js";
 import { githubCheckResult, parseGhAuthStatus, parseGhRepoList } from "./github.js";
+import { ARTIFACTS_CONTRACT, refFromArtifactRow, summarizeArtifactRefs } from "./library.js";
 import { appendEntry, parseMemoryBlocks } from "./memory.js";
 import { addFragment, forgetMemoryItem, listFragments, readFragment } from "./memory-store.js";
 import { buildMentionItems } from "./mentions.js";
@@ -239,6 +240,31 @@ function dirSize(dir) {
     }
   }
   return total;
+}
+
+/**
+ * F33：为某个项目目录挑一个「会话作用域」。
+ *
+ * `workspaceFiles` 的 scope 是 `{sessionId, workspaceRoot}`：会话的 cwd 在 worktree 里时，
+ * 用项目目录当 root 可能列不出内容（宿主按会话 workspace 求值）。所以优先挑 `thread.dir`
+ * 正好等于该目录的线程，其次挑目录在同一条路径链上的线程，最后才退回第一个线程。
+ * @param {any[]} threads @param {string} dir @param {string} fallback
+ * @returns {string}
+ */
+function sessionForProjectDir(threads, dir, fallback) {
+  const withSession = (Array.isArray(threads) ? threads : []).filter(
+    (thread) => String(thread?.sessionId ?? "") !== "",
+  );
+  const target = String(dir ?? "");
+  const exact = withSession.find((thread) => String(thread?.dir ?? "") === target);
+  if (exact) return String(exact.sessionId);
+  const related = withSession.find((thread) => {
+    const own = String(thread?.dir ?? "");
+    if (own === "") return false;
+    return own === target || own.startsWith(`${target}/`) || target.startsWith(`${own}/`);
+  });
+  if (related) return String(related.sessionId);
+  return String(fallback ?? "");
 }
 
 export class ProjectsService extends TypertRemoteService {
@@ -3750,6 +3776,252 @@ export class ProjectsService extends TypertRemoteService {
   }
 
   /**
+   * F33：Library 视图 = 文件面（宿主 `workspaceFiles`）+ 产物面（artifacts 或我们自存的映射）。
+   *
+   * 事实边界（docs/runtime 0.2.2-rc.5 §13）：
+   *  - `workspaceFiles` 的 scope 是 `{sessionId, workspaceRoot}`：没有会话就没有文件面（明说，不装空）；
+   *  - `search` 只搜**文件名/路径**，不搜正文——UI 必须写「按文件名搜索」；
+   *  - 多目录 = 多个 workspaceRoot，逐个 list；
+   *  - artifacts 未装 / 契约不是 artifacts/2 → `available:false` + reason，**不能**显示「没有产物」。
+   * @param {string} projectId
+   */
+  async libraryView(projectId) {
+    const store = this.requireStore();
+    const project = store.getProject(String(projectId ?? ""));
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const refs = store.listArtifactRefs(project.id);
+    const threads = store.listThreads(project.id);
+    const sessionId =
+      threads.find((/** @type {any} */ thread) => String(thread.sessionId ?? "") !== "")
+        ?.sessionId ??
+      (typeof project.coordinatorSessionId === "string" ? project.coordinatorSessionId : "") ??
+      "";
+    const dirs = Array.isArray(project.dirs) ? project.dirs.filter(Boolean) : [];
+
+    // —— 文件面 ——
+    /** @type {any[]} */
+    const fileDirs = [];
+    const files = {
+      available: false,
+      reason: "",
+      sessionId: String(sessionId ?? ""),
+      dirs: fileDirs,
+      total: 0,
+    };
+    /** 一个目录可能要换几个会话作用域才列得出内容（worktree 线程 vs 项目目录线程）。 */
+    const listDirWithFallback = async (/** @type {string} */ dir) => {
+      const candidates = [];
+      const preferred = sessionForProjectDir(threads, dir, String(sessionId ?? ""));
+      if (preferred !== "") candidates.push(preferred);
+      for (const thread of threads) {
+        const candidate = String(thread?.sessionId ?? "");
+        if (candidate !== "" && !candidates.includes(candidate)) candidates.push(candidate);
+      }
+      const coordinator =
+        typeof project.coordinatorSessionId === "string" ? project.coordinatorSessionId : "";
+      if (coordinator !== "" && !candidates.includes(coordinator)) candidates.push(coordinator);
+      /** @type {any} */
+      let fallbackResult = null;
+      // 宿主 `list` 的 path 是「workspace 内路径」：实测空串会返回空列表，
+      // 用 "." 表示根才列得出直接子项；绝对路径作为最后兜底（同为 root 时应被接受）。
+      const pathCandidates = [".", "", dir];
+      for (const listPath of pathCandidates) {
+        for (const candidate of candidates) {
+          try {
+            // 宿主 Remote 的签名是 (scope, path, signal)：漏传 signal 会在实现里
+            // `signal.throwIfAborted()` 直接抛，表现为「列不出任何文件」而不是报错。
+            const page = await workspaceFiles.list(
+              { sessionId: candidate, workspaceRoot: dir },
+              listPath,
+              new AbortController().signal,
+            );
+            const entriesOut = (Array.isArray(page?.entries) ? page.entries : [])
+              .slice(0, 200)
+              .map((/** @type {any} */ entry) => ({
+                name: String(entry?.name ?? entry?.path ?? ""),
+                path: String(entry?.path ?? entry?.name ?? ""),
+                type: String(entry?.type ?? entry?.kind ?? "file"),
+                size: Number(entry?.size ?? entry?.bytes ?? 0),
+                updatedAt: Number(entry?.updatedAt ?? entry?.mtimeMs ?? 0) || null,
+              }));
+            const result = {
+              dir,
+              listedPath: listPath,
+              ok: true,
+              truncated: page?.truncated === true,
+              entries: entriesOut,
+            };
+            if (entriesOut.length > 0) return result;
+            fallbackResult = fallbackResult ?? result;
+          } catch (error) {
+            fallbackResult = fallbackResult ?? {
+              dir,
+              listedPath: listPath,
+              ok: false,
+              truncated: false,
+              entries: [],
+              error: String(error instanceof Error ? error.message : error).slice(0, 200),
+            };
+          }
+        }
+      }
+      return fallbackResult ?? { dir, ok: true, truncated: false, entries: [] };
+    };
+    const workspaceFiles = this.hostService("workspaceFiles");
+    if (dirs.length === 0) files.reason = "no-dir";
+    else if (String(sessionId ?? "") === "") files.reason = "no-session";
+    else if (workspaceFiles === undefined || typeof workspaceFiles.list !== "function")
+      files.reason = "host-unavailable";
+    else {
+      files.available = true;
+      for (const dir of dirs) {
+        const listed = await listDirWithFallback(dir);
+        files.dirs.push(listed);
+        files.total += listed.entries.length;
+      }
+    }
+
+    // —— 产物面 ——
+    /** @type {any[]} */
+    const artifactRows = [];
+    const artifacts = {
+      available: false,
+      reason: "",
+      contract: "",
+      rows: artifactRows,
+      summary: { count: 0, bytes: 0 },
+      stored: refs,
+      storedSummary: summarizeArtifactRefs(refs),
+    };
+    const service = this.hostService("artifacts");
+    if (service === undefined || typeof service.list !== "function") {
+      artifacts.reason = "artifacts-not-installed";
+    } else {
+      let contract = "";
+      let probed = false;
+      try {
+        const version = await service.version();
+        contract = String(version?.contract ?? "");
+        probed = true;
+      } catch {
+        artifacts.reason = "artifacts-version-unavailable";
+      }
+      artifacts.contract = contract;
+      if (probed && contract !== ARTIFACTS_CONTRACT) {
+        artifacts.reason = "artifacts-contract-mismatch";
+      } else if (probed) {
+        try {
+          const page = await service.list({ projectId: project.id });
+          artifacts.available = true;
+          artifacts.rows = (Array.isArray(page?.artifacts) ? page.artifacts : [])
+            .map((/** @type {any} */ row) => refFromArtifactRow(row))
+            .filter(Boolean);
+          const summary = page?.summary ?? {};
+          artifacts.summary = {
+            count: Number(summary.count ?? artifacts.rows.length),
+            bytes: Number(summary.bytes ?? summarizeArtifactRefs(artifacts.rows).bytes),
+          };
+        } catch {
+          artifacts.reason = "artifacts-list-failed";
+        }
+      }
+    }
+    // 产物面合并：服务在线时以服务行为准，再用自存映射补齐旧产物；离线时只给映射（UI 降级只列文件面）。
+    if (artifacts.available) {
+      const seen = new Set(artifacts.rows.map((/** @type {any} */ row) => row.id));
+      for (const ref of refs) {
+        if (!seen.has(ref.id)) artifacts.rows.push(ref);
+      }
+      artifacts.summary = {
+        count: artifacts.rows.length,
+        bytes: artifacts.rows.reduce(
+          (/** @type {number} */ sum, /** @type {any} */ row) => sum + Number(row.bytes ?? 0),
+          0,
+        ),
+      };
+    }
+    return { projectId: project.id, files, artifacts };
+  }
+
+  /**
+   * F33：记录一条产物引用（projectId↔artifactId）。发布产物时在项目线程里调用。
+   * 只写我们自己的 store；不复制产物字节（字节由 artifacts 管）。
+   * @param {string} projectId @param {any} ref
+   */
+  recordArtifact(projectId, ref) {
+    const store = this.requireStore();
+    const project = store.getProject(String(projectId ?? ""));
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const written = store.recordArtifact(project.id, ref);
+    if (written === null) throw new Error("projects: artifact ref needs a valid id");
+    store.appendAudit({
+      action: "library/artifact-recorded",
+      projectId: project.id,
+      artifactId: written.ref.id,
+      version: written.ref.version,
+      bytes: written.ref.bytes,
+    });
+    store.save();
+    return {
+      ok: true,
+      ref: written.ref,
+      refs: written.refs,
+      summary: summarizeArtifactRefs(written.refs),
+    };
+  }
+
+  /**
+   * F33：按文件名搜索项目文件（`workspaceFiles.search` 只匹配名称与路径）。
+   * @param {string} projectId @param {string} query
+   */
+  async searchLibraryFiles(projectId, query) {
+    const store = this.requireStore();
+    const project = store.getProject(String(projectId ?? ""));
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const text = String(query ?? "").trim();
+    const threads = store.listThreads(project.id);
+    const fallbackSession =
+      threads.find((/** @type {any} */ thread) => String(thread.sessionId ?? "") !== "")
+        ?.sessionId ?? "";
+    const dirs = Array.isArray(project.dirs) ? project.dirs.filter(Boolean) : [];
+    const sessionId = sessionForProjectDir(threads, String(dirs[0] ?? ""), fallbackSession);
+    if (dirs.length === 0) return { available: false, reason: "no-dir", query: text, matches: [] };
+    if (String(sessionId) === "")
+      return { available: false, reason: "no-session", query: text, matches: [] };
+    const workspaceFiles = this.hostService("workspaceFiles");
+    if (workspaceFiles === undefined || typeof workspaceFiles.search !== "function")
+      return { available: false, reason: "host-unavailable", query: text, matches: [] };
+    if (text === "") return { available: true, reason: "", query: "", matches: [], nameOnly: true };
+    try {
+      const page = await workspaceFiles.search(
+        { sessionId: String(sessionId), workspaceRoot: String(dirs[0]) },
+        {
+          query: text,
+          excludedPaths: [],
+          includeHidden: true,
+          respectGitignore: true,
+        },
+        new AbortController().signal,
+      );
+      const matches = (Array.isArray(page?.matches) ? page.matches : [])
+        .slice(0, 50)
+        .map((/** @type {any} */ match) => ({
+          path: String(match?.path ?? ""),
+          type: String(match?.type ?? "file"),
+        }));
+      return { available: true, reason: "", query: text, matches, nameOnly: true };
+    } catch (error) {
+      return {
+        available: false,
+        reason: "search-failed",
+        query: text,
+        matches: [],
+        error: String(error instanceof Error ? error.message : error).slice(0, 200),
+      };
+    }
+  }
+
+  /**
    * F42：写项目级线程默认模型 / effort，返回回读值（空串 = 继承宿主默认）。
    * @param {string} projectId @param {string} [provider] @param {string} [model] @param {string} [reasoningEffort]
    */
@@ -5040,6 +5312,10 @@ declareRemote(ProjectsService, "usageView");
 declareRemote(ProjectsService, "mentionItems");
 declareRemote(ProjectsService, "recentSessions");
 declareRemote(ProjectsService, "setThreadDefaults");
+// B5 · F33/F34 Library
+declareRemote(ProjectsService, "libraryView");
+declareRemote(ProjectsService, "recordArtifact");
+declareRemote(ProjectsService, "searchLibraryFiles");
 // B4 · F52 权限收窄
 declareRemote(ProjectsService, "permissionCatalog");
 declareRemote(ProjectsService, "permissionState");

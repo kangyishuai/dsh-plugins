@@ -732,12 +732,15 @@ try {
       node.click();
       return true;
     };
-    const readPlaceholder = () => {
-      const node = document.querySelector("[data-projects-view-placeholder]");
-      return node
+    const readLibrary = () => {
+      // B5 起 Library 是真实视图（不再是占位）：用它的数据锚点回答。
+      const library = document.querySelector("[data-projects-library]");
+      return library
         ? {
-            kind: node.getAttribute("data-projects-view-placeholder"),
-            note: node.querySelector("[data-projects-view-placeholder-note]")?.textContent || "",
+            present: true,
+            kind: "library",
+            note: "",
+            degraded: library.getAttribute("data-projects-library-degraded") || "",
           }
         : null;
     };
@@ -751,7 +754,7 @@ try {
     };
     const clickedLibrary = openTab("library");
     await new Promise((resolve) => setTimeout(resolve, 400));
-    const library = readPlaceholder();
+    const library = readLibrary();
     const clickedRoutines = openTab("routines");
     await new Promise((resolve) => setTimeout(resolve, 900));
     const routines = readRoutines();
@@ -759,10 +762,11 @@ try {
     return { clickedLibrary, clickedRoutines, library, routines };
   });
   add(
-    "Library 页签给出「待接入 artifacts」占位（不假装有产物）",
+    "Library 页签渲染真实视图（B5 已落地，不再是「待接入」占位）",
     u9.clickedLibrary === true &&
       u9.library?.kind === "library" &&
-      u9.library.note.includes("待接入 artifacts"),
+      u9.library.note === "" &&
+      u9.library.present === true,
     JSON.stringify(u9.library),
   );
   add(
@@ -2414,6 +2418,111 @@ try {
     JSON.stringify(effortDeploy.rows),
   );
   result.effortDeploy = effortDeploy.rows;
+
+  const b5 = await page.evaluate(async () => {
+    const q = (sel) => document.querySelector(sel);
+    const all = (sel) => [...document.querySelectorAll(sel)];
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const openTab = (id) => {
+      const node = q('[data-projects-tab="' + id + '"]');
+      if (node) node.click();
+      return Boolean(node);
+    };
+    const clicked = openTab("library");
+    await wait(1400);
+    const root = q("[data-projects-library]");
+    const searchNote = q("[data-projects-library-search-note]")?.textContent || "";
+    const folderHint = q("[data-projects-folder-cwd-hint]")?.textContent || "";
+    const out = {
+      clicked,
+      present: Boolean(root),
+      loaded: root?.getAttribute("data-projects-library-loaded") || "",
+      degraded: root?.getAttribute("data-projects-library-degraded") || "",
+      artifactsAvailable: root?.getAttribute("data-projects-library-artifacts-available") || "",
+      artifactOpenDisabled: q("[data-projects-artifact-open]")?.disabled ?? null,
+      degradeNote: q("[data-projects-library-degraded-note]")?.textContent || "",
+      searchNote,
+      folderHint,
+      fileCount: q("[data-projects-library-file-count]")?.textContent || "",
+      meter: q("[data-projects-library-meter]")?.textContent || "",
+      files: all("[data-projects-library-file]").map((node) =>
+        node.getAttribute("data-projects-library-file"),
+      ),
+      fileUnavailable:
+        q("[data-projects-library-files-unavailable]")?.getAttribute(
+          "data-projects-library-files-unavailable",
+        ) || "",
+      artifactCards: all("[data-projects-artifact-card]").length,
+      threadCards: all("[data-projects-thread-artifacts]").length,
+    };
+    // 文件名搜索：输入 seed → 点搜索 → 等结果
+    const input = q("[data-projects-library-search]");
+    if (input) {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+      setter.call(input, "seed");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      q("[data-projects-library-search-run]")?.click();
+      await wait(1600);
+    }
+    out.matches = all("[data-projects-library-match]").map((node) =>
+      node.getAttribute("data-projects-library-match"),
+    );
+    return out;
+  });
+  result.b5 = b5;
+  add(
+    "B5 Library 渲染真实视图（文件面 + 产物面两块数据都在，loaded=true）",
+    b5.clicked === true && b5.present === true && b5.loaded === "true",
+    JSON.stringify({ present: b5.present, loaded: b5.loaded, degraded: b5.degraded }),
+  );
+  add(
+    "B5 文件面来自宿主 workspaceFiles：列到项目目录里的 seed.txt",
+    b5.fileUnavailable === "" &&
+      b5.files.some((file) => String(file).endsWith("seed.txt")) &&
+      b5.fileCount !== "",
+    JSON.stringify({ files: b5.files.slice(0, 8), fileUnavailable: b5.fileUnavailable }),
+  );
+  add(
+    "B5 搜索只按文件名（UI 写明）且 seed 能命中文件名",
+    b5.searchNote.includes("文件名") &&
+      b5.matches.some((match) => String(match).endsWith("seed.txt")),
+    JSON.stringify({ note: b5.searchNote, matches: b5.matches }),
+  );
+  add(
+    "B5 产物面降级：明示需要 dsh-artifacts 0.2（不是「没有产物」），打开按钮禁用",
+    b5.artifactsAvailable === "false" &&
+      b5.degradeNote.includes("dsh-artifacts 0.2") &&
+      !b5.degradeNote.includes("还没有产物") &&
+      b5.artifactOpenDisabled === true,
+    JSON.stringify({
+      available: b5.artifactsAvailable,
+      note: b5.degradeNote,
+      disabled: b5.artifactOpenDisabled,
+    }),
+  );
+  add(
+    "B5 降级时不伪造产物卡（线程内也不画不存在的缩略图）",
+    b5.artifactCards === 0 && b5.threadCards === 0,
+    JSON.stringify({ cards: b5.artifactCards, threadCards: b5.threadCards }),
+  );
+  add(
+    "F55 授权卡写明 cwd 语义（push-branch 在 worktree 里跑、继承项目目录授权；B3 复审 P2）",
+    b5.folderHint.includes("worktree") &&
+      b5.folderHint.includes("继承") &&
+      b5.folderHint.includes("push-branch"),
+    b5.folderHint,
+  );
+  // 截图：Library 降级态（文件面带文件名搜索 + 产物库缺依赖的明示）
+  {
+    const shot = await page.cdp("Page.captureScreenshot", { format: "png" });
+    const fs = await import("node:fs/promises");
+    await fs.writeFile(
+      ${JSON.stringify(shotsDir)} + "/12-b5-library-degraded.png",
+      Buffer.from(shot.data, "base64"),
+    );
+  }
+  await page.evaluate(() => document.querySelector('[data-projects-tab="threads"]')?.click());
+  await page.waitForTimeout(500);
 
   // —— F37：记忆碎片 UI（记忆页签里有列表 + 新增入口；交互写盘由单测与 RPC 覆盖）——
   const b3frag = await page.evaluate(async () => {
@@ -5022,6 +5131,106 @@ const main = async () => {
     } catch (error) {
       checks.push({
         name: "F55 动作被拒（switch-off）时 once 凭据未被消费（B3 复审 P2）",
+        ok: false,
+        detail: errorText(error).slice(0, 300),
+      });
+    }
+
+    // B5：文件面 + 产物面的写→回读（真实 RPC）。
+    try {
+      const targetProject = projectByName ?? null;
+      const sessionId = String(result.overviewFacts?.sessionId ?? "");
+      const unique = `needle-only-${Date.now().toString(36)}`;
+      await writeFile(join(SMOKE_WORKSPACE_DIR, "content-only.txt"), `${unique}\n`, "utf8");
+      const refId = "smoke-art-1";
+      const recorded = await hostRpc(boot.port, boot.token, "projects/recordArtifact", {
+        projectId: targetProject?.id ?? "",
+        ref: {
+          id: refId,
+          title: "Smoke artifact",
+          kind: "markdown",
+          version: 2,
+          bytes: 1234,
+          updatedAt: Date.now(),
+          sessionId,
+          source: { sessionId, toolCallId: "call-smoke-1", via: "tool" },
+        },
+      });
+      const library = await hostRpc(boot.port, boot.token, "projects/libraryView", {
+        projectId: targetProject?.id ?? "",
+      });
+      const view = library.value ?? {};
+      const storedIds = (view.artifacts?.stored ?? []).map((/** @type {any} */ item) => item.id);
+      checks.push({
+        name: "B5 产物面自存映射写→回读（recordArtifact → libraryView.stored，含 provenance）",
+        ok:
+          recorded.value?.ok === true &&
+          storedIds.includes(refId) &&
+          (view.artifacts?.stored ?? []).some(
+            (/** @type {any} */ item) =>
+              item.id === refId && item.source?.toolCallId === "call-smoke-1",
+          ),
+        detail: JSON.stringify({
+          recorded: recorded.value?.ref ?? null,
+          stored: view.artifacts?.stored ?? [],
+        }),
+      });
+      checks.push({
+        name: "B5 产物面计量（count/bytes 来自自存映射；summary 口径一致）",
+        ok:
+          Number(view.artifacts?.storedSummary?.count ?? -1) >= 1 &&
+          Number(view.artifacts?.storedSummary?.bytes ?? 0) >= 1234,
+        detail: JSON.stringify(view.artifacts?.storedSummary ?? null),
+      });
+      checks.push({
+        name: "B5 artifacts 未装时 libraryView 给出降级 reason（不是空数组冒充「没有产物」）",
+        ok:
+          view.artifacts?.available === false &&
+          String(view.artifacts?.reason ?? "") === "artifacts-not-installed",
+        detail: JSON.stringify({
+          available: view.artifacts?.available ?? null,
+          reason: view.artifacts?.reason ?? null,
+        }),
+      });
+      const fileDirs = Array.isArray(view.files?.dirs) ? view.files.dirs : [];
+      const fileNames = fileDirs.flatMap((/** @type {any} */ dir) =>
+        (dir.entries ?? []).map((/** @type {any} */ entry) => String(entry.name ?? "")),
+      );
+      checks.push({
+        name: "B5 文件面读回：宿主 workspaceFiles 列到项目目录里的 seed.txt",
+        ok: view.files?.available === true && fileNames.includes("seed.txt"),
+        detail: JSON.stringify({
+          available: view.files?.available ?? null,
+          dirs: fileDirs.length,
+          fileNames: fileNames.slice(0, 10),
+        }),
+      });
+      const seedSearch = await hostRpc(boot.port, boot.token, "projects/searchLibraryFiles", {
+        projectId: targetProject?.id ?? "",
+        query: "seed",
+      });
+      const contentSearch = await hostRpc(boot.port, boot.token, "projects/searchLibraryFiles", {
+        projectId: targetProject?.id ?? "",
+        query: unique,
+      });
+      const seedMatches = (seedSearch.value?.matches ?? []).map(
+        (/** @type {any} */ match) => match.path,
+      );
+      checks.push({
+        name: "B5 文件搜索只按文件名：seed 命中 seed.txt，正文里的 needle 不命中（宿主的边界）",
+        ok:
+          seedSearch.value?.available === true &&
+          seedMatches.some((/** @type {any} */ path) => String(path).endsWith("seed.txt")) &&
+          (contentSearch.value?.matches ?? []).length === 0,
+        detail: JSON.stringify({
+          seed: seedMatches,
+          contentMatches: (contentSearch.value?.matches ?? []).length,
+          nameOnly: seedSearch.value?.nameOnly ?? null,
+        }),
+      });
+    } catch (error) {
+      checks.push({
+        name: "B5 文件面/产物面的写→回读证据可执行",
         ok: false,
         detail: errorText(error).slice(0, 300),
       });

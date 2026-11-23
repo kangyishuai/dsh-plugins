@@ -496,6 +496,40 @@ window.__ModuleLoader__.load({
       "detail.group.resolved": "待审",
       "detail.group.idle": "空闲",
       "detail.group.archived": "已归档",
+      "library.title": "Library",
+      "library.meter": "{count} 个产物 · {bytes}",
+      "library.openPanel": "打开产物库",
+      "library.openPanelHint": "在右栏用 artifacts 面板打开这个项目的产物库",
+      "library.artifactsMissing": "产物库需要 dsh-artifacts 0.2；当前不可用，下面只列项目文件。",
+      "library.artifactsTitle": "产物",
+      "library.artifactsEmpty": "这个项目还没有产物。",
+      "library.artifactMeta": "{kind} · v{version} · {when}",
+      "library.provenance": "来自会话 {session} · 调用 {call}",
+      "library.timeUnknown": "时间未知",
+      "library.kind.html": "页面",
+      "library.kind.markdown": "Markdown",
+      "library.kind.json": "JSON",
+      "library.kind.csv": "CSV",
+      "library.kind.image": "图片",
+      "library.threadArtifacts": "这个线程的产物",
+      "library.threadArtifactsMissing":
+        "artifacts 未安装/版本不兼容：缩略图与预览不可用，只显示本地记录。",
+      "library.filesTitle": "项目文件",
+      "library.filesCount": "{count} 个文件",
+      "library.filesEmpty": "这个目录里还没有文件。",
+      "library.filesNoDir": "这个项目还没有绑定目录：先在「项目目录」里绑定一个文件夹，再看文件。",
+      "library.filesNoSession":
+        "还没有项目线程会话：文件面由宿主 workspaceFiles 按会话作用域提供，建一个线程或归属一个会话后才有。",
+      "library.filesHostUnavailable":
+        "这个部署没有 workspaceFiles 服务：文件面不可用（不伪造文件列表）。",
+      "library.searchByNameOnly":
+        "搜索只匹配文件名 / 路径，不搜正文（宿主 workspaceFiles.search 的边界）。",
+      "library.searchPlaceholder": "按文件名搜索…",
+      "library.search": "搜索",
+      "library.searching": "搜索中…",
+      "library.searchEmpty": "没有匹配的文件名。",
+      "library.searchFailed": "搜索失败",
+      "library.truncated": "已截断",
       "b3.folderWorktreeHint":
         "merge 在项目目录里跑；push-branch 在线程 worktree 里跑——worktree 继承它所属项目目录的授权。",
     };
@@ -996,6 +1030,42 @@ window.__ModuleLoader__.load({
       "detail.dirInvalidHint":
         "An absolute path is required (starting with /); relative paths cannot be a session directory, so the save was rejected.",
       "detail.configTitle": "Advanced settings (repository access / trash)",
+      "library.title": "Library",
+      "library.meter": "{count} artifacts · {bytes}",
+      "library.openPanel": "Open artifact library",
+      "library.openPanelHint": "Open this project's artifacts in the right-side artifacts panel",
+      "library.artifactsMissing":
+        "The artifact library needs dsh-artifacts 0.2; it is unavailable, so only project files are listed below.",
+      "library.artifactsTitle": "Artifacts",
+      "library.artifactsEmpty": "This project has no artifacts yet.",
+      "library.artifactMeta": "{kind} · v{version} · {when}",
+      "library.provenance": "from session {session} · call {call}",
+      "library.timeUnknown": "time unknown",
+      "library.kind.html": "page",
+      "library.kind.markdown": "Markdown",
+      "library.kind.json": "JSON",
+      "library.kind.csv": "CSV",
+      "library.kind.image": "image",
+      "library.threadArtifacts": "Artifacts from this thread",
+      "library.threadArtifactsMissing":
+        "artifacts is not installed or its contract differs: thumbnails and previews are unavailable, showing local records only.",
+      "library.filesTitle": "Project files",
+      "library.filesCount": "{count} files",
+      "library.filesEmpty": "No files in this folder yet.",
+      "library.filesNoDir":
+        'This project has no folder bound yet: bind one under "project folders" to see files.',
+      "library.filesNoSession":
+        "No project thread session yet: the file view comes from the host workspaceFiles session scope, so create or attach a session first.",
+      "library.filesHostUnavailable":
+        "This deployment has no workspaceFiles service: the file view is unavailable (no invented file list).",
+      "library.searchByNameOnly":
+        "Search matches file names / paths only, not file contents (the workspaceFiles.search boundary).",
+      "library.searchPlaceholder": "Search by file name…",
+      "library.search": "Search",
+      "library.searching": "Searching…",
+      "library.searchEmpty": "No matching file names.",
+      "library.searchFailed": "Search failed",
+      "library.truncated": "truncated",
       "b3.folderWorktreeHint":
         "merge runs in the project folder; push-branch runs in the thread worktree, which inherits the authorization of the project folder it came from.",
     };
@@ -3731,6 +3801,414 @@ window.__ModuleLoader__.load({
     /**
      * @param {{api: any, t: any, project: any, onBack: () => void, onDeleted?: () => void, onChanged?: () => void, onToast?: (message: string) => void, onEditDetails?: (project: any) => void}} props
      */
+    /** B5：字节数的紧凑写法（计量行用；不引入依赖）。 @param {unknown} value */
+    function formatBytes(value) {
+      var bytes = Number(value);
+      if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+      return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+    }
+
+    /** B5：epoch ms → 相对时间（不依赖宿主的 i18n 格式）。 @param {any} t @param {unknown} value */
+    function formatWhen(t, value) {
+      var at = Number(value);
+      if (!Number.isFinite(at) || at <= 0) return "";
+      var delta = Date.now() - at;
+      if (delta < 60_000) return text(t, "panel.relative.now");
+      if (delta < 3_600_000)
+        return text(t, "panel.relative.minutes", { count: Math.floor(delta / 60_000) });
+      if (delta < 86_400_000)
+        return text(t, "panel.relative.hours", { count: Math.floor(delta / 3_600_000) });
+      return text(t, "panel.relative.days", { count: Math.floor(delta / 86_400_000) });
+    }
+
+    /**
+     * B5 · U15：产物缩略卡（标题 + 类型 + 版本 + 时间 + provenance）。
+     * Library 列表与线程行内嵌卡共用同一份渲染，避免两处视觉/字段漂移。
+     * @param {any} t @param {any} item @param {boolean} available @param {string} keyPrefix
+     */
+    function artifactCardFor(t, item, available, keyPrefix) {
+      var id = String(item?.id ?? "");
+      var kind = String(item?.kind ?? "html");
+      var known = ["html", "markdown", "json", "csv", "image"];
+      var kindLabel = known.indexOf(kind) >= 0 ? text(t, `library.kind.${kind}`) : kind;
+      var version = Number(item?.version ?? 1);
+      var when = formatWhen(t, item?.updatedAt);
+      var source = item?.source ?? null;
+      var provenance = source?.sessionId ? String(source.sessionId).slice(0, 8) : "";
+      return h(
+        "div",
+        {
+          key: `${keyPrefix}${id}`,
+          style: {
+            display: "flex",
+            gap: "8px",
+            alignItems: "flex-start",
+            border: `1px solid ${T.borderSoft}`,
+            borderRadius: "10px",
+            padding: "8px 10px",
+            background: T.panel,
+            minWidth: 0,
+          },
+          "data-projects-artifact-card": id,
+          "data-projects-artifact-kind": kind,
+          "data-projects-artifact-version": String(version),
+          "data-projects-artifact-available": available === true ? "true" : "false",
+          "data-projects-artifact-time": when || "",
+        },
+        h(
+          "span",
+          {
+            style: {
+              width: "34px",
+              height: "34px",
+              flex: "0 0 34px",
+              borderRadius: "8px",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: T.accent,
+              color: T.accentText,
+              fontSize: "11px",
+              fontWeight: 600,
+            },
+            "data-projects-artifact-cover": "",
+          },
+          kindLabel.slice(0, 4),
+        ),
+        h(
+          "div",
+          { style: { display: "flex", flexDirection: "column", gap: "2px", minWidth: 0 } },
+          h(
+            "span",
+            {
+              style: { ...styles.name, overflow: "hidden", textOverflow: "ellipsis" },
+              title: String(item?.title || id),
+            },
+            String(item?.title || id),
+          ),
+          h(
+            "span",
+            { style: { ...styles.meta, fontVariantNumeric: "tabular-nums" } },
+            text(t, "library.artifactMeta", {
+              kind: kindLabel,
+              version: version,
+              when: when || text(t, "library.timeUnknown"),
+            }),
+          ),
+          provenance !== "" || source?.toolCallId
+            ? h(
+                "span",
+                { style: { ...styles.meta, color: T.faint } },
+                text(t, "library.provenance", {
+                  session: provenance || "—",
+                  call: source?.toolCallId ? String(source.toolCallId).slice(0, 8) : "—",
+                }),
+              )
+            : null,
+        ),
+      );
+    }
+
+    /**
+     * B5 · F33/F34/U15：Library 视图 = 文件面 + 产物面。
+     *
+     * 视觉对齐 Claude 的 `Artifacts ⌄` 段：小标题 + 计量 + 缩略图列表（标题/类型/版本/时间）。
+     * 降级是**明示**的：artifacts 未装或契约不对时写「产物库需要 dsh-artifacts 0.2」，
+     * 只列文件面，绝不显示「没有产物」（那是在说谎）。
+     * @param {any} props
+     */
+    function LibraryView(props) {
+      var api = props.api;
+      var t = props.t;
+      var project = props.project || {};
+      var library = props.library || null;
+      var files = library?.files ?? { available: false, reason: "loading", dirs: [] };
+      var artifacts = library?.artifacts ?? {
+        available: false,
+        reason: "loading",
+        rows: [],
+        stored: [],
+        summary: {},
+      };
+      var stored = Array.isArray(artifacts.stored) ? artifacts.stored : [];
+      var rows = Array.isArray(artifacts.rows) ? artifacts.rows : [];
+      // 合并：服务在线时以行中的实时数据为准；自存映射补旧产物（同 id 去重）。
+      /** @type {Record<string, boolean>} */
+      var seen = {};
+      /** @type {any[]} */
+      var artifactRows = [];
+      rows.concat(stored).forEach((/** @type {any} */ item) => {
+        var id = String(item?.id ?? "");
+        if (id === "" || seen[id]) return;
+        seen[id] = true;
+        artifactRows.push(item);
+      });
+      var degraded = artifacts.available !== true;
+      var summary = artifacts.summary || {};
+      var count = Number(summary.count || artifactRows.length || 0);
+      var bytes = Number(summary.bytes || 0);
+      var loaded = library !== null && library !== undefined;
+      var st = useState({ query: "", busy: false, matches: null, error: "" });
+      var view = st[0];
+      var setView = st[1];
+
+      var runSearch = () => {
+        var query = String(view.query || "").trim();
+        if (query === "") {
+          setView((/** @type {any} */ prev) => ({ ...prev, matches: null, error: "" }));
+          return;
+        }
+        setView((/** @type {any} */ prev) => ({ ...prev, busy: true, error: "" }));
+        call(api.ctx, "searchLibraryFiles", { projectId: project.id, query: query }).then(
+          (/** @type {any} */ result) => {
+            setView((/** @type {any} */ prev) => ({
+              ...prev,
+              busy: false,
+              matches: Array.isArray(result?.matches) ? result.matches : [],
+              error: result?.available === false ? String(result.reason || "unavailable") : "",
+            }));
+          },
+          (/** @type {any} */ error) => {
+            setView((/** @type {any} */ prev) => ({
+              ...prev,
+              busy: false,
+              matches: [],
+              error: String(error?.message ?? error).slice(0, 160),
+            }));
+          },
+        );
+      };
+
+      var openArtifactPanel = () => {
+        // 宿主右栏页签（docs/plugin-conventions §8.5）：拿不到就降级为内联提示，不假装打开了。
+        var sidebar = api.ctx?.sidebarRight;
+        if (sidebar && typeof sidebar.openTab === "function") {
+          try {
+            sidebar.openTab("artifact", { params: { projectId: project.id } });
+            return true;
+          } catch {
+            return false;
+          }
+        }
+        return false;
+      };
+
+      var reasonText = (/** @type {string} */ reason) => {
+        if (reason === "no-dir") return text(t, "library.filesNoDir");
+        if (reason === "no-session") return text(t, "library.filesNoSession");
+        if (reason === "host-unavailable") return text(t, "library.filesHostUnavailable");
+        if (reason === "search-failed") return text(t, "library.searchFailed");
+        if (reason === "loading") return text(t, "detail.loading");
+        return String(reason || "");
+      };
+
+      var artifactCard = (/** @type {any} */ item, /** @type {string} */ keyPrefix) =>
+        artifactCardFor(t, item, artifacts.available === true, keyPrefix);
+
+      return h(
+        "div",
+        {
+          style: { display: "flex", flexDirection: "column", gap: "10px" },
+          "data-projects-library": "",
+          "data-projects-library-loaded": loaded ? "true" : "false",
+          "data-projects-library-artifacts-available":
+            artifacts.available === true ? "true" : "false",
+          "data-projects-library-degraded": degraded
+            ? String(artifacts.reason || "unavailable")
+            : "false",
+        },
+        // —— 标题 + 产物计量 + 打开宿主右栏 ——
+        h(
+          "div",
+          { style: { display: "flex", alignItems: "baseline", gap: "8px", flexWrap: "wrap" } },
+          h("h3", { style: styles.name }, text(t, "library.title")),
+          h(
+            "span",
+            { style: styles.meta, "data-projects-library-meter": "" },
+            text(t, "library.meter", {
+              count: count,
+              bytes: formatBytes(bytes),
+            }),
+          ),
+          h("span", { style: { flex: "1 1 auto" } }),
+          h(
+            "button",
+            {
+              type: "button",
+              style: styles.secondaryButton,
+              "data-projects-artifact-open": "",
+              disabled: degraded,
+              title: degraded
+                ? text(t, "library.artifactsMissing")
+                : text(t, "library.openPanelHint"),
+              onClick: openArtifactPanel,
+            },
+            text(t, "library.openPanel"),
+          ),
+        ),
+        // —— 产物面（降级时明示，不显示「没有产物」）——
+        degraded
+          ? h(
+              "div",
+              {
+                style: {
+                  ...styles.meta,
+                  border: `1px dashed ${T.border}`,
+                  borderRadius: "10px",
+                  padding: "8px 10px",
+                },
+                "data-projects-library-degraded-note": "",
+              },
+              text(t, "library.artifactsMissing") +
+                (artifacts.reason ? `（${String(artifacts.reason)}）` : ""),
+            )
+          : artifactRows.length === 0
+            ? h(
+                "div",
+                { style: styles.meta, "data-projects-library-artifacts-empty": "" },
+                text(t, "library.artifactsEmpty"),
+              )
+            : h(
+                "div",
+                {
+                  style: { display: "flex", flexDirection: "column", gap: "6px" },
+                  "data-projects-library-artifacts": "",
+                },
+                h("span", { style: styles.meta }, `${text(t, "library.artifactsTitle")} ⌄`),
+                artifactRows.map((item) => artifactCard(item, "lib:")),
+              ),
+        // —— 文件面：宿主 workspaceFiles（search 只搜文件名，UI 必须写明）——
+        h(
+          "div",
+          { style: { display: "flex", flexDirection: "column", gap: "6px" } },
+          h(
+            "div",
+            { style: { display: "flex", alignItems: "baseline", gap: "8px", flexWrap: "wrap" } },
+            h("span", { style: styles.name }, text(t, "library.filesTitle")),
+            h(
+              "span",
+              { style: styles.meta, "data-projects-library-file-count": "" },
+              text(t, "library.filesCount", { count: Number(files.total || 0) }),
+            ),
+          ),
+          h(
+            "span",
+            { style: { ...styles.meta, color: T.faint }, "data-projects-library-search-note": "" },
+            text(t, "library.searchByNameOnly"),
+          ),
+          h(
+            "div",
+            { style: { display: "flex", gap: "6px", flexWrap: "wrap" } },
+            h("input", {
+              type: "text",
+              style: { ...styles.input, flex: "1 1 160px" },
+              value: view.query,
+              placeholder: text(t, "library.searchPlaceholder"),
+              "data-projects-library-search": "",
+              onChange: (/** @type {any} */ event) => {
+                setView((/** @type {any} */ prev) => ({
+                  ...prev,
+                  query: String(event.target.value || ""),
+                }));
+              },
+              onKeyDown: (/** @type {any} */ event) => {
+                if (event.key === "Enter") runSearch();
+              },
+            }),
+            h(
+              "button",
+              {
+                type: "button",
+                style: styles.secondaryButton,
+                "data-projects-library-search-run": "",
+                disabled: view.busy === true,
+                onClick: runSearch,
+              },
+              view.busy ? text(t, "library.searching") : text(t, "library.search"),
+            ),
+          ),
+          view.matches !== null
+            ? h(
+                "div",
+                {
+                  style: { display: "flex", flexDirection: "column", gap: "2px" },
+                  "data-projects-library-matches": "",
+                },
+                view.matches.length === 0
+                  ? h("span", { style: styles.meta }, text(t, "library.searchEmpty"))
+                  : view.matches.map((/** @type {any} */ match) =>
+                      h(
+                        "span",
+                        {
+                          key: String(match.path),
+                          style: { ...styles.meta, fontFamily: "ui-monospace, monospace" },
+                          "data-projects-library-match": String(match.path),
+                        },
+                        String(match.path),
+                      ),
+                    ),
+              )
+            : null,
+          view.error !== "" ? h("span", { style: styles.error }, reasonText(view.error)) : null,
+          files.available === false
+            ? h(
+                "div",
+                {
+                  style: { ...styles.meta, color: T.faint },
+                  "data-projects-library-files-unavailable": String(files.reason || ""),
+                },
+                reasonText(String(files.reason || "")),
+              )
+            : h(
+                "div",
+                {
+                  style: { display: "flex", flexDirection: "column", gap: "6px" },
+                  "data-projects-library-files": "",
+                },
+                (Array.isArray(files.dirs) ? files.dirs : []).map((/** @type {any} */ dirView) =>
+                  h(
+                    "div",
+                    {
+                      key: String(dirView.dir),
+                      style: { display: "flex", flexDirection: "column", gap: "2px" },
+                      "data-projects-library-dir": String(dirView.dir),
+                    },
+                    h(
+                      "span",
+                      { style: { ...styles.meta, color: T.faint } },
+                      baseName(String(dirView.dir)) +
+                        (dirView.truncated === true ? ` · ${text(t, "library.truncated")}` : ""),
+                    ),
+                    dirView.ok === false
+                      ? h("span", { style: styles.error }, reasonText(String(dirView.error || "")))
+                      : dirView.entries.length === 0
+                        ? h("span", { style: styles.meta }, text(t, "library.filesEmpty"))
+                        : dirView.entries.map((/** @type {any} */ entry) =>
+                            h(
+                              "span",
+                              {
+                                key: String(entry.path),
+                                style: {
+                                  ...styles.meta,
+                                  fontFamily: "ui-monospace, monospace",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                },
+                                "data-projects-library-file": String(entry.path),
+                                "data-projects-library-file-type": String(entry.type || "file"),
+                              },
+                              String(entry.name || entry.path),
+                            ),
+                          ),
+                  ),
+                ),
+              ),
+        ),
+      );
+    }
+
     /** @param {any} props */
     function ProjectDetail(props) {
       const api = props.api;
@@ -3775,6 +4253,8 @@ window.__ModuleLoader__.load({
             // B4：右栏「定时任务」段的计数（F36）与提醒待触发数（F30）
             call(api.ctx, "routinesView", { projectId: project.id }).catch(() => null),
             call(api.ctx, "remindersView", { projectId: project.id }).catch(() => null),
+            // B5 · F33/F34：Library 视图（文件面 workspaceFiles + 产物面 artifacts / 自存映射）
+            call(api.ctx, "libraryView", { projectId: project.id }).catch(() => null),
           ]).then(
             (values) => {
               setData({
@@ -3802,6 +4282,7 @@ window.__ModuleLoader__.load({
                   };
                 })(),
                 reminders: values[10] || null,
+                library: values[11] || null,
               });
               // F25 折叠状态存宿主 storageDomain（跨重启保留）；读不到就当全部展开。
               // 只在首次加载时套用：否则 5s 轮询会用旧值把用户刚点的折叠弹回去。
@@ -5449,6 +5930,52 @@ window.__ModuleLoader__.load({
                       text(t, "detail.approvalHint"),
                     ),
                   ),
+                  // B5 · F34：线程内嵌产物缩略卡（标题 + 类型 + 版本 + 时间）
+                  // 数据来自 Library 视图：artifacts 行 + 我们自存映射，按 sessionId 命中这条线程。
+                  (() => {
+                    const libraryData = data.library;
+                    if (!libraryData) return null;
+                    const artifactsData = libraryData.artifacts || {};
+                    const available = artifactsData.available === true;
+                    const rowsList = Array.isArray(artifactsData.rows) ? artifactsData.rows : [];
+                    const storedList = Array.isArray(artifactsData.stored)
+                      ? artifactsData.stored
+                      : [];
+                    /** @type {Record<string, boolean>} */
+                    const seenIds = {};
+                    /** @type {any[]} */
+                    const items = [];
+                    rowsList.concat(storedList).forEach((/** @type {any} */ item) => {
+                      const id = String(item?.id ?? "");
+                      const sid = String(item?.sessionId ?? item?.source?.sessionId ?? "");
+                      if (id === "" || seenIds[id] || sid !== String(row.sessionId)) return;
+                      seenIds[id] = true;
+                      items.push(item);
+                    });
+                    if (items.length === 0) return null;
+                    return h(
+                      "div",
+                      {
+                        style: { display: "flex", flexDirection: "column", gap: "6px" },
+                        "data-projects-thread-artifacts": row.sessionId,
+                        "data-projects-thread-artifacts-available": available ? "true" : "false",
+                        "data-projects-thread-artifacts-count": String(items.length),
+                      },
+                      h("span", { style: styles.meta }, `${text(t, "library.threadArtifacts")} ⌄`),
+                      available
+                        ? null
+                        : h(
+                            "span",
+                            { style: { ...styles.meta, color: T.faint } },
+                            text(t, "library.threadArtifactsMissing"),
+                          ),
+                      items
+                        .slice(0, 5)
+                        .map((item) =>
+                          artifactCardFor(t, item, available, `thr:${String(row.sessionId)}:`),
+                        ),
+                    );
+                  })(),
                 )
               : null,
           ),
@@ -5699,19 +6226,13 @@ window.__ModuleLoader__.load({
         if (data.error !== "")
           return h("p", { style: styles.error, "data-projects-detail-error": "" }, data.error);
         if (tab === "library") {
-          return h(
-            "div",
-            { "data-projects-view-placeholder": tab },
-            h("h3", { style: styles.name }, "Library"),
-            h(
-              "div",
-              {
-                style: { ...styles.meta, marginTop: "4px" },
-                "data-projects-view-placeholder-note": "",
-              },
-              "待接入 artifacts：Library 会列出这个项目的产物与项目文件（B5，依赖 dsh-artifacts 0.2）。",
-            ),
-          );
+          return h(LibraryView, {
+            api: api,
+            t: t,
+            project: project,
+            library: data.library,
+            onChanged: load,
+          });
         }
         // B4 · F36：Routines 视图（六档频率 + Run now + History + 成本提示）+ F30 提醒
         if (tab === "routines") {

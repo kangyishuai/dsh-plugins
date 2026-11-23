@@ -57,7 +57,7 @@ pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体�
 | `memory.test.js`    | 记忆写入：幂等、单条与总量上限、时间戳注释、被拒时给出原因                                    |
 | `exec.test.js`      | 子进程封装：参数原样传递、失败返回 code 不抛、cwd 生效、命令不存在也不抛                      |
 
-## 2. web 端到端冒烟（220 项）
+## 2. web 端到端冒烟（238 项）
 
 > 0.10.0 面板改版后：新建走「入口 → 模态（两入口）→ 表单」，列表页新增搜索/排序/收藏，详情页改为
 > 主列 + 右栏（右栏为值行 + 编辑动作），并补了 toast、两列 DOM 顺序、值行无 input 等断言，故 78 → 102。
@@ -126,6 +126,30 @@ pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体�
 > 「`null` 或字符串」），已在上面替换成具体值 + 深比较；另外补了「冷启动读得回来」与「UI/盘上一致」两组，
 > 保证坏实现（永远不写回、写进去读不回）会 FAIL。批次记录见 `notes/projects/claude-borrow/progress.md`
 > （私有笔记，不在公开仓库）。
+
+> **B5（Library / Artifacts：F33 F34 U15）+ B3 复审修复再 +18，故 220 → 238。** 新增锚点与断言：
+> `data-projects-library`（+`-loaded` / `-degraded` / `-artifacts-available` / `-meter` / `-file-count`）、
+> `data-projects-library-search`（+`-search-note` / `-search-run` / `-matches` / `-match`）、
+> `data-projects-library-files`（+`-file` / `-dir` / `-files-unavailable`）、`data-projects-library-degraded-note`、
+> `data-projects-artifact-open`、`data-projects-artifact-card`（+`-kind` / `-version` / `-available` / `-time` / `-cover`）、
+> `data-projects-thread-artifacts`（+`-available` / `-count`）、`data-projects-folder-cwd-hint`。
+> 断言覆盖：Library 真渲染（不再是「待接入」占位）、文件面列出项目目录里的 `seed.txt`、搜索只按文件名且
+> `seed` 命中、产物面降级明示「需要 dsh-artifacts 0.2」且打开按钮禁用、降级时不伪造产物卡、授权卡写明
+> cwd 语义（push-branch 在 worktree 里跑并继承项目目录授权）。宿主侧（Node 直连 RPC，`token → cookie →
+> POST /api/<ns>/<method>` 的 client-request 信封）：`recordArtifact`→`libraryView.artifacts.stored` 的
+> 写→回读（含 `source.toolCallId`）、`storedSummary` 计量、`artifacts-not-installed` 降级 reason、
+> `workspaceFiles` 文件面读回 `seed.txt`、只搜文件名（正文里的 `needle` 不命中）、未知 `projectId` 的
+> `listMemoryFragments` 被拒、`authorizeFolder(once)` → `requestAction(merge)` → `resolveApproval` →
+> `executeApproval` 被 `switch-off` 拒后 once 仍 `used=false`。
+
+> **B3 复审修复（同分支，2026-11-23）**：P0 `store.js` 的 effort 白名单删掉（`max`/`xhigh`/`off` 经手填
+> 写入→回读，审计里能看到三次 `thread/defaults`，`test/b4-store.test.js` 覆盖冷启动回读）；P1 locale 补齐
+> 44 键（`test/locale-parity.test.js` 锁 runtime↔locale 键集与文案值，冒烟再跑一次同口径检查）；
+> P1 冒烟开局加 INFRA 自检（端口不可连 / 插件未激活 / `projects.json` 未落盘 / 浏览器脚本无结果都
+> fail-fast，不进断言计数），并把 toast 消失、会话行、归属菜单、详情打开、折叠回读五处固定等待改成轮询；
+> P2 once 凭据改到「所有闸通过 + 占位成功」之后消费、执行没落地时回滚（`test/service-execute.test.js`
+> 覆盖 switch-off / repo-unknown / no-worktree 三条拒绝路径）、文件夹闸按实际 cwd 所属目录求 mode；
+> P2 `listMemoryFragments` 先校验项目存在（单测静态守卫 + 冒烟真实 RPC 各一条）。
 
 `pnpm smoke:projects` 在临时 home 里种子一个**真实 git 仓库**作为工作区，然后：
 
