@@ -314,6 +314,35 @@ try {
     folderPath === "folder" && scratchPath === "scratch" && backToChooser === true,
     JSON.stringify({ folderPath, scratchPath, backToChooser }),
   );
+  // F39：goal ≤8,000 与字数提示（对齐 Claude 的 28 / 8,000 口径）
+  const goalCounter = await page.evaluate(async () => {
+    const input = document.querySelector("[data-projects-new-goal]");
+    const counter = () => document.querySelector("[data-projects-goal-counter]");
+    if (!input || !counter()) return { ok: false, reason: "no-counter" };
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    const initial = counter().textContent || "";
+    setter.call(input, "把 CI 修绿");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const typed = counter().textContent || "";
+    const maxLength = input.getAttribute("maxlength");
+    setter.call(input, "");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    return { ok: true, initial, typed, maxLength };
+  });
+  add(
+    "goal 带 x / 8,000 计数并随输入更新",
+    goalCounter.ok === true &&
+      goalCounter.initial.includes("/ 8,000") &&
+      goalCounter.typed.includes("/ 8,000") &&
+      goalCounter.typed !== goalCounter.initial,
+    JSON.stringify(goalCounter),
+  );
+  add(
+    "goal 输入有 8000 的硬上限（maxlength）",
+    goalCounter.ok === true && goalCounter.maxLength === "8000",
+    String(goalCounter.maxLength),
+  );
   const emptyDisabled = await page.evaluate(() => {
     const button = document.querySelector("[data-projects-create]");
     return button
@@ -526,10 +555,57 @@ try {
   );
   add("详情页没有渲染崩溃", detailCrash === "", detailCrash);
   add(
-    "项目详情可打开且有三个页签",
-    detailState.present && detailState.tabs.length === 3 && detailState.threadsTab,
+    "项目详情可打开且有五个视图页签",
+    detailState.present &&
+      detailState.tabs.length === 5 &&
+      ["threads", "memory", "library", "routines", "audit"].every((id) =>
+        detailState.tabs.includes(id),
+      ) &&
+      detailState.threadsTab,
     JSON.stringify({ detail, ...detailState }),
   );
+
+  // U9：Library / Routines 是「视图页签」而不是隐藏功能——点开要有明确占位说明。
+  const u9 = await page.evaluate(async () => {
+    const openTab = (id) => {
+      const node = document.querySelector('[data-projects-tab="' + id + '"]');
+      if (!node) return false;
+      node.click();
+      return true;
+    };
+    const readPlaceholder = () => {
+      const node = document.querySelector("[data-projects-view-placeholder]");
+      return node
+        ? {
+            kind: node.getAttribute("data-projects-view-placeholder"),
+            note: node.querySelector("[data-projects-view-placeholder-note]")?.textContent || "",
+          }
+        : null;
+    };
+    const clickedLibrary = openTab("library");
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const library = readPlaceholder();
+    const clickedRoutines = openTab("routines");
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const routines = readPlaceholder();
+    openTab("threads");
+    return { clickedLibrary, clickedRoutines, library, routines };
+  });
+  add(
+    "Library 页签给出「待接入 artifacts」占位（不假装有产物）",
+    u9.clickedLibrary === true &&
+      u9.library?.kind === "library" &&
+      u9.library.note.includes("待接入 artifacts"),
+    JSON.stringify(u9.library),
+  );
+  add(
+    "Routines 页签给出 B4 落地说明与成本口径",
+    u9.clickedRoutines === true &&
+      u9.routines?.kind === "routines" &&
+      u9.routines.note.includes("跑一次模型"),
+    JSON.stringify(u9.routines),
+  );
+  await page.waitForTimeout(600);
 
   // 详情页断言在宽窗（1440）下跑：宽窗=两列、右栏各段展开；窄窗折叠另有一条专门断言。
   await page.cdp("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
@@ -2203,6 +2279,150 @@ try {
     JSON.stringify(dangerUi),
   );
   await page.waitForTimeout(1200);
+  var b3SettingsSeen = await page.evaluate(() =>
+    Boolean(document.querySelector("[data-projects-settings-nav-item]")),
+  );
+  // —— B3：设置四分区（F41/U19）+ 预算（F22）+ Usage（F49）+ Debug access（F50）+
+  //        通知开关（F58）+ GitHub 检查（F4）+ 模板补全（F5）——
+  const b3Settings = await page.evaluate(async () => {
+    const q = (sel) => document.querySelector(sel);
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const navItems = [...document.querySelectorAll("[data-projects-settings-nav-item]")].map((node) =>
+      node.getAttribute("data-projects-settings-nav-item"),
+    );
+    const section = () => q("[data-projects-settings]")?.getAttribute("data-projects-settings-section") || "";
+    const clickNav = (id) => {
+      const node = q('[data-projects-settings-nav-item="' + id + '"]');
+      if (!node) return false;
+      node.click();
+      return true;
+    };
+    const budget = {};
+    for (const key of ["maxThreadsPerDay", "maxConcurrent", "maxStepsPerThread", "dailyTokens"]) {
+      const input = q('[data-projects-budget-input="' + key + '"]');
+      budget[key] = input ? input.value : null;
+    }
+    let saved = "";
+    let afterSave = "";
+    const threadsInput = q('[data-projects-budget-input="maxThreadsPerDay"]');
+    if (threadsInput) {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+      setter.call(threadsInput, "7");
+      threadsInput.dispatchEvent(new Event("input", { bubbles: true }));
+      await wait(200);
+      q("[data-projects-budget-save]")?.click();
+      await wait(1800);
+      saved = q("[data-projects-settings-b3-result]")?.textContent || "";
+      afterSave = q('[data-projects-budget-input="maxThreadsPerDay"]')?.value || "";
+    }
+    const clickedUsage = clickNav("usage");
+    await wait(900);
+    const usage = {
+      clicked: clickedUsage,
+      section: section(),
+      text: q("[data-projects-settings-usage]")?.innerText || "",
+      hasTokens: Boolean(q("[data-projects-usage-tokens]")),
+    };
+    const clickedDebug = clickNav("debug");
+    await wait(800);
+    const notify = [...document.querySelectorAll("[data-projects-notify-pref]")].map((node) => ({
+      key: node.getAttribute("data-projects-notify-pref"),
+      checked: node.checked === true,
+    }));
+    const completedBox = q('[data-projects-notify-pref="completed"]');
+    let notifyAfter = "";
+    if (completedBox) {
+      completedBox.click();
+      await wait(1500);
+      const again = q('[data-projects-notify-pref="completed"]');
+      notifyAfter = again && again.checked ? "on" : "off";
+    }
+    const debug = {
+      clicked: clickedDebug,
+      title: q("[data-projects-debug-access]")?.textContent || "",
+      rows: q("[data-projects-debug-rows]")?.textContent || "",
+    };
+    const ghButton = q("[data-projects-gh-check]");
+    let gh = "no-button";
+    if (ghButton) {
+      ghButton.click();
+      await wait(5000);
+      gh = q("[data-projects-gh-result]")?.textContent || "";
+    }
+    const clickedMemory = clickNav("memory");
+    await wait(600);
+    const templateButton = q("[data-projects-template-apply]");
+    let templateClicked = false;
+    if (templateButton) {
+      templateButton.click();
+      templateClicked = true;
+      await wait(1800);
+    }
+    const memory = {
+      clicked: clickedMemory,
+      counts: q("[data-projects-settings-memory-counts]")?.textContent || "",
+      templateClicked,
+      result: q("[data-projects-settings-b3-result]")?.textContent || "",
+    };
+    clickNav("general");
+    await wait(300);
+    return { navItems, budget, saved, afterSave, usage, debug, notify, notifyAfter, gh, memory, sectionAfter: section() };
+  });
+  add(
+    b3SettingsSeen ? "设置页面分四个分区（General/Memory/Usage/Debug）" : "设置页面分四个分区（设置页未启用，跳过）",
+    b3SettingsSeen ? b3Settings.navItems.join(",") === "general,memory,usage,debug" : true,
+    JSON.stringify(b3Settings.navItems),
+  );
+  add(
+    b3SettingsSeen ? "General 显示默认预算（日线程 20 / 并发 2 / 步数 60 / token 不限）" : "General 显示默认预算（设置页未启用，跳过）",
+    b3SettingsSeen ? b3Settings.budget.maxThreadsPerDay === "20" &&
+      b3Settings.budget.maxConcurrent === "2" &&
+      b3Settings.budget.maxStepsPerThread === "60" &&
+      b3Settings.budget.dailyTokens === "" : true,
+    JSON.stringify(b3Settings.budget),
+  );
+  add(
+    b3SettingsSeen ? "预算写→回读闭环（改成 7 后保存并回读）" : "预算写→回读闭环（设置页未启用，跳过）",
+    b3SettingsSeen ? b3Settings.saved.includes("预算已保存") && b3Settings.afterSave === "7" : true,
+    JSON.stringify({ saved: b3Settings.saved, afterSave: b3Settings.afterSave }),
+  );
+  add(
+    b3SettingsSeen ? "Usage 分区显示 token，且**不显示金额**" : "Usage 分区显示 token（设置页未启用，跳过）",
+    b3SettingsSeen ? b3Settings.usage.section === "usage" &&
+      b3Settings.usage.hasTokens === true &&
+      /token/iu.test(b3Settings.usage.text) &&
+      !/[¥$€]|USD|CNY|RMB/u.test(b3Settings.usage.text) : true,
+    JSON.stringify({ text: b3Settings.usage.text.slice(0, 120) }),
+  );
+  add(
+    b3SettingsSeen ? "Debug 分区命名为 Debug access 并给出诊断计数" : "Debug 分区命名（设置页未启用，跳过）",
+    b3SettingsSeen ? b3Settings.debug.section === "debug" &&
+      /Debug access/u.test(b3Settings.debug.title) &&
+      /项目/u.test(b3Settings.debug.rows) : true,
+    JSON.stringify(b3Settings.debug),
+  );
+  add(
+    b3SettingsSeen ? "GitHub 连接检查给出可读结论（不崩溃、不只是空）" : "GitHub 连接检查（设置页未启用，跳过）",
+    b3SettingsSeen ? typeof b3Settings.gh === "string" && b3Settings.gh.trim().length > 0 : true,
+    String(b3Settings.gh).slice(0, 120),
+  );
+  add(
+    b3SettingsSeen ? "通知开关默认「失败/等你开、完成关」，可切换并回读" : "通知开关（设置页未启用，跳过）",
+    b3SettingsSeen ? b3Settings.notify.length === 3 &&
+      b3Settings.notify.find((item) => item.key === "failed")?.checked === true &&
+      b3Settings.notify.find((item) => item.key === "waiting-user")?.checked === true &&
+      b3Settings.notify.find((item) => item.key === "completed")?.checked === false &&
+      b3Settings.notifyAfter === "on" : true,
+    JSON.stringify({ notify: b3Settings.notify, notifyAfter: b3Settings.notifyAfter }),
+  );
+  add(
+    b3SettingsSeen ? "Memory 分区显示指令/记忆/碎片计数并提供模板补全入口" : "Memory 分区（设置页未启用，跳过）",
+    b3SettingsSeen ? b3Settings.memory.clicked === true &&
+      /指令 d+ 字符/u.test(b3Settings.memory.counts) &&
+      b3Settings.memory.templateClicked === true : true,
+    JSON.stringify(b3Settings.memory),
+  );
+  await page.waitForTimeout(600);
 
   await page.evaluate(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
   await page.waitForTimeout(600);
@@ -2311,6 +2531,7 @@ try {
 } catch (error) {
   result.fatal = String(error && error.message ? error.message : error).slice(0, 800);
 }
+result.settingsSeen = b3SettingsSeen;
 console.log("SMOKE_RESULT " + JSON.stringify(result));
 `;
 }
@@ -2842,6 +3063,52 @@ const main = async () => {
         parsed !== null &&
         threadIds.every((id) => Boolean(parsed.projects?.[parsed.threads[id]?.projectId])),
       detail: "",
+    });
+    // —— B3：三项「写→回读」由宿主侧文件做硬证据（UI 只是按钮，盘上才算数）——
+    const b3Budget = Object.values(parsed?.projects ?? {})
+      .map((/** @type {any} */ project) => project?.budget)
+      .find((/** @type {any} */ budget) => budget && Number(budget.maxThreadsPerDay) === 7);
+    checks.push({
+      name:
+        result.settingsSeen === false
+          ? "预算改动在宿主侧落盘（设置页未启用，跳过）"
+          : "预算改动在宿主侧落盘（maxThreadsPerDay=7 可回读）",
+      ok:
+        result.settingsSeen === false
+          ? true
+          : Boolean(b3Budget) && b3Budget.maxConcurrent === 2 && b3Budget.maxStepsPerThread === 60,
+      detail: JSON.stringify(b3Budget ?? null),
+    });
+    const b3Notify = Object.values(parsed?.projects ?? {})
+      .map((/** @type {any} */ project) => project?.notifyPrefs)
+      .find((/** @type {any} */ prefs) => prefs && prefs.completed === true);
+    checks.push({
+      name:
+        result.settingsSeen === false
+          ? "通知开关在宿主侧落盘（设置页未启用，跳过）"
+          : "通知开关在宿主侧落盘（completed=true 可回读）",
+      ok:
+        result.settingsSeen === false
+          ? true
+          : Boolean(b3Notify) && b3Notify.failed === true && b3Notify["waiting-user"] === true,
+      detail: JSON.stringify(b3Notify ?? null),
+    });
+    const b3DataRoot = join(home, "projects");
+    const b3ProjectDirs = await readdir(b3DataRoot, { withFileTypes: true }).catch(() => []);
+    const b3Agents = [];
+    for (const entry of b3ProjectDirs) {
+      if (!entry.isDirectory()) continue;
+      const file = join(b3DataRoot, entry.name, "AGENTS.md");
+      const text = await readIfExists(file);
+      if (text.includes("dsh-projects:begin")) b3Agents.push(entry.name);
+    }
+    checks.push({
+      name:
+        result.settingsSeen === false
+          ? "模板补全写入 AGENTS.md 受管区块（设置页未启用，跳过）"
+          : "模板补全写入 AGENTS.md 受管区块（可回读、幂等标记）",
+      ok: result.settingsSeen === false ? true : b3Agents.length === 1,
+      detail: b3Agents.join(","),
     });
     checks.push({
       name: "原子写没有残留 .tmp 文件",
