@@ -45,7 +45,12 @@ export function registerProjectContext(deps) {
         .listProjects()
         .find((/** @type {any} */ item) => item.coordinatorSessionId === sessionId);
       const project = threadProject ?? coordinatorProject;
-      if (project?.state !== "active") {
+      // F44：暂停（paused）只停「新建线程 + 定时任务」，**不**停上下文注入——
+      // 暂停后再和已有线程对话仍然应该带着项目规则与记忆（以前这里只认 active，
+      // 暂停项目一对话上下文就静默消失，是个不容易发现的回归）。
+      // 归档（archived）才是真的不再注入：数据还在，但项目已经不在工作集里。
+      const injectable = Boolean(project) && project.state !== "archived";
+      if (!injectable) {
         deps.onRender?.(sessionId, "unmatched");
         return "";
       }

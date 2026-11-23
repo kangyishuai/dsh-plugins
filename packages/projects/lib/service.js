@@ -26,13 +26,31 @@ import {
   checkThreadBudget,
   checkTokenBudget,
   checkWeeklyTokenBudget,
+  DEFAULT_BUDGET,
+  isToday,
+  normalizeBudgetPatch,
   startOfWeek,
   tokensOf,
 } from "./budget.js";
 import { runCommand } from "./exec.js";
 import { executeApprovalCore } from "./execute.js";
 import { checkPreapproval } from "./executor.js";
-import { appendEntry } from "./memory.js";
+import { applyFolderDecision, consumeOnceFolderGrant, folderAuthSummary } from "./folder-auth.js";
+import { githubCheckResult, parseGhAuthStatus, parseGhRepoList } from "./github.js";
+import {
+  appendEntry,
+  fragmentIndexLine,
+  MEMORY_FRAGMENT_MAX_CHARS,
+  MEMORY_FRAGMENT_MAX_COUNT,
+  normalizeFragmentText,
+  normalizeFragmentTitle,
+  parseMemoryBlocks,
+  previewText,
+  removeMemoryBlock,
+  uniqueFragmentSlug,
+} from "./memory.js";
+import { buildMentionItems } from "./mentions.js";
+import { normalizeNotifyPatch } from "./notify.js";
 import {
   initialStats,
   observeEvent,
@@ -65,7 +83,12 @@ import { readProjectFiles } from "./project-files.js";
 import { buildPurgeManifest, DEFAULT_RETENTION_DAYS, selectExpired } from "./purge.js";
 import { decideRoute } from "./routing.js";
 import { ProjectStore } from "./store.js";
-import { planTemplate } from "./template.js";
+import {
+  MANAGED_BEGIN,
+  mergeManagedBlock,
+  planTemplate,
+  renderManagedAgentsBlock,
+} from "./template.js";
 import { createIsolatedThread, reclaimThreadWorktree, reconcileWorktrees } from "./thread.js";
 import { buildCoordinatorTools, REQUESTABLE_ACTIONS } from "./tools.js";
 import { impactOf, TRASH_DIR, trashDirFor } from "./trash.js";
@@ -80,6 +103,11 @@ export const COORDINATOR_MESSAGE_CAP = 40;
  * @param {any} Proto
  * @param {string} method
  * @returns {void}
+ */
+
+/**
+ * 声明一个 Remote 方法（网关只认这个被导出类自身原型上的声明）。
+ * @param {any} Proto @param {string} method
  */
 function declareRemote(Proto, method) {
   /** @type {Function[]} */
@@ -96,6 +124,23 @@ function declareRemote(Proto, method) {
     throw new Error(`projects: cannot declare Remote method ${method}`);
   }
   initializers[0].call(Object.create(Proto.prototype));
+}
+
+/** 目录里碎片文件的名字（只认 .md）。 @param {string} dir @returns {string[]} */
+function listFragmentFiles(dir) {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((name) => typeof name === "string" && name.endsWith(".md") && !name.startsWith("."))
+    .sort();
+}
+
+/** @param {string} file @returns {string} */
+function statMtime(file) {
+  try {
+    return statSync(file).mtime.toISOString();
+  } catch {
+    return "";
+  }
 }
 
 /**
@@ -1051,7 +1096,16 @@ export class ProjectsService extends TypertRemoteService {
     const store = this.requireStore();
     if (!store.getProject(projectId)) throw new Error(`projects: unknown project ${projectId}`);
     const files = readProjectFiles(this.dataRoot, projectId);
-    return { instructions: files.instructions, memoryIndex: files.memoryIndex };
+    const memory = this.listMemoryFragments(projectId);
+    return {
+      instructions: files.instructions,
+      memoryIndex: files.memoryIndex,
+      // F37：碎片列表 + 索引拆块（UI 的「逐条 forget / 预览」用）
+      entries: parseMemoryBlocks(files.memoryIndex),
+      fragments: memory.fragments,
+      memoryChars: files.memoryIndex.length,
+      instructionsChars: files.instructions.length,
+    };
   }
 
   /**
@@ -2583,8 +2637,9 @@ export class ProjectsService extends TypertRemoteService {
       dir: thread.dir ?? null,
       // 有没有独立 worktree 决定"隔不隔离"，界面要能如实显示（走查发现用户看不出来）
       isolated: typeof thread.worktree === "string" && thread.worktree !== "",
-      // 会话标题（list() 的 title 投影）；没有就留空，由 UI 退化显示分支/短 id
-      title: String(summary?.projections?.values?.title ?? ""),
+      // 会话标题：优先人工重命名（F23 写回 thread.title），否则用 list() 的 title 投影；
+      // 都没有就留空，由 UI 退化显示分支/短 id
+      title: String(thread.title || summary?.projections?.values?.title || ""),
       view: { ...view, state, pendingInput },
       stats: { ...stats, commands: stats.commands.slice(-3) },
       summary: summarizeForRow({ stats }),
@@ -3346,6 +3401,435 @@ export class ProjectsService extends TypertRemoteService {
     const next = await this.writeUiState({ realtimeCi: enabled === true });
     return { ...next, spec: realtimeCiSpec() };
   }
+  // —— B3：记忆碎片 / 预算 / 授权 / GitHub / 模板 / 用量 / 提及 / 重命名 ——
+
+  /**
+   * F37：新增一条记忆碎片（独立 .md + MEMORY.md 索引行）。
+   * 索引行与正文分开：MEMORY.md 始终短，正文按需读取。
+   * @param {{ projectId?: string, title?: string, text?: string }} options
+   */
+  addMemoryFragment(options) {
+    const store = this.requireStore();
+    const projectId = String(options?.projectId ?? "");
+    if (!store.getProject(projectId)) throw new Error(`projects: unknown project ${projectId}`);
+    const title = normalizeFragmentTitle(options?.title);
+    const body = normalizeFragmentText(options?.text);
+    if (body.ok !== true) {
+      store.appendAudit({ action: "memory/fragment-rejected", projectId, reason: body.reason });
+      store.save();
+      return { ok: false, reason: body.reason };
+    }
+    const dir = join(this.dataRoot, projectId, "memory", "fragments");
+    mkdirSync(dir, { recursive: true });
+    const existing = listFragmentFiles(dir);
+    if (existing.length >= MEMORY_FRAGMENT_MAX_COUNT) {
+      store.appendAudit({ action: "memory/fragment-rejected", projectId, reason: "too-many" });
+      store.save();
+      return { ok: false, reason: "fragment-too-many", limit: MEMORY_FRAGMENT_MAX_COUNT };
+    }
+    const finalTitle = title === "" ? `记忆 ${existing.length + 1}` : title;
+    const slug = uniqueFragmentSlug(
+      finalTitle,
+      existing.map((name) => name.replace(/\.md$/u, "")),
+    );
+    const file = join(dir, `${slug}.md`);
+    writeFileSync(file, `${body.text}\n`, { mode: 0o600, flag: "wx" });
+    const indexFile = join(this.dataRoot, projectId, "memory", "MEMORY.md");
+    const current = existsSync(indexFile) ? readFileSync(indexFile, "utf8") : "";
+    const line = fragmentIndexLine({ title: finalTitle, slug, text: body.text });
+    const appended = appendEntry(current, line, { at: new Date().toISOString() });
+    if (appended.ok !== true) {
+      rmSync(file, { force: true });
+      store.appendAudit({ action: "memory/fragment-rejected", projectId, reason: appended.reason });
+      store.save();
+      return { ok: false, reason: appended.reason };
+    }
+    writeFileSync(indexFile, appended.text, { mode: 0o600 });
+    store.appendAudit({
+      action: "memory/fragment-added",
+      projectId,
+      slug,
+      chars: body.text.length,
+    });
+    store.save();
+    return { ok: true, slug, title: finalTitle, chars: body.text.length };
+  }
+
+  /**
+   * F37：列出记忆碎片（标题从索引行取，读不到标题就用 slug）。
+   * @param {string} projectId
+   */
+  listMemoryFragments(projectId) {
+    const dir = join(this.dataRoot, String(projectId ?? ""), "memory", "fragments");
+    const indexFile = join(this.dataRoot, String(projectId ?? ""), "memory", "MEMORY.md");
+    const indexText = existsSync(indexFile) ? readFileSync(indexFile, "utf8") : "";
+    /** @type {Map<string, string>} */
+    const titles = new Map();
+    for (const block of parseMemoryBlocks(indexText)) {
+      if (block.fragment) titles.set(block.fragment.slug, block.fragment.title);
+    }
+    const files = listFragmentFiles(dir);
+    const fragments = files.map((name) => {
+      const slug = name.replace(/\.md$/u, "");
+      const full = join(dir, name);
+      const text = existsSync(full) ? readFileSync(full, "utf8") : "";
+      const info = previewText(text);
+      return {
+        slug,
+        title: titles.get(slug) ?? slug,
+        chars: info.chars,
+        preview: info.preview,
+        truncated: info.truncated,
+        updatedAt: statMtime(full),
+      };
+    });
+    return {
+      fragments,
+      totalChars: fragments.reduce((sum, item) => sum + item.chars, 0),
+      limit: MEMORY_FRAGMENT_MAX_COUNT,
+      maxChars: MEMORY_FRAGMENT_MAX_CHARS,
+    };
+  }
+
+  /**
+   * F37：读一个碎片全文（UI 预览用）。
+   * @param {{ projectId?: string, slug?: string }} options
+   */
+  readMemoryFragment(options) {
+    const store = this.requireStore();
+    const projectId = String(options?.projectId ?? "");
+    if (!store.getProject(projectId)) throw new Error(`projects: unknown project ${projectId}`);
+    const slug = String(options?.slug ?? "").replace(/[^\p{Letter}\p{Number}._-]/gu, "");
+    if (slug === "" || slug.includes("/") || slug.includes("..")) {
+      return { ok: false, reason: "fragment/invalid-slug" };
+    }
+    const file = join(this.dataRoot, projectId, "memory", "fragments", `${slug}.md`);
+    if (!existsSync(file)) return { ok: false, reason: "fragment/not-found" };
+    const text = readFileSync(file, "utf8");
+    const info = this.listMemoryFragments(projectId).fragments.find((item) => item.slug === slug);
+    return {
+      ok: true,
+      slug,
+      title: info ? info.title : slug,
+      text,
+      ...previewText(text, 1200),
+    };
+  }
+
+  /**
+   * F37：忘掉一条记忆。
+   * kind=fragment：删碎片文件 + 索引行；kind=entry：只删索引里那一条（稳定 id）。
+   * @param {{ projectId?: string, kind?: string, id?: string }} options
+   */
+  forgetMemory(options) {
+    const store = this.requireStore();
+    const projectId = String(options?.projectId ?? "");
+    if (!store.getProject(projectId)) throw new Error(`projects: unknown project ${projectId}`);
+    const kind = String(options?.kind ?? "entry");
+    const id = String(options?.id ?? "");
+    if (id === "") return { ok: false, reason: "forget/id-required" };
+    const indexFile = join(this.dataRoot, projectId, "memory", "MEMORY.md");
+    const current = existsSync(indexFile) ? readFileSync(indexFile, "utf8") : "";
+    const blocks = parseMemoryBlocks(current);
+    const target =
+      kind === "fragment"
+        ? blocks.find((block) => block.fragment?.slug === id)
+        : blocks.find((block) => block.id === id);
+    if (!target) return { ok: false, reason: "forget/not-found" };
+    const removed = removeMemoryBlock(current, target.id);
+    if (removed.ok !== true) return { ok: false, reason: "forget/failed" };
+    if (removed.text === "") rmSync(indexFile, { force: true });
+    else writeFileSync(indexFile, removed.text, { mode: 0o600 });
+    if (kind === "fragment") {
+      const file = join(this.dataRoot, projectId, "memory", "fragments", `${id}.md`);
+      if (existsSync(file)) rmSync(file, { force: true });
+    }
+    store.appendAudit({ action: "memory/forgotten", projectId, kind, id });
+    store.save();
+    return { ok: true, kind, id, removed: removed.removed.slice(0, 200) };
+  }
+
+  /**
+   * F22：写项目预算（null = 不限）。返回**回读值**，避免假开关。
+   * @param {{ projectId?: string, budget?: any }} options
+   */
+  setBudget(options) {
+    const store = this.requireStore();
+    const projectId = String(options?.projectId ?? "");
+    if (!store.getProject(projectId)) throw new Error(`projects: unknown project ${projectId}`);
+    const normalized = normalizeBudgetPatch(options?.budget);
+    if (normalized.ok !== true) {
+      store.appendAudit({ action: "budget/rejected", projectId, reason: normalized.reason });
+      store.save();
+      return { ok: false, reason: normalized.reason };
+    }
+    const updated = store.updateProject(projectId, { budget: normalized.budget });
+    store.appendAudit({ action: "budget/updated", projectId, budget: updated.budget });
+    store.save();
+    return { ok: true, budget: { ...updated.budget }, defaults: { ...DEFAULT_BUDGET } };
+  }
+
+  /**
+   * F58：写项目的通知开关，返回回读值。
+   * @param {{ projectId?: string, prefs?: any }} options
+   */
+  setNotifyPrefs(options) {
+    const store = this.requireStore();
+    const projectId = String(options?.projectId ?? "");
+    if (!store.getProject(projectId)) throw new Error(`projects: unknown project ${projectId}`);
+    const normalized = normalizeNotifyPatch(options?.prefs);
+    if (normalized.ok !== true) {
+      return { ok: false, reason: normalized.reason };
+    }
+    const result = store.setNotifyPrefs(projectId, normalized.prefs);
+    store.appendAudit({ action: "notify/prefs", projectId, prefs: result.prefs });
+    store.save();
+    return { ok: true, prefs: { ...result.prefs } };
+  }
+
+  /**
+   * F23：线程重命名（右键菜单）。返回回读值。
+   * @param {{ sessionId?: string, title?: string }} options
+   */
+  renameThread(options) {
+    const store = this.requireStore();
+    const sessionId = String(options?.sessionId ?? "");
+    if (!store.state?.threads?.[sessionId])
+      throw new Error(`projects: unknown thread ${sessionId}`);
+    const result = store.setThreadTitle(sessionId, String(options?.title ?? ""));
+    store.appendAudit({ action: "thread/renamed", sessionId, title: result.title });
+    store.save();
+    const readback = store.state.threads[sessionId];
+    return { ok: true, sessionId, title: String(readback?.title ?? "") };
+  }
+
+  /**
+   * F55 / U20：本地文件夹授权卡的三键。
+   * - deny：记 denied（执行器不再为这个目录发起请求）
+   * - default：落到本项目 store（跨重启保留）
+   * - once：一次性凭据，语义对齐宿主 approval 的 `allowed-once`
+   * @param {{ projectId?: string, path?: string, decision?: string }} options
+   */
+  authorizeFolder(options) {
+    const store = this.requireStore();
+    const projectId = String(options?.projectId ?? "");
+    const project = store.getProject(projectId);
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const path = String(options?.path ?? "").trim();
+    const result = applyFolderDecision(project.policy, path, options?.decision, this.now());
+    if (result.ok !== true) return { ok: false, reason: result.reason };
+    store.updateProject(projectId, { policy: result.policy });
+    store.appendAudit({
+      action: "folder/authorized",
+      projectId,
+      path,
+      decision: result.record.mode,
+    });
+    store.save();
+    const readback = store.getProject(projectId);
+    return {
+      ok: true,
+      path,
+      decision: result.record.mode,
+      // 宿主语义：only-once ↔ approval `allowed-once`；default 是我们自己的 store
+      hostSemantics: result.record.mode === "once" ? "allowed-once" : "project-store",
+      summary: folderAuthSummary(readback?.policy, path),
+    };
+  }
+
+  /**
+   * F55：消费一张一次性凭据（用掉即失效）。
+   * @param {{ projectId?: string, path?: string }} options
+   */
+  consumeFolderGrant(options) {
+    const store = this.requireStore();
+    const projectId = String(options?.projectId ?? "");
+    const project = store.getProject(projectId);
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const path = String(options?.path ?? "").trim();
+    const result = consumeOnceFolderGrant(project.policy, path);
+    if (result.ok !== true) return { ok: false, reason: result.reason };
+    store.updateProject(projectId, { policy: result.policy });
+    store.appendAudit({ action: "folder/once-consumed", projectId, path });
+    store.save();
+    return { ok: true, path, summary: folderAuthSummary(result.policy, path) };
+  }
+
+  /**
+   * F4：GitHub 连接检查（只读）。`gh auth status` + `gh repo list --limit 5`，
+   * 失败时给出可操作的下一步（装 gh / 登录 / 补 scope），不存任何 token。
+   */
+  async githubCheck() {
+    const auth = await runGh(["auth", "status"]);
+    const parsed = parseGhAuthStatus(auth);
+    const repos =
+      parsed.authenticated === true
+        ? parseGhRepoList(await runGh(["repo", "list", "--limit", "5"]))
+        : { count: 0, repos: [], hint: parsed.hint };
+    const result = githubCheckResult(parsed, repos);
+    this.store?.appendAudit?.({
+      action: "github/checked",
+      level: result.level,
+      repoCount: result.repoCount,
+    });
+    this.store?.save?.();
+    return { ...result, repos: repos.repos, scopes: parsed.scopes };
+  }
+
+  /**
+   * F5：补全项目模板——把受管区块合并进 AGENTS.md（幂等），并补齐 instructions.md。
+   * 不覆盖用户内容：受管区块外的东西原样保留。
+   * @param {string} projectId
+   */
+  applyProjectTemplate(projectId) {
+    const store = this.requireStore();
+    const project = store.getProject(String(projectId ?? ""));
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const dir =
+      Array.isArray(project.dirs) && project.dirs.length > 0 ? String(project.dirs[0]) : "";
+    const base = dir === "" ? join(this.dataRoot, project.id) : dir.replace(/\/+$/u, "");
+    mkdirSync(base, { recursive: true });
+    const agentsPath = join(base, "AGENTS.md");
+    const block = renderManagedAgentsBlock({
+      name: project.name,
+      budget: project.budget,
+    });
+    const existing = existsSync(agentsPath) ? readFileSync(agentsPath, "utf8") : "";
+    const merged = mergeManagedBlock(existing, block);
+    writeFileSync(agentsPath, merged.text, { mode: 0o600 });
+    const instructions = join(base, "instructions.md");
+    let instructionsCreated = false;
+    if (!existsSync(instructions)) {
+      const plan = planTemplate({
+        dir: base,
+        exists: { dirExists: true, agentsMd: false, instructionsMd: false },
+      });
+      for (const file of plan.files) {
+        mkdirSync(dirname(file.path), { recursive: true });
+        try {
+          writeFileSync(file.path, file.content, { flag: "wx" });
+          instructionsCreated = true;
+        } catch {
+          /* 并发创建：已存在就跳过 */
+        }
+      }
+    }
+    store.appendAudit({
+      action: "project/template-applied",
+      projectId: project.id,
+      agents: agentsPath,
+      replaced: merged.replaced,
+      instructionsCreated,
+    });
+    store.save();
+    return {
+      ok: true,
+      agentsPath,
+      agentsCreated: merged.created,
+      agentsReplaced: merged.replaced,
+      instructionsCreated,
+      managed: { begin: MANAGED_BEGIN, chars: block.length },
+    };
+  }
+
+  /**
+   * F49：Usage 视图（token / 上下文占用，**不显示金额**：宿主没有价目 API）。
+   * @param {string} projectId
+   */
+  usageView(projectId) {
+    const store = this.requireStore();
+    const project = store.getProject(String(projectId ?? ""));
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const days = this.usageDays(project.id);
+    const threads = store.listThreads(project.id);
+    const files = readProjectFiles(this.dataRoot, project.id);
+    const fragments = this.listMemoryFragments(project.id);
+    const now = Date.now();
+    const totalTokens = days.reduce((sum, day) => sum + day.tokens, 0);
+    return {
+      projectId: project.id,
+      days,
+      totalTokens,
+      todayTokens: days.length > 0 ? days[days.length - 1].tokens : 0,
+      threads: {
+        total: threads.length,
+        today: threads.filter((/** @type {any} */ thread) => isToday(thread, now)).length,
+        working: threads.filter((/** @type {any} */ thread) => thread.state === "working").length,
+        waiting: threads.filter((/** @type {any} */ thread) => thread.state === "waiting-user")
+          .length,
+      },
+      context: {
+        instructionsChars: files.instructions.length,
+        memoryChars: files.memoryIndex.length,
+        fragments: fragments.fragments.length,
+        fragmentsChars: fragments.totalChars,
+        budget: { ...project.budget },
+      },
+      // 诚实呈现：没有钱这一项
+      money: null,
+      note: "宿主没有价目 API：这里只统计 token 与上下文占用，不显示金额。",
+    };
+  }
+
+  /**
+   * F62：`@` 候选（项目 + 线程）。client 的 inputTriggers source 回调这里取数据。
+   * @param {string} [query]
+   */
+  mentionItems(query) {
+    const store = this.requireStore();
+    const projects = store.listProjects();
+    /** @type {any[]} */
+    const threads = [];
+    for (const project of projects) {
+      for (const thread of store.listThreads(project.id)) {
+        threads.push({
+          sessionId: thread.sessionId,
+          projectId: project.id,
+          title: String(thread.title ?? thread.subtitle ?? ""),
+          lastActivityAt: thread.lastActivityAt,
+          createdAt: thread.createdAt,
+        });
+      }
+    }
+    return buildMentionItems({ projects, threads, query: String(query ?? "") });
+  }
+
+  /**
+   * F3：最近会话（「从会话开线程」用）。走宿主 sessionController.list，只读。
+   * @param {string} projectId
+   */
+  async recentSessions(projectId) {
+    const store = this.requireStore();
+    const project = store.getProject(String(projectId ?? ""));
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const sc = this.sessionController;
+    if (!sc || typeof sc.list !== "function")
+      return { ok: false, reason: "sessions/unavailable", sessions: [] };
+    /** @type {any[]} */
+    let items = [];
+    try {
+      items = await sc.list(AbortSignal.timeout(4000));
+    } catch (error) {
+      return {
+        ok: false,
+        reason: `sessions/unavailable: ${String(/** @type {any} */ (error)?.message ?? error).slice(0, 80)}`,
+        sessions: [],
+      };
+    }
+    const attached = new Set(
+      store.listThreads(project.id).map((/** @type {any} */ thread) => thread.sessionId),
+    );
+    const sessions = (Array.isArray(items) ? items : [])
+      .map((item) => ({
+        sessionId: String(item?.sessionId ?? ""),
+        title: String(item?.projections?.values?.title ?? item?.title ?? ""),
+        updatedAt: item?.updatedAt ?? item?.createdAt ?? null,
+        attached: attached.has(String(item?.sessionId ?? "")),
+      }))
+      .filter((item) => item.sessionId !== "")
+      .slice(0, 20);
+    return { ok: true, sessions };
+  }
 }
 
 declareRemote(ProjectsService, "listProjects");
@@ -3409,3 +3893,17 @@ declareRemote(ProjectsService, "prPollState");
 declareRemote(ProjectsService, "setPrPolling");
 declareRemote(ProjectsService, "setRealtimeCi");
 declareRemote(ProjectsService, "realtimeCiSpec");
+declareRemote(ProjectsService, "addMemoryFragment");
+declareRemote(ProjectsService, "listMemoryFragments");
+declareRemote(ProjectsService, "readMemoryFragment");
+declareRemote(ProjectsService, "forgetMemory");
+declareRemote(ProjectsService, "setBudget");
+declareRemote(ProjectsService, "setNotifyPrefs");
+declareRemote(ProjectsService, "renameThread");
+declareRemote(ProjectsService, "authorizeFolder");
+declareRemote(ProjectsService, "consumeFolderGrant");
+declareRemote(ProjectsService, "githubCheck");
+declareRemote(ProjectsService, "applyProjectTemplate");
+declareRemote(ProjectsService, "usageView");
+declareRemote(ProjectsService, "mentionItems");
+declareRemote(ProjectsService, "recentSessions");

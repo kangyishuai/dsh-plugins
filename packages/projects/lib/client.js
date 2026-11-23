@@ -42,6 +42,52 @@ window.__ModuleLoader__.load({
       "settings.diag": "诊断",
       "settings.unavailable": "不可用",
       "settings.hint": "项目元数据与内容文件都在本机；不会写任何远端仓库。",
+      "settings.nav.general": "General",
+      "settings.nav.memory": "Memory",
+      "settings.nav.usage": "Usage",
+      "settings.nav.debug": "Debug",
+      "settings.sectionTitle": "设置分区",
+      "settings.budget": "预算（日线程 / 并发 / 步数 / token）",
+      "settings.budgetSave": "保存预算",
+      "settings.budgetSaved": "预算已保存：{budget}",
+      "settings.budgetUnlimited": "不限",
+      "settings.memoryTitle": "记忆与指令",
+      "settings.memoryCounts":
+        "指令 {instructions} 字符 · 记忆索引 {memory} 字符 · 碎片 {fragments} 个",
+      "settings.memoryTemplate": "补全项目模板（AGENTS.md 受管区块）",
+      "settings.memoryTemplateDone": "模板已写入：{path}",
+      "settings.usageTitle": "用量",
+      "settings.usageNote": "宿主没有价目 API：这里只统计 token 与上下文占用，不显示金额。",
+      "settings.usageTokens": "今日 {today} tokens · 近 7 天 {total} tokens",
+      "settings.usageContext":
+        "上下文：指令 {instructions} 字符 · 记忆 {memory} 字符 · 碎片 {fragments} 个",
+      "settings.usageThreads":
+        "线程 {total} 个 · 今日新建 {today} 个 · 在跑 {working} · 等你 {waiting}",
+      "settings.usageEmpty": "还没有可统计的用量。",
+      "settings.debugTitle": "Debug access",
+      "settings.debugRows": "项目 {projects} · 活跃 {active} · 已挂上下文 {attached} 个会话",
+      "settings.ghCheck": "检查 GitHub 连接",
+      "settings.ghChecking": "检查中…",
+      "settings.ghOk": "GitHub：{message}",
+      "settings.ghFail": "GitHub：{message}（{hint}）",
+      "settings.notifyTitle": "通知（按项目）",
+      "settings.notifyFailed": "失败",
+      "settings.notifyWaiting": "等你",
+      "settings.notifyCompleted": "完成",
+      "settings.notifySaved": "通知开关已保存",
+      "detail.goalCounter": "{count} / 8,000",
+      "detail.fragmentsTitle": "记忆碎片（独立文件）",
+      "detail.fragmentAdd": "新增碎片",
+      "detail.fragmentTitlePlaceholder": "碎片标题，例如 部署注意事项",
+      "detail.fragmentTextPlaceholder": "写一段就够：模型需要细节时会读这个文件",
+      "detail.fragmentAdded": "已新增碎片 {slug}",
+      "detail.fragmentForget": "忘掉",
+      "detail.fragmentForgotten": "已忘掉",
+      "detail.fragmentPreview": "预览",
+      "detail.fragmentEmpty": "还没有碎片。加一条，让记忆从「一段话」变成「可检索的文件」。",
+      "detail.entriesTitle": "记忆条目",
+      "detail.entriesEmpty": "还没有记忆条目。",
+      "detail.entryForget": "忘掉这条",
       "detail.coordinator": "协调者",
       "detail.coordinatorEmpty": "还没有对话。线程跑完后它会在这里向你汇报。",
       "detail.coordinatorPlaceholder": "跟协调者说一句话，例如「帮我看下 CI 为什么红」",
@@ -2162,9 +2208,23 @@ window.__ModuleLoader__.load({
                 style: styles.input,
                 value: String(form.goal ?? ""),
                 placeholder: text(t, "panel.new.goalPlaceholder"),
+                maxLength: 8000,
                 "data-projects-new-goal": "",
                 onChange: (/** @type {any} */ event) => patch({ goal: event.target.value }),
               }),
+              // F39：≤8,000 与字数提示（对齐 Claude 的 `28 / 8,000`）
+              h(
+                "span",
+                {
+                  style: {
+                    ...styles.meta,
+                    color:
+                      String(form.goal ?? "").length > 8000 ? (T.danger ?? T.accentText) : T.faint,
+                  },
+                  "data-projects-goal-counter": String(String(form.goal ?? "").length),
+                },
+                text(t, "detail.goalCounter", { count: String(form.goal ?? "").length }),
+              ),
             ),
             // —— F2 Context 多选：目录 ≤10（逐个 workspaceRoot）+ 仓库 owner/repo ——
             h(
@@ -4267,6 +4327,9 @@ window.__ModuleLoader__.load({
           }),
         },
         { id: "memory", label: text(t, "detail.tab.memory") },
+        // U9：视图页签。Library 先占位（artifacts 0.2 才接入），Routines 在 B4 落地。
+        { id: "library", label: "Library" },
+        { id: "routines", label: "Routines" },
         { id: "audit", label: text(t, "detail.tab.audit") },
       ];
 
@@ -5173,6 +5236,23 @@ window.__ModuleLoader__.load({
         if (data.loading) return h("p", { style: styles.empty }, text(t, "detail.loading"));
         if (data.error !== "")
           return h("p", { style: styles.error, "data-projects-detail-error": "" }, data.error);
+        if (tab === "library" || tab === "routines") {
+          return h(
+            "div",
+            { "data-projects-view-placeholder": tab },
+            h("h3", { style: styles.name }, tab === "library" ? "Library" : "Routines"),
+            h(
+              "div",
+              {
+                style: { ...styles.meta, marginTop: "4px" },
+                "data-projects-view-placeholder-note": "",
+              },
+              tab === "library"
+                ? "待接入 artifacts：Library 会列出这个项目的产物与项目文件（B5，依赖 dsh-artifacts 0.2）。"
+                : "Routines 在 B4 落地：6 种频率 + Run now + History，并写明每次投递会跑一次模型。",
+            ),
+          );
+        }
         if (tab === "threads") {
           const rows = data.progress?.rows ?? [];
           const visibleRows =
@@ -7491,273 +7571,709 @@ window.__ModuleLoader__.load({
       );
 
       var describe = view.describe;
-      return h(
+      // —— B3：设置四分区（F41/U19）+ 预算（F22）+ Usage（F49）+ Debug access（F50）+ 通知（F58）——
+      var sectionState = useState("general");
+      var section = sectionState[0];
+      var setSection = sectionState[1];
+      var b3State = useState({
+        usage: null,
+        content: null,
+        gh: null,
+        message: "",
+        busy: "",
+        draft: null,
+      });
+      var b3 = /** @type {any} */ (b3State[0]);
+      var setB3 = /** @type {any} */ (b3State[1]);
+      var selectedForB3 =
+        view.projects.find((/** @type {any} */ project) => project.id === view.selectedId) ||
+        view.projects[0] ||
+        null;
+      var selectedForB3Id = selectedForB3 ? String(selectedForB3.id) : "";
+      var loadB3 = useCallback(() => {
+        if (selectedForB3Id === "") return;
+        Promise.all([
+          call(api.ctx, "usageView", { projectId: selectedForB3Id }).catch(() => null),
+          call(api.ctx, "getProjectContent", { projectId: selectedForB3Id }).catch(() => null),
+        ]).then((/** @type {any} */ values) => {
+          setB3((/** @type {any} */ prev) => ({ ...prev, usage: values[0], content: values[1] }));
+        });
+      }, [api, selectedForB3Id]);
+      useEffect(() => {
+        loadB3();
+      }, [loadB3]);
+      var budgetKeys = ["maxThreadsPerDay", "maxConcurrent", "maxStepsPerThread", "dailyTokens"];
+      var budgetValues = /** @type {Record<string, any>} */ ({});
+      budgetKeys.forEach((/** @type {any} */ key) => {
+        var stored = selectedForB3?.budget ? selectedForB3.budget[key] : null;
+        budgetValues[key] = Object.hasOwn(b3.draft || {}, key)
+          ? b3.draft[key]
+          : stored === null || stored === undefined
+            ? ""
+            : String(stored);
+      });
+      var setDraft = (/** @type {any} */ key, /** @type {any} */ value) => {
+        setB3((/** @type {any} */ prev) => ({
+          ...prev,
+          draft: { ...(prev.draft || {}), [key]: value },
+        }));
+      };
+      var saveBudget = () => {
+        if (!selectedForB3) return;
+        var patch = /** @type {Record<string, any>} */ ({});
+        budgetKeys.forEach((/** @type {any} */ key) => {
+          var raw = String(budgetValues[key] === "" ? "" : budgetValues[key]).trim();
+          patch[key] = raw === "" ? null : Number(raw);
+        });
+        setB3((/** @type {any} */ prev) => ({ ...prev, busy: "budget", message: "" }));
+        call(api.ctx, "setBudget", { projectId: selectedForB3.id, budget: patch }).then(
+          (/** @type {any} */ result) => {
+            setB3((/** @type {any} */ prev) => ({
+              ...prev,
+              busy: "",
+              draft: null,
+              message: text(t, "settings.budgetSaved", {
+                budget: JSON.stringify(result?.budget || patch),
+              }),
+            }));
+            reload();
+          },
+          (/** @type {any} */ error) => {
+            setB3((/** @type {any} */ prev) => ({
+              ...prev,
+              busy: "",
+              message: String(error?.message ? error.message : error).slice(0, 160),
+            }));
+          },
+        );
+      };
+      var b3Message =
+        b3.message === ""
+          ? null
+          : h(
+              "div",
+              { style: { color: T.dim, marginTop: "6px" }, "data-projects-settings-b3-result": "" },
+              b3.message,
+            );
+      var budgetPanel = h(
         "div",
-        { style: { color: T.text, fontSize: "13px" }, "data-projects-settings": "" },
+        {
+          style: { display: "flex", flexDirection: "column", gap: "6px" },
+          "data-projects-settings-budget": "",
+        },
+        h("div", { style: { color: T.dim, fontSize: "12px" } }, text(t, "settings.budget")),
         h(
           "div",
-          { style: styles.summary, "data-projects-settings-summary": "" },
-          describe
-            ? text(t, "settings.summary", { count: describe.projectCount })
-            : text(t, "settings.unavailable"),
+          { style: { display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "flex-end" } },
+          budgetKeys.map((/** @type {any} */ key) =>
+            h(
+              "label",
+              {
+                key: key,
+                style: {
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "2px",
+                  fontSize: "11.5px",
+                  color: T.faint,
+                },
+              },
+              h("span", null, key),
+              h("input", {
+                type: "text",
+                inputMode: "numeric",
+                value: budgetValues[key],
+                placeholder: text(t, "settings.budgetUnlimited"),
+                "data-projects-budget-input": key,
+                style: { ...styles.input, width: "84px" },
+                onChange: (/** @type {any} */ event) => {
+                  setDraft(key, event.target.value);
+                },
+              }),
+            ),
+          ),
+          h(
+            "button",
+            {
+              type: "button",
+              style: styles.button,
+              "data-projects-budget-save": "",
+              onClick: saveBudget,
+            },
+            text(t, "settings.budgetSave"),
+          ),
         ),
-        view.error ? h("div", { style: styles.error }, view.error) : null,
+        b3Message,
+      );
+      var memoryPanel = h(
+        "div",
+        {
+          "data-projects-settings-memory": "",
+          style: { display: "flex", flexDirection: "column", gap: "6px" },
+        },
+        h("div", { style: { color: T.dim, fontSize: "12px" } }, text(t, "settings.memoryTitle")),
+        h(
+          "div",
+          { style: { color: T.dim, fontSize: "12px" }, "data-projects-settings-memory-counts": "" },
+          text(t, "settings.memoryCounts", {
+            instructions: b3.content ? b3.content.instructionsChars : 0,
+            memory: b3.content ? b3.content.memoryChars : 0,
+            fragments:
+              b3.content && Array.isArray(b3.content.fragments) ? b3.content.fragments.length : 0,
+          }),
+        ),
+        h(
+          "button",
+          {
+            type: "button",
+            style: styles.button,
+            "data-projects-template-apply": "",
+            onClick: () => {
+              if (!selectedForB3) return;
+              call(api.ctx, "applyProjectTemplate", selectedForB3.id).then(
+                (/** @type {any} */ result) => {
+                  setB3((/** @type {any} */ prev) => ({
+                    ...prev,
+                    message: text(t, "settings.memoryTemplateDone", {
+                      path: String(result?.agentsPath || ""),
+                    }),
+                  }));
+                  loadB3();
+                },
+                (/** @type {any} */ error) => {
+                  setB3((/** @type {any} */ prev) => ({
+                    ...prev,
+                    message: String(error?.message ? error.message : error).slice(0, 160),
+                  }));
+                },
+              );
+            },
+          },
+          text(t, "settings.memoryTemplate"),
+        ),
+        b3Message,
+      );
+      var usage = b3.usage;
+      var usagePanel = h(
+        "div",
+        {
+          "data-projects-settings-usage": "",
+          style: { display: "flex", flexDirection: "column", gap: "4px" },
+        },
+        h("div", { style: { color: T.dim, fontSize: "12px" } }, text(t, "settings.usageTitle")),
+        usage
+          ? h(
+              "div",
+              { style: { color: T.text, fontSize: "12px" } },
+              h(
+                "div",
+                { "data-projects-usage-tokens": "" },
+                text(t, "settings.usageTokens", {
+                  today: usage.todayTokens,
+                  total: usage.totalTokens,
+                }),
+              ),
+              h(
+                "div",
+                { "data-projects-usage-context": "" },
+                text(t, "settings.usageContext", {
+                  instructions: usage.context ? usage.context.instructionsChars : 0,
+                  memory: usage.context ? usage.context.memoryChars : 0,
+                  fragments: usage.context ? usage.context.fragments : 0,
+                }),
+              ),
+              h(
+                "div",
+                { "data-projects-usage-threads": "" },
+                text(t, "settings.usageThreads", {
+                  total: usage.threads ? usage.threads.total : 0,
+                  today: usage.threads ? usage.threads.today : 0,
+                  working: usage.threads ? usage.threads.working : 0,
+                  waiting: usage.threads ? usage.threads.waiting : 0,
+                }),
+              ),
+            )
+          : h(
+              "div",
+              { style: { color: T.faint, fontSize: "12px" }, "data-projects-usage-empty": "" },
+              text(t, "settings.usageEmpty"),
+            ),
+        h(
+          "div",
+          { style: { color: T.faint, fontSize: "11.5px" }, "data-projects-usage-money": "none" },
+          text(t, "settings.usageNote"),
+        ),
+      );
+      var notifyPrefs = selectedForB3?.notifyPrefs || {
+        failed: true,
+        "waiting-user": true,
+        completed: false,
+      };
+      var setNotifyPref = (/** @type {any} */ key, /** @type {any} */ value) => {
+        if (!selectedForB3) return;
+        var patch = /** @type {Record<string, any>} */ ({});
+        patch[key] = value;
+        call(api.ctx, "setNotifyPrefs", { projectId: selectedForB3.id, prefs: patch }).then(
+          () => {
+            setB3((/** @type {any} */ prev) => ({
+              ...prev,
+              message: text(t, "settings.notifySaved"),
+            }));
+            reload();
+          },
+          (/** @type {any} */ error) => {
+            setB3((/** @type {any} */ prev) => ({
+              ...prev,
+              message: String(error?.message ? error.message : error).slice(0, 160),
+            }));
+          },
+        );
+      };
+      var notifyRow = h(
+        "div",
+        {
+          style: { display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" },
+          "data-projects-notify-prefs": "",
+        },
+        h("span", { style: { color: T.dim, fontSize: "12px" } }, text(t, "settings.notifyTitle")),
+        ["failed", "waiting-user", "completed"].map((/** @type {any} */ key) => {
+          var labelKey =
+            key === "failed"
+              ? "settings.notifyFailed"
+              : key === "waiting-user"
+                ? "settings.notifyWaiting"
+                : "settings.notifyCompleted";
+          return h(
+            "label",
+            {
+              key: key,
+              style: {
+                display: "flex",
+                gap: "4px",
+                alignItems: "center",
+                fontSize: "12px",
+                color: T.dim,
+              },
+            },
+            h("input", {
+              type: "checkbox",
+              checked: notifyPrefs[key] === true,
+              "data-projects-notify-pref": key,
+              onChange: (/** @type {any} */ event) => {
+                setNotifyPref(key, event.target.checked);
+              },
+            }),
+            text(t, labelKey),
+          );
+        }),
+      );
+      var debugPanel = h(
+        "div",
+        {
+          "data-projects-settings-debug": "",
+          style: { display: "flex", flexDirection: "column", gap: "6px" },
+        },
+        h(
+          "div",
+          { style: { color: T.dim, fontSize: "12px" }, "data-projects-debug-access": "" },
+          text(t, "settings.debugTitle"),
+        ),
         describe
           ? h(
               "div",
-              { style: { marginTop: "6px", color: T.dim }, "data-projects-settings-root": "" },
-              `${text(t, "settings.dataRoot")}: ${describe.dataRoot}`,
-            )
-          : null,
-        h("div", { style: { marginTop: "6px", color: T.faint } }, text(t, "settings.hint")),
-        (() => {
-          var selectedForDanger = view.projects.find(
-            (/** @type {any} */ project) => project.id === view.selectedId,
-          );
-          if (!selectedForDanger) return null;
-          return h(DangerSwitches, {
-            t: t,
-            policy: selectedForDanger.policy,
-            onChange: applyPolicy,
-          });
-        })(),
-
-        // —— B2/F45：Restart 行（丢掉当前协调器会话，重开一个）——
-        (() => {
-          var selectedForRestart = view.projects.find(
-            (/** @type {any} */ project) => project.id === view.selectedId,
-          );
-          var projectId = selectedForRestart ? selectedForRestart.id : "";
-          var coordinatorId = String(selectedForRestart?.coordinatorSessionId ?? "");
-          return h(
-            "div",
-            {
-              style: {
-                marginTop: "8px",
-                display: "flex",
-                gap: "8px",
-                alignItems: "center",
-                flexWrap: "wrap",
-              },
-              "data-projects-settings-restart-row": projectId,
-              "data-projects-settings-coordinator": coordinatorId,
-            },
-            h(
-              "button",
-              {
-                type: "button",
-                style: styles.button,
-                "data-projects-settings-restart": projectId,
-                disabled: projectId === "" || ci.busy !== "",
-                onClick: () => {
-                  if (projectId === "") return;
-                  setCi((/** @type {any} */ prev) => ({ ...prev, busy: "restart", message: "" }));
-                  call(api.ctx, "restartCoordinator", { projectId: projectId }).then(
-                    (/** @type {any} */ result) => {
-                      setCi((/** @type {any} */ prev) => ({
-                        ...prev,
-                        busy: "",
-                        message: text(t, "settings.restartDone", {
-                          previous: String(result?.previousSessionId ?? "").slice(0, 10),
-                        }),
-                      }));
-                      reload();
-                    },
-                    (/** @type {any} */ error) =>
-                      setCi((/** @type {any} */ prev) => ({
-                        ...prev,
-                        busy: "",
-                        message: String(error?.message ?? error).slice(0, 160),
-                      })),
-                  );
-                },
-              },
-              text(t, "settings.restartRow"),
-            ),
-            h(
-              "span",
-              { style: { color: T.dim, fontSize: "12px", minWidth: 0, flex: "1 1 220px" } },
-              text(t, "settings.restartHint"),
-            ),
-          );
-        })(),
-        // —— B2/F21：实验性实时监听开关（默认关）+ 轮询状态回读 ——
-        (() => {
-          var enabled = ci.ui?.realtimeCi === true;
-          var poll = ci.poll || null;
-          return h(
-            "div",
-            {
-              style: { marginTop: "8px", display: "flex", flexDirection: "column", gap: "2px" },
-              "data-projects-realtime-ci-row": "",
-              "data-projects-realtime-ci-state": enabled ? "on" : "off",
-              "data-projects-realtime-ci-persisted": ci.ui?.available === true ? "yes" : "no",
-            },
-            h(
-              "label",
-              { style: { display: "flex", gap: "6px", alignItems: "center" } },
-              h("input", {
-                type: "checkbox",
-                checked: enabled,
-                "data-projects-realtime-ci": "",
-                onChange: (/** @type {any} */ event) => {
-                  var next = event.target.checked;
-                  call(api.ctx, "setRealtimeCi", { enabled: next }).then(
-                    (/** @type {any} */ result) =>
-                      setCi((/** @type {any} */ prev) => ({
-                        ...prev,
-                        ui: result,
-                        spec: result?.spec ?? prev.spec,
-                        message: next
-                          ? text(t, "settings.realtimeCiOn")
-                          : text(t, "settings.realtimeCiOff"),
-                      })),
-                    (/** @type {any} */ error) =>
-                      setCi((/** @type {any} */ prev) => ({
-                        ...prev,
-                        message: String(error?.message ?? error).slice(0, 160),
-                      })),
-                  );
-                },
+              { style: { color: T.dim, fontSize: "12px" }, "data-projects-debug-rows": "" },
+              text(t, "settings.debugRows", {
+                projects: describe.projectCount,
+                active: describe.activeCount,
+                attached: describe.attachedSessions,
               }),
-              text(t, "settings.realtimeCi"),
-            ),
-            h(
-              "span",
-              { style: { color: T.faint, fontSize: "11.5px", marginLeft: "20px" } },
-              ci.spec?.warning ? String(ci.spec.warning) : text(t, "settings.realtimeCiHint"),
-            ),
-            poll
-              ? h(
-                  "span",
-                  {
-                    style: { color: T.dim, fontSize: "11.5px", marginLeft: "20px" },
-                    "data-projects-poll-state": poll.running ? "running" : "stopped",
-                  },
-                  text(t, "settings.pollState", {
-                    state: poll.running
-                      ? text(t, "settings.pollRunning")
-                      : text(t, "settings.pollStopped"),
-                    at: poll.lastAt ? new Date(poll.lastAt).toLocaleTimeString() : "—",
-                    delay: String(Math.round(Number(poll.nextDelayMs ?? 30000) / 1000)),
-                  }),
-                )
-              : null,
-          );
-        })(),
-        ci.message !== ""
-          ? h(
-              "div",
-              { style: { marginTop: "6px", color: T.dim }, "data-projects-settings-b2-result": "" },
-              ci.message,
             )
           : null,
+        notifyRow,
         h(
-          "details",
-          { style: { marginTop: "8px" }, "data-projects-policy": "" },
+          "div",
+          { style: { display: "flex", gap: "8px", alignItems: "center" } },
           h(
-            "summary",
-            { style: { cursor: "pointer", color: T.dim } },
-            text(t, "settings.policyTitle"),
+            "button",
+            {
+              type: "button",
+              style: styles.button,
+              "data-projects-gh-check": "",
+              disabled: b3.busy === "gh",
+              onClick: () => {
+                setB3((/** @type {any} */ prev) => ({ ...prev, busy: "gh", message: "" }));
+                call(api.ctx, "githubCheck").then(
+                  (/** @type {any} */ result) => {
+                    setB3((/** @type {any} */ prev) => ({
+                      ...prev,
+                      busy: "",
+                      gh: result,
+                      message: text(
+                        t,
+                        result && result.level === "ok" ? "settings.ghOk" : "settings.ghFail",
+                        {
+                          message: String(result?.message || ""),
+                          hint: String(result?.hint || ""),
+                        },
+                      ),
+                    }));
+                  },
+                  (/** @type {any} */ error) => {
+                    setB3((/** @type {any} */ prev) => ({
+                      ...prev,
+                      busy: "",
+                      message: String(error?.message ? error.message : error).slice(0, 160),
+                    }));
+                  },
+                );
+              },
+            },
+            text(t, b3.busy === "gh" ? "settings.ghChecking" : "settings.ghCheck"),
           ),
-          view.projects.length === 0
-            ? h("div", { style: { color: T.faint } }, text(t, "settings.noProjects"))
-            : h(
+          h(
+            "span",
+            {
+              style: { color: T.faint, fontSize: "11.5px" },
+              "data-projects-gh-result": b3.gh ? String(b3.gh.level || "") : "",
+            },
+            b3.gh ? String(b3.gh.message || "") : "",
+          ),
+        ),
+        b3Message,
+      );
+      var sectionPanel = h(
+        "div",
+        {
+          style: { marginTop: "8px", display: "flex", flexDirection: "column", gap: "6px" },
+          "data-projects-settings-panel": section,
+        },
+        section === "general"
+          ? budgetPanel
+          : section === "memory"
+            ? memoryPanel
+            : section === "usage"
+              ? usagePanel
+              : debugPanel,
+      );
+      var sectionNav = h(
+        "div",
+        {
+          style: { display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "8px" },
+          "data-projects-settings-nav": "",
+        },
+        ["general", "memory", "usage", "debug"].map((id) =>
+          h(
+            "button",
+            {
+              key: id,
+              type: "button",
+              "data-projects-settings-nav-item": id,
+              "aria-selected": section === id ? "true" : "false",
+              style: {
+                ...styles.button,
+                ...(section === id ? { borderColor: T.accentText, color: T.accentText } : {}),
+              },
+              onClick: () => {
+                setSection(id);
+              },
+            },
+            text(t, `settings.nav.${id}`),
+          ),
+        ),
+      );
+      return h(
+        "div",
+        {
+          style: { color: T.text, fontSize: "13px" },
+          "data-projects-settings": "",
+          "data-projects-settings-section": section,
+        },
+        sectionNav,
+        sectionPanel,
+        h(
+          "div",
+          {
+            style: section === "general" ? { display: "contents" } : { display: "none" },
+            "data-projects-settings-general": "",
+          },
+          h(
+            "div",
+            { style: styles.summary, "data-projects-settings-summary": "" },
+            describe
+              ? text(t, "settings.summary", { count: describe.projectCount })
+              : text(t, "settings.unavailable"),
+          ),
+          view.error ? h("div", { style: styles.error }, view.error) : null,
+          describe
+            ? h(
+                "div",
+                { style: { marginTop: "6px", color: T.dim }, "data-projects-settings-root": "" },
+                `${text(t, "settings.dataRoot")}: ${describe.dataRoot}`,
+              )
+            : null,
+          h("div", { style: { marginTop: "6px", color: T.faint } }, text(t, "settings.hint")),
+          (() => {
+            var selectedForDanger = view.projects.find(
+              (/** @type {any} */ project) => project.id === view.selectedId,
+            );
+            if (!selectedForDanger) return null;
+            return h(DangerSwitches, {
+              t: t,
+              policy: selectedForDanger.policy,
+              onChange: applyPolicy,
+            });
+          })(),
+
+          // —— B2/F45：Restart 行（丢掉当前协调器会话，重开一个）——
+          (() => {
+            var selectedForRestart = view.projects.find(
+              (/** @type {any} */ project) => project.id === view.selectedId,
+            );
+            var projectId = selectedForRestart ? selectedForRestart.id : "";
+            var coordinatorId = String(selectedForRestart?.coordinatorSessionId ?? "");
+            return h(
+              "div",
+              {
+                style: {
+                  marginTop: "8px",
+                  display: "flex",
+                  gap: "8px",
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                },
+                "data-projects-settings-restart-row": projectId,
+                "data-projects-settings-coordinator": coordinatorId,
+              },
+              h(
+                "button",
+                {
+                  type: "button",
+                  style: styles.button,
+                  "data-projects-settings-restart": projectId,
+                  disabled: projectId === "" || ci.busy !== "",
+                  onClick: () => {
+                    if (projectId === "") return;
+                    setCi((/** @type {any} */ prev) => ({ ...prev, busy: "restart", message: "" }));
+                    call(api.ctx, "restartCoordinator", { projectId: projectId }).then(
+                      (/** @type {any} */ result) => {
+                        setCi((/** @type {any} */ prev) => ({
+                          ...prev,
+                          busy: "",
+                          message: text(t, "settings.restartDone", {
+                            previous: String(result?.previousSessionId ?? "").slice(0, 10),
+                          }),
+                        }));
+                        reload();
+                      },
+                      (/** @type {any} */ error) =>
+                        setCi((/** @type {any} */ prev) => ({
+                          ...prev,
+                          busy: "",
+                          message: String(error?.message ?? error).slice(0, 160),
+                        })),
+                    );
+                  },
+                },
+                text(t, "settings.restartRow"),
+              ),
+              h(
+                "span",
+                { style: { color: T.dim, fontSize: "12px", minWidth: 0, flex: "1 1 220px" } },
+                text(t, "settings.restartHint"),
+              ),
+            );
+          })(),
+          // —— B2/F21：实验性实时监听开关（默认关）+ 轮询状态回读 ——
+          (() => {
+            var enabled = ci.ui?.realtimeCi === true;
+            var poll = ci.poll || null;
+            return h(
+              "div",
+              {
+                style: { marginTop: "8px", display: "flex", flexDirection: "column", gap: "2px" },
+                "data-projects-realtime-ci-row": "",
+                "data-projects-realtime-ci-state": enabled ? "on" : "off",
+                "data-projects-realtime-ci-persisted": ci.ui?.available === true ? "yes" : "no",
+              },
+              h(
+                "label",
+                { style: { display: "flex", gap: "6px", alignItems: "center" } },
+                h("input", {
+                  type: "checkbox",
+                  checked: enabled,
+                  "data-projects-realtime-ci": "",
+                  onChange: (/** @type {any} */ event) => {
+                    var next = event.target.checked;
+                    call(api.ctx, "setRealtimeCi", { enabled: next }).then(
+                      (/** @type {any} */ result) =>
+                        setCi((/** @type {any} */ prev) => ({
+                          ...prev,
+                          ui: result,
+                          spec: result?.spec ?? prev.spec,
+                          message: next
+                            ? text(t, "settings.realtimeCiOn")
+                            : text(t, "settings.realtimeCiOff"),
+                        })),
+                      (/** @type {any} */ error) =>
+                        setCi((/** @type {any} */ prev) => ({
+                          ...prev,
+                          message: String(error?.message ?? error).slice(0, 160),
+                        })),
+                    );
+                  },
+                }),
+                text(t, "settings.realtimeCi"),
+              ),
+              h(
+                "span",
+                { style: { color: T.faint, fontSize: "11.5px", marginLeft: "20px" } },
+                ci.spec?.warning ? String(ci.spec.warning) : text(t, "settings.realtimeCiHint"),
+              ),
+              poll
+                ? h(
+                    "span",
+                    {
+                      style: { color: T.dim, fontSize: "11.5px", marginLeft: "20px" },
+                      "data-projects-poll-state": poll.running ? "running" : "stopped",
+                    },
+                    text(t, "settings.pollState", {
+                      state: poll.running
+                        ? text(t, "settings.pollRunning")
+                        : text(t, "settings.pollStopped"),
+                      at: poll.lastAt ? new Date(poll.lastAt).toLocaleTimeString() : "—",
+                      delay: String(Math.round(Number(poll.nextDelayMs ?? 30000) / 1000)),
+                    }),
+                  )
+                : null,
+            );
+          })(),
+          ci.message !== ""
+            ? h(
                 "div",
                 {
-                  style: { display: "flex", flexDirection: "column", gap: "6px", marginTop: "6px" },
+                  style: { marginTop: "6px", color: T.dim },
+                  "data-projects-settings-b2-result": "",
                 },
-                h(
-                  "select",
+                ci.message,
+              )
+            : null,
+          h(
+            "details",
+            { style: { marginTop: "8px" }, "data-projects-policy": "" },
+            h(
+              "summary",
+              { style: { cursor: "pointer", color: T.dim } },
+              text(t, "settings.policyTitle"),
+            ),
+            view.projects.length === 0
+              ? h("div", { style: { color: T.faint } }, text(t, "settings.noProjects"))
+              : h(
+                  "div",
                   {
-                    style: styles.input,
-                    value: view.selectedId,
-                    "data-projects-policy-project": "",
-                    onChange: (/** @type {any} */ event) =>
-                      setView((/** @type {any} */ prev) => ({
-                        ...prev,
-                        selectedId: event.target.value,
-                      })),
+                    style: {
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "6px",
+                      marginTop: "6px",
+                    },
                   },
-                  view.projects.map((/** @type {any} */ project) =>
-                    h("option", { key: project.id, value: project.id }, project.name),
+                  h(
+                    "select",
+                    {
+                      style: styles.input,
+                      value: view.selectedId,
+                      "data-projects-policy-project": "",
+                      onChange: (/** @type {any} */ event) =>
+                        setView((/** @type {any} */ prev) => ({
+                          ...prev,
+                          selectedId: event.target.value,
+                        })),
+                    },
+                    view.projects.map((/** @type {any} */ project) =>
+                      h("option", { key: project.id, value: project.id }, project.name),
+                    ),
                   ),
-                ),
-                (() => {
-                  var selected = view.projects.find(
-                    (/** @type {any} */ project) => project.id === view.selectedId,
-                  );
-                  if (!selected) return null;
-                  return h(
-                    "div",
-                    { style: { display: "flex", flexDirection: "column", gap: "6px" } },
-                    h(
-                      "label",
-                      { style: { display: "flex", gap: "8px", alignItems: "center" } },
+                  (() => {
+                    var selected = view.projects.find(
+                      (/** @type {any} */ project) => project.id === view.selectedId,
+                    );
+                    if (!selected) return null;
+                    return h(
+                      "div",
+                      { style: { display: "flex", flexDirection: "column", gap: "6px" } },
                       h(
-                        "span",
-                        { style: { color: T.dim, flex: "none" } },
-                        text(t, "settings.autonomy"),
-                      ),
-                      h(
-                        "select",
-                        {
-                          style: styles.input,
-                          value: selected.policy?.autonomy ?? "L1",
-                          "data-projects-policy-autonomy": "",
-                          onChange: (/** @type {any} */ event) =>
-                            applyPolicy({ autonomy: event.target.value }),
-                        },
-                        ["L0", "L1", "L2", "L3"].map((level) =>
-                          h(
-                            "option",
-                            { key: level, value: level },
-                            `${level} — ${text(t, `settings.level.${level}`)}`,
+                        "label",
+                        { style: { display: "flex", gap: "8px", alignItems: "center" } },
+                        h(
+                          "span",
+                          { style: { color: T.dim, flex: "none" } },
+                          text(t, "settings.autonomy"),
+                        ),
+                        h(
+                          "select",
+                          {
+                            style: styles.input,
+                            value: selected.policy?.autonomy ?? "L1",
+                            "data-projects-policy-autonomy": "",
+                            onChange: (/** @type {any} */ event) =>
+                              applyPolicy({ autonomy: event.target.value }),
+                          },
+                          ["L0", "L1", "L2", "L3"].map((level) =>
+                            h(
+                              "option",
+                              { key: level, value: level },
+                              `${level} — ${text(t, `settings.level.${level}`)}`,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                    h("input", {
-                      style: styles.input,
-                      value: selected.policy?.persona ?? "",
-                      placeholder: text(t, "settings.persona"),
-                      "data-projects-policy-persona": "",
-                      // 非受控输入：切换项目时必须重挂载，否则显示的是上一个项目的人格
-                      key: `persona-${selected.id}`,
-                      // 不逐字提交：每敲一个字符就写一次 projects.json，
-                      // 输入长人格时会触发几十次磁盘写。改成失焦/回车时才提交。
-                      defaultValue: selected.policy?.persona ?? "",
-                      onBlur: (/** @type {any} */ event) => {
-                        if (event.target.value !== (selected.policy?.persona ?? "")) {
-                          applyPolicy({ persona: event.target.value });
-                        }
-                      },
-                      onKeyDown: (/** @type {any} */ event) => {
-                        if (event.key === "Enter") event.target.blur();
-                      },
-                    }),
-                    h(
-                      "label",
-                      {
-                        style: { display: "flex", gap: "6px", alignItems: "center", color: T.dim },
-                      },
                       h("input", {
-                        type: "checkbox",
-                        checked: selected.policy?.routing?.fallback !== false,
-                        "data-projects-policy-fallback": "",
-                        onChange: (/** @type {any} */ event) =>
-                          applyPolicy({
-                            routing: {
-                              ...(selected.policy?.routing ?? {}),
-                              fallback: event.target.checked,
-                            },
-                          }),
+                        style: styles.input,
+                        value: selected.policy?.persona ?? "",
+                        placeholder: text(t, "settings.persona"),
+                        "data-projects-policy-persona": "",
+                        // 非受控输入：切换项目时必须重挂载，否则显示的是上一个项目的人格
+                        key: `persona-${selected.id}`,
+                        // 不逐字提交：每敲一个字符就写一次 projects.json，
+                        // 输入长人格时会触发几十次磁盘写。改成失焦/回车时才提交。
+                        defaultValue: selected.policy?.persona ?? "",
+                        onBlur: (/** @type {any} */ event) => {
+                          if (event.target.value !== (selected.policy?.persona ?? "")) {
+                            applyPolicy({ persona: event.target.value });
+                          }
+                        },
+                        onKeyDown: (/** @type {any} */ event) => {
+                          if (event.key === "Enter") event.target.blur();
+                        },
                       }),
-                      text(t, "settings.fallback"),
-                    ),
-                  );
-                })(),
-              ),
+                      h(
+                        "label",
+                        {
+                          style: {
+                            display: "flex",
+                            gap: "6px",
+                            alignItems: "center",
+                            color: T.dim,
+                          },
+                        },
+                        h("input", {
+                          type: "checkbox",
+                          checked: selected.policy?.routing?.fallback !== false,
+                          "data-projects-policy-fallback": "",
+                          onChange: (/** @type {any} */ event) =>
+                            applyPolicy({
+                              routing: {
+                                ...(selected.policy?.routing ?? {}),
+                                fallback: event.target.checked,
+                              },
+                            }),
+                        }),
+                        text(t, "settings.fallback"),
+                      ),
+                    );
+                  })(),
+                ),
+          ),
         ),
       );
     }

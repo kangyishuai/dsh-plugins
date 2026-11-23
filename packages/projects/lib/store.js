@@ -7,6 +7,8 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { DEFAULT_BUDGET } from "./budget.js";
+import { DEFAULT_NOTIFY_PREFS } from "./notify.js";
 import { THREAD_STATES } from "./overview.js";
 import { defaultRules } from "./routing.js";
 
@@ -30,6 +32,12 @@ export const MAX_DIRS = 10;
 export const MAX_REPOS = 10;
 /** 图标是短标记（emoji 或一两个字符），不是图片路径。 */
 export const MAX_ICON_LENGTH = 8;
+
+/** F39：goal 上限（对齐 Claude Projects 的 8,000 字符）。 */
+export const MAX_GOAL_CHARS = 8_000;
+
+/** F23：线程标题上限（右键重命名）。 */
+export const MAX_THREAD_TITLE_CHARS = 120;
 
 /**
  * 线程记录里允许持久化的 state 词表。
@@ -273,6 +281,21 @@ function emptyState(path) {
 }
 
 /**
+ * F58：通知偏好归一。只认三个已知键，非布尔值回落默认值。
+ * @param {unknown} value
+ * @returns {Record<string, boolean>}
+ */
+export function normalizeNotifyPrefs(value) {
+  const source = value && typeof value === "object" ? /** @type {any} */ (value) : {};
+  /** @type {Record<string, boolean>} */
+  const out = { ...DEFAULT_NOTIFY_PREFS };
+  for (const key of Object.keys(DEFAULT_NOTIFY_PREFS)) {
+    if (typeof source[key] === "boolean") out[key] = source[key];
+  }
+  return out;
+}
+
+/**
  * 把任意输入收敛成合法状态；不认识的字段保留（前向兼容），缺失的补齐。
  * @param {any} raw
  * @param {string} root
@@ -311,18 +334,31 @@ export function normalize(raw, root) {
         coordinatorSessionId:
           typeof project.coordinatorSessionId === "string" ? project.coordinatorSessionId : null,
         policy: normalizePolicy(project.policy),
-        budget: {
-          dailyTokens:
-            typeof project.budget?.dailyTokens === "number" ? project.budget.dailyTokens : null,
-          maxThreadsPerDay:
-            typeof project.budget?.maxThreadsPerDay === "number"
-              ? project.budget.maxThreadsPerDay
-              : null,
-          maxStepsPerThread:
-            typeof project.budget?.maxStepsPerThread === "number"
-              ? project.budget.maxStepsPerThread
-              : null,
-        },
+        // F22：新项目带默认预算；老记录里**显式写过的 null** 保持 null（升级不改变已有项目行为），
+        // 整段 budget 缺失（更早的数据）才补默认值。
+        budget:
+          project.budget && typeof project.budget === "object"
+            ? {
+                dailyTokens:
+                  typeof project.budget.dailyTokens === "number"
+                    ? project.budget.dailyTokens
+                    : null,
+                maxThreadsPerDay:
+                  typeof project.budget.maxThreadsPerDay === "number"
+                    ? project.budget.maxThreadsPerDay
+                    : null,
+                maxConcurrent:
+                  typeof project.budget.maxConcurrent === "number"
+                    ? project.budget.maxConcurrent
+                    : null,
+                maxStepsPerThread:
+                  typeof project.budget.maxStepsPerThread === "number"
+                    ? project.budget.maxStepsPerThread
+                    : null,
+              }
+            : { ...DEFAULT_BUDGET },
+        // F58：按项目的通知开关（失败/等你默认开，完成默认关）
+        notifyPrefs: normalizeNotifyPrefs(project.notifyPrefs),
         // 旧数据没有 pinned：缺失即 false（不 bump formatVersion——纯增量可选字段，
         // 老版本读到 pinned 也只是忽略，两个方向都能读；破坏性变更才需要迁移步骤）。
         pinned: project.pinned === true,
@@ -350,6 +386,9 @@ export function normalize(raw, root) {
               }
             : null,
         subtitle: typeof thread.subtitle === "string" ? thread.subtitle.slice(0, 120) : "",
+        // F23：右键「重命名」写回的人工标题；空串 = 用宿主投影的标题
+        title:
+          typeof thread.title === "string" ? thread.title.slice(0, MAX_THREAD_TITLE_CHARS) : "",
         lastActivityAt: typeof thread.lastActivityAt === "string" ? thread.lastActivityAt : null,
         dir: typeof thread.dir === "string" ? thread.dir : null,
         branch: typeof thread.branch === "string" ? thread.branch : null,
@@ -438,12 +477,16 @@ export class ProjectStore {
   createProject(name, input = {}) {
     const trimmed = String(name ?? "").trim();
     if (trimmed === "") throw new Error("projects: project name is required");
+    const goal = typeof input.goal === "string" ? input.goal : "";
+    if (goal.length > MAX_GOAL_CHARS) {
+      throw new Error(`projects: goal exceeds ${MAX_GOAL_CHARS} characters (got ${goal.length})`);
+    }
     const id = newProjectId(this.now());
     const stamp = iso(this.now());
     this.state.projects[id] = {
       id,
       name: trimmed,
-      goal: typeof input.goal === "string" ? input.goal : "",
+      goal,
       icon: normalizeIcon(input.icon),
       state: "active",
       archivedAt: null,
@@ -453,12 +496,9 @@ export class ProjectStore {
       coordinatorSessionId: null,
       pinned: false,
       policy: defaultPolicy(),
-      budget: {
-        dailyTokens: null,
-        maxThreadsPerDay: null,
-        maxStepsPerThread: null,
-        maxConcurrent: null,
-      },
+      // F22：默认预算（日线程 20 / 并发 2 / 步数 60 / token 不限），不再是"全 null = 闸门不生效"
+      budget: { ...DEFAULT_BUDGET },
+      notifyPrefs: { ...DEFAULT_NOTIFY_PREFS },
       createdAt: stamp,
       updatedAt: stamp,
     };
@@ -484,7 +524,14 @@ export class ProjectStore {
     if (!current) throw new Error(`projects: unknown project ${id}`);
     const next = { ...current };
     if (typeof patch.name === "string" && patch.name.trim() !== "") next.name = patch.name.trim();
-    if (typeof patch.goal === "string") next.goal = patch.goal;
+    if (typeof patch.goal === "string") {
+      if (patch.goal.length > MAX_GOAL_CHARS) {
+        throw new Error(
+          `projects: goal exceeds ${MAX_GOAL_CHARS} characters (got ${patch.goal.length})`,
+        );
+      }
+      next.goal = patch.goal;
+    }
     if (typeof patch.icon === "string") next.icon = normalizeIcon(patch.icon);
     if (typeof patch.pinned === "boolean") next.pinned = patch.pinned;
     if (patch.autoResolveDays === null || typeof patch.autoResolveDays === "number") {
@@ -811,6 +858,44 @@ export class ProjectStore {
     current.state = resolved ? "resolved" : "idle";
     current.resolvedAt = resolved ? iso(this.now()) : null;
     return { ...current };
+  }
+
+  /**
+   * F23：人工线程标题（右键重命名）。空串表示清除，回到宿主投影的标题。
+   * @param {string} sessionId @param {string} title
+   * @returns {{ sessionId: string, title: string }}
+   */
+  setThreadTitle(sessionId, title) {
+    const current = this.state.threads[sessionId];
+    if (!current) throw new Error(`projects: unknown thread ${sessionId}`);
+    const value = String(title ?? "")
+      .replace(/\s+/gu, " ")
+      .trim()
+      .slice(0, MAX_THREAD_TITLE_CHARS);
+    current.title = value;
+    if (value !== "") current.unread = false;
+    return { sessionId, title: value };
+  }
+
+  /**
+   * F58：写项目的通知开关（部分补丁，未提供的键保持原值）。
+   * @param {string} projectId @param {unknown} patch
+   * @returns {{ project: any, prefs: Record<string, boolean> }}
+   */
+  setNotifyPrefs(projectId, patch) {
+    const current = this.state.projects[projectId];
+    if (!current) throw new Error(`projects: unknown project ${projectId}`);
+    /** @type {Record<string, boolean>} */
+    const clean = {};
+    for (const key of Object.keys(DEFAULT_NOTIFY_PREFS)) {
+      const value =
+        patch && typeof patch === "object" ? /** @type {any} */ (patch)[key] : undefined;
+      if (typeof value === "boolean") clean[key] = value;
+    }
+    const merged = normalizeNotifyPrefs({ ...normalizeNotifyPrefs(current.notifyPrefs), ...clean });
+    current.notifyPrefs = merged;
+    current.updatedAt = iso(this.now());
+    return { project: { ...current }, prefs: merged };
   }
 
   /**

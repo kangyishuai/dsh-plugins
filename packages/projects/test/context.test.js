@@ -35,7 +35,12 @@ describe("renderProjectContext", () => {
     assert.match(text, /工作目录：\/repo\/api/u);
     assert.match(text, /常设规则\n分支从 main 起。/u);
     assert.match(text, /项目记忆索引（MEMORY\.md）\n- 缓存层在 src\/cache\.ts/u);
-    assert.match(text, /AGENTS\.md \/ CLAUDE\.md 已由宿主单独加载/u);
+    // F40：明确「这是项目记忆，不是 AGENTS.md」
+    assert.match(text, /不是 AGENTS\.md 或 CLAUDE\.md/u);
+    assert.match(text, /后者已由宿主单独加载/u);
+    // F38：注入契约带包裹标签
+    assert.match(text, /^<project-context>/u);
+    assert.match(text, /<\/project-context>$/u);
   });
 
   it("**不**重复渲染 AGENTS.md 的内容（去重是纪律）", () => {

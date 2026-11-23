@@ -37,6 +37,7 @@ describe("diffAttention", () => {
     assert.deepEqual(summarize(items), {
       failed: 1,
       waiting: 1,
+      completed: 0,
       text: "1 个线程失败 · 1 个线程在等你",
     });
   });
@@ -66,7 +67,7 @@ describe("summarize", () => {
   });
 
   it("空集合给空串（不弹空通知）", () => {
-    assert.deepEqual(summarize([]), { failed: 0, waiting: 0, text: "" });
+    assert.deepEqual(summarize([]), { failed: 0, waiting: 0, completed: 0, text: "" });
     // @ts-expect-error 故意传 undefined
     assert.equal(summarize(undefined).text, "");
   });

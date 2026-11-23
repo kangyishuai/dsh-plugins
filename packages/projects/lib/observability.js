@@ -72,10 +72,11 @@ export function observeEvent(stats, event) {
   }
 
   if (type === "tool/result") {
-    const ok =
-      data?.ok === false || data?.error !== undefined || String(data?.status ?? "") === "error"
-        ? false
-        : true;
+    const ok = !(
+      data?.ok === false ||
+      data?.error !== undefined ||
+      String(data?.status ?? "") === "error"
+    );
     const commands = [...base.commands];
     for (let i = commands.length - 1; i >= 0; i -= 1) {
       if (commands[i].ok === null) {
