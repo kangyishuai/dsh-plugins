@@ -25,7 +25,7 @@ window.__ModuleLoader__.load({
       "panel.title": "项目",
       "panel.summary":
         "{projects} 个项目 · {active} 个活跃 · {threads} 个线程 · {attached} 个会话带上下文",
-      "panel.empty": "还没有项目。建一个，把会话丢进去，下次就不用重复交代背景。",
+      "panel.empty": "还没有项目。",
       "panel.createPlaceholder": "项目名，例如 payments-api",
       "panel.create": "新建项目",
       "panel.creating": "正在新建…",
@@ -542,8 +542,7 @@ window.__ModuleLoader__.load({
       "panel.title": "Projects",
       "panel.summary":
         "{projects} projects · {active} active · {threads} threads · {attached} sessions with context",
-      "panel.empty":
-        "No projects yet. Create one, drop sessions into it, and stop restating the background.",
+      "panel.empty": "No projects yet.",
       "panel.createPlaceholder": "Project name, e.g. payments-api",
       "panel.create": "New project",
       "panel.creating": "Creating…",

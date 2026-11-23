@@ -3,7 +3,7 @@
     "title": "Projects",
     "panel.title": "Projects",
     "panel.summary": "{projects} projects · {active} active · {threads} threads · {attached} sessions with context",
-    "panel.empty": "No projects yet. Create one, drop sessions into it, and stop restating the background.",
+    "panel.empty": "No projects yet.",
     "panel.createPlaceholder": "Project name, e.g. payments-api",
     "panel.create": "New project",
     "panel.creating": "Creating…",
