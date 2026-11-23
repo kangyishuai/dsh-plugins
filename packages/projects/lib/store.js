@@ -24,6 +24,7 @@ export const FORMAT_VERSION = 1;
  * @property {string} persona 协调器人格；空串表示用内置默认人格
  * @property {Record<string, true>} repoGrants 直推保护分支的 per-repo 首次授予
  * @property {{minApprovals:number, maxDiffFiles:number, maxDiffLines:number}} merge 合并门槛
+ * @property {{tier:'off'|'draft'|'ready'|'auto-merge'}} pr PR 档位（F21/F22；per-project opt-out）
  */
 
 /** 项目 Context 的上限（F2/F35）。宿主侧没有目录数配额，这个上限是产品约束 + 防误贴一大串路径。 */
@@ -119,6 +120,10 @@ export function defaultPolicy() {
     repoGrants: {},
     // 合并门槛（规格 §7.5 行 3 的 ④⑤）：默认要求 1 个人批过
     merge: { minApprovals: 1, maxDiffFiles: 20, maxDiffLines: 600 },
+    // F21：PR/CI 轮询档位。**以前全仓没有这个字段**，`pollPrs` 读 `policy.pr.tier` 永远拿到
+    // undefined 再退回 "draft"——写进策略也改不了行为，等于没有 per-project opt-out。
+    // off = 这个项目完全不轮询（也挡住 Create PR 的自动开档）；默认 draft。
+    pr: { tier: "draft" },
   };
 }
 
@@ -208,6 +213,14 @@ export function normalizePolicy(raw, fallbackPolicy) {
       const fromPolicy = pick(policy.repoGrants);
       return Object.keys(fromPolicy).length > 0 ? fromPolicy : pick(previous.repoGrants);
     })(),
+    // F21：PR 档位。只接受四档词表里的值；非法值落回上一份合法值，再不行才 draft。
+    pr: (() => {
+      const tiers = ["off", "draft", "ready", "auto-merge"];
+      const pick = (/** @type {any} */ value) =>
+        tiers.includes(String(value ?? "")) ? String(value) : "";
+      const tier = pick(policy.pr?.tier) || pick(previous.pr?.tier) || "draft";
+      return { tier };
+    })(),
   };
 }
 
@@ -239,8 +252,12 @@ export function filterDirs(value) {
 }
 
 /**
- * 目录列表收敛（写入口用）：形状收敛 + 按产品上限截断（F35）。
- * 不校验绝对路径（那是 UI 的事）；这里只保证存进去的形状是干净的。
+ * 目录列表收敛（形状收敛 + 上限截断）。
+ *
+ * 注意：**写入口不再用它兜底截断**（P2 复审）。`filterDirs` 的注释承诺「上限只在写入口拒绝」，
+ * 但 `createProject` 曾经悄悄只留前 10 个——用户贴 12 个目录会静默丢 2 个，而 `updateProject`
+ * 是显式报错的，两条入口说法不一致。现在 `createProject` 也显式拒绝；这个函数只给
+ * 「已经校验过数量」的调用方做形状收敛，单测仍覆盖它的截断行为。
  * @param {unknown} value
  * @returns {string[]}
  */
@@ -537,6 +554,11 @@ export class ProjectStore {
     }
     const id = newProjectId(this.now());
     const stamp = iso(this.now());
+    // P2 复审：与 updateProject 同口径——超上限就明确拒绝，不再静默截断（静默丢用户数据）
+    const dirs = filterDirs(input.dirs);
+    if (dirs.length > MAX_DIRS) {
+      throw new Error(`projects: at most ${MAX_DIRS} project dirs (got ${dirs.length})`);
+    }
     this.state.projects[id] = {
       id,
       name: trimmed,
@@ -544,7 +566,7 @@ export class ProjectStore {
       icon: normalizeIcon(input.icon),
       state: "active",
       archivedAt: null,
-      dirs: normalizeDirs(input.dirs),
+      dirs,
       repos: normalizeRepos(input.repos),
       autoResolveDays: normalizeAutoResolveDays(input.autoResolveDays),
       coordinatorSessionId: null,
@@ -897,8 +919,15 @@ export class ProjectStore {
     const next = isThreadState(state) ? state : current.state;
     const changed = next !== current.state;
     if (changed) current.state = next;
-    // resolvedAt 只由 setThreadResolved / setThreadState('resolved') 维护；
-    // 这里刻意不因为「临时变成 failed/working」就清掉它——清不清是事件层的决定。
+    // resolvedAt 跟着 resolved 走（P2 复审：注释以前说这里维护，代码却没写）：
+    // 进入 resolved 记时间；离开 resolved（重开/又跑起来/归档）就清掉，避免「已 resolve 时间」泄漏。
+    if (next === "resolved") {
+      if (typeof current.resolvedAt !== "string" || current.resolvedAt === "") {
+        current.resolvedAt = iso(this.now());
+      }
+    } else if (current.resolvedAt != null) {
+      current.resolvedAt = null;
+    }
     return { changed, state: current.state, record: { ...current } };
   }
 

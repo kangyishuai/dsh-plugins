@@ -478,6 +478,17 @@ describe("B1 审查 P0-2：重启后 failed / working 仍读得到", () => {
     assert.equal(deriveThreadState(undefined, { state: "failed" }), "failed");
   });
 
+  it("mergeRecord 把记录里的 waiting-user 读回（P2：写到盘上再读不会变 idle）", () => {
+    const view = mergeRecord(undefined, { state: "waiting-user", resolvedAt: null });
+    assert.equal(view.awaitingUser, true);
+    assert.equal(deriveState(view), "waiting-user");
+    assert.equal(deriveThreadState(undefined, { state: "waiting-user" }), "waiting-user");
+    // B1 之前的历史拼写 `waiting` 同样按「等你」读（不伪造别的状态）
+    assert.equal(deriveThreadState(undefined, { state: "waiting" }), "waiting-user");
+    // 别的状态不会被误读成「等你」
+    assert.equal(mergeRecord(undefined, { state: "idle" }).awaitingUser, false);
+  });
+
   it("mergeRecord 把记录里的 working 映射回视图（不是 idle）", () => {
     assert.equal(mergeRecord(undefined, { state: "working" }).state, "working");
     assert.equal(deriveThreadState(undefined, { state: "working" }), "working");

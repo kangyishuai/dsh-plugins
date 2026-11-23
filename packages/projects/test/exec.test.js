@@ -58,6 +58,18 @@ describe("runCommand", () => {
     assert.ok(result.stdout.trim().endsWith(tail), result.stdout);
   });
 
+  it("超时返回 124 且不抛（gh 卡住不能把轮询 inFlight 永久占住）", async () => {
+    const slow = join(dir, "slowcmd");
+    writeFileSync(slow, "#!/bin/sh\nsleep 5\necho never\n", "utf8");
+    chmodSync(slow, 0o755);
+    const startedAt = Date.now();
+    const result = await runCommand("slowcmd", [], { timeoutMs: 300 });
+    const elapsed = Date.now() - startedAt;
+    assert.equal(result.code, 124);
+    assert.match(result.stderr, /timeout after 300ms/u);
+    assert.ok(elapsed < 4000, `应该在超时附近返回，实际 ${elapsed}ms`);
+  });
+
   it("命令不存在时返回非 0 而不是抛错", async () => {
     const result = await runCommand("definitely-not-a-command-xyz", []);
     assert.notEqual(result.code, 0);

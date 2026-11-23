@@ -166,6 +166,17 @@ window.__ModuleLoader__.load({
       "detail.modelNone": "这个部署没暴露模型目录",
       "detail.modelSave": "应用",
       "detail.modelSaved": "已切到 {model}",
+      "detail.modelSavedEffort": "已切到 {model} / effort {effort}",
+      "detail.effort": "effort",
+      "detail.effortInherit": "继承默认",
+      "detail.modelSelection": "宿主回读：{selection}",
+      "detail.threadConflict": "这个会话已经在别的项目里：先从这个项目移除，再挂到目标项目。",
+      "detail.autofix": "修一轮 CI",
+      "detail.autofixHint": "只在 CI 失败时可用；只改本地 worktree，不 push、不开 PR。",
+      "detail.autofixDisabled": "当前没有失败的 CI，无需手动修。",
+      "detail.autofixRunning": "正在投递修复任务…",
+      "detail.autofixStarted": "已投递修复任务（第 {round} 轮，结论回读 {reason}）",
+      "detail.autofixStopped": "没有继续修：{reason}",
       "detail.prCreate": "Create PR",
       "detail.prCreating": "正在开 PR…",
       "detail.prCreated": "已开 PR #{number}",
@@ -185,11 +196,11 @@ window.__ModuleLoader__.load({
       "settings.restartHint":
         "丢掉当前协调器会话并重开一个（旧会话保留可追溯）；当前那条回复会丢。",
       "settings.restartDone": "已重开（旧会话 {previous}…）",
-      "settings.realtimeCi": "实验性实时监听 CI/PR",
+      "settings.realtimeCi": "实时监听 CI/PR（未实现）",
       "settings.realtimeCiHint":
-        "默认关。开启会在该 GitHub 仓库上创建临时 webhook，需要仓库管理员权限；gh 官方标注仅供测试/开发。",
-      "settings.realtimeCiOn": "已开启（需要管理员权限，会建临时 webhook）",
-      "settings.realtimeCiOff": "已关闭，回到默认轮询",
+        "未实现：需要 `gh webhook forward`（gh-webhook 扩展）与仓库管理员权限，并要校验 webhook 签名；当前只有 30–90s 轮询，开关不会启动任何东西。",
+      "settings.realtimeCiOn": "未实现（不会建 webhook）",
+      "settings.realtimeCiOff": "未实现，只有默认轮询",
       "settings.pollState": "PR 轮询：{state} · 上次 {at} · 间隔 {delay}s",
       "settings.pollRunning": "运行中",
       "settings.pollStopped": "已停",
@@ -533,6 +544,19 @@ window.__ModuleLoader__.load({
       "detail.modelNone": "This deployment exposes no model catalog",
       "detail.modelSave": "Apply",
       "detail.modelSaved": "Switched to {model}",
+      "detail.modelSavedEffort": "Switched to {model} / effort {effort}",
+      "detail.effort": "effort",
+      "detail.effortInherit": "inherit",
+      "detail.modelSelection": "Host readback: {selection}",
+      "detail.threadConflict":
+        "This thread already belongs to another project. Remove it from that project first, then attach it here.",
+      "detail.autofix": "Fix CI round",
+      "detail.autofixHint":
+        "Only when CI is failing; touches only the local worktree — no push, no PR.",
+      "detail.autofixDisabled": "No failing CI right now, nothing to fix.",
+      "detail.autofixRunning": "Queueing the fix task…",
+      "detail.autofixStarted": "Fix task queued (round {round}, readback {reason})",
+      "detail.autofixStopped": "Stopped fixing: {reason}",
       "detail.prCreate": "Create PR",
       "detail.prCreating": "Creating PR…",
       "detail.prCreated": "Opened PR #{number}",
@@ -553,11 +577,11 @@ window.__ModuleLoader__.load({
       "settings.restartHint":
         "Drop the current coordinator session and open a new one (the old one is kept for audit); the reply in flight is lost.",
       "settings.restartDone": "Restarted (previous {previous}…)",
-      "settings.realtimeCi": "Experimental realtime CI/PR watch",
+      "settings.realtimeCi": "Realtime CI/PR watch (not implemented)",
       "settings.realtimeCiHint":
-        "Off by default. Enabling creates a temporary webhook on that GitHub repo and needs repo admin; gh marks this test/dev only.",
-      "settings.realtimeCiOn": "Enabled (needs admin; creates a temporary webhook)",
-      "settings.realtimeCiOff": "Disabled, back to default polling",
+        "Not implemented: it needs `gh webhook forward` (gh-webhook extension), repo admin rights and webhook signature checks; only the 30–90s poll exists, so this switch starts nothing.",
+      "settings.realtimeCiOn": "Not implemented (creates no webhook)",
+      "settings.realtimeCiOff": "Not implemented, polling only",
       "settings.pollState": "PR poll: {state} · last {at} · interval {delay}s",
       "settings.pollRunning": "running",
       "settings.pollStopped": "stopped",
@@ -910,6 +934,20 @@ window.__ModuleLoader__.load({
           return result && typeof result === "object" && "value" in result ? result.value : result;
         },
       );
+    }
+
+    /**
+     * 把 attachThread 的冲突错误本地化（B2 复审 P2）。
+     * 服务端抛的是内部串 `thread already belongs to project …`，直接透出去是英文内部实现细节。
+     * @param {any} t @param {any} error
+     * @returns {string}
+     */
+    function threadErrorText(t, error) {
+      var raw = String(error?.message || error || "");
+      if (/already belongs to project|thread-in-other-project/iu.test(raw)) {
+        return text(t, "detail.threadConflict");
+      }
+      return raw.slice(0, 200);
     }
 
     /** @param {any} t @param {string} key @param {Record<string, unknown>} [vars] */
@@ -4186,6 +4224,13 @@ window.__ModuleLoader__.load({
       const modelPickState = useState({});
       const modelPick = modelPickState[0];
       const setModelPick = modelPickState[1];
+      // F24/P1-3：effort 下拉与宿主回读（以前只传 provider/model，effort 从不传）
+      const modelEffortPickState = useState({});
+      const modelEffortPick = modelEffortPickState[0];
+      const setModelEffortPick = modelEffortPickState[1];
+      const modelSelectionState = useState({});
+      const modelSelection = modelSelectionState[0];
+      const setModelSelection = modelSelectionState[1];
 
       const sendCoordinator = useCallback(() => {
         const value = String(coordinatorDraft).trim();
@@ -4281,20 +4326,40 @@ window.__ModuleLoader__.load({
       );
 
       const applyModel = useCallback(
-        (/** @type {string} */ sessionId, /** @type {any} */ option) => {
+        (
+          /** @type {string} */ sessionId,
+          /** @type {any} */ option,
+          /** @type {string} */ effort,
+        ) => {
           if (!option || busyAction !== "") return;
           setBusyAction(`model:${sessionId}`);
+          const wantedEffort = String(effort ?? "").trim();
           call(api.ctx, "selectThreadModel", {
             projectId: project.id,
             sessionId,
-            input: { provider: option.provider, model: option.model },
+            input: {
+              provider: option.provider,
+              model: option.model,
+              // 空串 = 继承宿主默认（服务端只在不空时带上该字段）
+              reasoningEffort: wantedEffort,
+            },
           }).then(
             (/** @type {any} */ result) => {
               setBusyAction("");
+              setModelSelection((/** @type {any} */ prev) => ({
+                ...prev,
+                [sessionId]: result?.selection ?? null,
+              }));
               setThreadAction({
                 pending: "",
                 ok: true,
-                message: text(t, "detail.modelSaved", { model: String(result?.model ?? "") }),
+                message:
+                  wantedEffort === ""
+                    ? text(t, "detail.modelSaved", { model: String(result?.model ?? "") })
+                    : text(t, "detail.modelSavedEffort", {
+                        model: String(result?.model ?? ""),
+                        effort: String(result?.reasoningEffort ?? wantedEffort),
+                      }),
               });
               load(true);
             },
@@ -4341,10 +4406,49 @@ window.__ModuleLoader__.load({
         [api, busyAction, load, project.id, setThreadAction, t],
       );
 
+      // F21（B2 复审 P1-2）：auto-fix 的手动触发入口。
+      // 以前 `autoFixStep` 只有服务端实现、没有任何调用者，等于死代码；这里把它接到按钮上，
+      // 结果（继续修 / 停下 + 原因）回显到行内动作条，审计由服务端写（autofix/round|stopped）。
+      const autofixFor = useCallback(
+        (/** @type {string} */ sessionId) => {
+          if (busyAction !== "") return;
+          setBusyAction(`fix:${sessionId}`);
+          call(api.ctx, "autoFixStep", {
+            projectId: project.id,
+            input: { sessionId, log: "", changedFiles: [] },
+          }).then(
+            (/** @type {any} */ result) => {
+              setBusyAction("");
+              const continued = result?.continued === true;
+              setThreadAction({
+                pending: "",
+                ok: continued,
+                message: continued
+                  ? text(t, "detail.autofixStarted", {
+                      round: Number(result?.round ?? 0),
+                      reason: String(result?.reason ?? "queued"),
+                    })
+                  : text(t, "detail.autofixStopped", { reason: String(result?.reason ?? "?") }),
+              });
+              load(true);
+            },
+            (/** @type {any} */ error) => {
+              setBusyAction("");
+              setThreadAction({
+                pending: "",
+                ok: false,
+                message: String(error?.message ?? error).slice(0, 200),
+              });
+            },
+          );
+        },
+        [api, busyAction, load, project.id, setThreadAction, t],
+      );
+
       // F24：把 modelCatalog 摊平成 <option>；结构不认识就返回空（UI 明说"没暴露"）
       const modelOptions = (() => {
         const groups = Array.isArray(data.models?.groups) ? data.models.groups : [];
-        /** @type {Array<{ key: string, provider: string, model: string, label: string }>} */
+        /** @type {Array<{ key: string, provider: string, model: string, efforts: string[], label: string }>} */
         const out = [];
         for (const group of groups) {
           const models = Array.isArray(group?.models)
@@ -4359,10 +4463,21 @@ window.__ModuleLoader__.load({
                 : String(model?.id ?? model?.model ?? model?.name ?? "");
             if (id === "") continue;
             const provider = String(group?.provider ?? group?.id ?? group?.name ?? "");
+            // F24/P1-3：尽力取 reasoning.efforts（可能是字符串数组，也可能是 {id,label} 数组）
+            const reasoning = model && typeof model === "object" ? (model.reasoning ?? {}) : {};
+            const rawEfforts = Array.isArray(reasoning?.efforts) ? reasoning.efforts : [];
+            const efforts = rawEfforts
+              .map((/** @type {any} */ item) =>
+                typeof item === "string"
+                  ? item
+                  : String(item?.id ?? item?.value ?? item?.name ?? ""),
+              )
+              .filter((/** @type {string} */ item) => item !== "");
             out.push({
               key: `${provider}:${id}`,
               provider,
               model: id,
+              efforts,
               label: `${String(group?.label ?? group?.name ?? provider)}/${id}`,
             });
           }
@@ -5008,32 +5123,93 @@ window.__ModuleLoader__.load({
                           { style: styles.meta, "data-projects-thread-model-none": "" },
                           text(t, "detail.modelNone"),
                         ),
+                    // F24/P1-3：effort 下拉**无条件**渲染——模型目录没暴露时也要有明确的
+                    // 「继承默认」降级（否则这条能力在无目录部署里既不可用也不可见）。
+                    (() => {
+                      const pickedKey =
+                        modelOptions.length > 0
+                          ? (modelPick[row.sessionId] ??
+                            `${modelOptions[0].provider}:${modelOptions[0].model}`)
+                          : "";
+                      const picked = modelOptions.find(
+                        (/** @type {any} */ option) => option.key === pickedKey,
+                      );
+                      const efforts = Array.isArray(picked?.efforts) ? picked.efforts : [];
+                      const effortValue = String(modelEffortPick[row.sessionId] ?? "");
+                      return h(
+                        "select",
+                        {
+                          style: styles.input,
+                          "data-projects-thread-effort": row.sessionId,
+                          "data-projects-thread-effort-available":
+                            efforts.length > 0 ? "yes" : "no",
+                          "aria-label": text(t, "detail.effort"),
+                          value: effortValue,
+                          onChange: (/** @type {any} */ event) =>
+                            setModelEffortPick((/** @type {any} */ prev) => ({
+                              ...prev,
+                              [row.sessionId]: event.target.value,
+                            })),
+                        },
+                        [
+                          h(
+                            "option",
+                            { key: "inherit", value: "" },
+                            text(t, "detail.effortInherit"),
+                          ),
+                          ...efforts.map((/** @type {string} */ effort) =>
+                            h("option", { key: effort, value: effort }, effort),
+                          ),
+                        ],
+                      );
+                    })(),
                     modelOptions.length > 0
-                      ? h(
-                          "button",
-                          {
-                            type: "button",
-                            style: {
-                              ...styles.secondaryButton,
-                              padding: "2px 10px",
-                              fontSize: "12px",
-                            },
-                            "data-projects-thread-model-save": row.sessionId,
-                            disabled: busyAction !== "",
-                            onClick: () => {
-                              const key =
-                                modelPick[row.sessionId] ??
-                                `${modelOptions[0].provider}:${modelOptions[0].model}`;
-                              applyModel(
-                                String(row.sessionId),
-                                modelOptions.find(
-                                  (/** @type {any} */ option) => option.key === key,
-                                ),
-                              );
-                            },
-                          },
-                          text(t, "detail.modelSave"),
-                        )
+                      ? (() => {
+                          const pickedKey =
+                            modelPick[row.sessionId] ??
+                            `${modelOptions[0].provider}:${modelOptions[0].model}`;
+                          return [
+                            h(
+                              "button",
+                              {
+                                key: `save-${row.sessionId}`,
+                                type: "button",
+                                style: {
+                                  ...styles.secondaryButton,
+                                  padding: "2px 10px",
+                                  fontSize: "12px",
+                                },
+                                "data-projects-thread-model-save": row.sessionId,
+                                disabled: busyAction !== "",
+                                onClick: () =>
+                                  applyModel(
+                                    String(row.sessionId),
+                                    modelOptions.find(
+                                      (/** @type {any} */ option) => option.key === pickedKey,
+                                    ),
+                                    String(modelEffortPick[row.sessionId] ?? ""),
+                                  ),
+                              },
+                              text(t, "detail.modelSave"),
+                            ),
+                            modelSelection[row.sessionId]
+                              ? h(
+                                  "span",
+                                  {
+                                    key: `sel-${row.sessionId}`,
+                                    style: styles.meta,
+                                    "data-projects-thread-model-selection": row.sessionId,
+                                  },
+                                  text(t, "detail.modelSelection", {
+                                    selection: JSON.stringify(modelSelection[row.sessionId]).slice(
+                                      0,
+                                      120,
+                                    ),
+                                  }),
+                                )
+                              : null,
+                          ];
+                        })()
                       : null,
                   ),
                   // F12/U16：Create PR 条 + 分支条
@@ -5063,6 +5239,25 @@ window.__ModuleLoader__.load({
                       busyAction === `pr:${row.sessionId}`
                         ? text(t, "detail.prCreating")
                         : text(t, "detail.prCreate"),
+                    ),
+                    // F21/P1-2：auto-fix 手动触发入口（只在 CI 失败时可点，避免无意义/花 token 的调用）
+                    h(
+                      "button",
+                      {
+                        type: "button",
+                        style: { ...styles.secondaryButton, padding: "2px 10px", fontSize: "12px" },
+                        "data-projects-thread-autofix": row.sessionId,
+                        "data-projects-thread-autofix-state": row.ciState ?? "none",
+                        disabled: busyAction !== "" || row.ciState !== "failing",
+                        title:
+                          row.ciState === "failing"
+                            ? text(t, "detail.autofixHint")
+                            : text(t, "detail.autofixDisabled"),
+                        onClick: () => autofixFor(String(row.sessionId)),
+                      },
+                      busyAction === `fix:${row.sessionId}`
+                        ? text(t, "detail.autofixRunning")
+                        : text(t, "detail.autofix"),
                     ),
                   ),
                   // F18：审批在**线程里**产生；这里的按钮只是把"申请"入口暴露给用户
@@ -5983,6 +6178,8 @@ window.__ModuleLoader__.load({
                       color: threadAction.ok === false ? T.danger : T.text,
                     },
                     "data-projects-thread-action-result": "",
+                    // F20/P1-4：冒烟要点按钮验结果态，ok 也要能读（成功条/失败条）
+                    "data-projects-thread-action-ok": String(threadAction.ok),
                   },
                   threadAction.message,
                 )
@@ -6267,16 +6464,12 @@ window.__ModuleLoader__.load({
                     },
                     h("input", {
                       type: "checkbox",
-                      checked: data.ui?.realtimeCi === true,
+                      // B2 复审 P1-2：实时监听**未实现**（要 gh webhook forward + 管理员 + 验签），
+                      // 以前开关能点能存却什么也不启动，属于假承诺；现在 disabled 并写明原因。
+                      checked: false,
+                      disabled: true,
                       "data-projects-detail-realtime-ci": "",
-                      onChange: (/** @type {any} */ event) => {
-                        const next = event.target.checked;
-                        call(api.ctx, "setRealtimeCi", { enabled: next }).then(
-                          () => load(true),
-                          (/** @type {any} */ error) =>
-                            setCoordinatorMsg(String(error?.message ?? error).slice(0, 160)),
-                        );
-                      },
+                      "data-projects-detail-realtime-ci-implemented": "no",
                     }),
                     text(t, "settings.realtimeCi"),
                   ),
@@ -7301,7 +7494,7 @@ window.__ModuleLoader__.load({
             (error) => {
               setView((/** @type {any} */ prev) => ({
                 loading: false,
-                error: String(error?.message ?? error),
+                error: threadErrorText(t, error),
                 projects: prev.projects,
               }));
             },
@@ -8220,27 +8413,11 @@ window.__ModuleLoader__.load({
                 { style: { display: "flex", gap: "6px", alignItems: "center" } },
                 h("input", {
                   type: "checkbox",
-                  checked: enabled,
+                  // 未实现：见详情页同一处注释（gh webhook 扩展 + 仓库管理员 + 验签，本轮不做）
+                  checked: false,
+                  disabled: true,
                   "data-projects-realtime-ci": "",
-                  onChange: (/** @type {any} */ event) => {
-                    var next = event.target.checked;
-                    call(api.ctx, "setRealtimeCi", { enabled: next }).then(
-                      (/** @type {any} */ result) =>
-                        setCi((/** @type {any} */ prev) => ({
-                          ...prev,
-                          ui: result,
-                          spec: result?.spec ?? prev.spec,
-                          message: next
-                            ? text(t, "settings.realtimeCiOn")
-                            : text(t, "settings.realtimeCiOff"),
-                        })),
-                      (/** @type {any} */ error) =>
-                        setCi((/** @type {any} */ prev) => ({
-                          ...prev,
-                          message: String(error?.message ?? error).slice(0, 160),
-                        })),
-                    );
-                  },
+                  "data-projects-realtime-ci-implemented": "no",
                 }),
                 text(t, "settings.realtimeCi"),
               ),

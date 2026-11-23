@@ -85,14 +85,23 @@ describe("项目实体新字段（F1）", () => {
 });
 
 describe("Context 多选上限（F2/F35）", () => {
-  it("目录去重、去空、最多 10 个；超过上限时 updateProject 明确拒绝", () => {
+  it("目录去重、去空、最多 10 个；createProject / updateProject 都明确拒绝超限", () => {
     assert.deepEqual(normalizeDirs(["/a", "/a", " ", "/b"]), ["/a", "/b"]);
     assert.equal(normalizeDirs(Array.from({ length: 20 }, (_, i) => `/d${i}`)).length, 10);
     const store = new ProjectStore({ root }).load();
+    // P2 复审：以前 createProject 只留前 10 个（静默丢用户数据），与 `filterDirs` 注释里
+    // 「上限只在写入口拒绝」的说法不符；现在两条入口同口径，都是可读报错。
+    assert.throws(
+      () =>
+        store.createProject("alpha", {
+          dirs: Array.from({ length: 20 }, (_, i) => `/d${i}`),
+        }),
+      /at most 10 project dirs/u,
+    );
     const project = store.createProject("alpha", {
-      dirs: Array.from({ length: 20 }, (_, i) => `/d${i}`),
+      dirs: Array.from({ length: MAX_DIRS }, (_, i) => `/d${i}`),
     });
-    assert.equal(project.dirs.length, MAX_DIRS, "新建时按上限截断（不静默写爆）");
+    assert.equal(project.dirs.length, MAX_DIRS, "正好上限是允许的");
     assert.throws(
       () =>
         store.updateProject(project.id, {
@@ -142,6 +151,34 @@ describe("线程持久字段（F16/F27/F29/F31）", () => {
     const reopened = store.setThreadResolved("session-1", false);
     assert.equal(reopened.state, "idle");
     assert.equal(reopened.resolvedAt, null);
+  });
+
+  it("setThreadState('resolved') 也维护 resolvedAt（P2：注释说了代码没做）", () => {
+    const store = new ProjectStore({ root }).load();
+    const project = store.createProject("alpha");
+    store.attachThread("session-1", project.id);
+    const resolved = store.setThreadState("session-1", "resolved");
+    assert.equal(resolved.state, "resolved");
+    assert.equal(typeof resolved.record.resolvedAt, "string", "进入 resolved 要记时间");
+    // 重复写 resolved 不刷新时间（幂等）
+    const again = store.setThreadState("session-1", "resolved");
+    assert.equal(again.record.resolvedAt, resolved.record.resolvedAt);
+    // 离开 resolved 清掉时间，避免「已解决时间」泄漏到别的状态
+    const idle = store.setThreadState("session-1", "idle");
+    assert.equal(idle.record.resolvedAt, null);
+  });
+
+  it("默认策略带 policy.pr.tier=draft，且非法值收敛回 draft（F21 per-project opt-out）", () => {
+    const store = new ProjectStore({ root }).load();
+    const project = store.createProject("alpha");
+    assert.equal(project.policy.pr.tier, "draft");
+    const off = store.updateProject(project.id, { policy: { pr: { tier: "off" } } });
+    assert.equal(off.policy.pr.tier, "off");
+    const bogus = store.updateProject(project.id, { policy: { pr: { tier: "nonsense" } } });
+    assert.equal(bogus.policy.pr.tier, "off", "非法值继承上一份合法值，不编档位");
+    const legacy = new ProjectStore({ root }).load();
+    const legacyProject = legacy.createProject("legacy");
+    assert.equal(legacyProject.policy.pr.tier, "draft", "老数据没有 pr 字段时补默认值");
   });
 
   it("todos / subtitle / unread / lastActivityAt 落盘并可读回", () => {

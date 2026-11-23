@@ -132,15 +132,19 @@ export function planThreadPatches(input, rows) {
 }
 
 /**
- * 实验档（实时 webhook）开关的说明：开关存在，但这里**只**暴露文案与前置条件，
- * 真起 `gh webhook forward` 需要仓库管理员权限，必须由用户显式确认后才做（B2 不做自动起）。
- * @returns {{ key: string, requires: string[], warning: string }}
+ * 实验档（实时 webhook）开关的说明。
+ *
+ * **未实现（B2 复审 P1）**：以前这里只给「开关 + 文案」，开关能写能回读，却没有任何东西被启动，
+ * README 还宣称"会建临时 webhook"——那是假承诺。真做需要 `gh webhook forward`（gh-webhook 扩展）
+ * + 仓库管理员权限 + 校验签名，本轮不做，所以 UI 明确 disabled，并保留这段前置条件说明。
+ * @returns {{ key: string, implemented: boolean, requires: string[], warning: string }}
  */
 export function realtimeCiSpec() {
   return {
     key: "realtimeCi",
+    implemented: false,
     requires: ["仓库管理员权限", "本机 gh ≥ 2.60（需 gh-webhook 扩展）", "同一仓库同时只能一人用"],
     warning:
-      "开启后会在该 GitHub 仓库上创建临时 webhook（push/pull_request/check_run），并在本机起 loopback 监听；gh 官方标注仅供测试/开发。默认关闭，轮询已够用。",
+      "未实现：实时监听需要 `gh webhook forward`（gh-webhook 扩展）与仓库管理员权限，并要校验 webhook 签名；当前只有 30–90s 轮询，开关不会启动任何东西。",
   };
 }

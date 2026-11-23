@@ -787,7 +787,19 @@ try {
 
   // 展开面板：U5 起始卡 / U7 chip / F17 Tasks / F19 steer / F24 模型 / F12 Create PR 条
   await page.evaluate(() => document.querySelector("[data-projects-thread-expand]")?.click());
-  await page.waitForTimeout(600);
+  // 轮询等展开面板出现（固定 sleep 在慢机器上会闪空，重复跑时尤其不稳）
+  {
+    let shown = false;
+    for (let i = 0; i < 20; i += 1) {
+      shown = await page.evaluate(
+        () =>
+          document.querySelector("[data-projects-thread-detail]") !== null &&
+          document.querySelector("[data-projects-thread-model-row]") !== null,
+      );
+      if (shown) break;
+      await page.waitForTimeout(250);
+    }
+  }
   const expanded = await page.evaluate(() => ({
     detail: Boolean(document.querySelector("[data-projects-thread-detail]")),
     startCard: Boolean(document.querySelector("[data-projects-thread-start-card]")),
@@ -810,6 +822,18 @@ try {
         ?.getAttribute("data-projects-thread-model-available") || "",
     prButton: Boolean(document.querySelector("[data-projects-create-pr]")),
     prButtonDisabled: document.querySelector("[data-projects-create-pr]")?.disabled === true,
+    effort: Boolean(document.querySelector("[data-projects-thread-effort-available]")),
+    effortAvailable:
+      document
+        .querySelector("[data-projects-thread-effort-available]")
+        ?.getAttribute("data-projects-thread-effort-available") || "",
+    autofix: Boolean(document.querySelector("[data-projects-thread-autofix]")),
+    autofixState:
+      document
+        .querySelector("[data-projects-thread-autofix]")
+        ?.getAttribute("data-projects-thread-autofix-state") || "",
+    autofixDisabled:
+      document.querySelector("[data-projects-thread-autofix]")?.disabled === true,
     branchBar: Boolean(document.querySelector("[data-projects-branch-bar]")),
     branchLabel: (document.querySelector("[data-projects-branch-label]")?.textContent || "").trim(),
   }));
@@ -848,6 +872,24 @@ try {
     expanded.modelRow === true && ["yes", "no"].includes(expanded.modelAvailable),
     JSON.stringify({ row: expanded.modelRow, available: expanded.modelAvailable }),
   );
+  // F24/P1-3：effort 下拉必须和模型下拉并排出现（以前只传 provider/model，effort 从不传）
+  add(
+    "每线程 effort 下拉与模型下拉并排（F24：数据来自 modelCatalog.reasoning.efforts）",
+    expanded.effort === true && ["yes", "no"].includes(expanded.effortAvailable),
+    JSON.stringify({ effort: expanded.effort, available: expanded.effortAvailable }),
+  );
+  // F21/P1-2：auto-fix 的手动入口必须真实存在，并且当前没失败 CI 时是禁用的
+  add(
+    "auto-fix 手动入口可见且无失败 CI 时禁用（F21：autoFixStep 有调用者）",
+    expanded.autofix === true &&
+      expanded.autofixState === "none" &&
+      expanded.autofixDisabled === true,
+    JSON.stringify({
+      button: expanded.autofix,
+      state: expanded.autofixState,
+      disabled: expanded.autofixDisabled,
+    }),
+  );
   // 有分支 → 按钮可点；没分支 → 按钮禁用并写明原因（两种都必须自洽，不能只测一种）
   const hasBranchLabel = /^分支 \\S+/u.test(String(expanded.branchLabel ?? ""));
   add(
@@ -861,6 +903,37 @@ try {
       disabled: expanded.prButtonDisabled,
       label: expanded.branchLabel,
     }),
+  );
+
+  // F20（复审 P1-4）：以前这里只断言「按钮存在 + disabled 与分支自洽」，**从不点击**——
+  // 把 service.createPr 里的 openPr 调用删掉，这条依然是 PASS。现在真的点：
+  // 有分支就点一次，等行内动作条出现，并断言原因是**决策层的真实原因**（no-commits 等）；
+  // 删掉 openPr 后 createPr 只能给出 "unknown"，于是这条会红。
+  let prClick = { clicked: false, message: "", ok: null };
+  if (expanded.prButton === true && expanded.prButtonDisabled === false) {
+    await page.evaluate(() => document.querySelector("[data-projects-create-pr]")?.click());
+    for (let i = 0; i < 30; i += 1) {
+      prClick = await page.evaluate(() => {
+        const el = document.querySelector("[data-projects-thread-action-result]");
+        return {
+          clicked: true,
+          message: (el?.textContent || "").trim(),
+          ok: el ? el.getAttribute("data-projects-thread-action-ok") : null,
+        };
+      });
+      if (prClick.message !== "") break;
+      await page.waitForTimeout(250);
+    }
+  }
+  // 只有真的点过才算（没分支时按钮 disabled，本来就是「写明原因」的另一种自洽）
+  // 注意：这段是模板字符串里的浏览器脚本，正则里不能写 \b（会被当成退格转义）
+  const prReason = /(no-commits|branch-not-ours|too-many-attempts|tier-off|push-failed|gh-failed|title-required|body-required|branch-required)/u;
+  add(
+    "Create PR 点击后有真实结果态（F20：删掉 openPr 会红，不是只断言按钮存在）",
+    expanded.prButtonDisabled === true
+      ? expanded.prButton === true
+      : prClick.message !== "" && prReason.test(prClick.message) && !prClick.message.includes("?"),
+    JSON.stringify({ disabled: expanded.prButtonDisabled, ...prClick }),
   );
 
   // B2 证据截图：1440 宽详情页（协调者区 + 线程 chip + Tasks + PR/分支条）
@@ -881,34 +954,35 @@ try {
   }
 
   // F21：轮询状态可见 + 实验档开关写→读
-  const pollBefore = await page.evaluate(() => ({
-    state: document
-      .querySelector("[data-projects-poll-state]")
-      ?.getAttribute("data-projects-poll-state") || "",
-    toggle: Boolean(document.querySelector("[data-projects-detail-realtime-ci]")),
-    checked: document.querySelector("[data-projects-detail-realtime-ci]")?.checked === true,
-  }));
+  const pollBefore = await page.evaluate(() => {
+    const box = document.querySelector("[data-projects-detail-realtime-ci]");
+    return {
+      state: document
+        .querySelector("[data-projects-poll-state]")
+        ?.getAttribute("data-projects-poll-state") || "",
+      toggle: Boolean(box),
+      disabled: box?.disabled === true,
+      implemented: box?.getAttribute("data-projects-detail-realtime-ci-implemented") || "",
+      hint: (
+        document.querySelector("[data-projects-detail-realtime-ci-row]")?.getAttribute("title") ||
+        ""
+      ).trim(),
+    };
+  });
   add(
     "PR 轮询状态可见（F21：运行中/已停 + 间隔）",
     ["running", "stopped"].includes(pollBefore.state) && pollBefore.toggle === true,
-    JSON.stringify(pollBefore),
+    JSON.stringify({ state: pollBefore.state, toggle: pollBefore.toggle }),
   );
-  await page.evaluate(() => {
-    const box = document.querySelector("[data-projects-detail-realtime-ci]");
-    if (box && !box.checked) box.click();
-  });
-  let realtimeAfter = null;
-  for (let i = 0; i < 20; i += 1) {
-    realtimeAfter = await page.evaluate(() => ({
-      checked: document.querySelector("[data-projects-detail-realtime-ci]")?.checked === true,
-    }));
-    if (realtimeAfter.checked) break;
-    await page.waitForTimeout(400);
-  }
+  // F21 复审 P1-2：这个开关**没有实现**，以前能点能存却什么也不启动（假承诺）。
+  // 现在必须 disabled 且写明「未实现」，不允许再回读成「已开启」。
   add(
-    "实验性实时监听开关可写且回读为开（F21，默认关）",
-    pollBefore.checked === false && realtimeAfter?.checked === true,
-    JSON.stringify({ before: pollBefore.checked, after: realtimeAfter?.checked }),
+    "实时监听开关 disabled 且明确「未实现」（F21/P1-2：不宣称会建 webhook）",
+    pollBefore.toggle === true &&
+      pollBefore.disabled === true &&
+      pollBefore.implemented === "no" &&
+      /未实现|not implemented/iu.test(pollBefore.hint),
+    JSON.stringify(pollBefore),
   );
 
   // F26：点药丸 = 过滤；「全部」= 清除
@@ -2928,9 +3002,25 @@ const main = async () => {
           ? ""
           : JSON.stringify(Object.values(parsed.projects ?? {})[0]?.policy ?? {}).slice(0, 160),
     });
+    // P0（复审）：协调器工具真的注册上了——审计里必须有 coordinator/tools 且 count 是 6。
+    // 这条是「把桩接通」的端到端证据：删掉 onAgentCreated/warmUpCoordinator 里的挂载就红。
+    const toolsAudit = Array.isArray(parsed?.audit)
+      ? parsed.audit.filter((/** @type {any} */ entry) => entry?.action === "coordinator/tools")
+      : [];
+    checks.push({
+      name: "协调器工具已挂到 agent 作用域（P0：审计 coordinator/tools 且 count=6）",
+      ok: toolsAudit.length > 0 && toolsAudit.some((/** @type {any} */ entry) => entry.count === 6),
+      detail: JSON.stringify(toolsAudit.slice(-2)),
+    });
     const projectByName = Object.values(parsed?.projects ?? {}).find(
       (/** @type {any} */ project) => project?.name === result.projectName,
     );
+    // F21/P2：policy.pr.tier 必须有定义并被写盘（以前全仓没这个字段，per-project opt-out 不存在）
+    checks.push({
+      name: "策略里有 PR 档位且默认 draft（F21：policy.pr.tier 可 per-project opt-out）",
+      ok: projectByName?.policy?.pr?.tier === "draft",
+      detail: JSON.stringify({ pr: projectByName?.policy?.pr ?? null }),
+    });
     checks.push({
       name: "项目图标与关联仓库落盘（F1/F2）",
       ok:
@@ -3104,10 +3194,27 @@ const main = async () => {
         coordinatorProjects.map((/** @type {any} */ project) => project.name).slice(0, 2),
       ),
     });
+    // F21 复审 P1-2：实时监听**未实现**，所以盘上不允许出现 realtimeCi=true 这种假状态
+    // （以前开关能写能回读，却没有任何东西被启动）。
     checks.push({
-      name: "实验性实时监听开关写→读为开且落到 storageDomain（F21）",
-      ok: uiStore?.global?.realtimeCi === true,
+      name: "实时监听未实现时不落「已开启」假状态（F21/P1-2，storageDomain）",
+      ok: uiStore?.global?.realtimeCi !== true,
       detail: JSON.stringify(uiStore?.global ?? null).slice(0, 200),
+    });
+    // F20/P1-4：点了 Create PR 之后，服务端必须有真实决策审计（pr/decided 或 pr/failed）。
+    // 删掉 service.createPr 里的 openPr 调用 → 一条 pr/* 审计都不会写 → 这条红。
+    const prAudit = Array.isArray(parsed?.audit)
+      ? parsed.audit.filter(
+          (/** @type {any} */ entry) =>
+            typeof entry?.action === "string" && entry.action.startsWith("pr/"),
+        )
+      : [];
+    checks.push({
+      name: "Create PR 写入真实决策审计（F20：pr/decided 或 pr/failed 可追溯）",
+      ok:
+        prAudit.length > 0 &&
+        prAudit.some((/** @type {any} */ entry) => String(entry.reason ?? "") !== ""),
+      detail: JSON.stringify(prAudit.slice(-2)),
     });
     const threadList = Object.values(parsed?.threads ?? {});
     checks.push({

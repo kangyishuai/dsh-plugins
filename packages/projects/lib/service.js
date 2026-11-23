@@ -32,6 +32,7 @@ import {
   startOfWeek,
   tokensOf,
 } from "./budget.js";
+import { mountCoordinatorTools } from "./coordinator-tools.js";
 import { runCommand } from "./exec.js";
 import { executeApprovalCore } from "./execute.js";
 import { checkPreapproval } from "./executor.js";
@@ -90,10 +91,17 @@ import {
   renderManagedAgentsBlock,
 } from "./template.js";
 import { createIsolatedThread, reclaimThreadWorktree, reconcileWorktrees } from "./thread.js";
-import { buildCoordinatorTools, REQUESTABLE_ACTIONS } from "./tools.js";
+import { REQUESTABLE_ACTIONS } from "./tools.js";
 import { impactOf, TRASH_DIR, trashDirFor } from "./trash.js";
 import { buildEnvelope, createInjectionGuard, decideWake, pendingWakes } from "./wake.js";
 import { planDeleteBranch, shouldDeleteBranchV2 } from "./worktree.js";
+import {
+  createPrCore,
+  selectThreadModelCore,
+  sendToCoordinatorCore,
+  shouldRecordCoordinatorMessage,
+  steerThreadCore,
+} from "./write-paths.js";
 
 /** 协调器发言在内存里最多留多少条（F11 汇报渲染；只影响面板，不影响宿主持久化）。 */
 export const COORDINATOR_MESSAGE_CAP = 40;
@@ -521,13 +529,10 @@ export class ProjectsService extends TypertRemoteService {
    * @param {any} project
    */
   attachCoordinatorTools(agent, project) {
-    try {
-      const tools = agent?.ctx?.tools;
-      if (!tools || typeof tools.register !== "function") {
-        this.auditSkip(project?.id, "tools-skip", "no-tools-service");
-        return;
-      }
-      const definitions = buildCoordinatorTools({
+    const sessionId = String(agent?.id ?? "");
+    const outcome = mountCoordinatorTools({
+      agent,
+      deps: {
         startThread: (/** @type {string} */ task) => this.createThread(project.id, task),
         listThreads: async () => this.progress(project.id),
         messageThread: (/** @type {string} */ sessionId, /** @type {string} */ text) =>
@@ -545,28 +550,48 @@ export class ProjectsService extends TypertRemoteService {
           this.requireStore().save();
           return created;
         },
-      });
-      /** @type {(() => void)[]} */
-      const disposers = [];
-      for (const definition of definitions) {
-        const dispose = tools.register(definition);
-        if (typeof dispose === "function") disposers.push(dispose);
-      }
-      this.coordinatorToolDisposers?.set?.(String(agent?.id ?? ""), disposers);
-      const store = this.requireStore();
-      store.appendAudit({
-        action: "coordinator/tools",
-        projectId: project.id,
-        count: definitions.length,
-      });
-      store.save();
-    } catch (error) {
-      this.auditSkip(
-        project?.id,
-        "tools-skip",
-        String(/** @type {any} */ (error)?.message ?? error).slice(0, 200),
-      );
+      },
+      onAudit: (/** @type {any} */ result) => {
+        if (result.attached) {
+          const store = this.requireStore();
+          store.appendAudit({
+            action: "coordinator/tools",
+            projectId: project.id,
+            count: result.count,
+          });
+          store.save();
+          return;
+        }
+        this.auditSkip(project.id, "tools-skip", result.reason);
+      },
+    });
+    if (outcome.attached) {
+      this.coordinatorToolDisposers?.set?.(sessionId, outcome.disposers);
     }
+    return outcome.attached;
+  }
+
+  /**
+   * 给「某个会话如果是协调器」挂工具：`agent/created` 与 `warmUpCoordinator` 两条路共用。
+   * 幂等（已挂过直接返回 true）；不是协调器会话返回 false。
+   * B2 复审 P0：以前 `attachCoordinatorTools` 全仓零调用者，project_* 工具运行时不存在。
+   * @param {string} sessionId
+   * @param {any} [agent]
+   * @returns {boolean}
+   */
+  attachCoordinatorToolsFor(sessionId, agent) {
+    const sid = String(sessionId ?? "");
+    if (sid === "") return false;
+    if (this.coordinatorToolDisposers?.has?.(sid) === true) return true;
+    const store = this.store;
+    if (!store) return false;
+    const project = store
+      .listProjects()
+      .find((/** @type {any} */ item) => item.coordinatorSessionId === sid);
+    if (!project) return false;
+    const liveAgent = agent ?? this.coordinatorAgents?.get?.(sid);
+    if (!liveAgent) return false;
+    return this.attachCoordinatorTools(liveAgent, project);
   }
 
   /**
@@ -717,7 +742,19 @@ export class ProjectsService extends TypertRemoteService {
     const deadline = Date.now() + 4000;
     while (Date.now() < deadline) {
       const agent = this.agents?.get?.(sessionId);
-      if (agent) return true;
+      if (agent) {
+        // P0：agent 一出现就挂工具（agent/created 可能早于/晚于这条路径，`attachCoordinatorToolsFor` 幂等）
+        try {
+          this.attachCoordinatorToolsFor(sessionId, agent);
+        } catch (error) {
+          this.auditSkip(
+            projectId,
+            "tools-skip",
+            String(/** @type {any} */ (error)?.message ?? error).slice(0, 200),
+          );
+        }
+        return true;
+      }
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
     const store = this.requireStore();
@@ -742,6 +779,18 @@ export class ProjectsService extends TypertRemoteService {
     if (sessionId === "") return;
     // 记下在线 agent，供工具注册/诊断使用
     this.coordinatorAgents?.set?.(sessionId, agent);
+    // B2 复审 P0：协调器会话一建好就把 project_* 工具挂到**它自己的作用域**。
+    // 提示词（systemPrompt）在 agent/created 里注册无效（runtime §11.18），但工具是每步从
+    // scope 解析的，这里挂上之后下一轮就能用；`warmUpCoordinator` 里还有一次幂等重试。
+    try {
+      this.attachCoordinatorToolsFor(sessionId, agent);
+    } catch (error) {
+      this.auditSkip(
+        undefined,
+        "tools-skip",
+        String(/** @type {any} */ (error)?.message ?? error).slice(0, 200),
+      );
+    }
   }
 
   /** @param {string|undefined} sessionId */
@@ -753,6 +802,17 @@ export class ProjectsService extends TypertRemoteService {
       dispose?.();
     } catch {
       /* ignore */
+    }
+    // 协调器工具跟着 agent 走：agent 没了就把注册摘掉，别在作用域里留指向旧 agent 的定义
+    this.coordinatorAgents?.delete?.(sessionId);
+    const disposers = this.coordinatorToolDisposers?.get?.(sessionId);
+    this.coordinatorToolDisposers?.delete?.(sessionId);
+    for (const unmount of disposers ?? []) {
+      try {
+        unmount();
+      } catch {
+        /* ignore */
+      }
     }
   }
 
@@ -2931,9 +2991,22 @@ export class ProjectsService extends TypertRemoteService {
   recordCoordinatorMessage(projectId, role, text) {
     const cap = COORDINATOR_MESSAGE_CAP;
     const list = this.coordinatorMessages.get(projectId) ?? [];
-    list.push({ role, text: String(text).slice(0, 4000), at: Date.now() });
+    const at = Date.now();
+    // P2 复审：乐观写 + 宿主 user/message 事件双写会重复，按「同角色同文本 + 时间窗」去重
+    if (
+      shouldRecordCoordinatorMessage(
+        list,
+        role === "assistant" ? "assistant" : "user",
+        text,
+        at,
+      ) !== true
+    ) {
+      return false;
+    }
+    list.push({ role, text: String(text).slice(0, 4000), at });
     while (list.length > cap) list.shift();
     this.coordinatorMessages.set(projectId, list);
+    return true;
   }
 
   /**
@@ -2944,33 +3017,18 @@ export class ProjectsService extends TypertRemoteService {
    */
   async sendToCoordinator(projectId, text) {
     await this.waitServices();
-    const store = this.requireStore();
-    const project = store.getProject(projectId);
-    if (!project) throw new Error(`projects: unknown project ${projectId}`);
-    const input = String(text ?? "").trim();
-    if (input === "") throw new Error("projects: coordinator message requires text");
-    const created = await this.ensureCoordinator(projectId);
-    const sessionId = String(created.sessionId);
-    const sc = this.sessionController;
-    if (!sc) throw new Error("projects: session controller unavailable");
-    await sc.prompt(
-      {
-        requestId: `projects-coordinator-msg-${Date.now()}`,
-        sessionId,
-        mode: "queue",
-        content: [{ type: "text", text: input }],
-      },
-      new AbortController().signal,
-    );
-    this.recordCoordinatorMessage(projectId, "user", input);
-    store.appendAudit({
-      action: "coordinator/message",
+    return sendToCoordinatorCore({
+      store: this.requireStore(),
+      sessionController: this.sessionController,
+      ensureCoordinator: (/** @type {string} */ id) => this.ensureCoordinator(id),
+      recordMessage: (
+        /** @type {string} */ id,
+        /** @type {"user"|"assistant"} */ role,
+        /** @type {string} */ body,
+      ) => this.recordCoordinatorMessage(id, role, body),
       projectId,
-      sessionId,
-      created: created.created === true,
+      text,
     });
-    store.save();
-    return { sessionId, sent: true, created: created.created === true, chars: input.length };
   }
 
   /**
@@ -3079,37 +3137,12 @@ export class ProjectsService extends TypertRemoteService {
    */
   async steerThread(sessionId, text) {
     await this.waitServices();
-    const store = this.requireStore();
-    const project = store.projectOfSession(sessionId);
-    if (!project) throw new Error(`projects: unknown thread ${sessionId}`);
-    const input = String(text ?? "").trim();
-    if (input === "") throw new Error("projects: steer requires text");
-    const sc = this.sessionController;
-    if (!sc) throw new Error("projects: session controller unavailable");
-    /** @type {any} */
-    let live = null;
-    try {
-      live = await sc.state({ sessionId }, AbortSignal.timeout(1500));
-    } catch {
-      live = null;
-    }
-    await sc.prompt(
-      {
-        requestId: `projects-steer-${Date.now()}`,
-        sessionId,
-        mode: "steer",
-        content: [{ type: "text", text: input }],
-      },
-      new AbortController().signal,
-    );
-    store.appendAudit({
-      action: "thread/steer",
-      projectId: project.id,
+    return steerThreadCore({
+      store: this.requireStore(),
+      sessionController: this.sessionController,
       sessionId,
-      chars: input.length,
+      text,
     });
-    store.save();
-    return { steered: true, running: live?.running === true, chars: input.length };
   }
 
   /**
@@ -3147,76 +3180,13 @@ export class ProjectsService extends TypertRemoteService {
    */
   async selectThreadModel(projectId, sessionId, input) {
     await this.waitServices();
-    const store = this.requireStore();
-    const project = store.getProject(projectId);
-    if (!project) throw new Error(`projects: unknown project ${projectId}`);
-    const thread = store
-      .listThreads(projectId)
-      .find((/** @type {any} */ item) => item.sessionId === sessionId);
-    if (!thread) throw new Error(`projects: unknown thread ${sessionId}`);
-    const provider = String(input?.provider ?? "").trim();
-    const model = String(input?.model ?? "").trim();
-    if (provider === "" || model === "") throw new Error("projects: provider and model required");
-    const sc = this.sessionController;
-    if (!sc || typeof sc.selectModel !== "function") {
-      throw new Error("projects: session controller unavailable");
-    }
-    /** @type {{ sessionId: string, provider: string, model: string, reasoningEffort?: string }} */
-    const params = { sessionId, provider, model };
-    const effort = String(input?.reasoningEffort ?? "").trim();
-    if (effort !== "") params.reasoningEffort = effort;
-    await sc.selectModel(params, new AbortController().signal);
-    // 回读：改完再问宿主，避免"假开关"
-    /** @type {any} */
-    let selection = null;
-    try {
-      await sc.state({ sessionId }, AbortSignal.timeout(1500));
-      const value =
-        typeof sc.projections === "function"
-          ? await sc.projections({ sessionId }, AbortSignal.timeout(1500))
-          : null;
-      selection = value?.modelSelection ?? null;
-    } catch {
-      selection = null;
-    }
-    store.appendAudit({
-      action: "thread/model",
+    return selectThreadModelCore({
+      store: this.requireStore(),
+      sessionController: this.sessionController,
       projectId,
       sessionId,
-      provider,
-      model,
-      reasoningEffort: effort || null,
+      input,
     });
-    store.save();
-    return { ok: true, sessionId, provider, model, reasoningEffort: effort || null, selection };
-  }
-
-  /**
-   * F17：线程的 Tasks 清单（todo/write 的整表快照 + 每项文案与状态）。
-   * 数据源：视图里最近一次 `todo/write`（宿主事件）与持久记录里的 n/m。
-   * @param {string} projectId
-   * @param {string} sessionId
-   */
-  threadTasks(projectId, sessionId) {
-    const store = this.requireStore();
-    const thread = store
-      .listThreads(projectId)
-      .find((/** @type {any} */ item) => item.sessionId === sessionId);
-    if (!thread) throw new Error(`projects: unknown thread ${sessionId}`);
-    const view = /** @type {any} */ (mergeRecord(this.views.get(String(sessionId)), thread));
-    const summary = /** @type {any} */ (mergeRecord(view.todos, thread.todos));
-    const items = Array.isArray(view.todoItems) ? view.todoItems : [];
-    return {
-      sessionId,
-      tasks: items.map((/** @type {any} */ item) => ({
-        content: String(item?.content ?? ""),
-        status: String(item?.status ?? ""),
-        done: String(item?.status ?? "") === "completed",
-      })),
-      done: Number(summary.done ?? 0),
-      total: Number(summary.total ?? 0),
-      source: items.length > 0 ? "todo/write" : summary.total > 0 ? "record" : "none",
-    };
   }
 
   /**
@@ -3228,21 +3198,14 @@ export class ProjectsService extends TypertRemoteService {
    * @param {{ tier?: string, base?: string, repo?: string }} [options]
    */
   async createPr(projectId, sessionId, options) {
-    const store = this.requireStore();
-    const project = store.getProject(projectId);
-    if (!project) throw new Error(`projects: unknown project ${projectId}`);
-    const tier = String(options?.tier ?? project.policy?.pr?.tier ?? "draft");
-    const result = await this.openPr(projectId, sessionId, { ...(options ?? {}), tier });
-    const thread = store
-      .listThreads(projectId)
-      .find((/** @type {any} */ item) => item.sessionId === sessionId);
-    return {
-      ...result,
-      tier,
-      branch: thread?.branch ?? null,
-      prNumber: thread?.prNumber ?? result?.prNumber ?? null,
-      ciState: thread?.ciState ?? null,
-    };
+    return createPrCore({
+      store: this.requireStore(),
+      openPr: (/** @type {string} */ id, /** @type {string} */ sid, /** @type {any} */ opts) =>
+        this.openPr(id, sid, opts),
+      projectId,
+      sessionId,
+      options,
+    });
   }
 
   /**
@@ -3412,13 +3375,30 @@ export class ProjectsService extends TypertRemoteService {
   }
 
   /**
-   * F21：实验性实时监听开关（默认关）。**只落开关与回读值**，不偷偷起 webhook 子进程：
-   * 它会在仓库上建临时 webhook、需要管理员权限，必须用户明确知道后果。
+   * F21：实验性实时监听开关。**未实现**（B2 复审 P1）：不接受写入、不启动任何子进程，
+   * 只回读现状 + 说明（README/UI 同步改成 disabled，不再宣称"会建临时 webhook"）。
    * @param {boolean} enabled
    */
   async setRealtimeCi(enabled) {
-    const next = await this.writeUiState({ realtimeCi: enabled === true });
-    return { ...next, spec: realtimeCiSpec() };
+    const spec = realtimeCiSpec();
+    const store = this.store;
+    if (store) {
+      store.appendAudit({
+        action: "realtime-ci/refused",
+        projectId: null,
+        requested: enabled === true,
+        reason: "not-implemented",
+      });
+      store.save();
+    }
+    return {
+      available: false,
+      implemented: false,
+      realtimeCi: false,
+      requested: enabled === true,
+      reason: "not-implemented",
+      spec,
+    };
   }
   // —— B3：记忆碎片 / 预算 / 授权 / GitHub / 模板 / 用量 / 提及 / 重命名 ——
 
@@ -3925,7 +3905,7 @@ declareRemote(ProjectsService, "restartCoordinator");
 declareRemote(ProjectsService, "steerThread");
 declareRemote(ProjectsService, "modelCatalog");
 declareRemote(ProjectsService, "selectThreadModel");
-declareRemote(ProjectsService, "threadTasks");
+// F17：Tasks 明细走 `progress()` 的行内 `tasks` 字段；单独的 threadTasks RPC 已删（零调用者）。
 declareRemote(ProjectsService, "createPr");
 declareRemote(ProjectsService, "pollPrs");
 declareRemote(ProjectsService, "prPollState");

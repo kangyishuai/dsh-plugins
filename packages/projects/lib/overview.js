@@ -133,6 +133,10 @@ export function mergeRecord(view, record) {
   const base = view ?? initialView();
   const recordState = typeof record?.state === "string" ? record.state : "";
   const resolvedAt = typeof record?.resolvedAt === "string" && record.resolvedAt !== "";
+  // B1 的 P0-2 残留（B2 复审 P2）：`waiting-user` 以前**没有**映射——盘上写进去的
+  // "waiting-user" 读回来 `awaitingUser` 仍是 false，`deriveState` 于是把它当 idle。
+  // 历史拼写 `waiting`（B1 之前）同样按「等你」读，不伪造别的状态。
+  const awaitingUser = recordState === "waiting-user" || recordState === "waiting";
   // 六态持久化（B1 审查 P0-2）：冷启动时内存视图是空的，`failed` / `working` 只有记录里那份事实。
   // 以前这里只映射 resolved/archived，于是重启后 failed/working 一律落回 idle——写进去了却读不出来。
   return {
@@ -141,6 +145,7 @@ export function mergeRecord(view, record) {
     // 所以真在跑/真停了都以宿主为准，这里只是让「重启后仍读得到 working」成立。
     state: recordState === "working" ? "working" : base.state,
     lastTurnFailed: recordState === "failed" ? true : base.lastTurnFailed,
+    awaitingUser: awaitingUser ? true : base.awaitingUser,
     resolved: resolvedAt || recordState === "resolved",
     archived: recordState === "archived",
   };
