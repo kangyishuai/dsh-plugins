@@ -10,7 +10,9 @@
 //   3) 点卡片打开面板，iframe 出现且是 v1；
 //   4) 追加两版后版本变 v3，且 iframe 仍是同一个元素（未重建）；
 //   5) 刷新页面后恢复（丢 params 时回退到最近打开的工件），仍是 v3；
-//   6) 路由：带 cookie 200 / 无 cookie 401 / 未知 id 404 / 封面 200。
+//   6) 需求 10：按 projectId 打开库视图（`__dshArtifactsOpenTab({projectId})`）只列本项目产物；
+//      多类型预览：markdown 走 <pre>、图片走 <img> 且真的加载；
+//   7) 路由：带 cookie 200 / 无 cookie 401 / 未知 id 404 / 封面 200 / 编码斜杠 400。
 //
 // 前置：本机有 `dsh` 与 `ego-browser`；缺任意一个打印 SKIP（退出码 0）。
 import { spawn } from "node:child_process";
@@ -22,6 +24,8 @@ import { parseArgs } from "node:util";
 const REPO = resolve(import.meta.dirname, "..");
 const PKG_DIR = join(REPO, "packages", "artifacts");
 const PROFILE = "web";
+/** 需求 10 冒烟用的固定项目 id：浏览器脚本按它断言「按项目过滤的库视图」。 */
+const SMOKE_PROJECT = "smoke-project-2026";
 const sleep = (/** @type {number} */ ms) => new Promise((r) => setTimeout(r, ms));
 
 /** @param {string} cmd */
@@ -106,6 +110,25 @@ async function main() {
     const store = createArtifactStore({ root: home });
     const seeded = await store.create({ title: "Smoke report", html: "<h1>smoke v1</h1>" });
     await store.create({ title: "Weekly review", html: "<h1>weekly</h1>" });
+    // 需求 10 的种子：一个带 projectId 的产物 + 一个 markdown + 一张图片。
+    const projectArtifact = await store.create({
+      title: "Project page",
+      html: "<h1>project v1</h1>",
+      projectId: SMOKE_PROJECT,
+    });
+    const markdownArtifact = await store.create({
+      title: "Smoke notes",
+      kind: "markdown",
+      content: "# smoke notes\n\n- markdown-body-marker",
+    });
+    const imageArtifact = await store.create({
+      title: "Smoke chart",
+      kind: "image",
+      data: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+        "base64",
+      ),
+    });
 
     console.log("# 启动宿主");
     const stream = (await import("node:fs")).createWriteStream(logPath);
@@ -124,6 +147,10 @@ async function main() {
     const script = makeBrowserScript({
       url: `http://127.0.0.1:${boot.port}/?token=${boot.token}`,
       space,
+      project: SMOKE_PROJECT,
+      projectArtifact: projectArtifact.id,
+      markdownArtifact: markdownArtifact.id,
+      imageArtifact: imageArtifact.id,
     });
     const scriptPath = join(work, "browser.mjs");
     await writeFile(scriptPath, script);
@@ -163,26 +190,29 @@ async function main() {
       const authedText = await authed.text();
       const anonymous = await fetch(`${base}/artifacts/${seeded.id}`);
       const missing = await fetch(`${base}/artifacts/nope-000000`, { headers: { cookie } });
+      const traversal = await fetch(`${base}/artifacts/..%2F..%2Fetc`, { headers: { cookie } });
       const cover = await fetch(`${base}/artifacts/${seeded.id}/cover.svg`, {
         headers: { cookie },
       });
       checks.push({
-        name: "路由鉴权：200/401/404 + 封面",
+        name: "路由鉴权：200/401/404/400 + 封面",
         ok:
           authed.status === 200 &&
           authedText.includes("smoke v3") &&
           anonymous.status === 401 &&
           missing.status === 404 &&
+          traversal.status === 400 &&
           cover.status === 200,
         detail: JSON.stringify({
           authed: authed.status,
           anonymous: anonymous.status,
           missing: missing.status,
+          traversal: traversal.status,
           cover: cover.status,
         }),
       });
     } catch (error) {
-      checks.push({ name: "路由鉴权：200/401/404 + 封面", ok: false, detail: String(error) });
+      checks.push({ name: "路由鉴权：200/401/404/400 + 封面", ok: false, detail: String(error) });
     }
 
     let failed = 0;
@@ -214,10 +244,17 @@ async function main() {
 }
 
 /**
- * ego-browser 里跑的脚本：库 → 封面 → 面板 → 刷新恢复。
- * @param {{ url: string, space: string }} input
+ * ego-browser 里跑的脚本：库 → 封面 → 面板 → 刷新恢复 →（需求 10）按项目过滤的库视图 + 多类型预览。
+ * @param {{ url: string, space: string, project: string, projectArtifact: string, markdownArtifact: string, imageArtifact: string }} input
  */
-function makeBrowserScript({ url, space }) {
+function makeBrowserScript({
+  url,
+  space,
+  project,
+  projectArtifact,
+  markdownArtifact,
+  imageArtifact,
+}) {
   return `(async () => {
 const checks = [];
 const check = (name, good, detail) => checks.push({ name, ok: Boolean(good), detail: detail === undefined ? "" : String(detail) });
@@ -279,7 +316,10 @@ const library = await page.evaluate(() => {
 check("工件库渲染", library.library && library.cards >= 2, JSON.stringify(library));
 check("封面 SVG 真的加载", library.covers.length >= 2 && library.covers.every((c) => c.loaded && c.w === 320), JSON.stringify(library));
 await page.evaluate(() => {
-  const card = document.querySelector("[data-dsh-artifact-card]");
+  // 图片是最后播种的（列表按 updatedAt 倒序），点它不会有 iframe；这里明确点 html 卡片。
+  const card =
+    document.querySelector('[data-dsh-artifact-card-kind="html"]') ||
+    document.querySelector("[data-dsh-artifact-card]");
   if (card) card.click();
 });
 await page.waitForTimeout(2200);
@@ -296,6 +336,64 @@ const restored = await page.evaluate(() => ({
   library: Boolean(document.querySelector("[data-dsh-artifact-library]")),
 }));
 check("刷新后恢复同一工件（回退到最近打开）", restored.version !== null || restored.library, JSON.stringify(restored));
+
+// 需求 10：按 projectId 打开库视图 —— 断言 scope 属性与行集合都只含本项目产物。
+let hookOk = true;
+try {
+  await page.evaluate(() => window.__dshArtifactsOpenTab({ projectId: ${JSON.stringify(project)} }));
+} catch {
+  hookOk = false;
+}
+await page.waitForTimeout(2000);
+const scoped = await page.evaluate(() => ({
+  scope: document
+    .querySelector("[data-dsh-artifact-library-scope]")
+    ?.getAttribute("data-dsh-artifact-library-scope") || null,
+  cards: [...document.querySelectorAll("[data-dsh-artifact-card]")].map((node) =>
+    node.getAttribute("data-dsh-artifact-card"),
+  ),
+  summary: document.querySelector("[data-dsh-artifact-summary]")?.textContent || "",
+}));
+check(
+  "项目过滤视图：scope + 行集合只含本项目",
+  hookOk &&
+    scoped.scope === ${JSON.stringify(project)} &&
+    scoped.cards.length === 1 &&
+    scoped.cards[0] === ${JSON.stringify(projectArtifact)},
+  JSON.stringify({ hookOk, scoped }),
+);
+
+// 多类型预览：markdown 进 <pre>，图片进 <img> 且真的加载。
+let markdownText = "";
+let markdownVisible = false;
+try {
+  await page.evaluate(() => window.__dshArtifactsOpenTab({ id: ${JSON.stringify(markdownArtifact)} }));
+  await page.waitForTimeout(2000);
+  const markdown = await page.evaluate(() => {
+    const pre = document.querySelector("[data-dsh-artifact-text]");
+    return { visible: Boolean(pre), text: (pre?.textContent || "").slice(0, 200) };
+  });
+  markdownText = markdown.text;
+  markdownVisible = markdown.visible;
+} catch {}
+let imageState = { visible: false, loaded: false, w: 0 };
+try {
+  await page.evaluate(() => window.__dshArtifactsOpenTab({ id: ${JSON.stringify(imageArtifact)} }));
+  await page.waitForTimeout(2000);
+  imageState = await page.evaluate(() => {
+    const img = document.querySelector("[data-dsh-artifact-image]");
+    return {
+      visible: Boolean(img),
+      loaded: Boolean(img && img.complete && img.naturalWidth > 0),
+      w: img ? img.naturalWidth : 0,
+    };
+  });
+} catch {}
+check(
+  "多类型预览：markdown 文本 + 图片加载",
+  markdownVisible && markdownText.includes("markdown-body-marker") && imageState.visible && imageState.loaded,
+  JSON.stringify({ markdownVisible, markdownText, imageState }),
+);
 console.log("SMOKE_RESULT " + JSON.stringify({ checks }));
 })();`;
 }
