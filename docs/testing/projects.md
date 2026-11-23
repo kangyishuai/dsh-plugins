@@ -57,7 +57,7 @@ pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体�
 | `memory.test.js`    | 记忆写入：幂等、单条与总量上限、时间戳注释、被拒时给出原因                                    |
 | `exec.test.js`      | 子进程封装：参数原样传递、失败返回 code 不抛、cwd 生效、命令不存在也不抛                      |
 
-## 2. web 端到端冒烟（149 项）
+## 2. web 端到端冒烟（157 项）
 
 > 0.10.0 面板改版后：新建走「入口 → 模态（两入口）→ 表单」，列表页新增搜索/排序/收藏，详情页改为
 > 主列 + 右栏（右栏为值行 + 编辑动作），并补了 toast、两列 DOM 顺序、值行无 input 等断言，故 78 → 102。
@@ -76,7 +76,7 @@ pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体�
 > `firstRunDone=true` 在宿主 storageDomain 里可回读。
 
 
-> B2（把桩接通）再 +16，故 133 → 149。新增的 `data-*` 锚点与断言：
+> B2（把桩接通）再 +24，故 133 → 157。新增的 `data-*` 锚点与断言：
 > `data-projects-coordinator*`（项目页的协调者区：不是宿主 composer；空态 → 点「建协调者」→
 > 回读 `data-projects-coordinator-session` 非空；`compaction` 有无都要给出明确结论，这是 F10 的判空兜底）、
 > `data-projects-poll-state` + `data-projects-detail-realtime-ci`（F21：轮询状态可见；实验开关默认关，
@@ -86,7 +86,17 @@ pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体�
 > `-steer-input`/`-steer`、`-model-row`（`available=yes|no` 显式降级）、
 > `-create-pr` + `-branch-bar`（无分支时按钮禁用并写明原因））。
 > 宿主侧另外断言：`coordinatorSessionId` 落盘、`coordinator/created` 写审计、
-> 每条线程记录都带 `ciState`/`headRefOid` 字段（`null` 也显式存在，不是缺字段）。
+> 每条线程记录都带 `ciState`/`headRefOid` 字段（`null` 也显式存在，不是缺字段）、
+> 线程 `state` 回写为具体值 `resolved` 且与 UI 最后显示一致、
+> `resolvedAt` 非空且与 UI 回读逐字符相同、无 todo 的线程 `todos` 恒为 `null`、
+> 归档项目 `archivedAt` 是可解析 ISO 时间、未归档项目 `archivedAt` 恒为 `null`、
+> **冷启动读路径**（`ProjectStore.load()` + `deriveThreadState()`）与 UI 最后显示一致、
+> 线程 `dir` 是项目目录之一、`resolve`/`reopen` 写审计。
+
+> **B1 审查修复（同一分支，2026-11-23）**：上一版有 4 条宿主侧断言是恒真式（只校验「∈ 六态枚举」/
+> 「`null` 或字符串」），已在上面替换成具体值 + 深比较；另外补了「冷启动读得回来」与「UI/盘上一致」两组，
+> 保证坏实现（永远不写回、写进去读不回）会 FAIL。批次记录见 `notes/projects/claude-borrow/progress.md`
+> （私有笔记，不在公开仓库）。
 
 `pnpm smoke:projects` 在临时 home 里种子一个**真实 git 仓库**作为工作区，然后：
 
@@ -256,9 +266,14 @@ open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debuggin
 pnpm smoke:projects-desktop --require
 ```
 
-预期：`PASS 全部 15 项桌面回归断言通过`（live profile 里一个项目都没有时是 `12 PASS / 3 SKIP`，
-SKIP 只用于「详情页两列」这类数据分支，不计 PASS）。在此之前它一直输出
+预期：`PASS` 数等于当次执行的断言数（脚本最多 **17 项**；live profile 里一个项目都没有时
+「详情页主列+右栏」那条不跑，记 SKIP，不计 PASS）。在此之前它一直输出
 `SKIP 插件未装进当前 live profile`。
+
+> **B1 审查 P1-5 修后的口径（未复跑）**：首启引导那条以前会**点掉 CTA**，等于往 live profile 的
+> `firstRunDone`（storageDomain）里写东西——和「默认只读」自相矛盾。现在改为**只断言存在 + CTA 有文案、
+> 不点击**，只把节点从 DOM 里摘掉（不写任何存储，刷新后引导仍在）。这一改动**没有在 live 桌面版复跑**
+> （本批不重启桌面版），下次 `pnpm gate projects` 时以实跑结果为准；在那之前不要写死 PASS 数。
 
 ### 9.4 真实 GitHub 上的远端写入（2026-11-21 已做）
 

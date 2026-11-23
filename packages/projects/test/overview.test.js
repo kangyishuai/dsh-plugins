@@ -469,3 +469,72 @@ describe("排序与「需要我」", () => {
     );
   });
 });
+
+describe("B1 审查 P0-2：重启后 failed / working 仍读得到", () => {
+  it("mergeRecord 把记录里的 failed 映射成 lastTurnFailed（内存视图为空也要能读回）", () => {
+    const failed = mergeRecord(undefined, { state: "failed", resolvedAt: null });
+    assert.equal(failed.lastTurnFailed, true);
+    assert.equal(deriveState(failed), "failed");
+    assert.equal(deriveThreadState(undefined, { state: "failed" }), "failed");
+  });
+
+  it("mergeRecord 把记录里的 working 映射回视图（不是 idle）", () => {
+    assert.equal(mergeRecord(undefined, { state: "working" }).state, "working");
+    assert.equal(deriveThreadState(undefined, { state: "working" }), "working");
+    // 宿主说「真停了」时仍以宿主为准：settleState 的 running 优先级更高
+    assert.equal(
+      settleState({ view: undefined, record: { state: "working" }, running: false }),
+      "working",
+      "没有宿主 running 事实时按持久事实显示（重启后就是这样）",
+    );
+  });
+
+  it("记录里的 failed 优先于视图里的 resolved（失败要人处理，与 deriveState 口径一致）", () => {
+    const view = { ...initialView(), resolved: true };
+    // 记录还是上一轮失败（还没被进度写回）：resolve 是用户显式决定，优先
+    assert.equal(deriveState(mergeRecord(view, { state: "failed" })), "failed");
+    // 但记录一旦是 resolved，就保持 resolved
+    assert.equal(deriveThreadState(view, { state: "resolved" }), "resolved");
+  });
+});
+
+describe("B1 审查 P1-4：firstActivityAt 用最早时间，估得出非 null 的 ~Nm", () => {
+  it("真实 reduce 出来的视图：firstActivityAt 是最早事件、last 是最近事件", () => {
+    const events = [
+      { type: "turn/start", at: at(1), data: { turn: 1 } },
+      { type: "tool/call", at: at(2), data: { name: "bash" } },
+      { type: "turn/end", at: at(3), data: { turn: 1 } },
+    ];
+    const view = reduce(reduce(reduce(initialView(), events[0]), events[1]), events[2]);
+    assert.equal(view.firstActivityAt, at(1), "第一次活动就是最早的时间（不是 Math.max）");
+    assert.equal(view.lastActivityAt, at(3));
+    assert.notEqual(view.firstActivityAt, view.lastActivityAt);
+  });
+
+  it("从真实 reduce 的视图能估出非 null 的剩余时间（原来恒为 null）", () => {
+    const t0 = at(1);
+    const events = [
+      { type: "turn/start", at: t0, data: { turn: 1 } },
+      {
+        type: "todo/write",
+        at: t0 + 60_000,
+        data: { todos: [{ content: "a" }, { content: "b" }, { content: "c" }] },
+      },
+      { type: "tool/call", at: t0 + 180_000, data: { name: "bash" } },
+      { type: "tool/call", at: t0 + 360_000, data: { name: "bash" } },
+    ];
+    const view = events.reduce((acc, event) => reduce(acc, event), initialView());
+    assert.equal(view.todos.total, 3);
+    assert.equal(view.todos.done, 0);
+    assert.equal(view.firstActivityAt, t0, "最早事件");
+    assert.equal(view.lastActivityAt, t0 + 360_000, "最近事件");
+    const estimate = estimateRemainingMs({
+      todos: view.todos,
+      steps: 3, // 步数来自 observability 的 stats（与视图同一条事件流计数）
+      firstActivityAt: view.firstActivityAt,
+      lastActivityAt: view.lastActivityAt,
+    });
+    // 3 步用了 6 分钟 → 每步 3 分钟；剩 3 步 → 9 分钟
+    assert.equal(estimate, 9 * 60_000, "有 2+ 样本 + 剩余步数就必须给得出估计");
+  });
+});

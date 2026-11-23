@@ -185,3 +185,82 @@ describe("线程持久字段（F16/F27/F29/F31）", () => {
     assert.equal(thread.dir, null);
   });
 });
+
+describe("B1 审查 P0-2：六态词表两端一致（写进去要读得回来）", () => {
+  it("waiting-user 能写进记录，并在重新 load 之后仍是 waiting-user", () => {
+    const store = new ProjectStore({ root }).load();
+    const project = store.createProject("alpha");
+    store.attachThread("session-1", project.id);
+    // 旧白名单写的是 "waiting"，而 deriveState() 产出 "waiting-user" → 写被静默丢弃。
+    const written = store.setThreadState("session-1", "waiting-user");
+    assert.equal(written.changed, true);
+    assert.equal(written.state, "waiting-user");
+    store.save();
+    const reloaded = new ProjectStore({ root }).load();
+    assert.equal(
+      reloaded.listThreads(project.id)[0].state,
+      "waiting-user",
+      "重启后仍是 waiting-user（不是 idle）",
+    );
+  });
+
+  it("failed / working 也能跨重启读回（不是只有 resolved/archived）", () => {
+    const store = new ProjectStore({ root }).load();
+    const project = store.createProject("alpha");
+    store.attachThread("failed-1", project.id);
+    store.attachThread("working-1", project.id);
+    store.setThreadState("failed-1", "failed");
+    store.setThreadState("working-1", "working");
+    store.save();
+    const reloaded = new ProjectStore({ root }).load();
+    const byId = new Map(
+      reloaded
+        .listThreads(project.id)
+        .map((/** @type {any} */ thread) => [thread.sessionId, thread.state]),
+    );
+    assert.equal(byId.get("failed-1"), "failed");
+    assert.equal(byId.get("working-1"), "working");
+  });
+
+  it("不认识的 state 仍然落回 idle（前向兼容不认识的条目，但不伪造状态）", () => {
+    const store = new ProjectStore({ root }).load();
+    const project = store.createProject("alpha");
+    store.attachThread("session-1", project.id);
+    assert.equal(store.setThreadState("session-1", "bogus").state, "idle");
+  });
+});
+
+describe("B1 审查 P0-3：load 只做类型过滤、不截断目录", () => {
+  it("旧 projects.json 里第 11+ 个目录不会被下一次 save 丢掉", () => {
+    const dirs = Array.from({ length: MAX_DIRS + 5 }, (_, i) => `/legacy/dir-${i}`);
+    writeFileSync(
+      join(root, "projects.json"),
+      JSON.stringify({
+        format: 1,
+        projects: { p1: { id: "p1", name: "legacy", dirs } },
+        threads: {},
+      }),
+    );
+    const store = new ProjectStore({ root }).load();
+    // load：全留着（只过滤类型/去重）
+    assert.deepEqual(store.getProject("p1")?.dirs, dirs);
+    store.save();
+    const raw = JSON.parse(readFileSync(join(root, "projects.json"), "utf8"));
+    assert.deepEqual(raw.projects.p1.dirs, dirs, "save 之后一个都没少");
+    // 但写入口仍然拒绝超过上限（那里能给用户报错）
+    assert.throws(() => store.updateProject("p1", { dirs }), /at most 10/u);
+  });
+
+  it("load 仍然过滤非字符串与重复项（不截断不等于不收敛）", () => {
+    writeFileSync(
+      join(root, "projects.json"),
+      JSON.stringify({
+        format: 1,
+        projects: { p1: { id: "p1", name: "legacy", dirs: ["/a", "/a", " ", 42, "/b"] } },
+        threads: {},
+      }),
+    );
+    const store = new ProjectStore({ root }).load();
+    assert.deepEqual(store.getProject("p1")?.dirs, ["/a", "/b"]);
+  });
+});

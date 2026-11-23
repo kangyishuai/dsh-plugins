@@ -17,6 +17,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
+// Node 侧直接复用插件的读路径做「冷启动」验证：同一份 projects.json，
+// 经过 ProjectStore.load() + deriveThreadState() 还能读出 failed（P0-2 的端到端证据）。
+import { deriveThreadState, THREAD_STATES } from "../packages/projects/lib/overview.js";
+import { ProjectStore } from "../packages/projects/lib/store.js";
+
 const exec = promisify(execFile);
 const REPO = resolve(import.meta.dirname, "..");
 const SHOTS_OUT = join(tmpdir(), "dsh-smoke-projects-shots");
@@ -588,6 +593,7 @@ try {
         );
       }
       return {
+        sessionId: row.getAttribute("data-projects-thread-row") || "",
         state: row.getAttribute("data-projects-thread-state"),
         stepsState:
           document
@@ -614,6 +620,14 @@ try {
     overview?.state === "failed",
     JSON.stringify(overview?.state),
   );
+  // Node 侧要拿同一份事实去和 projects.json 对（UI 说什么、盘上就得是什么）
+  result.overviewFacts = {
+    // 行的 sessionId：Node 侧要拿**同一行**的记录去对 projects.json（项目里不止一条线程）
+    sessionId: overview?.sessionId ?? "",
+    state: overview?.state ?? "",
+    stepsState: overview?.stepsState ?? "",
+    subtitlePresent: overview?.subtitle === true,
+  };
   add(
     "Overview 药丸条：5 类 + 全部，计数可断言",
     overview?.pillsCount === 6 &&
@@ -703,6 +717,9 @@ try {
     startCard: Boolean(document.querySelector("[data-projects-thread-start-card]")),
     chips: Boolean(document.querySelector("[data-projects-thread-chips]")),
     params: Boolean(document.querySelector("[data-projects-thread-params]")),
+    paramsText: (
+      document.querySelector("[data-projects-thread-params]")?.textContent || ""
+    ).trim(),
     tasks: Boolean(document.querySelector("[data-projects-thread-tasks]")),
     tasksSource:
       document
@@ -730,6 +747,20 @@ try {
     "Tasks 清单有区块并标数据来源（F17：没有 todo 显示 none，不编 0/0）",
     expanded.tasks === true && ["todo/write", "none"].includes(expanded.tasksSource),
     JSON.stringify({ tasks: expanded.tasks, source: expanded.tasksSource }),
+  );
+  // P1-7：thread.dir 以前只写不读——非隔离线程也必须能看出「跑在哪个目录」
+  const workspaceDirName = String(SMOKE_WORKSPACE_DIR).split("/").pop() || "workspace";
+  // 这一行是隔离线程（git 仓库 → worktree），chip 前半段写「隔离 worktree」；
+  // 关键是**后半段必须是 thread.dir 的短名**（以前字段只写不读，行内根本看不到目录）。
+  add(
+    "行内 chip 显示 thread.dir 短名（P1-7：字段有读点，隔离/共享两种都显示）",
+    expanded.params === true &&
+      (expanded.paramsText.includes("共享目录") ||
+        expanded.paramsText.includes("shared dir") ||
+        expanded.paramsText.includes("隔离 worktree") ||
+        expanded.paramsText.includes("isolated worktree")) &&
+      expanded.paramsText.includes(workspaceDirName),
+    JSON.stringify({ params: expanded.paramsText, expect: workspaceDirName }),
   );
   add(
     "steering 输入 + 按钮（F19）",
@@ -929,6 +960,10 @@ try {
       state: document.querySelector("[data-projects-thread-row]")?.getAttribute(
         "data-projects-thread-state",
       ),
+      resolvedAt:
+        document
+          .querySelector("[data-projects-thread-row]")
+          ?.getAttribute("data-projects-thread-resolved-at") || "",
       resolved: pills.resolved,
       group: Number(
         document
@@ -957,10 +992,45 @@ try {
   const reopenedState = await page.evaluate(() =>
     document.querySelector("[data-projects-thread-row]")?.getAttribute("data-projects-thread-state"),
   );
+  // P0-1 的 UI 半边：resolve 写进去的 resolvedAt 必须是**具体 ISO 时间**且能在行上读回，
+  // Node 侧再拿同一个值和 projects.json 对（不是「null 或字符串」这种恒真断言）。
+  result.resolvedAtSeen = resolvedState.resolvedAt;
+  add(
+    "resolve 后行上回读的 resolvedAt 是可解析的 ISO 时间（F29 写→回读）",
+    typeof resolvedState.resolvedAt === "string" &&
+      /^\\d{4}-\\d{2}-\\d{2}T/u.test(resolvedState.resolvedAt) &&
+      !Number.isNaN(Date.parse(resolvedState.resolvedAt)),
+    JSON.stringify({ state: resolvedState.state, resolvedAt: resolvedState.resolvedAt }),
+  );
   add(
     "重开后不再显示已解决",
     reopenClicked === "clicked" && reopenedState !== "resolved",
     JSON.stringify({ reopenClicked, reopenedState }),
+  );
+  // 收尾把线程**留在已解决**：这样 Node 侧读 projects.json 时能拿一个「非默认值」做
+  // 写→回读闭环（旧断言只校验「∈ 六态枚举」，而新建线程默认 idle 也能通过）。
+  await openThreadMenu();
+  const finalResolveClicked = await page.evaluate(() => {
+    const button = document.querySelector("[data-projects-thread-resolve]");
+    if (!button) return "no-button";
+    button.click();
+    return "clicked";
+  });
+  await page.waitForTimeout(1600);
+  const finalThread = await page.evaluate(() => {
+    const row = document.querySelector("[data-projects-thread-row]");
+    return {
+      state: row?.getAttribute("data-projects-thread-state") || "",
+      resolvedAt: row?.getAttribute("data-projects-thread-resolved-at") || "",
+    };
+  });
+  result.finalThread = finalThread;
+  add(
+    "收尾把线程留在 resolved（给宿主侧持久化断言一个具体值）",
+    finalResolveClicked === "clicked" &&
+      finalThread.state === "resolved" &&
+      /^\\d{4}-\\d{2}-\\d{2}T/u.test(finalThread.resolvedAt),
+    JSON.stringify({ finalResolveClicked, finalThread }),
   );
 
   // F31：手动标记未读 → 行首圆点；再标记已读清掉
@@ -2463,11 +2533,31 @@ const main = async () => {
       detail: JSON.stringify({ icon: projectByName?.icon, repos: projectByName?.repos }),
     });
     checks.push({
-      name: "归档时间字段存在且未归档为 null（F1）",
+      name: "未归档项目的 archivedAt 恒为 null（F1，不是「null 或字符串」这种恒真断言）",
       ok:
         projectByName !== undefined &&
-        (projectByName.archivedAt === null || typeof projectByName.archivedAt === "string"),
-      detail: String(projectByName?.archivedAt),
+        projectByName.state !== "archived" &&
+        projectByName.archivedAt === null,
+      detail: JSON.stringify({
+        state: projectByName?.state,
+        archivedAt: projectByName?.archivedAt,
+      }),
+    });
+    // 归档的一次性项目：archivedAt 必须是**真的 ISO 时间**（旧断言只校验类型，坏实现也 PASS）
+    const archivedProject = Object.values(parsed?.projects ?? {}).find(
+      (/** @type {any} */ project) => project?.state === "archived",
+    );
+    checks.push({
+      name: "归档项目的 archivedAt 是可解析的 ISO 时间（F1 写→回读）",
+      ok:
+        archivedProject !== undefined &&
+        typeof archivedProject.archivedAt === "string" &&
+        /^\d{4}-\d{2}-\d{2}T/u.test(archivedProject.archivedAt) &&
+        !Number.isNaN(Date.parse(archivedProject.archivedAt)),
+      detail: JSON.stringify({
+        name: archivedProject?.name ?? null,
+        archivedAt: archivedProject?.archivedAt ?? null,
+      }),
     });
     checks.push({
       name: "多目录落盘（F35：两个目录都在）",
@@ -2477,35 +2567,111 @@ const main = async () => {
         projectByName.dirs.some((/** @type {any} */ dir) => String(dir).includes("workspace2")),
       detail: JSON.stringify(projectByName?.dirs),
     });
-    const threadRecord = Object.values(parsed?.threads ?? {}).find(
-      (/** @type {any} */ thread) => thread?.projectId === projectByName?.id,
-    );
+    // ⚠️ 只按 projectId 找一个是不够的：项目里不止一条线程（会话菜单 attach 进来的那条没有 dir、
+    // 也没有 prompt），find() 会挑到它 → 断言看着过了，其实对错了对象。用 UI 那行的 sessionId 精确定位。
+    const threadRecord =
+      parsed?.threads?.[String(result.overviewFacts?.sessionId ?? "")] ??
+      Object.values(parsed?.threads ?? {}).find(
+        (/** @type {any} */ thread) => thread?.sessionId === result.overviewFacts?.sessionId,
+      );
+    // 新建线程默认 idle：旧断言只校验「∈ 六态枚举」，坏实现（永远不写回）也能 PASS。
+    // 这里钉死具体值，并要求**和 UI 说的一致**（这一轮必然 MISSING_CREDENTIAL → failed）。
+    // 具体值 = resolved（不是「∈ 六态枚举」）：新建线程默认 idle，坏实现（永远不写回）会 FAIL。
+    // 同时要求 UI 最后显示的就是这个值（写→回读闭环），而不是各说各的。
     checks.push({
-      name: "线程六态由事件回写持久记录（F16）",
+      name: "线程状态回写为具体值 resolved，且与 UI 最后显示一致（F16）",
       ok:
         threadRecord !== undefined &&
-        ["waiting-user", "failed", "working", "resolved", "idle", "archived"].includes(
-          String(threadRecord?.state),
-        ),
-      detail: String(threadRecord?.state),
-    });
-    checks.push({
-      name: "线程 todo/副标题缺数据时留空（F27）",
-      ok:
-        threadRecord !== undefined &&
-        (threadRecord.todos === null || typeof threadRecord.todos === "object") &&
-        typeof threadRecord.subtitle === "string",
+        threadRecord.state === "resolved" &&
+        threadRecord.state === String(result.finalThread?.state ?? ""),
       detail: JSON.stringify({
-        todos: threadRecord?.todos,
-        subtitle: threadRecord?.subtitle,
+        store: threadRecord?.state ?? null,
+        uiFinal: result.finalThread?.state ?? null,
       }),
     });
     checks.push({
-      name: "线程 resolvedAt 字段可回读（F29）",
+      name: "线程状态用的是统一六态词表（P0-2：waiting-user 带连字符）",
       ok:
         threadRecord !== undefined &&
-        (threadRecord.resolvedAt === null || typeof threadRecord.resolvedAt === "string"),
-      detail: String(threadRecord?.resolvedAt),
+        THREAD_STATES.includes(String(threadRecord.state)) &&
+        !["waiting", "done"].includes(String(threadRecord.state)),
+      detail: JSON.stringify({ state: threadRecord?.state, vocabulary: THREAD_STATES }),
+    });
+    // 这条线程没有任何 todo/write：todos 必须**就是 null**（不是 "object 也行"），
+    // 并且 UI 同步显示 none——两边都得是「没有」，不能一边编 0/0。
+    checks.push({
+      name: "无 todo 的线程 todos 恒为 null 且 UI 显示 none（F27，深比较而非类型检查）",
+      ok:
+        threadRecord !== undefined &&
+        threadRecord.todos === null &&
+        String(result.overviewFacts?.stepsState ?? "") === "none",
+      detail: JSON.stringify({
+        todos: threadRecord?.todos ?? "MISSING",
+        uiSteps: result.overviewFacts?.stepsState ?? null,
+      }),
+    });
+    checks.push({
+      name: "副标题缺数据时留空（F27：不是编出来的字符串）",
+      ok:
+        threadRecord !== undefined &&
+        threadRecord.subtitle === "" &&
+        result.overviewFacts?.subtitlePresent === false,
+      detail: JSON.stringify({
+        subtitle: threadRecord?.subtitle,
+        uiPresent: result.overviewFacts?.subtitlePresent,
+      }),
+    });
+    // resolve 阶段 UI 回读到过具体 ISO 时间（browser 断言已校验格式），重开后必须清成 null。
+    // 旧断言「resolvedAt === null || string」对两种结果都成立 → 恒真。
+    // resolvedAt 必须**真的写进去了**，且 UI 从宿主回读到的就是同一个值（不是各算各的）：
+    // 旧断言「=== null || typeof string」对「永远是 null」和「是字符串」都成立 → 恒真。
+    checks.push({
+      name: "resolvedAt 非空、可解析，且与 UI 回读值逐字符相同（F29 写→回读）",
+      ok:
+        threadRecord !== undefined &&
+        typeof threadRecord.resolvedAt === "string" &&
+        threadRecord.resolvedAt !== "" &&
+        /^\d{4}-\d{2}-\d{2}T/u.test(threadRecord.resolvedAt) &&
+        !Number.isNaN(Date.parse(threadRecord.resolvedAt)) &&
+        threadRecord.resolvedAt === String(result.finalThread?.resolvedAt ?? "") &&
+        typeof result.resolvedAtSeen === "string" &&
+        Number.isNaN(Date.parse(result.resolvedAtSeen)) === false,
+      detail: JSON.stringify({
+        store: threadRecord?.resolvedAt ?? "MISSING",
+        uiFinal: result.finalThread?.resolvedAt ?? null,
+        firstResolveUi: result.resolvedAtSeen ?? null,
+      }),
+    });
+    // 冷启动（模拟宿主重启）：不经过内存视图，直接从盘上 load 再推导六态。
+    // 这正是 P0-2 说的「冷启动 failed/working 一律变 idle」的回归点。
+    let coldState = "load-failed";
+    try {
+      const coldStore = new ProjectStore({ root: join(home, "projects") }).load();
+      // ⚠️ 线程记录本身没有 sessionId 字段（它以 sessionId 为 key）：必须用 UI 那行的 id 定位，
+      // 否则会 fallback 到项目里另一条线程（attach 进来的 idle 线程）→ 看着像「冷启动丢了状态」。
+      const coldId = String(result.overviewFacts?.sessionId ?? "");
+      const coldThread = coldId === "" ? undefined : coldStore.state.threads?.[coldId];
+      coldState = coldThread ? deriveThreadState(undefined, coldThread) : "no-thread";
+    } catch (error) {
+      coldState = `load-error: ${String(/** @type {any} */ (error)?.message ?? error).slice(0, 80)}`;
+    }
+    // 冷启动（模拟宿主重启）：不经过内存视图，直接 load 盘上的记录再推导六态。
+    // 期望值与 UI 最后显示一致——这就是 P0-2「写进去要读得回来」的端到端证据。
+    // （failed/working 的映射另有三条单测固定：mergeRecord + deriveThreadState。）
+    checks.push({
+      name: "冷启动读路径与 UI 最后显示一致（P0-2 持久化闭环）",
+      ok: coldState === "resolved" && coldState === String(result.finalThread?.state ?? ""),
+      detail: JSON.stringify({ coldState, uiFinal: result.finalThread?.state ?? null }),
+    });
+    checks.push({
+      name: "线程 dir 落盘且是项目目录之一（多目录时能说清跑在哪个 root，P1-7 写入侧）",
+      ok:
+        threadRecord !== undefined &&
+        typeof threadRecord.dir === "string" &&
+        threadRecord.dir.length > 0 &&
+        Array.isArray(projectByName?.dirs) &&
+        projectByName.dirs.includes(threadRecord.dir),
+      detail: JSON.stringify({ dir: threadRecord?.dir ?? null, dirs: projectByName?.dirs ?? null }),
     });
     const uiStoreText = await readIfExists(join(home, "storages", "projects_ui.json"));
     let uiStore = null;
@@ -2559,6 +2725,15 @@ const main = async () => {
       name: "协调者创建写审计（F9：coordinator/created 可追溯）",
       ok: auditActions.includes("coordinator/created"),
       detail: auditActions.slice(-6).join(","),
+    });
+    checks.push({
+      name: "resolve / 重开都写审计（F29 可追溯）",
+      ok: auditActions.includes("thread/resolved") && auditActions.includes("thread/reopened"),
+      detail: JSON.stringify(
+        auditActions
+          .filter((/** @type {string} */ action) => action.startsWith("thread/"))
+          .slice(0, 6),
+      ),
     });
     const leftovers = (await readdir(join(home, "projects")).catch(() => [])).filter((name) =>
       String(name).includes(".tmp-"),

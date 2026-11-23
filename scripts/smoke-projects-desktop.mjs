@@ -11,10 +11,12 @@
 // 默认**只读**：只切会话、开关对话框/面板，不执行破坏性操作，因此可以直接跑在真实 profile 上。
 // 需要写东西的流程请单独开一个 --deep 模式，并要求显式传入专用目录。
 //
-// 断言覆盖（11 项，全部只读）：
-//   插件 client 半已加载 / 首启对话框处理 / 侧栏「项目」入口 / 面板渲染 / data-projects-status 形状 /
-//   无渲染崩溃 / 摘要已本地化 / 新建控件存在（不提交）/ 设置分节（设置页被禁用时容忍跳过）/
-//   Esc 关闭后界面仍可用 / 截图落盘。
+// 断言覆盖（最多 17 项，全部只读）：
+//   连接桌面 UI / 插件 client 半已加载 / 宿主首启对话框处理 / 侧栏「项目」入口 / 面板渲染 /
+//   B1 首启引导只断言存在不点击（**不写 live profile 的 firstRunDone**）/ data-projects-status 形状 /
+//   无渲染崩溃 / 摘要已本地化 / 新建控件存在（不提交）/ 详情页三段（有项目行时才跑）/
+//   设置分节（设置页被禁用时容忍跳过）/ Esc 关闭后界面仍可用 / 截图落盘。
+// 注：本批（B1 P1-5）改的是断言口径，**没有复跑**；下次 `pnpm gate projects` 时以实跑结果为准。
 // 未装进 live profile 时默认 SKIP（门禁加 --require 则失败）。
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -210,26 +212,34 @@ const main = async () => {
     await sleep(600);
 
     // 0) B1 首启引导（F63）：一次性弹窗，会盖住面板（fixed backdrop）。
-    //    只读回归里点掉它；唯一的写入是 UI 状态 firstRunDone（storageDomain），
-    //    不碰项目数据。已经看过（firstRunDone=true）时这里不存在，计 PASS。
-    const guideSeen = await cdp.evaluate(
+    //    **只读口径（B1 审查 P1-5）**：只断言它存在、CTA 有文案，**不点**——
+    //    点 CTA 会写 live profile 的 `firstRunDone`（storageDomain），那就不是只读了。
+    //    为了不挡后面的只读断言，这里只把节点从 DOM 里摘掉：不写任何存储，
+    //    页面刷新后引导还在（下次跑仍能看到）。
+    const guide = await cdp.evaluate(
       `(() => {
         const node = document.querySelector("[data-projects-firstrun]");
-        if (!node) return "absent";
+        if (!node) return { seen: false, cta: "", persisted: "" };
         const button = document.querySelector("[data-projects-firstrun-cta]");
-        if (!button) return "no-cta";
-        button.click();
-        return "dismissed";
+        const cta = (button && button.textContent ? button.textContent : "").trim();
+        const persisted = node.getAttribute("data-projects-firstrun-persisted") || "";
+        node.remove();
+        return { seen: true, cta, persisted };
       })()`,
     );
-    await sleep(500);
+    await sleep(300);
     const guideGone = await cdp.evaluate(
       `document.querySelector("[data-projects-firstrun]") === null`,
     );
     check(
-      "首启引导已处理（一次性，不挡后续操作）",
-      guideSeen === "absent" || (guideSeen === "dismissed" && guideGone === true),
-      String(guideSeen),
+      "首启引导只断言存在、不点击（不写 live profile 的 firstRunDone）",
+      guideGone === true &&
+        (guide?.seen === false ||
+          (guide?.seen === true &&
+            typeof guide.cta === "string" &&
+            guide.cta !== "" &&
+            ["yes", "no"].includes(String(guide.persisted)))),
+      JSON.stringify(guide),
     );
 
     const status = await cdp

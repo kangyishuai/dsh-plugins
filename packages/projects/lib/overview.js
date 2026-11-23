@@ -131,11 +131,18 @@ export function deriveState(view) {
  */
 export function mergeRecord(view, record) {
   const base = view ?? initialView();
+  const recordState = typeof record?.state === "string" ? record.state : "";
   const resolvedAt = typeof record?.resolvedAt === "string" && record.resolvedAt !== "";
+  // 六态持久化（B1 审查 P0-2）：冷启动时内存视图是空的，`failed` / `working` 只有记录里那份事实。
+  // 以前这里只映射 resolved/archived，于是重启后 failed/working 一律落回 idle——写进去了却读不出来。
   return {
     ...base,
-    resolved: resolvedAt || record?.state === "resolved",
-    archived: record?.state === "archived",
+    // `working` 是**持久化事实**：宿主 `state().running` 在 settleState 里优先级更高，
+    // 所以真在跑/真停了都以宿主为准，这里只是让「重启后仍读得到 working」成立。
+    state: recordState === "working" ? "working" : base.state,
+    lastTurnFailed: recordState === "failed" ? true : base.lastTurnFailed,
+    resolved: resolvedAt || recordState === "resolved",
+    archived: recordState === "archived",
   };
 }
 
@@ -225,7 +232,10 @@ export function reduce(view, event) {
   let next = {
     ...view,
     lastActivityAt: at,
-    firstActivityAt: Math.max(view.firstActivityAt, at),
+    // 「第一次看到活动」的时间：首条事件取 at，之后取**更早**的那个（B1 审查 P1-4：
+    // 原来写成 Math.max，恒等于 lastActivityAt，`estimateRemainingMs` 的 (last-first) 永远 0，
+    // 于是 `~Nm` 永远不显示）。
+    firstActivityAt: view.firstActivityAt > 0 ? Math.min(view.firstActivityAt, at) : at,
   };
 
   switch (type) {

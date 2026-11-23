@@ -4652,6 +4652,8 @@ window.__ModuleLoader__.load({
             },
             "data-projects-thread-row": row.sessionId,
             "data-projects-thread-state": state,
+            // F29 回读锚点：resolve 写进去的 resolvedAt 必须能在 UI 上读回来（冒烟比同一份值）
+            "data-projects-thread-resolved-at": String(row.resolvedAt ?? ""),
             "data-projects-thread-unread": row.unread === true ? "true" : "false",
             "data-projects-thread-focused": focused ? "true" : "false",
             onMouseEnter: () => setThreadHover(String(row.sessionId)),

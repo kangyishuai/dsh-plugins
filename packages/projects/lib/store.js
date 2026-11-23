@@ -7,6 +7,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { THREAD_STATES } from "./overview.js";
 import { defaultRules } from "./routing.js";
 
 /** 当前元数据格式版本。任何不兼容变更都要 +1 并在 migrate() 里补一步。 */
@@ -31,6 +32,22 @@ export const MAX_REPOS = 10;
 export const MAX_ICON_LENGTH = 8;
 
 /**
+ * 线程记录里允许持久化的 state 词表。
+ *
+ * 六态词表只有一份：`overview.js` 的 `THREAD_STATES`（`waiting-user` 带连字符）。
+ * 这里另外接受 `waiting` / `done` 两个**旧数据 / 事件层原始态**：前者是 B1 之前写进去的
+ * 历史拼写，后者是 `reduce()` 内部「一轮正常跑完」的原始事实（对外一律收敛成 idle）。
+ * B1 审查 P0-2：以前白名单写的是 `waiting`，而 `deriveState()` 产出 `waiting-user`，
+ * 于是「等你」永远写不进去；两端统一到这份词表后，写→回读才闭环。
+ */
+export const THREAD_STATE_VALUES = Object.freeze([...THREAD_STATES, "waiting", "done"]);
+
+/** @param {unknown} value @returns {boolean} */
+export function isThreadState(value) {
+  return typeof value === "string" && THREAD_STATE_VALUES.includes(value);
+}
+
+/**
  * @typedef {object} ProjectRecord
  * @property {string} id
  * @property {string} name
@@ -52,7 +69,7 @@ export const MAX_ICON_LENGTH = 8;
 /**
  * @typedef {object} ThreadRecord
  * @property {string} projectId
- * @property {'idle'|'working'|'waiting'|'done'|'failed'|'resolved'|'archived'} state
+ * @property {'idle'|'working'|'waiting-user'|'waiting'|'done'|'failed'|'resolved'|'archived'} state
  *   六态里 resolved/archived 是插件域（宿主无原语），其余由事件回写。
  * @property {string|null} resolvedAt 手动 resolve 时间（F29）
  * @property {boolean} unread 手动标记的未读（F31；宿主无 read 概念，只能插件存）
@@ -163,12 +180,15 @@ function iso(now = Date.now()) {
 }
 
 /**
- * 目录列表收敛：只留字符串、去空、去重、按上限截断（F35）。
- * 不校验绝对路径（那是 UI 的事）；这里只保证存进去的形状是干净的。
+ * 目录列表**形状收敛**：只留字符串、去空、去重，**不截断**。
+ *
+ * 为什么不在 load 时截断（B1 审查 P0-3）：`projects.json` 是用户数据，load 时静默砍掉第 11+
+ * 个目录，会在下一次 save 后永久丢失——违反硬性约定 1（不认识的条目保留，不整段丢）。
+ * 上限只在**写入口**拒绝（`createProject` / `updateProject`），那里能给用户报错。
  * @param {unknown} value
  * @returns {string[]}
  */
-export function normalizeDirs(value) {
+export function filterDirs(value) {
   if (!Array.isArray(value)) return [];
   /** @type {string[]} */
   const out = [];
@@ -177,17 +197,26 @@ export function normalizeDirs(value) {
     const path = item.trim();
     if (path === "" || out.includes(path)) continue;
     out.push(path);
-    if (out.length >= MAX_DIRS) break;
   }
   return out;
 }
 
 /**
- * 仓库列表收敛：只认 `owner/repo` 形状，去重、按上限截断（F2）。
+ * 目录列表收敛（写入口用）：形状收敛 + 按产品上限截断（F35）。
+ * 不校验绝对路径（那是 UI 的事）；这里只保证存进去的形状是干净的。
  * @param {unknown} value
  * @returns {string[]}
  */
-export function normalizeRepos(value) {
+export function normalizeDirs(value) {
+  return filterDirs(value).slice(0, MAX_DIRS);
+}
+
+/**
+ * 仓库列表**形状收敛**：只认 `owner/repo`，去重，**不截断**（load 用；理由同 filterDirs）。
+ * @param {unknown} value
+ * @returns {string[]}
+ */
+export function filterRepos(value) {
   if (!Array.isArray(value)) return [];
   /** @type {string[]} */
   const out = [];
@@ -200,9 +229,17 @@ export function normalizeRepos(value) {
     if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(name)) continue;
     if (out.includes(name)) continue;
     out.push(name);
-    if (out.length >= MAX_REPOS) break;
   }
   return out;
+}
+
+/**
+ * 仓库列表收敛（写入口用）：形状收敛 + 上限截断（F2）。
+ * @param {unknown} value
+ * @returns {string[]}
+ */
+export function normalizeRepos(value) {
+  return filterRepos(value).slice(0, MAX_REPOS);
 }
 
 /**
@@ -266,8 +303,10 @@ export function normalize(raw, root) {
           project.state === "archived" && typeof project.archivedAt === "string"
             ? project.archivedAt
             : null,
-        dirs: normalizeDirs(project.dirs),
-        repos: normalizeRepos(project.repos),
+        // load 只做类型过滤、**不截断**：用户数据不能在下一次 save 后永久丢失（P0-3）。
+        // 上限由写入口拒绝（createProject/updateProject）。
+        dirs: filterDirs(project.dirs),
+        repos: filterRepos(project.repos),
         autoResolveDays: normalizeAutoResolveDays(project.autoResolveDays),
         coordinatorSessionId:
           typeof project.coordinatorSessionId === "string" ? project.coordinatorSessionId : null,
@@ -299,11 +338,8 @@ export function normalize(raw, root) {
       state.threads[sessionId] = {
         ...thread,
         projectId: thread.projectId,
-        state: ["idle", "working", "waiting", "done", "failed", "resolved", "archived"].includes(
-          thread.state,
-        )
-          ? thread.state
-          : "idle",
+        // 六态词表统一（P0-2）：`waiting-user` 必须能读回来，否则重启后「等你」变 idle。
+        state: isThreadState(thread.state) ? thread.state : "idle",
         resolvedAt: typeof thread.resolvedAt === "string" ? thread.resolvedAt : null,
         unread: thread.unread === true,
         todos:
@@ -756,8 +792,7 @@ export class ProjectStore {
   setThreadState(sessionId, state) {
     const current = this.state.threads[sessionId];
     if (!current) throw new Error(`projects: unknown thread ${sessionId}`);
-    const allowed = ["idle", "working", "waiting", "done", "failed", "resolved", "archived"];
-    const next = allowed.includes(state) ? state : current.state;
+    const next = isThreadState(state) ? state : current.state;
     const changed = next !== current.state;
     if (changed) current.state = next;
     // resolvedAt 只由 setThreadResolved / setThreadState('resolved') 维护；
