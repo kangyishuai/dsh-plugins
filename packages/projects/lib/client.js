@@ -444,6 +444,10 @@ window.__ModuleLoader__.load({
       "detail.groupCollapseAll": "全部折叠",
       "detail.addView": "新增视图",
       "detail.today": "今天",
+      "detail.slash.memory": "打开记忆",
+      "detail.slash.routines": "打开定时任务",
+      "detail.slash.settings": "打开项目设置",
+      "detail.slash.clear": "清除筛选与搜索",
       "detail.workingLine": "{count} 个线程在跑，完成后协调者会在这里汇报。",
       "detail.settingsPane.general": "通用",
       "detail.settingsPane.memory": "记忆",
@@ -901,6 +905,10 @@ window.__ModuleLoader__.load({
       "detail.groupCollapseAll": "Collapse all",
       "detail.addView": "Add view",
       "detail.today": "Today",
+      "detail.slash.memory": "Open memory",
+      "detail.slash.routines": "Open routines",
+      "detail.slash.settings": "Open project settings",
+      "detail.slash.clear": "Clear filters and search",
       "detail.workingLine": "{count} thread(s) working; the coordinator will report back here.",
       "detail.settingsPane.general": "General",
       "detail.settingsPane.memory": "Memory",
@@ -5807,6 +5815,47 @@ window.__ModuleLoader__.load({
       );
       /** 自定义视图：保存的是"当前筛选条件"，不是结果快照。 */
       const views = Array.isArray(data.progress?.views) ? data.progress.views : [];
+      /** 斜杠命令（Claude 的 "Type / for commands"）：选中即跳转，不创建线程。 */
+      const slashCommands = [
+        {
+          key: "memory",
+          label: text(t, "detail.slash.memory"),
+          run: () => setTab("memory"),
+        },
+        {
+          key: "routines",
+          label: text(t, "detail.slash.routines"),
+          run: () => setTab("routines"),
+        },
+        {
+          key: "settings",
+          label: text(t, "detail.slash.settings"),
+          run: () => setPanelSettingsOpen(true),
+        },
+        {
+          key: "clear",
+          label: text(t, "detail.slash.clear"),
+          run: () => {
+            setFilter("");
+            setPanelQuery("");
+          },
+        },
+      ];
+      const slashQuery = draft.startsWith("/") ? draft.slice(1).trim().toLowerCase() : "";
+      const slashOpen = draft.startsWith("/");
+      const slashMatches = slashOpen
+        ? slashCommands.filter((command) =>
+            slashQuery === ""
+              ? true
+              : command.key.indexOf(slashQuery) >= 0 ||
+                command.label.toLowerCase().indexOf(slashQuery) >= 0,
+          )
+        : [];
+      const runSlashCommand = (/** @type {any} */ command) => {
+        if (!command) return;
+        command.run();
+        setDraft("");
+      };
       const saveView = () => {
         const name = viewName.trim();
         if (name === "") return;
@@ -8064,6 +8113,50 @@ window.__ModuleLoader__.load({
                 style: colorScheme === "light" ? styles.composerCardLight : styles.composerCard,
                 "data-projects-composer": "",
               },
+              slashOpen && slashMatches.length > 0
+                ? h(
+                    "div",
+                    {
+                      style: {
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "1px",
+                        marginBottom: "4px",
+                        border: `1px solid ${T.borderSoft}`,
+                        borderRadius: "10px",
+                        padding: "4px",
+                        background: T.panel,
+                      },
+                      "data-panel-slash-menu": "",
+                    },
+                    slashMatches.map((command) =>
+                      h(
+                        "button",
+                        {
+                          type: "button",
+                          key: command.key,
+                          style: {
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "8px",
+                            border: "none",
+                            background: "transparent",
+                            color: T.text,
+                            fontSize: "12.5px",
+                            textAlign: "left",
+                            padding: "4px 6px",
+                            borderRadius: "6px",
+                            cursor: "pointer",
+                          },
+                          "data-panel-slash": command.key,
+                          onClick: () => runSlashCommand(command),
+                        },
+                        h("span", { style: { color: T.faint, width: "44px" } }, `/${command.key}`),
+                        h("span", {}, command.label),
+                      ),
+                    ),
+                  )
+                : null,
               h("input", {
                 ref: threadInputRef,
                 style: {
@@ -8078,7 +8171,14 @@ window.__ModuleLoader__.load({
                 "data-projects-thread-input": "",
                 onChange: (/** @type {any} */ event) => setDraft(event.target.value),
                 onKeyDown: (/** @type {any} */ event) => {
-                  if (event.key === "Enter") createThread();
+                  if (event.key === "Escape" && slashOpen) {
+                    setDraft("");
+                    return;
+                  }
+                  if (event.key === "Enter") {
+                    if (slashOpen) runSlashCommand(slashMatches[0]);
+                    else createThread();
+                  }
                 },
                 disabled: busy,
               }),

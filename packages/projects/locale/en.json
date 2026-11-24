@@ -533,6 +533,10 @@
     "detail.viewSaveFailed": "Could not save the view: {reason}",
     "detail.bellTitle": "{count} item(s) need you (waiting / failed)",
     "detail.carouselPreview": "Preview",
-    "detail.carouselPreviewHint": "Expand the focused thread"
+    "detail.carouselPreviewHint": "Expand the focused thread",
+    "detail.slash.memory": "Open memory",
+    "detail.slash.routines": "Open routines",
+    "detail.slash.settings": "Open project settings",
+    "detail.slash.clear": "Clear filters and search"
   }
 }

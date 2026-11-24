@@ -533,6 +533,10 @@
     "detail.viewSaveFailed": "保存视图失败：{reason}",
     "detail.bellTitle": "{count} 条需要你处理（等你/失败）",
     "detail.carouselPreview": "预览",
-    "detail.carouselPreviewHint": "展开当前这条线程"
+    "detail.carouselPreviewHint": "展开当前这条线程",
+    "detail.slash.memory": "打开记忆",
+    "detail.slash.routines": "打开定时任务",
+    "detail.slash.settings": "打开项目设置",
+    "detail.slash.clear": "清除筛选与搜索"
   }
 }
