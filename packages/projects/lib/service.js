@@ -3185,6 +3185,24 @@ export class ProjectsService extends TypertRemoteService {
         now,
         diffs.get(String(thread.sessionId)) ?? null,
       );
+      // F34：线程行内嵌产物卡需要 `row.artifacts`——以前客户端有这个分支但服务端从不喂数据，
+      // 于是产物卡永远不渲染（真机走查发现）。按 source.sessionId 归属，最多 5 条。
+      try {
+        const sid = String(thread.sessionId ?? "");
+        row.artifacts = store
+          .listArtifactRefs(projectId)
+          .filter((/** @type {any} */ ref) => String(ref?.source?.sessionId ?? "") === sid)
+          .slice(0, 5)
+          .map((/** @type {any} */ ref) => ({
+            id: ref.id,
+            title: ref.title,
+            kind: ref.kind,
+            version: ref.version,
+            bytes: ref.bytes,
+          }));
+      } catch {
+        row.artifacts = [];
+      }
       try {
         if (this.persistRowFacts(thread, row)) dirty = true;
       } catch (error) {

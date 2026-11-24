@@ -4002,9 +4002,11 @@ window.__ModuleLoader__.load({
 
       var openArtifactPanel = () => {
         // 宿主右栏页签（docs/plugin-conventions §8.5）：拿不到就降级为内联提示，不假装打开了。
-        // 服务要经 ctx.get 取（未声明在 exports.inject 里的服务直取属性不可靠，见 runtime §17.3）。
+        // `sidebarRight` 是晚于插件就绪的服务（官方 ui-reference / artifacts 都写进 inject）；
+        // 本插件把它加进了 exports.inject，这里优先直取，再兜底 ctx.get。
         var sidebar =
-          typeof api.ctx?.get === "function" ? api.ctx.get("sidebarRight") : api.ctx?.sidebarRight;
+          api.ctx?.sidebarRight ||
+          (typeof api.ctx?.get === "function" ? api.ctx.get("sidebarRight") : undefined);
         if (sidebar && typeof sidebar.openTab === "function") {
           try {
             sidebar.openTab("artifact", { params: { projectId: project.id } });
@@ -11471,7 +11473,7 @@ window.__ModuleLoader__.load({
       );
     }
 
-    exports.inject = ["slots", "locale", "connection"];
+    exports.inject = ["slots", "locale", "connection", "sidebarRight"];
     /** @param {any} ctx */
     exports.apply = function apply(ctx) {
       var c = /** @type {any} */ (ctx);
