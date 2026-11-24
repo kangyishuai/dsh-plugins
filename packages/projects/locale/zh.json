@@ -537,6 +537,10 @@
     "detail.slash.memory": "打开记忆",
     "detail.slash.routines": "打开定时任务",
     "detail.slash.settings": "打开项目设置",
-    "detail.slash.clear": "清除筛选与搜索"
+    "detail.slash.clear": "清除筛选与搜索",
+    "detail.threadRemind": "加一个提醒（30 分钟后）",
+    "detail.threadReminderText": "回看线程：{title}",
+    "detail.threadReminderAdded": "已加提醒：30 分钟后",
+    "detail.threadReminderFailed": "加提醒失败：{reason}"
   }
 }

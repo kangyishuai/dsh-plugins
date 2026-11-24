@@ -444,6 +444,10 @@ window.__ModuleLoader__.load({
       "detail.groupCollapseAll": "全部折叠",
       "detail.addView": "新增视图",
       "detail.today": "今天",
+      "detail.threadRemind": "加一个提醒（30 分钟后）",
+      "detail.threadReminderText": "回看线程：{title}",
+      "detail.threadReminderAdded": "已加提醒：30 分钟后",
+      "detail.threadReminderFailed": "加提醒失败：{reason}",
       "detail.slash.memory": "打开记忆",
       "detail.slash.routines": "打开定时任务",
       "detail.slash.settings": "打开项目设置",
@@ -905,6 +909,10 @@ window.__ModuleLoader__.load({
       "detail.groupCollapseAll": "Collapse all",
       "detail.addView": "Add view",
       "detail.today": "Today",
+      "detail.threadRemind": "Add a reminder (in 30 min)",
+      "detail.threadReminderText": "Revisit thread: {title}",
+      "detail.threadReminderAdded": "Reminder added: in 30 minutes",
+      "detail.threadReminderFailed": "Could not add the reminder: {reason}",
       "detail.slash.memory": "Open memory",
       "detail.slash.routines": "Open routines",
       "detail.slash.settings": "Open project settings",
@@ -6888,6 +6896,52 @@ window.__ModuleLoader__.load({
                     onClick: () => resolveRow(row.sessionId, state !== "resolved"),
                   },
                   state === "resolved" ? text(t, "detail.reopen") : text(t, "detail.resolve"),
+                ),
+                // Claude ref 31 的「Add a reminder」：给这条线程加一个 30 分钟后的提醒
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    role: "menuitem",
+                    style: menuItemStyle,
+                    "data-projects-thread-remind": row.sessionId,
+                    onClick: () => {
+                      setThreadMenu("");
+                      const at = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+                      call(api.ctx, "createReminder", {
+                        projectId: project.id,
+                        input: {
+                          at,
+                          text: text(t, "detail.threadReminderText", {
+                            title: String(title).slice(0, 40),
+                          }),
+                        },
+                      }).then(
+                        (/** @type {any} */ result) => {
+                          setThreadAction({
+                            pending: "",
+                            ok: result?.ok !== false,
+                            message:
+                              result?.ok === false
+                                ? text(t, "detail.threadReminderFailed", {
+                                    reason: String(result?.reason ?? ""),
+                                  })
+                                : text(t, "detail.threadReminderAdded"),
+                          });
+                          load();
+                        },
+                        (/** @type {any} */ error) =>
+                          setThreadAction({
+                            pending: "",
+                            ok: false,
+                            message: text(t, "detail.threadReminderFailed", {
+                              reason: String(error?.message ?? error),
+                            }),
+                          }),
+                      );
+                    },
+                  },
+                  text(t, "detail.threadRemind"),
                 ),
                 // F31：标记未读 / 已读
                 h(

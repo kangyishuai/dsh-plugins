@@ -537,6 +537,10 @@
     "detail.slash.memory": "Open memory",
     "detail.slash.routines": "Open routines",
     "detail.slash.settings": "Open project settings",
-    "detail.slash.clear": "Clear filters and search"
+    "detail.slash.clear": "Clear filters and search",
+    "detail.threadRemind": "Add a reminder (in 30 min)",
+    "detail.threadReminderText": "Revisit thread: {title}",
+    "detail.threadReminderAdded": "Reminder added: in 30 minutes",
+    "detail.threadReminderFailed": "Could not add the reminder: {reason}"
   }
 }
