@@ -4000,27 +4000,40 @@ window.__ModuleLoader__.load({
         );
       };
 
+      /** 右栏服务是否可用（宿主没提供时不渲染成"点了才失败"的按钮）。 */
       var openArtifactPanel = () => {
         // 宿主右栏页签（docs/plugin-conventions §8.5）：拿不到就降级为内联提示，不假装打开了。
-        // `sidebarRight` 是晚于插件就绪的服务（官方 ui-reference / artifacts 都写进 inject）；
-        // 本插件把它加进了 exports.inject，这里优先直取，再兜底 ctx.get。
+        // `sidebarRight` 是晚于插件就绪的服务（官方 ui-reference / artifacts 都写进 inject），
+        // 而且**不同版本方法名不同**：openTab(kind, opts) 与 openTabIn(sessionId, kind, opts) 都要试。
         var sidebar =
           api.ctx?.sidebarRight ||
           (typeof api.ctx?.get === "function" ? api.ctx.get("sidebarRight") : undefined);
-        if (sidebar && typeof sidebar.openTab === "function") {
+        var opened = false;
+        if (typeof sidebar?.openTab === "function") {
           try {
             sidebar.openTab("artifact", { params: { projectId: project.id } });
-            setView((/** @type {any} */ prev) => ({ ...prev, openNote: "" }));
-            return true;
+            opened = true;
           } catch {
-            /* 落到下面的内联提示 */
+            opened = false;
+          }
+        }
+        var sid = "";
+        if (!opened && typeof sidebar?.openTabIn === "function") {
+          try {
+            sid =
+              String(props.threads?.[0]?.sessionId || "") ||
+              String(project.coordinatorSessionId || "");
+            sidebar.openTabIn(sid, "artifact", { params: { projectId: project.id } });
+            opened = true;
+          } catch {
+            opened = false;
           }
         }
         setView((/** @type {any} */ prev) => ({
           ...prev,
-          openNote: text(t, "library.openPanelUnavailable"),
+          openNote: opened ? "" : text(t, "library.openPanelUnavailable"),
         }));
-        return false;
+        return opened;
       };
 
       var reasonText = (/** @type {string} */ reason) => {
@@ -5984,10 +5997,12 @@ window.__ModuleLoader__.load({
                   // B5 · F34：线程内嵌产物缩略卡（标题 + 类型 + 版本 + 时间）
                   // 数据来自 Library 视图：artifacts 行 + 我们自存映射，按 sessionId 命中这条线程。
                   (() => {
+                    // 数据优先用 progress 行里带的 `row.artifacts`（服务端按 source.sessionId 归属，
+                    // 不需要额外拉 Library 数据）；退化时再看 Library 视图。
+                    const rowItems = Array.isArray(row.artifacts) ? row.artifacts : [];
                     const libraryData = data.library;
-                    if (!libraryData) return null;
-                    const artifactsData = libraryData.artifacts || {};
-                    const available = artifactsData.available === true;
+                    const artifactsData = libraryData ? libraryData.artifacts || {} : {};
+                    const available = rowItems.length > 0 || artifactsData.available === true;
                     const rowsList = Array.isArray(artifactsData.rows) ? artifactsData.rows : [];
                     const storedList = Array.isArray(artifactsData.stored)
                       ? artifactsData.stored
@@ -5996,6 +6011,12 @@ window.__ModuleLoader__.load({
                     const seenIds = {};
                     /** @type {any[]} */
                     const items = [];
+                    rowItems.forEach((/** @type {any} */ item) => {
+                      const id = String(item?.id ?? "");
+                      if (id === "" || seenIds[id]) return;
+                      seenIds[id] = true;
+                      items.push(item);
+                    });
                     rowsList.concat(storedList).forEach((/** @type {any} */ item) => {
                       const id = String(item?.id ?? "");
                       const sid = String(item?.sessionId ?? item?.source?.sessionId ?? "");

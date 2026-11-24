@@ -3199,6 +3199,8 @@ export class ProjectsService extends TypertRemoteService {
             kind: ref.kind,
             version: ref.version,
             bytes: ref.bytes,
+            at: ref.at,
+            updatedAt: ref.at,
           }));
       } catch {
         row.artifacts = [];
