@@ -198,7 +198,7 @@ window.__ModuleLoader__.load({
       "detail.paramIsolated": "隔离 worktree",
       "detail.paramShared": "共享目录",
       "detail.paramNoDir": "未绑定目录",
-      "detail.approvalHint": "审批在协调器/线程里产生；这条线程的申请会出现在上面的审批队列里。",
+      "detail.approvalHint": "审批在协调器/线程里产生；这条线程的申请会出现在对话流上方的审批区。",
       "settings.restartRow": "重开协调器会话",
       "settings.restartHint":
         "丢掉当前协调器会话并重开一个（旧会话保留可追溯）；当前那条回复会丢。",
@@ -219,9 +219,9 @@ window.__ModuleLoader__.load({
       "detail.tab.threads": "线程 ({count})",
       "detail.tab.memory": "记忆",
       "detail.threadsEmpty":
-        "还没有线程。在上面输入一个任务就能新建线程；也可以回到会话行，用「…」菜单把已有会话归属到本项目。",
+        "还没有线程。在左侧输入框给一个任务就能新建线程；也可以用「…」菜单把已有会话归属到本项目。",
       "detail.noDirHint":
-        "还没有绑定项目目录：线程会跑在插件的数据目录里（不隔离，也不便接手你的仓库）。建议先在上面「项目目录」里绑定一个 git 仓库，线程才会各占一个 worktree。",
+        "还没有绑定项目目录：线程会跑在插件的数据目录里（不隔离，也不便接手你的仓库）。建议先在「项目设置 → 环境 → 项目目录」里绑定一个 git 仓库，线程才会各占一个 worktree。",
       "detail.threadState": "状态：{state}",
       "detail.instructions": "常设规则（instructions.md）",
       "detail.memoryEdit": "编辑常设规则",
@@ -330,7 +330,7 @@ window.__ModuleLoader__.load({
       "detail.grantAdd": "添加",
       "detail.purgeTitle": "回收站清理",
       "detail.purgeHint":
-        "只清理本项目回收站里超过保留期的条目；先预览，再确认。需要在上面的危险开关里打开「清理过期的回收站条目」。",
+        "只清理本项目回收站里超过保留期的条目；先预览，再确认。需要在「项目设置 → 调试 → 危险动作开关」里打开「清理过期的回收站条目」。",
       "detail.purgePreview": "预览可清理项",
       "detail.trashTitle": "回收站（可恢复）",
       "detail.trashEmpty": "回收站是空的。删除项目会先放进这里，可以随时恢复。",
@@ -533,7 +533,7 @@ window.__ModuleLoader__.load({
       "library.title": "产物库",
       "library.meter": "{count} 个产物 · {bytes}",
       "library.openPanel": "打开产物库",
-      "library.openPanelHint": "在右栏用 artifacts 面板打开这个项目的产物库",
+      "library.openPanelHint": "用右侧的 artifacts 面板打开这个项目的产物库",
       "library.openPanelUnavailable": "打开失败：宿主未提供右栏面板服务（sidebarRight）。",
       "library.artifactsMissing": "产物库需要 dsh-artifacts 0.2；当前不可用，下面只列项目文件。",
       "library.artifactsTitle": "产物",
@@ -1678,8 +1678,8 @@ window.__ModuleLoader__.load({
         minWidth: 0,
         display: "flex",
         flexDirection: "column",
-        gap: "10px",
-        padding: "16px 18px",
+        gap: "12px",
+        padding: "18px 20px",
         borderRadius: "14px",
         border: "1px solid rgba(0,0,0,0.06)",
         background: "#ffffff",
@@ -5994,7 +5994,7 @@ window.__ModuleLoader__.load({
             style: {
               ...styles.row,
               position: "relative",
-              padding: "8px 4px",
+              padding: colorScheme === "light" ? "10px 6px" : "8px 4px",
               cursor: "default",
               alignItems: "flex-start",
               background: threadHover === row.sessionId ? T.hover : "transparent",
@@ -9603,7 +9603,7 @@ window.__ModuleLoader__.load({
           ? h(
               "div",
               { style: styles.railBodyFull, "data-projects-routines-empty": "" },
-              "还没有定时任务。上面建一个；手动档不会自己跑。",
+              "还没有定时任务。用上面的表单建一个；手动档不会自己跑。",
             )
           : h(
               "div",
