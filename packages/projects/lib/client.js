@@ -503,6 +503,9 @@ window.__ModuleLoader__.load({
       "panel.firstRun.cta": "开始使用",
       "panel.firstRun.dismiss": "稍后再说",
       "panel.firstRun.title": "项目现在是一段对话",
+      "panel.firstRun.intro":
+        "每次回到这个项目，都是接着上一次的对话继续。需要并行推进时，就从对话里开几条线程。",
+      "panel.firstRun.cloudNote": "（云端执行）",
       "panel.new.contextCount": "{dirs} 个目录 · {repos} 个仓库",
       "panel.new.contextLabel": "Context（目录 / 仓库）",
       "panel.new.contextLimit": "最多 {count} 个",
@@ -949,6 +952,9 @@ window.__ModuleLoader__.load({
       "panel.firstRun.cta": "Get started",
       "panel.firstRun.dismiss": "Later",
       "panel.firstRun.title": "A project is now a conversation",
+      "panel.firstRun.intro":
+        "Coming back to a project continues the same conversation. When work needs to run in parallel, branch it into threads.",
+      "panel.firstRun.cloudNote": "(cloud)",
       "panel.new.contextCount": "{dirs} folders · {repos} repos",
       "panel.new.contextLabel": "Context (folders / repos)",
       "panel.new.contextLimit": "Up to {count}",
@@ -2536,13 +2542,36 @@ window.__ModuleLoader__.load({
             text(t, "panel.firstRun.title"),
           ),
           h(
+            "div",
+            {
+              style: { ...styles.meta, whiteSpace: "normal", lineHeight: 1.6, marginBottom: "4px" },
+              "data-projects-firstrun-intro": "",
+            },
+            text(t, "panel.firstRun.intro"),
+          ),
+          h(
             "ul",
             { style: { margin: 0, paddingLeft: "18px", color: T.dim, lineHeight: 1.7 } },
             bullets.map((line, index) =>
               h(
                 "li",
                 { key: String(index), "data-projects-firstrun-bullet": String(index + 1) },
-                line,
+                index === 2
+                  ? h(
+                      "span",
+                      {},
+                      line,
+                      " ",
+                      h(
+                        "span",
+                        {
+                          style: { color: T.accentText },
+                          "data-projects-firstrun-link": "",
+                        },
+                        text(t, "panel.firstRun.cloudNote"),
+                      ),
+                    )
+                  : line,
               ),
             ),
           ),

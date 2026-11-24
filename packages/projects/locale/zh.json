@@ -520,6 +520,8 @@
     "library.artifactMenuHint": "更多（待接入）",
     "b3.folderAdd": "添加目录",
     "b3.folderAddHint": "在「项目目录」里新增一个工作目录",
-    "detail.workingLine": "{count} 个线程在跑，完成后协调者会在这里汇报。"
+    "detail.workingLine": "{count} 个线程在跑，完成后协调者会在这里汇报。",
+    "panel.firstRun.intro": "每次回到这个项目，都是接着上一次的对话继续。需要并行推进时，就从对话里开几条线程。",
+    "panel.firstRun.cloudNote": "（云端执行）"
   }
 }
