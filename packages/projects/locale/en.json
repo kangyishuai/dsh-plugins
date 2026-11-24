@@ -541,6 +541,10 @@
     "detail.threadRemind": "Add a reminder (in 30 min)",
     "detail.threadReminderText": "Revisit thread: {title}",
     "detail.threadReminderAdded": "Reminder added: in 30 minutes",
-    "detail.threadReminderFailed": "Could not add the reminder: {reason}"
+    "detail.threadReminderFailed": "Could not add the reminder: {reason}",
+    "b3.coordinatorTitle": "Coordinator defaults",
+    "b3.coordinatorModel": "Coordinator model",
+    "b3.coordinatorEffort": "Coordinator effort",
+    "b3.coordinatorSaved": "Coordinator defaults saved"
   }
 }

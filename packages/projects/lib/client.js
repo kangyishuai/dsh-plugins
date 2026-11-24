@@ -103,6 +103,11 @@ window.__ModuleLoader__.load({
       "b3.folderAdd": "添加目录",
       "b3.folderAddHint": "在「项目目录」里新增一个工作目录",
       "b3.modelTitle": "线程默认模型",
+      "b3.coordinatorTitle": "协调者默认模型",
+      "b3.coordinatorModel": "协调者模型",
+      "b3.coordinatorEffort": "协调者推理强度",
+      "b3.coordinatorSaved": "协调者默认模型已保存",
+
       "b3.model": "线程模型",
       "b3.effort": "推理强度",
       "b3.modelInherit": "继承宿主默认",
@@ -1082,6 +1087,10 @@ window.__ModuleLoader__.load({
       "b3.folderAdd": "Add folder",
       "b3.folderAddHint": "Add a working folder in Project folder",
       "b3.modelTitle": "Thread default model",
+      "b3.coordinatorTitle": "Coordinator defaults",
+      "b3.coordinatorModel": "Coordinator model",
+      "b3.coordinatorEffort": "Coordinator effort",
+      "b3.coordinatorSaved": "Coordinator defaults saved",
       "b3.model": "Thread model",
       "b3.effort": "Thread effort",
       "b3.modelInherit": "Inherit host default",
@@ -1700,7 +1709,8 @@ window.__ModuleLoader__.load({
       },
       detailGrid: {
         display: "grid",
-        gridTemplateColumns: "minmax(0, 58fr) minmax(320px, 42fr)",
+        // 视频实测右栏占 28–32%，静态参考 35–65%：取 63:37（右栏 ≈37%，落在两者交集附近）
+        gridTemplateColumns: "minmax(0, 63fr) minmax(340px, 37fr)",
         gap: "28px",
         alignItems: "start",
       },
@@ -12083,6 +12093,11 @@ window.__ModuleLoader__.load({
       var dirs = Array.isArray(project.dirs) ? project.dirs : [];
       var folderAuth = project.policy?.folderAuth || {};
       var defaults = project.threadDefaults || { provider: "", model: "", reasoningEffort: "" };
+      var coordinatorDefaults = project.coordinatorDefaults || {
+        provider: "",
+        model: "",
+        reasoningEffort: "",
+      };
       var st = useState({
         message: "",
         busy: "",
@@ -12094,6 +12109,8 @@ window.__ModuleLoader__.load({
         folderModes: {},
         /** F42：setThreadDefaults 回执里的 defaults（宿主回读值），同样先于父级刷新。 */
         savedDefaults: null,
+        /** D3：setCoordinatorDefaults 回执里的 defaults。 */
+        savedCoordinatorDefaults: null,
       });
       var view = st[0];
       var setView = st[1];
@@ -12105,6 +12122,16 @@ window.__ModuleLoader__.load({
       });
       var picked = pickedState[0];
       var setPicked = pickedState[1];
+      // 协调者默认模型是**独立**的下拉（视频里 Coordination 与 Thread 两个旋钮）。
+      var coordinatorPickedState = useState({
+        model:
+          coordinatorDefaults.provider && coordinatorDefaults.model
+            ? `${coordinatorDefaults.provider}|${coordinatorDefaults.model}`
+            : "",
+        effort: coordinatorDefaults.reasoningEffort || "",
+      });
+      var coordinatorPicked = coordinatorPickedState[0];
+      var setCoordinatorPicked = coordinatorPickedState[1];
       // F62：`@` 源是晚于插件就绪的服务，注册状态变化要能让这张卡重渲染（否则永远停在初始值）。
       var mentionTick = useState(0);
       var forceMention = mentionTick[1];
@@ -12122,6 +12149,21 @@ window.__ModuleLoader__.load({
           effort: defaults.reasoningEffort || "",
         });
       }, [project.id, defaults.provider, defaults.model, defaults.reasoningEffort, setPicked]);
+      useEffect(() => {
+        setCoordinatorPicked({
+          model:
+            coordinatorDefaults.provider && coordinatorDefaults.model
+              ? `${coordinatorDefaults.provider}|${coordinatorDefaults.model}`
+              : "",
+          effort: coordinatorDefaults.reasoningEffort || "",
+        });
+      }, [
+        project.id,
+        coordinatorDefaults.provider,
+        coordinatorDefaults.model,
+        coordinatorDefaults.reasoningEffort,
+        setCoordinatorPicked,
+      ]);
 
       useEffect(() => {
         call(api.ctx, "modelCatalog").then(
@@ -12158,6 +12200,36 @@ window.__ModuleLoader__.load({
             folderModes: { ...prev.folderModes, [path]: mode },
           }));
           note(text(t, "b3.folderSaved", { decision: label }));
+          if (typeof reload === "function") reload();
+        }, fail);
+      };
+      var saveCoordinatorDefaults = () => {
+        var parts = String(coordinatorPicked.model || "").split("|");
+        var provider = parts.length > 1 ? parts[0] : "";
+        var modelId = parts.length > 1 ? parts.slice(1).join("|") : "";
+        call(api.ctx, "setCoordinatorDefaults", {
+          projectId: project.id,
+          provider: provider,
+          model: modelId,
+          reasoningEffort: String(coordinatorPicked.effort || ""),
+        }).then((/** @type {any} */ result) => {
+          var readback = result?.defaults || {};
+          setView((/** @type {any} */ prev) => ({
+            ...prev,
+            savedCoordinatorDefaults: {
+              provider: String(readback.provider ?? ""),
+              model: String(readback.model ?? ""),
+              reasoningEffort: String(readback.reasoningEffort ?? ""),
+            },
+          }));
+          setCoordinatorPicked({
+            model:
+              readback.provider && readback.model
+                ? `${readback.provider}|${readback.model}`
+                : String(coordinatorPicked.model || ""),
+            effort: String(readback.reasoningEffort ?? coordinatorPicked.effort ?? ""),
+          });
+          note(text(t, "b3.coordinatorSaved"));
           if (typeof reload === "function") reload();
         }, fail);
       };
@@ -12261,6 +12333,21 @@ window.__ModuleLoader__.load({
           view.catalog && Array.isArray(view.catalog.failures) ? view.catalog.failures.length : 0,
         selectedEfforts: (effortByModel[picked.model] || []).length,
       });
+      // 协调者默认的回读锚点（宿主回读值，不是本地选择）
+      var coordinatorDefaultsReadback = JSON.stringify(
+        view.savedCoordinatorDefaults || {
+          provider: String(coordinatorDefaults.provider || ""),
+          model: String(coordinatorDefaults.model || ""),
+          reasoningEffort: String(coordinatorDefaults.reasoningEffort || ""),
+        },
+      );
+      var coordinatorEffortChoices = (effortByModel[coordinatorPicked.model] || []).slice();
+      if (
+        coordinatorPicked.effort !== "" &&
+        coordinatorEffortChoices.indexOf(coordinatorPicked.effort) < 0
+      ) {
+        coordinatorEffortChoices.push(coordinatorPicked.effort);
+      }
       // 回读锚点：值来自宿主回读（props.project.threadDefaults），不是本地选择。
       var defaultsReadback = JSON.stringify(
         view.savedDefaults || {
@@ -12507,6 +12594,97 @@ window.__ModuleLoader__.load({
                   ),
                 );
               }),
+        ),
+        // D3：协调者默认模型 / effort（与线程默认分开；视频里 Coordination 与 Thread 是两个旋钮）
+        h(
+          "div",
+          {
+            style: paneStyle("general", { display: "flex", flexDirection: "column", gap: "4px" }),
+            "data-projects-coordinator-defaults": "",
+            "data-projects-coordinator-defaults-value": coordinatorDefaultsReadback,
+          },
+          h("span", { style: styles.name }, text(t, "b3.coordinatorTitle")),
+          h(
+            "label",
+            {
+              style: {
+                display: "flex",
+                gap: "6px",
+                alignItems: "center",
+                fontSize: "12px",
+                color: T.dim,
+              },
+            },
+            h("span", null, text(t, "b3.coordinatorModel")),
+            h(
+              "select",
+              {
+                style: styles.input,
+                value: coordinatorPicked.model,
+                "data-projects-coordinator-model": "",
+                onChange: (/** @type {any} */ event) => {
+                  var next = String(event.target.value || "");
+                  setCoordinatorPicked((/** @type {any} */ prev) => {
+                    var allowed = effortByModel[next] || [];
+                    var effort =
+                      prev.effort === "" || allowed.indexOf(prev.effort) >= 0 ? prev.effort : "";
+                    return { model: next, effort: effort };
+                  });
+                },
+              },
+              options.map((/** @type {any} */ option) =>
+                h("option", { key: option.value || "inherit", value: option.value }, option.label),
+              ),
+            ),
+          ),
+          h(
+            "label",
+            {
+              style: {
+                display: "flex",
+                gap: "6px",
+                alignItems: "center",
+                fontSize: "12px",
+                color: T.dim,
+              },
+            },
+            h("span", null, text(t, "b3.coordinatorEffort")),
+            h(
+              "select",
+              {
+                style: styles.input,
+                value: coordinatorPicked.effort,
+                "data-projects-coordinator-effort": "",
+                onChange: (/** @type {any} */ event) => {
+                  var next = String(event.target.value || "");
+                  setCoordinatorPicked((/** @type {any} */ prev) => ({ ...prev, effort: next }));
+                },
+              },
+              [""]
+                .concat(coordinatorEffortChoices)
+                .map((/** @type {string} */ value) =>
+                  h(
+                    "option",
+                    { key: value || "inherit", value: value },
+                    value || text(t, "b3.modelInherit"),
+                  ),
+                ),
+            ),
+          ),
+          h(
+            "div",
+            { style: { display: "flex", gap: "6px", flexWrap: "wrap" } },
+            h(
+              "button",
+              {
+                type: "button",
+                style: styles.secondaryButton,
+                "data-projects-coordinator-defaults-save": "",
+                onClick: saveCoordinatorDefaults,
+              },
+              text(t, "b3.modelSave"),
+            ),
+          ),
         ),
         // F42：线程默认模型 / effort
         h(

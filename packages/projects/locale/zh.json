@@ -541,6 +541,10 @@
     "detail.threadRemind": "加一个提醒（30 分钟后）",
     "detail.threadReminderText": "回看线程：{title}",
     "detail.threadReminderAdded": "已加提醒：30 分钟后",
-    "detail.threadReminderFailed": "加提醒失败：{reason}"
+    "detail.threadReminderFailed": "加提醒失败：{reason}",
+    "b3.coordinatorTitle": "协调者默认模型",
+    "b3.coordinatorModel": "协调者模型",
+    "b3.coordinatorEffort": "协调者推理强度",
+    "b3.coordinatorSaved": "协调者默认模型已保存"
   }
 }
