@@ -478,6 +478,7 @@ window.__ModuleLoader__.load({
       "detail.markUnread": "标记未读",
       "detail.notificationCount": "{count} 条待处理",
       "detail.overview": "总览",
+      "detail.bellTitle": "{count} 条需要你处理（等你/失败）",
       "detail.pillAll": "全部",
       "detail.pillClear": "清除过滤",
       "detail.pillWorkingEta": "~{minutes}m",
@@ -932,6 +933,7 @@ window.__ModuleLoader__.load({
       "detail.markUnread": "Mark unread",
       "detail.notificationCount": "{count} pending",
       "detail.overview": "Overview",
+      "detail.bellTitle": "{count} item(s) need you (waiting / failed)",
       "detail.pillAll": "All",
       "detail.pillClear": "Clear filter",
       "detail.pillWorkingEta": "~{minutes}m",
@@ -7501,6 +7503,58 @@ window.__ModuleLoader__.load({
                 },
               },
               text(t, "detail.overview"),
+            ),
+            // 通知铃铛：数量 = 需要你处理（等你 + 失败）。点一下直接筛到「等你」。
+            h(
+              "button",
+              {
+                type: "button",
+                style: { ...styles.iconButton, position: "relative" },
+                "data-projects-bell": String(Number(data.progress?.attention ?? 0) || 0),
+                "aria-label": text(t, "detail.bellTitle", {
+                  count: Number(data.progress?.attention ?? 0) || 0,
+                }),
+                title: text(t, "detail.bellTitle", {
+                  count: Number(data.progress?.attention ?? 0) || 0,
+                }),
+                onClick: () => {
+                  const attention = Number(data.progress?.attention ?? 0) || 0;
+                  setFilter(attention > 0 && filter !== "waiting-user" ? "waiting-user" : "");
+                },
+              },
+              h(
+                "span",
+                {
+                  style: {
+                    display: "inline-flex",
+                    color: Number(data.progress?.attention ?? 0) > 0 ? T.text : T.faint,
+                  },
+                },
+                glyph("bell", 15),
+              ),
+              Number(data.progress?.attention ?? 0) > 0
+                ? h(
+                    "span",
+                    {
+                      style: {
+                        position: "absolute",
+                        top: "0px",
+                        right: "0px",
+                        minWidth: "13px",
+                        height: "13px",
+                        borderRadius: "999px",
+                        background: T.brand,
+                        color: T.onBrand,
+                        fontSize: "9.5px",
+                        lineHeight: "13px",
+                        textAlign: "center",
+                        padding: "0 3px",
+                      },
+                      "data-projects-bell-count": "",
+                    },
+                    String(Number(data.progress?.attention ?? 0)),
+                  )
+                : null,
             ),
             // U2：⚙。宿主没有暴露"打开插件设置"的 client API（未验证），拿不到就明说去哪里找。
             h(

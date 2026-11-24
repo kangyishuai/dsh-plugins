@@ -530,6 +530,7 @@
     "detail.viewSave": "保存",
     "detail.viewCancel": "取消",
     "detail.viewDelete": "删除这个视图",
-    "detail.viewSaveFailed": "保存视图失败：{reason}"
+    "detail.viewSaveFailed": "保存视图失败：{reason}",
+    "detail.bellTitle": "{count} 条需要你处理（等你/失败）"
   }
 }
