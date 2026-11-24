@@ -524,6 +524,7 @@
     "panel.firstRun.intro": "每次回到这个项目，都是接着上一次的对话继续。需要并行推进时，就从对话里开几条线程。",
     "panel.firstRun.cloudNote": "（云端执行）",
     "detail.panelSearch": "搜索线程",
-    "detail.emptySearch": "没有匹配的线程。"
+    "detail.emptySearch": "没有匹配的线程。",
+    "library.artifactMetaNoTime": "{kind} · v{version}"
   }
 }

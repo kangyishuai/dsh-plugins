@@ -524,6 +524,7 @@
     "panel.firstRun.intro": "Coming back to a project continues the same conversation. When work needs to run in parallel, branch it into threads.",
     "panel.firstRun.cloudNote": "(cloud)",
     "detail.panelSearch": "Search threads",
-    "detail.emptySearch": "No matching threads."
+    "detail.emptySearch": "No matching threads.",
+    "library.artifactMetaNoTime": "{kind} · v{version}"
   }
 }

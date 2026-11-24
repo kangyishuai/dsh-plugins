@@ -541,6 +541,7 @@ window.__ModuleLoader__.load({
       "library.artifactsTitle": "产物",
       "library.artifactsEmpty": "这个项目还没有产物。",
       "library.artifactMeta": "{kind} · v{version} · {when}",
+      "library.artifactMetaNoTime": "{kind} · v{version}",
       "library.provenance": "来自会话 {session} · 调用 {call}",
       "library.timeUnknown": "时间未知",
       "library.kind.html": "页面",
@@ -1118,6 +1119,7 @@ window.__ModuleLoader__.load({
       "library.artifactsTitle": "Artifacts",
       "library.artifactsEmpty": "This project has no artifacts yet.",
       "library.artifactMeta": "{kind} · v{version} · {when}",
+      "library.artifactMetaNoTime": "{kind} · v{version}",
       "library.provenance": "from session {session} · call {call}",
       "library.timeUnknown": "time unknown",
       "library.kind.html": "page",
@@ -1678,6 +1680,12 @@ window.__ModuleLoader__.load({
         gap: "10px",
       },
       // 浅色：面板是"白色圆角卡片 + 阴影"浮在页面上（Claude 浅色帧的结构）
+      panelColScroll: {
+        maxHeight: "calc(100vh - 230px)",
+        overflowY: "auto",
+        overscrollBehavior: "contain",
+        paddingRight: "6px",
+      },
       panelColLight: {
         minWidth: 0,
         display: "flex",
@@ -4357,10 +4365,10 @@ window.__ModuleLoader__.load({
           h(
             "span",
             { style: { ...styles.meta, fontVariantNumeric: "tabular-nums" } },
-            text(t, "library.artifactMeta", {
+            text(t, when === "" ? "library.artifactMetaNoTime" : "library.artifactMeta", {
               kind: kindLabel,
               version: version,
-              when: when || text(t, "library.timeUnknown"),
+              when: when,
             }),
           ),
           provenance !== "" || source?.toolCallId
@@ -8177,11 +8185,15 @@ window.__ModuleLoader__.load({
           h(
             "div",
             {
-              style: narrow
-                ? styles.panelColNarrow
-                : colorScheme === "light"
-                  ? styles.panelColLight
-                  : styles.panelCol,
+              style: {
+                ...(narrow
+                  ? styles.panelColNarrow
+                  : colorScheme === "light"
+                    ? styles.panelColLight
+                    : styles.panelCol),
+                // 宽窗：面板自己滚动，头部（页签+搜索）粘住
+                ...(narrow ? {} : styles.panelColScroll),
+              },
               "data-panel-column": "",
               "data-panel-scheme": colorScheme,
             },
@@ -8194,6 +8206,11 @@ window.__ModuleLoader__.load({
                   marginTop: "2px",
                   alignItems: "center",
                   borderBottom: `1px solid ${T.borderSoft}`,
+                  position: "sticky",
+                  top: 0,
+                  zIndex: 2,
+                  background: colorScheme === "light" ? "#ffffff" : T.bg,
+                  paddingTop: "2px",
                 },
                 role: "tablist",
               },
