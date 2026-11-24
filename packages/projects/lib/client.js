@@ -426,7 +426,7 @@ window.__ModuleLoader__.load({
       "detail.projectState.archived": "已归档",
       "detail.purged": "已清理 {count} 项，清单已写入 trash/",
       "detail.archivedLabel": "归档时间",
-      "detail.carousel": "{index} / {total}",
+      "detail.carousel": "{index}–{total} of {total}",
       "detail.carouselNext": "下一条",
       "detail.carouselPrev": "上一条",
       "detail.dirLimit": "最多 {count} 个目录（已加 {used} 个）",
@@ -438,6 +438,8 @@ window.__ModuleLoader__.load({
       "detail.groupCollapseAll": "全部折叠",
       "detail.addView": "新增视图",
       "detail.today": "今天",
+      "detail.prOpen": "已开",
+      "detail.groupReorderHint": "拖拽排序（待接入）",
       "detail.composerAttach": "添加附件（待接入）",
       "detail.composerMic": "语音输入（待接入）",
       "detail.composerModel": "模型：{model}",
@@ -853,7 +855,7 @@ window.__ModuleLoader__.load({
       "detail.projectState.archived": "Archived",
       "detail.purged": "Purged {count} entries; manifest written under trash/",
       "detail.archivedLabel": "Archived at",
-      "detail.carousel": "{index} / {total}",
+      "detail.carousel": "{index}–{total} of {total}",
       "detail.carouselNext": "Next",
       "detail.carouselPrev": "Previous",
       "detail.dirLimit": "Up to {count} folders ({used} added)",
@@ -865,6 +867,8 @@ window.__ModuleLoader__.load({
       "detail.groupCollapseAll": "Collapse all",
       "detail.addView": "Add view",
       "detail.today": "Today",
+      "detail.prOpen": "open",
+      "detail.groupReorderHint": "Reorder by drag (not yet available)",
       "detail.composerAttach": "Attach (not yet available)",
       "detail.composerMic": "Voice input (not yet available)",
       "detail.composerModel": "Model: {model}",
@@ -1989,6 +1993,17 @@ window.__ModuleLoader__.load({
             transform: "rotate(-90 12 12)",
             opacity: 0.9,
           }),
+        );
+      }
+      if (kind === "pr") {
+        return h(
+          "svg",
+          box,
+          h("circle", { cx: 6, cy: 6, r: 2 }),
+          h("circle", { cx: 6, cy: 18, r: 2 }),
+          h("path", { d: "M6 8v8" }),
+          h("path", { d: "M8 6h5.5a4 4 0 0 1 4 4v3" }),
+          h("path", { d: "M14.5 12l3 3 3-3" }),
         );
       }
       if (kind === "bell") {
@@ -5853,6 +5868,31 @@ window.__ModuleLoader__.load({
                   rowSubtitle,
                 )
               : null,
+            // Claude 的嵌套 PR 行：标题下方 `└ #409`（绿色 PR 图标 + 白字，无底无边）
+            row.prNumber
+              ? h(
+                  "span",
+                  {
+                    style: {
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "4px",
+                      color: T.text,
+                      fontSize: "12px",
+                      paddingLeft: "10px",
+                    },
+                    "data-panel-thread-pr-line": row.sessionId,
+                  },
+                  h("span", { style: { color: T.faint } }, "└"),
+                  h(
+                    "span",
+                    { style: { color: T.success, display: "inline-flex" } },
+                    glyph("pr", 13),
+                  ),
+                  h("span", {}, text(t, "detail.prBadge", { number: row.prNumber })),
+                  h("span", { style: { color: T.faint } }, text(t, "detail.prOpen")),
+                )
+              : null,
             // 可观测摘要（规格 §7.7.3）：步骤/工具/diff/tokens，缺失显式 n/a
             row.summary
               ? h(
@@ -6300,7 +6340,15 @@ window.__ModuleLoader__.load({
             h(
               "span",
               {
-                style: { display: "inline-flex", alignItems: "center", gap: "4px" },
+                style: {
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  border: `1px solid ${steps === null ? "transparent" : T.borderSoft}`,
+                  borderRadius: "999px",
+                  padding: steps === null ? "0" : "1px 7px 1px 5px",
+                  fontSize: "11.5px",
+                },
                 "data-projects-thread-steps": row.sessionId,
                 "data-projects-thread-steps-state": steps === null ? "none" : "count",
                 title: steps === null ? text(t, "detail.stepsHint") : undefined,
@@ -6683,6 +6731,22 @@ window.__ModuleLoader__.load({
                       { style: styles.groupCount, "data-projects-group-badge": group.id },
                       ` · ${String(group.rows.length)}`,
                     ),
+                  ),
+                  h("span", { style: { flex: "1 1 auto" } }),
+                  // 拖拽柄（Claude 的分组头右端有 ⠿；排序本身留待后续，这里只给视觉锚点）
+                  h(
+                    "span",
+                    {
+                      style: {
+                        color: T.faint,
+                        fontSize: "11px",
+                        cursor: "default",
+                        paddingTop: "2px",
+                      },
+                      "data-panel-group-handle": group.id,
+                      title: text(t, "detail.groupReorderHint"),
+                    },
+                    "⠿",
                   ),
                   group.rows.length > 1
                     ? h(

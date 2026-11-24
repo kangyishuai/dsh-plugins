@@ -180,7 +180,7 @@
     "detail.projectState.paused": "Paused",
     "detail.projectState.archived": "Archived",
     "detail.archivedLabel": "Archived at",
-    "detail.carousel": "{index} / {total}",
+    "detail.carousel": "{index}–{total} of {total}",
     "detail.carouselNext": "Next",
     "detail.carouselPrev": "Previous",
     "detail.dirLimit": "Up to {count} folders ({used} added)",
@@ -505,6 +505,8 @@
     "detail.composerAttach": "Attach (not yet available)",
     "detail.composerMic": "Voice input (not yet available)",
     "detail.composerModel": "Model: {model}",
-    "detail.composerModelInherit": "Host default"
+    "detail.composerModelInherit": "Host default",
+    "detail.prOpen": "open",
+    "detail.groupReorderHint": "Reorder by drag (not yet available)"
   }
 }

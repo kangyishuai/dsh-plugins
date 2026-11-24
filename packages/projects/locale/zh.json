@@ -180,7 +180,7 @@
     "detail.projectState.paused": "已暂停",
     "detail.projectState.archived": "已归档",
     "detail.archivedLabel": "归档时间",
-    "detail.carousel": "{index} / {total}",
+    "detail.carousel": "{index}–{total} of {total}",
     "detail.carouselNext": "下一条",
     "detail.carouselPrev": "上一条",
     "detail.dirLimit": "最多 {count} 个目录（已加 {used} 个）",
@@ -505,6 +505,8 @@
     "detail.composerAttach": "添加附件（待接入）",
     "detail.composerMic": "语音输入（待接入）",
     "detail.composerModel": "模型：{model}",
-    "detail.composerModelInherit": "继承宿主默认"
+    "detail.composerModelInherit": "继承宿主默认",
+    "detail.prOpen": "已开",
+    "detail.groupReorderHint": "拖拽排序（待接入）"
   }
 }
