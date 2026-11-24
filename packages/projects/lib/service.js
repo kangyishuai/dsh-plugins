@@ -1638,6 +1638,33 @@ export class ProjectsService extends TypertRemoteService {
    * @param {string} [filter]
    * @param {string} [query]
    */
+  /**
+   * 写右栏可见视图（D1）。`viewsText` = 逗号分隔的 id（标量参数，避免网关收窄嵌套对象）。
+   * @param {string} projectId
+   * @param {string} viewsText
+   */
+  async setVisibleViews(projectId, viewsText) {
+    const store = this.requireStore();
+    const project = store.getProject(String(projectId ?? ""));
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const views = String(viewsText ?? "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const result = store.setVisibleViews(project.id, views);
+    store.appendAudit({
+      action: "project/visible-views",
+      projectId: project.id,
+      visibleViews: result.visibleViews,
+    });
+    store.save();
+    return { ok: true, visibleViews: result.visibleViews };
+  }
+
+  /**
+   * 保存自定义视图。
+   * @param {string} projectId @param {string} name @param {string} [filter] @param {string} [query]
+   */
   async addView(projectId, name, filter, query) {
     const store = this.requireStore();
     const project = store.getProject(String(projectId ?? ""));
@@ -5697,6 +5724,7 @@ declareRemote(ProjectsService, "resolveThread");
 declareRemote(ProjectsService, "checkAutoResolve");
 declareRemote(ProjectsService, "setAutoResolveDays");
 declareRemote(ProjectsService, "addView");
+declareRemote(ProjectsService, "setVisibleViews");
 declareRemote(ProjectsService, "deleteView");
 declareRemote(ProjectsService, "setThreadUnread");
 declareRemote(ProjectsService, "uiState");

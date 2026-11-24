@@ -5806,10 +5806,10 @@ window.__ModuleLoader__.load({
         setVisibleOverride(nextList);
         let pending = null;
         try {
-          pending = call(api.ctx, "updateProject", {
-            id: project.id,
-            // 网关对数组参数不可靠：用逗号串传，store 端再解析
-            patch: { visibleViewsText: nextList.join(",") },
+          pending = call(api.ctx, "setVisibleViews", {
+            projectId: project.id,
+            // 标量参数最稳：数组/嵌套对象过网关都可能被收窄
+            viewsText: nextList.join(","),
           });
         } catch (error) {
           try {
@@ -5822,13 +5822,32 @@ window.__ModuleLoader__.load({
           }
           return;
         }
+        try {
+          document.body.setAttribute("data-projects-view-stage", "then-attached");
+        } catch {
+          /* ignore */
+        }
         pending.then(
-          () => {
+          (/** @type {any} */ result) => {
+            try {
+              document.body.setAttribute("data-projects-view-stage", "resolved");
+              document.body.setAttribute(
+                "data-projects-view-result",
+                JSON.stringify(result ?? null).slice(0, 240),
+              );
+            } catch {
+              /* ignore */
+            }
             // 不清 override：等 load() 回读到与选择一致的盘上值再清。
             // 旧宿主若忽略 visibleViews，UI 仍按选择隐藏（只是刷新后回默认）。
             load();
           },
           (/** @type {any} */ error) => {
+            try {
+              document.body.setAttribute("data-projects-view-stage", "rejected");
+            } catch {
+              /* ignore */
+            }
             setVisibleOverride(null);
             // 调试/回归用：把失败原因挂在 DOM 上，别静默吞掉（本轮排查就卡在这）
             try {
