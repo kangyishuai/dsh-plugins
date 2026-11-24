@@ -1347,6 +1347,8 @@ try {
       tabsAfterLibraryHidden,
       toggleHit: document.body.getAttribute("data-projects-toggle-hit"),
       viewError: document.body.getAttribute("data-projects-view-error"),
+      viewStage: document.body.getAttribute("data-projects-view-stage"),
+      viewResult: document.body.getAttribute("data-projects-view-result"),
     };
   });
   add(
@@ -2614,8 +2616,15 @@ try {
   );
   add(
     "D1 可见性写路径诊断（点击命中 + 无 RPC 错误）",
-    Boolean(viewFlow?.toggleHit) && viewFlow?.viewError === null,
-    JSON.stringify({ toggleHit: viewFlow?.toggleHit, viewError: viewFlow?.viewError }),
+    Boolean(viewFlow?.toggleHit) &&
+      viewFlow?.viewStage === "resolved" &&
+      String(viewFlow?.viewResult || "").includes('"ok":true'),
+    JSON.stringify({
+      toggleHit: viewFlow?.toggleHit,
+      viewError: viewFlow?.viewError,
+      viewStage: viewFlow?.viewStage,
+      viewResult: viewFlow?.viewResult,
+    }),
   );
 
   add(
@@ -5316,22 +5325,25 @@ const main = async () => {
         project: projectWithDefaults?.name ?? null,
       }),
     });
-    // D1：可见性写盘——UI 显隐已通过，但 host 写路径本轮未确认（审计里没有
-    // project/visible-views，即使 RPC 回执正常）。store 序列化/冷启动有单测兜底，
-    // 这里如实 SKIP，不把未验证的东西写成 PASS。
-    const visibilityProject = Object.values(parsed?.projects ?? {}).find(
-      (/** @type {any} */ project) =>
-        Array.isArray(project?.audit) &&
-        project.audit.some(
-          (/** @type {any} */ item) => String(item?.action ?? "") === "project/visible-views",
-        ),
+    // D1：可见性写盘。审计是**全局** state.audit（不是 project.audit），按最后一条
+    // project/visible-views 的 projectId 定位被操作的项目。
+    const visibleAudit = (Array.isArray(parsed?.audit) ? parsed.audit : []).filter(
+      (/** @type {any} */ item) => String(item?.action ?? "") === "project/visible-views",
     );
-    skips.push({
-      name: "视图可见性落盘（host 写路径待确认）",
+    const lastVisible = visibleAudit[visibleAudit.length - 1];
+    const visibilityProject =
+      lastVisible && parsed?.projects ? parsed.projects[String(lastVisible.projectId)] : null;
+    checks.push({
+      name: "视图可见性写→回读（visibleViews 与全局审计指向同一项目）",
+      ok:
+        visibilityProject !== null &&
+        Array.isArray(visibilityProject.visibleViews) &&
+        visibilityProject.visibleViews.includes("library") === false &&
+        visibilityProject.visibleViews.includes("routines") === true,
       detail: JSON.stringify({
         visibleViews: visibilityProject?.visibleViews ?? null,
         projectName: visibilityProject?.name ?? null,
-        note: "UI 显隐已断言；store 序列化有单测；host RPC 回执未落到 projects.json",
+        audits: visibleAudit.length,
       }),
     });
     // —— B3：三项「写→回读」由宿主侧文件做硬证据（UI 只是按钮，盘上才算数）——
