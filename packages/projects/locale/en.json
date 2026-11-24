@@ -517,6 +517,8 @@
     "detail.settingsDebugHint": "Danger switches / thread permissions / audit are in this section; full settings → Projects → Debug has more.",
     "detail.settingsOpenFull": "Open full settings",
     "library.artifactPinHint": "Pin (not yet available)",
-    "library.artifactMenuHint": "More (not yet available)"
+    "library.artifactMenuHint": "More (not yet available)",
+    "b3.folderAdd": "Add folder",
+    "b3.folderAddHint": "Add a working folder in Project folder"
   }
 }

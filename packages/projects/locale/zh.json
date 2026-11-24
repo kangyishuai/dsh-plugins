@@ -517,6 +517,8 @@
     "detail.settingsDebugHint": "更细的调试项（危险动作开关 / 线程权限 / 审计）已在本分区；完整设置的「项目 → 调试」里还有更多。",
     "detail.settingsOpenFull": "打开完整设置",
     "library.artifactPinHint": "钉住（待接入）",
-    "library.artifactMenuHint": "更多（待接入）"
+    "library.artifactMenuHint": "更多（待接入）",
+    "b3.folderAdd": "添加目录",
+    "b3.folderAddHint": "在「项目目录」里新增一个工作目录"
   }
 }

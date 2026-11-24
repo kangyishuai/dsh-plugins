@@ -100,6 +100,8 @@ window.__ModuleLoader__.load({
       "b3.folderOnceUsed": "一次性凭据已用掉",
       "b3.folderSaved": "已记录：{decision}",
       "b3.folderNoDir": "先在「项目目录」里绑定一个文件夹，再授权。",
+      "b3.folderAdd": "添加目录",
+      "b3.folderAddHint": "在「项目目录」里新增一个工作目录",
       "b3.modelTitle": "线程默认模型",
       "b3.model": "线程模型",
       "b3.effort": "推理强度",
@@ -1032,6 +1034,8 @@ window.__ModuleLoader__.load({
       "b3.folderOnceUsed": "One-time grant already used",
       "b3.folderSaved": "Recorded: {decision}",
       "b3.folderNoDir": "Bind a folder under “project directories” first, then grant access.",
+      "b3.folderAdd": "Add folder",
+      "b3.folderAddHint": "Add a working folder in Project folder",
       "b3.modelTitle": "Thread default model",
       "b3.model": "Thread model",
       "b3.effort": "Thread effort",
@@ -8451,6 +8455,7 @@ window.__ModuleLoader__.load({
                   api: api,
                   t: t,
                   activePane: panelPane,
+                  onAddDir: () => setDirEditing(true),
                   project: data.liveProject || project,
                   fragments: data.content?.fragments || [],
                   entries: data.content?.entries || [],
@@ -11644,7 +11649,31 @@ window.__ModuleLoader__.load({
             }),
             "data-projects-folder-auth": "",
           },
-          h("span", { style: styles.name }, text(t, "b3.folderTitle")),
+          h(
+            "span",
+            {
+              style: {
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                justifyContent: "space-between",
+              },
+            },
+            h("span", { style: styles.name }, text(t, "b3.folderTitle")),
+            h(
+              "button",
+              {
+                type: "button",
+                style: { ...styles.secondaryButton, padding: "1px 8px", fontSize: "11.5px" },
+                "data-projects-folder-add": "",
+                title: text(t, "b3.folderAddHint"),
+                onClick: () => {
+                  if (typeof props.onAddDir === "function") props.onAddDir();
+                },
+              },
+              `+ ${text(t, "b3.folderAdd")}`,
+            ),
+          ),
           dirs.length === 0
             ? h("span", { style: styles.meta }, text(t, "b3.folderNoDir"))
             : dirs.map((/** @type {string} */ dir) => {
@@ -11675,7 +11704,48 @@ window.__ModuleLoader__.load({
                     "data-projects-folder-card": dir,
                     "data-projects-folder-mode": mode || "unset",
                   },
-                  h("span", { style: styles.name, title: dir }, baseName(dir)),
+                  h(
+                    "span",
+                    {
+                      style: { display: "flex", alignItems: "center", gap: "6px", minWidth: 0 },
+                    },
+                    h("span", { style: styles.name }, baseName(dir)),
+                    Array.isArray(project.repos) && project.repos.length > 0
+                      ? h(
+                          "span",
+                          {
+                            style: {
+                              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                              fontSize: "11px",
+                              color: T.dim,
+                              border: `1px solid ${T.borderSoft}`,
+                              borderRadius: "6px",
+                              padding: "0 5px",
+                              flex: "none",
+                            },
+                            "data-projects-folder-repo": dir,
+                          },
+                          String(project.repos[0]),
+                        )
+                      : null,
+                  ),
+                  h(
+                    "span",
+                    {
+                      style: {
+                        ...styles.meta,
+                        color: T.faint,
+                        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                        fontSize: "11px",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      },
+                      title: dir,
+                      "data-projects-folder-path": dir,
+                    },
+                    dir,
+                  ),
                   h(
                     "span",
                     { style: { ...styles.meta, whiteSpace: "normal" } },
