@@ -436,6 +436,8 @@ window.__ModuleLoader__.load({
       "detail.durationDays": "{days} 天",
       "detail.durationHours": "{hours} 小时",
       "detail.durationMinutes": "{minutes} 分钟",
+      "detail.panelSearch": "搜索线程",
+      "detail.emptySearch": "没有匹配的线程。",
       "detail.emptyOverview": "没有在等你的事。",
       "detail.groupCollapseAll": "全部折叠",
       "detail.addView": "新增视图",
@@ -882,6 +884,8 @@ window.__ModuleLoader__.load({
       "detail.durationDays": "{days} d",
       "detail.durationHours": "{hours} h",
       "detail.durationMinutes": "{minutes} min",
+      "detail.panelSearch": "Search threads",
+      "detail.emptySearch": "No matching threads.",
       "detail.emptyOverview": "Nothing is waiting on you.",
       "detail.groupCollapseAll": "Collapse all",
       "detail.addView": "Add view",
@@ -2108,6 +2112,14 @@ window.__ModuleLoader__.load({
           h("path", { d: "M6 8v8" }),
           h("path", { d: "M8 6h5.5a4 4 0 0 1 4 4v3" }),
           h("path", { d: "M14.5 12l3 3 3-3" }),
+        );
+      }
+      if (kind === "search") {
+        return h(
+          "svg",
+          box,
+          h("circle", { cx: 11, cy: 11, r: 6.5 }),
+          h("path", { d: "M16 16l4 4" }),
         );
       }
       if (kind === "bell") {
@@ -5640,6 +5652,9 @@ window.__ModuleLoader__.load({
       const setGroupMenu = groupMenuState[1];
       // 设置抽屉：rail 里的 15 段设置不再常驻右栏（Claude 是独立 Project settings），
       // 由面板 header 的 ⚙ 打开；锚点保持原样，冒烟/桌面回归照旧能点。
+      const panelQueryState = useState("");
+      const panelQuery = panelQueryState[0];
+      const setPanelQuery = panelQueryState[1];
       const panelPaneState = useState("general");
       const panelPane = panelPaneState[0];
       const setPanelPane = panelPaneState[1];
@@ -6843,10 +6858,23 @@ window.__ModuleLoader__.load({
         }
         if (tab === "threads") {
           const rows = data.progress?.rows ?? [];
-          const visibleRows =
+          const query = panelQuery.trim().toLowerCase();
+          const matchesQuery = (/** @type {any} */ row) => {
+            if (query === "") return true;
+            const haystack = [
+              cleanThreadTitle(row.title),
+              cleanThreadTitle(row.subtitle),
+              String(row.sessionId ?? ""),
+            ]
+              .join(" ")
+              .toLowerCase();
+            return haystack.indexOf(query) >= 0;
+          };
+          const visibleRows = (
             filter === ""
               ? rows
-              : rows.filter((/** @type {any} */ row) => row.view.state === filter);
+              : rows.filter((/** @type {any} */ row) => row.view.state === filter)
+          ).filter(matchesQuery);
           const visibleIds = new Set(
             /** @type {any[]} */ (visibleRows).map((row) => String(row.sessionId)),
           );
@@ -6898,14 +6926,21 @@ window.__ModuleLoader__.load({
               h(
                 "div",
                 { style: styles.emptyCta, "data-projects-empty-overview": "" },
-                h("span", { style: styles.name }, text(t, "detail.emptyOverview")),
+                h(
+                  "span",
+                  { style: styles.name },
+                  text(t, query === "" ? "detail.emptyOverview" : "detail.emptySearch"),
+                ),
                 h(
                   "button",
                   {
                     type: "button",
                     style: styles.secondaryButton,
                     "data-projects-empty-overview-clear": "",
-                    onClick: () => setFilter(""),
+                    onClick: () => {
+                      setFilter("");
+                      setPanelQuery("");
+                    },
                   },
                   text(t, "detail.pillClear"),
                 ),
@@ -8141,6 +8176,41 @@ window.__ModuleLoader__.load({
                 ),
               ),
               h("span", { style: { flex: "1 1 auto" } }),
+              h(
+                "label",
+                {
+                  style: {
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "4px",
+                    border: `1px solid ${T.borderSoft}`,
+                    borderRadius: "999px",
+                    padding: "1px 8px",
+                    color: T.faint,
+                    maxWidth: "160px",
+                  },
+                  "data-panel-search-box": "",
+                },
+                glyph("search", 12),
+                h("input", {
+                  style: {
+                    border: "none",
+                    background: "transparent",
+                    outline: "none",
+                    color: T.text,
+                    fontSize: "12px",
+                    width: "110px",
+                    padding: "2px 0",
+                  },
+                  value: panelQuery,
+                  placeholder: text(t, "detail.panelSearch"),
+                  "data-panel-search": "",
+                  onChange: (/** @type {any} */ event) => setPanelQuery(event.target.value),
+                  onKeyDown: (/** @type {any} */ event) => {
+                    if (event.key === "Escape") setPanelQuery("");
+                  },
+                }),
+              ),
               h(
                 "button",
                 {
