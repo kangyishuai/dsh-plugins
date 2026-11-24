@@ -495,6 +495,11 @@
     "library.railSummary": "{files} 个文件 · {artifacts} 个产物",
     "library.railLoading": "打开查看",
     "b3.folderWorktreeHint": "merge 在项目目录里跑；push-branch 在线程 worktree 里跑——worktree 继承它所属项目目录的授权。",
-    "library.openPanelUnavailable": "打开失败：宿主未提供右栏面板服务（sidebarRight）。"
+    "library.openPanelUnavailable": "打开失败：宿主未提供右栏面板服务（sidebarRight）。",
+    "detail.addView": "新增视图",
+    "detail.addViewHint": "自定义视图（待接入）",
+    "detail.settingsOpen": "项目设置",
+    "detail.settingsTitle": "项目设置",
+    "detail.settingsClose": "关闭设置"
   }
 }

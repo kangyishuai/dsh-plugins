@@ -436,6 +436,11 @@ window.__ModuleLoader__.load({
       "detail.durationMinutes": "{minutes} 分钟",
       "detail.emptyOverview": "没有在等你的事。",
       "detail.groupCollapseAll": "全部折叠",
+      "detail.addView": "新增视图",
+      "detail.settingsOpen": "项目设置",
+      "detail.settingsTitle": "项目设置",
+      "detail.settingsClose": "关闭设置",
+      "detail.addViewHint": "自定义视图（待接入）",
       "detail.groupExpandAll": "全部展开",
       "detail.groupMenu": "分组操作",
       "detail.groupOnly": "只看这一组",
@@ -853,6 +858,11 @@ window.__ModuleLoader__.load({
       "detail.durationMinutes": "{minutes} min",
       "detail.emptyOverview": "Nothing is waiting on you.",
       "detail.groupCollapseAll": "Collapse all",
+      "detail.addView": "Add view",
+      "detail.settingsOpen": "Project settings",
+      "detail.settingsTitle": "Project settings",
+      "detail.settingsClose": "Close settings",
+      "detail.addViewHint": "Custom views (not yet available)",
       "detail.groupExpandAll": "Expand all",
       "detail.groupMenu": "Group actions",
       "detail.groupOnly": "Only this group",
@@ -1115,6 +1125,10 @@ window.__ModuleLoader__.load({
       onPrimary: "var(--dsw-alias-label-primary-foreground, Canvas)",
       danger: "var(--dsw-alias-state-error-primary, #d9534f)",
       success: "var(--dsw-alias-state-success-primary, #3fa14a)",
+      // Claude 的"选中"是紫蓝强调色；宿主 token 在深色主题下 button-primary-fill 接近白色，
+      // 所以这里用品牌色常量（深浅主题都可读）。
+      brand: "#6f5bf5",
+      onBrand: "#ffffff",
       shadow: "var(--dsw-shadow-lv2, 0 6px 20px rgba(0,0,0,0.18))",
     };
 
@@ -1568,13 +1582,40 @@ window.__ModuleLoader__.load({
       },
       detailGrid: {
         display: "grid",
-        gridTemplateColumns: "minmax(0, 1fr) minmax(280px, 320px)",
-        gap: "32px",
+        gridTemplateColumns: "minmax(0, 58fr) minmax(320px, 42fr)",
+        gap: "28px",
         alignItems: "start",
       },
       detailGridNarrow: { display: "flex", flexDirection: "column", gap: "24px" },
-      mainCol: { minWidth: 0, display: "flex", flexDirection: "column", gap: "8px" },
+      mainCol: { minWidth: 0, display: "flex", flexDirection: "column", gap: "10px" },
+      // 右列：Threads 面板（Claude 结构）——与左列用 1px 分割线隔开，不铺卡片
+      panelCol: {
+        minWidth: 0,
+        display: "flex",
+        flexDirection: "column",
+        gap: "10px",
+        paddingLeft: "20px",
+        borderLeft: `1px solid ${T.borderSoft}`,
+      },
       rail: { minWidth: 0, display: "flex", flexDirection: "column" },
+      // 设置抽屉（Claude 的 Project settings 是我们的宿主设置分节；这里是"项目内设置"入口）
+      settingsDrawer: {
+        position: "fixed",
+        top: 0,
+        right: 0,
+        bottom: 0,
+        width: "400px",
+        maxWidth: "92vw",
+        overflowY: "auto",
+        padding: "16px 18px 24px",
+        background: T.bg,
+        borderLeft: `1px solid ${T.border}`,
+        boxShadow: T.shadow,
+        zIndex: 60,
+        display: "flex",
+        flexDirection: "column",
+        gap: "2px",
+      },
       railSection: {
         display: "flex",
         flexDirection: "column",
@@ -1682,21 +1723,26 @@ window.__ModuleLoader__.load({
         display: "inline-flex",
         alignItems: "center",
         gap: "6px",
-        padding: "3px 10px",
+        padding: "4px 12px",
         borderRadius: "999px",
-        border: `1px solid ${T.borderSoft}`,
-        background: "transparent",
+        border: "1px solid transparent",
+        background: T.panel,
         color: T.dim,
         fontSize: "12px",
         cursor: "pointer",
         flex: "none",
       },
       pillActive: {
-        border: `1px solid ${T.accentText}`,
-        background: T.accent,
-        color: T.text,
+        border: "1px solid transparent",
+        background: T.brand,
+        color: T.onBrand,
       },
-      pillCount: { fontVariantNumeric: "tabular-nums", fontWeight: 600, color: T.text },
+      pillCount: {
+        fontVariantNumeric: "tabular-nums",
+        fontWeight: 500,
+        color: "inherit",
+        opacity: 0.72,
+      },
       welcome: {
         display: "flex",
         alignItems: "flex-end",
@@ -1706,21 +1752,26 @@ window.__ModuleLoader__.load({
         flexWrap: "wrap",
       },
       welcomeTitle: {
-        fontSize: "20px",
+        // Claude 用衬线体做"产品气质"：问候语与大标题
+        fontFamily: 'ui-serif, Georgia, "Songti SC", "Noto Serif CJK SC", serif',
+        fontSize: "26px",
         fontWeight: 500,
-        lineHeight: 1.25,
+        lineHeight: 1.2,
         letterSpacing: "0.01em",
         minWidth: 0,
       },
-      welcomeSub: { color: T.dim, fontSize: "12px", marginTop: "2px", minWidth: 0 },
+      welcomeSub: { color: T.dim, fontSize: "13px", marginTop: "4px", minWidth: 0 },
       spark: { display: "flex", alignItems: "flex-end", gap: "2px", height: "22px", flex: "none" },
       sparkBar: { width: "4px", borderRadius: "2px", background: T.border },
       groupHead: {
         display: "flex",
         alignItems: "center",
         gap: "6px",
-        padding: "6px 2px",
-        marginTop: "4px",
+        padding: "5px 10px",
+        marginTop: "2px",
+        marginBottom: "2px",
+        borderRadius: "8px",
+        background: T.panel,
         minWidth: 0,
       },
       groupToggle: {
@@ -1755,6 +1806,7 @@ window.__ModuleLoader__.load({
       },
       rowTitle: {
         fontWeight: 500,
+        fontSize: "14px",
         minWidth: 0,
         overflow: "hidden",
         textOverflow: "ellipsis",
@@ -5248,6 +5300,11 @@ window.__ModuleLoader__.load({
       const groupMenuState = useState("");
       const groupMenu = groupMenuState[0];
       const setGroupMenu = groupMenuState[1];
+      // 设置抽屉：rail 里的 15 段设置不再常驻右栏（Claude 是独立 Project settings），
+      // 由面板 header 的 ⚙ 打开；锚点保持原样，冒烟/桌面回归照旧能点。
+      const panelSettingsState = useState(false);
+      const panelSettingsOpen = panelSettingsState[0];
+      const setPanelSettingsOpen = panelSettingsState[1];
       const threadInputRef = useRef(null);
       const collapsedInitRef = useRef(false);
       // F28 `Welcome back, {名}.`：宿主账号没有注入到插件 client（settings.section 之外），
@@ -5539,12 +5596,17 @@ window.__ModuleLoader__.load({
                 : state === "resolved"
                   ? T.accentText
                   : T.faint;
+        // 行标题用人话（Claude 是"任务/主题"当标题）：title → 副标题/任务 → 线程短 id；
+        // 不再暴露 turn 号与 session id（真机走查里最"脏"的一处）。
+        const rawTitle = String(row.title ?? "").trim();
+        const taskHint = String(row.subtitle ?? "").trim();
         const title =
-          String(row.title ?? "") !== ""
-            ? String(row.title)
-            : row.view?.turn > 0
-              ? `turn ${row.view.turn} · ${row.branch ? String(row.branch) : String(row.sessionId).slice(0, 12)}`
-              : String(row.sessionId).slice(0, 20);
+          rawTitle !== ""
+            ? rawTitle
+            : taskHint !== ""
+              ? taskHint
+              : `线程 ${String(row.sessionId).slice(0, 6)}`;
+        const rowSubtitle = rawTitle !== "" ? taskHint : text(t, `detail.state.${state}`);
         const steps = row.steps && Number(row.steps.total) > 0 ? row.steps : null;
         const duration = durationLabel(row.durationMs);
         const notifications = Array.isArray(row.view?.pendingInput)
@@ -5633,7 +5695,7 @@ window.__ModuleLoader__.load({
               ),
               h(
                 "span",
-                { style: styles.pill, "data-projects-thread-pill": state },
+                { style: { display: "none" }, "data-projects-thread-pill": state },
                 text(t, `detail.state.${state}`),
               ),
               row.manualUnread === true
@@ -5649,11 +5711,11 @@ window.__ModuleLoader__.load({
                 : null,
             ),
             // 副标题 = 最近一条 tool/call 的可读摘要；没有就留空（不编）
-            String(row.subtitle ?? "") !== ""
+            rowSubtitle !== ""
               ? h(
                   "span",
                   { style: styles.rowSub, "data-projects-thread-subtitle": row.sessionId },
-                  String(row.subtitle),
+                  rowSubtitle,
                 )
               : null,
             // 可观测摘要（规格 §7.7.3）：步骤/工具/diff/tokens，缺失显式 n/a
@@ -5661,7 +5723,16 @@ window.__ModuleLoader__.load({
               ? h(
                   "span",
                   {
-                    style: styles.meta,
+                    // 视觉隐藏：Claude 行内不铺 "diff n/a · tokens n/a" 这类实现层信息，
+                    // 但冒烟/排障仍要能读文本，所以保留 DOM 只做 sr-only。
+                    style: {
+                      position: "absolute",
+                      width: "1px",
+                      height: "1px",
+                      overflow: "hidden",
+                      clip: "rect(0 0 0 0)",
+                      whiteSpace: "nowrap",
+                    },
                     "data-projects-thread-stats": "",
                     // P0-3：真实 diff 单独给一个锚点，冒烟不用解析自然语言文案
                     "data-projects-thread-diff": row.diff
@@ -6073,7 +6144,13 @@ window.__ModuleLoader__.load({
               "button",
               {
                 type: "button",
-                style: { ...styles.secondaryButton, padding: "1px 8px", fontSize: "11px" },
+                style: {
+                  ...styles.secondaryButton,
+                  padding: "1px 8px",
+                  fontSize: "11px",
+                  opacity: threadHover === row.sessionId ? 1 : 0,
+                  transition: "opacity 120ms ease",
+                },
                 "data-projects-thread-expand": row.sessionId,
                 "data-projects-thread-expanded":
                   expandedThread === row.sessionId ? "true" : "false",
@@ -6102,8 +6179,9 @@ window.__ModuleLoader__.load({
                     color: steps === null ? T.faint : T.text,
                   },
                 },
+                // 没有 todo 时 Claude 行尾是空的（不摆 "—" 占位）；锚点仍在，冒烟靠 steps-state 判
                 steps === null
-                  ? text(t, "detail.stepsNone")
+                  ? ""
                   : text(t, "detail.steps", { done: steps.done, total: steps.total }),
               ),
             ),
@@ -6458,17 +6536,17 @@ window.__ModuleLoader__.load({
                           color: T.dim,
                           width: "12px",
                           display: "inline-block",
-                          fontSize: "11px",
+                          fontSize: "12px",
                           lineHeight: 1,
                         },
                       },
-                      collapsed ? "▸" : "▾",
+                      collapsed ? "›" : "⌄",
                     ),
                     h("span", {}, groupLabel(group.id)),
                     h(
                       "span",
                       { style: styles.groupCount, "data-projects-group-badge": group.id },
-                      String(group.rows.length),
+                      ` · ${String(group.rows.length)}`,
                     ),
                   ),
                   group.rows.length > 1
@@ -6848,7 +6926,8 @@ window.__ModuleLoader__.load({
               {
                 type: "button",
                 style: styles.iconButton,
-                "data-projects-settings": "",
+                // 与设置面板根 `data-projects-settings` 区分开：否则"设置是否打开"会误判（桌面回归踩过）
+                "data-projects-header-settings": "",
                 "aria-label": text(t, "detail.settings"),
                 title: text(t, "detail.settings"),
                 onClick: () => {
@@ -6956,7 +7035,7 @@ window.__ModuleLoader__.load({
             style: narrow ? styles.detailGridNarrow : styles.detailGrid,
             "data-projects-detail-grid": "",
           },
-          // —— 主列：composer 卡 → 页签 → 线程列表 ——
+          // —— 左列：项目对话（thread 操作条 / 协调者 / composer / 按规则派活 / 审批）——
           h(
             "div",
             { style: styles.mainCol, "data-projects-detail-main": "" },
@@ -6982,69 +7061,6 @@ window.__ModuleLoader__.load({
                   text(t, "detail.noDirHint"),
                 )
               : null,
-            // —— F28/U10：Welcome 头（大字 + 状态句 + 7 日 token 迷你图）——
-            (() => {
-              const waiting = Number(pills["waiting-user"] ?? 0);
-              const working = Number(pills.working ?? 0);
-              const statusSentence =
-                waiting > 0
-                  ? text(t, "detail.welcomeWaiting", { count: waiting })
-                  : working > 0
-                    ? text(t, "detail.welcomeWorking", { count: working })
-                    : text(t, "detail.welcomeIdle");
-              const usageDays = Array.isArray(data.progress?.usageDays)
-                ? data.progress.usageDays
-                : [];
-              const peak = usageDays.reduce(
-                (/** @type {number} */ max, /** @type {any} */ item) =>
-                  Math.max(max, Number(item?.tokens) || 0),
-                0,
-              );
-              return h(
-                "div",
-                { style: styles.welcome, "data-projects-welcome": "" },
-                h(
-                  "div",
-                  { style: { minWidth: 0, flex: "1 1 auto" } },
-                  h(
-                    "div",
-                    { style: styles.welcomeTitle, "data-projects-welcome-title": "" },
-                    userName !== ""
-                      ? text(t, "detail.welcome", { name: userName })
-                      : text(t, "detail.welcomeAnon"),
-                  ),
-                  h(
-                    "div",
-                    { style: styles.welcomeSub, "data-projects-welcome-status": "" },
-                    statusSentence,
-                  ),
-                ),
-                usageDays.length > 0
-                  ? h(
-                      "div",
-                      {
-                        style: styles.spark,
-                        "data-projects-spark": "",
-                        title: text(t, "detail.sparkHint"),
-                      },
-                      usageDays.map((/** @type {any} */ item) =>
-                        h("span", {
-                          key: String(item.date),
-                          "data-projects-spark-bar": String(item.date),
-                          style: {
-                            ...styles.sparkBar,
-                            height:
-                              peak > 0
-                                ? `${Math.max(3, Math.round(((Number(item.tokens) || 0) / peak) * 22))}px`
-                                : "3px",
-                            background: Number(item.tokens) > 0 ? T.accentText : T.border,
-                          },
-                        }),
-                      ),
-                    )
-                  : null,
-              );
-            })(),
             // —— U4/F9/F10/F11/F13：协调者区（**不是**宿主 composer）——
             // 一个长期会话：你只跟它说话；它在线程跑完后汇报（结论上浮 + thread chip）。
             // 没有会话时显示"建协调者"；compaction 缺失时如实说明（F10 的判空兜底）。
@@ -7302,63 +7318,6 @@ window.__ModuleLoader__.load({
                   : null,
               );
             })(),
-            // —— F26/U13 药丸条：5 类计数 + 在跑的时间估计；点击 = 过滤该状态 ——
-            h(
-              "div",
-              { style: styles.pillBar, "data-projects-pills": "", "data-projects-counts": "" },
-              h(
-                "button",
-                {
-                  type: "button",
-                  style: { ...styles.filterPill, ...(filter === "" ? styles.pillActive : {}) },
-                  "data-projects-pill": "all",
-                  "data-projects-pill-active": filter === "" ? "true" : "false",
-                  "aria-pressed": filter === "" ? "true" : "false",
-                  onClick: () => {
-                    setFilter("");
-                    setCarousel({});
-                  },
-                },
-                text(t, "detail.pillAll"),
-              ),
-              (() => {
-                const estimates = (Array.isArray(data.threads) ? data.threads : [])
-                  .filter(
-                    (/** @type {any} */ row) =>
-                      row.view?.state === "working" && Number(row.estimateMs) > 0,
-                  )
-                  .map((/** @type {any} */ row) => Number(row.estimateMs));
-                const eta = estimates.length > 0 ? Math.min(...estimates) : 0;
-                return ["waiting-user", "failed", "working", "resolved", "idle"].map((state) => {
-                  const count = Number(pills[state] ?? 0);
-                  const active = filter === state;
-                  return h(
-                    "button",
-                    {
-                      type: "button",
-                      key: state,
-                      style: { ...styles.filterPill, ...(active ? styles.pillActive : {}) },
-                      "data-projects-pill": state,
-                      "data-projects-pill-count": String(count),
-                      "data-projects-pill-active": active ? "true" : "false",
-                      "aria-pressed": active ? "true" : "false",
-                      onClick: () => toggleFilter(state),
-                    },
-                    text(t, `detail.pill.${state}`),
-                    h("span", { style: styles.pillCount }, String(count)),
-                    state === "working" && eta > 0
-                      ? h(
-                          "span",
-                          { style: { color: T.dim }, "data-projects-pill-eta": "" },
-                          text(t, "detail.pillWorkingEta", {
-                            minutes: Math.max(1, Math.round(eta / 60_000)),
-                          }),
-                        )
-                      : null,
-                  );
-                });
-              })(),
-            ),
             h(
               "div",
               { style: styles.composerCard, "data-projects-composer": "" },
@@ -7551,9 +7510,23 @@ window.__ModuleLoader__.load({
                   exec.message,
                 )
               : null,
+          ),
+          // —— 右列：Threads 面板（页签 + Welcome + 药丸条 + 列表/记忆/Routines）——
+          h(
+            "div",
+            { style: styles.panelCol, "data-panel-column": "" },
             h(
               "div",
-              { style: { display: "flex", gap: "6px", marginTop: "4px" }, role: "tablist" },
+              {
+                style: {
+                  display: "flex",
+                  gap: "4px",
+                  marginTop: "2px",
+                  alignItems: "center",
+                  borderBottom: `1px solid ${T.borderSoft}`,
+                },
+                role: "tablist",
+              },
               tabs.map((/** @type {any} */ item) =>
                 h(
                   "button",
@@ -7564,15 +7537,179 @@ window.__ModuleLoader__.load({
                     "aria-selected": tab === item.id ? "true" : "false",
                     "data-projects-tab": item.id,
                     style: {
-                      ...styles.button,
-                      borderColor: tab === item.id ? T.accentText : T.border,
-                      color: tab === item.id ? T.accentText : T.text,
+                      background: "transparent",
+                      border: "none",
+                      borderBottom: `2px solid ${tab === item.id ? T.accentText : "transparent"}`,
+                      borderRadius: "6px 6px 0 0",
+                      padding: "6px 10px",
+                      color: tab === item.id ? T.text : T.dim,
+                      fontWeight: tab === item.id ? 600 : 400,
+                      cursor: "pointer",
                     },
                     onClick: () => setTab(item.id),
                   },
                   item.label,
                 ),
               ),
+              h("span", { style: { flex: "1 1 auto" } }),
+              h(
+                "button",
+                {
+                  type: "button",
+                  style: {
+                    background: "transparent",
+                    border: "none",
+                    color: T.dim,
+                    fontSize: "14px",
+                    padding: "2px 6px",
+                    cursor: "pointer",
+                  },
+                  "data-panel-settings-open": "",
+                  "aria-label": text(t, "detail.settingsOpen"),
+                  title: text(t, "detail.settingsOpen"),
+                  onClick: () => setPanelSettingsOpen(true),
+                },
+                "⚙",
+              ),
+              // Claude 的面板 header 右侧有「+ Add view」；这里先做占位（禁用 + 说明）
+              h(
+                "button",
+                {
+                  type: "button",
+                  style: {
+                    background: "transparent",
+                    border: "none",
+                    color: T.faint,
+                    fontSize: "12px",
+                    padding: "4px 6px",
+                    cursor: "default",
+                  },
+                  "data-panel-add-view": "",
+                  title: text(t, "detail.addViewHint"),
+                  disabled: true,
+                },
+                `+ ${text(t, "detail.addView")}`,
+              ),
+            ),
+            // —— F28/U10：Welcome 头（大字 + 状态句 + 7 日 token 迷你图）——
+            (() => {
+              const waiting = Number(pills["waiting-user"] ?? 0);
+              const working = Number(pills.working ?? 0);
+              const statusSentence =
+                waiting > 0
+                  ? text(t, "detail.welcomeWaiting", { count: waiting })
+                  : working > 0
+                    ? text(t, "detail.welcomeWorking", { count: working })
+                    : text(t, "detail.welcomeIdle");
+              const usageDays = Array.isArray(data.progress?.usageDays)
+                ? data.progress.usageDays
+                : [];
+              const peak = usageDays.reduce(
+                (/** @type {number} */ max, /** @type {any} */ item) =>
+                  Math.max(max, Number(item?.tokens) || 0),
+                0,
+              );
+              return h(
+                "div",
+                { style: styles.welcome, "data-projects-welcome": "" },
+                h(
+                  "div",
+                  { style: { minWidth: 0, flex: "1 1 auto" } },
+                  h(
+                    "div",
+                    { style: styles.welcomeTitle, "data-projects-welcome-title": "" },
+                    userName !== ""
+                      ? text(t, "detail.welcome", { name: userName })
+                      : text(t, "detail.welcomeAnon"),
+                  ),
+                  h(
+                    "div",
+                    { style: styles.welcomeSub, "data-projects-welcome-status": "" },
+                    statusSentence,
+                  ),
+                ),
+                usageDays.length > 0
+                  ? h(
+                      "div",
+                      {
+                        style: styles.spark,
+                        "data-projects-spark": "",
+                        title: text(t, "detail.sparkHint"),
+                      },
+                      usageDays.map((/** @type {any} */ item) =>
+                        h("span", {
+                          key: String(item.date),
+                          "data-projects-spark-bar": String(item.date),
+                          style: {
+                            ...styles.sparkBar,
+                            height:
+                              peak > 0
+                                ? `${Math.max(3, Math.round(((Number(item.tokens) || 0) / peak) * 22))}px`
+                                : "3px",
+                            background: Number(item.tokens) > 0 ? T.accentText : T.border,
+                          },
+                        }),
+                      ),
+                    )
+                  : null,
+              );
+            })(),
+            // —— F26/U13 药丸条：5 类计数 + 在跑的时间估计；点击 = 过滤该状态 ——
+            h(
+              "div",
+              { style: styles.pillBar, "data-projects-pills": "", "data-projects-counts": "" },
+              h(
+                "button",
+                {
+                  type: "button",
+                  style: { ...styles.filterPill, ...(filter === "" ? styles.pillActive : {}) },
+                  "data-projects-pill": "all",
+                  "data-projects-pill-active": filter === "" ? "true" : "false",
+                  "aria-pressed": filter === "" ? "true" : "false",
+                  onClick: () => {
+                    setFilter("");
+                    setCarousel({});
+                  },
+                },
+                text(t, "detail.pillAll"),
+              ),
+              (() => {
+                const estimates = (Array.isArray(data.threads) ? data.threads : [])
+                  .filter(
+                    (/** @type {any} */ row) =>
+                      row.view?.state === "working" && Number(row.estimateMs) > 0,
+                  )
+                  .map((/** @type {any} */ row) => Number(row.estimateMs));
+                const eta = estimates.length > 0 ? Math.min(...estimates) : 0;
+                return ["waiting-user", "failed", "working", "resolved", "idle"].map((state) => {
+                  const count = Number(pills[state] ?? 0);
+                  const active = filter === state;
+                  return h(
+                    "button",
+                    {
+                      type: "button",
+                      key: state,
+                      style: { ...styles.filterPill, ...(active ? styles.pillActive : {}) },
+                      "data-projects-pill": state,
+                      "data-projects-pill-count": String(count),
+                      "data-projects-pill-active": active ? "true" : "false",
+                      "aria-pressed": active ? "true" : "false",
+                      onClick: () => toggleFilter(state),
+                    },
+                    text(t, `detail.pill.${state}`),
+                    h("span", { style: styles.pillCount }, String(count)),
+                    state === "working" && eta > 0
+                      ? h(
+                          "span",
+                          { style: { color: T.dim }, "data-projects-pill-eta": "" },
+                          text(t, "detail.pillWorkingEta", {
+                            minutes: Math.max(1, Math.round(eta / 60_000)),
+                          }),
+                        )
+                      : null,
+                  );
+                });
+              })(),
             ),
             body,
           ),
@@ -7581,7 +7718,42 @@ window.__ModuleLoader__.load({
           // 窄窗（单列）时每段默认折叠成「标题 + 一行摘要 + ▸」，点开才展开。
           h(
             "aside",
-            { style: styles.rail, "data-projects-config": "", "data-projects-rail": "" },
+            {
+              // 关着时仍挂载（锚点/冒烟照旧），但不可见；打开时是 fixed 抽屉
+              style: panelSettingsOpen
+                ? styles.settingsDrawer
+                : { ...styles.rail, display: "none" },
+              "data-panel-settings-drawer": panelSettingsOpen ? "open" : "closed",
+              "data-projects-config": "",
+              "data-projects-rail": "",
+            },
+            h(
+              "div",
+              {
+                style: {
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  paddingBottom: "8px",
+                },
+              },
+              h(
+                "span",
+                { style: { ...styles.name, fontSize: "14px", fontWeight: 600, flex: "1 1 auto" } },
+                text(t, "detail.settingsTitle"),
+              ),
+              h(
+                "button",
+                {
+                  type: "button",
+                  style: { ...styles.iconButton, flex: "none" },
+                  "data-panel-settings-close": "",
+                  "aria-label": text(t, "detail.settingsClose"),
+                  onClick: () => setPanelSettingsOpen(false),
+                },
+                "✕",
+              ),
+            ),
             h(RailSection, {
               t: t,
               id: "instructions",

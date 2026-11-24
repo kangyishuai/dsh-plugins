@@ -951,6 +951,7 @@ try {
             ?.getAttribute("data-projects-thread-steps-state") || "",
         stepsText: (document.querySelector("[data-projects-thread-steps]")?.textContent || "").trim(),
         subtitle: Boolean(document.querySelector("[data-projects-thread-subtitle]")),
+        subtitleText: (document.querySelector("[data-projects-thread-subtitle]")?.textContent || "").trim(),
         pills,
         pillsCount: document.querySelectorAll("[data-projects-pill]").length,
         groups: [...document.querySelectorAll("[data-projects-group]")].map((node) => ({
@@ -977,6 +978,7 @@ try {
     state: overview?.state ?? "",
     stepsState: overview?.stepsState ?? "",
     subtitlePresent: overview?.subtitle === true,
+    subtitleText: overview?.subtitleText ?? "",
   };
   add(
     "Overview 药丸条：5 类 + 全部，计数可断言",
@@ -991,11 +993,15 @@ try {
     JSON.stringify(overview?.groups),
   );
   add(
-    "没有 todo 时步进显示「—」而不是 0/0",
-    overview?.stepsState === "none" && overview?.stepsText === "—",
+    "没有 todo 时不显示 0/0（Claude 行尾留空，不再摆占位破折号）",
+    overview?.stepsState === "none" && overview?.stepsText === "",
     JSON.stringify({ stepsState: overview?.stepsState, stepsText: overview?.stepsText }),
   );
-  add("副标题缺数据时留空（不编）", overview?.subtitle === false, String(overview?.subtitle));
+  add(
+    "副标题缺数据时不编造（只允许状态词或空）",
+    overview?.subtitleText === "" || /空闲|在跑|等你|待审|失败|归档/u.test(String(overview?.subtitleText)),
+    JSON.stringify({ subtitle: overview?.subtitle, text: overview?.subtitleText }),
+  );
   add(
     "Welcome 头 + 状态句 + 7 日迷你图",
     /(Welcome back|欢迎回来)/u.test(overview?.welcome || "") &&
@@ -4812,7 +4818,8 @@ const main = async () => {
       ok:
         threadRecord !== undefined &&
         threadRecord.subtitle === "" &&
-        result.overviewFacts?.subtitlePresent === false,
+        (result.overviewFacts?.subtitlePresent === false ||
+          /空闲|在跑|等你|待审|失败|归档/u.test(String(result.overviewFacts?.subtitleText ?? ""))),
       detail: JSON.stringify({
         subtitle: threadRecord?.subtitle,
         uiPresent: result.overviewFacts?.subtitlePresent,

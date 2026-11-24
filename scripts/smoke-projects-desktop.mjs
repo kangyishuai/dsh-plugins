@@ -365,10 +365,16 @@ const main = async () => {
           grid: Boolean(grid),
           main: Boolean(main),
           rail: Boolean(rail),
+          // Claude 结构：左=对话（main）、右=Threads 面板（panel-column），rail 只在抽屉里
+          panel: Boolean(document.querySelector("[data-panel-column]")),
           // 两列：右栏在主列右侧。窄窗（容器 < 820px，见 client 的 gridRef）
           // 会折成单列，那时只能断言三个锚点都在；宽窗时必须是并排。
           gridWidth: grid ? Math.round(grid.getBoundingClientRect().width) : 0,
-          twoColumn: Boolean(grid) && Boolean(main) && Boolean(rail) && left(rail) > left(main),
+          twoColumn:
+            Boolean(grid) &&
+            Boolean(main) &&
+            Boolean(document.querySelector("[data-panel-column]")) &&
+            left(document.querySelector("[data-panel-column]")) > left(main),
           pills: document.querySelectorAll("[data-projects-pill]").length,
           tabs: [...document.querySelectorAll("[data-projects-tab]")].map((node) =>
             node.getAttribute("data-projects-tab"),
@@ -423,6 +429,13 @@ const main = async () => {
       );
     }
 
+    // live profile 可能停在详情页（上次打开的项目）：先返回列表，否则"行数=0"会被误判成空 profile
+    await cdp.evaluate(`(() => {
+      const back = document.querySelector("[data-projects-detail-back]");
+      if (back) back.click();
+      return Boolean(back);
+    })()`);
+    await sleep(600);
     const rowOpened = await cdp.evaluate(
       projectName === ""
         ? `(() => {
@@ -532,16 +545,35 @@ const main = async () => {
         snap.libraryOpen === true && snap.auditInDetail === false,
         JSON.stringify({ libraryOpen: snap.libraryOpen, auditInDetail: snap.auditInDetail }),
       );
+      // 结构对齐 Claude 后：详情页 = 左对话 + 右面板；指令/记忆/上下文在「项目设置」抽屉里
+      const drawer = await cdp.evaluate(`(async () => {
+        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const open = document.querySelector("[data-panel-settings-open]");
+        if (open) open.click();
+        for (let i = 0; i < 20; i += 1) {
+          if (document.querySelector('[data-panel-settings-drawer="open"]')) break;
+          await wait(150);
+        }
+        const d = document.querySelector('[data-panel-settings-drawer="open"]');
+        const text = (d && d.innerText) || "";
+        const result = {
+          open: Boolean(d),
+          instructions: /指令|Instructions/u.test(text),
+          memory: /记忆|Memory/u.test(text),
+          context: /上下文|Context/u.test(text),
+        };
+        document.querySelector("[data-panel-settings-close]")?.click();
+        return result;
+      })()`);
       check(
-        "详情页渲染主列 + 右栏三段（指令/记忆/上下文）",
-        snap.hasInstructions === true &&
-          snap.hasContextSection === true &&
-          snap.hasThreads === true,
-        JSON.stringify({
-          hasInstructions: snap.hasInstructions,
-          hasContextSection: snap.hasContextSection,
-          hasThreads: snap.hasThreads,
-        }),
+        "详情页：右面板（线程/药丸）+ 设置抽屉三段（指令/记忆/上下文）",
+        snap.panel === true &&
+          snap.hasThreads === true &&
+          drawer?.open === true &&
+          drawer?.instructions === true &&
+          drawer?.memory === true &&
+          drawer?.context === true,
+        JSON.stringify({ panel: snap.panel, threads: snap.hasThreads, drawer }),
       );
       const back = await cdp.evaluate(`(() => {
         const button = document.querySelector("[data-projects-detail-back]");
@@ -726,6 +758,16 @@ const main = async () => {
     // 有些 live profile 会把设置页整体禁用（cordis.patch.yml 里 ui-settings enabled:false）。
     // 那不是「通过」：渲染了就真断言，没渲染就如实 SKIP（计数行不把跳过冒充覆盖）。
     // 打开就真断言（不是「渲染了就算过」）；打不开才 SKIP，并且把跳过写进计数行。
+    // 我们的分节可能比对话框晚一拍渲染：等到 nav 出现再快照（否则 nav:[] 会误判成"没有分区"）
+    if (settingsSeen === true) {
+      for (let i = 0; i < 25; i += 1) {
+        const ready = await cdp.evaluate(
+          `document.querySelectorAll("[data-projects-settings-nav-item]").length > 0`,
+        );
+        if (ready) break;
+        await sleep(200);
+      }
+    }
     const settingsSnap =
       settingsSeen === true
         ? await cdp.evaluate(`(async () => {
