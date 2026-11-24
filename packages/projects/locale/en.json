@@ -545,6 +545,15 @@
     "b3.coordinatorTitle": "Coordinator defaults",
     "b3.coordinatorModel": "Coordinator model",
     "b3.coordinatorEffort": "Coordinator effort",
-    "b3.coordinatorSaved": "Coordinator defaults saved"
+    "b3.coordinatorSaved": "Coordinator defaults saved",
+    "detail.tab.library": "Library",
+    "detail.tab.views": "Views",
+    "views.title": "Visible views",
+    "views.hint": "Hide the views you don't need; the panel shows only the ones you use.",
+    "views.savedTitle": "Saved filter views",
+    "views.savedEmpty": "No saved views yet. Save one with a filter and a name.",
+    "views.apply": "Apply",
+    "views.delete": "Delete",
+    "views.addHint": "A saved view stores the state filter and keyword, not a result snapshot."
   }
 }

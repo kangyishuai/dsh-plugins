@@ -223,6 +223,16 @@ window.__ModuleLoader__.load({
       "detail.loading": "加载中…",
       "detail.tab.threads": "线程 ({count})",
       "detail.tab.memory": "记忆",
+      "detail.tab.library": "Library",
+      "detail.tab.views": "视图",
+      "views.title": "视图可见性",
+      "views.hint": "关掉不需要的视图，右栏就只显示你常用的那几个。",
+      "views.savedTitle": "已保存的筛选视图",
+      "views.savedEmpty": "还没有保存的视图。用一个筛选条件 + 名字就能存一个。",
+      "views.apply": "套用",
+      "views.delete": "删除",
+      "views.addHint": "保存的是「状态筛选 + 关键词」，不是结果快照。",
+
       "detail.threadsEmpty":
         "还没有线程。在左侧输入框给一个任务就能新建线程；也可以用「…」菜单把已有会话归属到本项目。",
       "detail.noDirHint":
@@ -695,6 +705,16 @@ window.__ModuleLoader__.load({
       "detail.loading": "Loading…",
       "detail.tab.threads": "Threads ({count})",
       "detail.tab.memory": "Memory",
+      "detail.tab.library": "Library",
+      "detail.tab.views": "Views",
+      "views.title": "Visible views",
+      "views.hint": "Hide the views you don't need; the panel shows only the ones you use.",
+      "views.savedTitle": "Saved filter views",
+      "views.savedEmpty": "No saved views yet. Save one with a filter and a name.",
+      "views.apply": "Apply",
+      "views.delete": "Delete",
+      "views.addHint": "A saved view stores the state filter and keyword, not a result snapshot.",
+
       "detail.threadsEmpty":
         "No sessions belong to this project yet. Use “Add to project…” in a session's … menu.",
       "detail.noDirHint":
@@ -5671,8 +5691,9 @@ window.__ModuleLoader__.load({
             count: data.progress?.total ?? data.threads.length,
           }),
         },
-        { id: "memory", label: text(t, "detail.tab.memory") },
+        { id: "library", label: text(t, "detail.tab.library") },
         { id: "routines", label: "Routines" },
+        { id: "views", label: text(t, "detail.tab.views") },
       ];
 
       // 右栏 Library 行的一行摘要（文件面 + 产物面；数据没到就说「打开查看」）
@@ -5755,9 +5776,9 @@ window.__ModuleLoader__.load({
       const setGroupMenu = groupMenuState[1];
       // 设置抽屉：rail 里的 15 段设置不再常驻右栏（Claude 是独立 Project settings），
       // 由面板 header 的 ⚙ 打开；锚点保持原样，冒烟/桌面回归照旧能点。
-      const viewFormState = useState(false);
-      const viewFormOpen = viewFormState[0];
-      const setViewFormOpen = viewFormState[1];
+      const visibleTabsState = useState({ threads: true, library: true, routines: true });
+      const visibleTabs = visibleTabsState[0];
+      const setVisibleTabs = visibleTabsState[1];
       const viewNameState = useState("");
       const viewName = viewNameState[0];
       const setViewName = viewNameState[1];
@@ -5858,7 +5879,10 @@ window.__ModuleLoader__.load({
         {
           key: "memory",
           label: text(t, "detail.slash.memory"),
-          run: () => setTab("memory"),
+          run: () => {
+            setPanelPane("memory");
+            setPanelSettingsOpen(true);
+          },
         },
         {
           key: "routines",
@@ -5907,7 +5931,6 @@ window.__ModuleLoader__.load({
           query: panelQuery,
         }).then(
           () => {
-            setViewFormOpen(false);
             setViewName("");
             load();
           },
@@ -7062,6 +7085,112 @@ window.__ModuleLoader__.load({
         );
       };
 
+      // 记忆面板：从页签迁到「项目设置 › 记忆」（Claude 的 Memory 在设置里）
+      const memoryPane = (() => {
+        const content = data.content || {};
+        return h(
+          "div",
+          { "data-projects-memory": "" },
+          // F37：碎片列表 + 索引条目（新增 / 预览 / 逐条忘掉）
+          h(MemoryFragments, {
+            api: api,
+            t: t,
+            projectId: project.id,
+            content: content,
+            onChanged: load,
+          }),
+          h("h3", { style: styles.name }, text(t, "detail.instructions")),
+          // 走查发现这一页只读：用户看得到规则却写不进去。加编辑与追加两个入口。
+          mem.editing
+            ? h("textarea", {
+                style: { ...styles.input, minHeight: "140px", fontFamily: "inherit" },
+                value: mem.draft,
+                placeholder: text(t, "detail.memoryAppendPlaceholder"),
+                "data-projects-memory-editor": "",
+                onChange: (/** @type {any} */ event) =>
+                  setMem((/** @type {any} */ prev) => ({ ...prev, draft: event.target.value })),
+              })
+            : h(
+                "pre",
+                {
+                  style: { ...styles.meta, whiteSpace: "pre-wrap", margin: "4px 0 12px" },
+                  "data-projects-instructions-full": "",
+                },
+                content.instructions || text(t, "detail.emptyFile"),
+              ),
+          h(
+            "div",
+            { style: { display: "flex", gap: "8px", alignItems: "center", margin: "0 0 12px" } },
+            h(
+              "button",
+              {
+                type: "button",
+                style: styles.button,
+                "data-projects-memory-edit": "",
+                onClick: () =>
+                  setMem((/** @type {any} */ prev) => ({
+                    ...prev,
+                    editing: !prev.editing,
+                    draft: prev.editing ? prev.draft : String(content.instructions ?? ""),
+                    message: "",
+                  })),
+              },
+              mem.editing ? text(t, "detail.cancel") : text(t, "detail.memoryEdit"),
+            ),
+            mem.editing
+              ? h(
+                  "button",
+                  {
+                    type: "button",
+                    style: styles.button,
+                    "data-projects-memory-save": "",
+                    onClick: saveInstructions,
+                    disabled: mem.busy,
+                  },
+                  mem.busy ? text(t, "detail.memorySaving") : text(t, "detail.memorySave"),
+                )
+              : null,
+          ),
+          h(
+            "div",
+            { style: { display: "flex", gap: "8px", margin: "0 0 12px" } },
+            h("input", {
+              style: styles.input,
+              value: mem.append,
+              placeholder: text(t, "detail.memoryAppendPlaceholder"),
+              "data-projects-memory-append-input": "",
+              onChange: (/** @type {any} */ event) =>
+                setMem((/** @type {any} */ prev) => ({ ...prev, append: event.target.value })),
+              onKeyDown: (/** @type {any} */ event) => {
+                if (event.key === "Enter") appendMemoryLine();
+              },
+            }),
+            h(
+              "button",
+              {
+                type: "button",
+                style: styles.button,
+                "data-projects-memory-append": "",
+                onClick: appendMemoryLine,
+              },
+              text(t, "detail.memoryAppend"),
+            ),
+          ),
+          mem.message !== ""
+            ? h("div", { style: styles.meta, "data-projects-memory-result": "" }, mem.message)
+            : null,
+          h("h3", { style: styles.name }, text(t, "detail.memoryIndex")),
+          h(
+            "pre",
+            {
+              style: { ...styles.meta, whiteSpace: "pre-wrap", margin: "4px 0" },
+              "data-projects-memory-index": "",
+            },
+            content.memoryIndex || text(t, "detail.emptyFile"),
+          ),
+        );
+      })();
+
       const body = (() => {
         if (data.loading) return h("p", { style: styles.empty }, text(t, "detail.loading"));
         if (data.error !== "")
@@ -7109,6 +7238,151 @@ window.__ModuleLoader__.load({
         // B4 · F36：Routines 视图（六档频率 + Run now + History + 成本提示）+ F30 提醒
         if (tab === "routines") {
           return h(RoutinesView, { api: api, t: t, project: project, onChanged: load });
+        }
+        if (tab === "views") {
+          // Claude 的 Views：控制右栏显示哪些视图 + 管理已保存的筛选视图
+          return h(
+            "div",
+            {
+              style: { display: "flex", flexDirection: "column", gap: "12px" },
+              "data-projects-views-pane": "",
+            },
+            h("span", { style: styles.name }, text(t, "views.title")),
+            h("span", { style: { ...styles.meta, whiteSpace: "normal" } }, text(t, "views.hint")),
+            h(
+              "div",
+              {
+                style: { display: "flex", flexDirection: "column", gap: "4px" },
+                "data-projects-view-toggles": "",
+              },
+              [
+                [
+                  "threads",
+                  text(t, "detail.tab.threads", {
+                    count: data.progress?.total ?? data.threads.length,
+                  }),
+                ],
+                ["library", text(t, "detail.tab.library")],
+                ["routines", "Routines"],
+              ].map(([id, label]) =>
+                h(
+                  "label",
+                  {
+                    key: id,
+                    style: {
+                      display: "flex",
+                      gap: "6px",
+                      alignItems: "center",
+                      fontSize: "12.5px",
+                      color: T.dim,
+                    },
+                  },
+                  h("input", {
+                    type: "checkbox",
+                    checked: visibleTabs[id] !== false,
+                    "data-projects-view-toggle": id,
+                    onChange: (/** @type {any} */ event) =>
+                      setVisibleTabs((/** @type {any} */ prev) => ({
+                        ...prev,
+                        [id]: event.target.checked,
+                      })),
+                  }),
+                  label,
+                ),
+              ),
+            ),
+            h("span", { style: styles.name }, text(t, "views.savedTitle")),
+            views.length === 0
+              ? h(
+                  "span",
+                  { style: { ...styles.meta, whiteSpace: "normal" } },
+                  text(t, "views.savedEmpty"),
+                )
+              : h(
+                  "div",
+                  {
+                    style: { display: "flex", flexDirection: "column", gap: "4px" },
+                    "data-projects-saved-views": "",
+                  },
+                  views.map((/** @type {any} */ view) =>
+                    h(
+                      "div",
+                      {
+                        key: view.id,
+                        style: {
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "8px",
+                          fontSize: "12.5px",
+                        },
+                        "data-projects-saved-view": view.id,
+                      },
+                      h("span", { style: { flex: "1 1 auto", minWidth: 0 } }, String(view.name)),
+                      h(
+                        "button",
+                        {
+                          type: "button",
+                          style: {
+                            ...styles.secondaryButton,
+                            padding: "1px 8px",
+                            fontSize: "11.5px",
+                          },
+                          "data-projects-saved-view-apply": view.id,
+                          onClick: () => {
+                            setFilter(String(view.filter ?? ""));
+                            setPanelQuery(String(view.query ?? ""));
+                            setTab("threads");
+                          },
+                        },
+                        text(t, "views.apply"),
+                      ),
+                      h(
+                        "button",
+                        {
+                          type: "button",
+                          style: {
+                            ...styles.secondaryButton,
+                            padding: "1px 8px",
+                            fontSize: "11.5px",
+                          },
+                          "data-projects-saved-view-delete": view.id,
+                          onClick: () => deleteView(view.id),
+                        },
+                        text(t, "views.delete"),
+                      ),
+                    ),
+                  ),
+                ),
+            h(
+              "div",
+              {
+                style: { display: "flex", gap: "6px", alignItems: "center" },
+                "data-projects-view-add": "",
+              },
+              h("input", {
+                style: { ...styles.input, fontSize: "12px", padding: "3px 8px" },
+                value: viewName,
+                placeholder: text(t, "detail.viewNamePlaceholder"),
+                "data-projects-view-add-name": "",
+                onChange: (/** @type {any} */ event) => setViewName(event.target.value),
+              }),
+              h(
+                "button",
+                {
+                  type: "button",
+                  style: { ...styles.primaryButton, padding: "3px 10px", fontSize: "12px" },
+                  "data-projects-view-add-save": "",
+                  onClick: saveView,
+                },
+                text(t, "detail.viewSave"),
+              ),
+            ),
+            h(
+              "span",
+              { style: { ...styles.meta, whiteSpace: "normal" } },
+              text(t, "views.addHint"),
+            ),
+          );
         }
         if (tab === "threads") {
           const rows = data.progress?.rows ?? [];
@@ -7407,110 +7681,6 @@ window.__ModuleLoader__.load({
                     ),
               );
             }),
-          );
-        }
-        if (tab === "memory") {
-          const content = data.content || {};
-          return h(
-            "div",
-            { "data-projects-memory": "" },
-            // F37：碎片列表 + 索引条目（新增 / 预览 / 逐条忘掉）
-            h(MemoryFragments, {
-              api: api,
-              t: t,
-              projectId: project.id,
-              content: content,
-              onChanged: load,
-            }),
-            h("h3", { style: styles.name }, text(t, "detail.instructions")),
-            // 走查发现这一页只读：用户看得到规则却写不进去。加编辑与追加两个入口。
-            mem.editing
-              ? h("textarea", {
-                  style: { ...styles.input, minHeight: "140px", fontFamily: "inherit" },
-                  value: mem.draft,
-                  placeholder: text(t, "detail.memoryAppendPlaceholder"),
-                  "data-projects-memory-editor": "",
-                  onChange: (/** @type {any} */ event) =>
-                    setMem((/** @type {any} */ prev) => ({ ...prev, draft: event.target.value })),
-                })
-              : h(
-                  "pre",
-                  {
-                    style: { ...styles.meta, whiteSpace: "pre-wrap", margin: "4px 0 12px" },
-                    "data-projects-instructions-full": "",
-                  },
-                  content.instructions || text(t, "detail.emptyFile"),
-                ),
-            h(
-              "div",
-              { style: { display: "flex", gap: "8px", alignItems: "center", margin: "0 0 12px" } },
-              h(
-                "button",
-                {
-                  type: "button",
-                  style: styles.button,
-                  "data-projects-memory-edit": "",
-                  onClick: () =>
-                    setMem((/** @type {any} */ prev) => ({
-                      ...prev,
-                      editing: !prev.editing,
-                      draft: prev.editing ? prev.draft : String(content.instructions ?? ""),
-                      message: "",
-                    })),
-                },
-                mem.editing ? text(t, "detail.cancel") : text(t, "detail.memoryEdit"),
-              ),
-              mem.editing
-                ? h(
-                    "button",
-                    {
-                      type: "button",
-                      style: styles.button,
-                      "data-projects-memory-save": "",
-                      onClick: saveInstructions,
-                      disabled: mem.busy,
-                    },
-                    mem.busy ? text(t, "detail.memorySaving") : text(t, "detail.memorySave"),
-                  )
-                : null,
-            ),
-            h(
-              "div",
-              { style: { display: "flex", gap: "8px", margin: "0 0 12px" } },
-              h("input", {
-                style: styles.input,
-                value: mem.append,
-                placeholder: text(t, "detail.memoryAppendPlaceholder"),
-                "data-projects-memory-append-input": "",
-                onChange: (/** @type {any} */ event) =>
-                  setMem((/** @type {any} */ prev) => ({ ...prev, append: event.target.value })),
-                onKeyDown: (/** @type {any} */ event) => {
-                  if (event.key === "Enter") appendMemoryLine();
-                },
-              }),
-              h(
-                "button",
-                {
-                  type: "button",
-                  style: styles.button,
-                  "data-projects-memory-append": "",
-                  onClick: appendMemoryLine,
-                },
-                text(t, "detail.memoryAppend"),
-              ),
-            ),
-            mem.message !== ""
-              ? h("div", { style: styles.meta, "data-projects-memory-result": "" }, mem.message)
-              : null,
-            h("h3", { style: styles.name }, text(t, "detail.memoryIndex")),
-            h(
-              "pre",
-              {
-                style: { ...styles.meta, whiteSpace: "pre-wrap", margin: "4px 0" },
-                "data-projects-memory-index": "",
-              },
-              content.memoryIndex || text(t, "detail.emptyFile"),
-            ),
           );
         }
         // 审计已外迁到设置分节 Debug 区（§7.3：审计/诊断这类进设置页），详情页不再有审计视图。
@@ -8556,30 +8726,35 @@ window.__ModuleLoader__.load({
                 },
                 role: "tablist",
               },
-              tabs.map((/** @type {any} */ item) =>
-                h(
-                  "button",
-                  {
-                    type: "button",
-                    key: item.id,
-                    role: "tab",
-                    "aria-selected": tab === item.id ? "true" : "false",
-                    "data-projects-tab": item.id,
-                    style: {
-                      background: "transparent",
-                      border: "none",
-                      borderBottom: `2px solid ${tab === item.id ? T.accentText : "transparent"}`,
-                      borderRadius: "6px 6px 0 0",
-                      padding: "6px 10px",
-                      color: tab === item.id ? T.text : T.dim,
-                      fontWeight: tab === item.id ? 600 : 400,
-                      cursor: "pointer",
+              tabs
+                .filter(
+                  (/** @type {any} */ item) =>
+                    item.id === "threads" || item.id === "views" || visibleTabs[item.id] !== false,
+                )
+                .map((/** @type {any} */ item) =>
+                  h(
+                    "button",
+                    {
+                      type: "button",
+                      key: item.id,
+                      role: "tab",
+                      "aria-selected": tab === item.id ? "true" : "false",
+                      "data-projects-tab": item.id,
+                      style: {
+                        background: "transparent",
+                        border: "none",
+                        borderBottom: `2px solid ${tab === item.id ? T.accentText : "transparent"}`,
+                        borderRadius: "6px 6px 0 0",
+                        padding: "6px 10px",
+                        color: tab === item.id ? T.text : T.dim,
+                        fontWeight: tab === item.id ? 600 : 400,
+                        cursor: "pointer",
+                      },
+                      onClick: () => setTab(item.id),
                     },
-                    onClick: () => setTab(item.id),
-                  },
-                  item.label,
+                    item.label,
+                  ),
                 ),
-              ),
               h("span", { style: { flex: "1 1 auto" } }),
               h(
                 "label",
@@ -8650,107 +8825,11 @@ window.__ModuleLoader__.load({
                   },
                   "data-panel-add-view": "",
                   title: text(t, "detail.addViewHint"),
-                  onClick: () => setViewFormOpen(!viewFormOpen),
+                  onClick: () => setTab("views"),
                 },
                 `+ ${text(t, "detail.addView")}`,
               ),
             ),
-            // 视图表单 + 已保存视图的 chip 行
-            viewFormOpen
-              ? h(
-                  "div",
-                  {
-                    style: { display: "flex", gap: "6px", alignItems: "center", paddingTop: "6px" },
-                    "data-panel-view-form": "",
-                  },
-                  h("input", {
-                    style: { ...styles.input, fontSize: "12px", padding: "3px 8px" },
-                    value: viewName,
-                    placeholder: text(t, "detail.viewNamePlaceholder"),
-                    "data-panel-view-name": "",
-                    onChange: (/** @type {any} */ event) => setViewName(event.target.value),
-                    onKeyDown: (/** @type {any} */ event) => {
-                      if (event.key === "Enter") saveView();
-                    },
-                  }),
-                  h(
-                    "button",
-                    {
-                      type: "button",
-                      style: { ...styles.primaryButton, padding: "3px 10px", fontSize: "12px" },
-                      "data-panel-view-save": "",
-                      onClick: saveView,
-                    },
-                    text(t, "detail.viewSave"),
-                  ),
-                  h(
-                    "button",
-                    {
-                      type: "button",
-                      style: { ...styles.secondaryButton, padding: "3px 10px", fontSize: "12px" },
-                      "data-panel-view-cancel": "",
-                      onClick: () => {
-                        setViewFormOpen(false);
-                        setViewName("");
-                      },
-                    },
-                    text(t, "detail.viewCancel"),
-                  ),
-                )
-              : null,
-            views.length > 0
-              ? h(
-                  "div",
-                  {
-                    style: { display: "flex", gap: "6px", flexWrap: "wrap", paddingTop: "6px" },
-                    "data-panel-views": "",
-                  },
-                  views.map((/** @type {any} */ view) =>
-                    h(
-                      "span",
-                      {
-                        key: view.id,
-                        style: {
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: "4px",
-                          border: `1px solid ${
-                            filter === view.filter && panelQuery === view.query
-                              ? T.accentText
-                              : T.borderSoft
-                          }`,
-                          borderRadius: "999px",
-                          padding: "2px 8px",
-                          fontSize: "12px",
-                          color: T.text,
-                          cursor: "pointer",
-                        },
-                        "data-panel-view": view.id,
-                      },
-                      h(
-                        "span",
-                        {
-                          onClick: () => {
-                            setFilter(String(view.filter ?? ""));
-                            setPanelQuery(String(view.query ?? ""));
-                          },
-                        },
-                        String(view.name),
-                      ),
-                      h(
-                        "span",
-                        {
-                          style: { color: T.faint, paddingLeft: "2px" },
-                          title: text(t, "detail.viewDelete"),
-                          "data-panel-view-delete": view.id,
-                          onClick: () => deleteView(view.id),
-                        },
-                        "×",
-                      ),
-                    ),
-                  ),
-                )
-              : null,
             // —— F28/U10：Welcome 头（大字 + 状态句 + 7 日 token 迷你图）——
             (() => {
               const waiting = Number(pills["waiting-user"] ?? 0);
@@ -8955,6 +9034,18 @@ window.__ModuleLoader__.load({
                 ),
               ),
             ),
+            // 记忆面板（从页签迁入）：只在「记忆」分区显示
+            h(
+              "div",
+              {
+                style: {
+                  display: panelPane === "memory" ? "block" : "none",
+                  paddingTop: "6px",
+                },
+                "data-projects-memory-pane": "",
+              },
+              memoryPane,
+            ),
             // 环境/调试的分区内容还在宿主设置里（后续批次搬进来）
             panelPane === "debug"
               ? h(
@@ -9007,7 +9098,8 @@ window.__ModuleLoader__.load({
                   "data-projects-instructions-edit": "",
                   "aria-label": text(t, "detail.instructionsEdit"),
                   onClick: () => {
-                    setTab("memory");
+                    setPanelPane("memory");
+                    setPanelSettingsOpen(true);
                     setMem((/** @type {any} */ prev) => ({
                       ...prev,
                       editing: true,
@@ -9043,7 +9135,10 @@ window.__ModuleLoader__.load({
                   type: "button",
                   style: { ...styles.secondaryButton, padding: "2px 10px", fontSize: "12px" },
                   "data-projects-memory-open": "",
-                  onClick: () => setTab("memory"),
+                  onClick: () => {
+                    setPanelPane("memory");
+                    setPanelSettingsOpen(true);
+                  },
                 },
                 `${text(t, "detail.section.open")} ›`,
               ),

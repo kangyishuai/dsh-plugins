@@ -545,6 +545,15 @@
     "b3.coordinatorTitle": "协调者默认模型",
     "b3.coordinatorModel": "协调者模型",
     "b3.coordinatorEffort": "协调者推理强度",
-    "b3.coordinatorSaved": "协调者默认模型已保存"
+    "b3.coordinatorSaved": "协调者默认模型已保存",
+    "detail.tab.library": "Library",
+    "detail.tab.views": "视图",
+    "views.title": "视图可见性",
+    "views.hint": "关掉不需要的视图，右栏就只显示你常用的那几个。",
+    "views.savedTitle": "已保存的筛选视图",
+    "views.savedEmpty": "还没有保存的视图。用一个筛选条件 + 名字就能存一个。",
+    "views.apply": "套用",
+    "views.delete": "删除",
+    "views.addHint": "保存的是「状态筛选 + 关键词」，不是结果快照。"
   }
 }
