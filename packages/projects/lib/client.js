@@ -450,6 +450,8 @@ window.__ModuleLoader__.load({
       "detail.settingsOpenFull": "打开完整设置",
 
       "detail.prOpen": "已开",
+      "library.artifactPinHint": "钉住（待接入）",
+      "library.artifactMenuHint": "更多（待接入）",
       "detail.groupReorderHint": "拖拽排序（待接入）",
       "detail.composerAttach": "添加附件（待接入）",
       "detail.composerMic": "语音输入（待接入）",
@@ -890,6 +892,8 @@ window.__ModuleLoader__.load({
       "detail.settingsOpenFull": "Open full settings",
 
       "detail.prOpen": "open",
+      "library.artifactPinHint": "Pin (not yet available)",
+      "library.artifactMenuHint": "More (not yet available)",
       "detail.groupReorderHint": "Reorder by drag (not yet available)",
       "detail.composerAttach": "Attach (not yet available)",
       "detail.composerMic": "Voice input (not yet available)",
@@ -4090,7 +4094,7 @@ window.__ModuleLoader__.load({
       var known = ["html", "markdown", "json", "csv", "image"];
       var kindLabel = known.indexOf(kind) >= 0 ? text(t, `library.kind.${kind}`) : kind;
       var version = Number(item?.version ?? 1);
-      var when = formatWhen(t, item?.updatedAt);
+      var when = formatWhen(t, item?.updatedAt ?? item?.at);
       var source = item?.source ?? null;
       var provenance = source?.sessionId ? String(source.sessionId).slice(0, 8) : "";
       return h(
@@ -4117,21 +4121,32 @@ window.__ModuleLoader__.load({
           "span",
           {
             style: {
-              width: "34px",
-              height: "34px",
-              flex: "0 0 34px",
-              borderRadius: "8px",
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              background: T.accent,
-              color: T.accentText,
-              fontSize: "11px",
-              fontWeight: 600,
+              position: "relative",
+              width: "38px",
+              height: "44px",
+              flex: "0 0 38px",
+              borderRadius: "6px",
+              border: `1px solid ${T.borderSoft}`,
+              background: T.card,
+              display: "flex",
+              flexDirection: "column",
+              gap: "3px",
+              padding: "7px 6px",
+              overflow: "hidden",
             },
             "data-projects-artifact-cover": "",
+            title: kindLabel,
           },
-          kindLabel.slice(0, 4),
+          // 迷你文档预览：三行灰线（Claude 的产物卡是"文档缩略图"而不是色块）
+          h("span", {
+            style: { height: "2px", borderRadius: "1px", background: T.border, width: "100%" },
+          }),
+          h("span", {
+            style: { height: "2px", borderRadius: "1px", background: T.borderSoft, width: "70%" },
+          }),
+          h("span", {
+            style: { height: "2px", borderRadius: "1px", background: T.borderSoft, width: "85%" },
+          }),
         ),
         h(
           "div",
@@ -4139,10 +4154,56 @@ window.__ModuleLoader__.load({
           h(
             "span",
             {
-              style: { ...styles.name, overflow: "hidden", textOverflow: "ellipsis" },
-              title: String(item?.title || id),
+              style: {
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                minWidth: 0,
+              },
             },
-            String(item?.title || id),
+            h(
+              "span",
+              {
+                style: {
+                  ...styles.name,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  minWidth: 0,
+                  flex: "1 1 auto",
+                },
+                title: String(item?.title || id),
+              },
+              String(item?.title || id),
+            ),
+            h(
+              "span",
+              {
+                style: {
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  color: T.faint,
+                  fontSize: "11px",
+                  flex: "none",
+                },
+              },
+              h(
+                "button",
+                {
+                  type: "button",
+                  style: { ...styles.iconButton, padding: "0 2px", color: T.faint },
+                  "data-projects-artifact-pin": id,
+                  title: text(t, "library.artifactPinHint"),
+                  disabled: true,
+                },
+                uiIcon("pin", "📌", 12),
+              ),
+              h(
+                "span",
+                { "data-projects-artifact-menu": id, title: text(t, "library.artifactMenuHint") },
+                "⋯",
+              ),
+            ),
           ),
           h(
             "span",

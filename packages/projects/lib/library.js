@@ -23,7 +23,7 @@ function shortText(value, max) {
 /**
  * 把任意输入收敛成一条合法的产物引用；缺 id 就返回 null（不编造）。
  * @param {unknown} value
- * @returns {{ id: string, title: string, kind: string, version: number, bytes: number, totalBytes: number, updatedAt: number|null, sessionId: string, threadId: string, source: { sessionId: string, toolCallId: string, via: string }|null } | null}
+ * @returns {{ id: string, title: string, kind: string, version: number, bytes: number, totalBytes: number, updatedAt: number|null, at: string, sessionId: string, threadId: string, source: { sessionId: string, toolCallId: string, via: string }|null } | null}
  */
 export function normalizeArtifactRef(value) {
   const source = value && typeof value === "object" ? /** @type {any} */ (value) : {};
@@ -52,6 +52,8 @@ export function normalizeArtifactRef(value) {
         ? Math.trunc(Number(source.totalBytes))
         : 0,
     updatedAt: Number.isFinite(updatedAt) && updatedAt > 0 ? Math.trunc(updatedAt) : null,
+    // 我们自己在记录时写下产出时间（ISO）；catalog 行没有这个字段，UI 的"时间未知"靠它补
+    at: typeof source.at === "string" ? source.at : "",
     sessionId: shortText(source.sessionId, 120),
     threadId: shortText(source.threadId, 120),
     source:

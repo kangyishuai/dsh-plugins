@@ -515,6 +515,8 @@
     "detail.settingsPane.debug": "Debug access",
     "detail.settingsEnvHint": "Environment settings (project folder / repo grants / local folder access / cleanup) are in this section.",
     "detail.settingsDebugHint": "Danger switches / thread permissions / audit are in this section; full settings → Projects → Debug has more.",
-    "detail.settingsOpenFull": "Open full settings"
+    "detail.settingsOpenFull": "Open full settings",
+    "library.artifactPinHint": "Pin (not yet available)",
+    "library.artifactMenuHint": "More (not yet available)"
   }
 }

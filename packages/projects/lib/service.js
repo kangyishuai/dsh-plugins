@@ -539,6 +539,8 @@ export class ProjectsService extends TypertRemoteService {
             const ref = artifactRefFromToolResult(extractText(event?.data?.message), {
               sessionId,
               toolCallId: callId,
+              // 记录"什么时候产出的"：catalog 行没有这个时间，UI 的"时间未知"就是漏了它
+              at: new Date().toISOString(),
             });
             if (ref) this.recordArtifact(threadProjectForEvent.id, ref);
           }
@@ -4286,6 +4288,13 @@ export class ProjectsService extends TypertRemoteService {
     }
     // 产物面合并：服务在线时以服务行为准，再用自存映射补齐旧产物；离线时只给映射（UI 降级只列文件面）。
     if (artifacts.available) {
+      // artifacts 服务返回的行没有我们记的 `at`；用自存引用把时间补回去（否则 UI 只能显示"时间未知"）
+      const refById = new Map(refs.map((/** @type {any} */ ref) => [ref.id, ref]));
+      artifacts.rows = artifacts.rows.map((/** @type {any} */ row) => {
+        const ref = refById.get(row.id);
+        if (!ref) return row;
+        return { ...row, at: row.at ?? ref.at ?? null, updatedAt: row.updatedAt ?? ref.at ?? null };
+      });
       const seen = new Set(artifacts.rows.map((/** @type {any} */ row) => row.id));
       for (const ref of refs) {
         if (!seen.has(ref.id)) artifacts.rows.push(ref);
