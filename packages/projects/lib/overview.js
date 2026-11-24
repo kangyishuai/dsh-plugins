@@ -139,12 +139,14 @@ export function mergeRecord(view, record) {
   const awaitingUser = recordState === "waiting-user" || recordState === "waiting";
   // 六态持久化（B1 审查 P0-2）：冷启动时内存视图是空的，`failed` / `working` 只有记录里那份事实。
   // 以前这里只映射 resolved/archived，于是重启后 failed/working 一律落回 idle——写进去了却读不出来。
+  // 观里已经有本轮的 turn 事实（turn >= 1）时，**事件归约优先**：否则记录里残留的
+  // working/failed 会把视图按在地上——turn/end 之后永远回不到 idle（真机实测：线程卡「在跑」）。
+  // 记录只在「冷启动、内存视图还没归约过任何 turn」时作为持久事实兜底（重启后仍读得到 working/failed）。
+  const hasTurnFact = Number(base?.turn ?? 0) > 0;
   return {
     ...base,
-    // `working` 是**持久化事实**：宿主 `state().running` 在 settleState 里优先级更高，
-    // 所以真在跑/真停了都以宿主为准，这里只是让「重启后仍读得到 working」成立。
-    state: recordState === "working" ? "working" : base.state,
-    lastTurnFailed: recordState === "failed" ? true : base.lastTurnFailed,
+    state: !hasTurnFact && recordState === "working" ? "working" : base.state,
+    lastTurnFailed: !hasTurnFact && recordState === "failed" ? true : base.lastTurnFailed,
     awaitingUser: awaitingUser ? true : base.awaitingUser,
     resolved: resolvedAt || recordState === "resolved",
     archived: recordState === "archived",
@@ -157,6 +159,23 @@ export function mergeRecord(view, record) {
  */
 export function deriveThreadState(view, record) {
   return deriveState(mergeRecord(view, record));
+}
+
+/**
+ * 宿主 `state().running` 是「有 turn 在跑」的权威源，但它可能**卡在 true**：
+ * 实测 `sessionController.create()` + `prompt()` 的会话在 `turn/end` 之后仍返回 running=true
+ * （session.lock 一直持有），线程就会永远显示「在跑」。所以只有视图里确实有**未结束的 turn**
+ * （或还没有任何 turn 事实、看不出矛盾）时才采信它。
+ * @param {ThreadView|undefined} view
+ * @param {boolean|undefined} liveRunning
+ * @returns {boolean}
+ */
+export function resolveLiveRunning(view, liveRunning) {
+  if (liveRunning !== true) return false;
+  if (view === undefined || view === null) return true;
+  const turn = Number(view.turn ?? 0);
+  if (!Number.isFinite(turn) || turn <= 0) return true; // 还没有 turn 事实：先信宿主
+  return view.state === "working"; // 有 turn 事实：只有「未结束」才算在跑
 }
 
 /**

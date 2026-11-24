@@ -51,13 +51,18 @@ function fakeDeps() {
 }
 
 describe("工具定义形状", () => {
-  it("每个工具都有 name/description/inputSchema/output{schema,render}", () => {
+  it("每个工具都有 name/description/parameters/output{schema,render}（宿主字段名是 parameters）", () => {
     const tools = buildCoordinatorTools(fakeDeps());
     assert.equal(tools.length, 6);
     for (const tool of tools) {
       assert.match(tool.name, /^project_/u);
       assert.ok(tool.description.length > 20, `${tool.name} 描述太短`);
-      assert.equal(tool.inputSchema.type, "object");
+      assert.equal(tool.parameters.type, "object");
+      assert.equal(
+        tool.inputSchema,
+        undefined,
+        "宿主只认 parameters；写成 inputSchema 会让工具参数在模型侧变成 undefined（实测报 parameters must be lossless JSON）",
+      );
       assert.ok(tool.output.schema, `${tool.name} 缺 output.schema`);
       assert.equal(typeof tool.output.render, "function", `${tool.name} 缺 render`);
       assert.equal(typeof tool.execute, "function");

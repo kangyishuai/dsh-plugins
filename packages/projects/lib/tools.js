@@ -65,7 +65,7 @@ export function buildCoordinatorTools(deps) {
       name: "project_thread_start",
       description:
         "Start a new thread in this project for a task. Use when the task deserves its own session (multi-step, will touch files, or may take long).",
-      inputSchema: {
+      parameters: {
         type: "object",
         properties: { task: { type: "string", description: "A self-contained task description." } },
         required: ["task"],
@@ -96,7 +96,7 @@ export function buildCoordinatorTools(deps) {
       name: "project_thread_list",
       description:
         "List the project's threads with their state (waiting-user, failed, working, done, idle).",
-      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      parameters: { type: "object", properties: {}, additionalProperties: false },
       output: {
         schema: {
           type: "object",
@@ -129,7 +129,7 @@ export function buildCoordinatorTools(deps) {
     {
       name: "project_thread_message",
       description: "Send a follow-up instruction to an existing thread.",
-      inputSchema: {
+      parameters: {
         type: "object",
         properties: {
           sessionId: { type: "string" },
@@ -157,7 +157,7 @@ export function buildCoordinatorTools(deps) {
       name: "project_memory_read",
       description:
         "Read this project's standing rules and memory index. Read before you write so you do not duplicate what is already known.",
-      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      parameters: { type: "object", properties: {}, additionalProperties: false },
       output: {
         schema: {
           type: "object",
@@ -189,7 +189,7 @@ export function buildCoordinatorTools(deps) {
       name: "project_memory_write",
       description:
         "Remember a durable fact about this project (a convention, a gotcha, a decision). Keep it short and self-contained; duplicates are ignored.",
-      inputSchema: {
+      parameters: {
         type: "object",
         properties: { text: { type: "string", description: "One short paragraph to remember." } },
         required: ["text"],
@@ -226,7 +226,7 @@ export function buildCoordinatorTools(deps) {
       name: "project_request_action",
       description:
         "Ask for a dangerous or irreversible action. If the project pre-approves this action (policy-grant), it is executed immediately through the same gates; otherwise it is queued for a human to approve and execute.",
-      inputSchema: {
+      parameters: {
         type: "object",
         properties: {
           action: { type: "string", enum: [...REQUESTABLE_ACTIONS] },

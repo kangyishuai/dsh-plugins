@@ -62,6 +62,7 @@ import {
   mergeRecord,
   pillCounts,
   reduce,
+  resolveLiveRunning,
   settleState,
   sortRows,
   todoSummary,
@@ -1287,7 +1288,9 @@ export class ProjectsService extends TypertRemoteService {
         const live = facts.states.get(thread.sessionId);
         const pendingInput = Array.isArray(live?.pendingInput) ? live.pendingInput : [];
         const view = mergeRecord(this.views.get(thread.sessionId), thread);
-        const running = live?.running === true || (live === undefined && view.state === "working");
+        const running =
+          resolveLiveRunning(view, live?.running) ||
+          (live === undefined && view.state === "working");
         const hostArchived = archivedIds.has(thread.sessionId);
         const state = hostArchived
           ? "archived"
@@ -3056,7 +3059,8 @@ export class ProjectsService extends TypertRemoteService {
     const summary = facts.summaries.get(sessionId);
     const view = mergeRecord(this.views.get(sessionId), thread);
     const pendingInput = Array.isArray(live?.pendingInput) ? live.pendingInput.map(String) : [];
-    const running = live?.running === true || (live === undefined && view.state === "working");
+    const running =
+      resolveLiveRunning(view, live?.running) || (live === undefined && view.state === "working");
     const hostArchived = archivedIds.has(sessionId);
     // 宿主侧 unarchive 之后记录里可能还留着 archived：以宿主为准（archive 可逆）
     const record =

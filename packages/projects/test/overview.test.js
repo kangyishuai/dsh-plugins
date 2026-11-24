@@ -19,6 +19,7 @@ import {
   pillCounts,
   reduce,
   replay,
+  resolveLiveRunning,
   STATE_GROUPS,
   STATE_PILLS,
   STATE_RANK,
@@ -547,5 +548,60 @@ describe("B1 审查 P1-4：firstActivityAt 用最早时间，估得出非 null �
     });
     // 3 步用了 6 分钟 → 每步 3 分钟；剩 3 步 → 9 分钟
     assert.equal(estimate, 9 * 60_000, "有 2+ 样本 + 剩余步数就必须给得出估计");
+  });
+});
+
+describe("六态：记录 vs 视图优先级（真机卡「在跑」回归）", () => {
+  it("turn/end 之后记录里的 working 不能再压住视图", () => {
+    let view = initialView();
+    view = reduce(view, { type: "turn/start", at: 1, data: { turn: 1 } });
+    view = reduce(view, {
+      type: "assistant/message",
+      at: 2,
+      data: { message: { content: [{ type: "text", text: "收到" }] } },
+    });
+    view = reduce(view, { type: "turn/end", at: 3, data: { reason: { kind: "completed" } } });
+    assert.equal(view.turn, 1);
+    assert.equal(deriveThreadState(view, { state: "working" }), "idle");
+    assert.equal(settleState({ view, record: { state: "working" } }), "idle");
+  });
+
+  it("冷启动（视图为空）仍从记录读回 working / failed", () => {
+    assert.equal(deriveThreadState(initialView(), { state: "working" }), "working");
+    assert.equal(deriveThreadState(initialView(), { state: "failed" }), "failed");
+  });
+
+  it("成功一轮之后记录里的 failed 也不能继续压住视图", () => {
+    let view = initialView();
+    view = reduce(view, { type: "turn/start", at: 1, data: { turn: 1 } });
+    view = reduce(view, { type: "turn/end", at: 2, data: { reason: { kind: "completed" } } });
+    assert.equal(deriveThreadState(view, { state: "failed" }), "idle");
+  });
+});
+
+describe("宿主 running 卡住的兜底（真机：session 锁一直持有 → running 恒 true）", () => {
+  it("视图里本轮已结束（done）时不再采信 running=true", () => {
+    let view = initialView();
+    view = reduce(view, { type: "turn/start", at: 1, data: { turn: 1 } });
+    view = reduce(view, { type: "turn/end", at: 2, data: { reason: { kind: "completed" } } });
+    assert.equal(view.state, "done");
+    assert.equal(resolveLiveRunning(view, true), false);
+    assert.equal(
+      settleState({ view, record: { state: "working" }, running: resolveLiveRunning(view, true) }),
+      "idle",
+    );
+  });
+
+  it("视图里有未结束的 turn（working）时采信 running=true", () => {
+    let view = initialView();
+    view = reduce(view, { type: "turn/start", at: 1, data: { turn: 1 } });
+    assert.equal(view.state, "working");
+    assert.equal(resolveLiveRunning(view, true), true);
+  });
+
+  it("还没有任何 turn 事实时先信宿主；running=false 一律 false", () => {
+    assert.equal(resolveLiveRunning(initialView(), true), true);
+    assert.equal(resolveLiveRunning(initialView(), false), false);
+    assert.equal(resolveLiveRunning(undefined, true), true);
   });
 });
