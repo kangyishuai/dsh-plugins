@@ -173,4 +173,26 @@ describe("F33 自存映射：写→落盘→冷启动回读", () => {
     assert.equal(back[0].version, 2);
     assert.throws(() => store.recordArtifact("nope", { id: "art-1" }), /unknown project/u);
   });
+
+  it("产出时间 at 落盘且冷启动可读（产物卡「时间未知」的根因）", () => {
+    const store = new ProjectStore({ root });
+    store.load();
+    const project = store.createProject("at 落盘");
+    const at = "2026-11-24T12:34:56.000Z";
+    store.recordArtifact(project.id, {
+      id: "art-at",
+      title: "带时间的产物",
+      kind: "html",
+      version: 1,
+      bytes: 10,
+      at,
+      source: { sessionId: "session-at", toolCallId: "call-at" },
+    });
+    store.save();
+    const reloaded = new ProjectStore({ root });
+    reloaded.load();
+    const back = reloaded.listArtifactRefs(project.id);
+    assert.equal(back.length, 1);
+    assert.equal(back[0].at, at);
+  });
 });
