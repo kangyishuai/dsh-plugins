@@ -5823,6 +5823,21 @@ window.__ModuleLoader__.load({
       );
       /** 自定义视图：保存的是"当前筛选条件"，不是结果快照。 */
       const views = Array.isArray(data.progress?.views) ? data.progress.views : [];
+      /**
+       * 视图 RPC 调用：宿主的 `addView` 可能是位置参数（新版）或单对象参数（旧版）。
+       * 新版按 `{projectId,name,...}` 传；旧版需要 `{request:{...}}`。网关校验失败时自动重试一次，
+       * 这样"装完插件还没重启宿主"的场景也能用（重试只发生在明确的字段不匹配错误上）。
+       */
+      const callViewRpc = (/** @type {string} */ method, /** @type {any} */ args) => {
+        return call(api.ctx, method, args).then(
+          (result) => result,
+          (error) => {
+            const message = String(error?.message ?? error);
+            if (!/args fields do not match|unexpected "/u.test(message)) throw error;
+            return call(api.ctx, method, { request: args });
+          },
+        );
+      };
       /** 斜杠命令（Claude 的 "Type / for commands"）：选中即跳转，不创建线程。 */
       const slashCommands = [
         {
@@ -5870,7 +5885,7 @@ window.__ModuleLoader__.load({
       const saveView = () => {
         const name = viewName.trim();
         if (name === "") return;
-        call(api.ctx, "addView", {
+        callViewRpc("addView", {
           projectId: project.id,
           name,
           filter,
@@ -5892,7 +5907,7 @@ window.__ModuleLoader__.load({
         );
       };
       const deleteView = (/** @type {string} */ viewId) => {
-        call(api.ctx, "deleteView", { projectId: project.id, viewId }).then(
+        callViewRpc("deleteView", { projectId: project.id, viewId }).then(
           () => load(),
           (/** @type {any} */ error) =>
             setThreadAction({
