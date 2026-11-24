@@ -731,11 +731,12 @@ try {
   );
   add("详情页没有渲染崩溃", detailCrash === "", detailCrash);
   add(
-    "项目详情可打开且恰好三个页签（线程/记忆/Routines；§7.3 上限 3）",
+    "项目详情可打开且恰四个页签（线程/Library/Routines/视图；D2）",
     detailState.present &&
-      detailState.tabs.length === 3 &&
-      ["threads", "memory", "routines"].every((id) => detailState.tabs.includes(id)) &&
-      !detailState.tabs.includes("library") &&
+      detailState.tabs.length === 4 &&
+      ["threads", "library", "routines", "views"].every((id) =>
+        detailState.tabs.includes(id),
+      ) &&
       !detailState.tabs.includes("audit") &&
       detailState.threadsTab,
     JSON.stringify({ detail, ...detailState }),
@@ -758,10 +759,10 @@ try {
     };
   });
   add(
-    "Library/审计已外迁：详情页无这两个页签，右栏有 Library 入口且无审计残留锚点",
-    movedOut.tabs.length === 3 &&
+    "Library 成为页签、审计仍外迁：右栏 Library 入口可达且无审计残留锚点",
+    movedOut.tabs.length === 4 &&
       movedOut.auditTab === false &&
-      movedOut.libraryTab === false &&
+      movedOut.libraryTab === true &&
       movedOut.auditInDetail === false &&
       movedOut.libraryRail === true &&
       movedOut.railLibraryRow === true,
@@ -1265,7 +1266,7 @@ try {
     JSON.stringify(pollBefore),
   );
 
-  // 自定义视图（+ 新增视图）：保存 → chip 出现 → 删除生效 → 再建一个留给 Node 侧查落盘
+  // 自定义视图（D1：Views 页签里管理）：保存 → 列表出现 → 删除生效 → 再建一个留给 Node 侧查落盘
   const viewFlow = await page.evaluate(async () => {
     const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const setValue = (input, value) => {
@@ -1273,50 +1274,75 @@ try {
       setter.call(input, value);
       input.dispatchEvent(new Event("input", { bubbles: true }));
     };
-    const openForm = async () => {
-      document.querySelector("[data-panel-add-view]")?.click();
-      await wait(300);
-      return document.querySelector("[data-panel-view-name]");
-    };
+    // 进入 Views 页签
+    document.querySelector('[data-projects-tab="views"]')?.click();
+    await wait(600);
+    const paneReady = Boolean(document.querySelector("[data-projects-views-pane]"));
     const save = async (name) => {
-      const input = await openForm();
+      const input = document.querySelector("[data-projects-view-add-name]");
       if (!input) return false;
       setValue(input, name);
       await wait(200);
-      document.querySelector("[data-panel-view-save]")?.click();
+      document.querySelector("[data-projects-view-add-save]")?.click();
       for (let index = 0; index < 20; index += 1) {
-        const chips = [...document.querySelectorAll("[data-panel-view]")];
-        if (chips.some((node) => (node.textContent || "").includes(name))) return true;
+        const rows = [...document.querySelectorAll("[data-projects-saved-view]")];
+        if (rows.some((node) => (node.textContent || "").includes(name))) return true;
         await wait(200);
       }
       return false;
     };
     const saved = await save("冒烟视图A");
-    const chipsAfterSave = [...document.querySelectorAll("[data-panel-view]")].map(
+    const savedNames = [...document.querySelectorAll("[data-projects-saved-view]")].map(
       (node) => node.textContent || "",
     );
-    document.querySelector("[data-panel-view-delete]")?.click();
+    document.querySelector("[data-projects-saved-view-delete]")?.click();
     for (let index = 0; index < 20; index += 1) {
-      if (document.querySelectorAll("[data-panel-view]").length === 0) break;
+      if (document.querySelectorAll("[data-projects-saved-view]").length === 0) break;
       await wait(200);
     }
-    const afterDelete = document.querySelectorAll("[data-panel-view]").length;
+    const afterDelete = document.querySelectorAll("[data-projects-saved-view]").length;
     const savedAgain = await save("冒烟视图B");
+    const toggles = [...document.querySelectorAll("[data-projects-view-toggle]")].map((node) =>
+      node.getAttribute("data-projects-view-toggle"),
+    );
+    // 关掉 Routines 视图再确认页签消失，然后恢复
+    const routinesToggle = document.querySelector('[data-projects-view-toggle="routines"]');
+    if (routinesToggle) {
+      routinesToggle.click();
+      await wait(400);
+    }
+    const tabsAfterHide = [...document.querySelectorAll("[data-projects-tab]")].map((node) =>
+      node.getAttribute("data-projects-tab"),
+    );
+    const routinesToggle2 = document.querySelector('[data-projects-view-toggle="routines"]');
+    if (routinesToggle2) {
+      routinesToggle2.click();
+      await wait(400);
+    }
+    document.querySelector('[data-projects-tab="threads"]')?.click();
+    await wait(400);
     return {
+      paneReady,
       saved,
       savedAgain,
-      chipsAfterSave,
+      savedNames,
       afterDelete,
-      kept: [...document.querySelectorAll("[data-panel-view]")].map((node) => node.textContent || ""),
+      kept: [...document.querySelectorAll("[data-projects-saved-view]")].map(
+        (node) => node.textContent || "",
+      ),
+      toggles,
+      tabsAfterHide,
     };
   });
   add(
-    "自定义视图：保存出现 chip、删除生效、可再保存",
-    viewFlow?.saved === true &&
+    "D1 Views 页签：勾选可见性（关掉 Routines 页签消失）+ 保存/删除筛选视图",
+    viewFlow?.paneReady === true &&
+      viewFlow?.saved === true &&
       viewFlow?.savedAgain === true &&
-      (viewFlow?.chipsAfterSave || []).some((text) => text.includes("冒烟视图A")) &&
+      (viewFlow?.savedNames || []).some((text) => text.includes("冒烟视图A")) &&
       viewFlow?.afterDelete === 0 &&
-      (viewFlow?.kept || []).some((text) => text.includes("冒烟视图B")),
+      (viewFlow?.toggles || []).join(",") === "threads,library,routines" &&
+      viewFlow?.tabsAfterHide?.includes("routines") === false,
     JSON.stringify(viewFlow),
   );
 
@@ -2117,11 +2143,14 @@ try {
     trashText.slice(0, 80),
   );
 
-  const memoryTab = await page.evaluate(() => {
-    const tab = document.querySelector('[data-projects-tab="memory"]');
-    if (!tab) return "no-tab";
-    tab.click();
-    return "clicked";
+  const memoryTab = await page.evaluate(async () => {
+    // 记忆已从页签迁到「项目设置 › 记忆」：开抽屉并切到记忆分区
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    document.querySelector("[data-panel-settings-open]")?.click();
+    await wait(600);
+    document.querySelector('[data-panel-settings-pane="memory"]')?.click();
+    await wait(600);
+    return document.querySelector("[data-projects-memory-pane]") ? "clicked" : "no-pane";
   });
   const memorySeen = await waitUntil(
     () =>
@@ -2136,7 +2165,10 @@ try {
   add("记忆页签渲染规则与索引", memorySeen === true, String(memoryTab));
 
   // —— B3 第二批 UI：授权卡 / 线程默认模型 / 从会话开线程 / 线程动作 / @ 源 ——
-  await page.evaluate(() => document.querySelector('[data-projects-tab="threads"]')?.click());
+  await page.evaluate(() => {
+    document.querySelector("[data-panel-settings-close]")?.click();
+    document.querySelector('[data-projects-tab="threads"]')?.click();
+  });
   await page.waitForTimeout(700);
   const b3ui = await page.evaluate(async () => {
     const q = (sel) => document.querySelector(sel);
@@ -2777,8 +2809,10 @@ try {
   const b3frag = await page.evaluate(async () => {
     const q = (sel) => document.querySelector(sel);
     const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    q('[data-projects-tab="memory"]')?.click();
-    await wait(1000);
+    q("[data-panel-settings-open]")?.click();
+    await wait(600);
+    q('[data-panel-settings-pane="memory"]')?.click();
+    await wait(800);
     return {
       add: Boolean(q("[data-projects-frag-add]")),
       title: Boolean(q("[data-projects-frag-title]")),
