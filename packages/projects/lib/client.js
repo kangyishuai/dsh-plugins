@@ -5859,6 +5859,9 @@ window.__ModuleLoader__.load({
                 command.label.toLowerCase().indexOf(slashQuery) >= 0,
           )
         : [];
+      const slashIndexState = useState(0);
+      const slashIndex = slashIndexState[0];
+      const setSlashIndex = slashIndexState[1];
       const runSlashCommand = (/** @type {any} */ command) => {
         if (!command) return;
         command.run();
@@ -8189,12 +8192,18 @@ window.__ModuleLoader__.load({
                         {
                           type: "button",
                           key: command.key,
+                          "data-panel-slash": command.key,
+                          "data-panel-slash-active":
+                            slashMatches[slashIndex]?.key === command.key ? "true" : "false",
                           style: {
                             display: "flex",
                             alignItems: "center",
                             gap: "8px",
                             border: "none",
-                            background: "transparent",
+                            background:
+                              slashMatches[slashIndex]?.key === command.key
+                                ? T.hover
+                                : "transparent",
                             color: T.text,
                             fontSize: "12.5px",
                             textAlign: "left",
@@ -8202,7 +8211,6 @@ window.__ModuleLoader__.load({
                             borderRadius: "6px",
                             cursor: "pointer",
                           },
-                          "data-panel-slash": command.key,
                           onClick: () => runSlashCommand(command),
                         },
                         h("span", { style: { color: T.faint, width: "44px" } }, `/${command.key}`),
@@ -8225,14 +8233,28 @@ window.__ModuleLoader__.load({
                 "data-projects-thread-input": "",
                 onChange: (/** @type {any} */ event) => setDraft(event.target.value),
                 onKeyDown: (/** @type {any} */ event) => {
-                  if (event.key === "Escape" && slashOpen) {
-                    setDraft("");
-                    return;
+                  if (slashOpen) {
+                    if (event.key === "Escape") {
+                      setDraft("");
+                      return;
+                    }
+                    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                      event.preventDefault();
+                      const total = slashMatches.length;
+                      if (total > 0) {
+                        const delta = event.key === "ArrowDown" ? 1 : -1;
+                        setSlashIndex(
+                          (/** @type {number} */ prev) => (prev + delta + total) % total,
+                        );
+                      }
+                      return;
+                    }
+                    if (event.key === "Enter") {
+                      runSlashCommand(slashMatches[slashIndex] ?? slashMatches[0]);
+                      return;
+                    }
                   }
-                  if (event.key === "Enter") {
-                    if (slashOpen) runSlashCommand(slashMatches[0]);
-                    else createThread();
-                  }
+                  if (event.key === "Enter") createThread();
                 },
                 disabled: busy,
               }),
