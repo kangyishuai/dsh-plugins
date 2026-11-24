@@ -1287,6 +1287,15 @@ window.__ModuleLoader__.load({
         display: "block",
         minWidth: 0,
       },
+      refRow: {
+        display: "flex",
+        alignItems: "center",
+        gap: "6px",
+        padding: "2px 4px",
+        borderRadius: "6px",
+        minWidth: 0,
+        cursor: "pointer",
+      },
       threadChip: {
         display: "inline-flex",
         alignItems: "center",
@@ -1320,11 +1329,12 @@ window.__ModuleLoader__.load({
       },
       startCard: {
         display: "flex",
-        alignItems: "center",
+        alignItems: "flex-start",
         gap: "8px",
-        padding: "6px 8px",
-        borderRadius: "8px",
-        background: T.hover,
+        padding: "10px 12px",
+        borderRadius: "12px",
+        border: `1px solid ${T.borderSoft}`,
+        background: "transparent",
         minWidth: 0,
       },
       inlineChip: {
@@ -5983,18 +5993,51 @@ window.__ModuleLoader__.load({
                   h(
                     "div",
                     { style: styles.startCard, "data-projects-thread-start-card": row.sessionId },
-                    h("span", {
-                      style: { ...styles.chipDot, background: stateColor },
-                      "data-projects-thread-start-dot": state,
-                    }),
+                    h(
+                      "span",
+                      {
+                        style: {
+                          display: "inline-flex",
+                          alignItems: "center",
+                          marginTop: "3px",
+                          color: stateColor,
+                        },
+                        "data-projects-thread-start-dot": state,
+                      },
+                      // Claude 的起始卡左侧是空心圆（进行中/已解决用弧与勾区分）
+                      state === "working"
+                        ? glyph("arc", 13)
+                        : state === "resolved"
+                          ? glyph("check", 13)
+                          : h("span", {
+                              style: {
+                                width: "9px",
+                                height: "9px",
+                                borderRadius: "999px",
+                                border: `1.5px solid ${stateColor}`,
+                              },
+                            }),
+                    ),
                     h(
                       "div",
-                      { style: { minWidth: 0 } },
+                      {
+                        style: {
+                          minWidth: 0,
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: "1px",
+                        },
+                      },
                       h("span", { style: styles.name }, title),
                       h(
                         "span",
                         { style: styles.meta },
-                        String(row.subtitle ?? "") || text(t, "detail.stepsNone"),
+                        (() => {
+                          const sub = cleanThreadTitle(row.subtitle);
+                          return sub !== "" && sub !== title
+                            ? sub
+                            : text(t, `detail.state.${state}`);
+                        })(),
                       ),
                     ),
                   ),
@@ -7312,13 +7355,10 @@ window.__ModuleLoader__.load({
               const messages = Array.isArray(coordinator?.messages)
                 ? coordinator.messages.slice(-4)
                 : [];
-              const chips = (Array.isArray(coordinator?.threads) ? coordinator.threads : [])
-                .filter(
-                  (/** @type {any} */ item) =>
-                    (typeof item?.branch === "string" && item.branch !== "") ||
-                    Number.isInteger(Number(item?.prNumber)),
-                )
-                .slice(0, 4);
+              const chips = (Array.isArray(coordinator?.threads) ? coordinator.threads : []).slice(
+                0,
+                6,
+              );
               const compaction = coordinator?.compaction || null;
               return h(
                 "div",
@@ -7437,35 +7477,52 @@ window.__ModuleLoader__.load({
                   ? h(
                       "div",
                       {
-                        style: { display: "flex", flexWrap: "wrap", gap: "6px" },
-                        "data-projects-coordinator-chips": "",
+                        style: {
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: "1px",
+                          marginTop: "2px",
+                          "data-projects-coordinator-refs": "",
+                        },
                       },
-                      chips.map((/** @type {any} */ chip) =>
-                        h(
-                          "span",
+                      chips.map((/** @type {any} */ chip) => {
+                        var chipState = String(chip.state ?? "idle");
+                        return h(
+                          "div",
                           {
                             key: String(chip.sessionId),
-                            style: styles.threadChip,
+                            style: styles.refRow,
+                            title: String(chip.title || chip.sessionId),
+                            "data-projects-coordinator-ref": String(chip.sessionId),
                             "data-projects-coordinator-chip": String(chip.sessionId),
                             "data-projects-chip-branch": String(chip.branch ?? ""),
-                            "data-projects-chip-pr": Number.isInteger(Number(chip.prNumber))
-                              ? String(Number(chip.prNumber))
-                              : "",
+                            "data-projects-chip-pr":
+                              Number(chip.prNumber) > 0 ? String(Number(chip.prNumber)) : "",
+                            onClick: () => setExpandedThread(String(chip.sessionId)),
                           },
-                          h("span", {
-                            style: {
-                              ...styles.chipDot,
-                              background:
-                                String(chip.state) === "waiting-user"
-                                  ? T.success
-                                  : String(chip.state) === "working"
-                                    ? T.accentText
-                                    : String(chip.state) === "failed"
-                                      ? T.danger
-                                      : T.faint,
+                          h("span", { style: { color: T.faint, fontSize: "12px" } }, "└"),
+                          h(
+                            "span",
+                            {
+                              style: {
+                                display: "inline-flex",
+                                color:
+                                  chipState === "resolved"
+                                    ? T.success
+                                    : chipState === "working"
+                                      ? T.accentText
+                                      : chipState === "failed"
+                                        ? T.danger
+                                        : T.dim,
+                              },
+                              "data-projects-chip-dot": chipState,
                             },
-                            "data-projects-chip-dot": String(chip.state ?? "idle"),
-                          }),
+                            chipState === "working"
+                              ? glyph("arc", 12)
+                              : chipState === "resolved"
+                                ? glyph("check", 12)
+                                : h("span", { style: styles.chipDot, background: T.faint }),
+                          ),
                           h(
                             "span",
                             {
@@ -7474,15 +7531,38 @@ window.__ModuleLoader__.load({
                                 overflow: "hidden",
                                 textOverflow: "ellipsis",
                                 whiteSpace: "nowrap",
+                                fontSize: "12.5px",
                               },
                             },
-                            String(chip.title || chip.sessionId).slice(0, 40),
+                            String(chip.title || chip.sessionId).slice(0, 48),
                           ),
-                          Number.isInteger(Number(chip.prNumber))
-                            ? h("span", { style: styles.chipMeta }, `#${Number(chip.prNumber)}`)
+                          Number(chip.prNumber) > 0
+                            ? h(
+                                "span",
+                                {
+                                  style: {
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: "3px",
+                                    color: T.success,
+                                    fontSize: "11.5px",
+                                  },
+                                },
+                                glyph("pr", 12),
+                                `#${Number(chip.prNumber)}`,
+                              )
                             : null,
-                        ),
-                      ),
+                          h("span", { style: { flex: "1 1 auto" } }),
+                          h(
+                            "span",
+                            {
+                              style: { color: T.faint, fontSize: "12px", paddingLeft: "4px" },
+                              "data-projects-coordinator-ref-menu": String(chip.sessionId),
+                            },
+                            "⋯",
+                          ),
+                        );
+                      }),
                     )
                   : null,
                 // F21：轮询状态 + 实验性实时监听开关（**默认关**，说明会建临时 webhook）
