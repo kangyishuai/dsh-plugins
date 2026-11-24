@@ -438,6 +438,17 @@ window.__ModuleLoader__.load({
       "detail.groupCollapseAll": "全部折叠",
       "detail.addView": "新增视图",
       "detail.today": "今天",
+      "detail.settingsPane.general": "通用",
+      "detail.settingsPane.memory": "记忆",
+      "detail.settingsPane.environment": "环境",
+      "detail.settingsPane.usage": "用量",
+      "detail.settingsPane.debug": "调试",
+      "detail.settingsEnvHint":
+        "环境设置（项目目录 / 仓库授权 / 本地文件夹授权 / 清理）在完整设置的「项目 → 环境」里。",
+      "detail.settingsDebugHint":
+        "调试设置（危险动作开关 / 线程权限 / 审计）在完整设置的「项目 → 调试」里。",
+      "detail.settingsOpenFull": "打开完整设置",
+
       "detail.prOpen": "已开",
       "detail.groupReorderHint": "拖拽排序（待接入）",
       "detail.composerAttach": "添加附件（待接入）",
@@ -867,6 +878,17 @@ window.__ModuleLoader__.load({
       "detail.groupCollapseAll": "Collapse all",
       "detail.addView": "Add view",
       "detail.today": "Today",
+      "detail.settingsPane.general": "General",
+      "detail.settingsPane.memory": "Memory",
+      "detail.settingsPane.environment": "Environment",
+      "detail.settingsPane.usage": "Usage",
+      "detail.settingsPane.debug": "Debug access",
+      "detail.settingsEnvHint":
+        "Environment settings (project folder / repo grants / local folder access / cleanup) live in full settings → Projects → Environment.",
+      "detail.settingsDebugHint":
+        "Debug settings (danger switches / thread permissions / audit) live in full settings → Projects → Debug.",
+      "detail.settingsOpenFull": "Open full settings",
+
       "detail.prOpen": "open",
       "detail.groupReorderHint": "Reorder by drag (not yet available)",
       "detail.composerAttach": "Attach (not yet available)",
@@ -2186,9 +2208,18 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         setOpen(!collapsible);
       }, [collapsible, setOpen]);
+      // 分区过滤：抽屉按 Claude 的 5 分区切换时，只渲染当前分区的 section
+      // 分区过滤：只隐藏不卸载——锚点/冒烟/回读仍要在 DOM 里（返回 null 会让 10 条冒烟断言找不到锚点）
+      const paneProps = /** @type {any} */ (props);
+      const paneHidden = Boolean(
+        paneProps.pane && paneProps.activePane && paneProps.pane !== paneProps.activePane,
+      );
       return h(
         "section",
-        { style: styles.railSection, ...(props.attrs || {}) },
+        {
+          style: paneHidden ? { ...styles.railSection, display: "none" } : styles.railSection,
+          ...(props.attrs || {}),
+        },
         h(
           "div",
           { style: styles.railHead },
@@ -5439,6 +5470,9 @@ window.__ModuleLoader__.load({
       const setGroupMenu = groupMenuState[1];
       // 设置抽屉：rail 里的 15 段设置不再常驻右栏（Claude 是独立 Project settings），
       // 由面板 header 的 ⚙ 打开；锚点保持原样，冒烟/桌面回归照旧能点。
+      const panelPaneState = useState("general");
+      const panelPane = panelPaneState[0];
+      const setPanelPane = panelPaneState[1];
       const panelSettingsState = useState(false);
       const panelSettingsOpen = panelSettingsState[0];
       const setPanelSettingsOpen = panelSettingsState[1];
@@ -8023,9 +8057,87 @@ window.__ModuleLoader__.load({
                 "✕",
               ),
             ),
+            // Claude 的 Project settings 有 5 个分区；这里先做骨架导航
+            h(
+              "div",
+              {
+                style: {
+                  display: "flex",
+                  gap: "4px",
+                  flexWrap: "wrap",
+                  paddingBottom: "10px",
+                  borderBottom: `1px solid ${T.borderSoft}`,
+                  marginBottom: "4px",
+                },
+                role: "tablist",
+                "data-panel-settings-nav": "",
+              },
+              ...["general", "memory", "environment", "usage", "debug"].map((id) =>
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    key: id,
+                    role: "tab",
+                    "aria-selected": panelPane === id ? "true" : "false",
+                    "data-panel-settings-pane": id,
+                    style: {
+                      background: "transparent",
+                      border: "none",
+                      borderBottom: `2px solid ${panelPane === id ? T.accentText : "transparent"}`,
+                      borderRadius: "6px 6px 0 0",
+                      padding: "5px 8px",
+                      fontSize: "12px",
+                      color: panelPane === id ? T.text : T.dim,
+                      fontWeight: panelPane === id ? 600 : 400,
+                      cursor: "pointer",
+                    },
+                    onClick: () => setPanelPane(id),
+                  },
+                  text(t, `detail.settingsPane.${id}`),
+                ),
+              ),
+            ),
+            // 环境/调试的分区内容还在宿主设置里（后续批次搬进来）
+            panelPane === "environment" || panelPane === "debug"
+              ? h(
+                  "div",
+                  {
+                    style: {
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "8px",
+                      padding: "10px 2px",
+                      color: T.dim,
+                      fontSize: "12.5px",
+                    },
+                    "data-panel-settings-host-hint": panelPane,
+                  },
+                  text(
+                    t,
+                    panelPane === "environment"
+                      ? "detail.settingsEnvHint"
+                      : "detail.settingsDebugHint",
+                  ),
+                  h(
+                    "button",
+                    {
+                      type: "button",
+                      style: { ...styles.secondaryButton, alignSelf: "flex-start" },
+                      "data-panel-settings-host-link": "",
+                      onClick: () => {
+                        if (typeof api.openSettings === "function") api.openSettings();
+                      },
+                    },
+                    text(t, "detail.settingsOpenFull"),
+                  ),
+                )
+              : null,
             h(RailSection, {
               t: t,
               id: "instructions",
+              pane: "general",
+              activePane: panelPane,
               title: text(t, "detail.section.instructions"),
               collapsible: narrow,
               summary: String(content.instructions ?? "") || text(t, "detail.instructionsEmpty"),
@@ -8062,6 +8174,8 @@ window.__ModuleLoader__.load({
             h(RailSection, {
               t: t,
               id: "memory",
+              pane: "memory",
+              activePane: panelPane,
               title: text(t, "detail.section.memory"),
               collapsible: narrow,
               summary: text(t, "detail.memoryCount", { count: memoryEntries }),
@@ -8096,6 +8210,8 @@ window.__ModuleLoader__.load({
             h(RailSection, {
               t: t,
               id: "library",
+              pane: "usage",
+              activePane: panelPane,
               title: text(t, "library.title"),
               collapsible: narrow,
               summary: libraryRailSummary,
@@ -8124,6 +8240,8 @@ window.__ModuleLoader__.load({
             h(RailSection, {
               t: t,
               id: "routines",
+              pane: "usage",
+              activePane: panelPane,
               title: "定时任务",
               collapsible: narrow,
               summary: data.routines?.summary || "打开查看",
@@ -8169,6 +8287,8 @@ window.__ModuleLoader__.load({
             h(RailSection, {
               t: t,
               id: "context",
+              pane: "general",
+              activePane: panelPane,
               title: text(t, "detail.section.context"),
               collapsible: narrow,
               summary: dirSummary,

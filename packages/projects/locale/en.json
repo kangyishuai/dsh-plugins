@@ -507,6 +507,14 @@
     "detail.composerModel": "Model: {model}",
     "detail.composerModelInherit": "Host default",
     "detail.prOpen": "open",
-    "detail.groupReorderHint": "Reorder by drag (not yet available)"
+    "detail.groupReorderHint": "Reorder by drag (not yet available)",
+    "detail.settingsPane.general": "General",
+    "detail.settingsPane.memory": "Memory",
+    "detail.settingsPane.environment": "Environment",
+    "detail.settingsPane.usage": "Usage",
+    "detail.settingsPane.debug": "Debug access",
+    "detail.settingsEnvHint": "Environment settings (project folder / repo grants / local folder access / cleanup) live in full settings → Projects → Environment.",
+    "detail.settingsDebugHint": "Debug settings (danger switches / thread permissions / audit) live in full settings → Projects → Debug.",
+    "detail.settingsOpenFull": "Open full settings"
   }
 }

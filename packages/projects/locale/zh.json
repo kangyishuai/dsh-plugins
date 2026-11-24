@@ -507,6 +507,14 @@
     "detail.composerModel": "模型：{model}",
     "detail.composerModelInherit": "继承宿主默认",
     "detail.prOpen": "已开",
-    "detail.groupReorderHint": "拖拽排序（待接入）"
+    "detail.groupReorderHint": "拖拽排序（待接入）",
+    "detail.settingsPane.general": "通用",
+    "detail.settingsPane.memory": "记忆",
+    "detail.settingsPane.environment": "环境",
+    "detail.settingsPane.usage": "用量",
+    "detail.settingsPane.debug": "调试",
+    "detail.settingsEnvHint": "环境设置（项目目录 / 仓库授权 / 本地文件夹授权 / 清理）在完整设置的「项目 → 环境」里。",
+    "detail.settingsDebugHint": "调试设置（危险动作开关 / 线程权限 / 审计）在完整设置的「项目 → 调试」里。",
+    "detail.settingsOpenFull": "打开完整设置"
   }
 }
