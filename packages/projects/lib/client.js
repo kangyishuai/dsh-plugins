@@ -1966,10 +1966,8 @@ window.__ModuleLoader__.load({
         border: "1px solid rgba(0,0,0,0.06)",
         background: "#ffffff",
         boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
-        position: "sticky",
-        bottom: "8px",
+        marginTop: "auto",
         zIndex: 3,
-        marginTop: "6px",
       },
       composerCard: {
         display: "flex",
@@ -1979,11 +1977,9 @@ window.__ModuleLoader__.load({
         borderRadius: "14px",
         background: T.panel,
         border: `1px solid ${T.border}`,
-        // 贴底：sticky（不玩高度，避免把整页顶下去）
-        position: "sticky",
-        bottom: "8px",
+        // 贴底：左列 flex 撑开 + auto 外边距（minHeight 在列上，不在 grid 上）
+        marginTop: "auto",
         zIndex: 3,
-        marginTop: "6px",
       },
     };
 
@@ -7482,7 +7478,13 @@ window.__ModuleLoader__.load({
           // —— 左列：项目对话（thread 操作条 / 协调者 / composer / 按规则派活 / 审批）——
           h(
             "div",
-            { style: styles.mainCol, "data-projects-detail-main": "" },
+            {
+              // 宽窗让 composer 贴左列底部（Claude 形状）；窄窗单列时不撑高，避免中间一大段空白
+              style: narrow
+                ? styles.mainCol
+                : { ...styles.mainCol, minHeight: "calc(100vh - 300px)" },
+              "data-projects-detail-main": "",
+            },
             threadAction.message !== ""
               ? h(
                   "div",
