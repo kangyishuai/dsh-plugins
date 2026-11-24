@@ -108,6 +108,22 @@ describe("F33 产物引用归一（不编造、不越界）", () => {
     assert.equal(ref.sessionId, "s-2");
     assert.equal(ref.source.toolCallId, "c-2");
   });
+
+  it("artifacts 封面地址透传到引用（卡片要用真实缩略图，不能只画灰线）", () => {
+    const ref = refFromArtifactRow({
+      id: "art-cover",
+      title: "封面",
+      kind: "html",
+      latest: 1,
+      coverUrl: "/artifacts/art-cover/cover.svg",
+    });
+    assert.equal(ref.coverUrl, "/artifacts/art-cover/cover.svg");
+  });
+
+  it("没有封面地址时留空串（不编造 URL）", () => {
+    const ref = refFromArtifactRow({ id: "art-nocover", title: "无封面", kind: "html" });
+    assert.equal(ref.coverUrl, "");
+  });
 });
 
 describe("F33 artifacts 降级判定（明示缺依赖，不显示「没有产物」）", () => {

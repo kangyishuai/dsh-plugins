@@ -23,7 +23,7 @@ function shortText(value, max) {
 /**
  * 把任意输入收敛成一条合法的产物引用；缺 id 就返回 null（不编造）。
  * @param {unknown} value
- * @returns {{ id: string, title: string, kind: string, version: number, bytes: number, totalBytes: number, updatedAt: number|null, at: string, sessionId: string, threadId: string, source: { sessionId: string, toolCallId: string, via: string }|null } | null}
+ * @returns {{ id: string, title: string, kind: string, version: number, bytes: number, totalBytes: number, updatedAt: number|null, at: string, coverUrl: string, sessionId: string, threadId: string, source: { sessionId: string, toolCallId: string, via: string }|null } | null}
  */
 export function normalizeArtifactRef(value) {
   const source = value && typeof value === "object" ? /** @type {any} */ (value) : {};
@@ -54,6 +54,8 @@ export function normalizeArtifactRef(value) {
     updatedAt: Number.isFinite(updatedAt) && updatedAt > 0 ? Math.trunc(updatedAt) : null,
     // 我们自己在记录时写下产出时间（ISO）；catalog 行没有这个字段，UI 的"时间未知"靠它补
     at: typeof source.at === "string" ? source.at : "",
+    // artifacts 服务给的封面地址（GET .../cover.svg）：卡片用它显示真实缩略图
+    coverUrl: shortText(source.coverUrl, 300),
     sessionId: shortText(source.sessionId, 120),
     threadId: shortText(source.threadId, 120),
     source:
@@ -122,6 +124,7 @@ export function refFromArtifactRow(row) {
     sessionId: source.sessionId,
     threadId: source.threadId,
     source: source.source,
+    coverUrl: source.coverUrl,
   });
 }
 

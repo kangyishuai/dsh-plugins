@@ -4199,6 +4199,12 @@ window.__ModuleLoader__.load({
       var version = Number(item?.version ?? 1);
       var when = formatWhen(t, item?.updatedAt ?? item?.at);
       var source = item?.source ?? null;
+      // 封面：优先用 artifacts 服务给的真实封面地址；旧宿主没透传时按路由约定兜底拼一个
+      // （GET /artifacts/<id>/cover.svg，重名/中文 id 都已 URL 编码）。
+      var coverUrl = String(item?.coverUrl ?? "");
+      if (coverUrl === "" && id !== "") {
+        coverUrl = `/artifacts/${encodeURIComponent(id)}/cover.svg`;
+      }
       var provenance = source?.sessionId ? String(source.sessionId).slice(0, 8) : "";
       return h(
         "div",
@@ -4240,16 +4246,56 @@ window.__ModuleLoader__.load({
             "data-projects-artifact-cover": "",
             title: kindLabel,
           },
-          // 迷你文档预览：三行灰线（Claude 的产物卡是"文档缩略图"而不是色块）
-          h("span", {
-            style: { height: "2px", borderRadius: "1px", background: T.border, width: "100%" },
-          }),
-          h("span", {
-            style: { height: "2px", borderRadius: "1px", background: T.borderSoft, width: "70%" },
-          }),
-          h("span", {
-            style: { height: "2px", borderRadius: "1px", background: T.borderSoft, width: "85%" },
-          }),
+          coverUrl !== ""
+            ? h("img", {
+                src: coverUrl,
+                alt: "",
+                style: {
+                  position: "absolute",
+                  inset: 0,
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                },
+                "data-projects-artifact-cover-img": id,
+              })
+            : // 没有封面时回退成迷你文档预览（三行灰线）
+              h(
+                "span",
+                {
+                  style: {
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "3px",
+                    position: "absolute",
+                    inset: "7px 6px",
+                  },
+                },
+                h("span", {
+                  style: {
+                    height: "2px",
+                    borderRadius: "1px",
+                    background: T.border,
+                    width: "100%",
+                  },
+                }),
+                h("span", {
+                  style: {
+                    height: "2px",
+                    borderRadius: "1px",
+                    background: T.borderSoft,
+                    width: "70%",
+                  },
+                }),
+                h("span", {
+                  style: {
+                    height: "2px",
+                    borderRadius: "1px",
+                    background: T.borderSoft,
+                    width: "85%",
+                  },
+                }),
+              ),
         ),
         h(
           "div",
