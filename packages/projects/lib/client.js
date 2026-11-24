@@ -6798,8 +6798,9 @@ window.__ModuleLoader__.load({
                   style: {
                     ...styles.iconButton,
                     flex: "none",
-                    opacity:
-                      threadHover === row.sessionId || threadMenu === row.sessionId ? 1 : 0.45,
+                    // Claude 的行内操作是 hover 才出现（常驻会显得脏）
+                    opacity: threadHover === row.sessionId || threadMenu === row.sessionId ? 1 : 0,
+                    transition: "opacity 120ms ease",
                   },
                   "data-projects-thread-menu": row.sessionId,
                   "aria-label": text(t, "detail.moreActions"),
