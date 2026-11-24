@@ -531,12 +531,11 @@ const main = async () => {
         }),
       );
       check(
-        "详情页有 6 个状态药丸 + 3 个页签（线程/记忆/Routines，§7.3 上限 3）",
+        "详情页有 6 个状态药丸 + 4 个页签（线程/Library/Routines/视图；§7.3 例外，对齐 Claude IA）",
         snap.pills === 6 &&
           Array.isArray(snap.tabs) &&
-          snap.tabs.length === 3 &&
-          ["threads", "memory", "routines"].every((id) => snap.tabs.includes(id)) &&
-          !snap.tabs.includes("library") &&
+          snap.tabs.length === 4 &&
+          ["threads", "library", "routines", "views"].every((id) => snap.tabs.includes(id)) &&
           !snap.tabs.includes("audit"),
         JSON.stringify({ pills: snap.pills, tabs: snap.tabs }),
       );
