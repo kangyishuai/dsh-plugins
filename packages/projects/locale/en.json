@@ -491,7 +491,7 @@
     "library.truncated": "truncated",
     "library.railOpen": "Open Library",
     "library.railBack": "Back to threads",
-    "library.railHint": "Library moved out of the tabs: open it from the rail, it renders in the main column, click the same rail row again to collapse (tabs cap at 3)",
+    "library.railHint": "Project files and artifacts in one place; search matches file names only.",
     "library.railSummary": "{files} files · {artifacts} artifacts",
     "library.railLoading": "Open to view",
     "b3.folderWorktreeHint": "merge runs in the project folder; push-branch runs in the thread worktree, which inherits the authorization of the project folder it came from.",

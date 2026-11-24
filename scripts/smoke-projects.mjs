@@ -998,7 +998,7 @@ try {
   add("副标题缺数据时留空（不编）", overview?.subtitle === false, String(overview?.subtitle));
   add(
     "Welcome 头 + 状态句 + 7 日迷你图",
-    (overview?.welcome || "").includes("Welcome back") &&
+    /(Welcome back|欢迎回来)/u.test(overview?.welcome || "") &&
       (overview?.status || "") !== "" &&
       overview?.spark === 7,
     JSON.stringify({ welcome: overview?.welcome, status: overview?.status, spark: overview?.spark }),
