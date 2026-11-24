@@ -500,6 +500,11 @@
     "detail.addViewHint": "自定义视图（待接入）",
     "detail.settingsOpen": "项目设置",
     "detail.settingsTitle": "项目设置",
-    "detail.settingsClose": "关闭设置"
+    "detail.settingsClose": "关闭设置",
+    "detail.today": "今天",
+    "detail.composerAttach": "添加附件（待接入）",
+    "detail.composerMic": "语音输入（待接入）",
+    "detail.composerModel": "模型：{model}",
+    "detail.composerModelInherit": "继承宿主默认"
   }
 }

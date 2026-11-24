@@ -500,6 +500,11 @@
     "detail.addViewHint": "Custom views (not yet available)",
     "detail.settingsOpen": "Project settings",
     "detail.settingsTitle": "Project settings",
-    "detail.settingsClose": "Close settings"
+    "detail.settingsClose": "Close settings",
+    "detail.today": "Today",
+    "detail.composerAttach": "Attach (not yet available)",
+    "detail.composerMic": "Voice input (not yet available)",
+    "detail.composerModel": "Model: {model}",
+    "detail.composerModelInherit": "Host default"
   }
 }

@@ -437,6 +437,11 @@ window.__ModuleLoader__.load({
       "detail.emptyOverview": "没有在等你的事。",
       "detail.groupCollapseAll": "全部折叠",
       "detail.addView": "新增视图",
+      "detail.today": "今天",
+      "detail.composerAttach": "添加附件（待接入）",
+      "detail.composerMic": "语音输入（待接入）",
+      "detail.composerModel": "模型：{model}",
+      "detail.composerModelInherit": "继承宿主默认",
       "detail.settingsOpen": "项目设置",
       "detail.settingsTitle": "项目设置",
       "detail.settingsClose": "关闭设置",
@@ -859,6 +864,11 @@ window.__ModuleLoader__.load({
       "detail.emptyOverview": "Nothing is waiting on you.",
       "detail.groupCollapseAll": "Collapse all",
       "detail.addView": "Add view",
+      "detail.today": "Today",
+      "detail.composerAttach": "Attach (not yet available)",
+      "detail.composerMic": "Voice input (not yet available)",
+      "detail.composerModel": "Model: {model}",
+      "detail.composerModelInherit": "Host default",
       "detail.settingsOpen": "Project settings",
       "detail.settingsTitle": "Project settings",
       "detail.settingsClose": "Close settings",
@@ -1193,37 +1203,55 @@ window.__ModuleLoader__.load({
 
     var styles = {
       // —— B2：协调者区 / thread chip / 展开面板 ——
+      // Claude 的左列是"对话"，不是卡片：协调者区不铺边框/底色
       coordinator: {
         display: "flex",
         flexDirection: "column",
-        gap: "6px",
-        border: `1px solid ${T.borderSoft}`,
-        borderRadius: "12px",
-        padding: "10px 12px",
-        background: T.panel ?? "transparent",
+        gap: "8px",
+        padding: "0 2px",
         minWidth: 0,
       },
+      // Claude 的协调者是"对话"：assistant 是正文（无气泡），user 才是右侧气泡
       coordinatorBubble: {
-        alignSelf: "flex-start",
-        maxWidth: "92%",
-        padding: "6px 10px",
-        borderRadius: "10px",
-        background: T.field ?? T.hover,
+        alignSelf: "stretch",
+        maxWidth: "100%",
+        padding: "2px 0",
+        background: "transparent",
         color: T.text,
-        fontSize: "12.5px",
+        fontSize: "13.5px",
+        lineHeight: 1.55,
         whiteSpace: "pre-wrap",
         minWidth: 0,
       },
       coordinatorBubbleUser: {
         alignSelf: "flex-end",
-        maxWidth: "92%",
-        padding: "6px 10px",
-        borderRadius: "10px",
-        background: T.hover,
-        color: T.dim,
-        fontSize: "12.5px",
+        maxWidth: "82%",
+        padding: "8px 12px",
+        borderRadius: "14px",
+        background: T.panel,
+        color: T.text,
+        fontSize: "13.5px",
+        lineHeight: 1.5,
         whiteSpace: "pre-wrap",
         minWidth: 0,
+      },
+      // 「Today」日期分隔：居中细字 + 两侧 1px 线（Claude 对话流的时间锚点）
+      dayDivider: {
+        display: "flex",
+        alignItems: "center",
+        gap: "10px",
+        margin: "6px 0 2px",
+        color: T.faint,
+        fontSize: "11.5px",
+      },
+      // 「✳ Claude is working」状态行
+      workingRow: {
+        display: "flex",
+        alignItems: "center",
+        gap: "6px",
+        color: T.dim,
+        fontSize: "12px",
+        padding: "4px 2px",
       },
       conclusion: {
         borderLeft: `2px solid ${T.accentText}`,
@@ -1587,7 +1615,12 @@ window.__ModuleLoader__.load({
         alignItems: "start",
       },
       detailGridNarrow: { display: "flex", flexDirection: "column", gap: "24px" },
-      mainCol: { minWidth: 0, display: "flex", flexDirection: "column", gap: "10px" },
+      mainCol: {
+        minWidth: 0,
+        display: "flex",
+        flexDirection: "column",
+        gap: "10px",
+      },
       // 右列：Threads 面板（Claude 结构）——与左列用 1px 分割线隔开，不铺卡片
       panelCol: {
         minWidth: 0,
@@ -1856,10 +1889,15 @@ window.__ModuleLoader__.load({
         display: "flex",
         flexDirection: "column",
         gap: "6px",
-        padding: "12px",
-        borderRadius: "10px",
-        background: T.card,
-        border: `1px solid ${T.borderSoft}`,
+        padding: "10px 12px",
+        borderRadius: "14px",
+        background: T.panel,
+        border: `1px solid ${T.border}`,
+        // 贴底：sticky（不玩高度，避免把整页顶下去）
+        position: "sticky",
+        bottom: "8px",
+        zIndex: 3,
+        marginTop: "6px",
       },
     };
 
@@ -1908,6 +1946,21 @@ window.__ModuleLoader__.load({
         { style: { fontSize: `${px}px`, lineHeight: 1 }, "aria-hidden": "true" },
         fallback,
       );
+    }
+
+    /**
+     * 行标题清洗：宿主的会话标题可能带 <system-reminder>…</system-reminder> 或其它标签，
+     * 直接展示会像"漏数据"。这里剥标签、折叠空白、超长截断（Claude 的行标题都是干净的）。
+     * @param {any} value
+     * @returns {string}
+     */
+    function cleanThreadTitle(value) {
+      var raw = String(value ?? "");
+      raw = raw.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/giu, " ");
+      raw = raw.replace(/<[^>\n]{1,80}>/gu, " ");
+      raw = raw.replace(/\s+/gu, " ").trim();
+      if (raw.length > 90) raw = `${raw.slice(0, 90)}…`;
+      return raw;
     }
 
     /**
@@ -5598,8 +5651,8 @@ window.__ModuleLoader__.load({
                   : T.faint;
         // 行标题用人话（Claude 是"任务/主题"当标题）：title → 副标题/任务 → 线程短 id；
         // 不再暴露 turn 号与 session id（真机走查里最"脏"的一处）。
-        const rawTitle = String(row.title ?? "").trim();
-        const taskHint = String(row.subtitle ?? "").trim();
+        const rawTitle = cleanThreadTitle(row.title);
+        const taskHint = cleanThreadTitle(row.subtitle);
         const title =
           rawTitle !== ""
             ? rawTitle
@@ -7023,11 +7076,13 @@ window.__ModuleLoader__.load({
             ? null
             : h("span", { style: { minWidth: 0 }, "data-projects-detail-head-rail": "" }),
         ),
-        h(
-          "span",
-          { style: { ...styles.meta, display: "block" }, "data-projects-detail-goal": "" },
-          project.goal || text(t, "panel.goalEmpty"),
-        ),
+        project.goal
+          ? h(
+              "span",
+              { style: { ...styles.meta, display: "block" }, "data-projects-detail-goal": "" },
+              project.goal,
+            )
+          : null,
         h(
           "div",
           {
@@ -7054,7 +7109,7 @@ window.__ModuleLoader__.load({
                   threadAction.message,
                 )
               : null,
-            !hasDir
+            !hasDir && (Array.isArray(data.threads) ? data.threads.length : 0) === 0
               ? h(
                   "div",
                   { style: styles.meta, "data-projects-no-dir-hint": "" },
@@ -7147,6 +7202,19 @@ window.__ModuleLoader__.load({
                             mode: String(compaction.mode ?? ""),
                           })
                         : text(t, "detail.coordinatorCompactionNo"),
+                    )
+                  : null,
+                messages.length > 0
+                  ? h(
+                      "div",
+                      { style: styles.dayDivider, "data-projects-day-divider": "" },
+                      h("span", {
+                        style: { flex: "1 1 auto", height: "1px", background: T.borderSoft },
+                      }),
+                      text(t, "detail.today"),
+                      h("span", {
+                        style: { flex: "1 1 auto", height: "1px", background: T.borderSoft },
+                      }),
                     )
                   : null,
                 messages.length === 0
@@ -7353,6 +7421,53 @@ window.__ModuleLoader__.load({
                     disabled: busy,
                   },
                   busy ? text(t, "detail.threadCreating") : text(t, "detail.threadCreate"),
+                ),
+              ),
+              // composer 控件行（Claude 输入框下方那一行）：+ / 🎤 / 模型 / effort。
+              // 现阶段是**读回显 + 占位**：模型与 effort 真源在「项目设置」，这里只显示继承值。
+              h(
+                "div",
+                {
+                  style: {
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "10px",
+                    paddingTop: "2px",
+                    color: T.faint,
+                    fontSize: "12px",
+                  },
+                  "data-composer-controls": "",
+                },
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    style: {
+                      width: "22px",
+                      height: "22px",
+                      borderRadius: "999px",
+                      border: `1px solid ${T.borderSoft}`,
+                      background: "transparent",
+                      color: T.dim,
+                      cursor: "default",
+                      lineHeight: 1,
+                    },
+                    "data-composer-attach": "",
+                    title: text(t, "detail.composerAttach"),
+                    disabled: true,
+                  },
+                  "+",
+                ),
+                h("span", { "data-composer-mic": "", title: text(t, "detail.composerMic") }, "🎤"),
+                h("span", { style: { flex: "1 1 auto" } }),
+                h(
+                  "span",
+                  { "data-composer-model": "" },
+                  text(t, "detail.composerModel", {
+                    model:
+                      String(data.content?.threadDefaults?.model ?? "") ||
+                      text(t, "detail.composerModelInherit"),
+                  }),
                 ),
               ),
             ),
