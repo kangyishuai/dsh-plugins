@@ -1623,18 +1623,17 @@ export class ProjectsService extends TypertRemoteService {
    * @param {number|null} days
    */
   /**
-   * 保存自定义视图（面板「+ 新增视图」）。
-   * @param {{ projectId: string, name: string, filter?: string, query?: string }} request
+   * 保存自定义视图（面板「+ 新增视图」）。参数是位置参数，客户端用同名键传（Typert 网关约定）。
+   * @param {string} projectId
+   * @param {string} name
+   * @param {string} [filter]
+   * @param {string} [query]
    */
-  async addView(request) {
+  async addView(projectId, name, filter, query) {
     const store = this.requireStore();
-    const project = store.getProject(String(request?.projectId ?? ""));
-    if (!project) throw new Error(`projects: unknown project ${request?.projectId}`);
-    const view = store.addView(project.id, {
-      name: request?.name,
-      filter: request?.filter,
-      query: request?.query,
-    });
+    const project = store.getProject(String(projectId ?? ""));
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const view = store.addView(project.id, { name, filter, query });
     store.save();
     store.appendAudit({ action: "view/added", projectId: project.id, viewId: view.id });
     return { view, views: store.getProject(project.id)?.views ?? [] };
@@ -1642,15 +1641,16 @@ export class ProjectsService extends TypertRemoteService {
 
   /**
    * 删除自定义视图。
-   * @param {{ projectId: string, viewId: string }} request
+   * @param {string} projectId
+   * @param {string} viewId
    */
-  async deleteView(request) {
+  async deleteView(projectId, viewId) {
     const store = this.requireStore();
-    const project = store.getProject(String(request?.projectId ?? ""));
-    if (!project) throw new Error(`projects: unknown project ${request?.projectId}`);
-    const views = store.deleteView(project.id, String(request?.viewId ?? ""));
+    const project = store.getProject(String(projectId ?? ""));
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const views = store.deleteView(project.id, String(viewId ?? ""));
     store.save();
-    store.appendAudit({ action: "view/deleted", projectId: project.id, viewId: request?.viewId });
+    store.appendAudit({ action: "view/deleted", projectId: project.id, viewId });
     return { views };
   }
 

@@ -1265,6 +1265,61 @@ try {
     JSON.stringify(pollBefore),
   );
 
+  // 自定义视图（+ 新增视图）：保存 → chip 出现 → 删除生效 → 再建一个留给 Node 侧查落盘
+  const viewFlow = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const setValue = (input, value) => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+      setter.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    const openForm = async () => {
+      document.querySelector("[data-panel-add-view]")?.click();
+      await wait(300);
+      return document.querySelector("[data-panel-view-name]");
+    };
+    const save = async (name) => {
+      const input = await openForm();
+      if (!input) return false;
+      setValue(input, name);
+      await wait(200);
+      document.querySelector("[data-panel-view-save]")?.click();
+      for (let index = 0; index < 20; index += 1) {
+        const chips = [...document.querySelectorAll("[data-panel-view]")];
+        if (chips.some((node) => (node.textContent || "").includes(name))) return true;
+        await wait(200);
+      }
+      return false;
+    };
+    const saved = await save("冒烟视图A");
+    const chipsAfterSave = [...document.querySelectorAll("[data-panel-view]")].map(
+      (node) => node.textContent || "",
+    );
+    document.querySelector("[data-panel-view-delete]")?.click();
+    for (let index = 0; index < 20; index += 1) {
+      if (document.querySelectorAll("[data-panel-view]").length === 0) break;
+      await wait(200);
+    }
+    const afterDelete = document.querySelectorAll("[data-panel-view]").length;
+    const savedAgain = await save("冒烟视图B");
+    return {
+      saved,
+      savedAgain,
+      chipsAfterSave,
+      afterDelete,
+      kept: [...document.querySelectorAll("[data-panel-view]")].map((node) => node.textContent || ""),
+    };
+  });
+  add(
+    "自定义视图：保存出现 chip、删除生效、可再保存",
+    viewFlow?.saved === true &&
+      viewFlow?.savedAgain === true &&
+      (viewFlow?.chipsAfterSave || []).some((text) => text.includes("冒烟视图A")) &&
+      viewFlow?.afterDelete === 0 &&
+      (viewFlow?.kept || []).some((text) => text.includes("冒烟视图B")),
+    JSON.stringify(viewFlow),
+  );
+
   // F26：点药丸 = 过滤；「全部」= 清除
   await page.evaluate(() => document.querySelector('[data-projects-pill="failed"]')?.click());
   await page.waitForTimeout(400);
@@ -4693,6 +4748,19 @@ const main = async () => {
         String(result.b4Preset ?? "") !== "" &&
         b4Project.preset === result.b4Preset,
       detail: JSON.stringify({ store: b4Project?.preset ?? null, ui: result.b4Preset ?? null }),
+    });
+    checks.push({
+      name: "自定义视图落盘（+ 新增视图 写→重启可读）",
+      ok: Object.values(parsed?.projects ?? {}).some(
+        (/** @type {any} */ project) =>
+          Array.isArray(project?.views) &&
+          project.views.some((/** @type {any} */ view) => String(view?.name ?? "") === "冒烟视图B"),
+      ),
+      detail: JSON.stringify(
+        Object.values(parsed?.projects ?? {}).map((/** @type {any} */ project) =>
+          (project?.views ?? []).map((/** @type {any} */ view) => view?.name),
+        ),
+      ),
     });
     checks.push({
       name: "默认策略是 L1 且危险开关全关",
