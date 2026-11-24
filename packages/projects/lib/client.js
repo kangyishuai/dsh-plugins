@@ -440,6 +440,7 @@ window.__ModuleLoader__.load({
       "detail.groupCollapseAll": "全部折叠",
       "detail.addView": "新增视图",
       "detail.today": "今天",
+      "detail.workingLine": "{count} 个线程在跑，完成后协调者会在这里汇报。",
       "detail.settingsPane.general": "通用",
       "detail.settingsPane.memory": "记忆",
       "detail.settingsPane.environment": "环境",
@@ -882,6 +883,7 @@ window.__ModuleLoader__.load({
       "detail.groupCollapseAll": "Collapse all",
       "detail.addView": "Add view",
       "detail.today": "Today",
+      "detail.workingLine": "{count} thread(s) working; the coordinator will report back here.",
       "detail.settingsPane.general": "General",
       "detail.settingsPane.memory": "Memory",
       "detail.settingsPane.environment": "Environment",
@@ -1664,6 +1666,14 @@ window.__ModuleLoader__.load({
         display: "flex",
         flexDirection: "column",
         gap: "10px",
+      },
+      panelColNarrow: {
+        minWidth: 0,
+        display: "flex",
+        flexDirection: "column",
+        gap: "10px",
+        paddingTop: "16px",
+        borderTop: `1px solid ${T.borderSoft}`,
       },
       // 右列：Threads 面板（Claude 结构）——与左列用 1px 分割线隔开，不铺卡片
       panelCol: {
@@ -5858,7 +5868,9 @@ window.__ModuleLoader__.load({
             ? rawTitle
             : taskHint !== ""
               ? taskHint
-              : `线程 ${String(row.sessionId).slice(0, 6)}`;
+              : `线程 ${String(row.sessionId)
+                  .replace(/^session-/u, "")
+                  .slice(0, 6)}`;
         const rowSubtitle = rawTitle !== "" ? taskHint : text(t, `detail.state.${state}`);
         const steps = row.steps && Number(row.steps.total) > 0 ? row.steps : null;
         const duration = durationLabel(row.durationMs);
@@ -7485,7 +7497,8 @@ window.__ModuleLoader__.load({
                   ? h(
                       "div",
                       {
-                        style: styles.meta,
+                        // 窄窗隐藏：这是部署能力说明（无 compaction），不属于对话内容
+                        style: narrow ? { ...styles.meta, display: "none" } : styles.meta,
                         "data-projects-coordinator-compaction": compaction.available ? "yes" : "no",
                         title: String(compaction.note || compaction.mode || ""),
                       },
@@ -7634,7 +7647,13 @@ window.__ModuleLoader__.load({
                 h(
                   "div",
                   {
-                    style: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" },
+                    // 窄窗隐藏：这一行是排障信息（"PR 轮询·上次·间隔"），Claude 的窄屏不摆它
+                    style: {
+                      display: narrow ? "none" : "flex",
+                      gap: "8px",
+                      alignItems: "center",
+                      flexWrap: "wrap",
+                    },
                     "data-projects-detail-poll-row": "",
                   },
                   h(
@@ -7681,6 +7700,18 @@ window.__ModuleLoader__.load({
                     text(t, "settings.realtimeCi"),
                   ),
                 ),
+                Number(pills.working ?? 0) > 0
+                  ? h(
+                      "div",
+                      { style: styles.workingRow, "data-projects-working-row": "" },
+                      h("span", { style: { color: "#c2703e", fontSize: "13px" } }, "✳"),
+                      h(
+                        "span",
+                        {},
+                        text(t, "detail.workingLine", { count: Number(pills.working ?? 0) }),
+                      ),
+                    )
+                  : null,
                 h(
                   "div",
                   { style: { display: "flex", gap: "6px", alignItems: "center" } },
@@ -7811,10 +7842,18 @@ window.__ModuleLoader__.load({
                 ),
               ),
             ),
-            // 按规则派活：保留既有语义（一句话决定怎么做），锚点与旧 UI 一致
+            // 按规则派活：保留既有语义（一句话决定怎么做），锚点与旧 UI 一致；
+            // 窄窗隐藏（三行输入框堆叠太吵），入口仍在「项目设置 → 通用」的指令里
             h(
               "div",
-              { style: { display: "flex", gap: "8px", alignItems: "center" } },
+              {
+                style: {
+                  display: narrow ? "none" : "flex",
+                  gap: "8px",
+                  alignItems: "center",
+                },
+                "data-projects-route-row": "",
+              },
               h("input", {
                 style: styles.input,
                 value: routeText,
@@ -7969,7 +8008,7 @@ window.__ModuleLoader__.load({
           // —— 右列：Threads 面板（页签 + Welcome + 药丸条 + 列表/记忆/Routines）——
           h(
             "div",
-            { style: styles.panelCol, "data-panel-column": "" },
+            { style: narrow ? styles.panelColNarrow : styles.panelCol, "data-panel-column": "" },
             h(
               "div",
               {

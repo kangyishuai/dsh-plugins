@@ -519,6 +519,7 @@
     "library.artifactPinHint": "Pin (not yet available)",
     "library.artifactMenuHint": "More (not yet available)",
     "b3.folderAdd": "Add folder",
-    "b3.folderAddHint": "Add a working folder in Project folder"
+    "b3.folderAddHint": "Add a working folder in Project folder",
+    "detail.workingLine": "{count} thread(s) working; the coordinator will report back here."
   }
 }

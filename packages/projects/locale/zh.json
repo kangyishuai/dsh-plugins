@@ -519,6 +519,7 @@
     "library.artifactPinHint": "钉住（待接入）",
     "library.artifactMenuHint": "更多（待接入）",
     "b3.folderAdd": "添加目录",
-    "b3.folderAddHint": "在「项目目录」里新增一个工作目录"
+    "b3.folderAddHint": "在「项目目录」里新增一个工作目录",
+    "detail.workingLine": "{count} 个线程在跑，完成后协调者会在这里汇报。"
   }
 }
