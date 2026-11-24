@@ -1745,6 +1745,11 @@ window.__ModuleLoader__.load({
         gap: "12px",
         paddingLeft: "20px",
         borderLeft: `1px solid ${T.borderSoft}`,
+        // Claude 深色下页面 #0A0A0A / 面板 #1A1A1A：面板比页面亮一档（层次感）。
+        // 之前面板与页面同色（#151516），逐像素比对暴露了这一点。
+        // 宿主 token 在深色下给的是 rgba(0.06) 档（≈#202021），比 Claude 的 #1A1A1A 亮；
+        // 这里用 0.045 档贴到 #1A1A1A 附近（浅色面板另有白卡样式）。
+        background: "rgba(127,127,127,0.045)",
       },
       rail: { minWidth: 0, display: "flex", flexDirection: "column" },
       // 设置抽屉（Claude 的 Project settings 是我们的宿主设置分节；这里是"项目内设置"入口）
