@@ -1951,6 +1951,20 @@ window.__ModuleLoader__.load({
         alignItems: "flex-start",
         padding: "10px 2px",
       },
+      composerCardLight: {
+        display: "flex",
+        flexDirection: "column",
+        gap: "6px",
+        padding: "12px 14px",
+        borderRadius: "14px",
+        border: "1px solid rgba(0,0,0,0.06)",
+        background: "#ffffff",
+        boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+        position: "sticky",
+        bottom: "8px",
+        zIndex: 3,
+        marginTop: "6px",
+      },
       composerCard: {
         display: "flex",
         flexDirection: "column",
@@ -7790,7 +7804,10 @@ window.__ModuleLoader__.load({
             })(),
             h(
               "div",
-              { style: styles.composerCard, "data-projects-composer": "" },
+              {
+                style: colorScheme === "light" ? styles.composerCardLight : styles.composerCard,
+                "data-projects-composer": "",
+              },
               h("input", {
                 ref: threadInputRef,
                 style: {
