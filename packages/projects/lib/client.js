@@ -4195,7 +4195,9 @@ window.__ModuleLoader__.load({
 
     /** B5：epoch ms → 相对时间（不依赖宿主的 i18n 格式）。 @param {any} t @param {unknown} value */
     function formatWhen(t, value) {
-      var at = Number(value);
+      // 兼容两种来源：epoch 毫秒（catalog 行）与 ISO 字符串（我们自己记的 `at`）。
+      // 只写 Number(value) 会把 ISO 变成 NaN，卡片就显示不出时间（真机踩过）。
+      var at = typeof value === "string" ? Date.parse(value) : Number(value);
       if (!Number.isFinite(at) || at <= 0) return "";
       var delta = Date.now() - at;
       if (delta < 60_000) return text(t, "panel.relative.now");

@@ -4332,7 +4332,12 @@ export class ProjectsService extends TypertRemoteService {
       artifacts.rows = artifacts.rows.map((/** @type {any} */ row) => {
         const ref = refById.get(row.id);
         if (!ref) return row;
-        return { ...row, at: row.at ?? ref.at ?? null, updatedAt: row.updatedAt ?? ref.at ?? null };
+        const atMs = ref.at ? Date.parse(ref.at) : Number.NaN;
+        return {
+          ...row,
+          at: row.at ?? ref.at ?? null,
+          updatedAt: row.updatedAt ?? (Number.isFinite(atMs) ? atMs : null),
+        };
       });
       const seen = new Set(artifacts.rows.map((/** @type {any} */ row) => row.id));
       for (const ref of refs) {
