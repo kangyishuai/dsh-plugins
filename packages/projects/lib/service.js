@@ -1622,6 +1622,43 @@ export class ProjectsService extends TypertRemoteService {
    * @param {string} projectId
    * @param {number|null} days
    */
+  /**
+   * 保存自定义视图（面板「+ 新增视图」）。
+   * @param {{ projectId: string, name: string, filter?: string, query?: string }} request
+   */
+  async addView(request) {
+    const store = this.requireStore();
+    const project = store.getProject(String(request?.projectId ?? ""));
+    if (!project) throw new Error(`projects: unknown project ${request?.projectId}`);
+    const view = store.addView(project.id, {
+      name: request?.name,
+      filter: request?.filter,
+      query: request?.query,
+    });
+    store.save();
+    store.appendAudit({ action: "view/added", projectId: project.id, viewId: view.id });
+    return { view, views: store.getProject(project.id)?.views ?? [] };
+  }
+
+  /**
+   * 删除自定义视图。
+   * @param {{ projectId: string, viewId: string }} request
+   */
+  async deleteView(request) {
+    const store = this.requireStore();
+    const project = store.getProject(String(request?.projectId ?? ""));
+    if (!project) throw new Error(`projects: unknown project ${request?.projectId}`);
+    const views = store.deleteView(project.id, String(request?.viewId ?? ""));
+    store.save();
+    store.appendAudit({ action: "view/deleted", projectId: project.id, viewId: request?.viewId });
+    return { views };
+  }
+
+  /**
+   * 自动 resolve 天数（null = 关）。
+   * @param {string} projectId
+   * @param {number|null} days
+   */
   setAutoResolveDays(projectId, days) {
     const store = this.requireStore();
     const id = String(projectId ?? "");
@@ -3275,6 +3312,8 @@ export class ProjectsService extends TypertRemoteService {
       },
       usageDays: this.usageDays(projectId),
       projectState: project?.state ?? "active",
+      // 自定义视图（面板「+ 新增视图」保存的筛选条件）
+      views: Array.isArray(project?.views) ? project.views : [],
     };
   }
 
@@ -5617,6 +5656,8 @@ declareRemote(ProjectsService, "setProjectPinned");
 declareRemote(ProjectsService, "resolveThread");
 declareRemote(ProjectsService, "checkAutoResolve");
 declareRemote(ProjectsService, "setAutoResolveDays");
+declareRemote(ProjectsService, "addView");
+declareRemote(ProjectsService, "deleteView");
 declareRemote(ProjectsService, "setThreadUnread");
 declareRemote(ProjectsService, "uiState");
 declareRemote(ProjectsService, "setFirstRunDone");

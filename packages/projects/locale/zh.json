@@ -497,7 +497,7 @@
     "b3.folderWorktreeHint": "merge 在项目目录里跑；push-branch 在线程 worktree 里跑——worktree 继承它所属项目目录的授权。",
     "library.openPanelUnavailable": "打开失败：宿主未提供右栏面板服务（sidebarRight）。",
     "detail.addView": "新增视图",
-    "detail.addViewHint": "自定义视图（待接入）",
+    "detail.addViewHint": "把当前筛选条件保存成视图",
     "detail.settingsOpen": "项目设置",
     "detail.settingsTitle": "项目设置",
     "detail.settingsClose": "关闭设置",
@@ -525,6 +525,11 @@
     "panel.firstRun.cloudNote": "（云端执行）",
     "detail.panelSearch": "搜索线程",
     "detail.emptySearch": "没有匹配的线程。",
-    "library.artifactMetaNoTime": "{kind} · v{version}"
+    "library.artifactMetaNoTime": "{kind} · v{version}",
+    "detail.viewNamePlaceholder": "视图名（例如「在跑」）",
+    "detail.viewSave": "保存",
+    "detail.viewCancel": "取消",
+    "detail.viewDelete": "删除这个视图",
+    "detail.viewSaveFailed": "保存视图失败：{reason}"
   }
 }

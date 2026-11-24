@@ -14,6 +14,7 @@ import { REPLAY_EVENT_CAP, THREAD_STATES } from "./overview.js";
 import { DEFAULT_REMINDER_MODE, normalizeReminder } from "./reminders.js";
 import { MAX_ROUTINES, normalizeRoutine } from "./routines.js";
 import { defaultRules } from "./routing.js";
+import { MAX_VIEWS, nextViewId, normalizeView, normalizeViews } from "./views.js";
 
 /** 当前元数据格式版本。任何不兼容变更都要 +1 并在 migrate() 里补一步。 */
 export const FORMAT_VERSION = 1;
@@ -457,6 +458,8 @@ export function normalize(raw, root) {
         reminderDefault: ["timer", "schedule"].includes(project.reminderDefault)
           ? project.reminderDefault
           : DEFAULT_REMINDER_MODE,
+        // 自定义视图（Claude 的 Add view）：只存筛选条件，非法条目丢弃
+        views: normalizeViews(project.views),
         // F33：产物引用（自存映射）。旧数据缺失即空数组；非法条目丢弃，不让整份数据读不出来。
         artifactRefs: (Array.isArray(project.artifactRefs) ? project.artifactRefs : [])
           .map((/** @type {any} */ item) => normalizeArtifactRef(item))
@@ -631,6 +634,7 @@ export class ProjectStore {
       reminderDefault: DEFAULT_REMINDER_MODE,
       // F33：项目产出的产物引用（我们自存的 projectId↔artifactId 映射；artifacts meta 不保证有）
       artifactRefs: [],
+      views: [],
       routines: [],
       reminders: [],
       createdAt: stamp,
@@ -652,6 +656,53 @@ export class ProjectStore {
   /**
    * @param {string} id
    * @param {Partial<{name: string, goal: string, icon: string, state: string, dirs: string[], repos: string[], autoResolveDays: number|null, coordinatorSessionId: string|null, pinned: boolean, policy: any, persona: string, budget: any}>} patch
+   */
+  /**
+   * 保存一个自定义视图（最多 MAX_VIEWS 个，超出报错而不是静默丢弃）。
+   * @param {string} projectId
+   * @param {{ name: unknown, filter?: unknown, query?: unknown }} input
+   * @param {number} [now]
+   */
+  addView(projectId, input, now) {
+    const current = this.state.projects[projectId];
+    if (!current) throw new Error(`projects: unknown project ${projectId}`);
+    const views = normalizeViews(current.views);
+    if (views.length >= MAX_VIEWS) throw new Error(`projects: too many views (max ${MAX_VIEWS})`);
+    const source = /** @type {{ name?: unknown, filter?: unknown, query?: unknown }} */ (
+      input && typeof input === "object" ? input : {}
+    );
+    const view = normalizeView({
+      id: nextViewId(now ? () => now : undefined),
+      name: source.name,
+      filter: source.filter,
+      query: source.query,
+    });
+    if (!view) throw new Error("projects: view name is required");
+    views.push(view);
+    this.state.projects[projectId] = { ...current, views, updatedAt: iso(this.now()) };
+    return view;
+  }
+
+  /**
+   * 删除一个视图（不存在就报错，便于 UI 如实回执）。
+   * @param {string} projectId
+   * @param {string} viewId
+   * @returns {Array<{ id: string, name: string, filter: string, query: string }>}
+   */
+  deleteView(projectId, viewId) {
+    const current = this.state.projects[projectId];
+    if (!current) throw new Error(`projects: unknown project ${projectId}`);
+    const views = normalizeViews(current.views);
+    const next = views.filter((view) => view.id !== String(viewId));
+    if (next.length === views.length) throw new Error(`projects: unknown view ${viewId}`);
+    this.state.projects[projectId] = { ...current, views: next, updatedAt: iso(this.now()) };
+    return next;
+  }
+
+  /**
+   * 更新项目字段（字段白名单见方法体）。
+   * @param {string} id
+   * @param {any} patch
    */
   updateProject(id, patch) {
     const current = this.state.projects[id];

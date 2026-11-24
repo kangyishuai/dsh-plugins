@@ -465,7 +465,12 @@ window.__ModuleLoader__.load({
       "detail.settingsOpen": "项目设置",
       "detail.settingsTitle": "项目设置",
       "detail.settingsClose": "关闭设置",
-      "detail.addViewHint": "自定义视图（待接入）",
+      "detail.addViewHint": "把当前筛选条件保存成视图",
+      "detail.viewNamePlaceholder": "视图名（例如「在跑」）",
+      "detail.viewSave": "保存",
+      "detail.viewCancel": "取消",
+      "detail.viewDelete": "删除这个视图",
+      "detail.viewSaveFailed": "保存视图失败：{reason}",
       "detail.groupExpandAll": "全部展开",
       "detail.groupMenu": "分组操作",
       "detail.groupOnly": "只看这一组",
@@ -914,7 +919,12 @@ window.__ModuleLoader__.load({
       "detail.settingsOpen": "Project settings",
       "detail.settingsTitle": "Project settings",
       "detail.settingsClose": "Close settings",
-      "detail.addViewHint": "Custom views (not yet available)",
+      "detail.addViewHint": "Save the current filter as a view",
+      "detail.viewNamePlaceholder": "View name (e.g. Working)",
+      "detail.viewSave": "Save",
+      "detail.viewCancel": "Cancel",
+      "detail.viewDelete": "Delete this view",
+      "detail.viewSaveFailed": "Could not save the view: {reason}",
       "detail.groupExpandAll": "Expand all",
       "detail.groupMenu": "Group actions",
       "detail.groupOnly": "Only this group",
@@ -5706,6 +5716,12 @@ window.__ModuleLoader__.load({
       const setGroupMenu = groupMenuState[1];
       // 设置抽屉：rail 里的 15 段设置不再常驻右栏（Claude 是独立 Project settings），
       // 由面板 header 的 ⚙ 打开；锚点保持原样，冒烟/桌面回归照旧能点。
+      const viewFormState = useState(false);
+      const viewFormOpen = viewFormState[0];
+      const setViewFormOpen = viewFormState[1];
+      const viewNameState = useState("");
+      const viewName = viewNameState[0];
+      const setViewName = viewNameState[1];
       const panelQueryState = useState("");
       const panelQuery = panelQueryState[0];
       const setPanelQuery = panelQueryState[1];
@@ -5781,6 +5797,45 @@ window.__ModuleLoader__.load({
         },
         [api, data.progress, setCollapsedGroups],
       );
+      /** 自定义视图：保存的是"当前筛选条件"，不是结果快照。 */
+      const views = Array.isArray(data.progress?.views) ? data.progress.views : [];
+      const saveView = () => {
+        const name = viewName.trim();
+        if (name === "") return;
+        call(api.ctx, "addView", {
+          projectId: project.id,
+          name,
+          filter,
+          query: panelQuery,
+        }).then(
+          () => {
+            setViewFormOpen(false);
+            setViewName("");
+            load();
+          },
+          (/** @type {any} */ error) =>
+            setThreadAction({
+              pending: "",
+              ok: false,
+              message: text(t, "detail.viewSaveFailed", {
+                reason: String(error?.message ?? error),
+              }),
+            }),
+        );
+      };
+      const deleteView = (/** @type {string} */ viewId) => {
+        call(api.ctx, "deleteView", { projectId: project.id, viewId }).then(
+          () => load(),
+          (/** @type {any} */ error) =>
+            setThreadAction({
+              pending: "",
+              ok: false,
+              message: text(t, "detail.viewSaveFailed", {
+                reason: String(error?.message ?? error),
+              }),
+            }),
+        );
+      };
       /** F26：药丸点击 = 过滤该状态；再点一次清除。 */
       const toggleFilter = useCallback(
         (/** @type {string} */ state) => {
@@ -8308,11 +8363,107 @@ window.__ModuleLoader__.load({
                   },
                   "data-panel-add-view": "",
                   title: text(t, "detail.addViewHint"),
-                  disabled: true,
+                  onClick: () => setViewFormOpen(!viewFormOpen),
                 },
                 `+ ${text(t, "detail.addView")}`,
               ),
             ),
+            // 视图表单 + 已保存视图的 chip 行
+            viewFormOpen
+              ? h(
+                  "div",
+                  {
+                    style: { display: "flex", gap: "6px", alignItems: "center", paddingTop: "6px" },
+                    "data-panel-view-form": "",
+                  },
+                  h("input", {
+                    style: { ...styles.input, fontSize: "12px", padding: "3px 8px" },
+                    value: viewName,
+                    placeholder: text(t, "detail.viewNamePlaceholder"),
+                    "data-panel-view-name": "",
+                    onChange: (/** @type {any} */ event) => setViewName(event.target.value),
+                    onKeyDown: (/** @type {any} */ event) => {
+                      if (event.key === "Enter") saveView();
+                    },
+                  }),
+                  h(
+                    "button",
+                    {
+                      type: "button",
+                      style: { ...styles.primaryButton, padding: "3px 10px", fontSize: "12px" },
+                      "data-panel-view-save": "",
+                      onClick: saveView,
+                    },
+                    text(t, "detail.viewSave"),
+                  ),
+                  h(
+                    "button",
+                    {
+                      type: "button",
+                      style: { ...styles.secondaryButton, padding: "3px 10px", fontSize: "12px" },
+                      "data-panel-view-cancel": "",
+                      onClick: () => {
+                        setViewFormOpen(false);
+                        setViewName("");
+                      },
+                    },
+                    text(t, "detail.viewCancel"),
+                  ),
+                )
+              : null,
+            views.length > 0
+              ? h(
+                  "div",
+                  {
+                    style: { display: "flex", gap: "6px", flexWrap: "wrap", paddingTop: "6px" },
+                    "data-panel-views": "",
+                  },
+                  views.map((/** @type {any} */ view) =>
+                    h(
+                      "span",
+                      {
+                        key: view.id,
+                        style: {
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                          border: `1px solid ${
+                            filter === view.filter && panelQuery === view.query
+                              ? T.accentText
+                              : T.borderSoft
+                          }`,
+                          borderRadius: "999px",
+                          padding: "2px 8px",
+                          fontSize: "12px",
+                          color: T.text,
+                          cursor: "pointer",
+                        },
+                        "data-panel-view": view.id,
+                      },
+                      h(
+                        "span",
+                        {
+                          onClick: () => {
+                            setFilter(String(view.filter ?? ""));
+                            setPanelQuery(String(view.query ?? ""));
+                          },
+                        },
+                        String(view.name),
+                      ),
+                      h(
+                        "span",
+                        {
+                          style: { color: T.faint, paddingLeft: "2px" },
+                          title: text(t, "detail.viewDelete"),
+                          "data-panel-view-delete": view.id,
+                          onClick: () => deleteView(view.id),
+                        },
+                        "×",
+                      ),
+                    ),
+                  ),
+                )
+              : null,
             // —— F28/U10：Welcome 头（大字 + 状态句 + 7 日 token 迷你图）——
             (() => {
               const waiting = Number(pills["waiting-user"] ?? 0);

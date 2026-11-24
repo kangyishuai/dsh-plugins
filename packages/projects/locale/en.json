@@ -497,7 +497,7 @@
     "b3.folderWorktreeHint": "merge runs in the project folder; push-branch runs in the thread worktree, which inherits the authorization of the project folder it came from.",
     "library.openPanelUnavailable": "Could not open: the host did not provide the right-side panel service (sidebarRight).",
     "detail.addView": "Add view",
-    "detail.addViewHint": "Custom views (not yet available)",
+    "detail.addViewHint": "Save the current filter as a view",
     "detail.settingsOpen": "Project settings",
     "detail.settingsTitle": "Project settings",
     "detail.settingsClose": "Close settings",
@@ -525,6 +525,11 @@
     "panel.firstRun.cloudNote": "(cloud)",
     "detail.panelSearch": "Search threads",
     "detail.emptySearch": "No matching threads.",
-    "library.artifactMetaNoTime": "{kind} · v{version}"
+    "library.artifactMetaNoTime": "{kind} · v{version}",
+    "detail.viewNamePlaceholder": "View name (e.g. Working)",
+    "detail.viewSave": "Save",
+    "detail.viewCancel": "Cancel",
+    "detail.viewDelete": "Delete this view",
+    "detail.viewSaveFailed": "Could not save the view: {reason}"
   }
 }
