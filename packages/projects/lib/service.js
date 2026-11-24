@@ -19,7 +19,6 @@ import { dirname, join } from "node:path";
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 
 import { artifactRefFromToolResult } from "./artifact-ref.js";
-
 import { registerProjectContext } from "./attach.js";
 import { buildFixTask, errorSignature, shouldContinueFix } from "./autofix.js";
 import { buildPrText, nextPrAction, parsePrNumber, planPrCreate } from "./autopr.js";
@@ -129,6 +128,7 @@ import { buildEnvelope, createInjectionGuard, decideWake, pendingWakes } from ".
 import { planDeleteBranch, shouldDeleteBranchV2 } from "./worktree.js";
 import {
   createPrCore,
+  selectModelParams,
   selectThreadModelCore,
   sendToCoordinatorCore,
   shouldRecordCoordinatorMessage,
@@ -2448,6 +2448,44 @@ export class ProjectsService extends TypertRemoteService {
           projectId,
           sessionId,
           reason: String(/** @type {any} */ (error)?.message ?? error).slice(0, 160),
+        });
+        store.save();
+      }
+    }
+    // F42：协调器会话也要套用项目级默认模型 / effort（空串 = 继承宿主默认）。
+    // 少了这一步，宿主默认模型若是严格校验的供应商，协调者一开会话就 400
+    // （真机：deepseek-official 拒绝 REA MCP 的 pattern 里孤立代理项转义）。
+    const coordinatorDefaults = project.threadDefaults ?? { provider: "", model: "" };
+    if (
+      String(coordinatorDefaults.provider ?? "") !== "" &&
+      String(coordinatorDefaults.model ?? "") !== ""
+    ) {
+      try {
+        // 直接调宿主 selectModel：协调者不是「线程」，走 selectThreadModel 会找不到线程记录
+        // （真机审计原文：projects: unknown thread session-…）。
+        await sc.selectModel(
+          selectModelParams(
+            sessionId,
+            coordinatorDefaults.provider,
+            coordinatorDefaults.model,
+            coordinatorDefaults.reasoningEffort || "",
+          ),
+          new AbortController().signal,
+        );
+        store.appendAudit({
+          action: "coordinator/model-default",
+          projectId,
+          sessionId,
+          provider: coordinatorDefaults.provider,
+          model: coordinatorDefaults.model,
+        });
+        store.save();
+      } catch (error) {
+        store.appendAudit({
+          action: "coordinator/model-default-failed",
+          projectId,
+          sessionId,
+          reason: String(/** @type {any} */ (error)?.message ?? error).slice(0, 120),
         });
         store.save();
       }
