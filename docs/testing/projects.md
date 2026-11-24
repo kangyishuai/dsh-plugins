@@ -235,11 +235,12 @@ pnpm smoke:projects-desktop --require
 `general,memory,usage,debug`、`data-projects-settings-debug`、`data-projects-audit-title` /
 `data-projects-audit`）、关闭后界面仍可用。
 
-数据分支的诚实计数：
-- live profile 里**一个项目都没有** 时，详情页那四条进 `SKIP`，并写明原因
-  （“需要覆盖时加 `--create`”），不把跳过伪装成 PASS；
-- 设置页被禁用（`cordis.patch.yml` 里 `ui-settings enabled:false`）时，设置那两条进 `SKIP`；
-  能打开就真断言（不再是“渲染了就算 PASS”）。
+**没有数据分支 SKIP**（2026-11-24 起）：
+- live profile 里**一个项目都没有** 时，不再记 SKIP——改为断言**真实的空态**：
+  `data-projects-empty` 存在、标题与说明非空、新建 CTA 可用、`data-projects-summary` 是
+  “0 个项目 … 0 个线程”、回收站提示可见且列表行数为 0。详情页本身由 `--create` 覆盖。
+- 设置页打不开（`cordis.patch.yml` 里 `ui-settings enabled:false`）时才进 `SKIP`；
+  能打开就真断言（四个分区 + Debug + 审计，不再是“渲染了就算 PASS”）。
 
 **`--create`（显式授权写入，默认关）**：用 UI 从零建一个
 `smoke-desktop-<ts>` 临时项目 → 跑上面的详情页断言 → 再用同一套 UI

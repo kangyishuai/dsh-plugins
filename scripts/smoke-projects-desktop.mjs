@@ -446,9 +446,40 @@ const main = async () => {
       if (values.create === true) {
         check("详情页两列（主列 + 右栏）", false, "临时项目建好后找不到项目行");
       } else {
-        skip(
-          "详情页两列（主列 + 右栏）",
-          "live profile 没有项目（只读默认不创建；需要覆盖时加 --create）",
+        // 没有项目时**不跳过**：详情页无从打开，但空态本身是可见的产品状态，
+        // 断言它比记一条 SKIP 更有价值（0 SKIP 也不靠“跳过冒充覆盖”）。
+        // 详情页本身由 `--create` 覆盖（发版门禁用 `--require --create`）。
+        const emptyState = await cdp.evaluate(`(() => {
+          const q = (sel) => document.querySelector(sel);
+          const text = (sel) => ((q(sel) || {}).textContent || "").replace(/\\s+/g, " ").trim();
+          const empty = q("[data-projects-empty]");
+          const summary = (q("[data-projects-summary]") || {}).textContent || "";
+          return {
+            empty: Boolean(empty),
+            title: empty ? (empty.querySelector("span") || {}).textContent || "" : "",
+            hint: empty ? (empty.textContent || "").trim() : "",
+            summary: summary.replace(/\\s+/g, " ").trim(),
+            newButton: Boolean(q("[data-projects-new]")),
+            newDisabled: Boolean((q("[data-projects-new]") || {}).disabled),
+            trashHint: /回收站/u.test(empty ? (empty.parentElement || empty).textContent || "" : ""),
+            rows: document.querySelectorAll("[data-projects-row]").length,
+          };
+        })()`);
+        check(
+          "无项目时空态正确（标题/说明/CTA/摘要都是真实渲染）",
+          emptyState?.empty === true &&
+            String(emptyState.title).trim().length > 0 &&
+            String(emptyState.hint).trim().length > 0 &&
+            emptyState.newButton === true &&
+            emptyState.newDisabled === false &&
+            emptyState.rows === 0 &&
+            /0 个项目|0 projects/u.test(String(emptyState.summary)),
+          JSON.stringify(emptyState),
+        );
+        check(
+          "无项目时回收站入口提示可见（不作假空列表）",
+          emptyState?.trashHint === true,
+          JSON.stringify({ trashHint: emptyState?.trashHint }),
         );
       }
     } else {
