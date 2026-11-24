@@ -1428,6 +1428,15 @@ export class ProjectsService extends TypertRemoteService {
     const before = store.getProject(id);
     const project = store.updateProject(id, patch);
     store.save();
+    // 可见性变化也是一次用户动作，留痕（也方便冒烟确认写路径真的走到了 host）
+    if (typeof patch?.visibleViewsText === "string") {
+      store.appendAudit({
+        action: "project/visible-views",
+        projectId: id,
+        visibleViews: project?.visibleViews ?? [],
+      });
+      store.save();
+    }
     // 安全面变更必须留痕：危险开关、自治等级、路由规则都直接影响"插件能替你做什么"
     const afterDanger = project?.policy?.danger ?? {};
     const beforeDanger = before?.policy?.danger ?? {};

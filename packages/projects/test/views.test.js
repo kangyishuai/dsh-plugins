@@ -83,3 +83,34 @@ describe("视图落盘（addView / deleteView）", () => {
     }
   });
 });
+
+// D1：右栏可见性（visibleViews）持久化 + 旧数据默认全开
+import { normalizeVisibleViews, PANEL_VIEWS } from "../lib/store.js";
+
+describe("右栏可见视图（D1）", () => {
+  it("默认全开；非法 id 被丢弃、顺序固定、去重", () => {
+    assert.deepEqual(normalizeVisibleViews(undefined), [...PANEL_VIEWS]);
+    assert.deepEqual(normalizeVisibleViews(["routines", "nope", "routines"]), ["routines"]);
+    assert.deepEqual(normalizeVisibleViews("bad"), [...PANEL_VIEWS]);
+  });
+
+  it("写→落盘→冷启动回读；旧数据（无字段）默认全开", () => {
+    const root = mkdtempSync(join(tmpdir(), "dsh-projects-visible-"));
+    try {
+      const store = new ProjectStore({ root }).load();
+      const project = store.createProject("可见性");
+      assert.deepEqual(store.getProject(project.id).visibleViews, [...PANEL_VIEWS]);
+      store.setVisibleViews(project.id, ["library"]);
+      store.save();
+      const reopened = new ProjectStore({ root }).load();
+      assert.deepEqual(reopened.getProject(project.id).visibleViews, ["library"]);
+      // 清空数组 = 两个可切换视图都隐藏
+      reopened.setVisibleViews(project.id, []);
+      reopened.save();
+      const again = new ProjectStore({ root }).load();
+      assert.deepEqual(again.getProject(project.id).visibleViews, []);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

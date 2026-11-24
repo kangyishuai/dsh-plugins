@@ -41,6 +41,24 @@ export const MAX_ICON_LENGTH = 8;
 /** F39：goal 上限（对齐 Claude Projects 的 8,000 字符）。 */
 export const MAX_GOAL_CHARS = 8_000;
 
+/**
+ * 右栏可隐藏的视图（Threads 始终显示）。Claude 的 `Views` 就是这组开关。
+ */
+export const PANEL_VIEWS = ["library", "routines"];
+
+/**
+ * 收敛 `visibleViews`：只保留已知 id、按固定顺序、去重；非数组 → 全开。
+ * 旧数据没有这个字段时全开，避免升级后视图突然消失。
+ * @param {unknown} value
+ * @returns {string[]}
+ */
+export function normalizeVisibleViews(value) {
+  const list = Array.isArray(value) ? value : PANEL_VIEWS;
+  const out = [];
+  for (const id of PANEL_VIEWS) if (list.indexOf(id) >= 0) out.push(id);
+  return out;
+}
+
 /** F23：线程标题上限（右键重命名）。 */
 export const MAX_THREAD_TITLE_CHARS = 120;
 
@@ -463,6 +481,8 @@ export function normalize(raw, root) {
           : DEFAULT_REMINDER_MODE,
         // 自定义视图（Claude 的 Add view）：只存筛选条件，非法条目丢弃
         views: normalizeViews(project.views),
+        // D1：右栏可见性（Threads 常驻；library/routines 可关）
+        visibleViews: normalizeVisibleViews(project.visibleViews),
         // F33：产物引用（自存映射）。旧数据缺失即空数组；非法条目丢弃，不让整份数据读不出来。
         artifactRefs: (Array.isArray(project.artifactRefs) ? project.artifactRefs : [])
           .map((/** @type {any} */ item) => normalizeArtifactRef(item))
@@ -639,6 +659,7 @@ export class ProjectStore {
       // F33：项目产出的产物引用（我们自存的 projectId↔artifactId 映射；artifacts meta 不保证有）
       artifactRefs: [],
       views: [],
+      visibleViews: [...PANEL_VIEWS],
       routines: [],
       reminders: [],
       createdAt: stamp,
@@ -693,6 +714,26 @@ export class ProjectStore {
    * @param {string} viewId
    * @returns {Array<{ id: string, name: string, filter: string, query: string }>}
    */
+  /**
+   * 写右栏可见视图（只影响 library/routines；threads 常驻）。
+   * @param {string} projectId @param {unknown} views
+   * @returns {{ visibleViews: string[] }}
+   */
+  setVisibleViews(projectId, views) {
+    const current = this.state.projects[projectId];
+    if (!current) throw new Error(`projects: unknown project ${projectId}`);
+    const visibleViews = normalizeVisibleViews(views);
+    current.visibleViews = visibleViews;
+    current.updatedAt = iso(this.now());
+    return { visibleViews };
+  }
+
+  /**
+   * 删除一个视图（不存在就报错，便于 UI 如实回执）。
+   * @param {string} projectId
+   * @param {string} viewId
+   * @returns {Array<{ id: string, name: string, filter: string, query: string }>}
+   */
   deleteView(projectId, viewId) {
     const current = this.state.projects[projectId];
     if (!current) throw new Error(`projects: unknown project ${projectId}`);
@@ -735,6 +776,18 @@ export class ProjectStore {
       } else {
         next.archivedAt = null;
       }
+    }
+    if (Array.isArray(patch.visibleViews)) {
+      next.visibleViews = normalizeVisibleViews(patch.visibleViews);
+    }
+    // 远程调用走逗号串（数组参数过 Typert 网关不可靠）
+    if (typeof patch.visibleViewsText === "string") {
+      next.visibleViews = normalizeVisibleViews(
+        patch.visibleViewsText
+          .split(",")
+          .map((/** @type {string} */ item) => item.trim())
+          .filter(Boolean),
+      );
     }
     if (Array.isArray(patch.dirs)) {
       const requested = patch.dirs.filter(
