@@ -2494,7 +2494,8 @@ export class ProjectsService extends TypertRemoteService {
     // F42：协调器会话也要套用项目级默认模型 / effort（空串 = 继承宿主默认）。
     // 少了这一步，宿主默认模型若是严格校验的供应商，协调者一开会话就 400
     // （真机：deepseek-official 拒绝 REA MCP 的 pattern 里孤立代理项转义）。
-    const coordinatorDefaults = project.threadDefaults ?? { provider: "", model: "" };
+    // 协调者用**自己的**默认模型（与线程分开），没设就继承宿主默认。
+    const coordinatorDefaults = project.coordinatorDefaults ?? { provider: "", model: "" };
     if (
       String(coordinatorDefaults.provider ?? "") !== "" &&
       String(coordinatorDefaults.model ?? "") !== ""
@@ -4436,6 +4437,31 @@ export class ProjectsService extends TypertRemoteService {
    * F42：写项目级线程默认模型 / effort，返回回读值（空串 = 继承宿主默认）。
    * @param {string} projectId @param {string} [provider] @param {string} [model] @param {string} [reasoningEffort]
    */
+  /**
+   * 写项目级**协调者**默认模型 / effort（与线程默认独立）。
+   * @param {string} projectId @param {string} [provider] @param {string} [model] @param {string} [reasoningEffort]
+   */
+  setCoordinatorDefaults(projectId, provider, model, reasoningEffort) {
+    const store = this.requireStore();
+    if (!store.getProject(projectId)) throw new Error(`projects: unknown project ${projectId}`);
+    const result = store.setCoordinatorDefaults(projectId, {
+      provider: String(provider ?? ""),
+      model: String(model ?? ""),
+      reasoningEffort: String(reasoningEffort ?? ""),
+    });
+    store.appendAudit({ action: "coordinator/defaults", projectId, defaults: result.defaults });
+    store.save();
+    const readback = store.getProject(projectId);
+    return {
+      ok: true,
+      defaults: { ...(readback?.coordinatorDefaults ?? result.defaults) },
+    };
+  }
+
+  /**
+   * F42：写项目级线程默认模型 / effort，返回回读值（空串 = 继承宿主默认）。
+   * @param {string} projectId @param {string} [provider] @param {string} [model] @param {string} [reasoningEffort]
+   */
   setThreadDefaults(projectId, provider, model, reasoningEffort) {
     const store = this.requireStore();
     if (!store.getProject(projectId)) throw new Error(`projects: unknown project ${projectId}`);
@@ -5727,6 +5753,7 @@ declareRemote(ProjectsService, "usageView");
 declareRemote(ProjectsService, "mentionItems");
 declareRemote(ProjectsService, "recentSessions");
 declareRemote(ProjectsService, "setThreadDefaults");
+declareRemote(ProjectsService, "setCoordinatorDefaults");
 // B5 · F33/F34 Library
 declareRemote(ProjectsService, "libraryView");
 declareRemote(ProjectsService, "recordArtifact");

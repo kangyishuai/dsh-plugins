@@ -212,6 +212,39 @@ describe("F30 reminders 落盘", () => {
 // B3 复审 P0：effort 白名单把本部署的 max/xhigh/off 静默清空（UI 还提示已保存）。
 // 修法：删白名单，非空即收（合法性由调用方按 modelCatalog.reasoning.efforts 校验）。
 describe("F42 线程默认 effort：部署枚举（max/xhigh/off）不被白名单吃掉", () => {
+  it("coordinatorDefaults 与 threadDefaults 分开存：互不影响、冷启动可读、默认继承", () => {
+    const store = new ProjectStore({ root });
+    store.load();
+    const project = store.createProject("协调者默认");
+    // 新建项目两者都是空（继承宿主）
+    const fresh = store.getProject(project.id);
+    assert.deepEqual(fresh.threadDefaults, { provider: "", model: "", reasoningEffort: "" });
+    assert.deepEqual(fresh.coordinatorDefaults, { provider: "", model: "", reasoningEffort: "" });
+    // 只写协调者，线程默认不受影响
+    store.setCoordinatorDefaults(project.id, {
+      provider: "zhinao",
+      model: "deepseek/x",
+      reasoningEffort: "high",
+    });
+    store.setThreadDefaults(project.id, { provider: "official", model: "flash" });
+    const after = store.getProject(project.id);
+    assert.equal(after.coordinatorDefaults.model, "deepseek/x");
+    assert.equal(after.coordinatorDefaults.reasoningEffort, "high");
+    assert.equal(after.threadDefaults.model, "flash");
+    store.save();
+    // 冷启动回读
+    const reloaded = new ProjectStore({ root }).load();
+    const back = reloaded.getProject(project.id);
+    assert.equal(back.coordinatorDefaults.provider, "zhinao");
+    assert.equal(back.threadDefaults.provider, "official");
+    // 清空 = 回到继承
+    assert.deepEqual(
+      reloaded.setCoordinatorDefaults(project.id, { provider: "", model: "", reasoningEffort: "" })
+        .defaults,
+      { provider: "", model: "", reasoningEffort: "" },
+    );
+  });
+
   it("setThreadDefaults 收 max/xhigh/off，落盘冷启动后还在；空串仍表示继承", () => {
     const { store, projectId } = freshProject();
     for (const effort of ["max", "xhigh", "off"]) {

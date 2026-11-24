@@ -451,6 +451,9 @@ export function normalize(raw, root) {
         notifyPrefs: normalizeNotifyPrefs(project.notifyPrefs),
         // F42：新建线程的默认模型 / effort（空串 = 继承宿主的默认模型）
         threadDefaults: normalizeThreadDefaults(project.threadDefaults),
+        // 协调者默认模型/effort：与线程**分开**（视频里 Coordination 与 Thread 是两个旋钮）。
+        // 旧数据没有这个字段 → 空 = 继承宿主默认，不改写用户已存的线程默认。
+        coordinatorDefaults: normalizeThreadDefaults(project.coordinatorDefaults),
         // F52：权限档位名（空串 = 继承宿主）。名字的合法性由写入口 `catalog()` 校验，
         // 读盘只收敛类型——部署换了 preset 名字，旧记录也不该让整份数据读不出来。
         preset: typeof project.preset === "string" && project.preset !== "" ? project.preset : null,
@@ -630,6 +633,7 @@ export class ProjectStore {
       budget: { ...DEFAULT_BUDGET },
       notifyPrefs: { ...DEFAULT_NOTIFY_PREFS },
       threadDefaults: { provider: "", model: "", reasoningEffort: "" },
+      coordinatorDefaults: { provider: "", model: "", reasoningEffort: "" },
       preset: null,
       reminderDefault: DEFAULT_REMINDER_MODE,
       // F33：项目产出的产物引用（我们自存的 projectId↔artifactId 映射；artifacts meta 不保证有）
@@ -1087,6 +1091,28 @@ export class ProjectStore {
 
   /**
    * F42：写线程默认模型 / effort；空串表示「继承宿主默认」。
+   * @param {string} projectId @param {unknown} patch
+   * @returns {{ defaults: { provider: string, model: string, reasoningEffort: string } }}
+   */
+  /**
+   * 协调者默认模型 / effort（与线程默认分开存）。空串 = 继承宿主默认。
+   * @param {string} projectId @param {unknown} patch
+   * @returns {{ defaults: { provider: string, model: string, reasoningEffort: string } }}
+   */
+  setCoordinatorDefaults(projectId, patch) {
+    const current = this.state.projects[projectId];
+    if (!current) throw new Error(`projects: unknown project ${projectId}`);
+    const merged = normalizeThreadDefaults({
+      ...normalizeThreadDefaults(current.coordinatorDefaults),
+      ...(patch && typeof patch === "object" ? patch : {}),
+    });
+    current.coordinatorDefaults = merged;
+    current.updatedAt = iso(this.now());
+    return { defaults: merged };
+  }
+
+  /**
+   * 写项目级线程默认模型 / effort（空串 = 继承宿主默认）。
    * @param {string} projectId @param {unknown} patch
    * @returns {{ defaults: { provider: string, model: string, reasoningEffort: string } }}
    */
