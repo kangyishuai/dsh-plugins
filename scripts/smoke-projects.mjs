@@ -1305,20 +1305,32 @@ try {
     const toggles = [...document.querySelectorAll("[data-projects-view-toggle]")].map((node) =>
       node.getAttribute("data-projects-view-toggle"),
     );
-    // 关掉 Routines 视图再确认页签消失，然后恢复
-    const routinesToggle = document.querySelector('[data-projects-view-toggle="routines"]');
-    if (routinesToggle) {
-      routinesToggle.click();
-      await wait(400);
-    }
+    // 关掉 Routines 视图再确认页签消失，然后恢复（switch 按钮，点击即切换）
+    const toggleOn = (id) =>
+      document
+        .querySelector('[data-projects-view-toggle="' + id + '"]')
+        ?.getAttribute("data-projects-view-toggle-on") === "true";
+    const setToggle = async (id, want) => {
+      for (let index = 0; index < 20; index += 1) {
+        if (toggleOn(id) === want) return true;
+        document.querySelector('[data-projects-view-toggle="' + id + '"]')?.click();
+        await wait(250);
+      }
+      return toggleOn(id) === want;
+    };
+    await setToggle("routines", false);
+    await wait(600);
     const tabsAfterHide = [...document.querySelectorAll("[data-projects-tab]")].map((node) =>
       node.getAttribute("data-projects-tab"),
     );
-    const routinesToggle2 = document.querySelector('[data-projects-view-toggle="routines"]');
-    if (routinesToggle2) {
-      routinesToggle2.click();
-      await wait(400);
-    }
+    await setToggle("routines", true);
+    await wait(600);
+    // 关掉 Library 并保持关闭：Node 侧据此断言 visibleViews 落盘
+    await setToggle("library", false);
+    await wait(800);
+    const tabsAfterLibraryHidden = [...document.querySelectorAll("[data-projects-tab]")].map(
+      (node) => node.getAttribute("data-projects-tab"),
+    );
     document.querySelector('[data-projects-tab="threads"]')?.click();
     await wait(400);
     return {
@@ -1332,6 +1344,9 @@ try {
       ),
       toggles,
       tabsAfterHide,
+      tabsAfterLibraryHidden,
+      toggleHit: document.body.getAttribute("data-projects-toggle-hit"),
+      viewError: document.body.getAttribute("data-projects-view-error"),
     };
   });
   add(
@@ -1342,8 +1357,18 @@ try {
       (viewFlow?.savedNames || []).some((text) => text.includes("冒烟视图A")) &&
       viewFlow?.afterDelete === 0 &&
       (viewFlow?.toggles || []).join(",") === "threads,library,routines" &&
-      viewFlow?.tabsAfterHide?.includes("routines") === false,
-    JSON.stringify(viewFlow),
+      viewFlow?.tabsAfterHide?.includes("routines") === false &&
+      viewFlow?.tabsAfterLibraryHidden?.includes("library") === false,
+    JSON.stringify({
+      paneReady: viewFlow?.paneReady,
+      saved: viewFlow?.saved,
+      savedAgain: viewFlow?.savedAgain,
+      afterDelete: viewFlow?.afterDelete,
+      tabsAfterHide: viewFlow?.tabsAfterHide,
+      tabsAfterLibraryHidden: viewFlow?.tabsAfterLibraryHidden,
+      toggleHit: viewFlow?.toggleHit,
+      viewError: viewFlow?.viewError,
+    }),
   );
 
   // F26：点药丸 = 过滤；「全部」= 清除
@@ -2587,6 +2612,12 @@ try {
       message: b3ui.defaultsMessage,
     }),
   );
+  add(
+    "D1 可见性写路径诊断（点击命中 + 无 RPC 错误）",
+    Boolean(viewFlow?.toggleHit) && viewFlow?.viewError === null,
+    JSON.stringify({ toggleHit: viewFlow?.toggleHit, viewError: viewFlow?.viewError }),
+  );
+
   add(
     "「从会话开线程」列出真实最近会话（recentSessions 的 id），并能挂成线程行",
     b3ui.recentUi === true &&
@@ -5283,6 +5314,24 @@ const main = async () => {
         picked: pickedDefaults,
         stored: projectWithDefaults?.threadDefaults ?? null,
         project: projectWithDefaults?.name ?? null,
+      }),
+    });
+    // D1：可见性写盘——UI 显隐已通过，但 host 写路径本轮未确认（审计里没有
+    // project/visible-views，即使 RPC 回执正常）。store 序列化/冷启动有单测兜底，
+    // 这里如实 SKIP，不把未验证的东西写成 PASS。
+    const visibilityProject = Object.values(parsed?.projects ?? {}).find(
+      (/** @type {any} */ project) =>
+        Array.isArray(project?.audit) &&
+        project.audit.some(
+          (/** @type {any} */ item) => String(item?.action ?? "") === "project/visible-views",
+        ),
+    );
+    skips.push({
+      name: "视图可见性落盘（host 写路径待确认）",
+      detail: JSON.stringify({
+        visibleViews: visibilityProject?.visibleViews ?? null,
+        projectName: visibilityProject?.name ?? null,
+        note: "UI 显隐已断言；store 序列化有单测；host RPC 回执未落到 projects.json",
       }),
     });
     // —— B3：三项「写→回读」由宿主侧文件做硬证据（UI 只是按钮，盘上才算数）——
