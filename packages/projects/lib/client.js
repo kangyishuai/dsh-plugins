@@ -1937,6 +1937,75 @@ window.__ModuleLoader__.load({
      * 图标节点：宿主的 Icon* 跟随主题 icon set；取不到就用一行字形兜底（不引 SVG 资源）。
      * @param {string} kind @param {string} fallback @param {number} [size]
      */
+    /**
+     * 线性 SVG 字形（Claude 的图标语言：1.5px stroke、圆角端点）。
+     * 宿主 icon set 覆盖不到的（gear/mic/check/arc/plus）用这里，避免 emoji 混进界面。
+     * @param {string} kind @param {number} [size]
+     */
+    function glyph(kind, size) {
+      var px = size || 16;
+      var box = {
+        width: px,
+        height: px,
+        viewBox: "0 0 24 24",
+        fill: "none",
+        stroke: "currentColor",
+        strokeWidth: 1.5,
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        "aria-hidden": "true",
+        style: { flex: "none", display: "block" },
+      };
+      if (kind === "gear") {
+        return h(
+          "svg",
+          box,
+          h("circle", { cx: 12, cy: 12, r: 3.2 }),
+          h("path", {
+            d: "M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6",
+          }),
+        );
+      }
+      if (kind === "mic") {
+        return h(
+          "svg",
+          box,
+          h("rect", { x: 9, y: 3, width: 6, height: 10, rx: 3 }),
+          h("path", { d: "M5.5 11a6.5 6.5 0 0 0 13 0" }),
+          h("path", { d: "M12 17.5V20" }),
+        );
+      }
+      if (kind === "plus") return h("svg", box, h("path", { d: "M12 5v14M5 12h14" }));
+      if (kind === "check") return h("svg", box, h("path", { d: "M5 12.5l4.2 4.2L19 7" }));
+      if (kind === "arc") {
+        return h(
+          "svg",
+          box,
+          h("circle", {
+            cx: 12,
+            cy: 12,
+            r: 7.5,
+            strokeDasharray: "34 14",
+            transform: "rotate(-90 12 12)",
+            opacity: 0.9,
+          }),
+        );
+      }
+      if (kind === "bell") {
+        return h(
+          "svg",
+          box,
+          h("path", { d: "M6 9a6 6 0 0 1 12 0c0 4 1.6 5.2 2 6H4c.4-.8 2-2 2-6Z" }),
+          h("path", { d: "M10 18a2 2 0 0 0 4 0" }),
+        );
+      }
+      return null;
+    }
+
+    /**
+     * 图标节点：宿主的 Icon* 跟随主题 icon set；取不到就用一行字形兜底（不引 SVG 资源）。
+     * @param {string} kind @param {string} fallback @param {number} [size]
+     */
     function uiIcon(kind, fallback, size) {
       var component = /** @type {any} */ (ICON)[kind];
       var px = size || 16;
@@ -5721,16 +5790,29 @@ window.__ModuleLoader__.load({
             },
           },
           // 状态点：颜色只表达状态；未读时加一圈光晕（F31）
-          h("span", {
-            style: {
-              ...styles.dot,
-              marginTop: "5px",
-              background: stateColor,
-              boxShadow: row.unread === true ? `0 0 0 3px ${T.accent}` : "none",
+          h(
+            "span",
+            {
+              style: {
+                ...styles.dot,
+                marginTop: "5px",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background:
+                  state === "working" || state === "resolved" ? "transparent" : stateColor,
+                boxShadow: row.unread === true ? `0 0 0 3px ${T.accent}` : "none",
+                color: state === "resolved" ? T.success : stateColor,
+              },
+              "data-projects-thread-dot": state,
+              "aria-hidden": "true",
             },
-            "data-projects-thread-dot": state,
-            "aria-hidden": "true",
-          }),
+            state === "working"
+              ? glyph("arc", 12)
+              : state === "resolved"
+                ? glyph("check", 12)
+                : null,
+          ),
           h(
             "div",
             { style: styles.rowMain },
@@ -7458,7 +7540,15 @@ window.__ModuleLoader__.load({
                   },
                   "+",
                 ),
-                h("span", { "data-composer-mic": "", title: text(t, "detail.composerMic") }, "🎤"),
+                h(
+                  "span",
+                  {
+                    "data-composer-mic": "",
+                    title: text(t, "detail.composerMic"),
+                    style: { display: "inline-flex", color: T.faint },
+                  },
+                  glyph("mic", 14),
+                ),
                 h("span", { style: { flex: "1 1 auto" } }),
                 h(
                   "span",
@@ -7684,7 +7774,7 @@ window.__ModuleLoader__.load({
                   title: text(t, "detail.settingsOpen"),
                   onClick: () => setPanelSettingsOpen(true),
                 },
-                "⚙",
+                glyph("gear", 14),
               ),
               // Claude 的面板 header 右侧有「+ Add view」；这里先做占位（禁用 + 说明）
               h(
