@@ -531,6 +531,8 @@
     "detail.viewCancel": "Cancel",
     "detail.viewDelete": "Delete this view",
     "detail.viewSaveFailed": "Could not save the view: {reason}",
-    "detail.bellTitle": "{count} item(s) need you (waiting / failed)"
+    "detail.bellTitle": "{count} item(s) need you (waiting / failed)",
+    "detail.carouselPreview": "Preview",
+    "detail.carouselPreviewHint": "Expand the focused thread"
   }
 }

@@ -429,6 +429,8 @@ window.__ModuleLoader__.load({
       "detail.purged": "已清理 {count} 项，清单已写入 trash/",
       "detail.archivedLabel": "归档时间",
       "detail.carousel": "{index}–{total} of {total}",
+      "detail.carouselPreview": "预览",
+      "detail.carouselPreviewHint": "展开当前这条线程",
       "detail.carouselNext": "下一条",
       "detail.carouselPrev": "上一条",
       "detail.dirLimit": "最多 {count} 个目录（已加 {used} 个）",
@@ -884,6 +886,8 @@ window.__ModuleLoader__.load({
       "detail.purged": "Purged {count} entries; manifest written under trash/",
       "detail.archivedLabel": "Archived at",
       "detail.carousel": "{index}–{total} of {total}",
+      "detail.carouselPreview": "Preview",
+      "detail.carouselPreviewHint": "Expand the focused thread",
       "detail.carouselNext": "Next",
       "detail.carouselPrev": "Previous",
       "detail.dirLimit": "Up to {count} folders ({used} added)",
@@ -7169,6 +7173,26 @@ window.__ModuleLoader__.load({
                             onClick: () => moveCarousel(group.id, 1, group.rows.length),
                           },
                           "›",
+                        ),
+                        // Preview：展开当前聚焦的那条线程（Claude 轮播右侧的 Preview）
+                        h(
+                          "button",
+                          {
+                            type: "button",
+                            style: {
+                              ...styles.iconButton,
+                              fontSize: "11px",
+                              padding: "0 4px",
+                              marginLeft: "4px",
+                            },
+                            "data-projects-carousel-preview": group.id,
+                            title: text(t, "detail.carouselPreviewHint"),
+                            onClick: () => {
+                              const target = group.rows[position]?.sessionId;
+                              if (target) setExpandedThread(String(target));
+                            },
+                          },
+                          text(t, "detail.carouselPreview"),
                         ),
                       )
                     : null,
