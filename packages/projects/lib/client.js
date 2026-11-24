@@ -1667,6 +1667,18 @@ window.__ModuleLoader__.load({
         flexDirection: "column",
         gap: "10px",
       },
+      // 浅色：面板是"白色圆角卡片 + 阴影"浮在页面上（Claude 浅色帧的结构）
+      panelColLight: {
+        minWidth: 0,
+        display: "flex",
+        flexDirection: "column",
+        gap: "10px",
+        padding: "16px 18px",
+        borderRadius: "14px",
+        border: "1px solid rgba(0,0,0,0.06)",
+        background: "#ffffff",
+        boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+      },
       panelColNarrow: {
         minWidth: 0,
         display: "flex",
@@ -1991,6 +2003,32 @@ window.__ModuleLoader__.load({
      * 图标节点：宿主的 Icon* 跟随主题 icon set；取不到就用一行字形兜底（不引 SVG 资源）。
      * @param {string} kind @param {string} fallback @param {number} [size]
      */
+    /**
+     * 当前宿主配色（light/dark）：宿主把"外观"落成 `color-scheme`，读它比 matchMedia 可靠。
+     * 每秒轮询一次（设置里切换外观时无需刷新页面）。
+     * @returns {"light"|"dark"}
+     */
+    function useColorScheme() {
+      var state = useState("dark");
+      var scheme = state[0];
+      var setScheme = state[1];
+      useEffect(() => {
+        var read = () => {
+          var value = "";
+          try {
+            value = getComputedStyle(document.documentElement).colorScheme || "";
+          } catch {
+            value = "";
+          }
+          setScheme(value.indexOf("light") >= 0 ? "light" : "dark");
+        };
+        read();
+        var timer = setInterval(read, 1200);
+        return () => clearInterval(timer);
+      }, [setScheme]);
+      return scheme;
+    }
+
     /**
      * 线性 SVG 字形（Claude 的图标语言：1.5px stroke、圆角端点）。
      * 宿主 icon set 覆盖不到的（gear/mic/check/arc/plus）用这里，避免 emoji 混进界面。
@@ -5539,6 +5577,7 @@ window.__ModuleLoader__.load({
       const setPinnedLocal = pinState[1];
       const gridRef = useRef(null);
       const narrowState = useState(false);
+      const colorScheme = useColorScheme();
       const narrow = narrowState[0];
       const setNarrow = narrowState[1];
       const content = data.content || {};
@@ -8008,7 +8047,15 @@ window.__ModuleLoader__.load({
           // —— 右列：Threads 面板（页签 + Welcome + 药丸条 + 列表/记忆/Routines）——
           h(
             "div",
-            { style: narrow ? styles.panelColNarrow : styles.panelCol, "data-panel-column": "" },
+            {
+              style: narrow
+                ? styles.panelColNarrow
+                : colorScheme === "light"
+                  ? styles.panelColLight
+                  : styles.panelCol,
+              "data-panel-column": "",
+              "data-panel-scheme": colorScheme,
+            },
             h(
               "div",
               {
