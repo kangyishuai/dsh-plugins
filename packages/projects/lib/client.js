@@ -5776,9 +5776,72 @@ window.__ModuleLoader__.load({
       const setGroupMenu = groupMenuState[1];
       // 设置抽屉：rail 里的 15 段设置不再常驻右栏（Claude 是独立 Project settings），
       // 由面板 header 的 ⚙ 打开；锚点保持原样，冒烟/桌面回归照旧能点。
-      const visibleTabsState = useState({ threads: true, library: true, routines: true });
-      const visibleTabs = visibleTabsState[0];
-      const setVisibleTabs = visibleTabsState[1];
+      // D1：右栏可见性持久化在项目记录里（visibleViews）；override 只做乐观反馈
+      const visibleOverrideState = useState(/** @type {string[]|null} */ (null));
+      const visibleOverride = visibleOverrideState[0];
+      const setVisibleOverride = visibleOverrideState[1];
+      const storedVisibleViews = Array.isArray(project.visibleViews)
+        ? project.visibleViews
+        : ["library", "routines"];
+      const visibleList = visibleOverride ?? storedVisibleViews;
+      /** @type {Record<string, boolean>} */
+      const visibleTabs = {
+        threads: true,
+        library: visibleList.indexOf("library") >= 0,
+        routines: visibleList.indexOf("routines") >= 0,
+      };
+      // 盘上值追上选择后，清掉乐观 override
+      useEffect(() => {
+        if (visibleOverride === null) return;
+        if (storedVisibleViews.join(",") === visibleOverride.join(",")) setVisibleOverride(null);
+      }, [storedVisibleViews.join(","), visibleOverride, setVisibleOverride]);
+      const toggleVisibleView = (/** @type {string} */ id, /** @type {boolean} */ next) => {
+        try {
+          document.body.setAttribute("data-projects-toggle-hit", `${id}:${String(next)}`);
+        } catch {
+          /* ignore */
+        }
+        const base = visibleList.filter((/** @type {string} */ item) => item !== id);
+        const nextList = next ? [...base, id] : base;
+        setVisibleOverride(nextList);
+        let pending = null;
+        try {
+          pending = call(api.ctx, "updateProject", {
+            id: project.id,
+            // 网关对数组参数不可靠：用逗号串传，store 端再解析
+            patch: { visibleViewsText: nextList.join(",") },
+          });
+        } catch (error) {
+          try {
+            document.body.setAttribute(
+              "data-projects-view-error",
+              "sync: " + String(/** @type {any} */ (error)?.message ?? error).slice(0, 240),
+            );
+          } catch {
+            /* ignore */
+          }
+          return;
+        }
+        pending.then(
+          () => {
+            // 不清 override：等 load() 回读到与选择一致的盘上值再清。
+            // 旧宿主若忽略 visibleViews，UI 仍按选择隐藏（只是刷新后回默认）。
+            load();
+          },
+          (/** @type {any} */ error) => {
+            setVisibleOverride(null);
+            // 调试/回归用：把失败原因挂在 DOM 上，别静默吞掉（本轮排查就卡在这）
+            try {
+              document.body.setAttribute(
+                "data-projects-view-error",
+                String(error?.message ?? error).slice(0, 300),
+              );
+            } catch {
+              /* ignore */
+            }
+          },
+        );
+      };
       const viewNameState = useState("");
       const viewName = viewNameState[0];
       const setViewName = viewNameState[1];
@@ -7265,30 +7328,55 @@ window.__ModuleLoader__.load({
                 ["library", text(t, "detail.tab.library")],
                 ["routines", "Routines"],
               ].map(([id, label]) =>
-                h(
-                  "label",
-                  {
-                    key: id,
-                    style: {
-                      display: "flex",
-                      gap: "6px",
-                      alignItems: "center",
-                      fontSize: "12.5px",
-                      color: T.dim,
+                (() => {
+                  const on = visibleTabs[id] !== false;
+                  // 用 switch 按钮而不是 checkbox：本轮实测受控 checkbox 的 onChange
+                  // 在这套 classic-script 渲染器里收不到（真实点击后 DOM 变了、state 不更新）。
+                  return h(
+                    "button",
+                    {
+                      key: id,
+                      type: "button",
+                      role: "switch",
+                      "aria-checked": on ? "true" : "false",
+                      "data-projects-view-toggle": id,
+                      "data-projects-view-toggle-on": on ? "true" : "false",
+                      style: {
+                        display: "flex",
+                        gap: "8px",
+                        alignItems: "center",
+                        border: "none",
+                        background: "transparent",
+                        padding: "2px 0",
+                        cursor: "pointer",
+                        fontSize: "12.5px",
+                        color: on ? T.text : T.dim,
+                        textAlign: "left",
+                      },
+                      onClick: () => toggleVisibleView(id, !on),
                     },
-                  },
-                  h("input", {
-                    type: "checkbox",
-                    checked: visibleTabs[id] !== false,
-                    "data-projects-view-toggle": id,
-                    onChange: (/** @type {any} */ event) =>
-                      setVisibleTabs((/** @type {any} */ prev) => ({
-                        ...prev,
-                        [id]: event.target.checked,
-                      })),
-                  }),
-                  label,
-                ),
+                    h(
+                      "span",
+                      {
+                        style: {
+                          width: "14px",
+                          height: "14px",
+                          borderRadius: "4px",
+                          border: `1px solid ${on ? T.accentText : T.borderSoft}`,
+                          background: on ? T.accentText : "transparent",
+                          color: on ? T.onPrimary : "transparent",
+                          fontSize: "10px",
+                          lineHeight: "14px",
+                          textAlign: "center",
+                          flex: "none",
+                        },
+                        "aria-hidden": "true",
+                      },
+                      "✓",
+                    ),
+                    label,
+                  );
+                })(),
               ),
             ),
             h("span", { style: styles.name }, text(t, "views.savedTitle")),
