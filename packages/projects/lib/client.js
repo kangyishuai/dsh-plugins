@@ -444,9 +444,9 @@ window.__ModuleLoader__.load({
       "detail.settingsPane.usage": "用量",
       "detail.settingsPane.debug": "调试",
       "detail.settingsEnvHint":
-        "环境设置（项目目录 / 仓库授权 / 本地文件夹授权 / 清理）在完整设置的「项目 → 环境」里。",
+        "环境设置（项目目录 / 仓库授权 / 本地文件夹授权 / 清理）已在本分区。",
       "detail.settingsDebugHint":
-        "调试设置（危险动作开关 / 线程权限 / 审计）在完整设置的「项目 → 调试」里。",
+        "更细的调试项（危险动作开关 / 线程权限 / 审计）已在本分区；完整设置的「项目 → 调试」里还有更多。",
       "detail.settingsOpenFull": "打开完整设置",
 
       "detail.prOpen": "已开",
@@ -884,9 +884,9 @@ window.__ModuleLoader__.load({
       "detail.settingsPane.usage": "Usage",
       "detail.settingsPane.debug": "Debug access",
       "detail.settingsEnvHint":
-        "Environment settings (project folder / repo grants / local folder access / cleanup) live in full settings → Projects → Environment.",
+        "Environment settings (project folder / repo grants / local folder access / cleanup) are in this section.",
       "detail.settingsDebugHint":
-        "Debug settings (danger switches / thread permissions / audit) live in full settings → Projects → Debug.",
+        "Danger switches / thread permissions / audit are in this section; full settings → Projects → Debug has more.",
       "detail.settingsOpenFull": "Open full settings",
 
       "detail.prOpen": "open",
@@ -2269,9 +2269,16 @@ window.__ModuleLoader__.load({
      * @param {{label: string, value: any, title?: string, action?: any, attrs?: any}} props
      */
     function RailRow(props) {
+      const rowProps = /** @type {any} */ (props);
+      const rowHidden = Boolean(
+        rowProps.pane && rowProps.activePane && rowProps.pane !== rowProps.activePane,
+      );
       return h(
         "div",
-        { style: styles.railRow, ...(props.attrs || {}) },
+        {
+          style: rowHidden ? { ...styles.railRow, display: "none" } : styles.railRow,
+          ...(props.attrs || {}),
+        },
         h("span", { style: styles.railLabel }, props.label),
         h(
           "span",
@@ -8099,7 +8106,7 @@ window.__ModuleLoader__.load({
               ),
             ),
             // 环境/调试的分区内容还在宿主设置里（后续批次搬进来）
-            panelPane === "environment" || panelPane === "debug"
+            panelPane === "debug"
               ? h(
                   "div",
                   {
@@ -8287,7 +8294,8 @@ window.__ModuleLoader__.load({
             h(RailSection, {
               t: t,
               id: "context",
-              pane: "general",
+              // 该段内混装 general/environment/debug 三组行，父段常驻、由内层行按 pane 过滤
+              pane: "",
               activePane: panelPane,
               title: text(t, "detail.section.context"),
               collapsible: narrow,
@@ -8301,6 +8309,7 @@ window.__ModuleLoader__.load({
                 h(B3ContextCard, {
                   api: api,
                   t: t,
+                  activePane: panelPane,
                   project: data.liveProject || project,
                   fragments: data.content?.fragments || [],
                   entries: data.content?.entries || [],
@@ -8308,6 +8317,8 @@ window.__ModuleLoader__.load({
                 }),
                 // 项目状态：值 + 暂停/恢复
                 h(RailRow, {
+                  pane: "general",
+                  activePane: panelPane,
                   label: text(t, "detail.projectState"),
                   value: projectStateText,
                   attrs: { "data-projects-rail-state": "" },
@@ -8348,6 +8359,8 @@ window.__ModuleLoader__.load({
                     ["30", text(t, "detail.autoResolveDays", { days: 30 })],
                   ];
                   return h(RailRow, {
+                    pane: "general",
+                    activePane: panelPane,
                     label: text(t, "detail.autoResolve"),
                     value:
                       days === null
@@ -8394,6 +8407,8 @@ window.__ModuleLoader__.load({
                 // F1：归档时间只对归档项目显示（不伪造未归档的时间）
                 data.projectState === "archived"
                   ? h(RailRow, {
+                      pane: "general",
+                      activePane: panelPane,
                       label: text(t, "detail.archivedLabel"),
                       value: project.archivedAt
                         ? relativeLabel(t, project.archivedAt)
@@ -8404,6 +8419,8 @@ window.__ModuleLoader__.load({
                 // F2：关联仓库（owner/repo）；没有就不显示这一行
                 Array.isArray(project.repos) && project.repos.length > 0
                   ? h(RailRow, {
+                      pane: "environment",
+                      activePane: panelPane,
                       label: text(t, "detail.reposLabel"),
                       value: project.repos.join(" · "),
                       title: project.repos.join(" · "),
@@ -8415,6 +8432,8 @@ window.__ModuleLoader__.load({
                   "div",
                   { style: { display: "flex", flexDirection: "column", gap: "2px" } },
                   h(RailRow, {
+                    pane: "environment",
+                    activePane: panelPane,
                     label: text(t, "detail.dirLabel"),
                     value: dirList.length > 0 ? dirList.join(" · ") : text(t, "detail.none"),
                     title: dirList.join(" · "),
@@ -8463,6 +8482,8 @@ window.__ModuleLoader__.load({
                 ),
                 // 仓库授权：值行 + ＋（点开才出输入与删除）
                 h(RailRow, {
+                  pane: "environment",
+                  activePane: panelPane,
                   label: text(t, "detail.grantsLabel"),
                   value: grants.length > 0 ? grants.join(" · ") : text(t, "detail.none"),
                   title: grants.join(" · "),
@@ -8480,6 +8501,8 @@ window.__ModuleLoader__.load({
                 }),
                 // 回收站清理：值行 + 预览/确认（两个都是动作，不是输入）
                 h(RailRow, {
+                  pane: "environment",
+                  activePane: panelPane,
                   label: text(t, "detail.purgeLabel"),
                   value: purge.message !== "" ? purge.message : text(t, "detail.purgeNothing"),
                   attrs: { "data-projects-purge": "" },
@@ -8650,6 +8673,8 @@ window.__ModuleLoader__.load({
                 ),
                 // 危险动作开关：本来就是「一行 + 展开」，保留 details 语义
                 h(DangerSwitches, {
+                  pane: "debug",
+                  activePane: panelPane,
                   t: t,
                   policy: project.policy,
                   onChange: (/** @type {any} */ patch) =>
@@ -10305,9 +10330,16 @@ window.__ModuleLoader__.load({
     function DangerSwitches(/** @type {any} */ props) {
       const t = props.t;
       const danger = props.policy?.danger ?? {};
+      const dangerPanes = /** @type {any} */ (props);
+      const dangerHidden = Boolean(
+        dangerPanes.pane && dangerPanes.activePane && dangerPanes.pane !== dangerPanes.activePane,
+      );
       return h(
         "details",
-        { "data-projects-policy-danger": "" },
+        {
+          "data-projects-policy-danger": "",
+          style: dangerHidden ? { display: "none" } : undefined,
+        },
         h(
           "summary",
           { style: { cursor: "pointer", color: T.dim } },
@@ -11199,6 +11231,12 @@ window.__ModuleLoader__.load({
      */
     function B3ContextCard(props) {
       var api = props.api;
+      // 这张卡混装三种分区内容（通用/记忆/环境），按当前分区隐藏而不是卸载
+      var b3Pane = String(props.activePane || "");
+      var paneStyle = (/** @type {string} */ pane, /** @type {any} */ base) => {
+        if (b3Pane === "" || pane === b3Pane) return base;
+        return { ...(base || {}), display: "none" };
+      };
       var t = props.t;
       var project = props.project || {};
       var dirs = Array.isArray(project.dirs) ? project.dirs : [];
@@ -11401,7 +11439,7 @@ window.__ModuleLoader__.load({
         h(
           "div",
           {
-            style: styles.meta,
+            style: paneStyle("general", styles.meta),
             "data-projects-mention-source": String(api.mentionSource || "unavailable"),
           },
           text(
@@ -11413,7 +11451,7 @@ window.__ModuleLoader__.load({
         h(
           "div",
           {
-            style: { display: "flex", flexWrap: "wrap", gap: "6px" },
+            style: paneStyle("memory", { display: "flex", flexWrap: "wrap", gap: "6px" }),
             "data-projects-mention-candidates": "",
           },
           (view.mentions || []).map((/** @type {any} */ item) =>
@@ -11448,7 +11486,7 @@ window.__ModuleLoader__.load({
         // F37：碎片计数（写入口在记忆页签；右栏保持只读观感）
         h(
           "span",
-          { style: styles.meta, "data-projects-frag-count": "" },
+          { style: paneStyle("memory", styles.meta), "data-projects-frag-count": "" },
           text(t, "b3.fragLimit", {
             count: Array.isArray(props.fragments) ? props.fragments.length : 0,
             limit: 100,
@@ -11458,7 +11496,11 @@ window.__ModuleLoader__.load({
         h(
           "div",
           {
-            style: { display: "flex", flexDirection: "column", gap: "6px" },
+            style: paneStyle("environment", {
+              display: "flex",
+              flexDirection: "column",
+              gap: "6px",
+            }),
             "data-projects-folder-auth": "",
           },
           h("span", { style: styles.name }, text(t, "b3.folderTitle")),
@@ -11564,7 +11606,7 @@ window.__ModuleLoader__.load({
         h(
           "div",
           {
-            style: { display: "flex", flexDirection: "column", gap: "4px" },
+            style: paneStyle("general", { display: "flex", flexDirection: "column", gap: "4px" }),
             "data-projects-thread-defaults": "",
             "data-projects-thread-defaults-value": defaultsReadback,
             "data-projects-model-catalog": catalogStats,
@@ -11715,7 +11757,11 @@ window.__ModuleLoader__.load({
           ? h(
               "div",
               {
-                style: { display: "flex", flexDirection: "column", gap: "4px" },
+                style: paneStyle("general", {
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "4px",
+                }),
                 "data-projects-recent-list": "",
               },
               view.sessions.length === 0

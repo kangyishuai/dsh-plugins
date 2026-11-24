@@ -513,8 +513,8 @@
     "detail.settingsPane.environment": "环境",
     "detail.settingsPane.usage": "用量",
     "detail.settingsPane.debug": "调试",
-    "detail.settingsEnvHint": "环境设置（项目目录 / 仓库授权 / 本地文件夹授权 / 清理）在完整设置的「项目 → 环境」里。",
-    "detail.settingsDebugHint": "调试设置（危险动作开关 / 线程权限 / 审计）在完整设置的「项目 → 调试」里。",
+    "detail.settingsEnvHint": "环境设置（项目目录 / 仓库授权 / 本地文件夹授权 / 清理）已在本分区。",
+    "detail.settingsDebugHint": "更细的调试项（危险动作开关 / 线程权限 / 审计）已在本分区；完整设置的「项目 → 调试」里还有更多。",
     "detail.settingsOpenFull": "打开完整设置"
   }
 }

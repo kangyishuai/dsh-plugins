@@ -513,8 +513,8 @@
     "detail.settingsPane.environment": "Environment",
     "detail.settingsPane.usage": "Usage",
     "detail.settingsPane.debug": "Debug access",
-    "detail.settingsEnvHint": "Environment settings (project folder / repo grants / local folder access / cleanup) live in full settings → Projects → Environment.",
-    "detail.settingsDebugHint": "Debug settings (danger switches / thread permissions / audit) live in full settings → Projects → Debug.",
+    "detail.settingsEnvHint": "Environment settings (project folder / repo grants / local folder access / cleanup) are in this section.",
+    "detail.settingsDebugHint": "Danger switches / thread permissions / audit are in this section; full settings → Projects → Debug has more.",
     "detail.settingsOpenFull": "Open full settings"
   }
 }
