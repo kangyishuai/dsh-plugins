@@ -485,6 +485,22 @@ export function applyRecordResolution(view, record) {
  */
 export function hydrateThreadView(record, events) {
   const replayed = replay(events ?? []);
+  // 崩溃恢复：有 turn/start 却没有对应 turn/end = 上一轮没跑完（进程被杀/断电）。
+  // 不处理的话 `state` 会停在 working 永远转圈（真机强杀实测：重启后「核对中 196s」一直涨）。
+  // 语义上这一轮确实没有正常结束，按 failed 处理，并让失败自动重试有机会接手。
+  const openTurns = (events ?? []).reduce(
+    (/** @type {number} */ open, /** @type {any} */ event) => {
+      const type = String(event?.type ?? "");
+      if (type === "turn/start") return open + 1;
+      if (type === "turn/end") return Math.max(0, open - 1);
+      return open;
+    },
+    0,
+  );
+  if (openTurns > 0) {
+    replayed.lastTurnFailed = true;
+    replayed.lastAttemptFailed = true;
+  }
   const resolvedAtMs = Date.parse(String(record?.resolvedAt ?? ""));
   // resolve 之后又跑过一轮：盘的 resolvedAt 已过期，不能再拿它盖住最新事实
   const stale = Number.isFinite(resolvedAtMs) && replayed.lastActivityAt > resolvedAtMs;

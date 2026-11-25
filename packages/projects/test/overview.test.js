@@ -605,3 +605,21 @@ describe("宿主 running 卡住的兜底（真机：session 锁一直持有 → 
     assert.equal(resolveLiveRunning(undefined, true), true);
   });
 });
+
+describe("崩溃恢复：未闭合的 turn 判为失败（强杀协议实测）", () => {
+  it("只有 turn/start → failed；有 turn/end → 不算失败", async () => {
+    const { hydrateThreadView, deriveState } = await import("../lib/overview.js");
+    const interrupted = hydrateThreadView({ state: "working" }, [
+      { type: "turn/start", at: 1000, data: { turn: 1 } },
+    ]);
+    assert.equal(interrupted.lastTurnFailed, true);
+    assert.equal(deriveState(interrupted), "failed");
+
+    const completed = hydrateThreadView({ state: "idle" }, [
+      { type: "turn/start", at: 1000, data: { turn: 1 } },
+      { type: "turn/end", at: 2000, data: {} },
+    ]);
+    assert.equal(completed.lastTurnFailed, false);
+    assert.equal(deriveState(completed), "idle");
+  });
+});
