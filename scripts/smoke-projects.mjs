@@ -2676,6 +2676,73 @@ try {
     }),
   );
 
+  // D3：协调者 composer 药丸（目录为空时走手动兜底，写 coordinatorDefaults 与设置页同值）
+  const coordPill = await page.evaluate(async () => {
+    const q = (sel) => document.querySelector(sel);
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const pill = q("[data-projects-coordinator-model-pill]");
+    if (!pill) return { ok: false, reason: "no-pill" };
+    pill.click();
+    await wait(400);
+    const menu = Boolean(q("[data-projects-coordinator-model-menu]"));
+    let resultPicked = "";
+    const fill = (selector, value) => {
+      const input = q(selector);
+      if (!input) return;
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+      setter.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    const select = q("[data-projects-coordinator-model-select]");
+    if (select) {
+      // 目录可用：选第一个具体模型
+      const value = [...select.options].map((option) => option.value).find((item) => item !== "");
+      if (value) {
+        const setter = Object.getOwnPropertyDescriptor(
+          window.HTMLSelectElement.prototype,
+          "value",
+        ).set;
+        setter.call(select, value);
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      resultPicked = value || "";
+    } else {
+      fill("[data-projects-coordinator-model-manual]", "smoke-coordinator|smoke-model");
+      resultPicked = "smoke-coordinator|smoke-model";
+    }
+    fill("[data-projects-coordinator-model-effort]", "high");
+    await wait(400);
+    q("[data-projects-coordinator-model-save]")?.click();
+    let label = "";
+    for (let index = 0; index < 30; index += 1) {
+      await wait(300);
+      label =
+        q("[data-projects-coordinator-model-pill]")?.getAttribute(
+          "data-projects-coordinator-model-pill-label",
+        ) || "";
+      if (label !== "" && label !== "继承宿主默认" && label !== "Host default") break;
+    }
+    return {
+      ok: menu,
+      menu,
+      picked: resultPicked,
+      label,
+      message:
+        (q("[data-projects-thread-action-result]")?.textContent || "") + " | " +
+        (q("[data-projects-coordinator-result]")?.textContent || ""),
+    };
+  });
+  add(
+    "D3 协调者 composer 药丸：菜单可开、手动兜底写→回读标签更新",
+    coordPill?.ok === true &&
+      coordPill?.menu === true &&
+      String(coordPill?.label || "") !== "" &&
+      String(coordPill?.label || "") !== "继承宿主默认" &&
+      String(coordPill?.label || "") !== "Host default",
+    JSON.stringify(coordPill),
+  );
+  console.log("coord pill debug:", JSON.stringify(coordPill));
+
   add(
     "3.x composer 模型药丸可点开菜单（锚点与回读标签）",
     await page.evaluate(() => {
