@@ -4270,6 +4270,24 @@ try {
       key: node.getAttribute("data-projects-notify-pref"),
       checked: node.checked === true,
     }));
+    // 通知四档（Claude 的 "Coordinator and @mentions" 预设）——档位选择写 booleans
+    const tierSel = q("[data-projects-notify-tier]");
+    const tierBefore = tierSel ? tierSel.value : "";
+    let tierAllResult = null;
+    if (tierSel) {
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLSelectElement.prototype,
+        "value",
+      ).set;
+      setter.call(tierSel, "all");
+      tierSel.dispatchEvent(new Event("change", { bubbles: true }));
+      await wait(1600);
+      tierAllResult = {
+        tier: q("[data-projects-notify-tier]")?.value || "",
+        completed: q('[data-projects-notify-pref="completed"]')?.checked === true,
+        failed: q('[data-projects-notify-pref="failed"]')?.checked === true,
+      };
+    }
     const completedBox = q('[data-projects-notify-pref="completed"]');
     let notifyAfter = "";
     if (completedBox) {
@@ -4277,6 +4295,19 @@ try {
       await wait(1500);
       const again = q('[data-projects-notify-pref="completed"]');
       notifyAfter = again && again.checked ? "on" : "off";
+    }
+    // 收尾把档位设为「全部」：Node 侧要验证 completed=true 落盘
+    {
+      const tierSelBack = q("[data-projects-notify-tier]");
+      if (tierSelBack) {
+        const setter = Object.getOwnPropertyDescriptor(
+          window.HTMLSelectElement.prototype,
+          "value",
+        ).set;
+        setter.call(tierSelBack, "all");
+        tierSelBack.dispatchEvent(new Event("change", { bubbles: true }));
+        await wait(1600);
+      }
     }
     const auditBox = q("[data-projects-audit]");
     const debug = {
@@ -4321,6 +4352,8 @@ try {
       debug,
       notify,
       notifyAfter,
+      notifyTier: tierBefore,
+      notifyTierAll: tierAllResult,
       gh,
       memory,
       pickedProject,
@@ -4438,12 +4471,22 @@ try {
     );
     add(
       "通知开关默认「失败/等你开、完成关」，可切换并回读",
+      "通知四档：档位选择存在，选「全部」后 failed/waiting/completed 都打开",
       b3Settings.notify.length === 3 &&
         b3Settings.notify.find((item) => item.key === "failed")?.checked === true &&
         b3Settings.notify.find((item) => item.key === "waiting-user")?.checked === true &&
         b3Settings.notify.find((item) => item.key === "completed")?.checked === false &&
         b3Settings.notifyAfter === "on",
       JSON.stringify({ notify: b3Settings.notify, notifyAfter: b3Settings.notifyAfter }),
+    );
+    add(
+      "通知四档：档位选择存在，选「全部」后 failed/waiting/completed 都打开",
+      typeof b3Settings.notifyTier === "string" &&
+        b3Settings.notifyTier !== "" &&
+        b3Settings.notifyTierAll?.tier === "all" &&
+        b3Settings.notifyTierAll?.completed === true &&
+        b3Settings.notifyTierAll?.failed === true,
+      JSON.stringify({ tier: b3Settings.notifyTier, all: b3Settings.notifyTierAll }),
     );
     add(
       "F5 模板补全回执写明 AGENTS.md 路径（两次调用仍幂等）",
