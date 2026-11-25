@@ -5299,6 +5299,39 @@ window.__ModuleLoader__.load({
       const data = dataState[0];
       const setData = dataState[1];
 
+      // M4：快捷键（Claude 的 P/R/A/D 思路；这里落到右栏四个视图）。
+      // 只在没在输入框里时生效，避免打字被劫持。
+      useEffect(() => {
+        if (typeof window === "undefined") return undefined;
+        const onKeyDown = (/** @type {any} */ event) => {
+          if (event?.defaultPrevented || event?.metaKey || event?.ctrlKey || event?.altKey) return;
+          const target = event?.target;
+          const tag = String(target?.tagName ?? "").toLowerCase();
+          if (
+            tag === "input" ||
+            tag === "textarea" ||
+            tag === "select" ||
+            target?.isContentEditable
+          )
+            return;
+          const key = String(event?.key ?? "").toLowerCase();
+          const next =
+            key === "p"
+              ? "threads"
+              : key === "l"
+                ? "library"
+                : key === "r"
+                  ? "routines"
+                  : key === "v"
+                    ? "views"
+                    : "";
+          if (next === "") return;
+          setTab(next);
+        };
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+      }, [setTab]);
+
       const load = useCallback(
         (/** @type {boolean} */ silent) => {
           // 静默刷新：后台轮询不把整页切回「加载中…」，否则行/锚点会周期性消失
@@ -7362,7 +7395,14 @@ window.__ModuleLoader__.load({
                               },
                               "data-projects-thread-artifact-chip": String(item?.id ?? ""),
                               title: String(item?.title ?? ""),
-                              onClick: () => setExpandedThread(String(row.sessionId)),
+                              onClick: () => {
+                                const kind = String(item?.kind ?? "");
+                                if (["markdown", "json", "csv"].indexOf(kind) >= 0) {
+                                  setArtifactViewer(item);
+                                } else {
+                                  setExpandedThread(String(row.sessionId));
+                                }
+                              },
                             },
                             String(item?.id ?? "") !== ""
                               ? h("img", {
