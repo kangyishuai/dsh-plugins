@@ -338,3 +338,35 @@ export function newRoutineId(now = Date.now()) {
     .padStart(4, "0");
   return `rt_${stamp}_${rand}`;
 }
+
+/**
+ * 编辑 routine 的参数计划（纯函数）：本地补丁 + 宿主 `schedule.edit` 的 patch。
+ * 改了频率/时间就必须同步宿主定时（否则本地记录与真实投递会漂移）。
+ * @param {{ name?: string, instructions?: string, frequency?: string, time?: string, weekday?: number, dayOfMonth?: number, timeZone?: string }} input
+ * @returns {{ ok: true, local: any, hostPatch: any } | { ok: false, reason: string }}
+ */
+export function planRoutineUpdate(input) {
+  const checked = validateRoutineInput(input);
+  if (!checked.ok) return { ok: false, reason: checked.reason };
+  const value = checked.value;
+  const timing = buildRoutineTiming(value.frequency, {
+    time: value.time,
+    weekday: value.weekday,
+    dayOfMonth: value.dayOfMonth,
+    timeZone: value.timeZone,
+  });
+  if (!timing.ok) return { ok: false, reason: timing.reason };
+  const local = {
+    name: value.name,
+    instructions: value.instructions,
+    frequency: value.frequency,
+    ...(value.frequency === "manual"
+      ? {}
+      : { time: value.time, weekday: value.weekday, dayOfMonth: value.dayOfMonth }),
+  };
+  const hostPatch = {
+    prompt: value.instructions,
+    ...(timing.timing === null ? {} : { timing: timing.timing }),
+  };
+  return { ok: true, local, hostPatch };
+}

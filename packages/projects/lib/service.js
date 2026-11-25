@@ -117,6 +117,7 @@ import {
   historyFromDelivery,
   MANUAL_COST_HINT,
   newRoutineId,
+  planRoutineUpdate,
   ROUTINE_COST_HINT,
   validateRoutineInput,
 } from "./routines.js";
@@ -1786,6 +1787,55 @@ export class ProjectsService extends TypertRemoteService {
     });
     store.save();
     return { ok: true, prNumber: Number(thread.prNumber) };
+  }
+
+  /**
+   * 保存自定义视图。
+   * @param {string} projectId @param {string} name @param {string} [filter] @param {string} [query]
+   */
+  /**
+   * 编辑一条 routine（指令/频率/时间）：先同步宿主定时，再改本地记录——
+   * 宿主改失败就整体失败，绝不出现「本地说 10:00、宿主还按 09:00 投递」的漂移。
+   * @param {string} projectId @param {string} routineId @param {any} input
+   */
+  async updateRoutine(projectId, routineId, input) {
+    const store = this.requireStore();
+    const project = store.getProject(String(projectId ?? ""));
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const routine = store
+      .listRoutines(project.id)
+      .find((/** @type {any} */ item) => String(item.id) === String(routineId));
+    if (!routine) return { ok: false, reason: "routine/not-found" };
+    const planned = planRoutineUpdate({ ...(input ?? {}), timeZone: this.hostTimeZone() });
+    if (!planned.ok) return { ok: false, reason: planned.reason };
+    const schedule = this.scheduleHost();
+    const scheduleId = String(routine.scheduleId ?? "");
+    if (scheduleId !== "" && "timing" in planned.hostPatch) {
+      if (!schedule || typeof schedule.edit !== "function") {
+        return { ok: false, reason: "schedule-unavailable" };
+      }
+      try {
+        await schedule.edit({ id: scheduleId, action: "update", patch: planned.hostPatch });
+      } catch (error) {
+        store.appendAudit({
+          action: "routine/update-failed",
+          projectId: project.id,
+          routineId,
+          detail: String(/** @type {any} */ (error)?.message ?? error).slice(0, 200),
+        });
+        store.save();
+        return { ok: false, reason: "schedule-failed" };
+      }
+    }
+    const written = store.patchRoutine(project.id, routineId, planned.local);
+    store.appendAudit({
+      action: "routine/updated",
+      projectId: project.id,
+      routineId,
+      frequency: planned.local.frequency,
+    });
+    store.save();
+    return { ok: true, routine: written.routine };
   }
 
   /**
@@ -5984,6 +6034,7 @@ declareRemote(ProjectsService, "applyProjectPreset");
 declareRemote(ProjectsService, "routinesView");
 declareRemote(ProjectsService, "createRoutine");
 declareRemote(ProjectsService, "setRoutineEnabled");
+declareRemote(ProjectsService, "updateRoutine");
 declareRemote(ProjectsService, "deleteRoutine");
 declareRemote(ProjectsService, "runRoutineNow");
 declareRemote(ProjectsService, "routineHistory");

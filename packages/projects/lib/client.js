@@ -11618,6 +11618,13 @@ window.__ModuleLoader__.load({
       const [history, setHistory] = useState({ routineId: "", rows: [], retention: null });
       // M4：Routines 详情三段（Trigger / Instructions / Runs in），一次只开一个
       const [detailId, setDetailId] = useState("");
+      // 编辑一条 routine（指令/频率/时间）：只支持已有 routine，不新增
+      const [editId, setEditId] = useState("");
+      const [editDraft, setEditDraft] = useState({
+        instructions: "",
+        frequency: "daily",
+        time: "09:00",
+      });
       const load = useCallback(() => {
         call(api.ctx, "routinesView", { projectId: project.id }).then(
           (/** @type {any} */ result) => setView(result),
@@ -11971,6 +11978,114 @@ window.__ModuleLoader__.load({
                           { style: styles.meta, "data-projects-routine-detail-runs": routine.id },
                           `${String(view?.timeZone || "")} · ${String(view?.projectDir || "")}`,
                         ),
+                        h(
+                          "div",
+                          { style: { display: "flex", gap: "6px", marginTop: "2px" } },
+                          h(
+                            "button",
+                            {
+                              type: "button",
+                              style: smallButton,
+                              "data-projects-routine-edit": routine.id,
+                              onClick: () => {
+                                setEditId(routine.id);
+                                setEditDraft({
+                                  instructions: String(routine.instructions || ""),
+                                  frequency: String(routine.frequency || "daily"),
+                                  time: String(routine.time || "09:00").slice(0, 5),
+                                });
+                              },
+                            },
+                            "编辑",
+                          ),
+                        ),
+                        editId === routine.id
+                          ? h(
+                              "div",
+                              {
+                                style: { display: "flex", flexDirection: "column", gap: "4px" },
+                                "data-projects-routine-edit-form": routine.id,
+                              },
+                              h("textarea", {
+                                style: {
+                                  ...styles.input,
+                                  minHeight: "64px",
+                                  fontFamily: "inherit",
+                                },
+                                value: editDraft.instructions,
+                                "data-projects-routine-edit-instructions": "",
+                                onChange: (/** @type {any} */ event) =>
+                                  setEditDraft((/** @type {any} */ prev) => ({
+                                    ...prev,
+                                    instructions: event.target.value,
+                                  })),
+                              }),
+                              h(
+                                "div",
+                                { style: { display: "flex", gap: "6px" } },
+                                h(
+                                  "select",
+                                  {
+                                    style: styles.input,
+                                    value: editDraft.frequency,
+                                    "data-projects-routine-edit-frequency": "",
+                                    onChange: (/** @type {any} */ event) =>
+                                      setEditDraft((/** @type {any} */ prev) => ({
+                                        ...prev,
+                                        frequency: event.target.value,
+                                      })),
+                                  },
+                                  [
+                                    "manual",
+                                    "hourly",
+                                    "daily",
+                                    "weekdays",
+                                    "weekly",
+                                    "monthly",
+                                  ].map((/** @type {string} */ value) =>
+                                    h("option", { key: value, value }, value),
+                                  ),
+                                ),
+                                h("input", {
+                                  style: { ...styles.input, width: "90px" },
+                                  value: editDraft.time,
+                                  placeholder: "HH:mm",
+                                  "data-projects-routine-edit-time": "",
+                                  onChange: (/** @type {any} */ event) =>
+                                    setEditDraft((/** @type {any} */ prev) => ({
+                                      ...prev,
+                                      time: event.target.value,
+                                    })),
+                                }),
+                              ),
+                              h(
+                                "button",
+                                {
+                                  type: "button",
+                                  style: smallButton,
+                                  "data-projects-routine-edit-save": routine.id,
+                                  onClick: () =>
+                                    runAction(
+                                      "更新",
+                                      call(api.ctx, "updateRoutine", {
+                                        projectId: project.id,
+                                        routineId: routine.id,
+                                        input: {
+                                          name: String(routine.name || routine.id),
+                                          instructions: editDraft.instructions,
+                                          frequency: editDraft.frequency,
+                                          time: editDraft.time,
+                                        },
+                                      }).then((/** @type {any} */ result) => {
+                                        if (result?.ok === true) setEditId("");
+                                        return result;
+                                      }),
+                                    ),
+                                },
+                                "保存",
+                              ),
+                            )
+                          : null,
                       )
                     : null,
                   h(
