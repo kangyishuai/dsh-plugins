@@ -4337,6 +4337,9 @@ try {
     const memory = {
       clicked: clickedMemory,
       counts: q("[data-projects-settings-memory-counts]")?.textContent || "",
+      layers: Boolean(q("[data-projects-memory-layers]")),
+      instructions: q("[data-projects-memory-instructions]")?.textContent || "",
+      indexUpdated: q("[data-projects-memory-index-updated]")?.textContent || "",
       templateClicked,
       templateClicks,
       result: q("[data-projects-settings-b3-result]")?.textContent || "",
@@ -4472,6 +4475,7 @@ try {
     add(
       "通知开关默认「失败/等你开、完成关」，可切换并回读",
       "通知四档：档位选择存在，选「全部」后 failed/waiting/completed 都打开",
+      "Memory 两层：指令计数带 16,000 上限 + 索引更新于",
       b3Settings.notify.length === 3 &&
         b3Settings.notify.find((item) => item.key === "failed")?.checked === true &&
         b3Settings.notify.find((item) => item.key === "waiting-user")?.checked === true &&
@@ -4487,6 +4491,16 @@ try {
         b3Settings.notifyTierAll?.completed === true &&
         b3Settings.notifyTierAll?.failed === true,
       JSON.stringify({ tier: b3Settings.notifyTier, all: b3Settings.notifyTierAll }),
+    );
+    add(
+      "Memory 两层：指令计数带 16,000 上限 + 索引更新于",
+      b3Settings.memory.layers === true &&
+        /指令 \\d+\\/16000/u.test(b3Settings.memory.instructions) &&
+        b3Settings.memory.indexUpdated.includes("更新于"),
+      JSON.stringify({
+        instructions: b3Settings.memory.instructions,
+        indexUpdated: b3Settings.memory.indexUpdated,
+      }),
     );
     add(
       "F5 模板补全回执写明 AGENTS.md 路径（两次调用仍幂等）",
