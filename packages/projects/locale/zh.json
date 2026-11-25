@@ -597,6 +597,7 @@
     "settings.memoryInstructions": "指令 {used}/{limit}「更新于 {updated}」",
     "settings.memoryIndexUpdated": "记忆索引更新于 {updated}",
     "settings.memoryNever": "从未",
-    "settings.memoryFilesEmpty": "记忆目录里还没有文件"
+    "settings.memoryFilesEmpty": "记忆目录里还没有文件",
+    "detail.composerHint": "输入 / 查看命令"
   }
 }

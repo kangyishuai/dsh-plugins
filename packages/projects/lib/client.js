@@ -515,6 +515,7 @@ window.__ModuleLoader__.load({
       "detail.composerAttach": "添加附件（待接入）",
       "detail.composerMic": "语音输入（待接入）",
       "detail.composerModel": "模型：{model}",
+      "detail.composerHint": "输入 / 查看命令",
       "detail.composerModelHint": "改的是项目的线程默认模型（等同设置里的「线程默认模型」）",
       "detail.composerModelMenuTitle": "线程默认模型",
       "detail.coordinatorModelHint": "协调者默认模型（与线程默认独立）",
@@ -1023,6 +1024,7 @@ window.__ModuleLoader__.load({
       "detail.composerAttach": "Attach (not yet available)",
       "detail.composerMic": "Voice input (not yet available)",
       "detail.composerModel": "Model: {model}",
+      "detail.composerHint": "Type / for commands",
       "detail.composerModelHint":
         "Edits the project thread default (same as Thread defaults in settings)",
       "detail.composerModelMenuTitle": "Thread default model",
@@ -6810,17 +6812,17 @@ window.__ModuleLoader__.load({
         [setCarousel],
       );
       /** 时长（U12 右侧元信息）：分钟 / 小时 / 天，没有 createdAt 就不显示。 */
-      const durationLabel = useCallback(
-        (/** @type {number|null} */ ms) => {
-          if (!(Number(ms) > 0)) return "";
-          const minutes = Math.max(1, Math.round(Number(ms) / 60_000));
-          if (minutes < 60) return text(t, "detail.durationMinutes", { minutes });
-          const hours = Math.round(minutes / 60);
-          if (hours < 24) return text(t, "detail.durationHours", { hours });
-          return text(t, "detail.durationDays", { days: Math.round(hours / 24) });
-        },
-        [t],
-      );
+      // Claude 的行尾时长是 small-caps 拉丁形式（now / 5m / 2h / 3d），不用中文长句。
+      const durationLabel = useCallback((/** @type {number|null} */ ms) => {
+        if (!(Number(ms) > 0)) return "";
+        const seconds = Math.round(Number(ms) / 1000);
+        if (seconds < 60) return "now";
+        const minutes = Math.round(seconds / 60);
+        if (minutes < 60) return `${minutes}m`;
+        const hours = Math.round(minutes / 60);
+        if (hours < 24) return `${hours}h`;
+        return `${Math.round(hours / 24)}d`;
+      }, []);
       const groupLabel = useCallback(
         (/** @type {string} */ id) => {
           const value = t(`detail.group.${id}`);
@@ -10012,6 +10014,15 @@ window.__ModuleLoader__.load({
                     : null,
                 ),
               ),
+            ),
+            // Claude 的 composer 提示行
+            h(
+              "span",
+              {
+                style: { ...styles.meta, paddingLeft: "2px" },
+                "data-projects-composer-hint": "",
+              },
+              text(t, "detail.composerHint"),
             ),
             // 按规则派活：保留既有语义（一句话决定怎么做），锚点与旧 UI 一致；
             // 窄窗隐藏（三行输入框堆叠太吵），入口仍在「项目设置 → 通用」的指令里
