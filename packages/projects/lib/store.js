@@ -199,6 +199,10 @@ export function normalizePolicy(raw, fallbackPolicy) {
         : typeof previous.persona === "string"
           ? previous.persona
           : "",
+    // M6：失败自动重试（语义=线程以失败结束时重发一句「继续」，最多 2 次；默认关）
+    autoRetry:
+      policy.autoRetry === true ||
+      (typeof policy.autoRetry !== "boolean" && previous.autoRetry === true),
     // F55：本地文件夹授权记录（path → {mode, at, used}）。只收敛已知 mode，其余原样丢弃。
     folderAuth: (() => {
       var merged = {
@@ -915,7 +919,7 @@ export class ProjectStore {
   /**
    * 记录线程的 worktree 归属（建 worktree 成功后调用）。
    * @param {string} sessionId
-   * @param {{ branch?: string|null, worktree?: string|null, baseSha?: string|null, lastPushedSha?: string|null, state?: string, prNumber?: number, mergedAt?: string|null }} patch
+   * @param {{ branch?: string|null, worktree?: string|null, baseSha?: string|null, lastPushedSha?: string|null, state?: string, prNumber?: number, mergedAt?: string|null, autoRetryCount?: number }} patch
    */
   setThreadWorktree(sessionId, patch) {
     const current = this.state.threads[sessionId];
@@ -933,6 +937,9 @@ export class ProjectStore {
     if (Number.isFinite(patch.prNumber)) current.prNumber = Number(patch.prNumber);
     if (typeof patch.mergedAt === "string" || patch.mergedAt === null)
       current.mergedAt = patch.mergedAt;
+    // M6：失败自动重试已用次数（成功/非失败状态会归零）
+    if (Number.isFinite(patch.autoRetryCount))
+      current.autoRetryCount = Math.max(0, Number(patch.autoRetryCount));
     return { ...current };
   }
 

@@ -20,6 +20,7 @@ import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 
 import { artifactRefFromToolResult } from "./artifact-ref.js";
 import { registerProjectContext } from "./attach.js";
+import { shouldAutoRetry } from "./auto-retry.js";
 import { buildFixTask, errorSignature, shouldContinueFix } from "./autofix.js";
 import {
   buildPrText,
@@ -375,6 +376,8 @@ export class ProjectsService extends TypertRemoteService {
     /** P0-3：线程 diff 摘要缓存（sessionId → {key, at, diff}）。progress 每 5s 轮询，
      * 不缓存的话每行每 5s 都 spawn 一次 git。 @type {Map<string, {key: string, at: number, diff: any}>} */
     this.diffCache = new Map();
+    /** M6：失败自动重试的定时器（sessionId → timer）。 @type {Map<string, any>} */
+    this.autoRetryTimers = new Map();
     /** M3：每会话最近一次 tool/call 的工具名（生成态 `✓✓✓ Using X` 用）。 @type {Map<string, string>} */
     this.currentTools = new Map();
     /** @type {any} */
@@ -658,6 +661,8 @@ export class ProjectsService extends TypertRemoteService {
           /* ignore */
         }
       }
+      for (const timer of this.autoRetryTimers.values()) clearTimeout(timer);
+      this.autoRetryTimers.clear();
       this.attached.clear();
     });
   }
@@ -3375,6 +3380,54 @@ export class ProjectsService extends TypertRemoteService {
    * @param {number} now
    * @returns {any}
    */
+  /**
+   * M6：失败自动重试（诚实语义：失败结束后重发「继续」，最多 2 次，60 秒后执行）。
+   * 只调度不执行：定时器到点时**再查一次**当前状态，仍失败才 steer。
+   * @param {string} projectId @param {string} sessionId @param {number} [delayMs]
+   */
+  scheduleAutoRetry(projectId, sessionId, delayMs = 60_000) {
+    if (this.autoRetryTimers.has(sessionId)) return;
+    const timer = setTimeout(
+      () => {
+        this.autoRetryTimers.delete(sessionId);
+        try {
+          const store = this.requireStore();
+          const thread = store
+            .listThreads(projectId)
+            .find((/** @type {any} */ item) => String(item.sessionId) === sessionId);
+          if (!thread) return;
+          const project = store.getProject(projectId);
+          const decision = shouldAutoRetry({
+            enabled: project?.policy?.autoRetry === true,
+            state: String(thread.state ?? ""),
+            previousState: "working",
+            attempts: Number(thread.autoRetryCount ?? 0),
+          });
+          if (!decision.retry) return;
+          store.setThreadWorktree(sessionId, {
+            autoRetryCount: Number(thread.autoRetryCount ?? 0) + 1,
+          });
+          store.appendAudit({ action: "thread/auto-retry", projectId, sessionId });
+          store.save();
+          void this.steerThread(sessionId, "继续").catch(() => {});
+        } catch {
+          /* 自动重试失败不打扰用户 */
+        }
+      },
+      Math.max(1_000, Number(delayMs)),
+    );
+    this.autoRetryTimers.set(sessionId, timer);
+  }
+
+  /**
+   * 组装一行 Overview 数据（F25/F26/F27）。
+   * @param {any} thread
+   * @param {{ states: Map<string, any>, summaries: Map<string, any> }} facts
+   * @param {Set<string>} archivedIds
+   * @param {number} now
+   * @param {any} [diff]
+   * @returns {any}
+   */
   buildThreadRow(thread, facts, archivedIds, now, diff = null) {
     const sessionId = String(thread.sessionId);
     const live = facts.states.get(sessionId);
@@ -3512,6 +3565,7 @@ export class ProjectsService extends TypertRemoteService {
     // P0-3：先把每行 worktree 的 diff 摘要算好（带缓存），再组装行；
     // 否则行摘要里 `diff n/a` 恒真，用户永远看不到「这一线程改了什么」。
     const diffs = await this.diffSummaries(threads);
+    const autoRetryEnabled = store.getProject(projectId)?.policy?.autoRetry === true;
     let dirty = false;
     const rows = threads.map((/** @type {any} */ thread) => {
       const row = this.buildThreadRow(
@@ -3545,6 +3599,19 @@ export class ProjectsService extends TypertRemoteService {
       }
       try {
         if (this.persistRowFacts(thread, row)) dirty = true;
+        // M6：失败自动重试（仅在「刚变成失败」时排一次；上限 2 次）
+        const retryDecision = shouldAutoRetry({
+          enabled: autoRetryEnabled,
+          state: String(row.view?.state ?? ""),
+          previousState: String(thread.state ?? ""),
+          attempts: Number(thread.autoRetryCount ?? 0),
+        });
+        if (retryDecision.retry) this.scheduleAutoRetry(projectId, String(thread.sessionId));
+        // 非失败状态把已用次数归零（下次失败重新给 2 次机会）
+        if (row.view?.state !== "failed" && Number(thread.autoRetryCount ?? 0) > 0) {
+          store.setThreadWorktree(String(thread.sessionId), { autoRetryCount: 0 });
+          dirty = true;
+        }
       } catch (error) {
         this.logger?.warn?.(
           `[projects] row state persist failed: ${String(/** @type {any} */ (error)?.message ?? error).slice(0, 160)}`,

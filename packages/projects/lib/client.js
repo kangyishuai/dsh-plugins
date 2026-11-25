@@ -48,6 +48,9 @@ window.__ModuleLoader__.load({
       "settings.nav.debug": "调试",
       "settings.sectionTitle": "设置分区",
       "settings.budget": "预算（日线程 / 并发 / 步数 / token）",
+      "settings.autoRetry": "失败自动重试（最多 2 次）",
+      "settings.autoRetryHint":
+        "线程以失败结束时，60 秒后自动再发一句「继续」；成功或超过 2 次就停。这不是「用量恢复续跑」。",
       "settings.budgetSave": "保存预算",
       "settings.budgetSaved": "预算已保存：{budget}",
       "settings.budgetUnlimited": "不限",
@@ -1141,6 +1144,9 @@ window.__ModuleLoader__.load({
       "settings.nav.debug": "Debug",
       "settings.sectionTitle": "Settings sections",
       "settings.budget": "Budget (threads/day / concurrent / steps / tokens)",
+      "settings.autoRetry": "Auto-retry on failure (max 2)",
+      "settings.autoRetryHint":
+        'When a thread ends failed, it re-sends "continue" once after 60s; stops after 2 tries. Not the same as resuming after a usage limit.',
       "settings.budgetSave": "Save budget",
       "settings.budgetSaved": "Budget saved: {budget}",
       "settings.budgetUnlimited": "unlimited",
@@ -13306,6 +13312,27 @@ window.__ModuleLoader__.load({
             },
             text(t, "settings.budgetSave"),
           ),
+        ),
+        // M6：失败自动重试（诚实语义：失败结束后自动再发「继续」，最多 2 次）
+        h(
+          "label",
+          {
+            style: { display: "flex", gap: "6px", alignItems: "center", fontSize: "12px" },
+            "data-projects-auto-retry-row": "",
+          },
+          h("input", {
+            type: "checkbox",
+            checked: selectedForB3?.policy?.autoRetry === true,
+            "data-projects-auto-retry": "",
+            onChange: (/** @type {any} */ event) =>
+              applyPolicy({ autoRetry: event.target.checked === true }),
+          }),
+          text(t, "settings.autoRetry"),
+        ),
+        h(
+          "span",
+          { style: { color: T.faint, fontSize: "11.5px" } },
+          text(t, "settings.autoRetryHint"),
         ),
         b3Message,
       );

@@ -610,6 +610,8 @@
     "detail.prCard.mergeHint": "点两次确认（squash + 删除分支）",
     "detail.prCard.mergeOff": "需要先打开「允许自动合并 PR」危险开关",
     "detail.prCard.mergeOk": "已合并 #{number}",
-    "detail.prCard.mergeFail": "合并失败：{reason}"
+    "detail.prCard.mergeFail": "合并失败：{reason}",
+    "settings.autoRetry": "失败自动重试（最多 2 次）",
+    "settings.autoRetryHint": "线程以失败结束时，60 秒后自动再发一句「继续」；成功或超过 2 次就停。这不是「用量恢复续跑」。"
   }
 }

@@ -610,6 +610,8 @@
     "detail.prCard.mergeHint": "Two clicks to confirm (squash + delete branch)",
     "detail.prCard.mergeOff": "Turn on the \"auto-merge PRs\" danger switch first",
     "detail.prCard.mergeOk": "Merged #{number}",
-    "detail.prCard.mergeFail": "Merge failed: {reason}"
+    "detail.prCard.mergeFail": "Merge failed: {reason}",
+    "settings.autoRetry": "Auto-retry on failure (max 2)",
+    "settings.autoRetryHint": "When a thread ends failed, it re-sends \"continue\" once after 60s; stops after 2 tries. Not the same as resuming after a usage limit."
   }
 }
