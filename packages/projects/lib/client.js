@@ -10858,6 +10858,8 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = useState("");
       const [message, setMessage] = useState({ text: "", ok: null });
       const [history, setHistory] = useState({ routineId: "", rows: [], retention: null });
+      // M4：Routines 详情三段（Trigger / Instructions / Runs in），一次只开一个
+      const [detailId, setDetailId] = useState("");
       const load = useCallback(() => {
         call(api.ctx, "routinesView", { projectId: project.id }).then(
           (/** @type {any} */ result) => setView(result),
@@ -11152,6 +11154,67 @@ window.__ModuleLoader__.load({
                     ),
                   ),
                   h("span", { style: styles.meta }, String(routine.description || "")),
+                  // M4：详情三段（Claude 的 Routines 详情 = Trigger / Instructions / Runs in）
+                  h(
+                    "button",
+                    {
+                      type: "button",
+                      style: {
+                        textAlign: "left",
+                        background: "transparent",
+                        border: "none",
+                        padding: "0",
+                        cursor: "pointer",
+                        fontSize: "11.5px",
+                        color: T.dim,
+                      },
+                      "data-projects-routine-detail-toggle": routine.id,
+                      "data-projects-routine-detail-open":
+                        detailId === routine.id ? "true" : "false",
+                      onClick: () => setDetailId(detailId === routine.id ? "" : routine.id),
+                    },
+                    detailId === routine.id ? "▾ 详情" : "▸ 详情",
+                  ),
+                  detailId === routine.id
+                    ? h(
+                        "div",
+                        {
+                          style: { display: "flex", flexDirection: "column", gap: "4px" },
+                          "data-projects-routine-detail": routine.id,
+                        },
+                        h(
+                          "span",
+                          { style: { ...styles.meta, color: T.text, fontWeight: 600 } },
+                          "触发",
+                        ),
+                        h("span", { style: styles.meta }, String(routine.description || "")),
+                        h(
+                          "span",
+                          { style: styles.meta },
+                          `宿主状态：${String(routine.hostStatus || routine.status?.status || "unknown")}`,
+                        ),
+                        h(
+                          "span",
+                          { style: { ...styles.meta, color: T.text, fontWeight: 600 } },
+                          "指令",
+                        ),
+                        h(
+                          "span",
+                          { style: { ...styles.meta, whiteSpace: "pre-wrap" } },
+                          String(routine.instructions || "").slice(0, 400),
+                        ),
+                        h(
+                          "span",
+                          { style: { ...styles.meta, color: T.text, fontWeight: 600 } },
+                          "运行于",
+                        ),
+                        h(
+                          "span",
+                          { style: styles.meta, "data-projects-routine-detail-runs": routine.id },
+                          `${String(view?.timeZone || "")} · ${String(view?.projectDir || "")}`,
+                        ),
+                      )
+                    : null,
                   h(
                     "span",
                     { style: styles.meta, "data-projects-routine-lastdelivery": "" },
