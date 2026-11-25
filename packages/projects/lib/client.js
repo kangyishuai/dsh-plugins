@@ -495,6 +495,10 @@ window.__ModuleLoader__.load({
       "detail.prCard.unavailable": "读不到 PR",
       "detail.prCard.actionsMissing": "Review/Merge 需要宿主 seam（未实现）",
       "detail.prOpen": "已开",
+      "artifacts.viewerOpen": "查看",
+      "artifacts.viewerClose": "关闭",
+      "artifacts.viewerLoading": "读取产物内容…",
+      "artifacts.viewerError": "读不到产物内容",
       "library.artifactPinHint": "钉住（待接入）",
       "library.artifactMenuHint": "更多（待接入）",
       "detail.groupReorderHint": "拖拽排序（待接入）",
@@ -999,6 +1003,10 @@ window.__ModuleLoader__.load({
       "detail.prCard.unavailable": "PR unavailable",
       "detail.prCard.actionsMissing": "Review/Merge need a host seam (not implemented)",
       "detail.prOpen": "open",
+      "artifacts.viewerOpen": "View",
+      "artifacts.viewerClose": "Close",
+      "artifacts.viewerLoading": "Loading artifact…",
+      "artifacts.viewerError": "Cannot read artifact content",
       "library.artifactPinHint": "Pin (not yet available)",
       "library.artifactMenuHint": "More (not yet available)",
       "detail.groupReorderHint": "Reorder by drag (not yet available)",
@@ -4327,7 +4335,342 @@ window.__ModuleLoader__.load({
      * Library 列表与线程行内嵌卡共用同一份渲染，避免两处视觉/字段漂移。
      * @param {any} t @param {any} item @param {boolean} available @param {string} keyPrefix
      */
-    function artifactCardFor(t, item, available, keyPrefix) {
+    // ================= M4：产物内容查看器 =================
+    /**
+     * 极简 Markdown 块解析（与 lib/artifact-render.js 同语义，客户端是 classic script
+     * 不能 import，所以这里有一份精简副本；两边都有单测/真机兜着，改动要同步）。
+     * @param {string} text
+     * @returns {any[]}
+     */
+    function parseArtifactBlocks(text) {
+      var lines = String(text || "")
+        .replace(/\r\n?/g, "\n")
+        .split("\n");
+      var blocks = [];
+      /** @type {string[]} */
+      var para = [];
+      /** @type {any[]} */
+      var list = [];
+      /** @type {string[]|null} */
+      var code = null;
+      var flushPara = () => {
+        if (para.length) blocks.push({ type: "paragraph", text: para.join(" ") });
+        para = [];
+      };
+      var flushList = () => {
+        if (list.length) blocks.push({ type: "list", items: list });
+        list = [];
+      };
+      for (let i = 0; i < lines.length; i += 1) {
+        const raw = lines[i];
+        const line = raw.trim();
+        if (line.indexOf("```") === 0) {
+          if (code !== null) {
+            blocks.push({ type: "code", text: code.join("\n") });
+            code = null;
+          } else {
+            flushPara();
+            flushList();
+            code = [];
+          }
+          continue;
+        }
+        if (code !== null) {
+          code.push(raw);
+          continue;
+        }
+        const h = /^(#{1,6})\s+(.*)/.exec(line);
+        if (h) {
+          flushPara();
+          flushList();
+          blocks.push({ type: "heading", level: h[1].length, text: h[2].trim() });
+          continue;
+        }
+        if (
+          line.charAt(0) === "|" &&
+          i + 1 < lines.length &&
+          /^[\s:|-]+$/.test(lines[i + 1].trim()) &&
+          lines[i + 1].indexOf("---") >= 0
+        ) {
+          flushPara();
+          flushList();
+          const cells = (/** @type {string} */ row) =>
+            row
+              .trim()
+              .replace(/^\\|/, "")
+              .replace(/\\|$/u, "")
+              .split("|")
+              .map((c) => c.trim());
+          const header = cells(line);
+          const rows = [];
+          i += 2;
+          while (i < lines.length && lines[i].trim().charAt(0) === "|") {
+            rows.push(cells(lines[i]));
+            i += 1;
+          }
+          i -= 1;
+          blocks.push({ type: "table", header: header, rows: rows });
+          continue;
+        }
+        const check = /^-\s*\[(x|X| )\]\s*(.*)/.exec(line);
+        if (check) {
+          flushPara();
+          list.push({ text: check[2].trim(), checked: check[1] !== " " });
+          continue;
+        }
+        const bullet = /^-\s+(.*)/.exec(line);
+        if (bullet) {
+          flushPara();
+          list.push({ text: bullet[1].trim(), checked: false });
+          continue;
+        }
+        if (line === "") {
+          flushPara();
+          flushList();
+          continue;
+        }
+        flushList();
+        para.push(line);
+      }
+      flushPara();
+      flushList();
+      if (code?.length) blocks.push({ type: "code", text: code.join("\n") });
+      return blocks;
+    }
+
+    /**
+     * 产物内容查看器（弹层）。内容走同源 HTTP 路由 `/artifacts/<id>`（带页面凭据），
+     * 不需要新 RPC——所以在旧宿主上也能用。
+     * @param {any} props
+     */
+    function ArtifactViewer(props) {
+      var t = props.t;
+      var item = props.item || {};
+      var st = useState({ loading: true, error: "", blocks: [], text: "" });
+      var view = st[0];
+      var setView = st[1];
+      useEffect(() => {
+        var id = String(item.id || "");
+        if (id === "") return undefined;
+        var alive = true;
+        fetch(`/artifacts/${encodeURIComponent(id)}`, { credentials: "same-origin" })
+          .then((response) => {
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return response.text();
+          })
+          .then((text) => {
+            if (!alive) return;
+            setView({ loading: false, error: "", blocks: parseArtifactBlocks(text), text: text });
+          })
+          .catch((error) => {
+            if (!alive) return;
+            setView({
+              loading: false,
+              error: String(error?.message ? error.message : error),
+              blocks: [],
+              text: "",
+            });
+          });
+        return () => {
+          alive = false;
+        };
+      }, [item.id]);
+      return h(
+        "div",
+        {
+          style: {
+            position: "fixed",
+            inset: "0",
+            zIndex: 40,
+            background: "rgba(0,0,0,0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          },
+          "data-projects-artifact-viewer": String(item.id || ""),
+          onClick: (/** @type {any} */ event) => {
+            if (event.target === event.currentTarget && typeof props.onClose === "function")
+              props.onClose();
+          },
+        },
+        h(
+          "div",
+          {
+            style: {
+              width: "min(760px, calc(100vw - 64px))",
+              maxHeight: "calc(100vh - 96px)",
+              overflow: "auto",
+              background: T.card,
+              border: `1px solid ${T.border}`,
+              borderRadius: "12px",
+              padding: "14px 16px",
+              display: "flex",
+              flexDirection: "column",
+              gap: "8px",
+              boxShadow: "0 18px 48px rgba(0,0,0,0.35)",
+            },
+          },
+          h(
+            "div",
+            { style: { display: "flex", alignItems: "center", gap: "8px" } },
+            h(
+              "span",
+              { style: { ...styles.name, flex: "1 1 auto", minWidth: 0 } },
+              String(item.title || item.id || ""),
+            ),
+            h(
+              "button",
+              {
+                type: "button",
+                style: { ...styles.secondaryButton, padding: "1px 8px", fontSize: "11.5px" },
+                "data-projects-artifact-viewer-close": "",
+                onClick: () => {
+                  if (typeof props.onClose === "function") props.onClose();
+                },
+              },
+              text(t, "artifacts.viewerClose"),
+            ),
+          ),
+          view.loading
+            ? h("span", { style: styles.meta }, text(t, "artifacts.viewerLoading"))
+            : view.error !== ""
+              ? h(
+                  "span",
+                  { style: styles.error },
+                  `${text(t, "artifacts.viewerError")}：${view.error}`,
+                )
+              : renderArtifactBlocks(view.blocks),
+        ),
+      );
+    }
+
+    /**
+     * 把解析后的块渲染成界面：标题 / 段落 / 勾选清单 / 表格 / 代码。
+     * @param {any[]} blocks
+     */
+    function renderArtifactBlocks(blocks) {
+      return h(
+        "div",
+        {
+          style: { display: "flex", flexDirection: "column", gap: "8px" },
+          "data-projects-artifact-body": "",
+        },
+        (blocks || []).map((block, index) => {
+          const key = String(index);
+          if (block.type === "heading") {
+            const size = block.level <= 1 ? "18px" : block.level === 2 ? "16px" : "14px";
+            return h(
+              "span",
+              { key, style: { fontSize: size, fontWeight: 600, color: T.text } },
+              String(block.text || ""),
+            );
+          }
+          if (block.type === "paragraph") {
+            return h(
+              "span",
+              { key, style: { ...styles.meta, lineHeight: "1.6", whiteSpace: "pre-wrap" } },
+              String(block.text || ""),
+            );
+          }
+          if (block.type === "list") {
+            return h(
+              "div",
+              { key, style: { display: "flex", flexDirection: "column", gap: "2px" } },
+              (block.items || []).map((/** @type {any} */ item, /** @type {number} */ itemIndex) =>
+                h(
+                  "span",
+                  { key: String(itemIndex), style: { ...styles.meta, lineHeight: "1.5" } },
+                  `${item.checked ? "✓" : "○"} ${String(item.text || "")}`,
+                ),
+              ),
+            );
+          }
+          if (block.type === "table") {
+            return h(
+              "div",
+              { key, "data-projects-artifact-table": "", style: { overflowX: "auto" } },
+              h(
+                "table",
+                { style: { borderCollapse: "collapse", fontSize: "12px" } },
+                h(
+                  "thead",
+                  null,
+                  h(
+                    "tr",
+                    null,
+                    (block.header || []).map(
+                      (/** @type {any} */ cell, /** @type {number} */ cellIndex) =>
+                        h(
+                          "th",
+                          {
+                            key: String(cellIndex),
+                            style: {
+                              textAlign: "left",
+                              padding: "3px 8px",
+                              borderBottom: `1px solid ${T.borderSoft}`,
+                              color: T.dim,
+                              fontWeight: 600,
+                            },
+                          },
+                          String(cell || ""),
+                        ),
+                    ),
+                  ),
+                ),
+                h(
+                  "tbody",
+                  null,
+                  (block.rows || []).map((/** @type {any} */ row, /** @type {number} */ rowIndex) =>
+                    h(
+                      "tr",
+                      { key: String(rowIndex) },
+                      (row || []).map((/** @type {any} */ cell, /** @type {number} */ cellIndex) =>
+                        h(
+                          "td",
+                          {
+                            key: String(cellIndex),
+                            style: {
+                              padding: "3px 8px",
+                              borderBottom: `1px solid ${T.borderSoft}`,
+                              color: T.text,
+                            },
+                          },
+                          String(cell || ""),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }
+          return h(
+            "pre",
+            {
+              key,
+              style: {
+                ...styles.meta,
+                whiteSpace: "pre-wrap",
+                fontFamily: "ui-monospace, monospace",
+                background: T.bg,
+                padding: "6px 8px",
+                borderRadius: "6px",
+              },
+            },
+            String(block.text || ""),
+          );
+        }),
+      );
+    }
+
+    /**
+     * @param {any} t
+     * @param {any} item
+     * @param {boolean} available
+     * @param {string} keyPrefix
+     * @param {(item: any) => void} [onOpen]
+     */
+    function artifactCardFor(t, item, available, keyPrefix, onOpen) {
       var id = String(item?.id ?? "");
       var kind = String(item?.kind ?? "html");
       var known = ["html", "markdown", "json", "csv", "image"];
@@ -4509,6 +4852,26 @@ window.__ModuleLoader__.load({
                 }),
               )
             : null,
+          typeof onOpen === "function" && ["markdown", "json", "csv"].indexOf(kind) >= 0
+            ? h(
+                "button",
+                {
+                  type: "button",
+                  style: {
+                    ...styles.secondaryButton,
+                    padding: "1px 8px",
+                    fontSize: "11px",
+                    alignSelf: "flex-start",
+                  },
+                  "data-projects-artifact-view": id,
+                  onClick: (/** @type {any} */ event) => {
+                    if (event?.stopPropagation) event.stopPropagation();
+                    onOpen(item);
+                  },
+                },
+                text(t, "artifacts.viewerOpen"),
+              )
+            : null,
         ),
       );
     }
@@ -4522,6 +4885,9 @@ window.__ModuleLoader__.load({
      * @param {any} props
      */
     function LibraryView(props) {
+      const viewerState = useState(null);
+      const viewerItem = viewerState[0];
+      const setViewerItem = viewerState[1];
       // M4：文件树表格（名称/类型/大小/更新），Claude 的 Library 文件树形态
       const fileTableFor = (/** @type {any} */ dirView) =>
         h(
@@ -4708,7 +5074,9 @@ window.__ModuleLoader__.load({
       };
 
       var artifactCard = (/** @type {any} */ item, /** @type {string} */ keyPrefix) =>
-        artifactCardFor(t, item, artifacts.available === true, keyPrefix);
+        artifactCardFor(t, item, artifacts.available === true, keyPrefix, (target) =>
+          setViewerItem(target),
+        );
 
       return h(
         "div",
@@ -4722,6 +5090,13 @@ window.__ModuleLoader__.load({
             ? String(artifacts.reason || "unavailable")
             : "false",
         },
+        viewerItem
+          ? h(ArtifactViewer, {
+              t: t,
+              item: viewerItem,
+              onClose: () => setViewerItem(null),
+            })
+          : null,
         // —— 标题 + 产物计量 + 打开宿主右栏 ——
         h(
           "div",
@@ -5534,6 +5909,9 @@ window.__ModuleLoader__.load({
       const expandedState = useState("");
       const expandedThread = expandedState[0];
       // M4：PR 三段式卡的数据源（只读 prOverview；合并/审阅动作需要新 seam）
+      const artifactViewerState = useState(/** @type {any} */ (null));
+      const artifactViewer = artifactViewerState[0];
+      const setArtifactViewer = artifactViewerState[1];
       const prInfoState = useState(/** @type {any} */ ({}));
       const prInfo = prInfoState[0];
       const setPrInfo = prInfoState[1];
@@ -7420,7 +7798,13 @@ window.__ModuleLoader__.load({
                       items
                         .slice(0, 5)
                         .map((item) =>
-                          artifactCardFor(t, item, available, `thr:${String(row.sessionId)}:`),
+                          artifactCardFor(
+                            t,
+                            item,
+                            available,
+                            `thr:${String(row.sessionId)}:`,
+                            (target) => setArtifactViewer(target),
+                          ),
                         ),
                     );
                   })(),
@@ -8431,6 +8815,13 @@ window.__ModuleLoader__.load({
             boxSizing: "border-box",
           },
         },
+        artifactViewer
+          ? h(ArtifactViewer, {
+              t: t,
+              item: artifactViewer,
+              onClose: () => setArtifactViewer(null),
+            })
+          : null,
         // —— 头部：返回 / 标题 / 收藏 / ⋯ ——
         // 头部与内容用同一套栅格：pin 与 ⋯ 贴**主列右缘**（1440 宽下不再跑到页面最右）。
         h(
