@@ -2677,6 +2677,26 @@ try {
   );
 
   add(
+    "3.x composer 模型药丸可点开菜单（锚点与回读标签）",
+    await page.evaluate(() => {
+      const pill = document.querySelector("[data-composer-model]");
+      if (!pill) return false;
+      const label = pill.getAttribute("data-composer-model-label") || "";
+      pill.click();
+      return label !== "" && true;
+    }) &&
+      (await waitUntil(
+        () => page.evaluate(() => Boolean(document.querySelector("[data-composer-model-menu]"))),
+        6000,
+      ).catch(() => false)),
+    JSON.stringify({
+      menu: await page.evaluate(
+        () => document.querySelectorAll("[data-composer-model-menu]").length,
+      ),
+    }),
+  );
+
+  add(
     "M2 行尾 n/m 带悬停弹层锚点（tasks popover 关闭态可见）",
     await page.evaluate(() => {
       const pill = document.querySelector("[data-projects-thread-steps]");
