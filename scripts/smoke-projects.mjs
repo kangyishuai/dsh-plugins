@@ -2793,6 +2793,23 @@ try {
   );
 
   add(
+    "composer 提示行存在（Type / for commands），行尾时长是 short 形式（now/Nm/Nh）",
+    await page.evaluate(() => {
+      const hint = document.querySelector("[data-projects-composer-hint]")?.textContent || "";
+      const durations = [...document.querySelectorAll("[data-projects-thread-duration]")].map(
+        (node) => (node.textContent || "").trim(),
+      );
+      return { hint, durations };
+    }).then((data) => {
+      const shortOk =
+        data.durations.length === 0 ||
+        data.durations.every((value) => /^(now|[0-9]+[mhd])$/u.test(value));
+      return shortOk && (data.hint.includes("输入 /") || data.hint.includes("Type /"));
+    }),
+    "hint+duration anchor",
+  );
+
+  add(
     "M2 行尾 n/m 带悬停弹层锚点（tasks popover 关闭态可见）",
     await page.evaluate(() => {
       const pill = document.querySelector("[data-projects-thread-steps]");
