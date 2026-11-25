@@ -6650,6 +6650,30 @@ window.__ModuleLoader__.load({
                           text(t, "detail.prBranch", { branch: String(row.branch) }),
                         )
                       : null,
+                    row.diff && Number(row.diff.files ?? 0) > 0
+                      ? h(
+                          "span",
+                          {
+                            style: {
+                              ...styles.inlineChip,
+                              display: "inline-flex",
+                              gap: "4px",
+                              fontVariantNumeric: "tabular-nums",
+                            },
+                            "data-projects-thread-diff-chip": row.sessionId,
+                          },
+                          h(
+                            "span",
+                            { style: { color: T.success } },
+                            `+${Number(row.diff.added ?? 0)}`,
+                          ),
+                          h(
+                            "span",
+                            { style: { color: T.danger } },
+                            `−${Number(row.diff.removed ?? 0)}`,
+                          ),
+                        )
+                      : null,
                     h(
                       "span",
                       { style: styles.inlineChip, "data-projects-thread-params": row.sessionId },
