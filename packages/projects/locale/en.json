@@ -564,6 +564,9 @@
     "detail.tasksPopover": "Tasks · {done}/{total}",
     "detail.tasksPopoverMore": "{count} more",
     "detail.rowArtifacts": "Artifacts",
-    "detail.rowArtifactsMore": "+{count}"
+    "detail.rowArtifactsMore": "+{count}",
+    "detail.composerModelHint": "Edits the project thread default (same as Thread defaults in settings)",
+    "detail.composerModelMenuTitle": "Thread default model",
+    "detail.composerModelSave": "Save"
   }
 }

@@ -492,6 +492,9 @@ window.__ModuleLoader__.load({
       "detail.composerAttach": "添加附件（待接入）",
       "detail.composerMic": "语音输入（待接入）",
       "detail.composerModel": "模型：{model}",
+      "detail.composerModelHint": "改的是项目的线程默认模型（等同设置里的「线程默认模型」）",
+      "detail.composerModelMenuTitle": "线程默认模型",
+      "detail.composerModelSave": "保存",
       "detail.composerModelInherit": "继承宿主默认",
       "detail.settingsOpen": "项目设置",
       "detail.settingsTitle": "项目设置",
@@ -977,6 +980,10 @@ window.__ModuleLoader__.load({
       "detail.composerAttach": "Attach (not yet available)",
       "detail.composerMic": "Voice input (not yet available)",
       "detail.composerModel": "Model: {model}",
+      "detail.composerModelHint":
+        "Edits the project thread default (same as Thread defaults in settings)",
+      "detail.composerModelMenuTitle": "Thread default model",
+      "detail.composerModelSave": "Save",
       "detail.composerModelInherit": "Host default",
       "detail.settingsOpen": "Project settings",
       "detail.settingsTitle": "Project settings",
@@ -5702,6 +5709,63 @@ window.__ModuleLoader__.load({
         return out;
       })();
 
+      // 3.x：composer 的模型/档位药丸（Claude 的 `Opus 5.5 · Low ▾`）
+      const composerModelOpenState = useState(false);
+      const composerModelOpen = composerModelOpenState[0];
+      const setComposerModelOpen = composerModelOpenState[1];
+      const composerPickState = useState(/** @type {any} */ (null));
+      const composerPick = composerPickState[0];
+      const setComposerPick = composerPickState[1];
+      // 读**回读值**（getProject 的 liveProject），不是父级列表快照——否则保存后药丸不变
+      const threadDefaults = data.liveProject?.threadDefaults ??
+        props.project?.threadDefaults ?? {
+          provider: "",
+          model: "",
+          reasoningEffort: "",
+        };
+      const composerModelLabel = (() => {
+        const model = String(threadDefaults.model ?? "");
+        const effort = String(threadDefaults.reasoningEffort ?? "");
+        if (model === "") return text(t, "detail.composerModelInherit");
+        const provider = String(threadDefaults.provider ?? "");
+        const base = provider === "" ? model : `${provider}/${model}`;
+        return effort === "" ? base : `${base} · ${effort}`;
+      })();
+      const composerPicked = composerPick ?? {
+        model: String(threadDefaults.model ?? ""),
+        effort: String(threadDefaults.reasoningEffort ?? ""),
+      };
+      const composerPickEntry = modelOptions.find(
+        (/** @type {any} */ option) => option.key === String(composerPicked.model ?? ""),
+      );
+      const composerEfforts = Array.isArray(composerPickEntry?.efforts)
+        ? composerPickEntry.efforts
+        : [];
+      const saveComposerModel = () => {
+        const key = String(composerPicked.model ?? "");
+        const sep = key.indexOf(":");
+        const provider = sep >= 0 ? key.slice(0, sep) : "";
+        const model = sep >= 0 ? key.slice(sep + 1) : key;
+        call(api.ctx, "setThreadDefaults", {
+          projectId: project.id,
+          provider,
+          model,
+          reasoningEffort: String(composerPicked.effort ?? ""),
+        }).then(
+          () => {
+            setComposerModelOpen(false);
+            setComposerPick(null);
+            load();
+          },
+          (/** @type {any} */ error) =>
+            setThreadAction({
+              pending: "",
+              ok: false,
+              message: String(error?.message ?? error).slice(0, 200),
+            }),
+        );
+      };
+
       // 页签最多 3 个（docs/plugin-conventions.md §7.3）：Library 走右栏入口、审计进设置 Debug，
       // 两者都不再占页签，页签只剩「线程 / 记忆 / Routines」。
       const tabs = [
@@ -8804,13 +8868,125 @@ window.__ModuleLoader__.load({
                 ),
                 h("span", { style: { flex: "1 1 auto" } }),
                 h(
-                  "span",
-                  { "data-composer-model": "" },
-                  text(t, "detail.composerModel", {
-                    model:
-                      String(data.content?.threadDefaults?.model ?? "") ||
-                      text(t, "detail.composerModelInherit"),
-                  }),
+                  "div",
+                  { style: { position: "relative" } },
+                  h(
+                    "button",
+                    {
+                      type: "button",
+                      style: {
+                        ...styles.secondaryButton,
+                        padding: "1px 8px",
+                        fontSize: "11.5px",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "4px",
+                      },
+                      "data-composer-model": "",
+                      "data-composer-model-label": composerModelLabel,
+                      "data-composer-model-open": composerModelOpen ? "true" : "false",
+                      title: text(t, "detail.composerModelHint"),
+                      onClick: () => setComposerModelOpen(!composerModelOpen),
+                    },
+                    composerModelLabel,
+                    h("span", { style: { color: T.faint } }, "▾"),
+                  ),
+                  composerModelOpen
+                    ? h(
+                        "div",
+                        {
+                          style: {
+                            position: "absolute",
+                            right: 0,
+                            bottom: "calc(100% + 8px)",
+                            zIndex: 14,
+                            minWidth: "240px",
+                            background: T.card,
+                            border: `1px solid ${T.border}`,
+                            borderRadius: "8px",
+                            boxShadow: "0 8px 24px rgba(0,0,0,0.3)",
+                            padding: "8px",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "6px",
+                            color: T.text,
+                          },
+                          "data-composer-model-menu": "",
+                        },
+                        h(
+                          "span",
+                          { style: { ...styles.meta, fontSize: "11px" } },
+                          text(t, "detail.composerModelMenuTitle"),
+                        ),
+                        h(
+                          "select",
+                          {
+                            style: styles.input,
+                            value: composerPicked.model,
+                            "data-composer-model-select": "",
+                            onChange: (/** @type {any} */ event) =>
+                              setComposerPick({
+                                model: String(event.target.value || ""),
+                                effort: "",
+                              }),
+                          },
+                          [""]
+                            .concat(modelOptions.map((/** @type {any} */ option) => option.key))
+                            .map((/** @type {string} */ value, /** @type {number} */ index) => {
+                              const option = modelOptions[index - 1];
+                              return h(
+                                "option",
+                                { key: value || "inherit", value: value },
+                                value === ""
+                                  ? text(t, "detail.composerModelInherit")
+                                  : String(option?.label ?? value),
+                              );
+                            }),
+                        ),
+                        composerEfforts.length > 0
+                          ? h(
+                              "select",
+                              {
+                                style: styles.input,
+                                value: composerPicked.effort,
+                                "data-composer-effort-select": "",
+                                onChange: (/** @type {any} */ event) =>
+                                  setComposerPick((/** @type {any} */ prev) => ({
+                                    model: String((prev ?? composerPicked).model ?? ""),
+                                    effort: String(event.target.value || ""),
+                                  })),
+                              },
+                              [""]
+                                .concat(composerEfforts)
+                                .map((/** @type {string} */ value) =>
+                                  h(
+                                    "option",
+                                    { key: value || "inherit", value: value },
+                                    value === "" ? text(t, "detail.composerModelInherit") : value,
+                                  ),
+                                ),
+                            )
+                          : null,
+                        h(
+                          "div",
+                          { style: { display: "flex", gap: "6px" } },
+                          h(
+                            "button",
+                            {
+                              type: "button",
+                              style: {
+                                ...styles.primaryButton,
+                                padding: "2px 10px",
+                                fontSize: "12px",
+                              },
+                              "data-composer-model-save": "",
+                              onClick: saveComposerModel,
+                            },
+                            text(t, "detail.composerModelSave"),
+                          ),
+                        ),
+                      )
+                    : null,
                 ),
               ),
             ),
