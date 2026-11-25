@@ -7108,7 +7108,7 @@ window.__ModuleLoader__.load({
             },
             "data-projects-thread-row": row.sessionId,
             "data-projects-thread-state": state,
-            "data-projects-debug-row-artifacts": String(
+            "data-projects-row-artifact-count": String(
               Array.isArray(row.artifacts) ? row.artifacts.length : "none",
             ),
             // F29 回读锚点：resolve 写进去的 resolvedAt 必须能在 UI 上读回来（冒烟比同一份值）
