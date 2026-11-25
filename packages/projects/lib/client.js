@@ -99,6 +99,12 @@ window.__ModuleLoader__.load({
       "detail.entriesTitle": "记忆条目",
       "detail.entriesEmpty": "还没有记忆条目。",
       "detail.entryForget": "忘掉这条",
+      "b3.envMachine": "运行位置：{value}",
+      "b3.envMachineLocal": "本机（线程各有隔离 worktree）",
+      "b3.envMachineNoDir": "本机（还没有绑定项目目录）",
+      "b3.envRepos": "仓库：{count} 个",
+      "b3.envAllowed": "免询问文件夹：{count} 个（{names}）",
+      "b3.envAllowedEmpty": "免询问文件夹：还没有（授权卡里选「设为默认」才会进这个名单）",
       "b3.folderTitle": "本地文件夹授权",
       "b3.folderCopy": "Claude 可以在你选择的文件夹里运行命令，不再逐次询问。",
       "b3.folderDeny": "拒绝",
@@ -1179,6 +1185,13 @@ window.__ModuleLoader__.load({
       "detail.entriesTitle": "Memory entries",
       "detail.entriesEmpty": "No memory entries yet.",
       "detail.entryForget": "Forget this entry",
+      "b3.envMachine": "Runs on: {value}",
+      "b3.envMachineLocal": "your computer (each thread has an isolated worktree)",
+      "b3.envMachineNoDir": "your computer (no project folder bound yet)",
+      "b3.envRepos": "Repositories: {count}",
+      "b3.envAllowed": "Folders without asking: {count} ({names})",
+      "b3.envAllowedEmpty":
+        'Folders without asking: none yet (choose "Set as default" on a folder card)',
       "b3.folderTitle": "Local folder access",
       "b3.folderCopy": "Commands can run in the folder you choose without asking every time.",
       "b3.folderDeny": "Deny",
@@ -14203,6 +14216,50 @@ window.__ModuleLoader__.load({
             count: Array.isArray(props.fragments) ? props.fragments.length : 0,
             limit: 100,
           }),
+        ),
+        // M5：Environment 摘要（Claude 的「Your computer / Repositories / Folders without asking」）
+        h(
+          "div",
+          {
+            style: paneStyle("environment", {
+              display: "flex",
+              flexDirection: "column",
+              gap: "3px",
+            }),
+            "data-projects-env-summary": "",
+          },
+          h(
+            "span",
+            { style: { ...styles.meta, color: T.dim }, "data-projects-env-machine": "" },
+            text(t, "b3.envMachine", {
+              value:
+                dirs.length > 0 ? text(t, "b3.envMachineLocal") : text(t, "b3.envMachineNoDir"),
+            }),
+          ),
+          h(
+            "span",
+            { style: { ...styles.meta, color: T.dim }, "data-projects-env-repos": "" },
+            text(t, "b3.envRepos", { count: dirs.length }),
+          ),
+          h(
+            "span",
+            { style: { ...styles.meta, color: T.dim }, "data-projects-env-allowed": "" },
+            (() => {
+              const allowed = Array.isArray(dirs)
+                ? dirs.filter((/** @type {string} */ dir) => {
+                    const record = folderAuth[dir] || null;
+                    const mode = String(view.folderModes[dir] || record?.mode || "");
+                    return mode === "default";
+                  })
+                : [];
+              return allowed.length === 0
+                ? text(t, "b3.envAllowedEmpty")
+                : text(t, "b3.envAllowed", {
+                    count: allowed.length,
+                    names: allowed.map((/** @type {string} */ dir) => baseName(dir)).join("、"),
+                  });
+            })(),
+          ),
         ),
         // F55/U20：本地文件夹授权卡
         h(

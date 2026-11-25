@@ -598,6 +598,12 @@
     "settings.memoryIndexUpdated": "记忆索引更新于 {updated}",
     "settings.memoryNever": "从未",
     "settings.memoryFilesEmpty": "记忆目录里还没有文件",
-    "detail.composerHint": "输入 / 查看命令"
+    "detail.composerHint": "输入 / 查看命令",
+    "b3.envMachine": "运行位置：{value}",
+    "b3.envMachineLocal": "本机（线程各有隔离 worktree）",
+    "b3.envMachineNoDir": "本机（还没有绑定项目目录）",
+    "b3.envRepos": "仓库：{count} 个",
+    "b3.envAllowed": "免询问文件夹：{count} 个（{names}）",
+    "b3.envAllowedEmpty": "免询问文件夹：还没有（授权卡里选「设为默认」才会进这个名单）"
   }
 }
