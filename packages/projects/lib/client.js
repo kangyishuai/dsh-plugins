@@ -495,6 +495,9 @@ window.__ModuleLoader__.load({
       "detail.composerModel": "模型：{model}",
       "detail.composerModelHint": "改的是项目的线程默认模型（等同设置里的「线程默认模型」）",
       "detail.composerModelMenuTitle": "线程默认模型",
+      "detail.coordinatorModelHint": "协调者默认模型（与线程默认独立）",
+      "detail.coordinatorModelMenuTitle": "协调者默认模型",
+      "detail.effortPlaceholder": "推理强度（可空）",
       "detail.composerModelSave": "保存",
       "detail.composerModelInherit": "继承宿主默认",
       "detail.settingsOpen": "项目设置",
@@ -985,6 +988,9 @@ window.__ModuleLoader__.load({
       "detail.composerModelHint":
         "Edits the project thread default (same as Thread defaults in settings)",
       "detail.composerModelMenuTitle": "Thread default model",
+      "detail.coordinatorModelHint": "Coordinator default model (independent of thread defaults)",
+      "detail.coordinatorModelMenuTitle": "Coordinator default model",
+      "detail.effortPlaceholder": "Reasoning effort (optional)",
       "detail.composerModelSave": "Save",
       "detail.composerModelInherit": "Host default",
       "detail.settingsOpen": "Project settings",
@@ -5716,10 +5722,59 @@ window.__ModuleLoader__.load({
       const composerModelOpen = composerModelOpenState[0];
       const setComposerModelOpen = composerModelOpenState[1];
       const composerPickState = useState(/** @type {any} */ (null));
+      // 协调者 composer 的药丸（D3：写 coordinatorDefaults，与线程默认独立）
+      const coordPillOpenState = useState(false);
+      const coordPillOpen = coordPillOpenState[0];
+      const setCoordPillOpen = coordPillOpenState[1];
+      const coordPickState = useState(/** @type {any} */ (null));
+      const coordPick = coordPickState[0];
+      const setCoordPick = coordPickState[1];
+      const coordinatorDefaults = data.progress?.coordinatorDefaults ??
+        data.liveProject?.coordinatorDefaults ??
+        props.project?.coordinatorDefaults ?? {
+          provider: "",
+          model: "",
+          reasoningEffort: "",
+        };
+      const coordPillLabel = (() => {
+        const model = String(coordinatorDefaults.model ?? "");
+        if (model === "") return text(t, "detail.composerModelInherit");
+        const provider = String(coordinatorDefaults.provider ?? "");
+        const effort = String(coordinatorDefaults.reasoningEffort ?? "");
+        const base = provider === "" ? model : `${provider}/${model}`;
+        return effort === "" ? base : `${base} · ${effort}`;
+      })();
+      const coordPicked = coordPick ?? {
+        provider: String(coordinatorDefaults.provider ?? ""),
+        model: String(coordinatorDefaults.model ?? ""),
+        effort: String(coordinatorDefaults.reasoningEffort ?? ""),
+      };
+      const saveCoordinatorModel = () => {
+        call(api.ctx, "setCoordinatorDefaults", {
+          projectId: project.id,
+          provider: String(coordPicked.provider ?? ""),
+          model: String(coordPicked.model ?? ""),
+          reasoningEffort: String(coordPicked.effort ?? ""),
+        }).then(
+          () => {
+            setCoordPillOpen(false);
+            setCoordPick(null);
+            setThreadAction({ pending: "", ok: true, message: "协调者默认已保存" });
+            load();
+          },
+          (/** @type {any} */ error) =>
+            setThreadAction({
+              pending: "",
+              ok: false,
+              message: `协调者默认模型保存失败：${String(error?.message ?? error).slice(0, 160)}`,
+            }),
+        );
+      };
       const composerPick = composerPickState[0];
       const setComposerPick = composerPickState[1];
       // 读**回读值**（getProject 的 liveProject），不是父级列表快照——否则保存后药丸不变
-      const threadDefaults = data.liveProject?.threadDefaults ??
+      const threadDefaults = data.progress?.threadDefaults ??
+        data.liveProject?.threadDefaults ??
         props.project?.threadDefaults ?? {
           provider: "",
           model: "",
@@ -5881,9 +5936,11 @@ window.__ModuleLoader__.load({
       const visibleOverrideState = useState(/** @type {string[]|null} */ (null));
       const visibleOverride = visibleOverrideState[0];
       const setVisibleOverride = visibleOverrideState[1];
-      const storedVisibleViews = Array.isArray(project.visibleViews)
-        ? project.visibleViews
-        : ["library", "routines"];
+      const storedVisibleViews = Array.isArray(data.progress?.visibleViews)
+        ? data.progress.visibleViews
+        : Array.isArray(project.visibleViews)
+          ? project.visibleViews
+          : ["library", "routines"];
       const visibleList = visibleOverride ?? storedVisibleViews;
       /** @type {Record<string, boolean>} */
       const visibleTabs = {
@@ -8804,6 +8861,141 @@ window.__ModuleLoader__.load({
                       if (event.key === "Enter") sendCoordinator();
                     },
                   }),
+                  h(
+                    "div",
+                    { style: { position: "relative", flex: "none" } },
+                    h(
+                      "button",
+                      {
+                        type: "button",
+                        style: {
+                          ...styles.secondaryButton,
+                          padding: "1px 8px",
+                          fontSize: "11.5px",
+                          whiteSpace: "nowrap",
+                        },
+                        "data-projects-coordinator-model-pill": "",
+                        "data-projects-coordinator-model-pill-label": coordPillLabel,
+                        "data-projects-coordinator-model-open": coordPillOpen ? "true" : "false",
+                        title: text(t, "detail.coordinatorModelHint"),
+                        onClick: () => setCoordPillOpen(!coordPillOpen),
+                      },
+                      `${coordPillLabel} ▾`,
+                    ),
+                    coordPillOpen
+                      ? h(
+                          "div",
+                          {
+                            style: {
+                              position: "absolute",
+                              right: 0,
+                              top: "calc(100% + 8px)",
+                              zIndex: 14,
+                              minWidth: "250px",
+                              background: T.card,
+                              border: `1px solid ${T.border}`,
+                              borderRadius: "8px",
+                              boxShadow: "0 8px 24px rgba(0,0,0,0.3)",
+                              padding: "8px",
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: "6px",
+                              color: T.text,
+                            },
+                            "data-projects-coordinator-model-menu": "",
+                          },
+                          h(
+                            "span",
+                            { style: { ...styles.meta, fontSize: "11px" } },
+                            text(t, "detail.coordinatorModelMenuTitle"),
+                          ),
+                          modelOptions.length > 0
+                            ? h(
+                                "select",
+                                {
+                                  style: styles.input,
+                                  value: `${String(coordPicked.provider ?? "")}:${String(coordPicked.model ?? "")}`,
+                                  "data-projects-coordinator-model-select": "",
+                                  onChange: (/** @type {any} */ event) => {
+                                    const key = String(event.target.value || "");
+                                    const sep = key.indexOf(":");
+                                    setCoordPick({
+                                      provider: sep >= 0 ? key.slice(0, sep) : "",
+                                      model: sep >= 0 ? key.slice(sep + 1) : key,
+                                      effort: "",
+                                    });
+                                  },
+                                },
+                                [""].map((/** @type {string} */ value) =>
+                                  h(
+                                    "option",
+                                    { key: "inherit", value: value },
+                                    text(t, "detail.composerModelInherit"),
+                                  ),
+                                ),
+                                modelOptions.map((/** @type {any} */ option) =>
+                                  h(
+                                    "option",
+                                    { key: option.key, value: option.key },
+                                    String(option.label),
+                                  ),
+                                ),
+                              )
+                            : h(
+                                "div",
+                                {
+                                  style: { display: "flex", flexDirection: "column", gap: "4px" },
+                                  "data-projects-coordinator-model-manual-menu": "",
+                                },
+                                h("input", {
+                                  style: styles.input,
+                                  value: `${String(coordPicked.provider ?? "")}|${String(coordPicked.model ?? "")}`,
+                                  placeholder: "provider|model",
+                                  "data-projects-coordinator-model-manual": "",
+                                  onChange: (/** @type {any} */ event) =>
+                                    setCoordPick((/** @type {any} */ prev) => {
+                                      const text = String(event.target.value || "");
+                                      const sep = text.indexOf("|");
+                                      return {
+                                        ...(prev ?? {}),
+                                        provider: sep >= 0 ? text.slice(0, sep) : "",
+                                        model: sep >= 0 ? text.slice(sep + 1) : text,
+                                      };
+                                    }),
+                                }),
+                              ),
+                          h("input", {
+                            style: styles.input,
+                            value: String(coordPicked.effort ?? ""),
+                            placeholder: text(t, "detail.effortPlaceholder"),
+                            "data-projects-coordinator-model-effort": "",
+                            onChange: (/** @type {any} */ event) =>
+                              setCoordPick((/** @type {any} */ prev) => ({
+                                ...(prev ?? {}),
+                                effort: String(event.target.value || ""),
+                              })),
+                          }),
+                          h(
+                            "div",
+                            { style: { display: "flex", gap: "6px" } },
+                            h(
+                              "button",
+                              {
+                                type: "button",
+                                style: {
+                                  ...styles.primaryButton,
+                                  padding: "2px 10px",
+                                  fontSize: "12px",
+                                },
+                                "data-projects-coordinator-model-save": "",
+                                onClick: saveCoordinatorModel,
+                              },
+                              text(t, "detail.composerModelSave"),
+                            ),
+                          ),
+                        )
+                      : null,
+                  ),
                   h(
                     "button",
                     {

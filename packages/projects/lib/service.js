@@ -3363,6 +3363,10 @@ export class ProjectsService extends TypertRemoteService {
       projectState: project?.state ?? "active",
       // 自定义视图（面板「+ 新增视图」保存的筛选条件）
       views: Array.isArray(project?.views) ? project.views : [],
+      // 默认模型两套（客户端药丸的回读源；不必再单独 getProject）
+      threadDefaults: project?.threadDefaults ?? null,
+      coordinatorDefaults: project?.coordinatorDefaults ?? null,
+      visibleViews: Array.isArray(project?.visibleViews) ? project.visibleViews : null,
     };
   }
 

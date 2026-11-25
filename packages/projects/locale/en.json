@@ -568,6 +568,9 @@
     "detail.composerModelHint": "Edits the project thread default (same as Thread defaults in settings)",
     "detail.composerModelMenuTitle": "Thread default model",
     "detail.composerModelSave": "Save",
-    "detail.working.verbs": "Ruminating|Billowing|Moonwalking|Pondering|Drafting|Sifting"
+    "detail.working.verbs": "Ruminating|Billowing|Moonwalking|Pondering|Drafting|Sifting",
+    "detail.coordinatorModelHint": "Coordinator default model (independent of thread defaults)",
+    "detail.coordinatorModelMenuTitle": "Coordinator default model",
+    "detail.effortPlaceholder": "Reasoning effort (optional)"
   }
 }
