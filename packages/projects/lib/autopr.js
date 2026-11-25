@@ -113,3 +113,28 @@ export function parsePrNumber(stdout) {
   const value = Number(match[1]);
   return Number.isInteger(value) && value > 0 ? value : null;
 }
+
+/**
+ * 兜底 push 计划：宿主进程拿不到 ssh/keychain 凭据时，用 gh 的 credential helper 走 https。
+ * 只做参数组装（纯函数），是否执行、失败如何记录由调用方决定。
+ * @param {{ url?: string, branch?: string }} input
+ * @returns {{ argv: string[] } | { error: string }}
+ */
+export function planHttpsPush(input) {
+  const url = String(input?.url ?? "").trim();
+  const branch = String(input?.branch ?? "").trim();
+  if (!/^https:\/\/[^\s]+$/u.test(url)) return { error: "url-not-https" };
+  if (branch === "") return { error: "branch-required" };
+  return {
+    argv: [
+      "-c",
+      "credential.helper=",
+      "-c",
+      "credential.helper=!gh auth git-credential",
+      "push",
+      "-u",
+      url,
+      branch,
+    ],
+  };
+}

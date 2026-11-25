@@ -21,7 +21,7 @@ import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 import { artifactRefFromToolResult } from "./artifact-ref.js";
 import { registerProjectContext } from "./attach.js";
 import { buildFixTask, errorSignature, shouldContinueFix } from "./autofix.js";
-import { buildPrText, nextPrAction, parsePrNumber, planPrCreate } from "./autopr.js";
+import { buildPrText, nextPrAction, parsePrNumber, planHttpsPush, planPrCreate } from "./autopr.js";
 import { autoResolveDaysOf, planAutoResolve } from "./autoresolve.js";
 import {
   checkStepBudget,
@@ -3109,24 +3109,46 @@ export class ProjectsService extends TypertRemoteService {
     // 先推分支（worktree 内），再开 PR
     const worktree =
       typeof thread.worktree === "string" && thread.worktree !== "" ? thread.worktree : "";
+    /** @type {{ code: number, stdout: string, stderr: string } | null} */
+    let pushedHttps = null;
     if (worktree !== "") {
       const pushed = await runGit(["push", "-u", "origin", String(thread.branch)], worktree);
+      // 兜底：宿主进程里 `git push origin` 可能拿不到 osxkeychain/SSH 凭据（真机踩到——
+      // 同一命令在用户 shell 里成功、在宿主里失败）。gh CLI 在宿主环境里可用（GH_TOKEN），
+      // 所以用它的 credential helper 走 https 再推一次；两条都失败才如实报 push-failed。
       if (pushed.code !== 0) {
+        const repoUrl = await runGh(["repo", "view", "--json", "url", "--jq", ".url"], worktree);
+        const httpsUrl = String(repoUrl.stdout ?? "").trim();
+        if (repoUrl.code === 0 && httpsUrl !== "") {
+          const plannedPush = planHttpsPush({ url: httpsUrl, branch: String(thread.branch) });
+          if (!("error" in plannedPush)) {
+            pushedHttps = await runGit(plannedPush.argv, worktree);
+          }
+        }
+      }
+      if (pushed.code !== 0 && (pushedHttps === null || pushedHttps.code !== 0)) {
         store.appendAudit({
           action: "pr/failed",
           projectId,
           sessionId,
           reason: "push-failed",
           // 把 stderr 首行带上：没有它只能看到 "push-failed"，排查全靠猜（本轮真机踩到）
-          detail: String(pushed.stderr ?? "")
-            .split("\n")[0]
-            .slice(0, 200),
+          detail: [
+            `ssh/cred: ${String(pushed.stderr ?? "").split("\n")[0]}`,
+            `https+gh: ${String(pushedHttps?.stderr ?? "").split("\n")[0]}`,
+          ]
+            .join(" | ")
+            .slice(0, 300),
         });
         store.save();
         return { opened: false, decision, reason: "push-failed" };
       }
     }
 
+    if (pushedHttps !== null && pushedHttps.code === 0) {
+      store.appendAudit({ action: "pr/push-fallback", projectId, sessionId, via: "gh-credential" });
+      store.save();
+    }
     const gh = await runGh(planned.argv, worktree !== "" ? worktree : repoRoot || undefined);
     const prNumber = gh.code === 0 ? parsePrNumber(gh.stdout) : null;
     if (gh.code !== 0 || prNumber === null) {
