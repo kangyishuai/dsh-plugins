@@ -253,6 +253,7 @@ window.__ModuleLoader__.load({
       "detail.emptyFile": "（空）",
       "detail.auditEmpty": "还没有审计记录。",
       "detail.rowSub.action": "正在：{text}",
+      "detail.working.verbs": "酝酿中|推进中|梳理中|核对中|起草中|推演中",
       "detail.rowSub.working": "正在处理…",
       "detail.rowSub.question": "等你回复：{text}",
       "detail.rowSub.failed": "上一轮失败了，点开看原因",
@@ -738,6 +739,7 @@ window.__ModuleLoader__.load({
       "detail.emptyFile": "(empty)",
       "detail.auditEmpty": "No audit entries yet.",
       "detail.rowSub.action": "Working: {text}",
+      "detail.working.verbs": "Ruminating|Billowing|Moonwalking|Pondering|Drafting|Sifting",
       "detail.rowSub.working": "Working…",
       "detail.rowSub.question": "Waiting on you: {text}",
       "detail.rowSub.failed": "Last turn failed — open for details",
@@ -5861,6 +5863,18 @@ window.__ModuleLoader__.load({
       // 设置抽屉：rail 里的 15 段设置不再常驻右栏（Claude 是独立 Project settings），
       // 由面板 header 的 ⚙ 打开；锚点保持原样，冒烟/桌面回归照旧能点。
       // D1：右栏可见性持久化在项目记录里（visibleViews）；override 只做乐观反馈
+      // M3：生成态的秒数需要每秒重渲染（只在有 working 行时开定时器）
+      const tickState = useState(0);
+      // 只用 setter 强制重渲染（tick 值本身不参与计算）
+      const setTick = tickState[1];
+      const hasWorkingRow = (data.progress?.rows ?? []).some(
+        (/** @type {any} */ row) => String(row?.view?.state ?? "") === "working",
+      );
+      useEffect(() => {
+        if (!hasWorkingRow) return undefined;
+        const timer = setInterval(() => setTick((/** @type {number} */ n) => n + 1), 1000);
+        return () => clearInterval(timer);
+      }, [hasWorkingRow, setTick]);
       const stepsHoverIdState = useState("");
       const stepsHoverId = stepsHoverIdState[0];
       const setStepsHoverId = stepsHoverIdState[1];
@@ -5902,7 +5916,7 @@ window.__ModuleLoader__.load({
           try {
             document.body.setAttribute(
               "data-projects-view-error",
-              "sync: " + String(/** @type {any} */ (error)?.message ?? error).slice(0, 240),
+              `sync: ${String(/** @type {any} */ (error)?.message ?? error).slice(0, 240)}`,
             );
           } catch {
             /* ignore */
@@ -6363,10 +6377,49 @@ window.__ModuleLoader__.load({
               : `线程 ${String(row.sessionId)
                   .replace(/^session-/u, "")
                   .slice(0, 6)}`;
-        const rowSubtitle = rawTitle !== "" ? taskHint : text(t, `detail.state.${state}`);
+        // 副标题统一逻辑：kind 语义 → 旧宿主 fallback → working 的「动词 + 秒数」
+        const pickVerb = () => {
+          const verbs = text(t, "detail.working.verbs").split("|");
+          const began =
+            Number(row.view?.firstActivityAt ?? 0) || Number(row.view?.lastActivityAt ?? 0);
+          const secs = began > 0 ? Math.max(0, Math.round((Date.now() - began) / 1000)) : null;
+          const seed =
+            String(row.sessionId ?? "")
+              .split("")
+              .reduce(
+                (/** @type {number} */ sum, /** @type {string} */ ch) => sum + ch.charCodeAt(0),
+                0,
+              ) % verbs.length;
+          const verb = verbs[seed] || verbs[0] || "";
+          return secs === null ? verb : `${verb} ${secs}s`;
+        };
+        const subtitleText = () => {
+          const kind = String(row.subtitleKind || "");
+          const detail = cleanThreadTitle(row.subtitleDetail || row.subtitle);
+          if (kind === "question") {
+            return text(t, "detail.rowSub.question", { text: detail.slice(0, 48) });
+          }
+          if (kind === "action") {
+            return detail !== ""
+              ? text(t, "detail.rowSub.action", { text: detail.slice(0, 48) })
+              : pickVerb();
+          }
+          if (kind === "failed") return text(t, "detail.rowSub.failed");
+          if (kind === "review") return detail !== "" ? detail : text(t, "detail.rowSub.review");
+          if (kind === "archived") return text(t, "detail.rowSub.archived");
+          if (kind === "result") {
+            const summary = String(row.summary || "").trim();
+            if (summary !== "") return summary;
+          }
+          if (rawTitle === "" && taskHint !== "" && taskHint !== title) return taskHint;
+          if (state === "working") return pickVerb();
+          return text(t, `detail.state.${state}`);
+        };
+        const rowSubtitle = subtitleText();
         const steps = row.steps && Number(row.steps.total) > 0 ? row.steps : null;
         // M2.2：行尾 `n/m` 悬停弹层（状态在 ProjectDetail 顶层，threadRowView 只是普通函数）
         const stepHoverOpen = stepsHoverId === String(row.sessionId);
+        const tickNow = () => Date.now();
         const duration = durationLabel(row.durationMs);
         const notifications = Array.isArray(row.view?.pendingInput)
           ? row.view.pendingInput.length
@@ -6613,9 +6666,27 @@ window.__ModuleLoader__.load({
                             });
                           }
                           if (kind === "action") {
-                            return detail !== ""
-                              ? text(t, "detail.rowSub.action", { text: detail.slice(0, 48) })
-                              : text(t, "detail.rowSub.working");
+                            if (detail !== "") {
+                              return text(t, "detail.rowSub.action", { text: detail.slice(0, 48) });
+                            }
+                            // Claude 的生成态：拟人化动词 + 秒数（Ruminating 4s）
+                            const verbs = text(t, "detail.working.verbs").split("|");
+                            const last = Number(row.view?.lastActivityAt ?? 0);
+                            const began = Number(row.view?.firstActivityAt ?? 0) || last;
+                            const elapsedMs = began > 0 ? Math.max(0, tickNow() - began) : NaN;
+                            const secs = Number.isFinite(elapsedMs)
+                              ? Math.max(0, Math.round(elapsedMs / 1000))
+                              : null;
+                            const seed =
+                              String(row.sessionId ?? "")
+                                .split("")
+                                .reduce(
+                                  (/** @type {number} */ sum, /** @type {string} */ ch) =>
+                                    sum + ch.charCodeAt(0),
+                                  0,
+                                ) % verbs.length;
+                            const verb = verbs[seed] || verbs[0] || "";
+                            return secs === null ? verb : `${verb} ${secs}s`;
                           }
                           if (kind === "failed") return text(t, "detail.rowSub.failed");
                           if (kind === "review")
@@ -6626,9 +6697,29 @@ window.__ModuleLoader__.load({
                             if (summary !== "") return summary;
                           }
                           const sub = cleanThreadTitle(row.subtitle);
-                          return sub !== "" && sub !== title
-                            ? sub
-                            : text(t, `detail.state.${state}`);
+                          if (sub !== "" && sub !== title) return sub;
+                          // host 还没给 subtitleKind（旧宿主）时，working 也走「动词 + 秒数」
+                          if (state === "working") {
+                            const verbs = text(t, "detail.working.verbs").split("|");
+                            const began =
+                              Number(row.view?.firstActivityAt ?? 0) ||
+                              Number(row.view?.lastActivityAt ?? 0);
+                            const secs =
+                              began > 0
+                                ? Math.max(0, Math.round((Date.now() - began) / 1000))
+                                : null;
+                            const seed =
+                              String(row.sessionId ?? "")
+                                .split("")
+                                .reduce(
+                                  (/** @type {number} */ sum, /** @type {string} */ ch) =>
+                                    sum + ch.charCodeAt(0),
+                                  0,
+                                ) % verbs.length;
+                            const verb = verbs[seed] || verbs[0] || "";
+                            return secs === null ? verb : `${verb} ${secs}s`;
+                          }
+                          return text(t, `detail.state.${state}`);
                         })(),
                       ),
                     ),

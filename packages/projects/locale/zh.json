@@ -567,6 +567,7 @@
     "detail.rowArtifactsMore": "+{count}",
     "detail.composerModelHint": "改的是项目的线程默认模型（等同设置里的「线程默认模型」）",
     "detail.composerModelMenuTitle": "线程默认模型",
-    "detail.composerModelSave": "保存"
+    "detail.composerModelSave": "保存",
+    "detail.working.verbs": "酝酿中|推进中|梳理中|核对中|起草中|推演中"
   }
 }

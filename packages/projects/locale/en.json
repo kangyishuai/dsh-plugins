@@ -567,6 +567,7 @@
     "detail.rowArtifactsMore": "+{count}",
     "detail.composerModelHint": "Edits the project thread default (same as Thread defaults in settings)",
     "detail.composerModelMenuTitle": "Thread default model",
-    "detail.composerModelSave": "Save"
+    "detail.composerModelSave": "Save",
+    "detail.working.verbs": "Ruminating|Billowing|Moonwalking|Pondering|Drafting|Sifting"
   }
 }
