@@ -12313,6 +12313,8 @@ window.__ModuleLoader__.load({
         savedDefaults: null,
         /** D3：setCoordinatorDefaults 回执里的 defaults。 */
         savedCoordinatorDefaults: null,
+        /** D3：目录为空时的手填兜底（与线程默认一致） */
+        coordinatorManualOpen: false,
       });
       var view = st[0];
       var setView = st[1];
@@ -12886,7 +12888,52 @@ window.__ModuleLoader__.load({
               },
               text(t, "b3.modelSave"),
             ),
+            h(
+              "button",
+              {
+                type: "button",
+                style: styles.secondaryButton,
+                "data-projects-coordinator-manual-toggle": "",
+                onClick: () =>
+                  setView((/** @type {any} */ prev) => ({
+                    ...prev,
+                    coordinatorManualOpen: !prev.coordinatorManualOpen,
+                  })),
+              },
+              text(t, "b3.modelManual"),
+            ),
           ),
+          view.coordinatorManualOpen
+            ? h(
+                "div",
+                {
+                  style: { display: "flex", gap: "6px", flexWrap: "wrap" },
+                  "data-projects-coordinator-manual": "",
+                },
+                h("input", {
+                  style: { ...styles.input, fontSize: "12px", padding: "3px 8px" },
+                  value: coordinatorPicked.model,
+                  placeholder: "provider|model",
+                  "data-projects-coordinator-model-manual": "",
+                  onChange: (/** @type {any} */ event) =>
+                    setCoordinatorPicked((/** @type {any} */ prev) => ({
+                      ...prev,
+                      model: String(event.target.value || ""),
+                    })),
+                }),
+                h("input", {
+                  style: { ...styles.input, fontSize: "12px", padding: "3px 8px" },
+                  value: coordinatorPicked.effort,
+                  placeholder: "effort",
+                  "data-projects-coordinator-effort-manual": "",
+                  onChange: (/** @type {any} */ event) =>
+                    setCoordinatorPicked((/** @type {any} */ prev) => ({
+                      ...prev,
+                      effort: String(event.target.value || ""),
+                    })),
+                }),
+              )
+            : null,
         ),
         // F42：线程默认模型 / effort
         h(
