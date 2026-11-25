@@ -2224,6 +2224,10 @@ try {
     // 授权三键点「设为默认」（回读在下面用 Node 侧轮询，避免单次 evaluate 超 15s）。
     result.folderMode =
       q("[data-projects-folder-mode]")?.getAttribute("data-projects-folder-mode") || "";
+    // Environment 摘要（Claude 的 Folders without asking）：设为默认后名单里应有 1 个
+    result.envAllowed = q("[data-projects-env-allowed]")?.textContent || "";
+    result.envMachine = q("[data-projects-env-machine]")?.textContent || "";
+    result.envRepos = q("[data-projects-env-repos]")?.textContent || "";
     result.folderMessage = q("[data-projects-b3-message]")?.textContent || "";
     result.folderCardAttrs = all("[data-projects-folder-card]").map((node) =>
       node.getAttribute("data-projects-folder-card"),
@@ -2610,6 +2614,19 @@ try {
       cards: b3ui.folderCardAttrs,
     }),
   );
+  add(
+    "Environment 摘要：运行位置/仓库数/免询问文件夹（设为默认后名单含 1 个）",
+    b3ui.envMachine.includes("本机") &&
+      b3ui.envRepos.includes("仓库") &&
+      b3ui.envAllowed.includes("免询问文件夹") &&
+      String(b3ui.envAllowed).includes("1 个"),
+    JSON.stringify({
+      machine: b3ui.envMachine,
+      repos: b3ui.envRepos,
+      allowed: b3ui.envAllowed,
+    }),
+  );
+
   add(
     "F55 「Deny」写入并回读 mode=deny",
     b3ui.folderDenyMode === "deny",
