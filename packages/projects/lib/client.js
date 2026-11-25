@@ -518,7 +518,7 @@ window.__ModuleLoader__.load({
       "detail.prCard.copied": "PR 链接已复制",
       "detail.prCard.loading": "读取 PR 信息…",
       "detail.prCard.unavailable": "读不到 PR",
-      "detail.prCard.actionsMissing": "Review/Merge 需要宿主 seam（未实现）",
+      "detail.prCard.actionsMissing": "Review 打开外链不可用；Merge 需先在危险开关里开启",
       "detail.prOpen": "已开",
       "artifacts.viewerOpen": "查看",
       "artifacts.viewerClose": "关闭",
@@ -1033,7 +1033,8 @@ window.__ModuleLoader__.load({
       "detail.prCard.copied": "PR link copied",
       "detail.prCard.loading": "Loading PR…",
       "detail.prCard.unavailable": "PR unavailable",
-      "detail.prCard.actionsMissing": "Review/Merge need a host seam (not implemented)",
+      "detail.prCard.actionsMissing":
+        "Opening Review in a browser is unavailable; Merge needs the danger switch on",
       "detail.prOpen": "open",
       "artifacts.viewerOpen": "View",
       "artifacts.viewerClose": "Close",
@@ -7107,6 +7108,9 @@ window.__ModuleLoader__.load({
             },
             "data-projects-thread-row": row.sessionId,
             "data-projects-thread-state": state,
+            "data-projects-debug-row-artifacts": String(
+              Array.isArray(row.artifacts) ? row.artifacts.length : "none",
+            ),
             // F29 回读锚点：resolve 写进去的 resolvedAt 必须能在 UI 上读回来（冒烟比同一份值）
             "data-projects-thread-resolved-at": String(row.resolvedAt ?? ""),
             "data-projects-thread-unread": row.unread === true ? "true" : "false",
@@ -7245,6 +7249,73 @@ window.__ModuleLoader__.load({
                     title: String(row.worktree),
                   },
                   text(t, "detail.threadWorktree", { path: String(row.worktree) }),
+                )
+              : null,
+            // M2.3：折叠行露产物（Claude 的行会把线程产物以小缩略卡露出来）
+            Array.isArray(row.artifacts) && row.artifacts.length > 0
+              ? h(
+                  "div",
+                  {
+                    style: {
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: "6px",
+                      marginTop: "2px",
+                    },
+                    "data-projects-row-artifacts": row.sessionId,
+                  },
+                  row.artifacts.slice(0, 3).map((/** @type {any} */ item) =>
+                    h(
+                      "span",
+                      {
+                        key: String(item?.id ?? ""),
+                        style: {
+                          ...styles.inlineChip,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "5px",
+                          maxWidth: "180px",
+                          cursor: "pointer",
+                        },
+                        "data-projects-row-artifact-chip": String(item?.id ?? ""),
+                        title: String(item?.title ?? ""),
+                        onClick: () => setExpandedThread(String(row.sessionId)),
+                      },
+                      h("img", {
+                        src:
+                          String(item?.coverUrl ?? "") !== ""
+                            ? String(item.coverUrl)
+                            : `/artifacts/${encodeURIComponent(String(item?.id ?? ""))}/cover.svg`,
+                        alt: "",
+                        style: {
+                          width: "20px",
+                          height: "15px",
+                          objectFit: "cover",
+                          borderRadius: "3px",
+                        },
+                      }),
+                      h(
+                        "span",
+                        {
+                          style: {
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          },
+                        },
+                        String(item?.title ?? item?.id ?? ""),
+                      ),
+                    ),
+                  ),
+                  row.artifacts.length > 3
+                    ? h(
+                        "span",
+                        { style: { ...styles.meta, fontSize: "11px", alignSelf: "center" } },
+                        text(t, "detail.rowArtifactsMore", {
+                          count: row.artifacts.length - 3,
+                        }),
+                      )
+                    : null,
                 )
               : null,
             // —— U5/U6/U7/F17/F19/F24/F12/F20：展开后的线程面板 ——

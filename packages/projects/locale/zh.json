@@ -583,7 +583,7 @@
     "detail.prCard.copied": "PR 链接已复制",
     "detail.prCard.loading": "读取 PR 信息…",
     "detail.prCard.unavailable": "读不到 PR",
-    "detail.prCard.actionsMissing": "Review/Merge 需要宿主 seam（未实现）",
+    "detail.prCard.actionsMissing": "Review 打开外链不可用；Merge 需先在危险开关里开启",
     "artifacts.viewerOpen": "查看",
     "artifacts.viewerClose": "关闭",
     "artifacts.viewerLoading": "读取产物内容…",

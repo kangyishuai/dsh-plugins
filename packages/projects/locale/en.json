@@ -583,7 +583,7 @@
     "detail.prCard.copied": "PR link copied",
     "detail.prCard.loading": "Loading PR…",
     "detail.prCard.unavailable": "PR unavailable",
-    "detail.prCard.actionsMissing": "Review/Merge need a host seam (not implemented)",
+    "detail.prCard.actionsMissing": "Opening Review in a browser is unavailable; Merge needs the danger switch on",
     "artifacts.viewerOpen": "View",
     "artifacts.viewerClose": "Close",
     "artifacts.viewerLoading": "Loading artifact…",

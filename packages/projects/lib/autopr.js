@@ -153,3 +153,18 @@ export function canMergePr(input) {
   if (input?.dangerAutoMerge !== true) return { ok: false, reason: "danger-off" };
   return { ok: true };
 }
+
+/**
+ * 合并前的步骤计划（纯函数）：草稿 PR 不能直接 merge（GitHub 会拒），先 `pr ready`。
+ * @param {{ prNumber?: number, isDraft?: boolean }} input
+ * @returns {{ error: string } | { steps: string[][] }}
+ */
+export function planMergeSteps(input) {
+  const prNumber = Number(input?.prNumber);
+  if (!Number.isInteger(prNumber) || prNumber <= 0) return { error: "no-pr" };
+  const merge = ["pr", "merge", String(prNumber), "--squash", "--delete-branch"];
+  if (input?.isDraft === true) {
+    return { steps: [["pr", "ready", String(prNumber)], merge] };
+  }
+  return { steps: [merge] };
+}

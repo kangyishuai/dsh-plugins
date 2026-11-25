@@ -28,6 +28,7 @@ import {
   nextPrAction,
   parsePrNumber,
   planHttpsPush,
+  planMergeSteps,
   planPrCreate,
 } from "./autopr.js";
 import { autoResolveDaysOf, planAutoResolve } from "./autoresolve.js";
@@ -1766,10 +1767,25 @@ export class ProjectsService extends TypertRemoteService {
     const repoRoot =
       Array.isArray(project.dirs) && project.dirs.length > 0 ? String(project.dirs[0]) : "";
     if (repoRoot === "") return { ok: false, reason: "no-dir" };
-    const gh = await runGh(
-      ["pr", "merge", String(Number(thread.prNumber)), "--squash", "--delete-branch"],
+    // 草稿 PR 直接 merge 会被 GitHub 拒（真机踩过：GraphQL "still a draft"），先 pr ready
+    const view = await runGh(
+      ["pr", "view", String(Number(thread.prNumber)), "--json", "isDraft"],
       repoRoot,
     );
+    let isDraft = false;
+    try {
+      isDraft = JSON.parse(String(view.stdout ?? "")).isDraft === true;
+    } catch {
+      isDraft = false;
+    }
+    const planned = planMergeSteps({ prNumber: Number(thread.prNumber), isDraft });
+    if ("error" in planned) return { ok: false, reason: planned.error };
+    /** @type {{ code: number, stdout: string, stderr: string }} */
+    let gh = { code: 0, stdout: "", stderr: "" };
+    for (const argv of planned.steps) {
+      gh = await runGh(argv, repoRoot);
+      if (gh.code !== 0) break;
+    }
     if (gh.code !== 0) {
       store.appendAudit({
         action: "pr/merge-failed",
