@@ -572,6 +572,8 @@
     "detail.coordinatorModelHint": "Coordinator default model (independent of thread defaults)",
     "detail.coordinatorModelMenuTitle": "Coordinator default model",
     "detail.effortPlaceholder": "Reasoning effort (optional)",
-    "detail.rowSub.using": "✓✓✓ Using {tool}"
+    "detail.rowSub.using": "✓✓✓ Using {tool}",
+    "detail.coordinatorFold": "{count} earlier coordinator messages",
+    "detail.coordinatorFoldHide": "Hide earlier messages"
   }
 }

@@ -161,6 +161,8 @@ window.__ModuleLoader__.load({
       "detail.coordinatorCreate": "建协调者",
       "detail.coordinatorCreated": "协调者会话已就绪",
       "detail.coordinatorMsgSent": "已发送给协调者",
+      "detail.coordinatorFold": "更早的 {count} 条协调者消息",
+      "detail.coordinatorFoldHide": "收起更早的消息",
       "detail.coordinatorConclusion": "结论",
       "detail.coordinatorCompactionYes": "自动压缩可用（{mode}）",
       "detail.coordinatorCompactionNo":
@@ -658,6 +660,8 @@ window.__ModuleLoader__.load({
       "detail.coordinatorCreate": "Create coordinator",
       "detail.coordinatorCreated": "Coordinator session is ready",
       "detail.coordinatorMsgSent": "Sent to the coordinator",
+      "detail.coordinatorFold": "{count} earlier coordinator messages",
+      "detail.coordinatorFoldHide": "Hide earlier messages",
       "detail.coordinatorConclusion": "Conclusion",
       "detail.coordinatorCompactionYes": "Auto-compaction available ({mode})",
       "detail.coordinatorCompactionNo":
@@ -5725,6 +5729,10 @@ window.__ModuleLoader__.load({
       const setComposerModelOpen = composerModelOpenState[1];
       const composerPickState = useState(/** @type {any} */ (null));
       // 协调者 composer 的药丸（D3：写 coordinatorDefaults，与线程默认独立）
+      // M3：协调者消息折叠（只显示最近 3 条，更早的折起来）
+      const coordFoldState = useState(false);
+      const coordFoldOpen = coordFoldState[0];
+      const setCoordFoldOpen = coordFoldState[1];
       const coordPillOpenState = useState(false);
       const coordPillOpen = coordPillOpenState[0];
       const setCoordPillOpen = coordPillOpenState[1];
@@ -8668,19 +8676,71 @@ window.__ModuleLoader__.load({
                       { style: styles.meta, "data-projects-coordinator-empty": "" },
                       text(t, "detail.coordinatorEmpty"),
                     )
-                  : messages.map((/** @type {any} */ item, /** @type {number} */ index) =>
-                      h(
-                        "div",
-                        {
-                          key: String(index),
-                          style:
-                            item.role === "assistant"
-                              ? styles.coordinatorBubble
-                              : styles.coordinatorBubbleUser,
-                          "data-projects-coordinator-message": String(item.role),
-                        },
-                        String(item.text ?? "").slice(0, 400),
-                      ),
+                  : h(
+                      "div",
+                      { style: { display: "flex", flexDirection: "column", gap: "4px" } },
+                      messages.length > 3
+                        ? h(
+                            "button",
+                            {
+                              type: "button",
+                              style: {
+                                ...styles.meta,
+                                textAlign: "left",
+                                background: "transparent",
+                                border: "none",
+                                padding: "0 0 2px",
+                                cursor: "pointer",
+                                color: T.dim,
+                              },
+                              "data-projects-coordinator-folded": "",
+                              "data-projects-coordinator-folded-open": coordFoldOpen
+                                ? "true"
+                                : "false",
+                              onClick: () => setCoordFoldOpen(!coordFoldOpen),
+                            },
+                            coordFoldOpen
+                              ? text(t, "detail.coordinatorFoldHide")
+                              : text(t, "detail.coordinatorFold", {
+                                  count: messages.length - 3,
+                                }),
+                          )
+                        : null,
+                      messages.length > 3 && coordFoldOpen
+                        ? messages
+                            .slice(0, messages.length - 3)
+                            .map((/** @type {any} */ item, /** @type {number} */ index) =>
+                              h(
+                                "div",
+                                {
+                                  key: `fold-${String(index)}`,
+                                  style:
+                                    item.role === "assistant"
+                                      ? styles.coordinatorBubble
+                                      : styles.coordinatorBubbleUser,
+                                  "data-projects-coordinator-message": String(item.role),
+                                  "data-projects-coordinator-message-folded": "",
+                                },
+                                String(item.text ?? "").slice(0, 400),
+                              ),
+                            )
+                        : null,
+                      messages
+                        .slice(Math.max(0, messages.length - 3))
+                        .map((/** @type {any} */ item, /** @type {number} */ index) =>
+                          h(
+                            "div",
+                            {
+                              key: String(index),
+                              style:
+                                item.role === "assistant"
+                                  ? styles.coordinatorBubble
+                                  : styles.coordinatorBubbleUser,
+                              "data-projects-coordinator-message": String(item.role),
+                            },
+                            String(item.text ?? "").slice(0, 400),
+                          ),
+                        ),
                     ),
                 String(coordinator?.conclusion ?? "") !== ""
                   ? h(

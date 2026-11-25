@@ -572,6 +572,8 @@
     "detail.coordinatorModelHint": "协调者默认模型（与线程默认独立）",
     "detail.coordinatorModelMenuTitle": "协调者默认模型",
     "detail.effortPlaceholder": "推理强度（可空）",
-    "detail.rowSub.using": "✓✓✓ 使用 {tool}"
+    "detail.rowSub.using": "✓✓✓ 使用 {tool}",
+    "detail.coordinatorFold": "更早的 {count} 条协调者消息",
+    "detail.coordinatorFoldHide": "收起更早的消息"
   }
 }
