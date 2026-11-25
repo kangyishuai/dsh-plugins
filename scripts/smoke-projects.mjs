@@ -2291,6 +2291,55 @@ try {
     }
     q("[data-projects-thread-defaults-save]")?.click();
     await wait(500);
+    // D3：协调者默认模型（与线程默认独立）——选一个具体值后保存
+    const cModel = q("[data-projects-coordinator-model]");
+    const cModelValue = cModel
+      ? [...cModel.options].map((option) => option.value).find((item) => item !== "") || ""
+      : "";
+    // 目录为空（无凭据部署）时走手填：与线程默认同一套兜底
+    if (cModelValue === "") {
+      q("[data-projects-coordinator-manual-toggle]")?.click();
+      await wait(300);
+      const fill = (selector, value) => {
+        const input = q(selector);
+        if (!input) return;
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+        setter.call(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      };
+      fill("[data-projects-coordinator-model-manual]", "smoke-coordinator|smoke-model");
+      fill("[data-projects-coordinator-effort-manual]", "high");
+      await wait(400);
+      result.coordinatorPicked = {
+        provider: "smoke-coordinator",
+        modelId: "smoke-model",
+        effort: "high",
+      };
+      q("[data-projects-coordinator-defaults-save]")?.click();
+      await wait(600);
+    } else if (cModel && cModelValue !== "") {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set;
+      setter.call(cModel, cModelValue);
+      cModel.dispatchEvent(new Event("change", { bubbles: true }));
+      await wait(400);
+      const cEffort = q("[data-projects-coordinator-effort]");
+      const cEffortValue = cEffort
+        ? [...cEffort.options].map((option) => option.value).find((item) => item !== "") || ""
+        : "";
+      if (cEffort && cEffortValue !== "") {
+        setter.call(cEffort, cEffortValue);
+        cEffort.dispatchEvent(new Event("change", { bubbles: true }));
+        await wait(300);
+      }
+      const parts = cModelValue.split("|");
+      result.coordinatorPicked = {
+        provider: parts.length > 1 ? parts[0] : "",
+        modelId: parts.length > 1 ? parts.slice(1).join("|") : cModelValue,
+        effort: cEffortValue,
+      };
+      q("[data-projects-coordinator-defaults-save]")?.click();
+      await wait(500);
+    }
     return result;
   });
   // 线程动作（自绘「⋯」菜单 + 行内重命名）：单独一次 evaluate，避免和上面的轮询叠加超 15s。
@@ -2878,6 +2927,7 @@ try {
   // 宿主侧回读要用的值（在同一个块作用域里带出去，避开 emit 点的块作用域边界）
   result.__b3FolderPath = b3ui.folderPath || (b3ui.folderCardAttrs || [])[0] || "";
   result.b3DefaultsPicked = b3ui.defaultsPicked ?? null;
+  result.b3CoordinatorPicked = b3ui.coordinatorPicked ?? null;
   result.b3MentionTokens = b3ui.mentionTokens ?? [];
   result.__b3AttachId = b3ui.attachId;
 
@@ -5346,6 +5396,41 @@ const main = async () => {
         audits: visibleAudit.length,
       }),
     });
+    // D3：协调者默认独立落盘（按全局审计 coordinator/defaults 定位项目）
+    const pickedCoordinator = result.b3CoordinatorPicked ?? null;
+    const coordinatorAudit = (Array.isArray(parsed?.audit) ? parsed.audit : []).filter(
+      (/** @type {any} */ item) => String(item?.action ?? "") === "coordinator/defaults",
+    );
+    const lastCoordinator = coordinatorAudit[coordinatorAudit.length - 1];
+    const coordinatorProject =
+      lastCoordinator && parsed?.projects
+        ? parsed.projects[String(lastCoordinator.projectId)]
+        : null;
+    if (pickedCoordinator === null) {
+      skips.push({
+        name: "协调者默认模型写→回读（目录为空，无具体模型可选）",
+        detail:
+          "modelCatalog 没有可选模型（无凭据部署）；单测覆盖存储，真机需带凭据环境或重启后手验",
+      });
+    } else
+      checks.push({
+        name: "协调者默认模型写→回读（coordinatorDefaults 独立于 threadDefaults）",
+        ok:
+          pickedCoordinator !== null &&
+          coordinatorProject !== null &&
+          String(coordinatorProject.coordinatorDefaults?.provider ?? "") ===
+            String(pickedCoordinator.provider ?? "") &&
+          String(coordinatorProject.coordinatorDefaults?.model ?? "") ===
+            String(pickedCoordinator.modelId ?? "") &&
+          String(coordinatorProject.coordinatorDefaults?.reasoningEffort ?? "") ===
+            String(pickedCoordinator.effort ?? ""),
+        detail: JSON.stringify({
+          picked: pickedCoordinator,
+          stored: coordinatorProject?.coordinatorDefaults ?? null,
+          threadDefaults: coordinatorProject?.threadDefaults ?? null,
+          audits: coordinatorAudit.length,
+        }),
+      });
     // —— B3：三项「写→回读」由宿主侧文件做硬证据（UI 只是按钮，盘上才算数）——
     const b3Budget = Object.values(parsed?.projects ?? {})
       .map((/** @type {any} */ project) => project?.budget)
