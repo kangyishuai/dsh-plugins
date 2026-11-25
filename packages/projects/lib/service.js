@@ -20,7 +20,7 @@ import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 
 import { artifactRefFromToolResult } from "./artifact-ref.js";
 import { registerProjectContext } from "./attach.js";
-import { shouldAutoRetry } from "./auto-retry.js";
+import { createAutoRetryScheduler, shouldAutoRetry } from "./auto-retry.js";
 import { buildFixTask, errorSignature, shouldContinueFix } from "./autofix.js";
 import {
   buildPrText,
@@ -377,8 +377,38 @@ export class ProjectsService extends TypertRemoteService {
     /** P0-3：线程 diff 摘要缓存（sessionId → {key, at, diff}）。progress 每 5s 轮询，
      * 不缓存的话每行每 5s 都 spawn 一次 git。 @type {Map<string, {key: string, at: number, diff: any}>} */
     this.diffCache = new Map();
-    /** M6：失败自动重试的定时器（sessionId → timer）。 @type {Map<string, any>} */
-    this.autoRetryTimers = new Map();
+    // M6：失败自动重试调度器（单例/重查/上限/可取消都在 lib 里，有伪定时器单测）
+    this.autoRetryScheduler = createAutoRetryScheduler({
+      delayMs: 60_000,
+      maxAttempts: 2,
+      readState: (/** @type {string} */ sessionId) => {
+        const store = this.store;
+        if (!store) return { enabled: false, state: "", attempts: 0 };
+        const projectId = store.projectOfSession?.(sessionId) ?? "";
+        const project = projectId === "" ? null : store.getProject(projectId);
+        const thread = store
+          .listThreads(projectId)
+          .find((/** @type {any} */ item) => String(item.sessionId) === sessionId);
+        return {
+          enabled: project?.policy?.autoRetry === true,
+          state: String(thread?.state ?? ""),
+          attempts: Number(thread?.autoRetryCount ?? 0),
+        };
+      },
+      onRetry: (/** @type {string} */ sessionId, /** @type {number} */ nextAttempts) => {
+        try {
+          const store = this.requireStore();
+          const projectId = store.projectOfSession?.(sessionId) ?? "";
+          if (projectId === "") return;
+          store.setThreadWorktree(sessionId, { autoRetryCount: nextAttempts });
+          store.appendAudit({ action: "thread/auto-retry", projectId, sessionId });
+          store.save();
+          void this.steerThread(sessionId, "继续").catch(() => {});
+        } catch {
+          /* 自动重试失败不打扰用户 */
+        }
+      },
+    });
     /** M3：每会话最近一次 tool/call 的工具名（生成态 `✓✓✓ Using X` 用）。 @type {Map<string, string>} */
     this.currentTools = new Map();
     /** @type {any} */
@@ -662,8 +692,7 @@ export class ProjectsService extends TypertRemoteService {
           /* ignore */
         }
       }
-      for (const timer of this.autoRetryTimers.values()) clearTimeout(timer);
-      this.autoRetryTimers.clear();
+      this.autoRetryScheduler.cancelAll();
       this.attached.clear();
     });
   }
@@ -3398,41 +3427,11 @@ export class ProjectsService extends TypertRemoteService {
    */
   /**
    * M6：失败自动重试（诚实语义：失败结束后重发「继续」，最多 2 次，60 秒后执行）。
-   * 只调度不执行：定时器到点时**再查一次**当前状态，仍失败才 steer。
-   * @param {string} projectId @param {string} sessionId @param {number} [delayMs]
+   * 具体定时/单例/重查/上限由 lib `createAutoRetryScheduler` 负责（有单测）。
+   * @param {string} _projectId @param {string} sessionId
    */
-  scheduleAutoRetry(projectId, sessionId, delayMs = 60_000) {
-    if (this.autoRetryTimers.has(sessionId)) return;
-    const timer = setTimeout(
-      () => {
-        this.autoRetryTimers.delete(sessionId);
-        try {
-          const store = this.requireStore();
-          const thread = store
-            .listThreads(projectId)
-            .find((/** @type {any} */ item) => String(item.sessionId) === sessionId);
-          if (!thread) return;
-          const project = store.getProject(projectId);
-          const decision = shouldAutoRetry({
-            enabled: project?.policy?.autoRetry === true,
-            state: String(thread.state ?? ""),
-            previousState: "working",
-            attempts: Number(thread.autoRetryCount ?? 0),
-          });
-          if (!decision.retry) return;
-          store.setThreadWorktree(sessionId, {
-            autoRetryCount: Number(thread.autoRetryCount ?? 0) + 1,
-          });
-          store.appendAudit({ action: "thread/auto-retry", projectId, sessionId });
-          store.save();
-          void this.steerThread(sessionId, "继续").catch(() => {});
-        } catch {
-          /* 自动重试失败不打扰用户 */
-        }
-      },
-      Math.max(1_000, Number(delayMs)),
-    );
-    this.autoRetryTimers.set(sessionId, timer);
+  scheduleAutoRetry(_projectId, sessionId) {
+    this.autoRetryScheduler.schedule(String(sessionId));
   }
 
   /**
