@@ -571,6 +571,7 @@
     "detail.working.verbs": "Ruminating|Billowing|Moonwalking|Pondering|Drafting|Sifting",
     "detail.coordinatorModelHint": "Coordinator default model (independent of thread defaults)",
     "detail.coordinatorModelMenuTitle": "Coordinator default model",
-    "detail.effortPlaceholder": "Reasoning effort (optional)"
+    "detail.effortPlaceholder": "Reasoning effort (optional)",
+    "detail.rowSub.using": "✓✓✓ Using {tool}"
   }
 }

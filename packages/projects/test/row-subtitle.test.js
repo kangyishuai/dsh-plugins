@@ -1,7 +1,7 @@
 // @ts-check
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { deriveSubtitle } from "../lib/row-subtitle.js";
+import { deriveSubtitle, deriveToolState } from "../lib/row-subtitle.js";
 
 describe("行副标题状态语义（M2.1）", () => {
   it("working → 显示当前动作（没有就留空，由 UI 用通用词）", () => {
@@ -37,5 +37,17 @@ describe("行副标题状态语义（M2.1）", () => {
       detail: "done",
     });
     assert.deepEqual(deriveSubtitle({ state: "resolved" }), { kind: "result", detail: "" });
+  });
+});
+
+describe("工具态（M3：✓✓✓ Using X）", () => {
+  it("只有 working + 有工具名才算工具态；其它状态/空名不编", () => {
+    assert.deepEqual(deriveToolState({ state: "working", tool: "bash" }), {
+      kind: "using",
+      tool: "bash",
+    });
+    assert.deepEqual(deriveToolState({ state: "idle", tool: "bash" }), { kind: "none", tool: "" });
+    assert.deepEqual(deriveToolState({ state: "working", tool: "  " }), { kind: "none", tool: "" });
+    assert.deepEqual(deriveToolState({}), { kind: "none", tool: "" });
   });
 });

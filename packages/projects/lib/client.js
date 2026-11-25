@@ -252,6 +252,7 @@ window.__ModuleLoader__.load({
       "detail.memoryIndex": "记忆索引（MEMORY.md）",
       "detail.emptyFile": "（空）",
       "detail.auditEmpty": "还没有审计记录。",
+      "detail.rowSub.using": "✓✓✓ 使用 {tool}",
       "detail.rowSub.action": "正在：{text}",
       "detail.working.verbs": "酝酿中|推进中|梳理中|核对中|起草中|推演中",
       "detail.rowSub.working": "正在处理…",
@@ -741,6 +742,7 @@ window.__ModuleLoader__.load({
       "detail.memoryIndex": "Memory index (MEMORY.md)",
       "detail.emptyFile": "(empty)",
       "detail.auditEmpty": "No audit entries yet.",
+      "detail.rowSub.using": "✓✓✓ Using {tool}",
       "detail.rowSub.action": "Working: {text}",
       "detail.working.verbs": "Ruminating|Billowing|Moonwalking|Pondering|Drafting|Sifting",
       "detail.rowSub.working": "Working…",
@@ -6456,7 +6458,10 @@ window.__ModuleLoader__.load({
           if (kind === "question") {
             return text(t, "detail.rowSub.question", { text: detail.slice(0, 48) });
           }
-          if (kind === "action") {
+          if (kind === "action" || state === "working") {
+            // M3：工具态优先（Claude 的 `✓✓✓ Using X`）；没有工具名再退回动词+秒数
+            const tool = String(row.currentTool || "").trim();
+            if (tool !== "") return text(t, "detail.rowSub.using", { tool });
             return detail !== ""
               ? text(t, "detail.rowSub.action", { text: detail.slice(0, 48) })
               : pickVerb();

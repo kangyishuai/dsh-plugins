@@ -21,3 +21,16 @@ export function deriveSubtitle(input) {
   if (state === "archived") return { kind: "archived", detail: "" };
   return { kind: "result", detail: subtitle };
 }
+
+/**
+ * 生成态的「工具态」：Claude 在跑工具时会显示 `✓✓✓ Using X`。
+ * 只有 working 且拿到了当前工具名才成立；工具名不编（没有就返回空）。
+ * @param {{ state?: string, tool?: string }} input
+ * @returns {{ kind: "using" | "none", tool: string }}
+ */
+export function deriveToolState(input) {
+  const state = String(input?.state ?? "");
+  const tool = String(input?.tool ?? "").trim();
+  if (state !== "working" || tool === "") return { kind: "none", tool: "" };
+  return { kind: "using", tool };
+}

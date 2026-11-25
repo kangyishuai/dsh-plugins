@@ -571,6 +571,7 @@
     "detail.working.verbs": "酝酿中|推进中|梳理中|核对中|起草中|推演中",
     "detail.coordinatorModelHint": "协调者默认模型（与线程默认独立）",
     "detail.coordinatorModelMenuTitle": "协调者默认模型",
-    "detail.effortPlaceholder": "推理强度（可空）"
+    "detail.effortPlaceholder": "推理强度（可空）",
+    "detail.rowSub.using": "✓✓✓ 使用 {tool}"
   }
 }

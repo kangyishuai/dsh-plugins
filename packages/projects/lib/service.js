@@ -114,7 +114,7 @@ import {
   validateRoutineInput,
 } from "./routines.js";
 import { decideRoute } from "./routing.js";
-import { deriveSubtitle } from "./row-subtitle.js";
+import { deriveSubtitle, deriveToolState } from "./row-subtitle.js";
 import { ProjectStore } from "./store.js";
 import {
   MANAGED_BEGIN,
@@ -367,6 +367,8 @@ export class ProjectsService extends TypertRemoteService {
     /** P0-3：线程 diff 摘要缓存（sessionId → {key, at, diff}）。progress 每 5s 轮询，
      * 不缓存的话每行每 5s 都 spawn 一次 git。 @type {Map<string, {key: string, at: number, diff: any}>} */
     this.diffCache = new Map();
+    /** M3：每会话最近一次 tool/call 的工具名（生成态 `✓✓✓ Using X` 用）。 @type {Map<string, string>} */
+    this.currentTools = new Map();
     /** @type {any} */
     this.agents = undefined;
     /** @type {any} */
@@ -519,6 +521,10 @@ export class ProjectsService extends TypertRemoteService {
       // 只解析 tool/result 的文本消息（artifacts 工具返回 JSON），不读产物字节；失败绝不打断事件处理。
       try {
         const eventType = String(event?.type ?? "");
+        if (eventType === "tool/call") {
+          const toolName = String(event?.data?.name ?? "").trim();
+          if (toolName !== "") this.currentTools.set(sessionId, toolName);
+        }
         if (eventType === "tool/call") {
           const callName = String(event?.data?.name ?? "");
           const callId = String(event?.data?.callId ?? "");
@@ -3219,6 +3225,11 @@ export class ProjectsService extends TypertRemoteService {
       diff: diff ?? null,
       summary: summarizeForRow({ stats, diff }),
       subtitle: view.subtitle || thread.subtitle || "",
+      // M3：当前工具名（working 才有；重启后客户端显示 `✓✓✓ Using X`）
+      currentTool: deriveToolState({
+        state,
+        tool: this.currentTools.get(sessionId) ?? "",
+      }).tool,
       // M2.1：副标题语义（client 按 kind 取 i18n 文案；这里只给"哪一类信息"）
       ...(() => {
         const sub = deriveSubtitle({
