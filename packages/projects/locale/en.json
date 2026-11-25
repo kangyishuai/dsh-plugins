@@ -587,6 +587,12 @@
     "artifacts.viewerOpen": "View",
     "artifacts.viewerClose": "Close",
     "artifacts.viewerLoading": "Loading artifact…",
-    "artifacts.viewerError": "Cannot read artifact content"
+    "artifacts.viewerError": "Cannot read artifact content",
+    "settings.notifyTier.all": "Everything (includes replies in every thread)",
+    "settings.notifyTier.coordinator": "Coordinator and @mentions (default)",
+    "settings.notifyTier.waiting": "Only what waits on me",
+    "settings.notifyTier.none": "Nothing",
+    "settings.notifyTier.custom": "Custom",
+    "settings.notifyTierHint": "\"Everything\" includes replies in every thread, so it is much noisier."
   }
 }

@@ -75,6 +75,12 @@ window.__ModuleLoader__.load({
       "settings.notifyFailed": "失败",
       "settings.notifyWaiting": "等你",
       "settings.notifyCompleted": "完成",
+      "settings.notifyTier.all": "全部（含每条线程回复）",
+      "settings.notifyTier.coordinator": "协调者与 @提及（默认）",
+      "settings.notifyTier.waiting": "仅等我处理的",
+      "settings.notifyTier.none": "不通知",
+      "settings.notifyTier.custom": "自定义",
+      "settings.notifyTierHint": "「全部」会包含每条线程的回复，通知会更频繁。",
       "settings.notifySaved": "通知开关已保存",
       "detail.goalCounter": "{count} / 8,000",
       "detail.fragmentsTitle": "记忆碎片（独立文件）",
@@ -1140,6 +1146,13 @@ window.__ModuleLoader__.load({
       "settings.notifyFailed": "Failed",
       "settings.notifyWaiting": "Waiting on you",
       "settings.notifyCompleted": "Completed",
+      "settings.notifyTier.all": "Everything (includes replies in every thread)",
+      "settings.notifyTier.coordinator": "Coordinator and @mentions (default)",
+      "settings.notifyTier.waiting": "Only what waits on me",
+      "settings.notifyTier.none": "Nothing",
+      "settings.notifyTier.custom": "Custom",
+      "settings.notifyTierHint":
+        '"Everything" includes replies in every thread, so it is much noisier.',
       "settings.notifySaved": "Notification switches saved",
       "detail.goalCounter": "{count} / 8,000",
       "detail.fragmentsTitle": "Memory fragments (separate files)",
@@ -13170,6 +13183,42 @@ window.__ModuleLoader__.load({
         "waiting-user": true,
         completed: false,
       };
+      // Claude 的通知是「四档」；我们底层是三个布尔，这里用**档位预设**表达真实行为
+      var notifyTier = (() => {
+        var failed = notifyPrefs.failed === true;
+        var waiting = notifyPrefs["waiting-user"] === true;
+        var completed = notifyPrefs.completed === true;
+        if (failed && waiting && completed) return "all";
+        if (failed && waiting) return "coordinator";
+        if (!failed && waiting) return "waiting";
+        if (!failed && !waiting && !completed) return "none";
+        return "custom";
+      })();
+      var setNotifyTier = (/** @type {any} */ tier) => {
+        if (!selectedForB3) return;
+        var prefs =
+          tier === "all"
+            ? { failed: true, "waiting-user": true, completed: true }
+            : tier === "coordinator"
+              ? { failed: true, "waiting-user": true, completed: false }
+              : tier === "waiting"
+                ? { failed: false, "waiting-user": true, completed: false }
+                : { failed: false, "waiting-user": false, completed: false };
+        call(api.ctx, "setNotifyPrefs", { projectId: selectedForB3.id, prefs: prefs }).then(
+          () => {
+            setB3((/** @type {any} */ prev) => ({
+              ...prev,
+              message: text(t, "settings.notifySaved"),
+            }));
+            reload();
+          },
+          (/** @type {any} */ error) =>
+            setB3((/** @type {any} */ prev) => ({
+              ...prev,
+              message: String(error?.message ? error.message : error).slice(0, 160),
+            })),
+        );
+      };
       var setNotifyPref = (/** @type {any} */ key, /** @type {any} */ value) => {
         if (!selectedForB3) return;
         var patch = /** @type {Record<string, any>} */ ({});
@@ -13193,40 +13242,63 @@ window.__ModuleLoader__.load({
       var notifyRow = h(
         "div",
         {
-          style: { display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" },
+          style: { display: "flex", flexDirection: "column", gap: "4px" },
           "data-projects-notify-prefs": "",
         },
         h("span", { style: { color: T.dim, fontSize: "12px" } }, text(t, "settings.notifyTitle")),
-        ["failed", "waiting-user", "completed"].map((/** @type {any} */ key) => {
-          var labelKey =
-            key === "failed"
-              ? "settings.notifyFailed"
-              : key === "waiting-user"
-                ? "settings.notifyWaiting"
-                : "settings.notifyCompleted";
-          return h(
-            "label",
-            {
-              key: key,
-              style: {
-                display: "flex",
-                gap: "4px",
-                alignItems: "center",
-                fontSize: "12px",
-                color: T.dim,
+        h(
+          "select",
+          {
+            style: styles.input,
+            value: notifyTier === "custom" ? "custom" : notifyTier,
+            "data-projects-notify-tier": notifyTier,
+            onChange: (/** @type {any} */ event) => setNotifyTier(String(event.target.value || "")),
+          },
+          ["all", "coordinator", "waiting", "none"]
+            .concat(notifyTier === "custom" ? ["custom"] : [])
+            .map((/** @type {string} */ tier) =>
+              h("option", { key: tier, value: tier }, text(t, `settings.notifyTier.${tier}`)),
+            ),
+        ),
+        h(
+          "span",
+          { style: { ...styles.meta, fontSize: "11px" } },
+          text(t, "settings.notifyTierHint"),
+        ),
+        h(
+          "div",
+          { style: { display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" } },
+          ["failed", "waiting-user", "completed"].map((/** @type {any} */ key) => {
+            var labelKey =
+              key === "failed"
+                ? "settings.notifyFailed"
+                : key === "waiting-user"
+                  ? "settings.notifyWaiting"
+                  : "settings.notifyCompleted";
+            return h(
+              "label",
+              {
+                key: key,
+                style: {
+                  display: "flex",
+                  gap: "4px",
+                  alignItems: "center",
+                  fontSize: "12px",
+                  color: T.dim,
+                },
               },
-            },
-            h("input", {
-              type: "checkbox",
-              checked: notifyPrefs[key] === true,
-              "data-projects-notify-pref": key,
-              onChange: (/** @type {any} */ event) => {
-                setNotifyPref(key, event.target.checked);
-              },
-            }),
-            text(t, labelKey),
-          );
-        }),
+              h("input", {
+                type: "checkbox",
+                checked: notifyPrefs[key] === true,
+                "data-projects-notify-pref": key,
+                onChange: (/** @type {any} */ event) => {
+                  setNotifyPref(key, event.target.checked);
+                },
+              }),
+              text(t, labelKey),
+            );
+          }),
+        ),
       );
       var debugPanel = h(
         "div",

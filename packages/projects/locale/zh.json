@@ -587,6 +587,12 @@
     "artifacts.viewerOpen": "查看",
     "artifacts.viewerClose": "关闭",
     "artifacts.viewerLoading": "读取产物内容…",
-    "artifacts.viewerError": "读不到产物内容"
+    "artifacts.viewerError": "读不到产物内容",
+    "settings.notifyTier.all": "全部（含每条线程回复）",
+    "settings.notifyTier.coordinator": "协调者与 @提及（默认）",
+    "settings.notifyTier.waiting": "仅等我处理的",
+    "settings.notifyTier.none": "不通知",
+    "settings.notifyTier.custom": "自定义",
+    "settings.notifyTierHint": "「全部」会包含每条线程的回复，通知会更频繁。"
   }
 }
