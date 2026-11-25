@@ -252,6 +252,12 @@ window.__ModuleLoader__.load({
       "detail.memoryIndex": "记忆索引（MEMORY.md）",
       "detail.emptyFile": "（空）",
       "detail.auditEmpty": "还没有审计记录。",
+      "detail.rowSub.action": "正在：{text}",
+      "detail.rowSub.working": "正在处理…",
+      "detail.rowSub.question": "等你回复：{text}",
+      "detail.rowSub.failed": "上一轮失败了，点开看原因",
+      "detail.rowSub.review": "等你审阅",
+      "detail.rowSub.archived": "已归档",
       "detail.state.waiting-user": "待你处理",
       "detail.state.failed": "失败",
       "detail.state.working": "进行中",
@@ -724,6 +730,12 @@ window.__ModuleLoader__.load({
       "detail.memoryIndex": "Memory index (MEMORY.md)",
       "detail.emptyFile": "(empty)",
       "detail.auditEmpty": "No audit entries yet.",
+      "detail.rowSub.action": "Working: {text}",
+      "detail.rowSub.working": "Working…",
+      "detail.rowSub.question": "Waiting on you: {text}",
+      "detail.rowSub.failed": "Last turn failed — open for details",
+      "detail.rowSub.review": "Waiting for your review",
+      "detail.rowSub.archived": "Archived",
       "detail.state.waiting-user": "Waiting on you",
       "detail.state.failed": "Failed",
       "detail.state.working": "Working",
@@ -6515,6 +6527,27 @@ window.__ModuleLoader__.load({
                         "span",
                         { style: styles.meta },
                         (() => {
+                          // M2.1：副标题按状态语义渲染（host 未提供 subtitleKind 时退回旧逻辑）
+                          const kind = String(row.subtitleKind || "");
+                          const detail = cleanThreadTitle(row.subtitleDetail || row.subtitle);
+                          if (kind === "question") {
+                            return text(t, "detail.rowSub.question", {
+                              text: detail.slice(0, 48),
+                            });
+                          }
+                          if (kind === "action") {
+                            return detail !== ""
+                              ? text(t, "detail.rowSub.action", { text: detail.slice(0, 48) })
+                              : text(t, "detail.rowSub.working");
+                          }
+                          if (kind === "failed") return text(t, "detail.rowSub.failed");
+                          if (kind === "review")
+                            return detail !== "" ? detail : text(t, "detail.rowSub.review");
+                          if (kind === "archived") return text(t, "detail.rowSub.archived");
+                          if (kind === "result") {
+                            const summary = String(row.summary || "").trim();
+                            if (summary !== "") return summary;
+                          }
                           const sub = cleanThreadTitle(row.subtitle);
                           return sub !== "" && sub !== title
                             ? sub

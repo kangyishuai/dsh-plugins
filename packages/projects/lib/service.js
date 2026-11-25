@@ -114,6 +114,7 @@ import {
   validateRoutineInput,
 } from "./routines.js";
 import { decideRoute } from "./routing.js";
+import { deriveSubtitle } from "./row-subtitle.js";
 import { ProjectStore } from "./store.js";
 import {
   MANAGED_BEGIN,
@@ -3218,6 +3219,15 @@ export class ProjectsService extends TypertRemoteService {
       diff: diff ?? null,
       summary: summarizeForRow({ stats, diff }),
       subtitle: view.subtitle || thread.subtitle || "",
+      // M2.1：副标题语义（client 按 kind 取 i18n 文案；这里只给"哪一类信息"）
+      ...(() => {
+        const sub = deriveSubtitle({
+          state,
+          pendingInput,
+          subtitle: view.subtitle || thread.subtitle || "",
+        });
+        return { subtitleKind: sub.kind, subtitleDetail: sub.detail };
+      })(),
       steps,
       estimateMs,
       // 未读：等你（pendingInput 权威）或用户手动标记；两者都不是就没有圆点
