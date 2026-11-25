@@ -2677,6 +2677,26 @@ try {
   );
 
   add(
+    "M2 行尾 n/m 带悬停弹层锚点（tasks popover 关闭态可见）",
+    await page.evaluate(() => {
+      const pill = document.querySelector("[data-projects-thread-steps]");
+      return (
+        Boolean(pill) &&
+        pill.getAttribute("data-projects-thread-steps-hover") === "closed" &&
+        Array.from(document.querySelectorAll("[data-projects-thread-row]")).length > 0
+      );
+    }),
+    JSON.stringify({
+      steps: await page.evaluate(
+        () => document.querySelectorAll("[data-projects-thread-steps]").length,
+      ),
+      rows: await page.evaluate(
+        () => document.querySelectorAll("[data-projects-thread-row]").length,
+      ),
+    }),
+  );
+
+  add(
     "「从会话开线程」列出真实最近会话（recentSessions 的 id），并能挂成线程行",
     b3ui.recentUi === true &&
       b3ui.recentCount > 0 &&
