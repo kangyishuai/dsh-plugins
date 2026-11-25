@@ -6637,9 +6637,13 @@ window.__ModuleLoader__.load({
                               title: String(item?.title ?? ""),
                               onClick: () => setExpandedThread(String(row.sessionId)),
                             },
-                            String(item?.coverUrl ?? "") !== ""
+                            String(item?.id ?? "") !== ""
                               ? h("img", {
-                                  src: String(item.coverUrl),
+                                  // 同 artifactCardFor：宿主没透传 coverUrl 时按路由约定兜底
+                                  src:
+                                    String(item?.coverUrl ?? "") !== ""
+                                      ? String(item.coverUrl)
+                                      : `/artifacts/${encodeURIComponent(String(item.id))}/cover.svg`,
                                   alt: "",
                                   style: {
                                     width: "22px",
