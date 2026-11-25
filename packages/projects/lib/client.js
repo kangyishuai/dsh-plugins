@@ -524,6 +524,10 @@ window.__ModuleLoader__.load({
       "detail.settingsHint": "插件设置入口在宿主「设置 → 插件 → 项目」里。",
       "detail.sparkHint": "最近 7 天的 token 用量",
       "detail.steps": "{done}/{total}",
+      "detail.tasksPopover": "任务 · {done}/{total}",
+      "detail.tasksPopoverMore": "还有 {count} 条",
+      "detail.rowArtifacts": "产物",
+      "detail.rowArtifactsMore": "+{count}",
       "detail.stepsHint": "这个线程还没有任务清单（todo）；没有就不显示比例。",
       "detail.stepsNone": "—",
       "detail.switch": "切换项目",
@@ -1005,6 +1009,10 @@ window.__ModuleLoader__.load({
       "detail.settingsHint": "Plugin settings live under Settings → Plugins → Projects.",
       "detail.sparkHint": "Tokens used in the last 7 days",
       "detail.steps": "{done}/{total}",
+      "detail.tasksPopover": "Tasks · {done}/{total}",
+      "detail.tasksPopoverMore": "{count} more",
+      "detail.rowArtifacts": "Artifacts",
+      "detail.rowArtifactsMore": "+{count}",
       "detail.stepsHint": "This thread has no todo list yet, so no step count is shown.",
       "detail.stepsNone": "—",
       "detail.switch": "Switch project",
@@ -5789,6 +5797,9 @@ window.__ModuleLoader__.load({
       // 设置抽屉：rail 里的 15 段设置不再常驻右栏（Claude 是独立 Project settings），
       // 由面板 header 的 ⚙ 打开；锚点保持原样，冒烟/桌面回归照旧能点。
       // D1：右栏可见性持久化在项目记录里（visibleViews）；override 只做乐观反馈
+      const stepsHoverIdState = useState("");
+      const stepsHoverId = stepsHoverIdState[0];
+      const setStepsHoverId = stepsHoverIdState[1];
       const visibleOverrideState = useState(/** @type {string[]|null} */ (null));
       const visibleOverride = visibleOverrideState[0];
       const setVisibleOverride = visibleOverrideState[1];
@@ -6290,6 +6301,8 @@ window.__ModuleLoader__.load({
                   .slice(0, 6)}`;
         const rowSubtitle = rawTitle !== "" ? taskHint : text(t, `detail.state.${state}`);
         const steps = row.steps && Number(row.steps.total) > 0 ? row.steps : null;
+        // M2.2：行尾 `n/m` 悬停弹层（状态在 ProjectDetail 顶层，threadRowView 只是普通函数）
+        const stepHoverOpen = stepsHoverId === String(row.sessionId);
         const duration = durationLabel(row.durationMs);
         const notifications = Array.isArray(row.view?.pendingInput)
           ? row.view.pendingInput.length
@@ -6595,6 +6608,72 @@ window.__ModuleLoader__.load({
                         )
                       : null,
                   ),
+                  // M2.3：折叠行里的产物 chips（Claude 的行会把线程产物露出来）
+                  Array.isArray(row.artifacts) && row.artifacts.length > 0
+                    ? h(
+                        "div",
+                        {
+                          style: { display: "flex", flexWrap: "wrap", gap: "6px" },
+                          "data-projects-thread-artifact-chips": row.sessionId,
+                        },
+                        h(
+                          "span",
+                          { style: { ...styles.meta, fontSize: "11px", alignSelf: "center" } },
+                          text(t, "detail.rowArtifacts"),
+                        ),
+                        row.artifacts.slice(0, 3).map((/** @type {any} */ item) =>
+                          h(
+                            "span",
+                            {
+                              key: String(item?.id ?? ""),
+                              style: {
+                                ...styles.inlineChip,
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "4px",
+                                maxWidth: "160px",
+                              },
+                              "data-projects-thread-artifact-chip": String(item?.id ?? ""),
+                              title: String(item?.title ?? ""),
+                              onClick: () => setExpandedThread(String(row.sessionId)),
+                            },
+                            String(item?.coverUrl ?? "") !== ""
+                              ? h("img", {
+                                  src: String(item.coverUrl),
+                                  alt: "",
+                                  style: {
+                                    width: "22px",
+                                    height: "16px",
+                                    objectFit: "cover",
+                                    borderRadius: "3px",
+                                    display: "block",
+                                  },
+                                })
+                              : null,
+                            h(
+                              "span",
+                              {
+                                style: {
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                },
+                              },
+                              String(item?.title ?? item?.kind ?? ""),
+                            ),
+                          ),
+                        ),
+                        row.artifacts.length > 3
+                          ? h(
+                              "span",
+                              { style: { ...styles.meta, fontSize: "11px", alignSelf: "center" } },
+                              text(t, "detail.rowArtifactsMore", {
+                                count: row.artifacts.length - 3,
+                              }),
+                            )
+                          : null,
+                      )
+                    : null,
                   // F17 Tasks 清单（✓/◌ + n/m，来自 todo/write）
                   h(
                     "div",
@@ -6947,10 +7026,17 @@ window.__ModuleLoader__.load({
                   borderRadius: "999px",
                   padding: steps === null ? "0" : "1px 7px 1px 5px",
                   fontSize: "11.5px",
+                  position: "relative",
                 },
                 "data-projects-thread-steps": row.sessionId,
                 "data-projects-thread-steps-state": steps === null ? "none" : "count",
+                "data-projects-thread-steps-hover": stepHoverOpen ? "open" : "closed",
                 title: steps === null ? text(t, "detail.stepsHint") : undefined,
+                onMouseEnter: () => setStepsHoverId(String(row.sessionId)),
+                onMouseLeave: () =>
+                  setStepsHoverId((/** @type {string} */ prev) =>
+                    prev === String(row.sessionId) ? "" : prev,
+                  ),
               },
               steps === null ? null : stepRing(steps.done, steps.total),
               h(
@@ -6966,6 +7052,59 @@ window.__ModuleLoader__.load({
                   ? ""
                   : text(t, "detail.steps", { done: steps.done, total: steps.total }),
               ),
+              stepHoverOpen && Array.isArray(row.tasks) && row.tasks.length > 0
+                ? h(
+                    "div",
+                    {
+                      style: {
+                        position: "absolute",
+                        right: 0,
+                        top: "calc(100% + 6px)",
+                        zIndex: 12,
+                        minWidth: "220px",
+                        maxWidth: "320px",
+                        background: T.card,
+                        border: `1px solid ${T.border}`,
+                        borderRadius: "8px",
+                        boxShadow: "0 8px 24px rgba(0,0,0,0.28)",
+                        padding: "8px",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "4px",
+                      },
+                      "data-projects-thread-tasks-popover": row.sessionId,
+                    },
+                    h(
+                      "span",
+                      { style: { ...styles.meta, fontSize: "11px" } },
+                      text(t, "detail.tasksPopover", {
+                        done: Number(row.steps?.done ?? 0),
+                        total: Number(row.steps?.total ?? 0),
+                      }),
+                    ),
+                    row.tasks
+                      .slice(0, 5)
+                      .map((/** @type {any} */ task, /** @type {number} */ index) => {
+                        const done =
+                          task?.done === true || String(task?.status ?? "") === "completed";
+                        return h(
+                          "span",
+                          {
+                            key: String(index),
+                            style: { ...styles.taskItem, fontSize: "11.5px" },
+                          },
+                          `${done ? "✓" : "◌"} ${String(task?.content ?? "").slice(0, 60)}`,
+                        );
+                      }),
+                    row.tasks.length > 5
+                      ? h(
+                          "span",
+                          { style: { ...styles.meta, fontSize: "11px" } },
+                          text(t, "detail.tasksPopoverMore", { count: row.tasks.length - 5 }),
+                        )
+                      : null,
+                  )
+                : null,
             ),
             row.prNumber
               ? h(

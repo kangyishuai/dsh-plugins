@@ -560,6 +560,10 @@
     "detail.rowSub.question": "Waiting on you: {text}",
     "detail.rowSub.failed": "Last turn failed — open for details",
     "detail.rowSub.review": "Waiting for your review",
-    "detail.rowSub.archived": "Archived"
+    "detail.rowSub.archived": "Archived",
+    "detail.tasksPopover": "Tasks · {done}/{total}",
+    "detail.tasksPopoverMore": "{count} more",
+    "detail.rowArtifacts": "Artifacts",
+    "detail.rowArtifactsMore": "+{count}"
   }
 }

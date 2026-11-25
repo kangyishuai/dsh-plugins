@@ -560,6 +560,10 @@
     "detail.rowSub.question": "等你回复：{text}",
     "detail.rowSub.failed": "上一轮失败了，点开看原因",
     "detail.rowSub.review": "等你审阅",
-    "detail.rowSub.archived": "已归档"
+    "detail.rowSub.archived": "已归档",
+    "detail.tasksPopover": "任务 · {done}/{total}",
+    "detail.tasksPopoverMore": "还有 {count} 条",
+    "detail.rowArtifacts": "产物",
+    "detail.rowArtifactsMore": "+{count}"
   }
 }

@@ -3325,6 +3325,8 @@ export class ProjectsService extends TypertRemoteService {
             bytes: ref.bytes,
             at: ref.at,
             updatedAt: ref.at,
+            // 行内缩略图要用它（之前只喂给 Library，行里的缩略卡因此没有封面）
+            coverUrl: typeof ref.coverUrl === "string" ? ref.coverUrl : "",
           }));
       } catch {
         row.artifacts = [];
