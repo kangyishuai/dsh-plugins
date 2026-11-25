@@ -9482,6 +9482,16 @@ window.__ModuleLoader__.load({
                         : null,
                       messages
                         .slice(Math.max(0, messages.length - 3))
+                        // 结论已在上面单独成块：列表里剔除同一条，避免同一句话出现两次
+                        .filter(
+                          (/** @type {any} */ item) =>
+                            !(
+                              item.role === "assistant" &&
+                              String(item.text ?? "").trim() ===
+                                String(coordinator?.conclusion ?? "").trim() &&
+                              String(coordinator?.conclusion ?? "").trim() !== ""
+                            ),
+                        )
                         .map((/** @type {any} */ item, /** @type {number} */ index) =>
                           h(
                             "div",
@@ -9504,6 +9514,63 @@ window.__ModuleLoader__.load({
                       `${text(t, "detail.coordinatorConclusion")}：${String(
                         coordinator.conclusion,
                       ).slice(0, 400)}`,
+                    )
+                  : null,
+                // M6：结论旁的产物 chip（Claude 的「结论 + 产物」）
+                Array.isArray(coordinator?.artifacts) && coordinator.artifacts.length > 0
+                  ? h(
+                      "div",
+                      {
+                        style: { display: "flex", flexWrap: "wrap", gap: "6px" },
+                        "data-projects-coordinator-artifacts": "",
+                      },
+                      coordinator.artifacts.map((/** @type {any} */ item) =>
+                        h(
+                          "span",
+                          {
+                            key: String(item.id),
+                            style: {
+                              ...styles.inlineChip,
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "5px",
+                              maxWidth: "200px",
+                              cursor: "pointer",
+                            },
+                            "data-projects-coordinator-artifact": String(item.id),
+                            title: String(item.title || item.id),
+                            onClick: () => setArtifactViewer(item),
+                          },
+                          String(item.kind ?? "") === "markdown" ||
+                            String(item.kind ?? "") === "json" ||
+                            String(item.kind ?? "") === "csv"
+                            ? h("img", {
+                                src:
+                                  String(item.coverUrl ?? "") !== ""
+                                    ? String(item.coverUrl)
+                                    : `/artifacts/${encodeURIComponent(String(item.id))}/cover.svg`,
+                                alt: "",
+                                style: {
+                                  width: "20px",
+                                  height: "15px",
+                                  objectFit: "cover",
+                                  borderRadius: "3px",
+                                },
+                              })
+                            : null,
+                          h(
+                            "span",
+                            {
+                              style: {
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              },
+                            },
+                            String(item.title || item.id),
+                          ),
+                        ),
+                      ),
                     )
                   : null,
                 chips.length > 0

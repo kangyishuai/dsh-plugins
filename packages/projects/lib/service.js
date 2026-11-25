@@ -3914,6 +3914,20 @@ export class ProjectsService extends TypertRemoteService {
         tasks: thread.todos ?? null,
       };
     });
+    // M6：结论旁边露产物（Claude 的「结论 + 产物 chip」）；取最近 3 条本项目产物
+    const artifacts = store
+      .listArtifactRefs(project.id)
+      .slice(-3)
+      .map((/** @type {any} */ ref) => ({
+        id: String(ref?.id ?? ""),
+        title: String(ref?.title ?? ""),
+        kind: String(ref?.kind ?? ""),
+        version: Number.isFinite(Number(ref?.version)) ? Number(ref.version) : null,
+        bytes: Number.isFinite(Number(ref?.bytes)) ? Number(ref.bytes) : null,
+        at: String(ref?.at ?? ""),
+        coverUrl: String(ref?.coverUrl ?? ""),
+      }))
+      .filter((/** @type {any} */ item) => item.id !== "");
     return {
       sessionId,
       available: sessionId !== "",
@@ -3921,6 +3935,8 @@ export class ProjectsService extends TypertRemoteService {
       threads: rows,
       // 结论 = 最后一条 assistant 消息（协调者汇报的"上浮"内容）
       conclusion: [...messages].reverse().find((item) => item.role === "assistant")?.text ?? "",
+      // M6：结论旁的产品（只有结论才配产物 chips，过程消息不占位）
+      artifacts,
       compaction: this.compactionStatus(),
     };
   }
