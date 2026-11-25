@@ -7063,7 +7063,8 @@ window.__ModuleLoader__.load({
                       style: {
                         position: "absolute",
                         right: 0,
-                        top: "calc(100% + 6px)",
+                        // 面板是滚动容器：向下弹会被底边裁掉（截图实测只剩一角），改为向上
+                        bottom: "calc(100% + 8px)",
                         zIndex: 12,
                         minWidth: "220px",
                         maxWidth: "320px",
