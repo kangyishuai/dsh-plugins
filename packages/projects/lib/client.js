@@ -52,6 +52,10 @@ window.__ModuleLoader__.load({
       "settings.budgetSaved": "预算已保存：{budget}",
       "settings.budgetUnlimited": "不限",
       "settings.memoryTitle": "记忆与指令",
+      "settings.memoryInstructions": "指令 {used}/{limit}「更新于 {updated}」",
+      "settings.memoryIndexUpdated": "记忆索引更新于 {updated}",
+      "settings.memoryNever": "从未",
+      "settings.memoryFilesEmpty": "记忆目录里还没有文件",
       "settings.memoryCounts":
         "指令 {instructions} 字符 · 记忆索引 {memory} 字符 · 碎片 {fragments} 个",
       "settings.memoryTemplate": "补全项目模板（AGENTS.md 受管区块）",
@@ -1121,6 +1125,10 @@ window.__ModuleLoader__.load({
       "settings.budgetSaved": "Budget saved: {budget}",
       "settings.budgetUnlimited": "unlimited",
       "settings.memoryTitle": "Memory and instructions",
+      "settings.memoryInstructions": "Instructions {used}/{limit} · updated {updated}",
+      "settings.memoryIndexUpdated": "Memory index updated {updated}",
+      "settings.memoryNever": "never",
+      "settings.memoryFilesEmpty": "No files in the memory folder yet",
       "settings.memoryCounts":
         "Instructions {instructions} chars · memory index {memory} chars · {fragments} fragments",
       "settings.memoryTemplate": "Fill in project template (managed AGENTS.md block)",
@@ -13095,6 +13103,77 @@ window.__ModuleLoader__.load({
             fragments:
               b3.content && Array.isArray(b3.content.fragments) ? b3.content.fragments.length : 0,
           }),
+        ),
+        // M5：Memory 两层呈现（Claude 的 instructions 计数 + MEMORY.md 更新于 + Memory files）
+        h(
+          "div",
+          {
+            style: { display: "flex", flexDirection: "column", gap: "3px" },
+            "data-projects-memory-layers": "",
+          },
+          h(
+            "span",
+            { style: { color: T.dim, fontSize: "12px" }, "data-projects-memory-instructions": "" },
+            text(t, "settings.memoryInstructions", {
+              used: Number(b3.content?.instructionsChars ?? 0),
+              limit: Number(b3.content?.instructionsLimit ?? 16_000),
+              updated: b3.content?.instructionsUpdatedAt
+                ? formatWhen(t, b3.content.instructionsUpdatedAt)
+                : text(t, "settings.memoryNever"),
+            }),
+          ),
+          h(
+            "span",
+            { style: { color: T.dim, fontSize: "12px" }, "data-projects-memory-index-updated": "" },
+            text(t, "settings.memoryIndexUpdated", {
+              updated: b3.content?.memoryUpdatedAt
+                ? formatWhen(t, b3.content.memoryUpdatedAt)
+                : text(t, "settings.memoryNever"),
+            }),
+          ),
+          Array.isArray(b3.content?.memoryFiles) && b3.content.memoryFiles.length > 0
+            ? h(
+                "div",
+                {
+                  style: { display: "flex", flexDirection: "column", gap: "1px" },
+                  "data-projects-memory-files": "",
+                },
+                b3.content.memoryFiles.slice(0, 8).map((/** @type {any} */ file) =>
+                  h(
+                    "span",
+                    {
+                      key: String(file.name),
+                      style: {
+                        display: "flex",
+                        gap: "8px",
+                        fontSize: "11.5px",
+                        color: T.faint,
+                      },
+                      "data-projects-memory-file": String(file.name),
+                    },
+                    h(
+                      "span",
+                      {
+                        style: {
+                          fontFamily: "ui-monospace, monospace",
+                          minWidth: 0,
+                          flex: "1 1 auto",
+                        },
+                      },
+                      String(file.name),
+                    ),
+                    h("span", {}, formatWhen(t, file.updatedAt)),
+                  ),
+                ),
+              )
+            : h(
+                "span",
+                {
+                  style: { color: T.faint, fontSize: "11.5px" },
+                  "data-projects-memory-files-empty": "",
+                },
+                text(t, "settings.memoryFilesEmpty"),
+              ),
         ),
         h(
           "button",

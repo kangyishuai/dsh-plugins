@@ -85,7 +85,7 @@ import {
   realtimeCiSpec,
   shouldPollProject,
 } from "./pr-poll.js";
-import { readProjectFiles } from "./project-files.js";
+import { INSTRUCTION_CHAR_LIMIT, listMemoryFiles, readProjectFiles } from "./project-files.js";
 import { buildPurgeManifest, DEFAULT_RETENTION_DAYS, selectExpired } from "./purge.js";
 import {
   DEFAULT_REMINDER_MODE,
@@ -1360,6 +1360,11 @@ export class ProjectsService extends TypertRemoteService {
       fragments: memory.fragments,
       memoryChars: files.memoryIndex.length,
       instructionsChars: files.instructions.length,
+      // M5：Memory 两层呈现（Claude 的 instructions 计数 / MEMORY.md 更新于 / Memory files 列表）
+      instructionsLimit: INSTRUCTION_CHAR_LIMIT,
+      instructionsUpdatedAt: files.instructionsStat?.updatedAt ?? null,
+      memoryUpdatedAt: files.memoryStat?.updatedAt ?? null,
+      memoryFiles: listMemoryFiles(this.dataRoot, projectId),
     };
   }
 

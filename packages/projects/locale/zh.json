@@ -593,6 +593,10 @@
     "settings.notifyTier.waiting": "仅等我处理的",
     "settings.notifyTier.none": "不通知",
     "settings.notifyTier.custom": "自定义",
-    "settings.notifyTierHint": "「全部」会包含每条线程的回复，通知会更频繁。"
+    "settings.notifyTierHint": "「全部」会包含每条线程的回复，通知会更频繁。",
+    "settings.memoryInstructions": "指令 {used}/{limit}「更新于 {updated}」",
+    "settings.memoryIndexUpdated": "记忆索引更新于 {updated}",
+    "settings.memoryNever": "从未",
+    "settings.memoryFilesEmpty": "记忆目录里还没有文件"
   }
 }

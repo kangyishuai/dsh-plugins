@@ -593,6 +593,10 @@
     "settings.notifyTier.waiting": "Only what waits on me",
     "settings.notifyTier.none": "Nothing",
     "settings.notifyTier.custom": "Custom",
-    "settings.notifyTierHint": "\"Everything\" includes replies in every thread, so it is much noisier."
+    "settings.notifyTierHint": "\"Everything\" includes replies in every thread, so it is much noisier.",
+    "settings.memoryInstructions": "Instructions {used}/{limit} · updated {updated}",
+    "settings.memoryIndexUpdated": "Memory index updated {updated}",
+    "settings.memoryNever": "never",
+    "settings.memoryFilesEmpty": "No files in the memory folder yet"
   }
 }
