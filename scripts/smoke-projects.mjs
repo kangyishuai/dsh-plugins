@@ -2764,6 +2764,35 @@ try {
   );
 
   add(
+    "快捷键 P/L/R/V 切右栏视图（输入框内不劫持）",
+    await page.evaluate(async () => {
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const tabs = () => [...document.querySelectorAll("[data-projects-tab]")].map((n) => n.getAttribute("data-projects-tab"));
+      const press = (key) =>
+        document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+      const base = tabs();
+      if (!base.includes("threads") || !base.includes("routines")) return false;
+      press("r");
+      await wait(600);
+      const afterR = tabs();
+      press("p");
+      await wait(600);
+      const afterP = tabs();
+      // 输入框内按 r 不应切换视图（打字不该被劫持）
+      const input = document.querySelector("[data-projects-thread-input]");
+      input?.focus();
+      input?.dispatchEvent(new KeyboardEvent("keydown", { key: "r", bubbles: true }));
+      await wait(400);
+      return (
+        afterR.includes("routines") &&
+        afterP.includes("threads") &&
+        tabs().includes("threads")
+      );
+    }),
+    "P/L/R/V via keydown",
+  );
+
+  add(
     "M2 行尾 n/m 带悬停弹层锚点（tasks popover 关闭态可见）",
     await page.evaluate(() => {
       const pill = document.querySelector("[data-projects-thread-steps]");
