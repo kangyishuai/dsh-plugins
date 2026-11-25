@@ -4378,6 +4378,17 @@ try {
       templateClicks,
       result: q("[data-projects-settings-b3-result]")?.textContent || "",
     };
+    // M6：失败自动重试开关（诚实语义）——点了要能回读成 true
+    clickNav("general");
+    await wait(400);
+    const autoRetryBox = q("[data-projects-auto-retry]");
+    let autoRetryAfter = null;
+    if (autoRetryBox) {
+      if (autoRetryBox.checked !== true) autoRetryBox.click();
+      await wait(1400);
+      autoRetryAfter = q("[data-projects-auto-retry]")?.checked === true;
+    }
+    const autoRetryCaptured = { present: Boolean(autoRetryBox), after: autoRetryAfter };
     clickNav("general");
     await wait(300);
     return {
@@ -4395,6 +4406,7 @@ try {
       memory,
       pickedProject,
       sectionAfter: section(),
+      autoRetry: autoRetryCaptured,
     };
   }, name);
   if (b3SettingsSeen) {
@@ -4525,6 +4537,11 @@ try {
         b3Settings.notifyTierAll?.completed === true &&
         b3Settings.notifyTierAll?.failed === true,
       JSON.stringify({ tier: b3Settings.notifyTier, all: b3Settings.notifyTierAll }),
+    );
+    add(
+      "失败自动重试开关存在且写→回读为 true（诚实语义，非用量恢复续跑）",
+      b3Settings.autoRetry?.present === true && b3Settings.autoRetry?.after === true,
+      JSON.stringify(b3Settings.autoRetry),
     );
     add(
       "Memory 两层：指令计数带 16,000 上限 + 索引更新于",
