@@ -21,7 +21,14 @@ import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 import { artifactRefFromToolResult } from "./artifact-ref.js";
 import { registerProjectContext } from "./attach.js";
 import { buildFixTask, errorSignature, shouldContinueFix } from "./autofix.js";
-import { buildPrText, nextPrAction, parsePrNumber, planHttpsPush, planPrCreate } from "./autopr.js";
+import {
+  buildPrText,
+  canMergePr,
+  nextPrAction,
+  parsePrNumber,
+  planHttpsPush,
+  planPrCreate,
+} from "./autopr.js";
 import { autoResolveDaysOf, planAutoResolve } from "./autoresolve.js";
 import {
   checkStepBudget,
@@ -1716,6 +1723,69 @@ export class ProjectsService extends TypertRemoteService {
     } catch {
       return { ok: false, reason: "parse-failed" };
     }
+  }
+
+  /**
+   * 保存自定义视图。
+   * @param {string} projectId @param {string} name @param {string} [filter] @param {string} [query]
+   */
+  /**
+   * 合并 PR（不可逆动作，门禁三重：PR 存在 + 二次确认 + 危险开关 autoMerge）。
+   * `gh pr merge --squash --delete-branch` 在项目目录跑；成功记 mergedAt 与审计。
+   * @param {string} projectId @param {string} sessionId @param {boolean} [confirm]
+   */
+  async mergePr(projectId, sessionId, confirm) {
+    const store = this.requireStore();
+    const project = store.getProject(String(projectId ?? ""));
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const thread = store
+      .listThreads(project.id)
+      .find((/** @type {any} */ item) => String(item.sessionId) === String(sessionId));
+    if (!thread) throw new Error(`projects: unknown thread ${sessionId}`);
+    const decision = canMergePr({
+      prNumber: Number(thread.prNumber),
+      confirmed: confirm === true,
+      dangerAutoMerge: project.policy?.danger?.autoMerge === true,
+    });
+    if (!decision.ok) {
+      store.appendAudit({
+        action: "pr/merge-refused",
+        projectId: project.id,
+        sessionId,
+        reason: decision.reason,
+      });
+      store.save();
+      return { ok: false, reason: decision.reason };
+    }
+    const repoRoot =
+      Array.isArray(project.dirs) && project.dirs.length > 0 ? String(project.dirs[0]) : "";
+    if (repoRoot === "") return { ok: false, reason: "no-dir" };
+    const gh = await runGh(
+      ["pr", "merge", String(Number(thread.prNumber)), "--squash", "--delete-branch"],
+      repoRoot,
+    );
+    if (gh.code !== 0) {
+      store.appendAudit({
+        action: "pr/merge-failed",
+        projectId: project.id,
+        sessionId,
+        prNumber: Number(thread.prNumber),
+        detail: String(gh.stderr ?? "")
+          .split("\n")[0]
+          .slice(0, 200),
+      });
+      store.save();
+      return { ok: false, reason: "gh-failed" };
+    }
+    store.setThreadWorktree(sessionId, { mergedAt: new Date().toISOString() });
+    store.appendAudit({
+      action: "pr/merged",
+      projectId: project.id,
+      sessionId,
+      prNumber: Number(thread.prNumber),
+    });
+    store.save();
+    return { ok: true, prNumber: Number(thread.prNumber) };
   }
 
   /**
@@ -5833,6 +5903,7 @@ declareRemote(ProjectsService, "checkAutoResolve");
 declareRemote(ProjectsService, "setAutoResolveDays");
 declareRemote(ProjectsService, "addView");
 declareRemote(ProjectsService, "prOverview");
+declareRemote(ProjectsService, "mergePr");
 declareRemote(ProjectsService, "setVisibleViews");
 declareRemote(ProjectsService, "deleteView");
 declareRemote(ProjectsService, "setThreadUnread");

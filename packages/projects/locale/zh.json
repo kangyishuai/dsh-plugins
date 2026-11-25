@@ -604,6 +604,12 @@
     "b3.envMachineNoDir": "本机（还没有绑定项目目录）",
     "b3.envRepos": "仓库：{count} 个",
     "b3.envAllowed": "免询问文件夹：{count} 个（{names}）",
-    "b3.envAllowedEmpty": "免询问文件夹：还没有（授权卡里选「设为默认」才会进这个名单）"
+    "b3.envAllowedEmpty": "免询问文件夹：还没有（授权卡里选「设为默认」才会进这个名单）",
+    "detail.prCard.merge": "合并 ⏎",
+    "detail.prCard.mergeArmed": "再点一次确认合并",
+    "detail.prCard.mergeHint": "点两次确认（squash + 删除分支）",
+    "detail.prCard.mergeOff": "需要先打开「允许自动合并 PR」危险开关",
+    "detail.prCard.mergeOk": "已合并 #{number}",
+    "detail.prCard.mergeFail": "合并失败：{reason}"
   }
 }

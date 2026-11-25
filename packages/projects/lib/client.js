@@ -505,6 +505,12 @@ window.__ModuleLoader__.load({
         "更细的调试项（危险动作开关 / 线程权限 / 审计）已在本分区；完整设置的「项目 → 调试」里还有更多。",
       "detail.settingsOpenFull": "打开完整设置",
 
+      "detail.prCard.merge": "合并 ⏎",
+      "detail.prCard.mergeArmed": "再点一次确认合并",
+      "detail.prCard.mergeHint": "点两次确认（squash + 删除分支）",
+      "detail.prCard.mergeOff": "需要先打开「允许自动合并 PR」危险开关",
+      "detail.prCard.mergeOk": "已合并 #{number}",
+      "detail.prCard.mergeFail": "合并失败：{reason}",
       "detail.prCard.copy": "复制链接",
       "detail.prCard.copied": "PR 链接已复制",
       "detail.prCard.loading": "读取 PR 信息…",
@@ -1014,6 +1020,12 @@ window.__ModuleLoader__.load({
         "Danger switches / thread permissions / audit are in this section; full settings → Projects → Debug has more.",
       "detail.settingsOpenFull": "Open full settings",
 
+      "detail.prCard.merge": "Merge ⏎",
+      "detail.prCard.mergeArmed": "Click again to confirm",
+      "detail.prCard.mergeHint": "Two clicks to confirm (squash + delete branch)",
+      "detail.prCard.mergeOff": 'Turn on the "auto-merge PRs" danger switch first',
+      "detail.prCard.mergeOk": "Merged #{number}",
+      "detail.prCard.mergeFail": "Merge failed: {reason}",
       "detail.prCard.copy": "Copy link",
       "detail.prCard.copied": "PR link copied",
       "detail.prCard.loading": "Loading PR…",
@@ -5981,6 +5993,10 @@ window.__ModuleLoader__.load({
       const artifactViewerState = useState(/** @type {any} */ (null));
       const artifactViewer = artifactViewerState[0];
       const setArtifactViewer = artifactViewerState[1];
+      // 合并 PR 的二次确认（同一时刻只 armed 一条线程）
+      const mergeArmState = useState("");
+      const mergeArm = mergeArmState[0];
+      const setMergeArm = mergeArmState[1];
       const prInfoState = useState(/** @type {any} */ ({}));
       const prInfo = prInfoState[0];
       const setPrInfo = prInfoState[1];
@@ -7815,6 +7831,73 @@ window.__ModuleLoader__.load({
                                     ? `${text(t, "detail.prCard.unavailable")} · ${String(info?.reason ?? "")}`
                                     : text(t, "detail.prCard.loading"),
                                 ),
+                            (() => {
+                              const dangerOn =
+                                (data.liveProject ?? props.project)?.policy?.danger?.autoMerge ===
+                                true;
+                              const armed = mergeArm === String(row.sessionId);
+                              return h(
+                                "button",
+                                {
+                                  type: "button",
+                                  style: {
+                                    ...styles.secondaryButton,
+                                    padding: "1px 8px",
+                                    fontSize: "11.5px",
+                                    opacity: dangerOn ? 1 : 0.6,
+                                  },
+                                  "data-projects-thread-pr-merge": row.sessionId,
+                                  "data-projects-thread-pr-merge-state": armed
+                                    ? "armed"
+                                    : dangerOn
+                                      ? "ready"
+                                      : "off",
+                                  disabled: !dangerOn,
+                                  title: dangerOn
+                                    ? text(t, "detail.prCard.mergeHint")
+                                    : text(t, "detail.prCard.mergeOff"),
+                                  onClick: () => {
+                                    if (!dangerOn) return;
+                                    const sid = String(row.sessionId);
+                                    if (!armed) {
+                                      setMergeArm(sid);
+                                      return;
+                                    }
+                                    setMergeArm("");
+                                    call(api.ctx, "mergePr", {
+                                      projectId: project.id,
+                                      sessionId: sid,
+                                      confirm: true,
+                                    }).then(
+                                      (/** @type {any} */ result) => {
+                                        setThreadAction({
+                                          pending: "",
+                                          ok: result?.ok === true,
+                                          message:
+                                            result?.ok === true
+                                              ? text(t, "detail.prCard.mergeOk", {
+                                                  number: Number(row.prNumber),
+                                                })
+                                              : text(t, "detail.prCard.mergeFail", {
+                                                  reason: String(result?.reason ?? "unknown"),
+                                                }),
+                                        });
+                                        load();
+                                      },
+                                      (/** @type {any} */ error) =>
+                                        setThreadAction({
+                                          pending: "",
+                                          ok: false,
+                                          message: String(error?.message ?? error).slice(0, 160),
+                                        }),
+                                    );
+                                  },
+                                },
+                                armed
+                                  ? text(t, "detail.prCard.mergeArmed")
+                                  : text(t, "detail.prCard.merge"),
+                              );
+                            })(),
                             h(
                               "span",
                               { style: { ...styles.meta, color: T.faint } },

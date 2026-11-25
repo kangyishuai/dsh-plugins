@@ -138,3 +138,18 @@ export function planHttpsPush(input) {
     ],
   };
 }
+
+/**
+ * 「能不能合并这个 PR」的判定（纯函数）：**默认拒绝**，必须同时满足
+ * ① 有 PR 号 ② 用户二次确认 ③ 项目危险开关 autoMerge 打开。
+ * 合并是不可逆动作，任何一环缺失都如实给出原因（不假装成功）。
+ * @param {{ prNumber?: number, confirmed?: boolean, dangerAutoMerge?: boolean }} input
+ * @returns {{ ok: true } | { ok: false, reason: string }}
+ */
+export function canMergePr(input) {
+  const prNumber = Number(input?.prNumber);
+  if (!Number.isInteger(prNumber) || prNumber <= 0) return { ok: false, reason: "no-pr" };
+  if (input?.confirmed !== true) return { ok: false, reason: "need-confirm" };
+  if (input?.dangerAutoMerge !== true) return { ok: false, reason: "danger-off" };
+  return { ok: true };
+}

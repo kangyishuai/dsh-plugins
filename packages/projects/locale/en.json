@@ -604,6 +604,12 @@
     "b3.envMachineNoDir": "your computer (no project folder bound yet)",
     "b3.envRepos": "Repositories: {count}",
     "b3.envAllowed": "Folders without asking: {count} ({names})",
-    "b3.envAllowedEmpty": "Folders without asking: none yet (choose \"Set as default\" on a folder card)"
+    "b3.envAllowedEmpty": "Folders without asking: none yet (choose \"Set as default\" on a folder card)",
+    "detail.prCard.merge": "Merge ⏎",
+    "detail.prCard.mergeArmed": "Click again to confirm",
+    "detail.prCard.mergeHint": "Two clicks to confirm (squash + delete branch)",
+    "detail.prCard.mergeOff": "Turn on the \"auto-merge PRs\" danger switch first",
+    "detail.prCard.mergeOk": "Merged #{number}",
+    "detail.prCard.mergeFail": "Merge failed: {reason}"
   }
 }
