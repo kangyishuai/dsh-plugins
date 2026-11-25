@@ -1672,6 +1672,51 @@ export class ProjectsService extends TypertRemoteService {
    * 保存自定义视图。
    * @param {string} projectId @param {string} name @param {string} [filter] @param {string} [query]
    */
+  /**
+   * PR 概览（三卡数据源）：只读 `gh pr view --json`，不打开浏览器、不合并。
+   * 合并/审阅动作需要新的宿主 seam（见 README 的已知限制），这里只给事实。
+   * @param {string} projectId @param {string} sessionId
+   */
+  async prOverview(projectId, sessionId) {
+    const store = this.requireStore();
+    const project = store.getProject(String(projectId ?? ""));
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const thread = store
+      .listThreads(project.id)
+      .find((/** @type {any} */ item) => String(item.sessionId) === String(sessionId));
+    if (!thread) throw new Error(`projects: unknown thread ${sessionId}`);
+    const prNumber = Number(thread.prNumber);
+    if (!Number.isInteger(prNumber) || prNumber <= 0) return { ok: false, reason: "no-pr" };
+    const repoRoot =
+      Array.isArray(project.dirs) && project.dirs.length > 0 ? String(project.dirs[0]) : "";
+    if (repoRoot === "") return { ok: false, reason: "no-dir" };
+    const gh = await runGh(
+      ["pr", "view", String(prNumber), "--json", "number,title,url,state,isDraft,mergeable"],
+      repoRoot,
+    );
+    if (gh.code !== 0) return { ok: false, reason: "gh-failed" };
+    try {
+      const data = JSON.parse(String(gh.stdout ?? ""));
+      return {
+        ok: true,
+        pr: {
+          number: Number(data.number ?? prNumber),
+          title: String(data.title ?? ""),
+          url: String(data.url ?? ""),
+          state: String(data.state ?? ""),
+          isDraft: data.isDraft === true,
+          mergeable: String(data.mergeable ?? ""),
+        },
+      };
+    } catch {
+      return { ok: false, reason: "parse-failed" };
+    }
+  }
+
+  /**
+   * 保存自定义视图。
+   * @param {string} projectId @param {string} name @param {string} [filter] @param {string} [query]
+   */
   async addView(projectId, name, filter, query) {
     const store = this.requireStore();
     const project = store.getProject(String(projectId ?? ""));
@@ -3062,7 +3107,16 @@ export class ProjectsService extends TypertRemoteService {
     if (worktree !== "") {
       const pushed = await runGit(["push", "-u", "origin", String(thread.branch)], worktree);
       if (pushed.code !== 0) {
-        store.appendAudit({ action: "pr/failed", projectId, sessionId, reason: "push-failed" });
+        store.appendAudit({
+          action: "pr/failed",
+          projectId,
+          sessionId,
+          reason: "push-failed",
+          // 把 stderr 首行带上：没有它只能看到 "push-failed"，排查全靠猜（本轮真机踩到）
+          detail: String(pushed.stderr ?? "")
+            .split("\n")[0]
+            .slice(0, 200),
+        });
         store.save();
         return { opened: false, decision, reason: "push-failed" };
       }
@@ -5751,6 +5805,7 @@ declareRemote(ProjectsService, "resolveThread");
 declareRemote(ProjectsService, "checkAutoResolve");
 declareRemote(ProjectsService, "setAutoResolveDays");
 declareRemote(ProjectsService, "addView");
+declareRemote(ProjectsService, "prOverview");
 declareRemote(ProjectsService, "setVisibleViews");
 declareRemote(ProjectsService, "deleteView");
 declareRemote(ProjectsService, "setThreadUnread");

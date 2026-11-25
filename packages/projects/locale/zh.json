@@ -578,6 +578,11 @@
     "library.colName": "名称",
     "library.colType": "类型",
     "library.colSize": "大小",
-    "library.colUpdated": "更新"
+    "library.colUpdated": "更新",
+    "detail.prCard.copy": "复制链接",
+    "detail.prCard.copied": "PR 链接已复制",
+    "detail.prCard.loading": "读取 PR 信息…",
+    "detail.prCard.unavailable": "读不到 PR",
+    "detail.prCard.actionsMissing": "Review/Merge 需要宿主 seam（未实现）"
   }
 }

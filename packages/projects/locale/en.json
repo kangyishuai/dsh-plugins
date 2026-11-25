@@ -578,6 +578,11 @@
     "library.colName": "Name",
     "library.colType": "Type",
     "library.colSize": "Size",
-    "library.colUpdated": "Updated"
+    "library.colUpdated": "Updated",
+    "detail.prCard.copy": "Copy link",
+    "detail.prCard.copied": "PR link copied",
+    "detail.prCard.loading": "Loading PR…",
+    "detail.prCard.unavailable": "PR unavailable",
+    "detail.prCard.actionsMissing": "Review/Merge need a host seam (not implemented)"
   }
 }

@@ -489,6 +489,11 @@ window.__ModuleLoader__.load({
         "更细的调试项（危险动作开关 / 线程权限 / 审计）已在本分区；完整设置的「项目 → 调试」里还有更多。",
       "detail.settingsOpenFull": "打开完整设置",
 
+      "detail.prCard.copy": "复制链接",
+      "detail.prCard.copied": "PR 链接已复制",
+      "detail.prCard.loading": "读取 PR 信息…",
+      "detail.prCard.unavailable": "读不到 PR",
+      "detail.prCard.actionsMissing": "Review/Merge 需要宿主 seam（未实现）",
       "detail.prOpen": "已开",
       "library.artifactPinHint": "钉住（待接入）",
       "library.artifactMenuHint": "更多（待接入）",
@@ -988,6 +993,11 @@ window.__ModuleLoader__.load({
         "Danger switches / thread permissions / audit are in this section; full settings → Projects → Debug has more.",
       "detail.settingsOpenFull": "Open full settings",
 
+      "detail.prCard.copy": "Copy link",
+      "detail.prCard.copied": "PR link copied",
+      "detail.prCard.loading": "Loading PR…",
+      "detail.prCard.unavailable": "PR unavailable",
+      "detail.prCard.actionsMissing": "Review/Merge need a host seam (not implemented)",
       "detail.prOpen": "open",
       "library.artifactPinHint": "Pin (not yet available)",
       "library.artifactMenuHint": "More (not yet available)",
@@ -5523,6 +5533,25 @@ window.__ModuleLoader__.load({
       const setCoordinatorMsg = coordinatorMsgState[1];
       const expandedState = useState("");
       const expandedThread = expandedState[0];
+      // M4：PR 三段式卡的数据源（只读 prOverview；合并/审阅动作需要新 seam）
+      const prInfoState = useState(/** @type {any} */ ({}));
+      const prInfo = prInfoState[0];
+      const setPrInfo = prInfoState[1];
+      // 展开某条线程时拉一次 PR 概览（有 prNumber 才拉；失败不打扰）
+      useEffect(() => {
+        const sid = String(expandedThread || "");
+        if (sid === "" || prInfo[sid] !== undefined) return;
+        const row = (data.progress?.rows ?? []).find(
+          (/** @type {any} */ item) => String(item.sessionId) === sid,
+        );
+        if (!row || Number(row.prNumber) <= 0) return;
+        call(api.ctx, "prOverview", { projectId: project.id, sessionId: sid }).then(
+          (/** @type {any} */ result) =>
+            setPrInfo((/** @type {any} */ prev) => ({ ...prev, [sid]: result })),
+          () => setPrInfo((/** @type {any} */ prev) => ({ ...prev, [sid]: { ok: false } })),
+        );
+      }, [api, data.progress, expandedThread, prInfo, project.id, setPrInfo]);
+
       const setExpandedThread = expandedState[1];
       const steerDraftState = useState("");
       const steerDraft = steerDraftState[0];
@@ -7242,6 +7271,105 @@ window.__ModuleLoader__.load({
                       text(t, "detail.approvalHint"),
                     ),
                   ),
+                  // M4：PR 三段式卡（状态 / 标题 / 动作）。Review/Merge 需要宿主 seam，
+                  // 现在只给「复制链接」这个真动作，其余如实标注未实现。
+                  row.prNumber
+                    ? (() => {
+                        const info = prInfo[String(row.sessionId)];
+                        const pr = info?.ok ? info.pr : null;
+                        const stateLabel = text(t, `detail.ci.${String(row.ciState ?? "none")}`);
+                        return h(
+                          "div",
+                          {
+                            style: {
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: "4px",
+                              border: `1px solid ${T.borderSoft}`,
+                              borderRadius: "8px",
+                              padding: "8px",
+                            },
+                            "data-projects-thread-pr-card": row.sessionId,
+                            "data-projects-thread-pr-card-ok": info?.ok ? "true" : "false",
+                          },
+                          h(
+                            "div",
+                            {
+                              style: {
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "8px",
+                                minWidth: 0,
+                              },
+                            },
+                            h("span", { style: { color: T.success } }, glyph("pr", 13)),
+                            h(
+                              "span",
+                              {
+                                style: {
+                                  ...styles.name,
+                                  fontSize: "12.5px",
+                                  flex: "1 1 auto",
+                                  minWidth: 0,
+                                },
+                              },
+                              `#${row.prNumber}`,
+                              pr && pr.title !== "" ? ` · ${pr.title}` : "",
+                            ),
+                            h("span", { style: styles.meta }, stateLabel),
+                          ),
+                          h(
+                            "div",
+                            {
+                              style: {
+                                display: "flex",
+                                gap: "6px",
+                                alignItems: "center",
+                                flexWrap: "wrap",
+                              },
+                            },
+                            pr && pr.url !== ""
+                              ? h(
+                                  "button",
+                                  {
+                                    type: "button",
+                                    style: {
+                                      ...styles.secondaryButton,
+                                      padding: "1px 8px",
+                                      fontSize: "11.5px",
+                                    },
+                                    "data-projects-thread-pr-copy": row.sessionId,
+                                    onClick: () => {
+                                      try {
+                                        navigator.clipboard?.writeText?.(String(pr.url));
+                                        setThreadAction({
+                                          pending: "",
+                                          ok: true,
+                                          message: text(t, "detail.prCard.copied"),
+                                        });
+                                      } catch {
+                                        /* 剪贴板不可用就什么都不承诺 */
+                                      }
+                                    },
+                                  },
+                                  text(t, "detail.prCard.copy"),
+                                )
+                              : h(
+                                  "span",
+                                  { style: styles.meta },
+                                  info?.ok === false
+                                    ? `${text(t, "detail.prCard.unavailable")} · ${String(info?.reason ?? "")}`
+                                    : text(t, "detail.prCard.loading"),
+                                ),
+                            h(
+                              "span",
+                              { style: { ...styles.meta, color: T.faint } },
+                              text(t, "detail.prCard.actionsMissing"),
+                            ),
+                          ),
+                        );
+                      })()
+                    : null,
                   // B5 · F34：线程内嵌产物缩略卡（标题 + 类型 + 版本 + 时间）
                   // 数据来自 Library 视图：artifacts 行 + 我们自存映射，按 sessionId 命中这条线程。
                   (() => {
