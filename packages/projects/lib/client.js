@@ -605,6 +605,10 @@ window.__ModuleLoader__.load({
         "artifacts 未安装/版本不兼容：缩略图与预览不可用，只显示本地记录。",
       "library.filesTitle": "项目文件",
       "library.filesCount": "{count} 个文件",
+      "library.colName": "名称",
+      "library.colType": "类型",
+      "library.colSize": "大小",
+      "library.colUpdated": "更新",
       "library.filesEmpty": "这个目录里还没有文件。",
       "library.filesNoDir": "这个项目还没有绑定目录：先在「项目目录」里绑定一个文件夹，再看文件。",
       "library.filesNoSession":
@@ -1234,6 +1238,10 @@ window.__ModuleLoader__.load({
         "artifacts is not installed or its contract differs: thumbnails and previews are unavailable, showing local records only.",
       "library.filesTitle": "Project files",
       "library.filesCount": "{count} files",
+      "library.colName": "Name",
+      "library.colType": "Type",
+      "library.colSize": "Size",
+      "library.colUpdated": "Updated",
       "library.filesEmpty": "No files in this folder yet.",
       "library.filesNoDir":
         'This project has no folder bound yet: bind one under "project folders" to see files.',
@@ -4504,6 +4512,85 @@ window.__ModuleLoader__.load({
      * @param {any} props
      */
     function LibraryView(props) {
+      // M4：文件树表格（名称/类型/大小/更新），Claude 的 Library 文件树形态
+      const fileTableFor = (/** @type {any} */ dirView) =>
+        h(
+          "div",
+          {
+            style: { display: "flex", flexDirection: "column", gap: "1px" },
+            "data-projects-library-table": String(dirView.dir),
+          },
+          h(
+            "div",
+            {
+              style: {
+                display: "grid",
+                gridTemplateColumns: "minmax(0,1fr) 52px 64px 74px",
+                gap: "6px",
+                fontSize: "11px",
+                color: T.faint,
+                padding: "0 2px",
+                borderBottom: `1px solid ${T.borderSoft}`,
+              },
+              "data-projects-library-table-head": "",
+            },
+            h("span", {}, text(t, "library.colName")),
+            h("span", {}, text(t, "library.colType")),
+            h("span", { style: { textAlign: "right" } }, text(t, "library.colSize")),
+            h("span", { style: { textAlign: "right" } }, text(t, "library.colUpdated")),
+          ),
+          (Array.isArray(dirView.entries) ? dirView.entries : []).map((/** @type {any} */ entry) =>
+            h(
+              "div",
+              {
+                key: String(entry.path),
+                style: {
+                  display: "grid",
+                  gridTemplateColumns: "minmax(0,1fr) 52px 64px 74px",
+                  gap: "6px",
+                  alignItems: "center",
+                  fontSize: "11.5px",
+                },
+                "data-projects-library-file": String(entry.path),
+                "data-projects-library-file-type": String(entry.type || "file"),
+                "data-projects-library-file-row": String(entry.path),
+              },
+              h(
+                "span",
+                {
+                  style: {
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    fontFamily: "ui-monospace, monospace",
+                  },
+                  title: String(entry.path),
+                },
+                `${String(entry.type || "file") === "directory" ? "▸ " : ""}${String(entry.name || entry.path)}`,
+              ),
+              h("span", { style: { color: T.faint } }, String(entry.type || "file")),
+              h(
+                "span",
+                {
+                  style: { textAlign: "right", color: T.faint },
+                  "data-projects-library-file-size": String(entry.path),
+                },
+                Number(entry.size) > 0
+                  ? `${Math.max(1, Math.round(Number(entry.size) / 1024))} KB`
+                  : "—",
+              ),
+              h(
+                "span",
+                {
+                  style: { textAlign: "right", color: T.faint },
+                  "data-projects-library-file-updated": String(entry.path),
+                },
+                Number(entry.updatedAt) > 0 ? formatWhen(t, Number(entry.updatedAt)) : "—",
+              ),
+            ),
+          ),
+        );
+
       var api = props.api;
       var t = props.t;
       var project = props.project || {};
@@ -4798,23 +4885,7 @@ window.__ModuleLoader__.load({
                       ? h("span", { style: styles.error }, reasonText(String(dirView.error || "")))
                       : dirView.entries.length === 0
                         ? h("span", { style: styles.meta }, text(t, "library.filesEmpty"))
-                        : dirView.entries.map((/** @type {any} */ entry) =>
-                            h(
-                              "span",
-                              {
-                                key: String(entry.path),
-                                style: {
-                                  ...styles.meta,
-                                  fontFamily: "ui-monospace, monospace",
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                },
-                                "data-projects-library-file": String(entry.path),
-                                "data-projects-library-file-type": String(entry.type || "file"),
-                              },
-                              String(entry.name || entry.path),
-                            ),
-                          ),
+                        : fileTableFor(dirView),
                   ),
                 ),
               ),

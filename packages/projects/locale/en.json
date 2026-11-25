@@ -574,6 +574,10 @@
     "detail.effortPlaceholder": "Reasoning effort (optional)",
     "detail.rowSub.using": "✓✓✓ Using {tool}",
     "detail.coordinatorFold": "{count} earlier coordinator messages",
-    "detail.coordinatorFoldHide": "Hide earlier messages"
+    "detail.coordinatorFoldHide": "Hide earlier messages",
+    "library.colName": "Name",
+    "library.colType": "Type",
+    "library.colSize": "Size",
+    "library.colUpdated": "Updated"
   }
 }
