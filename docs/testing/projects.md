@@ -976,3 +976,44 @@ AGENTS.md 受管区块幂等合并、`@` 候选排序）。`pnpm smoke:projects`
   web 端用 `Emulation.setDeviceMetricsOverride` 固定视口，桌面端用 CDP 同法。
 - 未验证项（需要重启宿主才能复验，已记录）：分支名带项目短 id 的实际推送、PR 草稿自动 `pr ready`、
   Routine 编辑触发的宿主 `schedule` 建/删、后台自动重试的真实端到端（单测覆盖调度器与判据）。
+
+## 重启宿主后的 4 项复验（手动清单）
+
+以下 4 项是 **host 半改动**，刷新页面不够（DSH 会继续跑旧 bundle），必须重启桌面版后按下述步骤确认。
+没有做成一键脚本：其中两项需要真实模型调用/远端仓库，自动化在"重启前"无法自证有效。
+
+### 1. 分支名带项目短 id（防撞远端）
+
+1. 新建一个项目，在「项目设置 → 环境 → 项目目录」绑定任意 git 仓库（本地即可）。
+2. 在项目里新建一条线程（会花一次模型调用）。
+3. 读 `~/.dsh/projects/projects.json`：
+
+   ```bash
+   node -e 'const j=require(process.env.HOME+"/.dsh/projects/projects.json");
+   console.log(Object.values(j.threads).map(t=>t.branch))'
+   ```
+
+4. 期望：分支形如 `dsh/<项目名 slug>-<序号>-<项目 id 末 6 位>`（例如 `dsh/pr-1-v563b8`）。
+   旧行为是 `dsh/<slug>-<序号>`，同名/重建项目会撞远端已有分支，`创建 PR` 报 `push-failed`。
+
+### 2. 草稿 PR 能自动 ready 后合并
+
+1. 项目绑定一个**有远端**的仓库；在线程里提交一次改动。
+2. 展开线程 → `创建 PR`（会建 draft PR）。
+3. 展开同一行 → PR 卡里点 `合并`（需要危险开关打开 + 二次确认）。
+4. 期望：成功（内部先 `gh pr ready` 再 `gh pr merge --squash --delete-branch`），
+   PR 卡状态变为已合并，`projects.json` 里该线程写回 `mergedAt`；
+   旧行为直接 `gh pr merge` 会被 GitHub 以 `Pull Request is still a draft` 拒绝。
+
+### 3. Routine 改成手动后真的删宿主定时
+
+1. 右栏 `Routines` 页签 → 建一条「每天 09:00」的定时任务（会建宿主 schedule）。
+2. 在同一行点编辑，把频率改成「手动（不自动跑）」并保存。
+3. 期望：该条显示为手动档，且宿主「设置 → 自动化任务」里对应条目**消失**
+   （实现是 `planRoutineHostAction` 走 delete；旧行为只改本地 `enabled`，宿主仍会到点投递花 token）。
+
+### 4. 后台自动重试（可选，较难稳定制造）
+
+失败线程在 60 秒后会自动补一句「继续」，累计最多 2 次；可在 `settings` 分节关闭。
+验证它需要先弄出一个失败回合（例如让线程在模型不可用时结束），确认 60 秒后线程重新进入 working，
+且 `projects.json` 里 `autoRetryCount` 递增。**语义是"重发继续"**，不是用量恢复续跑。
