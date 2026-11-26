@@ -598,7 +598,7 @@
     "settings.memoryIndexUpdated": "Memory index updated {updated}",
     "settings.memoryNever": "never",
     "settings.memoryFilesEmpty": "No files in the memory folder yet",
-    "detail.composerHint": "Type / for commands",
+    "detail.composerHint": "Type “/” for commands",
     "b3.envMachine": "Runs on: {value}",
     "b3.envMachineLocal": "your computer (each thread has an isolated worktree)",
     "b3.envMachineNoDir": "your computer (no project folder bound yet)",

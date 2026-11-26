@@ -383,6 +383,16 @@ export class ProjectsService extends TypertRemoteService {
     /** M6-P0：同一项目的并发 progress 合并成一次计算（notifier + 详情页会同时轮询）。 @type {Map<string, Promise<any>>} */
     this.progressInFlight = new Map();
     // M6：失败自动重试调度器（单例/重查/上限/可取消都在 lib 里，有伪定时器单测）
+    // 触发不能只挂在 progress()（只有详情页打开时才轮询）：面板关着也要能重试。
+    // 每 30s 扫一遍活跃项目的内存视图，failed 且未超限就交给调度器（调度器自己单例/重查/上限）。
+    this.autoRetryScanTimer = setInterval(() => {
+      try {
+        this.scanAutoRetry();
+      } catch {
+        /* 后台扫描失败不打扰用户 */
+      }
+    }, 30_000);
+    this.autoRetryScanTimer.unref?.();
     this.autoRetryScheduler = createAutoRetryScheduler({
       delayMs: 60_000,
       maxAttempts: 2,
@@ -393,9 +403,11 @@ export class ProjectsService extends TypertRemoteService {
         // 导致 enabled 永远 false、定时器到点直接放弃——真机 20 小时都没触发。
         const project = store.projectOfSession?.(sessionId) ?? null;
         const thread = store.state?.threads?.[sessionId] ?? null;
+        // 用内存视图 + 记录推导六态：后台扫描时 progress 可能没跑过，盘上的 state 还是 working
+        const view = mergeRecord(this.views.get(sessionId), thread);
         return {
           enabled: project?.policy?.autoRetry === true,
-          state: String(thread?.state ?? ""),
+          state: deriveState(view),
           attempts: Number(thread?.autoRetryCount ?? 0),
         };
       },
@@ -697,6 +709,7 @@ export class ProjectsService extends TypertRemoteService {
           /* ignore */
         }
       }
+      clearInterval(this.autoRetryScanTimer);
       this.autoRetryScheduler.cancelAll();
       this.attached.clear();
     });
@@ -3495,6 +3508,30 @@ export class ProjectsService extends TypertRemoteService {
   /**
    * M6：失败自动重试（诚实语义：失败结束后重发「继续」，最多 2 次，60 秒后执行）。
    * 具体定时/单例/重查/上限由 lib `createAutoRetryScheduler` 负责（有单测）。
+   * @param {string} _projectId @param {string} sessionId
+   */
+  /**
+   * 后台扫描：对「当前视图判定为 failed 且重试未超限」的线程挂重试定时器。
+   * 调度器内部会再单例/重查/限次，所以这里重复调用是安全的。
+   */
+  scanAutoRetry() {
+    const store = this.store;
+    if (!store) return;
+    for (const project of store.listProjects()) {
+      if (project.state !== "active") continue;
+      if (project.policy?.autoRetry !== true) continue;
+      for (const thread of store.listThreads(project.id)) {
+        const sessionId = String(thread?.sessionId ?? "");
+        if (sessionId === "") continue;
+        if (Number(thread?.autoRetryCount ?? 0) >= 2) continue;
+        const state = deriveState(mergeRecord(this.views.get(sessionId), thread));
+        if (state === "failed") this.autoRetryScheduler.schedule(sessionId);
+      }
+    }
+  }
+
+  /**
+   * 给某个线程挂失败自动重试（调度器负责单例/重查/上限）。
    * @param {string} _projectId @param {string} sessionId
    */
   scheduleAutoRetry(_projectId, sessionId) {

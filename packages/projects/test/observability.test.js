@@ -119,10 +119,10 @@ describe("summarizeForRow", () => {
 describe("selectDiffTargets（限制每轮 git 数）", () => {
   it("只留有 worktree 的，按最近活动取前 N", () => {
     const threads = [
-      { sessionId: "a", worktree: "/w/a", lastActivityAt: 10 },
-      { sessionId: "b", worktree: "", lastActivityAt: 99 },
-      { sessionId: "c", worktree: "/w/c", lastActivityAt: 30 },
-      { sessionId: "d", worktree: "/w/d", lastActivityAt: 20 },
+      { sessionId: "a", worktree: "/w/a", lastActivityAt: "2026-11-26T10:00:00.000Z" },
+      { sessionId: "b", worktree: "", lastActivityAt: "2026-11-26T12:00:00.000Z" },
+      { sessionId: "c", worktree: "/w/c", lastActivityAt: "2026-11-26T11:30:00.000Z" },
+      { sessionId: "d", worktree: "/w/d", lastActivityAt: "2026-11-26T11:00:00.000Z" },
     ];
     const picked = selectDiffTargets(threads, 2);
     assert.deepEqual(

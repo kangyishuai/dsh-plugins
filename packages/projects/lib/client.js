@@ -534,7 +534,7 @@ window.__ModuleLoader__.load({
       "detail.composerAttach": "添加附件（待接入）",
       "detail.composerMic": "语音输入（待接入）",
       "detail.composerModel": "模型：{model}",
-      "detail.composerHint": "输入 / 查看命令",
+      "detail.composerHint": "输入「/」调出命令",
       "detail.composerModelHint": "改的是项目的线程默认模型（等同设置里的「线程默认模型」）",
       "detail.composerModelMenuTitle": "线程默认模型",
       "detail.coordinatorModelHint": "协调者默认模型（与线程默认独立）",
@@ -610,16 +610,16 @@ window.__ModuleLoader__.load({
       "panel.unread": "{count} 条未读",
       "panel.waiting": "{count} 个在等你",
       "panel.working": "{count} 个在跑",
-      "detail.state.resolved": "待审",
+      "detail.state.resolved": "待你确认",
       "detail.state.archived": "已归档",
       "detail.pill.waiting-user": "等你",
       "detail.pill.failed": "失败",
       "detail.pill.working": "在跑",
-      "detail.pill.resolved": "待审",
+      "detail.pill.resolved": "待你确认",
       "detail.pill.idle": "空闲",
       "detail.group.waiting-user": "等你",
       "detail.group.working": "在跑",
-      "detail.group.resolved": "待审",
+      "detail.group.resolved": "待你确认",
       "detail.group.idle": "空闲",
       "detail.group.archived": "已归档",
       "library.title": "产物库",
@@ -1054,7 +1054,7 @@ window.__ModuleLoader__.load({
       "detail.composerAttach": "Attach (not yet available)",
       "detail.composerMic": "Voice input (not yet available)",
       "detail.composerModel": "Model: {model}",
-      "detail.composerHint": "Type / for commands",
+      "detail.composerHint": "Type “/” for commands",
       "detail.composerModelHint":
         "Edits the project thread default (same as Thread defaults in settings)",
       "detail.composerModelMenuTitle": "Thread default model",
@@ -1862,7 +1862,7 @@ window.__ModuleLoader__.load({
         // 视频实测右栏占 28–32%，静态参考 35–65%：取 63:37（右栏 ≈37%，落在两者交集附近）
         gridTemplateColumns: "minmax(0, 63fr) minmax(340px, 37fr)",
         gap: "28px",
-        alignItems: "start",
+        alignItems: "stretch",
       },
       detailGridNarrow: { display: "flex", flexDirection: "column", gap: "24px" },
       mainCol: {
@@ -1903,6 +1903,8 @@ window.__ModuleLoader__.load({
         display: "flex",
         flexDirection: "column",
         gap: "12px",
+        // 右栏铺满视口高度（参考图面板是全高，不是一小条）
+        minHeight: "calc(100vh - 170px)",
         paddingLeft: "20px",
         borderLeft: `1px solid ${T.borderSoft}`,
         // Claude 深色下页面 #0A0A0A / 面板 #1A1A1A：面板比页面亮一档（层次感）。
@@ -3678,13 +3680,12 @@ window.__ModuleLoader__.load({
                 uiIcon("pin", "📌", 13),
               )
             : null,
-          // 状态点：有「等你」显示绿点（与详情页行一致），只在跑显示蓝点；
-          // 纯视觉，语义由 meta 与 aria-label 承担
+          // 状态点与详情行同义：等你=强调色（蓝紫）、在跑=暗色；纯视觉，语义由 meta/aria 承担
           waiting > 0 || working > 0
             ? h("span", {
                 style: {
                   ...styles.dot,
-                  background: waiting > 0 ? T.success : T.accentText,
+                  background: waiting > 0 ? T.accentText : T.dim,
                   marginTop: 0,
                 },
                 "data-projects-row-dot": waiting > 0 ? "waiting" : "working",
@@ -7015,7 +7016,7 @@ window.__ModuleLoader__.load({
           state === "failed"
             ? T.danger
             : state === "working"
-              ? T.accentText
+              ? T.dim
               : state === "waiting-user"
                 ? T.accentText
                 : state === "resolved"
@@ -8800,11 +8801,6 @@ window.__ModuleLoader__.load({
               ),
             }))
             .filter((/** @type {any} */ group) => group.rows.length > 0);
-          const focusComposer = () => {
-            if (threadInputRef.current && typeof threadInputRef.current.focus === "function") {
-              threadInputRef.current.focus();
-            }
-          };
           if (rows.length === 0) {
             // U23 空态：一句解释 + 下一步 CTA（不再只有一句话）
             return h(
@@ -8813,19 +8809,7 @@ window.__ModuleLoader__.load({
               h(
                 "div",
                 { style: styles.emptyCta, "data-projects-threads-empty": "" },
-                h("span", { style: styles.name }, text(t, "detail.emptyOverview")),
                 h("span", { style: styles.emptyHint }, text(t, "detail.threadsEmpty")),
-                // 不再给第二个「派一件事」按钮：底部 composer 就是唯一入口（Claude 形状）
-                h(
-                  "button",
-                  {
-                    type: "button",
-                    style: { ...styles.secondaryButton, display: "none" },
-                    "data-projects-empty-cta": "",
-                    onClick: focusComposer,
-                  },
-                  text(t, "detail.welcomeCta"),
-                ),
               ),
             );
           }
@@ -10223,35 +10207,6 @@ window.__ModuleLoader__.load({
                   )
                 : null,
               // 目标切换：协调者 / 新线程（同一个输入框，Claude 只有一个 composer）
-              h(
-                "div",
-                { style: { display: "flex", gap: "4px", marginBottom: "2px" } },
-                [
-                  { id: "thread", label: text(t, "detail.composer.targetThread") },
-                  { id: "coordinator", label: text(t, "detail.composer.targetCoordinator") },
-                ].map((item) =>
-                  h(
-                    "button",
-                    {
-                      key: item.id,
-                      type: "button",
-                      "data-projects-composer-target": item.id,
-                      "aria-selected": composerTarget === item.id ? "true" : "false",
-                      style: {
-                        border: "none",
-                        background: composerTarget === item.id ? T.hover : "transparent",
-                        color: composerTarget === item.id ? T.text : T.faint,
-                        fontSize: "11.5px",
-                        padding: "2px 8px",
-                        borderRadius: "999px",
-                        cursor: "pointer",
-                      },
-                      onClick: () => setComposerTarget(item.id),
-                    },
-                    item.label,
-                  ),
-                ),
-              ),
               h("input", {
                 ref: threadInputRef,
                 style: {
@@ -10312,6 +10267,16 @@ window.__ModuleLoader__.load({
                   "button",
                   {
                     type: "button",
+                    style: { ...styles.secondaryButton, fontSize: "11.5px", padding: "1px 8px" },
+                    "data-projects-route-toggle": showRouteRow ? "open" : "closed",
+                    onClick: () => setShowRouteRow(!showRouteRow),
+                  },
+                  text(t, "detail.routeToggle"),
+                ),
+                h(
+                  "button",
+                  {
+                    type: "button",
                     style: styles.primaryButton,
                     // 双锚点：旧冒烟/桌面回归按这两个名字找入口；行为按当前目标分流
                     "data-projects-thread-create": "",
@@ -10347,6 +10312,41 @@ window.__ModuleLoader__.load({
                   },
                   "data-composer-controls": "",
                 },
+                // 目标切换（Claude 只有一个 composer）：新线程 / 协调者
+                ...[
+                  { id: "thread", label: text(t, "detail.composer.targetThread") },
+                  { id: "coordinator", label: text(t, "detail.composer.targetCoordinator") },
+                ].map((item) =>
+                  h(
+                    "button",
+                    {
+                      key: item.id,
+                      type: "button",
+                      "data-projects-composer-target": item.id,
+                      "aria-selected": composerTarget === item.id ? "true" : "false",
+                      style: {
+                        border: "none",
+                        background: composerTarget === item.id ? T.hover : "transparent",
+                        color: composerTarget === item.id ? T.text : T.faint,
+                        fontSize: "11.5px",
+                        padding: "1px 7px",
+                        borderRadius: "999px",
+                        cursor: "pointer",
+                      },
+                      onClick: () => setComposerTarget(item.id),
+                    },
+                    item.label,
+                  ),
+                ),
+                h(
+                  "span",
+                  {
+                    style: { ...styles.meta, paddingLeft: "2px" },
+                    "data-projects-composer-hint": "",
+                  },
+                  text(t, "detail.composerHint"),
+                ),
+                h("span", { style: { flex: "1 1 auto" } }),
                 h(
                   "button",
                   {
@@ -10500,15 +10500,6 @@ window.__ModuleLoader__.load({
                 ),
               ),
             ),
-            // Claude 的 composer 提示行
-            h(
-              "span",
-              {
-                style: { ...styles.meta, paddingLeft: "2px" },
-                "data-projects-composer-hint": "",
-              },
-              text(t, "detail.composerHint"),
-            ),
           ),
           // —— 右列：Threads 面板（页签 + Welcome + 药丸条 + 列表/记忆/Routines）——
           h(
@@ -10538,7 +10529,7 @@ window.__ModuleLoader__.load({
                   position: "sticky",
                   top: 0,
                   zIndex: 2,
-                  background: colorScheme === "light" ? "#ffffff" : T.bg,
+                  background: "transparent",
                   paddingTop: "2px",
                 },
                 role: "tablist",

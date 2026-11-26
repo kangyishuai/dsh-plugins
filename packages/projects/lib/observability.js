@@ -178,10 +178,17 @@ export function selectDiffTargets(threads, limit = 24) {
     (thread) => String(thread?.worktree ?? "") !== "",
   );
   if (eligible.length <= cap) return eligible;
+  // lastActivityAt 可能是数字毫秒，也可能是 ISO 字符串（盘上持久化的是字符串）——
+  // 直接用 Number() 会得到 NaN，排序退化成 sessionId 字典序（真机验收发现）。
+  const toMs = (/** @type {any} */ value) => {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    const parsed = Date.parse(String(value ?? ""));
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
   return [...eligible]
     .sort(
       (a, b) =>
-        Number(b?.lastActivityAt ?? 0) - Number(a?.lastActivityAt ?? 0) ||
+        toMs(b?.lastActivityAt) - toMs(a?.lastActivityAt) ||
         String(a?.sessionId ?? "").localeCompare(String(b?.sessionId ?? "")),
     )
     .slice(0, cap);
