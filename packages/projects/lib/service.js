@@ -327,10 +327,13 @@ export class ProjectsService extends TypertRemoteService {
     this.lastMessages = new Map();
     /**
      * 宿主实时状态缓存（F16/F31 的权威源 `state().pendingInput` + `list()` 的会话摘要）。
-     * 面板/通知器每隔几秒就会问一次；不去缓存的话每次都要把全部线程的 state 打一遍。
-     * @type {{ at: number, states: Map<string, any>, summaries: Map<string, any> }}
+     * 按 session 缓存 `state()`，TTL 2.5s；面板/通知器每隔几秒就会问一次，且只问自己项目的线程。
+     * @type {Map<string, { at: number, value: any }>}
      */
-    this.liveCache = { at: 0, states: new Map(), summaries: new Map() };
+    this.liveStateCache = new Map();
+    /** @type {{ at: number, summaries: Map<string, any> }} */
+    this.liveSummaryCache = { at: 0, summaries: new Map() };
+    this.liveSummaryCache = { at: 0, summaries: new Map() };
     /**
      * 协调器会话的最近发言（F11 汇报渲染）。只存内存：协调器的正文由宿主持久化，
      * 我们只需要"面板打开时能看到最近几条 + 结论"，重启后靠宿主 replay 重建。
@@ -661,7 +664,8 @@ export class ProjectsService extends TypertRemoteService {
           String(event?.type ?? ""),
         )
       ) {
-        this.liveCache = { at: 0, states: new Map(), summaries: new Map() };
+        this.liveStateCache = new Map();
+        this.liveSummaryCache = { at: 0, summaries: new Map() };
       }
       if (String(event?.type) === "assistant/message") {
         const text = extractText(event?.data?.message);
@@ -1153,43 +1157,73 @@ export class ProjectsService extends TypertRemoteService {
    * @param {boolean} [force]
    * @returns {Promise<{ states: Map<string, any>, summaries: Map<string, any> }>}
    */
-  async liveSessionFacts(force = false) {
+  /**
+   * 取宿主侧的实时 state()/list()。
+   * @param {boolean} [force]
+   * @param {string[]|null} [sessionIds] 只取这些会话（progress 传本项目线程，避免"全库 120 次 state()"）
+   */
+  async liveSessionFacts(force = false, sessionIds = null) {
     const now = Date.now();
-    if (!force && now - this.liveCache.at < 2500) {
-      return { states: this.liveCache.states, summaries: this.liveCache.summaries };
-    }
     const sc = this.sessionController;
-    const tracked = this.store ? Object.keys(this.store.state?.threads ?? {}) : [];
+    const tracked =
+      Array.isArray(sessionIds) && sessionIds.length > 0
+        ? sessionIds.map(String)
+        : this.store
+          ? Object.keys(this.store.state?.threads ?? {})
+          : [];
+    // 硬上限：一个项目里堆上百个线程时不把宿主读穿；超出的行退回事件推导
+    const ids = tracked.slice(0, 200);
     /** @type {Map<string, any>} */
     const states = new Map();
     /** @type {Map<string, any>} */
     const summaries = new Map();
-    // 硬上限：一个项目里堆上百个线程时不把宿主读穿；超出的行退回事件推导
-    const ids = tracked.slice(0, 200);
-    if (sc && typeof sc.state === "function") {
+    const stale = /** @type {string[]} */ ([]);
+    for (const sessionId of ids) {
+      const cached = this.liveStateCache.get(sessionId);
+      if (!force && cached && now - cached.at < 2500) {
+        if (cached.value) states.set(sessionId, cached.value);
+        continue;
+      }
+      stale.push(sessionId);
+    }
+    if (sc && typeof sc.state === "function" && stale.length > 0) {
       await Promise.all(
-        ids.map(async (sessionId) => {
+        stale.map(async (sessionId) => {
           try {
             const value = await sc.state({ sessionId }, AbortSignal.timeout(1500));
+            this.liveStateCache.set(sessionId, { at: now, value });
             if (value && typeof value === "object") states.set(sessionId, value);
           } catch {
             /* 冷会话/服务不可用：留空，交给事件推导与持久记录 */
+            this.liveStateCache.set(sessionId, { at: now, value: null });
           }
         }),
       );
     }
-    if (sc && typeof sc.list === "function") {
+    const summaryStale = force || now - this.liveSummaryCache.at >= 2500;
+    if (summaryStale && sc && typeof sc.list === "function") {
       try {
         const items = await sc.list(AbortSignal.timeout(4000));
+        /** @type {Map<string, any>} */
+        const next = new Map();
         for (const item of Array.isArray(items) ? items : []) {
           const sessionId = String(item?.sessionId ?? "");
-          if (sessionId !== "") summaries.set(sessionId, item);
+          if (sessionId !== "") next.set(sessionId, item);
         }
+        this.liveSummaryCache = { at: now, summaries: next };
       } catch {
         /* 摘要拿不到只是少个标题，不影响状态 */
       }
     }
-    this.liveCache = { at: now, states, summaries };
+    for (const sessionId of ids) {
+      const summary = this.liveSummaryCache.summaries.get(sessionId);
+      if (summary !== undefined) summaries.set(sessionId, summary);
+    }
+    // 缓存上限：会话删了之后 entry 会一直留着，超过 500 条就从最旧的开始丢
+    if (this.liveStateCache.size > 500) {
+      const entries = [...this.liveStateCache.entries()].sort((a, b) => a[1].at - b[1].at);
+      for (let i = 0; i < entries.length - 500; i += 1) this.liveStateCache.delete(entries[i][0]);
+    }
     return { states, summaries };
   }
 
@@ -3744,7 +3778,11 @@ export class ProjectsService extends TypertRemoteService {
     const projectId = key;
     const store = this.requireStore();
     const threads = store.listThreads(projectId);
-    const facts = await this.liveSessionFacts();
+    // 只问本项目的线程：此前对全库线程逐个 state()，多项目/大项目时是 O(全库) 宿主调用
+    const facts = await this.liveSessionFacts(
+      false,
+      threads.map((/** @type {any} */ thread) => String(thread.sessionId ?? "")).filter(Boolean),
+    );
     const archivedIds = new Set(
       Array.isArray(this.workspaceRegistry?.archivedSessionIds)
         ? this.workspaceRegistry.archivedSessionIds.map(String)
