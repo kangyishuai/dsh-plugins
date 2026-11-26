@@ -8375,7 +8375,7 @@ window.__ModuleLoader__.load({
                   ...styles.secondaryButton,
                   padding: "1px 8px",
                   fontSize: "11px",
-                  opacity: threadHover === row.sessionId ? 1 : 0,
+                  opacity: threadHover === row.sessionId ? 1 : 0.35,
                   transition: "opacity 120ms ease",
                 },
                 "data-projects-thread-expand": row.sessionId,
@@ -8561,7 +8561,8 @@ window.__ModuleLoader__.load({
                     ...styles.iconButton,
                     flex: "none",
                     // Claude 的行内操作是 hover 才出现（常驻会显得脏）
-                    opacity: threadHover === row.sessionId || threadMenu === row.sessionId ? 1 : 0,
+                    opacity:
+                      threadHover === row.sessionId || threadMenu === row.sessionId ? 1 : 0.35,
                     transition: "opacity 120ms ease",
                   },
                   "data-projects-thread-menu": row.sessionId,
@@ -9201,10 +9202,16 @@ window.__ModuleLoader__.load({
                       colorScheme === "light"
                         ? {
                             ...styles.groupHead,
-                            background: "rgba(0,0,0,0.045)",
+                            background:
+                              groupHover === group.id ? "rgba(0,0,0,0.07)" : "rgba(0,0,0,0.045)",
                             padding: "3px 8px",
                           }
-                        : { ...styles.groupHead, padding: "3px 8px" },
+                        : {
+                            ...styles.groupHead,
+                            background:
+                              groupHover === group.id ? "rgba(127,127,127,0.09)" : T.panel,
+                            padding: "3px 8px",
+                          },
                     onMouseEnter: () => setGroupHover(group.id),
                     onMouseLeave: () => setGroupHover(""),
                     "data-projects-group": group.id,
