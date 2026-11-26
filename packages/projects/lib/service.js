@@ -58,11 +58,13 @@ import {
   initialStats,
   observeEvent,
   parseNumstat,
+  selectDiffTargets,
   summarizeForRow,
   toolSummaryOf,
 } from "./observability.js";
 import {
   compactEvent,
+  deriveState,
   estimateRemainingMs,
   groupRows,
   hydrateThreadView,
@@ -119,6 +121,7 @@ import {
   historyFromDelivery,
   MANUAL_COST_HINT,
   newRoutineId,
+  planRoutineHostAction,
   planRoutineUpdate,
   ROUTINE_COST_HINT,
   validateRoutineInput,
@@ -377,6 +380,8 @@ export class ProjectsService extends TypertRemoteService {
     /** P0-3：线程 diff 摘要缓存（sessionId → {key, at, diff}）。progress 每 5s 轮询，
      * 不缓存的话每行每 5s 都 spawn 一次 git。 @type {Map<string, {key: string, at: number, diff: any}>} */
     this.diffCache = new Map();
+    /** M6-P0：同一项目的并发 progress 合并成一次计算（notifier + 详情页会同时轮询）。 @type {Map<string, Promise<any>>} */
+    this.progressInFlight = new Map();
     // M6：失败自动重试调度器（单例/重查/上限/可取消都在 lib 里，有伪定时器单测）
     this.autoRetryScheduler = createAutoRetryScheduler({
       delayMs: 60_000,
@@ -1858,34 +1863,86 @@ export class ProjectsService extends TypertRemoteService {
     if (!routine) return { ok: false, reason: "routine/not-found" };
     const planned = planRoutineUpdate({ ...(input ?? {}), timeZone: this.hostTimeZone() });
     if (!planned.ok) return { ok: false, reason: planned.reason };
+    // 定时↔手动必须真的建/删宿主定时：只 update 会让「改成手动」继续按旧频率烧 token，
+    // 而「手动改成每天」因为原本没有 scheduleId 会变成永不投递。
+    const wantsTiming = Object.hasOwn(planned.hostPatch, "timing");
+    const action = planRoutineHostAction({
+      scheduleId: String(routine.scheduleId ?? ""),
+      wantsTiming,
+    });
     const schedule = this.scheduleHost();
-    const scheduleId = String(routine.scheduleId ?? "");
-    if (scheduleId !== "" && "timing" in planned.hostPatch) {
+    let nextScheduleId = String(routine.scheduleId ?? "");
+    if (action === "delete" || action === "update") {
       if (!schedule || typeof schedule.edit !== "function") {
         return { ok: false, reason: "schedule-unavailable" };
       }
       try {
-        await schedule.edit({ id: scheduleId, action: "update", patch: planned.hostPatch });
+        await schedule.edit(
+          action === "delete"
+            ? { id: nextScheduleId, action: "delete" }
+            : { id: nextScheduleId, action: "update", patch: planned.hostPatch },
+        );
       } catch (error) {
         store.appendAudit({
           action: "routine/update-failed",
           projectId: project.id,
           routineId,
+          reason: action,
           detail: String(/** @type {any} */ (error)?.message ?? error).slice(0, 200),
         });
         store.save();
         return { ok: false, reason: "schedule-failed" };
       }
+      if (action === "delete") nextScheduleId = "";
+    } else if (action === "create") {
+      if (!schedule || typeof schedule.create !== "function") {
+        return { ok: false, reason: "schedule-unavailable" };
+      }
+      const cwd =
+        Array.isArray(project.dirs) && project.dirs.length > 0 ? project.dirs[0] : this.dataRoot;
+      try {
+        mkdirSync(cwd, { recursive: true });
+      } catch {
+        /* 目录已存在/无权限：宿主 create 会报出真正原因 */
+      }
+      try {
+        const created = await schedule.create({
+          title: `[${String(project.name ?? project.id)}] ${String(planned.local.name)}`.slice(
+            0,
+            120,
+          ),
+          prompt: String(planned.local.instructions),
+          timing: planned.hostPatch.timing,
+          target: { kind: "new", create: { cwd } },
+        });
+        nextScheduleId = String(created?.id ?? "");
+      } catch (error) {
+        store.appendAudit({
+          action: "routine/update-failed",
+          projectId: project.id,
+          routineId,
+          reason: "create",
+          detail: String(/** @type {any} */ (error)?.message ?? error).slice(0, 200),
+        });
+        store.save();
+        return { ok: false, reason: "schedule-failed" };
+      }
+      if (nextScheduleId === "") return { ok: false, reason: "schedule/no-id" };
     }
-    const written = store.patchRoutine(project.id, routineId, planned.local);
+    const written = store.patchRoutine(project.id, routineId, {
+      ...planned.local,
+      scheduleId: nextScheduleId,
+    });
     store.appendAudit({
       action: "routine/updated",
       projectId: project.id,
       routineId,
       frequency: planned.local.frequency,
+      hostAction: action,
+      scheduleId: nextScheduleId,
     });
     store.save();
-    return { ok: true, routine: written.routine };
+    return { ok: true, routine: written.routine, hostAction: action };
   }
 
   /**
@@ -3057,7 +3114,9 @@ export class ProjectsService extends TypertRemoteService {
     const key = `${worktree}|${base}`;
     const now = Date.now();
     const cached = this.diffCache.get(sessionId);
-    if (options?.force !== true && cached && cached.key === key && now - cached.at < 5000) {
+    // TTL 与 5s 轮询错开：原来 5000 恰好等于轮询间隔，实测 63% miss、缓存等于没有；
+    // 但也不能太长（15s 会让刚改的文件等一轮轮询才现），取 8s。
+    if (options?.force !== true && cached && cached.key === key && now - cached.at < 8000) {
       return cached.diff;
     }
     let diff = null;
@@ -3079,13 +3138,21 @@ export class ProjectsService extends TypertRemoteService {
   async diffSummaries(threads) {
     /** @type {Map<string, any>} */
     const diffs = new Map();
+    // 只算最近 N 条有 worktree 的线程，且并发度上限 4：
+    // 以前对每条线程 Promise.all 直接 spawn git，200 线程 = 200 个并发子进程。
+    const targets = selectDiffTargets(threads, 24);
+    const queue = [...targets];
+    const workerCount = Math.min(4, queue.length);
     await Promise.all(
-      (Array.isArray(threads) ? threads : []).map(async (thread) => {
-        const sessionId = String(thread?.sessionId ?? "");
-        try {
-          diffs.set(sessionId, await this.diffOfThread(thread));
-        } catch {
-          diffs.set(sessionId, null);
+      Array.from({ length: workerCount }, async () => {
+        while (queue.length > 0) {
+          const thread = queue.shift();
+          const sessionId = String(thread?.sessionId ?? "");
+          try {
+            diffs.set(sessionId, await this.diffOfThread(thread));
+          } catch {
+            diffs.set(sessionId, null);
+          }
         }
       }),
     );
@@ -3567,7 +3634,54 @@ export class ProjectsService extends TypertRemoteService {
    * @param {string} projectId
    * @returns {Promise<any>}
    */
+  /**
+   * 轻量线程状态（给全局通知轮询用）：只回 sessionId + 六态 + 项目通知开关，
+   * 不做 git / 不读文件 / 不组装行。全局 notifier 以前每 5s 对每个活跃项目调 `progress()`，
+   * 每条 isolated 线程 spawn 一次 git；有 N 个项目时就是 N 倍进程风暴。
+   * @returns {Promise<Array<{ projectId: string, notifyPrefs: any, rows: Array<{ sessionId: string, state: string }> }>>}
+   */
+  async threadStates() {
+    const store = this.requireStore();
+    /** @type {any[]} */
+    const out = [];
+    for (const project of store.listProjects()) {
+      if (project.state !== "active") continue;
+      /** @type {any[]} */
+      const rows = [];
+      for (const thread of store.listThreads(project.id)) {
+        const sessionId = String(thread?.sessionId ?? "");
+        if (sessionId === "") continue;
+        const view = mergeRecord(this.views.get(sessionId), thread);
+        rows.push({ sessionId, state: deriveState(view) });
+      }
+      out.push({ projectId: project.id, notifyPrefs: project.notifyPrefs ?? {}, rows });
+    }
+    return out;
+  }
+
+  /**
+   * 同一项目并发 progress 合并：全局 notifier（每 5s）和详情页（每 5s）会同时打进来，
+   * 不合并就会 2× 计算、2× spawn git。
+   * @param {string} [projectId]
+   * @returns {Promise<any>}
+   */
   async progress(projectId) {
+    const key = String(projectId ?? "");
+    const existing = this.progressInFlight.get(key);
+    if (existing) return existing;
+    const task = this.progressUncoalesced(key).finally(() => {
+      this.progressInFlight.delete(key);
+    });
+    this.progressInFlight.set(key, task);
+    return task;
+  }
+
+  /**
+   * @param {string} key
+   * @returns {Promise<any>}
+   */
+  async progressUncoalesced(key) {
+    const projectId = key;
     const store = this.requireStore();
     const threads = store.listThreads(projectId);
     const facts = await this.liveSessionFacts();
@@ -3622,11 +3736,9 @@ export class ProjectsService extends TypertRemoteService {
           attempts: Number(thread.autoRetryCount ?? 0),
         });
         if (retryDecision.retry) this.scheduleAutoRetry(projectId, String(thread.sessionId));
-        // 非失败状态把已用次数归零（下次失败重新给 2 次机会）
-        if (row.view?.state !== "failed" && Number(thread.autoRetryCount ?? 0) > 0) {
-          store.setThreadWorktree(String(thread.sessionId), { autoRetryCount: 0 });
-          dirty = true;
-        }
+        // 注意：**不**在非失败时清零。以前一旦观测到 idle 就归零，导致
+        // failed→idle→failed 每轮都算「第一次失败」，可以每 60s 无限重试，
+        // 「最多 2 次」根本不成立。现在计数是线程生命周期内累计的。
       } catch (error) {
         this.logger?.warn?.(
           `[projects] row state persist failed: ${String(/** @type {any} */ (error)?.message ?? error).slice(0, 160)}`,
@@ -6072,6 +6184,7 @@ declareRemote(ProjectsService, "detachThread");
 declareRemote(ProjectsService, "createThread");
 declareRemote(ProjectsService, "reclaimThread");
 declareRemote(ProjectsService, "progress");
+declareRemote(ProjectsService, "threadStates");
 declareRemote(ProjectsService, "threadStats");
 declareRemote(ProjectsService, "previewRoute");
 declareRemote(ProjectsService, "route");

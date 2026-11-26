@@ -1,7 +1,8 @@
 // @ts-check
 /**
  * 「失败自动重试」的判定（纯函数）。语义**不是** Claude 的"用量恢复续跑"：
- * 只在**线程以失败结束**时，按项目开关自动再发一句「继续」，最多 2 次。
+ * 只在**线程以失败结束**时，按项目开关自动再发一句「继续」，**线程生命周期内累计最多 2 次**
+ * （不因中间短暂恢复正常就清零，否则 failed→idle→failed 可以无限重试）。
  * @param {{ enabled?: boolean, state?: string, previousState?: string, attempts?: number, maxAttempts?: number }} input
  * @returns {{ retry: boolean, reason: string }}
  */

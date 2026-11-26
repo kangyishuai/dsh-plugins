@@ -50,7 +50,7 @@ window.__ModuleLoader__.load({
       "settings.budget": "预算（日线程 / 并发 / 步数 / token）",
       "settings.autoRetry": "失败自动重试（最多 2 次）",
       "settings.autoRetryHint":
-        "线程以失败结束时，60 秒后自动再发一句「继续」；成功或超过 2 次就停。这不是「用量恢复续跑」。",
+        "线程以失败结束时，60 秒后自动再发一句「继续」；累计最多 2 次（不因中间恢复清零）。这不是「用量恢复续跑」。",
       "settings.budgetSave": "保存预算",
       "settings.budgetSaved": "预算已保存：{budget}",
       "settings.budgetUnlimited": "不限",
@@ -278,6 +278,7 @@ window.__ModuleLoader__.load({
       "detail.working.verbs": "酝酿中|推进中|梳理中|核对中|起草中|推演中",
       "detail.rowSub.working": "正在处理…",
       "detail.rowSub.question": "等你回复：{text}",
+      "detail.rowSub.result": "已完成",
       "detail.rowSub.failed": "上一轮失败了，点开看原因",
       "detail.rowSub.review": "等你审阅",
       "detail.rowSub.archived": "已归档",
@@ -790,6 +791,7 @@ window.__ModuleLoader__.load({
       "detail.working.verbs": "Ruminating|Billowing|Moonwalking|Pondering|Drafting|Sifting",
       "detail.rowSub.working": "Working…",
       "detail.rowSub.question": "Waiting on you: {text}",
+      "detail.rowSub.result": "Done",
       "detail.rowSub.failed": "Last turn failed — open for details",
       "detail.rowSub.review": "Waiting for your review",
       "detail.rowSub.archived": "Archived",
@@ -1147,7 +1149,7 @@ window.__ModuleLoader__.load({
       "settings.budget": "Budget (threads/day / concurrent / steps / tokens)",
       "settings.autoRetry": "Auto-retry on failure (max 2)",
       "settings.autoRetryHint":
-        'When a thread ends failed, it re-sends "continue" once after 60s; stops after 2 tries. Not the same as resuming after a usage limit.',
+        'When a thread ends failed, it re-sends "continue" after 60s; at most 2 tries per thread, never reset. Not the same as resuming after a usage limit.',
       "settings.budgetSave": "Save budget",
       "settings.budgetSaved": "Budget saved: {budget}",
       "settings.budgetUnlimited": "unlimited",
@@ -7049,7 +7051,8 @@ window.__ModuleLoader__.load({
           if (kind === "archived") return text(t, "detail.rowSub.archived");
           if (kind === "result") {
             const summary = String(row.summary || "").trim();
-            if (summary !== "") return summary;
+            // 摘要只含真实观测到的量；一条都没有时回退到"已完成"，不写 0 步 / n/a 这种调试串
+            return summary !== "" ? summary : text(t, "detail.rowSub.result");
           }
           if (rawTitle === "" && taskHint !== "" && taskHint !== title) return taskHint;
           if (state === "working") return pickVerb();
@@ -12923,61 +12926,49 @@ window.__ModuleLoader__.load({
           // 在用户没看的时候纯属浪费（而且没人能看见 toast）。
           const doc = typeof document === "undefined" ? null : document;
           if (doc?.hidden === true) return;
-          call(api.ctx, "listProjects").then(
+          // 轻量 RPC：只回线程六态 + 项目通知开关；不再每 5s 对每个项目跑 progress()。
+          // 以前 progress() 会为每条 isolated 线程 spawn 一次 git，多项目时是进程风暴。
+          call(api.ctx, "threadStates").then(
             (projects) => {
               if (cancelled || !Array.isArray(projects)) return;
-              const active = projects.filter(
-                (/** @type {any} */ project) => project.state === "active",
-              );
-              Promise.all(
-                active.map((/** @type {any} */ project) =>
-                  call(api.ctx, "progress", { projectId: project.id }).then(
-                    (value) => ({ projectId: project.id, value }),
-                    () => null,
-                  ),
-                ),
-              ).then((results) => {
-                if (cancelled) return;
-                /** @type {Record<string, {state: string, projectId?: string}>} */
-                const threads = {};
-                for (const result of results) {
-                  if (!result?.value) continue;
-                  for (const row of result.value.rows ?? []) {
-                    threads[row.sessionId] = {
-                      state: row.view?.state ?? "idle",
-                      projectId: result.projectId,
-                    };
-                  }
+              /** @type {Record<string, {state: string, projectId?: string}>} */
+              const threads = {};
+              /** @type {Record<string, any>} */
+              const prefsByProject = {};
+              for (const project of projects) {
+                const projectId = String(project?.projectId ?? "");
+                if (projectId === "") continue;
+                prefsByProject[projectId] = project.notifyPrefs || {};
+                for (const row of project.rows ?? []) {
+                  threads[String(row.sessionId)] = {
+                    state: String(row.state ?? "idle"),
+                    projectId,
+                  };
                 }
-                const next = {
-                  threads,
-                  projects: active.map((/** @type {any} */ project) => project.id),
-                };
-                const items = diffAttention(previous.current, next);
-                previous.current = next;
-                // F58：按项目的通知开关过滤（项目没配置就用默认值：失败/等你开、完成关）
-                /** @type {Record<string, any>} */
-                const prefsByProject = {};
-                for (const project of active) {
-                  if (project?.id) prefsByProject[project.id] = project.notifyPrefs || {};
-                }
-                const defaults = { failed: true, "waiting-user": true, completed: false };
-                const filtered = items.filter((/** @type {any} */ item) => {
-                  const override = prefsByProject[item.projectId] || {};
-                  const prefs = { ...defaults, ...override };
-                  return prefs[item.kind] !== false;
-                });
-                const counts = summarize(filtered);
-                const parts = [];
-                if (counts.failed > 0)
-                  parts.push(text(t, "notify.failed", { count: counts.failed }));
-                if (counts.waiting > 0)
-                  parts.push(text(t, "notify.waiting", { count: counts.waiting }));
-                if (counts.completed > 0)
-                  parts.push(text(t, "notify.completed", { count: counts.completed }));
-                const line = parts.join(" · ");
-                if (line !== "") setNotice({ text: line, at: Date.now() });
+              }
+              const active = projects.map((/** @type {any} */ project) => project.projectId);
+              const next = {
+                threads,
+                projects: active,
+              };
+              const items = diffAttention(previous.current, next);
+              previous.current = next;
+              // F58：按项目的通知开关过滤（项目没配置就用默认值：失败/等你开、完成关）
+              const defaults = { failed: true, "waiting-user": true, completed: false };
+              const filtered = items.filter((/** @type {any} */ item) => {
+                const override = prefsByProject[item.projectId] || {};
+                const prefs = { ...defaults, ...override };
+                return prefs[item.kind] !== false;
               });
+              const counts = summarize(filtered);
+              const parts = [];
+              if (counts.failed > 0) parts.push(text(t, "notify.failed", { count: counts.failed }));
+              if (counts.waiting > 0)
+                parts.push(text(t, "notify.waiting", { count: counts.waiting }));
+              if (counts.completed > 0)
+                parts.push(text(t, "notify.completed", { count: counts.completed }));
+              const line = parts.join(" · ");
+              if (line !== "") setNotice({ text: line, at: Date.now() });
             },
             () => {},
           );

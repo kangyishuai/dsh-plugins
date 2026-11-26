@@ -1,7 +1,7 @@
 // @ts-check
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { planRoutineUpdate } from "../lib/routines.js";
+import { planRoutineHostAction, planRoutineUpdate } from "../lib/routines.js";
 
 describe("Routine 编辑计划（纯函数）", () => {
   it("daily 改动 → 本地补丁带时间，宿主 patch 带 prompt + daily timing", () => {
@@ -18,6 +18,19 @@ describe("Routine 编辑计划（纯函数）", () => {
     assert.equal(value.local.time, "09:00:00");
     assert.equal(value.hostPatch.prompt, "写三条要点");
     assert.equal(value.hostPatch.timing.daily.time, "09:00:00");
+  });
+
+  it("宿主动作规划：定时↔手动必须真的建/删，否则漂移", () => {
+    assert.equal(planRoutineHostAction({ scheduleId: "sch-1", wantsTiming: true }), "update");
+    assert.equal(planRoutineHostAction({ scheduleId: "sch-1", wantsTiming: false }), "delete");
+    assert.equal(planRoutineHostAction({ scheduleId: "", wantsTiming: true }), "create");
+    assert.equal(planRoutineHostAction({ scheduleId: "", wantsTiming: false }), "none");
+    // 与 planRoutineUpdate 串起来：manual 档没有 timing → 应该 delete
+    const manual = /** @type {any} */ (
+      planRoutineUpdate({ name: "x", instructions: "y", frequency: "manual" })
+    );
+    assert.equal("timing" in manual.hostPatch, false);
+    assert.equal(planRoutineHostAction({ scheduleId: "sch-1", wantsTiming: false }), "delete");
   });
 
   it("manual → 不产生宿主 timing；空指令/坏频率拒绝", () => {

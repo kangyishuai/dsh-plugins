@@ -7,6 +7,7 @@ import {
   initialStats,
   observeEvent,
   parseNumstat,
+  selectDiffTargets,
   summarizeEvents,
   summarizeForRow,
   tokensFrom,
@@ -99,20 +100,35 @@ describe("parseNumstat", () => {
 });
 
 describe("summarizeForRow", () => {
-  it("有 diff 时给出文件数与增删", () => {
+  it("有数据时给真实量：步数/工具/diff/ tokens", () => {
     const text = summarizeForRow({
       stats: { ...initialStats(), steps: 2, toolCalls: 3, tokens: 100, usageSeen: true },
       diff: { files: 1, added: 5, removed: 2 },
     });
-    assert.match(text, /2 步/u);
-    assert.match(text, /3 次工具/u);
-    assert.match(text, /diff 1 文件 \+5\/-2/u);
-    assert.match(text, /100 tokens/u);
+    assert.equal(text, "2 步 · 3 次工具 · +5/−2 · 100 tokens");
   });
 
-  it("缺 diff / 缺 usage 时显式写 n/a", () => {
+  it("缺数据就不写（不再出现 diff n/a / tokens n/a / 0 步）", () => {
     const text = summarizeForRow({ stats: initialStats(), diff: null });
-    assert.match(text, /diff n\/a/u);
-    assert.match(text, /tokens n\/a/u);
+    assert.equal(text, "");
+    assert.doesNotMatch(text, /n\/a/u);
+    assert.doesNotMatch(text, /0 步/u);
+  });
+});
+
+describe("selectDiffTargets（限制每轮 git 数）", () => {
+  it("只留有 worktree 的，按最近活动取前 N", () => {
+    const threads = [
+      { sessionId: "a", worktree: "/w/a", lastActivityAt: 10 },
+      { sessionId: "b", worktree: "", lastActivityAt: 99 },
+      { sessionId: "c", worktree: "/w/c", lastActivityAt: 30 },
+      { sessionId: "d", worktree: "/w/d", lastActivityAt: 20 },
+    ];
+    const picked = selectDiffTargets(threads, 2);
+    assert.deepEqual(
+      picked.map((item) => item.sessionId),
+      ["c", "d"],
+    );
+    assert.equal(selectDiffTargets([], 24).length, 0);
   });
 });

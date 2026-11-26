@@ -370,3 +370,19 @@ export function planRoutineUpdate(input) {
   };
   return { ok: true, local, hostPatch };
 }
+
+/**
+ * 编辑 routine 时该对宿主定时做什么（纯函数）。
+ * 关键：manual 档没有任何 timing，**必须把旧定时删掉**，否则宿主会继续按旧频率投递、继续花 token；
+ * 反过来 manual→daily 因为原来没有 scheduleId，必须**新建**，否则本地显示"每天"但从不投递。
+ * @param {{ scheduleId?: string, wantsTiming?: boolean }} input
+ * @returns {"none"|"create"|"update"|"delete"}
+ */
+export function planRoutineHostAction(input) {
+  const hasSchedule = String(input?.scheduleId ?? "") !== "";
+  const wantsTiming = input?.wantsTiming === true;
+  if (hasSchedule && wantsTiming) return "update";
+  if (hasSchedule && !wantsTiming) return "delete";
+  if (!hasSchedule && wantsTiming) return "create";
+  return "none";
+}
