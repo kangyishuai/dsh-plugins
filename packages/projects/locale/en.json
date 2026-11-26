@@ -626,6 +626,7 @@
     "detail.diag.coordinatorEmpty": "no coordinator",
     "detail.diag.pollRunning": "PR polling on",
     "detail.diag.pollStopped": "PR polling off",
-    "detail.diag.details": "Details"
+    "detail.diag.details": "Details",
+    "detail.sparkCaption": "last 7 days"
   }
 }

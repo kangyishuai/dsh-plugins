@@ -626,6 +626,7 @@
     "detail.diag.coordinatorEmpty": "协调者未建",
     "detail.diag.pollRunning": "PR 轮询中",
     "detail.diag.pollStopped": "PR 轮询停",
-    "detail.diag.details": "详情"
+    "detail.diag.details": "详情",
+    "detail.sparkCaption": "近 7 天"
   }
 }

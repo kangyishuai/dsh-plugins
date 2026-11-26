@@ -582,6 +582,7 @@ window.__ModuleLoader__.load({
       "detail.resolved": "已标记解决（可重开）",
       "detail.settings": "项目设置",
       "detail.settingsHint": "插件设置入口在宿主「设置 → 插件 → 项目」里。",
+      "detail.sparkCaption": "近 7 天",
       "detail.sparkHint": "最近 7 天的 token 用量",
       "detail.steps": "{done}/{total}",
       "detail.tasksPopover": "任务 · {done}/{total}",
@@ -1114,6 +1115,7 @@ window.__ModuleLoader__.load({
       "detail.resolved": "Marked resolved (reopenable)",
       "detail.settings": "Project settings",
       "detail.settingsHint": "Plugin settings live under Settings → Plugins → Projects.",
+      "detail.sparkCaption": "last 7 days",
       "detail.sparkHint": "Tokens used in the last 7 days",
       "detail.steps": "{done}/{total}",
       "detail.tasksPopover": "Tasks · {done}/{total}",
@@ -1718,7 +1720,7 @@ window.__ModuleLoader__.load({
       meta: {
         // 小字用 secondary（faint 在浅色下约 3.2:1，达不到可读标准）
         color: T.dim,
-        fontSize: "12px",
+        fontSize: "12.5px",
         minWidth: 0,
         overflow: "hidden",
         textOverflow: "ellipsis",
@@ -2057,9 +2059,11 @@ window.__ModuleLoader__.load({
       pillBar: {
         display: "flex",
         alignItems: "center",
-        gap: "4px",
+        gap: "3px",
         flexWrap: "nowrap",
         overflowX: "auto",
+        // 去掉横向滚动条占位（否则浅色下常驻 5px 灰条）
+        scrollbarWidth: "none",
         padding: "2px 0 6px",
       },
       filterPill: {
@@ -2149,7 +2153,7 @@ window.__ModuleLoader__.load({
       },
       rowTitle: {
         fontWeight: 500,
-        fontSize: "14px",
+        fontSize: "15px",
         minWidth: 0,
         overflow: "hidden",
         textOverflow: "ellipsis",
@@ -2157,7 +2161,7 @@ window.__ModuleLoader__.load({
       },
       rowSub: {
         color: T.dim,
-        fontSize: "13px",
+        fontSize: "13.5px",
         minWidth: 0,
         overflow: "hidden",
         textOverflow: "ellipsis",
@@ -10784,23 +10788,35 @@ window.__ModuleLoader__.load({
                   ? h(
                       "div",
                       {
-                        style: styles.spark,
+                        style: { display: "flex", flexDirection: "column", gap: "2px" },
                         "data-projects-spark": "",
                         title: text(t, "detail.sparkHint"),
                       },
-                      usageDays.map((/** @type {any} */ item) =>
-                        h("span", {
-                          key: String(item.date),
-                          "data-projects-spark-bar": String(item.date),
-                          style: {
-                            ...styles.sparkBar,
-                            height:
-                              peak > 0
-                                ? `${Math.max(3, Math.round(((Number(item.tokens) || 0) / peak) * 22))}px`
-                                : "3px",
-                            background: Number(item.tokens) > 0 ? T.accentText : T.border,
-                          },
-                        }),
+                      h(
+                        "span",
+                        {
+                          style: { ...styles.meta, fontSize: "10.5px" },
+                          "data-projects-spark-caption": "",
+                        },
+                        text(t, "detail.sparkCaption"),
+                      ),
+                      h(
+                        "div",
+                        { style: styles.spark },
+                        usageDays.map((/** @type {any} */ item) =>
+                          h("span", {
+                            key: String(item.date),
+                            "data-projects-spark-bar": String(item.date),
+                            style: {
+                              ...styles.sparkBar,
+                              height:
+                                peak > 0
+                                  ? `${Math.max(3, Math.round(((Number(item.tokens) || 0) / peak) * 22))}px`
+                                  : "3px",
+                              background: Number(item.tokens) > 0 ? T.accentText : T.border,
+                            },
+                          }),
+                        ),
                       ),
                     )
                   : null,
