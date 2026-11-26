@@ -8485,7 +8485,20 @@ window.__ModuleLoader__.load({
             row.prNumber
               ? h(
                   "span",
-                  { style: styles.archiveBadge, "data-projects-thread-pr": row.sessionId },
+                  {
+                    // 参考图 22：行内 PR 徽章是「绿色分支符号 + #编号」（不带状态词，状态看颜色点）
+                    style: {
+                      ...styles.inlineChip,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "3px",
+                      color: T.success,
+                      fontVariantNumeric: "tabular-nums",
+                    },
+                    title: text(t, `detail.ci.${String(row.ciState ?? "none")}`),
+                    "data-projects-thread-pr": row.sessionId,
+                  },
+                  "⎇",
                   text(t, "detail.prBadge", { number: row.prNumber }),
                 )
               : null,
