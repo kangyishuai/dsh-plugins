@@ -1892,11 +1892,10 @@ window.__ModuleLoader__.load({
         display: "flex",
         flexDirection: "column",
         gap: "12px",
-        padding: "18px 20px",
-        borderRadius: "14px",
-        border: "1px solid rgba(0,0,0,0.06)",
+        // 与深色 panelCol 同一盒模型（此前 padding/border 不同导致切主题整体位移 18px）
+        padding: "12px 16px",
+        borderLeft: "1px solid rgba(0,0,0,0.14)",
         background: "#ffffff",
-        boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
       },
       panelColNarrow: {
         minWidth: 0,
@@ -8862,7 +8861,10 @@ window.__ModuleLoader__.load({
                 h(
                   "div",
                   {
-                    style: styles.groupHead,
+                    style:
+                      colorScheme === "light"
+                        ? { ...styles.groupHead, background: "rgba(0,0,0,0.045)" }
+                        : styles.groupHead,
                     "data-projects-group": group.id,
                     "data-projects-group-count": String(group.rows.length),
                     "data-projects-group-collapsed": collapsed ? "true" : "false",
@@ -9044,7 +9046,7 @@ window.__ModuleLoader__.load({
                       "div",
                       { style: styles.groupBody, "data-projects-group-body": group.id },
                       group.rows.map((/** @type {any} */ row) =>
-                        threadRowView(row, group.rows.length > 1 && row.sessionId === focusedId),
+                        threadRowView(row, group.rows.length > 3 && row.sessionId === focusedId),
                       ),
                     ),
               );
@@ -9469,7 +9471,13 @@ window.__ModuleLoader__.load({
                   available
                     ? h(
                         "span",
-                        { style: styles.pill, "data-projects-coordinator-state": "ready" },
+                        {
+                          style:
+                            colorScheme === "light"
+                              ? { ...styles.pill, background: "rgba(0,0,0,0.045)" }
+                              : styles.pill,
+                          "data-projects-coordinator-state": "ready",
+                        },
                         String(coordinator.sessionId).slice(0, 10),
                       )
                     : null,
@@ -9582,7 +9590,12 @@ window.__ModuleLoader__.load({
                                   style:
                                     item.role === "assistant"
                                       ? styles.coordinatorBubble
-                                      : styles.coordinatorBubbleUser,
+                                      : colorScheme === "light"
+                                        ? {
+                                            ...styles.coordinatorBubbleUser,
+                                            background: "rgba(0,0,0,0.045)",
+                                          }
+                                        : styles.coordinatorBubbleUser,
                                   "data-projects-coordinator-message": String(item.role),
                                   "data-projects-coordinator-message-folded": "",
                                 },
@@ -10547,7 +10560,10 @@ window.__ModuleLoader__.load({
                   alignItems: "center",
                   flexWrap: "nowrap",
                   overflow: "hidden",
-                  borderBottom: `1px solid ${T.borderSoft}`,
+                  borderBottom:
+                    colorScheme === "light"
+                      ? "1px solid rgba(0,0,0,0.12)"
+                      : `1px solid ${T.borderSoft}`,
                   position: "sticky",
                   top: 0,
                   zIndex: 2,
@@ -10576,7 +10592,7 @@ window.__ModuleLoader__.load({
                         border: "none",
                         borderBottom: `2px solid ${tab === item.id ? T.accentText : "transparent"}`,
                         borderRadius: "6px 6px 0 0",
-                        padding: "6px 8px",
+                        padding: "6px 6px",
                         whiteSpace: "nowrap",
                         flexShrink: 0,
                         color: tab === item.id ? T.text : T.dim,
@@ -10596,10 +10612,15 @@ window.__ModuleLoader__.load({
                     display: "inline-flex",
                     alignItems: "center",
                     gap: "4px",
-                    border: `1px solid ${T.borderSoft}`,
+                    border:
+                      colorScheme === "light"
+                        ? "1px solid rgba(0,0,0,0.12)"
+                        : `1px solid ${T.borderSoft}`,
                     borderRadius: "999px",
                     padding: "1px 8px",
                     color: T.faint,
+                    flex: "1 1 70px",
+                    minWidth: 0,
                     maxWidth: "160px",
                   },
                   "data-panel-search-box": "",
@@ -10612,7 +10633,8 @@ window.__ModuleLoader__.load({
                     outline: "none",
                     color: T.text,
                     fontSize: "12px",
-                    width: "110px",
+                    width: "100%",
+                    minWidth: 0,
                     padding: "2px 0",
                   },
                   value: panelQuery,
@@ -10660,7 +10682,7 @@ window.__ModuleLoader__.load({
                   title: text(t, "detail.addViewHint"),
                   onClick: () => setTab("views"),
                 },
-                `+ ${text(t, "detail.addView")}`,
+                "+",
               ),
             ),
             // —— F28/U10：Welcome 头（大字 + 状态句 + 7 日 token 迷你图）——
