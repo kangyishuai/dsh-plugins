@@ -3960,6 +3960,13 @@ window.__ModuleLoader__.load({
               ),
             ),
           ),
+          view.loading && projects.length === 0
+            ? h(
+                "div",
+                { style: { ...styles.meta, padding: "12px 2px" }, "data-projects-loading": "" },
+                text(t, "menu.loading"),
+              )
+            : null,
           view.error
             ? h(
                 "div",
@@ -8625,7 +8632,24 @@ window.__ModuleLoader__.load({
       const body = (() => {
         if (data.loading) return h("p", { style: styles.empty }, text(t, "detail.loading"));
         if (data.error !== "")
-          return h("p", { style: styles.error, "data-projects-detail-error": "" }, data.error);
+          return h(
+            "div",
+            {
+              style: { ...styles.error, display: "flex", alignItems: "center", gap: "8px" },
+              "data-projects-detail-error": "",
+            },
+            h("span", { style: { flex: "1 1 auto" } }, data.error),
+            h(
+              "button",
+              {
+                type: "button",
+                style: { ...styles.secondaryButton, fontSize: "11.5px", padding: "1px 8px" },
+                "data-projects-retry": "detail",
+                onClick: () => load(),
+              },
+              text(t, "panel.retry"),
+            ),
+          );
         if (tab === "library") {
           // Library 不再是页签（§7.3 页签 ≤3）：右栏入口打开后**在主列**渲染，
           // 主列顶部给「返回线程列表」，再点同一 rail 行也能收起。
