@@ -5670,6 +5670,8 @@ window.__ModuleLoader__.load({
       const setShowRouteRow = routeRowState[1];
       // 主列顶部的排障信息（PR 轮询/compaction/实时监听）默认收起：
       // 参考图的主列是"对话内容优先"，这些属于诊断，折成一行摘要
+      const groupHoverState = useState("");
+      const [groupHover, setGroupHover] = groupHoverState;
       const diagnosticsState = useState(false);
       const showDiagnostics = diagnosticsState[0];
       const setShowDiagnostics = diagnosticsState[1];
@@ -8966,9 +8968,16 @@ window.__ModuleLoader__.load({
                   {
                     style:
                       colorScheme === "light"
-                        ? { ...styles.groupHead, background: "rgba(0,0,0,0.045)" }
-                        : styles.groupHead,
+                        ? {
+                            ...styles.groupHead,
+                            background: "rgba(0,0,0,0.045)",
+                            padding: "3px 8px",
+                          }
+                        : { ...styles.groupHead, padding: "3px 8px" },
+                    onMouseEnter: () => setGroupHover(group.id),
+                    onMouseLeave: () => setGroupHover(""),
                     "data-projects-group": group.id,
+                    "data-projects-group-hover": groupHover === group.id ? "true" : "false",
                     "data-projects-group-count": String(group.rows.length),
                     "data-projects-group-collapsed": collapsed ? "true" : "false",
                   },
@@ -8998,7 +9007,7 @@ window.__ModuleLoader__.load({
                       },
                       collapsed ? "›" : "⌄",
                     ),
-                    h("span", {}, groupLabel(group.id)),
+                    h("span", { style: { fontSize: "12px", color: T.dim } }, groupLabel(group.id)),
                     h(
                       "span",
                       { style: styles.groupCount, "data-projects-group-badge": group.id },
@@ -9015,6 +9024,8 @@ window.__ModuleLoader__.load({
                         fontSize: "11px",
                         cursor: "default",
                         paddingTop: "2px",
+                        opacity: groupHover === group.id || groupMenu === group.id ? 1 : 0,
+                        transition: "opacity 120ms",
                       },
                       "data-panel-group-handle": group.id,
                       title: text(t, "detail.groupReorderHint"),
@@ -9026,7 +9037,14 @@ window.__ModuleLoader__.load({
                   group.rows.length > 3
                     ? h(
                         "span",
-                        { style: styles.carousel, "data-projects-carousel": group.id },
+                        {
+                          style: {
+                            ...styles.carousel,
+                            opacity: groupHover === group.id || groupMenu === group.id ? 1 : 0,
+                            transition: "opacity 120ms",
+                          },
+                          "data-projects-carousel": group.id,
+                        },
                         h(
                           "button",
                           {
