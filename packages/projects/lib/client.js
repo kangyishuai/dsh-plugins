@@ -10463,212 +10463,212 @@ window.__ModuleLoader__.load({
                   busy || coordinatorBusy ? "…" : "↵",
                 ),
               ),
-              // composer 控件行（Claude 输入框下方那一行）：+ / 🎤 / 模型 / effort。
-              // 现阶段是**读回显 + 占位**：模型与 effort 真源在「项目设置」，这里只显示继承值。
+            ),
+            // composer 控件行（Claude 输入框下方那一行）：+ / 🎤 / 模型 / effort。
+            // 现阶段是**读回显 + 占位**：模型与 effort 真源在「项目设置」，这里只显示继承值。
+            h(
+              "div",
+              {
+                style: {
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "10px",
+                  paddingTop: "2px",
+                  color: T.faint,
+                  fontSize: "12px",
+                },
+                "data-composer-controls": "",
+              },
+              // 目标切换（Claude 只有一个 composer）：新线程 / 协调者
+              ...[
+                { id: "thread", label: text(t, "detail.composer.targetThread") },
+                { id: "coordinator", label: text(t, "detail.composer.targetCoordinator") },
+              ].map((item) =>
+                h(
+                  "button",
+                  {
+                    key: item.id,
+                    type: "button",
+                    "data-projects-composer-target": item.id,
+                    "aria-selected": composerTarget === item.id ? "true" : "false",
+                    style: {
+                      border: "none",
+                      background: composerTarget === item.id ? T.hover : "transparent",
+                      color: composerTarget === item.id ? T.text : T.faint,
+                      fontSize: "11.5px",
+                      padding: "1px 7px",
+                      borderRadius: "999px",
+                      cursor: "pointer",
+                    },
+                    onClick: () => setComposerTarget(item.id),
+                  },
+                  item.label,
+                ),
+              ),
+              h(
+                "span",
+                {
+                  style: { ...styles.meta, paddingLeft: "2px" },
+                  "data-projects-composer-hint": "",
+                },
+                text(
+                  t,
+                  composerTarget === "coordinator"
+                    ? "detail.composerHintCoordinator"
+                    : "detail.composerHint",
+                ),
+              ),
+              h("span", { style: { flex: "1 1 auto" } }),
+              h(
+                "button",
+                {
+                  type: "button",
+                  style: {
+                    width: "22px",
+                    height: "22px",
+                    borderRadius: "999px",
+                    border: `1px solid ${T.borderSoft}`,
+                    background: "transparent",
+                    color: T.dim,
+                    cursor: "default",
+                    lineHeight: 1,
+                  },
+                  "data-composer-attach": "",
+                  title: text(t, "detail.composerAttach"),
+                  disabled: true,
+                },
+                "+",
+              ),
+              h(
+                "span",
+                {
+                  "data-composer-mic": "",
+                  title: text(t, "detail.composerMic"),
+                  style: { display: "inline-flex", color: T.faint },
+                },
+                glyph("mic", 14),
+              ),
+              h("span", { style: { flex: "1 1 auto" } }),
               h(
                 "div",
-                {
-                  style: {
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "10px",
-                    paddingTop: "2px",
-                    color: T.faint,
-                    fontSize: "12px",
-                  },
-                  "data-composer-controls": "",
-                },
-                // 目标切换（Claude 只有一个 composer）：新线程 / 协调者
-                ...[
-                  { id: "thread", label: text(t, "detail.composer.targetThread") },
-                  { id: "coordinator", label: text(t, "detail.composer.targetCoordinator") },
-                ].map((item) =>
-                  h(
-                    "button",
-                    {
-                      key: item.id,
-                      type: "button",
-                      "data-projects-composer-target": item.id,
-                      "aria-selected": composerTarget === item.id ? "true" : "false",
-                      style: {
-                        border: "none",
-                        background: composerTarget === item.id ? T.hover : "transparent",
-                        color: composerTarget === item.id ? T.text : T.faint,
-                        fontSize: "11.5px",
-                        padding: "1px 7px",
-                        borderRadius: "999px",
-                        cursor: "pointer",
-                      },
-                      onClick: () => setComposerTarget(item.id),
-                    },
-                    item.label,
-                  ),
-                ),
-                h(
-                  "span",
-                  {
-                    style: { ...styles.meta, paddingLeft: "2px" },
-                    "data-projects-composer-hint": "",
-                  },
-                  text(
-                    t,
-                    composerTarget === "coordinator"
-                      ? "detail.composerHintCoordinator"
-                      : "detail.composerHint",
-                  ),
-                ),
-                h("span", { style: { flex: "1 1 auto" } }),
+                { style: { position: "relative" } },
                 h(
                   "button",
                   {
                     type: "button",
                     style: {
-                      width: "22px",
-                      height: "22px",
-                      borderRadius: "999px",
-                      border: `1px solid ${T.borderSoft}`,
-                      background: "transparent",
-                      color: T.dim,
-                      cursor: "default",
-                      lineHeight: 1,
+                      ...styles.secondaryButton,
+                      padding: "1px 8px",
+                      fontSize: "11.5px",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "4px",
                     },
-                    "data-composer-attach": "",
-                    title: text(t, "detail.composerAttach"),
-                    disabled: true,
+                    "data-composer-model": "",
+                    "data-composer-model-label": composerModelLabel,
+                    "data-composer-model-open": composerModelOpen ? "true" : "false",
+                    title: text(t, "detail.composerModelHint"),
+                    onClick: () => setComposerModelOpen(!composerModelOpen),
                   },
-                  "+",
+                  composerModelLabel,
+                  h("span", { style: { color: T.faint } }, "▾"),
                 ),
-                h(
-                  "span",
-                  {
-                    "data-composer-mic": "",
-                    title: text(t, "detail.composerMic"),
-                    style: { display: "inline-flex", color: T.faint },
-                  },
-                  glyph("mic", 14),
-                ),
-                h("span", { style: { flex: "1 1 auto" } }),
-                h(
-                  "div",
-                  { style: { position: "relative" } },
-                  h(
-                    "button",
-                    {
-                      type: "button",
-                      style: {
-                        ...styles.secondaryButton,
-                        padding: "1px 8px",
-                        fontSize: "11.5px",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: "4px",
-                      },
-                      "data-composer-model": "",
-                      "data-composer-model-label": composerModelLabel,
-                      "data-composer-model-open": composerModelOpen ? "true" : "false",
-                      title: text(t, "detail.composerModelHint"),
-                      onClick: () => setComposerModelOpen(!composerModelOpen),
-                    },
-                    composerModelLabel,
-                    h("span", { style: { color: T.faint } }, "▾"),
-                  ),
-                  composerModelOpen
-                    ? h(
-                        "div",
-                        {
-                          style: {
-                            position: "absolute",
-                            right: 0,
-                            bottom: "calc(100% + 8px)",
-                            zIndex: 14,
-                            minWidth: "240px",
-                            background: T.card,
-                            border: `1px solid ${T.border}`,
-                            borderRadius: "8px",
-                            boxShadow: "0 8px 24px rgba(0,0,0,0.3)",
-                            padding: "8px",
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: "6px",
-                            color: T.text,
-                          },
-                          "data-composer-model-menu": "",
+                composerModelOpen
+                  ? h(
+                      "div",
+                      {
+                        style: {
+                          position: "absolute",
+                          right: 0,
+                          bottom: "calc(100% + 8px)",
+                          zIndex: 14,
+                          minWidth: "240px",
+                          background: T.card,
+                          border: `1px solid ${T.border}`,
+                          borderRadius: "8px",
+                          boxShadow: "0 8px 24px rgba(0,0,0,0.3)",
+                          padding: "8px",
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: "6px",
+                          color: T.text,
                         },
-                        h(
-                          "span",
-                          { style: { ...styles.meta, fontSize: "11px" } },
-                          text(t, "detail.composerModelMenuTitle"),
-                        ),
-                        h(
-                          "select",
-                          {
-                            style: styles.input,
-                            value: composerPicked.model,
-                            "data-composer-model-select": "",
-                            onChange: (/** @type {any} */ event) =>
-                              setComposerPick({
-                                model: String(event.target.value || ""),
-                                effort: "",
-                              }),
-                          },
-                          [""]
-                            .concat(modelOptions.map((/** @type {any} */ option) => option.key))
-                            .map((/** @type {string} */ value, /** @type {number} */ index) => {
-                              const option = modelOptions[index - 1];
-                              return h(
-                                "option",
-                                { key: value || "inherit", value: value },
-                                value === ""
-                                  ? text(t, "detail.composerModelInherit")
-                                  : String(option?.label ?? value),
-                              );
+                        "data-composer-model-menu": "",
+                      },
+                      h(
+                        "span",
+                        { style: { ...styles.meta, fontSize: "11px" } },
+                        text(t, "detail.composerModelMenuTitle"),
+                      ),
+                      h(
+                        "select",
+                        {
+                          style: styles.input,
+                          value: composerPicked.model,
+                          "data-composer-model-select": "",
+                          onChange: (/** @type {any} */ event) =>
+                            setComposerPick({
+                              model: String(event.target.value || ""),
+                              effort: "",
                             }),
-                        ),
-                        composerEfforts.length > 0
-                          ? h(
-                              "select",
-                              {
-                                style: styles.input,
-                                value: composerPicked.effort,
-                                "data-composer-effort-select": "",
-                                onChange: (/** @type {any} */ event) =>
-                                  setComposerPick((/** @type {any} */ prev) => ({
-                                    model: String((prev ?? composerPicked).model ?? ""),
-                                    effort: String(event.target.value || ""),
-                                  })),
-                              },
-                              [""]
-                                .concat(composerEfforts)
-                                .map((/** @type {string} */ value) =>
-                                  h(
-                                    "option",
-                                    { key: value || "inherit", value: value },
-                                    value === "" ? text(t, "detail.composerModelInherit") : value,
-                                  ),
-                                ),
-                            )
-                          : null,
-                        h(
-                          "div",
-                          { style: { display: "flex", gap: "6px" } },
-                          h(
-                            "button",
+                        },
+                        [""]
+                          .concat(modelOptions.map((/** @type {any} */ option) => option.key))
+                          .map((/** @type {string} */ value, /** @type {number} */ index) => {
+                            const option = modelOptions[index - 1];
+                            return h(
+                              "option",
+                              { key: value || "inherit", value: value },
+                              value === ""
+                                ? text(t, "detail.composerModelInherit")
+                                : String(option?.label ?? value),
+                            );
+                          }),
+                      ),
+                      composerEfforts.length > 0
+                        ? h(
+                            "select",
                             {
-                              type: "button",
-                              style: {
-                                ...styles.primaryButton,
-                                padding: "2px 10px",
-                                fontSize: "12px",
-                              },
-                              "data-composer-model-save": "",
-                              onClick: saveComposerModel,
+                              style: styles.input,
+                              value: composerPicked.effort,
+                              "data-composer-effort-select": "",
+                              onChange: (/** @type {any} */ event) =>
+                                setComposerPick((/** @type {any} */ prev) => ({
+                                  model: String((prev ?? composerPicked).model ?? ""),
+                                  effort: String(event.target.value || ""),
+                                })),
                             },
-                            text(t, "detail.composerModelSave"),
-                          ),
+                            [""]
+                              .concat(composerEfforts)
+                              .map((/** @type {string} */ value) =>
+                                h(
+                                  "option",
+                                  { key: value || "inherit", value: value },
+                                  value === "" ? text(t, "detail.composerModelInherit") : value,
+                                ),
+                              ),
+                          )
+                        : null,
+                      h(
+                        "div",
+                        { style: { display: "flex", gap: "6px" } },
+                        h(
+                          "button",
+                          {
+                            type: "button",
+                            style: {
+                              ...styles.primaryButton,
+                              padding: "2px 10px",
+                              fontSize: "12px",
+                            },
+                            "data-composer-model-save": "",
+                            onClick: saveComposerModel,
+                          },
+                          text(t, "detail.composerModelSave"),
                         ),
-                      )
-                    : null,
-                ),
+                      ),
+                    )
+                  : null,
               ),
             ),
           ),
