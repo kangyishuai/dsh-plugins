@@ -3646,6 +3646,41 @@ try {
     /数据目录/u.test(noDirHint) && /绑定/u.test(noDirHint),
     noDirHint.slice(0, 80),
   );
+
+  // 诊断信息默认收起（主列顶部只留一行摘要），点「详情」才展开未绑定目录/轮询行
+  const diagState = await page.evaluate(() => {
+    const visible = (node) => {
+      if (!node) return false;
+      const rect = node.getBoundingClientRect();
+      return rect.width >= 8 && rect.height >= 8;
+    };
+    const hint = document.querySelector("[data-projects-no-dir-hint]");
+    const poll = document.querySelector("[data-projects-detail-poll-row]");
+    const before = {
+      summary: Boolean(document.querySelector("[data-projects-diagnostics]")),
+      hint: visible(hint),
+      poll: visible(poll),
+    };
+    document.querySelector("[data-projects-diagnostics-toggle]")?.click();
+    return before;
+  });
+  await page.waitForTimeout(500);
+  const diagAfter = await page.evaluate(() => {
+    const visible = (node) => {
+      if (!node) return false;
+      const rect = node.getBoundingClientRect();
+      return rect.width >= 8 && rect.height >= 8;
+    };
+    return {
+      hint: visible(document.querySelector("[data-projects-no-dir-hint]")),
+      poll: visible(document.querySelector("[data-projects-detail-poll-row]")),
+    };
+  });
+  add(
+    "诊断默认收起、点「详情」才显示未绑定目录与轮询行",
+    diagState.summary === true && diagState.hint === false && diagAfter.hint === true && diagAfter.poll === true,
+    JSON.stringify({ ...diagState, ...diagAfter }),
+  );
   await openDetailMenu();
   await page.evaluate(() => document.querySelector("[data-projects-delete]")?.click());
   await page.waitForTimeout(900);
