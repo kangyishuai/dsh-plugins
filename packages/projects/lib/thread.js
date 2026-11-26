@@ -79,7 +79,7 @@ export async function createIsolatedThread(input) {
   } else {
     const head = await safeGit(deps.runGit, ["rev-parse", "HEAD"], repoRoot);
     const candidatePath = worktreePath({ repoRoot, projectId, index });
-    const candidateBranch = branchName({ projectName: project.name, index });
+    const candidateBranch = branchName({ projectName: project.name, index, projectId: project.id });
     const created = await safeGit(
       deps.runGit,
       planCreate({ path: candidatePath, branch: candidateBranch }),

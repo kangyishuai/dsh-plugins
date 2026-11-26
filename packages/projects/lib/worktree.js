@@ -25,13 +25,20 @@ export function slug(name) {
 }
 
 /**
- * 分支名：`dsh/<project>-<n>`。
- * @param {{ projectName: string, index: number }} input
+ * 分支名：`dsh/<project>-<n>[-<项目短 id>]`。
+ *
+ * 为什么带项目短 id：只按项目名 + 序号命名时，同名项目/重建项目会撞上远端已有分支，
+ * `git push` 直接被拒（非快进），createPr 只能报 push-failed（真机复现）。
+ * @param {{ projectName: string, index: number, projectId?: string }} input
  * @returns {string}
  */
 export function branchName(input) {
   const index = Number.isFinite(input?.index) ? Math.max(1, Math.trunc(Number(input.index))) : 1;
-  return `${BRANCH_PREFIX}/${slug(input?.projectName)}-${index}`;
+  const projectId = String(input?.projectId ?? "")
+    .replace(/[^A-Za-z0-9]/gu, "")
+    .slice(-6);
+  const suffix = projectId === "" ? "" : `-${projectId}`;
+  return `${BRANCH_PREFIX}/${slug(input?.projectName)}-${index}${suffix}`;
 }
 
 /**

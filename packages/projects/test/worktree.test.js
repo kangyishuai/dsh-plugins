@@ -49,6 +49,10 @@ describe("命名", () => {
 
   it("序号非法时回到 1", () => {
     assert.equal(branchName({ projectName: "p", index: 0 }), "dsh/p-1");
+    assert.equal(
+      branchName({ projectName: "p", index: 2, projectId: "prj_mwxokjhl1xurtiic" }),
+      "dsh/p-2-urtiic",
+    );
     assert.equal(branchName({ projectName: "p", index: Number.NaN }), "dsh/p-1");
   });
 

@@ -1666,6 +1666,9 @@ window.__ModuleLoader__.load({
         border: `1px solid ${T.borderSoft}`,
         borderRadius: "10px",
         minWidth: 0,
+        // 展开面板必须换到下一行占满整行，否则会被挤成 ~230px 一条
+        flexBasis: "100%",
+        width: "100%",
       },
       startCard: {
         display: "flex",
@@ -1765,6 +1768,9 @@ window.__ModuleLoader__.load({
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
+        // 窄容器（右栏展开面板 375px）里按钮不许被压成逐字换行
+        whiteSpace: "nowrap",
+        flexShrink: 0,
         padding: "6px 12px",
         borderRadius: "8px",
         border: "none",
@@ -1778,6 +1784,8 @@ window.__ModuleLoader__.load({
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
+        whiteSpace: "nowrap",
+        flexShrink: 0,
         padding: "6px 12px",
         borderRadius: "8px",
         border: `1px solid ${T.border}`,
@@ -7303,6 +7311,7 @@ window.__ModuleLoader__.load({
               padding: "8px 6px",
               cursor: "pointer",
               alignItems: "flex-start",
+              flexWrap: "wrap",
               background: threadHover === row.sessionId ? T.hover : "transparent",
               borderRadius: "8px",
               boxShadow: focused ? `inset 2px 0 0 ${T.accentText}` : "none",
