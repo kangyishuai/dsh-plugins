@@ -27,6 +27,7 @@ window.__ModuleLoader__.load({
         "{projects} 个项目 · {active} 个活跃 · {threads} 个线程 · {attached} 个会话带上下文",
       "panel.empty": "还没有项目。",
       "panel.createPlaceholder": "项目名，例如 payments-api",
+      "panel.retry": "重试",
       "panel.create": "新建项目",
       "panel.creating": "正在新建…",
       "panel.refresh": "刷新",
@@ -689,6 +690,7 @@ window.__ModuleLoader__.load({
         "{projects} projects · {active} active · {threads} threads · {attached} sessions with context",
       "panel.empty": "No projects yet.",
       "panel.createPlaceholder": "Project name, e.g. payments-api",
+      "panel.retry": "Retry",
       "panel.create": "New project",
       "panel.creating": "Creating…",
       "panel.refresh": "Refresh",
@@ -3959,7 +3961,29 @@ window.__ModuleLoader__.load({
             ),
           ),
           view.error
-            ? h("div", { style: styles.error, "data-projects-error": "" }, view.error)
+            ? h(
+                "div",
+                {
+                  style: {
+                    ...styles.error,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                  },
+                  "data-projects-error": "",
+                },
+                h("span", { style: { flex: "1 1 auto" } }, view.error),
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    style: { ...styles.secondaryButton, fontSize: "11.5px", padding: "1px 8px" },
+                    "data-projects-retry": "panel",
+                    onClick: () => refresh(),
+                  },
+                  text(t, "panel.retry"),
+                ),
+              )
             : null,
           // 详情打开时列表必须卸载：否则同一批锚点（row / pin / row-menu）会出现两份，
           // 菜单和收藏就会被点到隐藏的那一份上。
@@ -7176,6 +7200,19 @@ window.__ModuleLoader__.load({
             "data-projects-thread-unread": row.unread === true ? "true" : "false",
             "data-projects-thread-focused": focused ? "true" : "false",
             "data-projects-thread-host-menu": api.contextMenuReady === true ? "yes" : "no",
+            // 可访问性：行可聚焦，Enter/Space 展开（行内按钮各自处理，不受影响）
+            tabIndex: 0,
+            role: "button",
+            "aria-expanded": expandedThread === String(row.sessionId) ? "true" : "false",
+            "aria-label": `${title} · ${rowSubtitle}`,
+            onKeyDown: (/** @type {any} */ event) => {
+              if (event.key !== "Enter" && event.key !== " ") return;
+              if (event.target !== event.currentTarget) return;
+              event.preventDefault();
+              setExpandedThread(
+                expandedThread === String(row.sessionId) ? "" : String(row.sessionId),
+              );
+            },
             onMouseEnter: () => setThreadHover(String(row.sessionId)),
             onMouseLeave: () => setThreadHover(""),
             onClick: (/** @type {any} */ event) => {

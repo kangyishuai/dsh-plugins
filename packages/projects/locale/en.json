@@ -627,6 +627,7 @@
     "detail.diag.pollRunning": "PR polling on",
     "detail.diag.pollStopped": "PR polling off",
     "detail.diag.details": "Details",
-    "detail.sparkCaption": "last 7 days"
+    "detail.sparkCaption": "last 7 days",
+    "panel.retry": "Retry"
   }
 }
