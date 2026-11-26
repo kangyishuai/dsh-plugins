@@ -2263,7 +2263,7 @@ window.__ModuleLoader__.load({
         alignItems: "center",
         gap: "2px",
         marginLeft: "auto",
-        color: T.faint,
+        color: T.dim,
         fontSize: "11px",
         flex: "none",
       },
