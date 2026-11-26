@@ -1838,6 +1838,45 @@ try {
     threadActions.remove > 0 && (threadActions.reclaim > 0 || threadActions.worktree === 0),
     JSON.stringify(threadActions),
   );
+
+  // 可访问性：行可聚焦（tabindex=0 / role=button），Enter 能展开并同步 aria-expanded
+  const rowA11y = await page.evaluate(() => {
+    const row = document.querySelector("[data-projects-thread-row]");
+    return {
+      tab: row ? row.getAttribute("tabindex") : null,
+      role: row ? row.getAttribute("role") : null,
+      expanded: row ? row.getAttribute("aria-expanded") : null,
+    };
+  });
+  add(
+    "线程行可聚焦（tabindex=0 / role=button）",
+    rowA11y.tab === "0" && rowA11y.role === "button",
+    JSON.stringify(rowA11y),
+  );
+  const rowKeyed = await page.evaluate(() => {
+    const row = document.querySelector("[data-projects-thread-row]");
+    if (!row) return false;
+    row.focus();
+    row.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    return true;
+  });
+  await page.waitForTimeout(700);
+  const rowKeyState = await page.evaluate(() => ({
+    expanded: document.querySelector("[data-projects-thread-row]")?.getAttribute("aria-expanded"),
+    detail: Boolean(document.querySelector("[data-projects-thread-detail]")),
+  }));
+  add(
+    "Enter 键展开线程行（aria-expanded 同步）",
+    rowKeyed === true && rowKeyState.expanded === "true" && rowKeyState.detail === true,
+    JSON.stringify(rowKeyState),
+  );
+  // 收起来，避免影响后面的展开面板断言（它们会自己点开）
+  await page.evaluate(() => {
+    document
+      .querySelector("[data-projects-thread-row]")
+      ?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  });
+  await page.waitForTimeout(400);
   const removeOnce = await page.evaluate(() => {
     // 上一条断言已经把菜单打开了：先看菜单项在不在，别盲目 toggle 关掉它
     if (!document.querySelector("[data-projects-thread-remove]")) {
