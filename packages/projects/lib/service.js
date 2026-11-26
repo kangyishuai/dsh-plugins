@@ -3524,8 +3524,14 @@ export class ProjectsService extends TypertRemoteService {
         const sessionId = String(thread?.sessionId ?? "");
         if (sessionId === "") continue;
         if (Number(thread?.autoRetryCount ?? 0) >= 2) continue;
-        const state = deriveState(mergeRecord(this.views.get(sessionId), thread));
-        if (state === "failed") this.autoRetryScheduler.schedule(sessionId);
+        const view = mergeRecord(this.views.get(sessionId), thread);
+        const state = deriveState(view);
+        if (state !== "failed") continue;
+        // 新鲜度窗口：只对「最近 15 分钟内失败」的线程重试。
+        // 否则冷启动会把几天前的陈旧失败也自动「继续」，白烧 token。
+        const lastActivity = Number(view.lastActivityAt ?? 0);
+        if (lastActivity > 0 && Date.now() - lastActivity > 15 * 60_000) continue;
+        this.autoRetryScheduler.schedule(sessionId);
       }
     }
   }

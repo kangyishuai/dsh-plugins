@@ -1873,7 +1873,7 @@ window.__ModuleLoader__.load({
       },
       // 浅色：面板是"白色圆角卡片 + 阴影"浮在页面上（Claude 浅色帧的结构）
       panelColScroll: {
-        maxHeight: "calc(100vh - 230px)",
+        maxHeight: "calc(100vh - 170px)",
         overflowY: "auto",
         overscrollBehavior: "contain",
         paddingRight: "6px",
@@ -7800,20 +7800,6 @@ window.__ModuleLoader__.load({
                       "button",
                       {
                         type: "button",
-                        style: {
-                          ...styles.secondaryButton,
-                          fontSize: "11.5px",
-                          padding: "1px 8px",
-                        },
-                        "data-projects-route-toggle": showRouteRow ? "open" : "closed",
-                        onClick: () => setShowRouteRow(!showRouteRow),
-                      },
-                      text(t, "detail.routeToggle"),
-                    ),
-                    h(
-                      "button",
-                      {
-                        type: "button",
                         style: { ...styles.secondaryButton, padding: "2px 10px", fontSize: "12px" },
                         "data-projects-create-pr": row.sessionId,
                         disabled: busyAction !== "" || !row.branch,
@@ -10529,7 +10515,8 @@ window.__ModuleLoader__.load({
                   position: "sticky",
                   top: 0,
                   zIndex: 2,
-                  background: "transparent",
+                  // 与面板底色一致：透明时 sticky 滚动内容会从页签后面透出来（叠字）
+                  background: colorScheme === "light" ? "#ffffff" : "rgba(127,127,127,0.045)",
                   paddingTop: "2px",
                 },
                 role: "tablist",
