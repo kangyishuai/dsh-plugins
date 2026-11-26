@@ -460,6 +460,54 @@ window.__ModuleLoader__.load({
       "panel.new.creating": "正在创建…",
       "panel.new.cancel": "取消",
       "panel.new.back": "返回",
+      "routines.freq.manual": "手动（不自动跑）",
+      "routines.freq.hourly": "每小时",
+      "routines.freq.daily": "每天",
+      "routines.freq.weekdays": "工作日（周一至周五）",
+      "routines.freq.weekly": "每周",
+      "routines.freq.monthly": "每月",
+      "routines.weekday.sun": "周日",
+      "routines.weekday.mon": "周一",
+      "routines.weekday.tue": "周二",
+      "routines.weekday.wed": "周三",
+      "routines.weekday.thu": "周四",
+      "routines.weekday.fri": "周五",
+      "routines.weekday.sat": "周六",
+      "routines.formTitle": "新建定时任务",
+      "routines.name": "名字",
+      "routines.namePlaceholder": "例如：每日站会摘要",
+      "routines.instructions": "指令",
+      "routines.instructionsLabel": "指令（到点后作为提示词投递，会跑一次模型）",
+      "routines.instructionsPlaceholder": "例如：总结昨天合并的 PR，列出需要我确认的点。",
+      "routines.frequency": "频率",
+      "routines.time": "时间（HH:mm）",
+      "routines.weekday": "星期几",
+      "routines.dayOfMonth": "每月几号（1–28）",
+      "routines.create": "创建",
+      "routines.creating": "正在创建…",
+      "routines.manualHint": "手动档：只有点 Run now 才跑（也会花一次模型调用）",
+      "routines.autoHint": "自动投递：到点会跑一次模型",
+      "routines.costHint": "每次到点投递都会跑一次模型（会花 token）。",
+      "routines.empty": "还没有定时任务。用上面的表单建一个；手动档不会自己跑。",
+      "routines.scheduleUnavailablePrefix": "宿主的 schedule 服务不可用（",
+      "routines.scheduleUnavailableSuffix": "），定时任务无法创建。",
+      "routines.trigger": "触发",
+      "routines.runsOn": "运行于",
+      "routines.edit": "编辑",
+      "routines.disabled": "已停用",
+      "routines.detail": "详情",
+      "routines.retention": "宿主保留：{days} 天 / {records} 条",
+      "routines.retentionDays": " 天",
+      "routines.retentionRecords": " 条",
+      "routines.deliveryNote": "会真的投递一次（= 一次模型调用）",
+      "routines.historyEmpty": "还没有投递过",
+      "routines.historyNone": "宿主侧还没有投递记录（History 只显示真实的投递）。",
+      "routines.enable": "启用",
+      "routines.disable": "停用",
+      "routines.switch": "切换",
+      "routines.delete": "删除",
+      "routines.save": "保存",
+      "routines.update": "更新",
       "detail.cancel": "取消",
       "detail.section.instructions": "指令",
       "detail.section.memory": "记忆",
@@ -993,6 +1041,57 @@ window.__ModuleLoader__.load({
       "panel.new.creating": "Creating…",
       "panel.new.cancel": "Cancel",
       "panel.new.back": "Back",
+      "routines.freq.manual": "Manual (no auto-run)",
+      "routines.freq.hourly": "Hourly",
+      "routines.freq.daily": "Daily",
+      "routines.freq.weekdays": "Weekdays (Mon–Fri)",
+      "routines.freq.weekly": "Weekly",
+      "routines.freq.monthly": "Monthly",
+      "routines.weekday.sun": "Sun",
+      "routines.weekday.mon": "Mon",
+      "routines.weekday.tue": "Tue",
+      "routines.weekday.wed": "Wed",
+      "routines.weekday.thu": "Thu",
+      "routines.weekday.fri": "Fri",
+      "routines.weekday.sat": "Sat",
+      "routines.formTitle": "New routine",
+      "routines.name": "Name",
+      "routines.namePlaceholder": "e.g. Daily standup summary",
+      "routines.instructions": "Instructions",
+      "routines.instructionsLabel":
+        "Instructions (sent as the prompt when it fires; one model call)",
+      "routines.instructionsPlaceholder":
+        "e.g. Summarise yesterday’s merged PRs and list what needs my confirmation.",
+      "routines.frequency": "Frequency",
+      "routines.time": "Time (HH:mm)",
+      "routines.weekday": "Weekday",
+      "routines.dayOfMonth": "Day of month (1–28)",
+      "routines.create": "Create",
+      "routines.creating": "Creating…",
+      "routines.manualHint": "Manual: only runs when you click Run now (still one model call)",
+      "routines.autoHint": "Automatic: fires one model call at the scheduled time",
+      "routines.costHint": "Every delivery runs one model call (uses tokens).",
+      "routines.empty": "No routines yet. Create one above; manual mode never runs by itself.",
+      "routines.scheduleUnavailablePrefix": "Host schedule service unavailable (",
+      "routines.scheduleUnavailableSuffix": ") — routines cannot be created.",
+      "routines.trigger": "Trigger",
+      "routines.runsOn": "Runs on",
+      "routines.edit": "Edit",
+      "routines.disabled": "disabled",
+      "routines.detail": "Details",
+      "routines.retention": "Host keeps {days} days / {records} records",
+      "routines.retentionDays": " days",
+      "routines.retentionRecords": " records",
+      "routines.deliveryNote": "This really delivers once (= one model call)",
+      "routines.historyEmpty": "No deliveries yet",
+      "routines.historyNone":
+        "No delivery records on the host yet (History only shows real deliveries).",
+      "routines.enable": "Enable",
+      "routines.disable": "Disable",
+      "routines.switch": "Switch",
+      "routines.delete": "Delete",
+      "routines.save": "Save",
+      "routines.update": "Update",
       "detail.cancel": "Cancel",
       "detail.section.instructions": "Instructions",
       "detail.section.memory": "Memory",
@@ -12101,6 +12200,7 @@ window.__ModuleLoader__.load({
     /** @param {any} props */
     function RoutinesView(props) {
       const api = props.api;
+      const t = props.t;
       const project = props.project;
       const [view, setView] = useState(null);
       const [draft, setDraft] = useState({
@@ -12161,14 +12261,16 @@ window.__ModuleLoader__.load({
       /** @type {any[]} */
       const routines = Array.isArray(view?.routines) ? view.routines : [];
       const frequencyOptions = [
-        ["manual", "手动（不自动跑）"],
-        ["hourly", "每小时"],
-        ["daily", "每天"],
-        ["weekdays", "工作日（周一至周五）"],
-        ["weekly", "每周"],
-        ["monthly", "每月"],
+        ["manual", text(t, "routines.freq.manual")],
+        ["hourly", text(t, "routines.freq.hourly")],
+        ["daily", text(t, "routines.freq.daily")],
+        ["weekdays", text(t, "routines.freq.weekdays")],
+        ["weekly", text(t, "routines.freq.weekly")],
+        ["monthly", text(t, "routines.freq.monthly")],
       ];
-      const weekdayNames = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+      const weekdayNames = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"].map((id) =>
+        text(t, `routines.weekday.${id}`),
+      );
       const automatic = draft.frequency !== "manual";
       return h(
         "div",
@@ -12180,7 +12282,7 @@ window.__ModuleLoader__.load({
         h(
           "div",
           { style: styles.railBodyFull, "data-projects-routines-cost": "" },
-          view?.costHint || "每次到点投递都会跑一次模型（会花 token）。",
+          view?.costHint || text(t, "routines.costHint"),
         ),
         view && view.available === false
           ? h(
@@ -12189,9 +12291,9 @@ window.__ModuleLoader__.load({
                 style: { ...styles.meta, color: T.danger },
                 "data-projects-routines-unavailable": "",
               },
-              "宿主的 schedule 服务不可用（" +
+              text(t, "routines.scheduleUnavailablePrefix") +
                 String(view.reason || "unknown") +
-                "），定时任务无法创建。",
+                text(t, "routines.scheduleUnavailableSuffix"),
             )
           : null,
         // —— 新建表单 ——
@@ -12207,15 +12309,15 @@ window.__ModuleLoader__.load({
               padding: "8px 10px",
             },
           },
-          h("span", { style: styles.name }, "新建定时任务"),
+          h("span", { style: styles.name }, text(t, "routines.formTitle")),
           h(
             "label",
             { style: styles.fieldLabel },
-            h("span", { style: styles.meta }, "名字"),
+            h("span", { style: styles.meta }, text(t, "routines.name")),
             h("input", {
               style: styles.input,
               value: draft.name,
-              placeholder: "例如：每日站会摘要",
+              placeholder: text(t, "routines.namePlaceholder"),
               "data-projects-routine-name": "",
               onChange: (/** @type {any} */ event) =>
                 setDraft((/** @type {any} */ prev) => ({ ...prev, name: event.target.value })),
@@ -12224,11 +12326,11 @@ window.__ModuleLoader__.load({
           h(
             "label",
             { style: styles.fieldLabel },
-            h("span", { style: styles.meta }, "指令（到点后作为提示词投递，会跑一次模型）"),
+            h("span", { style: styles.meta }, text(t, "routines.instructionsLabel")),
             h("textarea", {
               style: { ...styles.input, minHeight: "54px", resize: "vertical" },
               value: draft.instructions,
-              placeholder: "例如：总结昨天合并的 PR，列出需要我确认的点。",
+              placeholder: text(t, "routines.instructionsPlaceholder"),
               "data-projects-routine-instructions": "",
               onChange: (/** @type {any} */ event) =>
                 setDraft((/** @type {any} */ prev) => ({
@@ -12243,7 +12345,7 @@ window.__ModuleLoader__.load({
             h(
               "label",
               { style: { ...styles.fieldLabel, flex: "1 1 150px" } },
-              h("span", { style: styles.meta }, "频率"),
+              h("span", { style: styles.meta }, text(t, "routines.frequency")),
               h(
                 "select",
                 {
@@ -12264,7 +12366,7 @@ window.__ModuleLoader__.load({
             h(
               "label",
               { style: { ...styles.fieldLabel, flex: "0 1 110px" } },
-              h("span", { style: styles.meta }, "时间（HH:mm）"),
+              h("span", { style: styles.meta }, text(t, "routines.time")),
               h("input", {
                 style: styles.input,
                 value: draft.time,
@@ -12277,7 +12379,7 @@ window.__ModuleLoader__.load({
               ? h(
                   "label",
                   { style: { ...styles.fieldLabel, flex: "0 1 110px" } },
-                  h("span", { style: styles.meta }, "星期几"),
+                  h("span", { style: styles.meta }, text(t, "routines.weekday")),
                   h(
                     "select",
                     {
@@ -12300,7 +12402,7 @@ window.__ModuleLoader__.load({
               ? h(
                   "label",
                   { style: { ...styles.fieldLabel, flex: "0 1 110px" } },
-                  h("span", { style: styles.meta }, "每月几号（1–28）"),
+                  h("span", { style: styles.meta }, text(t, "routines.dayOfMonth")),
                   h("input", {
                     style: styles.input,
                     value: String(draft.dayOfMonth),
@@ -12326,7 +12428,7 @@ window.__ModuleLoader__.load({
                 "data-projects-routine-create": "",
                 onClick: () =>
                   runAction(
-                    "创建",
+                    "create",
                     call(api.ctx, "createRoutine", {
                       projectId: project.id,
                       // 宿主网关按**参数名**包：方法与 `(projectId, input)` 对应，
@@ -12342,14 +12444,12 @@ window.__ModuleLoader__.load({
                     }),
                   ),
               },
-              busy === "创建" ? "正在创建…" : "创建",
+              busy === "create" ? text(t, "routines.creating") : text(t, "routines.create"),
             ),
             h(
               "span",
               { style: styles.meta },
-              automatic
-                ? "自动投递：到点会跑一次模型"
-                : "手动档：只有点 Run now 才跑（也会花一次模型调用）",
+              automatic ? text(t, "routines.autoHint") : text(t, "routines.manualHint"),
             ),
           ),
           message.text !== ""
@@ -12371,7 +12471,7 @@ window.__ModuleLoader__.load({
                 style: { ...styles.meta, whiteSpace: "normal", lineHeight: 1.5 },
                 "data-projects-routines-empty": "",
               },
-              "还没有定时任务。用上面的表单建一个；手动档不会自己跑。",
+              text(t, "routines.empty"),
             )
           : h(
               "div",
@@ -12416,7 +12516,9 @@ window.__ModuleLoader__.load({
                         "data-projects-routine-status":
                           routine.hostStatus || routine.status?.status || "",
                       },
-                      routine.enabled === false ? "已停用" : String(routine.status?.label || ""),
+                      routine.enabled === false
+                        ? text(t, "routines.disabled")
+                        : String(routine.status?.label || ""),
                     ),
                   ),
                   h("span", { style: styles.meta }, String(routine.description || "")),
@@ -12439,7 +12541,9 @@ window.__ModuleLoader__.load({
                         detailId === routine.id ? "true" : "false",
                       onClick: () => setDetailId(detailId === routine.id ? "" : routine.id),
                     },
-                    detailId === routine.id ? "▾ 详情" : "▸ 详情",
+                    detailId === routine.id
+                      ? `▾ ${text(t, "routines.detail")}`
+                      : `▸ ${text(t, "routines.detail")}`,
                   ),
                   detailId === routine.id
                     ? h(
@@ -12451,7 +12555,7 @@ window.__ModuleLoader__.load({
                         h(
                           "span",
                           { style: { ...styles.meta, color: T.text, fontWeight: 600 } },
-                          "触发",
+                          text(t, "routines.trigger"),
                         ),
                         h("span", { style: styles.meta }, String(routine.description || "")),
                         h(
@@ -12462,7 +12566,7 @@ window.__ModuleLoader__.load({
                         h(
                           "span",
                           { style: { ...styles.meta, color: T.text, fontWeight: 600 } },
-                          "指令",
+                          text(t, "routines.instructions"),
                         ),
                         h(
                           "span",
@@ -12472,7 +12576,7 @@ window.__ModuleLoader__.load({
                         h(
                           "span",
                           { style: { ...styles.meta, color: T.text, fontWeight: 600 } },
-                          "运行于",
+                          text(t, "routines.runsOn"),
                         ),
                         h(
                           "span",
@@ -12497,7 +12601,7 @@ window.__ModuleLoader__.load({
                                 });
                               },
                             },
-                            "编辑",
+                            text(t, "routines.edit"),
                           ),
                         ),
                         editId === routine.id
@@ -12567,7 +12671,7 @@ window.__ModuleLoader__.load({
                                   "data-projects-routine-edit-save": routine.id,
                                   onClick: () =>
                                     runAction(
-                                      "更新",
+                                      text(t, "routines.update"),
                                       call(api.ctx, "updateRoutine", {
                                         projectId: project.id,
                                         routineId: routine.id,
@@ -12583,7 +12687,7 @@ window.__ModuleLoader__.load({
                                       }),
                                     ),
                                 },
-                                "保存",
+                                text(t, "routines.save"),
                               ),
                             )
                           : null,
@@ -12596,7 +12700,7 @@ window.__ModuleLoader__.load({
                       ? `最近投递：${String(routine.lastDelivery.deliveredAt)}`
                       : routine.lastRunAt
                         ? `最近 Run now：${String(routine.lastRunAt)}`
-                        : "还没有投递过",
+                        : text(t, "routines.historyEmpty"),
                   ),
                   h(
                     "div",
@@ -12610,7 +12714,7 @@ window.__ModuleLoader__.load({
                         "data-projects-routine-toggle": routine.id,
                         onClick: () =>
                           runAction(
-                            "切换",
+                            text(t, "routines.switch"),
                             call(api.ctx, "setRoutineEnabled", {
                               projectId: project.id,
                               routineId: routine.id,
@@ -12618,7 +12722,9 @@ window.__ModuleLoader__.load({
                             }),
                           ),
                       },
-                      routine.enabled === false ? "启用" : "停用",
+                      routine.enabled === false
+                        ? text(t, "routines.enable")
+                        : text(t, "routines.disable"),
                     ),
                     h(
                       "button",
@@ -12626,7 +12732,7 @@ window.__ModuleLoader__.load({
                         type: "button",
                         style: smallButton,
                         disabled: busy !== "",
-                        title: "会真的投递一次（= 一次模型调用）",
+                        title: text(t, "routines.deliveryNote"),
                         "data-projects-routine-run": routine.id,
                         onClick: () =>
                           runAction(
@@ -12678,14 +12784,14 @@ window.__ModuleLoader__.load({
                         "data-projects-routine-delete": routine.id,
                         onClick: () =>
                           runAction(
-                            "删除",
+                            "delete",
                             call(api.ctx, "deleteRoutine", {
                               projectId: project.id,
                               routineId: routine.id,
                             }),
                           ),
                       },
-                      "删除",
+                      text(t, "routines.delete"),
                     ),
                   ),
                   history.routineId === routine.id
@@ -12697,11 +12803,7 @@ window.__ModuleLoader__.load({
                           "data-projects-routine-history-count": String(history.rows.length),
                         },
                         history.rows.length === 0
-                          ? h(
-                              "span",
-                              { style: styles.meta },
-                              "宿主侧还没有投递记录（History 只显示真实的投递）。",
-                            )
+                          ? h("span", { style: styles.meta }, text(t, "routines.historyNone"))
                           : history.rows.map((/** @type {any} */ row, /** @type {any} */ index) =>
                               h(
                                 "span",
@@ -12719,11 +12821,14 @@ window.__ModuleLoader__.load({
                           ? h(
                               "span",
                               { style: styles.meta },
-                              "宿主保留：" +
-                                String(history.retention.days ?? "?") +
-                                " 天 / " +
-                                String(history.retention.records ?? "?") +
-                                " 条",
+                              text(t, "routines.retention", {
+                                days:
+                                  String(history.retention.days ?? "?") +
+                                  text(t, "routines.retentionDays"),
+                                records:
+                                  String(history.retention.records ?? "?") +
+                                  text(t, "routines.retentionRecords"),
+                              }),
                             )
                           : null,
                       )
