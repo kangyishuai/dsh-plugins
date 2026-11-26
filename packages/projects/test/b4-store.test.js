@@ -273,6 +273,28 @@ describe("F42 线程默认 effort：部署枚举（max/xhigh/off）不被白名�
   });
 });
 
+describe("attachThread 幂等（重复 attach 不能丢字段）", () => {
+  it("重复 attach 保留 prNumber / mergedAt / autoRetryCount / title", () => {
+    const root = mkdtempSync(join(tmpdir(), "dsh-attach-"));
+    try {
+      const store = new ProjectStore({ root }).load();
+      const project = store.createProject("keep-fields");
+      store.attachThread("session-keep-1", project.id);
+      store.setThreadWorktree("session-keep-1", { prNumber: 42, mergedAt: "2026-11-27T00:00:00Z" });
+      const thread = store.state.threads["session-keep-1"];
+      thread.title = "带标题的线程";
+      thread.autoRetryCount = 1;
+      const again = store.attachThread("session-keep-1", project.id);
+      assert.equal(again.prNumber, 42);
+      assert.equal(again.mergedAt, "2026-11-27T00:00:00Z");
+      assert.equal(again.autoRetryCount, 1);
+      assert.equal(again.title, "带标题的线程");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("projectOfSession 契约（自动重试依赖）", () => {
   it("返回项目对象（含 id），不是 projectId 字符串", () => {
     const root = mkdtempSync(join(tmpdir(), "dsh-pos-"));

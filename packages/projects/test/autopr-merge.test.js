@@ -25,3 +25,13 @@ describe("PR 合并判定（默认拒绝）", () => {
     });
   });
 });
+
+describe("pickRepoRoot（PR 命令的工作目录）", () => {
+  it("优先线程 worktree，其次项目目录，都没有返回空串", async () => {
+    const { pickRepoRoot } = await import("../lib/autopr.js");
+    assert.equal(pickRepoRoot({ worktree: "/w/t-1", dirs: ["/a", "/b"] }), "/w/t-1");
+    assert.equal(pickRepoRoot({ worktree: null, dirs: ["/a", "/b"] }), "/a");
+    assert.equal(pickRepoRoot({ worktree: "", dirs: [] }), "");
+    assert.equal(pickRepoRoot({}), "");
+  });
+});

@@ -876,7 +876,10 @@ export class ProjectStore {
       error.currentProjectId = current.projectId;
       throw error;
     }
+    // 先展开旧记录再覆盖已知字段：以前按白名单重建，会静默丢掉 prNumber/mergedAt/
+    // autoRetryCount/title 等字段（重复 attach 时 PR 卡和重试计数会凭空消失）。
     this.state.threads[sessionId] = {
+      ...(current && typeof current === "object" ? current : {}),
       projectId,
       state: current?.state ?? "idle",
       resolvedAt: current?.resolvedAt ?? null,

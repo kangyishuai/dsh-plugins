@@ -168,3 +168,23 @@ export function planMergeSteps(input) {
   }
   return { steps: [merge] };
 }
+
+/**
+ * 选 PR 相关命令的工作目录（纯函数）。
+ *
+ * 以前 `prOverview`/`mergePr` 一律用 `project.dirs[0]`：多目录项目里第 0 个目录
+ * 可能不是线程所在仓库，`gh pr view <n>` 会去**另一个仓库**查同号 PR（不可逆操作尤其危险）。
+ * 线程有 worktree 就优先用它，其次项目目录。
+ * @param {{ worktree?: string|null, dirs?: string[] }} input
+ * @returns {string}
+ */
+export function pickRepoRoot(input) {
+  const worktree = String(input?.worktree ?? "").trim();
+  if (worktree !== "") return worktree;
+  const dirs = Array.isArray(input?.dirs) ? input.dirs : [];
+  for (const dir of dirs) {
+    const value = String(dir ?? "").trim();
+    if (value !== "") return value;
+  }
+  return "";
+}

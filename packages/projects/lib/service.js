@@ -27,6 +27,7 @@ import {
   canMergePr,
   nextPrAction,
   parsePrNumber,
+  pickRepoRoot,
   planHttpsPush,
   planMergeSteps,
   planPrCreate,
@@ -1754,8 +1755,8 @@ export class ProjectsService extends TypertRemoteService {
     if (!thread) throw new Error(`projects: unknown thread ${sessionId}`);
     const prNumber = Number(thread.prNumber);
     if (!Number.isInteger(prNumber) || prNumber <= 0) return { ok: false, reason: "no-pr" };
-    const repoRoot =
-      Array.isArray(project.dirs) && project.dirs.length > 0 ? String(project.dirs[0]) : "";
+    // 多目录项目：优先用线程 worktree，避免去另一个仓库查同号 PR
+    const repoRoot = pickRepoRoot({ worktree: thread.worktree, dirs: project.dirs });
     if (repoRoot === "") return { ok: false, reason: "no-dir" };
     const gh = await runGh(
       ["pr", "view", String(prNumber), "--json", "number,title,url,state,isDraft,mergeable"],
@@ -1812,8 +1813,8 @@ export class ProjectsService extends TypertRemoteService {
       store.save();
       return { ok: false, reason: decision.reason };
     }
-    const repoRoot =
-      Array.isArray(project.dirs) && project.dirs.length > 0 ? String(project.dirs[0]) : "";
+    // 多目录项目：合并必须在**线程 worktree 所属仓库**里跑（否则会合并错仓库的同号 PR）
+    const repoRoot = pickRepoRoot({ worktree: thread.worktree, dirs: project.dirs });
     if (repoRoot === "") return { ok: false, reason: "no-dir" };
     // 草稿 PR 直接 merge 会被 GitHub 拒（真机踩过：GraphQL "still a draft"），先 pr ready
     const view = await runGh(
