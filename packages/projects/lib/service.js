@@ -120,6 +120,7 @@ import {
   describeScheduleStatus,
   historyFromDelivery,
   MANUAL_COST_HINT,
+  mergeRoutineEditInput,
   newRoutineId,
   planRoutineHostAction,
   planRoutineUpdate,
@@ -1874,7 +1875,10 @@ export class ProjectsService extends TypertRemoteService {
       .listRoutines(project.id)
       .find((/** @type {any} */ item) => String(item.id) === String(routineId));
     if (!routine) return { ok: false, reason: "routine/not-found" };
-    const planned = planRoutineUpdate({ ...(input ?? {}), timeZone: this.hostTimeZone() });
+    const planned = planRoutineUpdate({
+      ...mergeRoutineEditInput(routine, input ?? {}),
+      timeZone: this.hostTimeZone(),
+    });
     if (!planned.ok) return { ok: false, reason: planned.reason };
     // 定时↔手动必须真的建/删宿主定时：只 update 会让「改成手动」继续按旧频率烧 token，
     // 而「手动改成每天」因为原本没有 scheduleId 会变成永不投递。

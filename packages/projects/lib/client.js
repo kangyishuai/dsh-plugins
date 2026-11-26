@@ -287,6 +287,10 @@ window.__ModuleLoader__.load({
       "detail.state.working": "进行中",
       "detail.state.done": "已完成",
       "detail.state.idle": "空闲",
+      "detail.mainWelcomeTitle": "欢迎回来。",
+      "detail.mainWelcomeBody":
+        "把项目当成一段持续对话：直接问、让它协调几条线程并行推进；线程跑完会把结论汇报到这里。",
+      "detail.composerHintCoordinator": "回车发送给协调者",
       "detail.composer.targetThread": "新线程",
       "detail.composer.targetCoordinator": "协调者",
       "detail.threadPlaceholder": "给这个线程一个任务，回车即建",
@@ -803,6 +807,10 @@ window.__ModuleLoader__.load({
       "detail.state.working": "Working",
       "detail.state.done": "Done",
       "detail.state.idle": "Idle",
+      "detail.mainWelcomeTitle": "Welcome back.",
+      "detail.mainWelcomeBody":
+        "Treat a project as one long conversation: ask directly, or let it coordinate several threads in parallel; each thread reports back here.",
+      "detail.composerHintCoordinator": "Enter to send to coordinator",
       "detail.composer.targetThread": "New thread",
       "detail.composer.targetCoordinator": "Coordinator",
       "detail.threadPlaceholder": "Describe a task for a new thread (Enter to create)",
@@ -1607,7 +1615,8 @@ window.__ModuleLoader__.load({
         borderRadius: "8px",
         background: T.field,
         color: T.dim,
-        minWidth: "170px",
+        minWidth: 0,
+        flex: "1 1 90px",
       },
       searchInput: {
         flex: "1 1 auto",
@@ -2130,7 +2139,7 @@ window.__ModuleLoader__.load({
       },
       rowSub: {
         color: T.dim,
-        fontSize: "12px",
+        fontSize: "13px",
         minWidth: 0,
         overflow: "hidden",
         textOverflow: "ellipsis",
@@ -9385,6 +9394,24 @@ window.__ModuleLoader__.load({
                   },
               "data-projects-detail-main": "",
             },
+            // 主列空态：Claude 的项目主页有一段"欢迎 + 怎么用"的文字，不是纯空白
+            Number(data.progress?.total ?? 0) === 0 &&
+              !(Array.isArray(data.coordinator?.messages) && data.coordinator.messages.length > 0)
+              ? h(
+                  "div",
+                  { style: { padding: "10px 2px 0" }, "data-projects-main-welcome": "" },
+                  h(
+                    "div",
+                    { style: { ...styles.welcomeTitle, fontSize: "21px" } },
+                    text(t, "detail.mainWelcomeTitle"),
+                  ),
+                  h(
+                    "div",
+                    { style: { ...styles.welcomeSub, maxWidth: "620px", lineHeight: 1.5 } },
+                    text(t, "detail.mainWelcomeBody"),
+                  ),
+                )
+              : null,
             threadAction.message !== ""
               ? h(
                   "div",
@@ -10330,7 +10357,12 @@ window.__ModuleLoader__.load({
                     style: { ...styles.meta, paddingLeft: "2px" },
                     "data-projects-composer-hint": "",
                   },
-                  text(t, "detail.composerHint"),
+                  text(
+                    t,
+                    composerTarget === "coordinator"
+                      ? "detail.composerHintCoordinator"
+                      : "detail.composerHint",
+                  ),
                 ),
                 h("span", { style: { flex: "1 1 auto" } }),
                 h(
@@ -10511,6 +10543,8 @@ window.__ModuleLoader__.load({
                   gap: "4px",
                   marginTop: "2px",
                   alignItems: "center",
+                  flexWrap: "nowrap",
+                  overflow: "hidden",
                   borderBottom: `1px solid ${T.borderSoft}`,
                   position: "sticky",
                   top: 0,
@@ -10540,7 +10574,9 @@ window.__ModuleLoader__.load({
                         border: "none",
                         borderBottom: `2px solid ${tab === item.id ? T.accentText : "transparent"}`,
                         borderRadius: "6px 6px 0 0",
-                        padding: "6px 10px",
+                        padding: "6px 8px",
+                        whiteSpace: "nowrap",
+                        flexShrink: 0,
                         color: tab === item.id ? T.text : T.dim,
                         fontWeight: tab === item.id ? 600 : 400,
                         cursor: "pointer",

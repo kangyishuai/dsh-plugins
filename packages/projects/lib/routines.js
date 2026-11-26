@@ -386,3 +386,22 @@ export function planRoutineHostAction(input) {
   if (!hasSchedule && wantsTiming) return "create";
   return "none";
 }
+
+/**
+ * 编辑 routine 时把「没传但必须保留」的字段补上（纯函数）。
+ * 典型坑：weekly/monthly routine 只改指令/时间时，客户端不带 weekday/dayOfMonth，
+ * 直接走校验会把星期几重置成默认值 —— 用户看到的频率就"漂移"了。
+ * @param {any} routine 现有记录
+ * @param {any} input 编辑输入
+ * @returns {any}
+ */
+export function mergeRoutineEditInput(routine, input) {
+  const base = input && typeof input === "object" ? input : {};
+  /** @type {any} */
+  const merged = { ...base };
+  if (merged.name === undefined) merged.name = routine?.name;
+  if (merged.weekday === undefined) merged.weekday = routine?.weekday;
+  if (merged.dayOfMonth === undefined) merged.dayOfMonth = routine?.dayOfMonth;
+  if (merged.time === undefined) merged.time = routine?.time;
+  return merged;
+}

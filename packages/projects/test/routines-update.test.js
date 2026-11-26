@@ -1,7 +1,11 @@
 // @ts-check
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { planRoutineHostAction, planRoutineUpdate } from "../lib/routines.js";
+import {
+  mergeRoutineEditInput,
+  planRoutineHostAction,
+  planRoutineUpdate,
+} from "../lib/routines.js";
 
 describe("Routine 编辑计划（纯函数）", () => {
   it("daily 改动 → 本地补丁带时间，宿主 patch 带 prompt + daily timing", () => {
@@ -18,6 +22,18 @@ describe("Routine 编辑计划（纯函数）", () => {
     assert.equal(value.local.time, "09:00:00");
     assert.equal(value.hostPatch.prompt, "写三条要点");
     assert.equal(value.hostPatch.timing.daily.time, "09:00:00");
+  });
+
+  it("编辑只传指令/频率时，weekday/dayOfMonth/time 从旧记录补上（不然频率漂移）", () => {
+    const merged = mergeRoutineEditInput(
+      { name: "周报", weekday: 5, dayOfMonth: undefined, time: "18:00:00" },
+      { instructions: "写周报", frequency: "weekly" },
+    );
+    assert.equal(merged.weekday, 5);
+    assert.equal(merged.time, "18:00:00");
+    assert.equal(merged.name, "周报");
+    // 显式传入的值优先
+    assert.equal(mergeRoutineEditInput({ weekday: 5 }, { weekday: 1 }).weekday, 1);
   });
 
   it("宿主动作规划：定时↔手动必须真的建/删，否则漂移", () => {
