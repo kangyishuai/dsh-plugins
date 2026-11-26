@@ -7441,7 +7441,7 @@ window.__ModuleLoader__.load({
                     },
                     "data-panel-thread-pr-line": row.sessionId,
                   },
-                  h("span", { style: { color: T.faint } }, "└"),
+                  h("span", { style: { color: T.dim } }, "└"),
                   h(
                     "span",
                     { style: { color: T.success, display: "inline-flex" } },
@@ -10104,7 +10104,7 @@ window.__ModuleLoader__.load({
                               Number(chip.prNumber) > 0 ? String(Number(chip.prNumber)) : "",
                             onClick: () => setExpandedThread(String(chip.sessionId)),
                           },
-                          h("span", { style: { color: T.faint, fontSize: "12px" } }, "└"),
+                          h("span", { style: { color: T.dim, fontSize: "12px" } }, "└"),
                           h(
                             "span",
                             {
@@ -10160,7 +10160,7 @@ window.__ModuleLoader__.load({
                           h(
                             "span",
                             {
-                              style: { color: T.faint, fontSize: "12px", paddingLeft: "4px" },
+                              style: { color: T.dim, fontSize: "12px", paddingLeft: "4px" },
                               "data-projects-coordinator-ref-menu": String(chip.sessionId),
                             },
                             "⋯",
@@ -10750,7 +10750,7 @@ window.__ModuleLoader__.load({
                     style: {
                       border: "none",
                       background: composerTarget === item.id ? T.hover : "transparent",
-                      color: composerTarget === item.id ? T.text : T.faint,
+                      color: composerTarget === item.id ? T.text : T.dim,
                       fontSize: "11.5px",
                       padding: "1px 7px",
                       borderRadius: "999px",
@@ -10827,7 +10827,7 @@ window.__ModuleLoader__.load({
                     onClick: () => setComposerModelOpen(!composerModelOpen),
                   },
                   composerModelLabel,
-                  h("span", { style: { color: T.faint } }, "▾"),
+                  h("span", { style: { color: T.dim } }, "▾"),
                 ),
                 composerModelOpen
                   ? h(
