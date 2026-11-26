@@ -211,6 +211,7 @@ window.__ModuleLoader__.load({
       "detail.autofixRunning": "正在投递修复任务…",
       "detail.autofixStarted": "已投递修复任务（第 {round} 轮，结论回读 {reason}）",
       "detail.autofixStopped": "没有继续修：{reason}",
+      "detail.prBarDismiss": "收起创建 PR 条",
       "detail.prCreate": "创建 PR",
       "detail.prCreating": "正在开 PR…",
       "detail.prCreated": "已开 PR #{number}",
@@ -798,6 +799,7 @@ window.__ModuleLoader__.load({
       "detail.autofixRunning": "Queueing the fix task…",
       "detail.autofixStarted": "Fix task queued (round {round}, readback {reason})",
       "detail.autofixStopped": "Stopped fixing: {reason}",
+      "detail.prBarDismiss": "Hide the create-PR bar",
       "detail.prCreate": "Create PR",
       "detail.prCreating": "Creating PR…",
       "detail.prCreated": "Opened PR #{number}",
@@ -5783,6 +5785,9 @@ window.__ModuleLoader__.load({
       const setShowRouteRow = routeRowState[1];
       // 主列顶部的排障信息（PR 轮询/compaction/实时监听）默认收起：
       // 参考图的主列是"对话内容优先"，这些属于诊断，折成一行摘要
+      const prBarClosedState = useState("");
+      const prBarClosed = prBarClosedState[0];
+      const setPrBarClosed = prBarClosedState[1];
       const groupHoverState = useState("");
       const [groupHover, setGroupHover] = groupHoverState;
       const diagnosticsState = useState(false);
@@ -7990,54 +7995,113 @@ window.__ModuleLoader__.load({
                         })()
                       : null,
                   ),
-                  // F12/U16：Create PR 条 + 分支条
-                  h(
-                    "div",
-                    {
-                      style: { display: "flex", gap: "6px", alignItems: "center" },
-                      "data-projects-branch-bar": row.sessionId,
-                    },
-                    h(
-                      "span",
-                      { style: styles.meta, "data-projects-branch-label": row.sessionId },
-                      row.branch
-                        ? text(t, "detail.prBranch", { branch: String(row.branch) })
-                        : text(t, "detail.noBranch"),
-                    ),
-                    h("span", { style: { flex: "1 1 auto" } }),
-                    h(
-                      "button",
-                      {
-                        type: "button",
-                        style: { ...styles.secondaryButton, padding: "2px 10px", fontSize: "12px" },
-                        "data-projects-create-pr": row.sessionId,
-                        disabled: busyAction !== "" || !row.branch,
-                        onClick: () => createPrFor(String(row.sessionId)),
-                      },
-                      busyAction === `pr:${row.sessionId}`
-                        ? text(t, "detail.prCreating")
-                        : text(t, "detail.prCreate"),
-                    ),
-                    // F21/P1-2：auto-fix 手动触发入口（只在 CI 失败时可点，避免无意义/花 token 的调用）
-                    h(
-                      "button",
-                      {
-                        type: "button",
-                        style: { ...styles.secondaryButton, padding: "2px 10px", fontSize: "12px" },
-                        "data-projects-thread-autofix": row.sessionId,
-                        "data-projects-thread-autofix-state": row.ciState ?? "none",
-                        disabled: busyAction !== "" || row.ciState !== "failing",
-                        title:
-                          row.ciState === "failing"
-                            ? text(t, "detail.autofixHint")
-                            : text(t, "detail.autofixDisabled"),
-                        onClick: () => autofixFor(String(row.sessionId)),
-                      },
-                      busyAction === `fix:${row.sessionId}`
-                        ? text(t, "detail.autofixRunning")
-                        : text(t, "detail.autofix"),
-                    ),
-                  ),
+                  // F12/U16：Create PR 条（对齐参考图 13：分支名输入条 + Create PR + ✕）
+                  row.prNumber
+                    ? null
+                    : prBarClosed === String(row.sessionId)
+                      ? h(
+                          "div",
+                          {
+                            style: { display: "flex", gap: "6px", alignItems: "center" },
+                            "data-projects-branch-bar": row.sessionId,
+                          },
+                          h(
+                            "button",
+                            {
+                              type: "button",
+                              style: {
+                                ...styles.secondaryButton,
+                                padding: "2px 10px",
+                                fontSize: "12px",
+                              },
+                              "data-projects-create-pr": row.sessionId,
+                              disabled: busyAction !== "" || !row.branch,
+                              onClick: () => createPrFor(String(row.sessionId)),
+                            },
+                            text(t, "detail.prCreate"),
+                          ),
+                        )
+                      : h(
+                          "div",
+                          {
+                            style: {
+                              display: "flex",
+                              gap: "6px",
+                              alignItems: "center",
+                              border: `1px solid ${T.borderSoft}`,
+                              borderRadius: "10px",
+                              padding: "3px 6px 3px 10px",
+                              background: T.field,
+                            },
+                            "data-projects-branch-bar": row.sessionId,
+                          },
+                          h(
+                            "span",
+                            {
+                              style: {
+                                ...styles.meta,
+                                fontFamily: "ui-monospace, monospace",
+                                flex: "1 1 auto",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                              },
+                              "data-projects-branch-label": row.sessionId,
+                            },
+                            row.branch ? String(row.branch) : text(t, "detail.noBranch"),
+                          ),
+                          // F21/P1-2：auto-fix 手动触发入口（只在 CI 失败时可点）
+                          h(
+                            "button",
+                            {
+                              type: "button",
+                              style: {
+                                ...styles.secondaryButton,
+                                padding: "2px 8px",
+                                fontSize: "11.5px",
+                              },
+                              "data-projects-thread-autofix": row.sessionId,
+                              "data-projects-thread-autofix-state": row.ciState ?? "none",
+                              disabled: busyAction !== "" || row.ciState !== "failing",
+                              title:
+                                row.ciState === "failing"
+                                  ? text(t, "detail.autofixHint")
+                                  : text(t, "detail.autofixDisabled"),
+                              onClick: () => autofixFor(String(row.sessionId)),
+                            },
+                            busyAction === `fix:${row.sessionId}`
+                              ? text(t, "detail.autofixRunning")
+                              : text(t, "detail.autofix"),
+                          ),
+                          h(
+                            "button",
+                            {
+                              type: "button",
+                              style: {
+                                ...styles.primaryButton,
+                                padding: "2px 10px",
+                                fontSize: "12px",
+                              },
+                              "data-projects-create-pr": row.sessionId,
+                              disabled: busyAction !== "" || !row.branch,
+                              onClick: () => createPrFor(String(row.sessionId)),
+                            },
+                            busyAction === `pr:${row.sessionId}`
+                              ? text(t, "detail.prCreating")
+                              : text(t, "detail.prCreate"),
+                          ),
+                          h(
+                            "button",
+                            {
+                              type: "button",
+                              style: styles.iconButton,
+                              "data-projects-pr-bar-dismiss": row.sessionId,
+                              "aria-label": text(t, "detail.prBarDismiss"),
+                              title: text(t, "detail.prBarDismiss"),
+                              onClick: () => setPrBarClosed(String(row.sessionId)),
+                            },
+                            "✕",
+                          ),
+                        ),
                   // F18：审批在**线程里**产生；这里的按钮只是把"申请"入口暴露给用户
                   h(
                     "div",

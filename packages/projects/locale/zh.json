@@ -677,6 +677,7 @@
     "routines.switch": "切换",
     "routines.delete": "删除",
     "routines.save": "保存",
-    "routines.update": "更新"
+    "routines.update": "更新",
+    "detail.prBarDismiss": "收起创建 PR 条"
   }
 }

@@ -677,6 +677,7 @@
     "routines.switch": "Switch",
     "routines.delete": "Delete",
     "routines.save": "Save",
-    "routines.update": "Update"
+    "routines.update": "Update",
+    "detail.prBarDismiss": "Hide the create-PR bar"
   }
 }
