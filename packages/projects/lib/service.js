@@ -384,11 +384,10 @@ export class ProjectsService extends TypertRemoteService {
       readState: (/** @type {string} */ sessionId) => {
         const store = this.store;
         if (!store) return { enabled: false, state: "", attempts: 0 };
-        const projectId = store.projectOfSession?.(sessionId) ?? "";
-        const project = projectId === "" ? null : store.getProject(projectId);
-        const thread = store
-          .listThreads(projectId)
-          .find((/** @type {any} */ item) => String(item.sessionId) === sessionId);
+        // 注意：`projectOfSession` 返回的是**项目对象**（不是 id）；之前当 id 用，
+        // 导致 enabled 永远 false、定时器到点直接放弃——真机 20 小时都没触发。
+        const project = store.projectOfSession?.(sessionId) ?? null;
+        const thread = store.state?.threads?.[sessionId] ?? null;
         return {
           enabled: project?.policy?.autoRetry === true,
           state: String(thread?.state ?? ""),
@@ -398,7 +397,8 @@ export class ProjectsService extends TypertRemoteService {
       onRetry: (/** @type {string} */ sessionId, /** @type {number} */ nextAttempts) => {
         try {
           const store = this.requireStore();
-          const projectId = store.projectOfSession?.(sessionId) ?? "";
+          const project = store.projectOfSession?.(sessionId) ?? null;
+          const projectId = String(project?.id ?? "");
           if (projectId === "") return;
           store.setThreadWorktree(sessionId, { autoRetryCount: nextAttempts });
           store.appendAudit({ action: "thread/auto-retry", projectId, sessionId });

@@ -272,3 +272,20 @@ describe("F42 线程默认 effort：部署枚举（max/xhigh/off）不被白名�
     assert.equal(long.defaults.reasoningEffort.length, 40);
   });
 });
+
+describe("projectOfSession 契约（自动重试依赖）", () => {
+  it("返回项目对象（含 id），不是 projectId 字符串", () => {
+    const root = mkdtempSync(join(tmpdir(), "dsh-pos-"));
+    try {
+      const store = new ProjectStore({ root }).load();
+      const project = store.createProject("pos");
+      const thread = { sessionId: "session-pos-1" };
+      store.attachThread(thread.sessionId, project.id);
+      const found = store.projectOfSession(thread.sessionId);
+      assert.equal(found?.id, project.id);
+      assert.equal(typeof store.projectOfSession("missing"), "undefined");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
