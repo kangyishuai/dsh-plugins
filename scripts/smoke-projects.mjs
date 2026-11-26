@@ -1757,8 +1757,8 @@ try {
     () => (document.querySelector("[data-projects-thread-stats]")?.textContent || "").trim(),
   );
   add(
-    "线程行显示可观测摘要（步骤/工具/diff/tokens）",
-    /步/u.test(statsText) && /(工具|diff|tokens)/u.test(statsText),
+    "线程行显示人话摘要（只写真实观测到的量，不写 n/a）",
+    /^\\d+ 步/u.test(statsText) && !/n\\/a/u.test(statsText) && !/0 步/u.test(statsText),
     statsText,
   );
 
@@ -1775,10 +1775,8 @@ try {
     };
   });
   add(
-    "未改动时行摘要如实给出 diff 计数、不是恒 n/a（P0-3）",
-    diffTarget.sessionId !== "" &&
-      /diff\\s+\\d+\\s*文件/u.test(diffTarget.stats) &&
-      !/diff n\\/a/u.test(diffTarget.stats),
+    "未改动时 diff 锚点给出真实计数（0:0:0），不是恒空",
+    diffTarget.sessionId !== "" && /^\\d+:\\d+:\\d+$/u.test(diffTarget.diff),
     JSON.stringify(diffTarget),
   );
   let diffWriter = "no-worktree";
@@ -1805,11 +1803,11 @@ try {
     await page.waitForTimeout(1000);
   }
   add(
-    "工作区真改 2 行后行摘要显示 diff 1 文件 +2/-0（P0-3：坏实现恒 n/a 会红）",
+    "工作区真改 2 行后行摘要显示 +2/−0（P0-3：坏实现恒 n/a 会红）",
     diffWriter === "written" &&
       diffAfter !== null &&
       diffAfter.diff === "1:2:0" &&
-      /\\+2\\/-0/u.test(diffAfter.text),
+      /\\+2\\/\\u22120/u.test(diffAfter.text),
     JSON.stringify({ target: diffTarget, after: diffAfter, writer: diffWriter }),
   );
   // 线程行要有可操作入口：看 worktree 路径、回收目录、移除追踪（两步确认）
