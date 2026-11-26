@@ -1067,6 +1067,10 @@ export class ProjectsService extends TypertRemoteService {
     } catch {
       /* ignore */
     }
+    // 会话级缓存跟着 agent 走：agent 已经销毁的会话不需要再留消息/工具名（Map 只增不减）
+    this.lastMessages?.delete?.(sessionId);
+    this.currentTools?.delete?.(sessionId);
+    this.presetApplied?.delete?.(sessionId);
     // 协调器工具跟着 agent 走：agent 没了就把注册摘掉，别在作用域里留指向旧 agent 的定义
     this.coordinatorAgents?.delete?.(sessionId);
     const disposers = this.coordinatorToolDisposers?.get?.(sessionId);

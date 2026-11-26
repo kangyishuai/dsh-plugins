@@ -5655,7 +5655,12 @@ window.__ModuleLoader__.load({
       // Overview 自己会变（线程跑完一轮、宿主 pendingInput 出现）：5s 静默刷新一次。
       // 不切 loading、只更新数据；事件驱动的实时化（去掉轮询）留给 B2 的 replay 修复。
       useEffect(() => {
-        const timer = setInterval(() => load(true), 5000);
+        const timer = setInterval(() => {
+          // 后台标签页不轮询：详情页一轮是 11 个 RPC，藏着页面跑纯浪费
+          const doc = typeof document === "undefined" ? null : document;
+          if (doc?.hidden === true) return;
+          load(true);
+        }, 5000);
         return () => clearInterval(timer);
       }, [load]);
       const [threadAction, setThreadAction] = useState({ pending: "", message: "", ok: null });
@@ -6738,7 +6743,11 @@ window.__ModuleLoader__.load({
       );
       useEffect(() => {
         if (!hasWorkingRow) return undefined;
-        const timer = setInterval(() => setTick((/** @type {number} */ n) => n + 1), 1000);
+        const timer = setInterval(() => {
+          const doc = typeof document === "undefined" ? null : document;
+          if (doc?.hidden === true) return;
+          setTick((/** @type {number} */ n) => n + 1);
+        }, 1000);
         return () => clearInterval(timer);
       }, [hasWorkingRow, setTick]);
       const stepsHoverIdState = useState("");
