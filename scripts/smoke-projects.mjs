@@ -1900,6 +1900,9 @@ try {
       ?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
   });
   await page.waitForTimeout(400);
+
+
+  await page.waitForTimeout(400);
   const removeOnce = await page.evaluate(() => {
     // 上一条断言已经把菜单打开了：先看菜单项在不在，别盲目 toggle 关掉它
     if (!document.querySelector("[data-projects-thread-remove]")) {
