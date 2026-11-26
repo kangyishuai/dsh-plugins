@@ -27,6 +27,7 @@ import {
   canMergePr,
   nextPrAction,
   parsePrNumber,
+  pickPollRoot,
   pickRepoRoot,
   planHttpsPush,
   planMergeSteps,
@@ -4283,8 +4284,7 @@ export class ProjectsService extends TypertRemoteService {
           });
           continue;
         }
-        const repoRoot =
-          Array.isArray(project.dirs) && project.dirs.length > 0 ? project.dirs[0] : "";
+        const repoRoot = pickPollRoot({ threads, dirs: project.dirs });
         if (repoRoot === "") {
           projects.push({
             projectId: project.id,

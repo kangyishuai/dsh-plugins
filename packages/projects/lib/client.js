@@ -6216,21 +6216,42 @@ window.__ModuleLoader__.load({
       const setMergeArm = mergeArmState[1];
       const prInfoState = useState(/** @type {any} */ ({}));
       const prInfo = prInfoState[0];
+      // PR 概览缓存加 TTL：以前拿到一次就永不刷新，CI/合并状态会一直停在旧值
+      const prInfoAtState = useState(/** @type {Record<string, number>} */ ({}));
+      const prInfoAt = prInfoAtState[0];
+      const setPrInfoAt = prInfoAtState[1];
       const setPrInfo = prInfoState[1];
       // 展开某条线程时拉一次 PR 概览（有 prNumber 才拉；失败不打扰）
       useEffect(() => {
         const sid = String(expandedThread || "");
-        if (sid === "" || prInfo[sid] !== undefined) return;
+        const fetchedAt = Number(prInfoAt[sid] ?? 0);
+        if (sid === "" || (prInfo[sid] !== undefined && Date.now() - fetchedAt < 30_000)) return;
         const row = (data.progress?.rows ?? []).find(
           (/** @type {any} */ item) => String(item.sessionId) === sid,
         );
         if (!row || Number(row.prNumber) <= 0) return;
+        const markFetched = () =>
+          setPrInfoAt((/** @type {any} */ prev) => ({ ...prev, [sid]: Date.now() }));
         call(api.ctx, "prOverview", { projectId: project.id, sessionId: sid }).then(
-          (/** @type {any} */ result) =>
-            setPrInfo((/** @type {any} */ prev) => ({ ...prev, [sid]: result })),
-          () => setPrInfo((/** @type {any} */ prev) => ({ ...prev, [sid]: { ok: false } })),
+          (/** @type {any} */ result) => {
+            setPrInfo((/** @type {any} */ prev) => ({ ...prev, [sid]: result }));
+            markFetched();
+          },
+          () => {
+            setPrInfo((/** @type {any} */ prev) => ({ ...prev, [sid]: { ok: false } }));
+            markFetched();
+          },
         );
-      }, [api, data.progress, expandedThread, prInfo, project.id, setPrInfo]);
+      }, [
+        api,
+        data.progress,
+        expandedThread,
+        prInfo,
+        prInfoAt,
+        project.id,
+        setPrInfo,
+        setPrInfoAt,
+      ]);
 
       const setExpandedThread = expandedState[1];
       const steerDraftState = useState("");

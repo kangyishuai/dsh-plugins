@@ -35,3 +35,15 @@ describe("pickRepoRoot（PR 命令的工作目录）", () => {
     assert.equal(pickRepoRoot({}), "");
   });
 });
+
+describe("pickPollRoot（项目级 PR 轮询目录）", () => {
+  it("优先任一线程 worktree，其次项目目录", async () => {
+    const { pickPollRoot } = await import("../lib/autopr.js");
+    assert.equal(
+      pickPollRoot({ threads: [{ worktree: null }, { worktree: "/w/t-2" }], dirs: ["/a"] }),
+      "/w/t-2",
+    );
+    assert.equal(pickPollRoot({ threads: [{ worktree: null }], dirs: ["/a"] }), "/a");
+    assert.equal(pickPollRoot({ threads: [], dirs: [] }), "");
+  });
+});
