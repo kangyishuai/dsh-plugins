@@ -8916,7 +8916,9 @@ window.__ModuleLoader__.load({
                     },
                     "⠿",
                   ),
-                  group.rows.length > 1
+                  // 轮播只在组内条目多的时候才出现：2 条时「1–2 of 2 预览 ⋯」
+                  // 只是噪音（真机截图里整行控件都比线程内容显眼）
+                  group.rows.length > 3
                     ? h(
                         "span",
                         { style: styles.carousel, "data-projects-carousel": group.id },
