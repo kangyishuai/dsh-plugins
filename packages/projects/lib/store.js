@@ -588,6 +588,8 @@ export class ProjectStore {
     this.root = options.root;
     this.file = join(options.root, "projects.json");
     this.now = options.now ?? (() => Date.now());
+    /** 待写盘定时器（saveSoon 合并用）；null 表示没有排队中的写。 @type {any} */
+    this.saveTimer = null;
     /** @type {any} */
     this.state = emptyState(this.root);
   }
@@ -618,11 +620,48 @@ export class ProjectStore {
   }
 
   save() {
+    if (this.saveTimer !== null) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
     mkdirSync(dirname(this.file), { recursive: true });
     const tmp = `${this.file}.tmp-${this.now()}`;
-    writeFileSync(tmp, `${JSON.stringify(this.state, null, 2)}\n`, { mode: 0o600 });
+    // 紧凑 JSON：pretty 版本实测大 57%（2.36MB 时单次写 6ms），落盘体积/耗时都是纯浪费
+    writeFileSync(tmp, `${JSON.stringify(this.state)}\n`, { mode: 0o600 });
     renameSync(tmp, this.file);
     return this;
+  }
+
+  /**
+   * 合并短时间内的多次写盘（事件流里每条 tool/call 都 save 一次，实测 6ms/次）。
+   * 崩溃窗口 = delayMs；`dispose`/显式 `save` 会立即落盘。
+   * @param {number} [delayMs]
+   * @returns {this}
+   */
+  saveSoon(delayMs = 250) {
+    if (this.saveTimer !== null) return this;
+    this.saveTimer = setTimeout(
+      () => {
+        this.saveTimer = null;
+        try {
+          this.save();
+        } catch {
+          /* 写盘失败下次再试；不打断事件处理 */
+        }
+      },
+      Math.max(0, Number(delayMs) || 0),
+    );
+    this.saveTimer.unref?.();
+    return this;
+  }
+
+  /** 立即落盘并清掉待写定时器（dispose 用）。 */
+  flush() {
+    if (this.saveTimer !== null) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+    return this.save();
   }
 
   /** @param {string} name @param {{goal?: string, icon?: string, dirs?: string[], repos?: string[], autoResolveDays?: number|null, template?: boolean}} [input] */

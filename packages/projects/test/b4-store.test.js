@@ -311,3 +311,29 @@ describe("projectOfSession 契约（自动重试依赖）", () => {
     }
   });
 });
+
+describe("saveSoon：合并写盘", () => {
+  it("连续多次 saveSoon 只写一次；flush 立即落盘", async () => {
+    const root = mkdtempSync(join(tmpdir(), "dsh-save-soon-"));
+    try {
+      const store = new ProjectStore({ root }).load();
+      store.createProject("coalesce");
+      store.saveSoon(40);
+      store.saveSoon(40);
+      store.saveSoon(40);
+      // 300ms 内文件应已出现（紧凑 JSON：只有一行、无缩进）
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      const raw = readFileSync(join(root, "projects.json"), "utf8");
+      assert.ok(raw.includes('"coalesce"'), "文件应已落盘");
+      assert.ok(!raw.includes("\n  "), "应为紧凑 JSON（不含两空格缩进）");
+      // flush 之后再改一次并立即 flush
+      store.createProject("flushed");
+      store.saveSoon(10_000);
+      store.flush();
+      const raw2 = readFileSync(join(root, "projects.json"), "utf8");
+      assert.ok(raw2.includes('"flushed"'), "flush 必须立即落盘");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

@@ -648,7 +648,8 @@ export class ProjectsService extends TypertRemoteService {
       // 事件回写持久状态（F16 的 P0-1）：todo 快照 / 副标题 / 六态都落 projects.json，
       // 面板没打开、宿主重启后仍读得到。只在真的变了才写盘（避免每个事件都原子写一次）。
       try {
-        if (this.applyThreadEvent(sessionId, event, next) || journaledNow) this.store.save();
+        // 事件是高频路径（每条 tool/call 一次）：合并写盘（250ms 窗口），dispose 时 flush
+        if (this.applyThreadEvent(sessionId, event, next) || journaledNow) this.store.saveSoon(250);
       } catch (error) {
         this.logger?.warn?.(
           `[projects] thread state write-back failed: ${String(/** @type {any} */ (error)?.message ?? error).slice(0, 160)}`,
@@ -714,6 +715,12 @@ export class ProjectsService extends TypertRemoteService {
       }
       clearInterval(this.autoRetryScanTimer);
       this.autoRetryScheduler.cancelAll();
+      // 合并写盘可能还有排队中的一次：dispose 前落盘，避免丢最后一批状态
+      try {
+        this.store?.flush?.();
+      } catch {
+        /* 关闭阶段写盘失败不抛 */
+      }
       this.attached.clear();
     });
   }
