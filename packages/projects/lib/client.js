@@ -7037,7 +7037,7 @@ window.__ModuleLoader__.load({
        */
       const stepRing = (done, total) => {
         const size = 18;
-        const stroke = 2.5;
+        const stroke = 2;
         const radius = (size - stroke) / 2;
         const circumference = 2 * Math.PI * radius;
         const ratio = total > 0 ? Math.min(1, Math.max(0, done / total)) : 0;
@@ -8230,7 +8230,8 @@ window.__ModuleLoader__.load({
                 {
                   style: {
                     fontVariantNumeric: "tabular-nums",
-                    color: steps === null ? T.faint : T.text,
+                    fontSize: "11.5px",
+                    color: steps === null ? T.faint : T.dim,
                   },
                 },
                 // 没有 todo 时 Claude 行尾是空的（不摆 "—" 占位）；锚点仍在，冒烟靠 steps-state 判
@@ -10726,11 +10727,10 @@ window.__ModuleLoader__.load({
                       "aria-selected": tab === item.id ? "true" : "false",
                       "data-projects-tab": item.id,
                       style: {
-                        background: "transparent",
+                        background: tab === item.id ? T.hover : "transparent",
                         border: "none",
-                        borderBottom: `2px solid ${tab === item.id ? T.accentText : "transparent"}`,
-                        borderRadius: "6px 6px 0 0",
-                        padding: "6px 6px",
+                        borderRadius: "6px",
+                        padding: "5px 7px",
                         whiteSpace: "nowrap",
                         flexShrink: 0,
                         color: tab === item.id ? T.text : T.dim,
