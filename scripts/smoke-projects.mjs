@@ -1839,6 +1839,27 @@ try {
     JSON.stringify(threadActions),
   );
 
+  // 行内 ⋯ 菜单：正常操作与危险操作之间有分隔线；↑↓ 可在菜单项间移动焦点
+  const menuA11y = await page.evaluate(() => {
+    const menu = document.querySelector("[data-projects-menu-divider]")?.parentElement;
+    const divider = Boolean(document.querySelector("[data-projects-menu-divider]"));
+    const items = menu ? [...menu.querySelectorAll('[role="menuitem"]:not([disabled])')] : [];
+    let moved = false;
+    if (menu && items.length >= 2) {
+      items[0].focus();
+      menu.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+      moved = document.activeElement === items[1];
+    }
+    return { divider, items: items.length, moved };
+  });
+  add(
+    "行内菜单有危险操作分隔线，↑↓ 可在菜单项间移动焦点",
+    menuA11y.divider === true && menuA11y.items >= 2 && menuA11y.moved === true,
+    JSON.stringify(menuA11y),
+  );
+  // 不关菜单：后面的「移除需二次确认」断言依赖菜单还开着；只把焦点放回菜单触发器
+  await page.evaluate(() => document.querySelector("[data-projects-thread-menu]")?.focus());
+
   // 可访问性：行可聚焦（tabindex=0 / role=button），Enter 能展开并同步 aria-expanded
   const rowA11y = await page.evaluate(() => {
     const row = document.querySelector("[data-projects-thread-row]");
