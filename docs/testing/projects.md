@@ -953,3 +953,26 @@ AGENTS.md 受管区块幂等合并、`@` 候选排序）。`pnpm smoke:projects`
 | P1-13 | 文档夸大                                      | 本节与上方表格按实际断言重写；计数行以冒烟输出为准                                                                                                                      |
 | P1-14 | 冒烟不可重复                                  | 记忆/归档/删除/搜索四处固定等待改为轮询；同 commit 连跑两次计数一致                                                                                                     |
 | P1-15 | 桌面回归设置断言空话                          | 渲染了就真断言，没渲染就 `SKIP` 并计入计数行                                                                                                                            |
+
+## Claude UI 对齐（M2–M6）验证（2026-11-27）
+
+对齐 Claude Projects 本地 space 的布局后，新增/更新的验证口径（数字以本 commit 输出为准）：
+
+- `pnpm verify`：projects 单测 **651**（含 i18n 三处一致性、`attachThread` 幂等、`pickRepoRoot`/`pickPollRoot`）。
+- `pnpm smoke:projects`：**270 PASS / 0 SKIP / 0 FAIL**（临时 `DSH_HOME`，ego 浏览器）。
+- `pnpm smoke:projects-desktop --require`：**20 PASS / 0 SKIP**（空 profile 时 17 条，其余按真实数据 SKIP）。
+- 新增断言（锚点均在 `lib/client.js`）：
+  - 可见性开关写项目记录并回读（`data-projects-views-pane` 与副标题不再出现 `n/a`）；
+  - 路由开关默认收起（`data-projects-route-toggle`，≥8×8，位于 composer 内）；
+  - 排障信息默认折成一行（`data-projects-diagnostics`），展开后才出现 `data-projects-no-dir-hint`；
+  - 线程行 `tabindex=0` / `role=button` / `aria-expanded` 同步，Enter 可展开；
+  - 行内菜单有危险操作分隔线，↑↓ 可在 `role=menuitem` 间移动焦点；
+  - Create PR 条：分支名直接展示、`data-projects-pr-bar-dismiss` 可收起、已有 PR 时整条隐藏。
+- **对比度**：用浏览器内脚本遍历面板可见文本（逐级取实际背景色合成，按 WCAG 计算），
+  浅色修掉 `faint` 的 5 类低对比文本后，仅剩 composer `+` 附件按钮（`disabled` 占位，WCAG 豁免）；
+  深色扫描 **0 项**。脚本为一次性探针，未入库。
+- **双端布局一致**：WebUI（临时 `dsh web --port 0`）与桌面版在 1440×900 下读几何，
+  右栏 `x=1017 w=407`、composer `x≈296`、页签行高 `36`，差异 ≤1px；
+  web 端用 `Emulation.setDeviceMetricsOverride` 固定视口，桌面端用 CDP 同法。
+- 未验证项（需要重启宿主才能复验，已记录）：分支名带项目短 id 的实际推送、PR 草稿自动 `pr ready`、
+  Routine 编辑触发的宿主 `schedule` 建/删、后台自动重试的真实端到端（单测覆盖调度器与判据）。
