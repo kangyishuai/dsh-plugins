@@ -10722,7 +10722,8 @@ window.__ModuleLoader__.load({
                       borderRadius: "999px",
                       border: "none",
                       background: busy || coordinatorBusy ? T.hover : T.brand,
-                      color: "#ffffff",
+                      // 配对前景 token：写死白字在浅色主题下会和白底糊在一起（check 也会警告）
+                      color: T.onPrimary,
                       fontSize: "13px",
                       lineHeight: 1,
                       cursor: busy || coordinatorBusy ? "default" : "pointer",
