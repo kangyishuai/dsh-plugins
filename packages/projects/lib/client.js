@@ -8388,7 +8388,27 @@ window.__ModuleLoader__.load({
               ),
               menu: h(
                 "div",
-                { style: { display: "flex", flexDirection: "column", gap: "2px" } },
+                {
+                  style: { display: "flex", flexDirection: "column", gap: "2px" },
+                  // 菜单键盘导航：↑↓ 在 menuitem 之间移动焦点（Esc 由 Popover 处理）
+                  onKeyDown: (/** @type {any} */ event) => {
+                    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+                    const items = [
+                      ...event.currentTarget.querySelectorAll('[role="menuitem"]:not([disabled])'),
+                    ];
+                    if (items.length === 0) return;
+                    event.preventDefault();
+                    const index = items.indexOf(document.activeElement);
+                    const delta = event.key === "ArrowDown" ? 1 : -1;
+                    const next =
+                      index < 0
+                        ? delta > 0
+                          ? 0
+                          : items.length - 1
+                        : (index + delta + items.length) % items.length;
+                    items[next]?.focus();
+                  },
+                },
                 // F29：手动 resolve / 重开（自动 resolve 是 B6）
                 h(
                   "button",
@@ -8463,6 +8483,18 @@ window.__ModuleLoader__.load({
                     ? text(t, "detail.markRead")
                     : text(t, "detail.markUnread"),
                 ),
+                // 危险组：回收目录 / 移除追踪（与"正常操作"之间加一条分隔线）
+                h("div", {
+                  key: `menu-divider`,
+                  role: "separator",
+                  style: {
+                    height: "1px",
+                    margin: "4px 2px",
+                    background: T.borderSoft,
+                    flex: "none",
+                  },
+                  "data-projects-menu-divider": "",
+                }),
                 row.worktree
                   ? h(
                       "button",
