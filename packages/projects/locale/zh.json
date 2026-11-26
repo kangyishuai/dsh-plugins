@@ -27,7 +27,7 @@
     "detail.loading": "加载中…",
     "detail.tab.threads": "线程 ({count})",
     "detail.tab.memory": "记忆",
-    "detail.threadsEmpty": "还没有线程。在左侧输入框给一个任务就能新建线程；也可以用「…」菜单把已有会话归属到本项目。",
+    "detail.threadsEmpty": "在下面输入框派个任务，回车即可新建线程；也可以用「…」菜单把已有会话归属进来。",
     "detail.threadState": "状态：{state}",
     "detail.instructions": "常设规则（instructions.md）",
     "detail.memoryIndex": "记忆索引（MEMORY.md）",
@@ -628,6 +628,7 @@
     "detail.diag.pollStopped": "PR 轮询停",
     "detail.diag.details": "详情",
     "detail.sparkCaption": "近 7 天",
-    "panel.retry": "重试"
+    "panel.retry": "重试",
+    "detail.welcomeEmpty": "还没有线程"
   }
 }

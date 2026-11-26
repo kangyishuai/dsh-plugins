@@ -256,7 +256,7 @@ window.__ModuleLoader__.load({
       "views.addHint": "保存的是「状态筛选 + 关键词」，不是结果快照。",
 
       "detail.threadsEmpty":
-        "还没有线程。在左侧输入框给一个任务就能新建线程；也可以用「…」菜单把已有会话归属到本项目。",
+        "在下面输入框派个任务，回车即可新建线程；也可以用「…」菜单把已有会话归属进来。",
       "detail.noDirHint":
         "还没有绑定项目目录：线程会跑在插件的数据目录里（不隔离，也不便接手你的仓库）。建议先在「项目设置 → 环境 → 项目目录」里绑定一个 git 仓库，线程才会各占一个 worktree。",
       "detail.threadState": "状态：{state}",
@@ -597,6 +597,7 @@ window.__ModuleLoader__.load({
       "detail.welcome": "欢迎回来，{name}。",
       "detail.welcomeAnon": "欢迎回来。",
       "detail.welcomeCta": "派一件事",
+      "detail.welcomeEmpty": "还没有线程",
       "detail.welcomeIdle": "没有在等你的事。",
       "detail.welcomeWaiting": "有 {count} 个线程在等你。",
       "detail.welcomeWorking": "有 {count} 个线程在跑。",
@@ -795,7 +796,7 @@ window.__ModuleLoader__.load({
       "views.addHint": "A saved view stores the state filter and keyword, not a result snapshot.",
 
       "detail.threadsEmpty":
-        "No sessions belong to this project yet. Use “Add to project…” in a session's … menu.",
+        "Type a task below and press Enter to start a thread; or use a session’s … menu to add it here.",
       "detail.noDirHint":
         "No project directory bound yet: threads run inside the plugin’s data directory (no isolation, and they cannot work on your repo). Bind a git repository above first — then each thread gets its own worktree.",
       "detail.threadState": "state: {state}",
@@ -1131,6 +1132,7 @@ window.__ModuleLoader__.load({
       "detail.welcome": "Welcome back, {name}.",
       "detail.welcomeAnon": "Welcome back.",
       "detail.welcomeCta": "Start a thread",
+      "detail.welcomeEmpty": "No threads yet",
       "detail.welcomeIdle": "Nothing is waiting on you.",
       "detail.welcomeWaiting": "{count} threads are waiting on you.",
       "detail.welcomeWorking": "{count} threads are running.",
@@ -10850,7 +10852,9 @@ window.__ModuleLoader__.load({
                   ? text(t, "detail.welcomeWaiting", { count: waiting })
                   : working > 0
                     ? text(t, "detail.welcomeWorking", { count: working })
-                    : text(t, "detail.welcomeIdle");
+                    : Number(data.progress?.total ?? 0) === 0
+                      ? text(t, "detail.welcomeEmpty")
+                      : text(t, "detail.welcomeIdle");
               const usageDays = Array.isArray(data.progress?.usageDays)
                 ? data.progress.usageDays
                 : [];
@@ -10924,7 +10928,10 @@ window.__ModuleLoader__.load({
             h(
               "div",
               {
-                style: tab === "threads" ? styles.pillBar : { ...styles.pillBar, display: "none" },
+                style:
+                  tab !== "threads" || Number(data.progress?.total ?? 0) === 0
+                    ? { ...styles.pillBar, display: "none" }
+                    : styles.pillBar,
                 "data-projects-pills": "",
                 "data-projects-counts": "",
               },

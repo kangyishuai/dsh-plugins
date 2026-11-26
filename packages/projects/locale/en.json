@@ -27,7 +27,7 @@
     "detail.loading": "Loading…",
     "detail.tab.threads": "Threads ({count})",
     "detail.tab.memory": "Memory",
-    "detail.threadsEmpty": "No sessions belong to this project yet. Use “Add to project…” in a session's … menu.",
+    "detail.threadsEmpty": "Type a task below and press Enter to start a thread; or use a session’s … menu to add it here.",
     "detail.threadState": "state: {state}",
     "detail.instructions": "Standing rules (instructions.md)",
     "detail.memoryIndex": "Memory index (MEMORY.md)",
@@ -628,6 +628,7 @@
     "detail.diag.pollStopped": "PR polling off",
     "detail.diag.details": "Details",
     "detail.sparkCaption": "last 7 days",
-    "panel.retry": "Retry"
+    "panel.retry": "Retry",
+    "detail.welcomeEmpty": "No threads yet"
   }
 }
