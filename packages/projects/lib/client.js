@@ -7383,7 +7383,12 @@ window.__ModuleLoader__.load({
           ),
           h(
             "div",
-            { style: styles.rowMain },
+            {
+              style: {
+                ...styles.rowMain,
+                ...(expandedThread === row.sessionId ? { flex: "1 1 100%" } : {}),
+              },
+            },
             h(
               "span",
               { style: { display: "flex", alignItems: "center", gap: "8px", minWidth: 0 } },
@@ -8348,6 +8353,9 @@ window.__ModuleLoader__.load({
               style: {
                 ...styles.rowRight,
                 alignSelf: "flex-start",
+                ...(expandedThread === row.sessionId
+                  ? { position: "absolute", top: "6px", right: "4px", maxWidth: "45%" }
+                  : {}),
                 justifyContent: "flex-end",
                 flexWrap: "wrap",
                 gap: "8px",
