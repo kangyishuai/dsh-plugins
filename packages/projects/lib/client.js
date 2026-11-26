@@ -1930,7 +1930,8 @@ window.__ModuleLoader__.load({
         gap: "12px",
         // 右栏铺满视口高度（参考图面板是全高，不是一小条）
         minHeight: "calc(100vh - 170px)",
-        paddingLeft: "20px",
+        // 与浅色 panelColLight 完全相同的盒模型：padding 12/16 + 1px 边
+        padding: "12px 16px",
         borderLeft: `1px solid ${T.borderSoft}`,
         // Claude 深色下页面 #0A0A0A / 面板 #1A1A1A：面板比页面亮一档（层次感）。
         // 之前面板与页面同色（#151516），逐像素比对暴露了这一点。
@@ -2200,7 +2201,7 @@ window.__ModuleLoader__.load({
         gap: "6px",
         padding: "12px 14px",
         borderRadius: "14px",
-        border: "1px solid rgba(0,0,0,0.06)",
+        border: "1px solid rgba(0,0,0,0.16)",
         background: "#ffffff",
         boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
         marginTop: "auto",
@@ -7049,7 +7050,10 @@ window.__ModuleLoader__.load({
             : state === "working"
               ? T.dim
               : state === "waiting-user"
-                ? T.accentText
+                ? // 深色下 accentText 近白，和 working 抢色；改用品牌紫
+                  colorScheme === "light"
+                  ? T.accentText
+                  : T.brand
                 : state === "resolved"
                   ? T.success
                   : T.faint;
@@ -7151,8 +7155,8 @@ window.__ModuleLoader__.load({
             style: {
               ...styles.row,
               position: "relative",
-              padding: "10px 6px",
-              cursor: "default",
+              padding: "8px 6px",
+              cursor: "pointer",
               alignItems: "flex-start",
               background: threadHover === row.sessionId ? T.hover : "transparent",
               borderRadius: "8px",
@@ -7170,6 +7174,13 @@ window.__ModuleLoader__.load({
             "data-projects-thread-host-menu": api.contextMenuReady === true ? "yes" : "no",
             onMouseEnter: () => setThreadHover(String(row.sessionId)),
             onMouseLeave: () => setThreadHover(""),
+            onClick: (/** @type {any} */ event) => {
+              // 行内按钮/菜单自己处理点击：只把"空白处点击"当作展开/收起
+              if (event.target.closest("button, input, textarea, a, select, label")) return;
+              setExpandedThread(
+                expandedThread === String(row.sessionId) ? "" : String(row.sessionId),
+              );
+            },
             onContextMenu: (/** @type {any} */ event) => {
               if (openHostThreadMenu(event)) event.preventDefault();
             },
@@ -10807,7 +10818,14 @@ window.__ModuleLoader__.load({
                 "button",
                 {
                   type: "button",
-                  style: { ...styles.filterPill, ...(filter === "" ? styles.pillActive : {}) },
+                  style: {
+                    ...styles.filterPill,
+                    ...(filter === ""
+                      ? styles.pillActive
+                      : colorScheme === "light"
+                        ? { background: "rgba(0,0,0,0.045)" }
+                        : {}),
+                  },
                   "data-projects-pill": "all",
                   "data-projects-pill-active": filter === "" ? "true" : "false",
                   "aria-pressed": filter === "" ? "true" : "false",
@@ -10834,7 +10852,14 @@ window.__ModuleLoader__.load({
                     {
                       type: "button",
                       key: state,
-                      style: { ...styles.filterPill, ...(active ? styles.pillActive : {}) },
+                      style: {
+                        ...styles.filterPill,
+                        ...(active
+                          ? styles.pillActive
+                          : colorScheme === "light"
+                            ? { background: "rgba(0,0,0,0.045)" }
+                            : {}),
+                      },
                       "data-projects-pill": state,
                       "data-projects-pill-count": String(count),
                       "data-projects-pill-active": active ? "true" : "false",
