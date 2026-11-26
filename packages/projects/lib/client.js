@@ -5403,7 +5403,11 @@ window.__ModuleLoader__.load({
                     dirView.ok === false
                       ? h("span", { style: styles.error }, reasonText(String(dirView.error || "")))
                       : dirView.entries.length === 0
-                        ? h("span", { style: styles.meta }, text(t, "library.filesEmpty"))
+                        ? h(
+                            "span",
+                            { style: { ...styles.meta, whiteSpace: "normal", lineHeight: 1.5 } },
+                            text(t, "library.filesEmpty"),
+                          )
                         : fileTableFor(dirView),
                   ),
                 ),
@@ -8783,7 +8787,7 @@ window.__ModuleLoader__.load({
             views.length === 0
               ? h(
                   "span",
-                  { style: { ...styles.meta, whiteSpace: "normal" } },
+                  { style: { ...styles.meta, whiteSpace: "normal", lineHeight: 1.5 } },
                   text(t, "views.savedEmpty"),
                 )
               : h(
@@ -12331,7 +12335,10 @@ window.__ModuleLoader__.load({
         routines.length === 0
           ? h(
               "div",
-              { style: styles.railBodyFull, "data-projects-routines-empty": "" },
+              {
+                style: { ...styles.meta, whiteSpace: "normal", lineHeight: 1.5 },
+                "data-projects-routines-empty": "",
+              },
               "还没有定时任务。用上面的表单建一个；手动档不会自己跑。",
             )
           : h(
