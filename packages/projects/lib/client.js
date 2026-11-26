@@ -1912,7 +1912,7 @@ window.__ModuleLoader__.load({
         flexDirection: "column",
         gap: "12px",
         // 与深色 panelCol 同一盒模型（此前 padding/border 不同导致切主题整体位移 18px）
-        padding: "12px 16px",
+        padding: "0 16px 12px",
         borderRadius: "12px",
         border: "1px solid rgba(0,0,0,0.12)",
         // 淡灰卡：页面是白的，纯白卡在白页上分不出层次
@@ -1935,7 +1935,8 @@ window.__ModuleLoader__.load({
         // 右栏铺满视口高度（参考图面板是全高，不是一小条）
         minHeight: "calc(100vh - 170px)",
         // 与浅色 panelColLight 完全相同的盒模型：padding 12/16 + 1px 边
-        padding: "12px 16px",
+        // 顶部不放 padding：overflow 裁剪区包含 padding，滚动内容会从顶部 12px 探出来
+        padding: "0 16px 12px",
         borderLeft: `1px solid ${T.borderSoft}`,
         // Claude 深色下页面 #0A0A0A / 面板 #1A1A1A：面板比页面亮一档（层次感）。
         // 之前面板与页面同色（#151516），逐像素比对暴露了这一点。
@@ -2063,6 +2064,7 @@ window.__ModuleLoader__.load({
         alignItems: "center",
         gap: "3px",
         flexWrap: "nowrap",
+        flexShrink: 0,
         overflowX: "auto",
         // 去掉横向滚动条占位（否则浅色下常驻 5px 灰条）
         scrollbarWidth: "none",
@@ -2099,6 +2101,7 @@ window.__ModuleLoader__.load({
         padding: "4px 2px 14px",
         minWidth: 0,
         flexWrap: "wrap",
+        flexShrink: 0,
       },
       welcomeTitle: {
         // Claude 用衬线体做"产品气质"：问候语与大标题
@@ -2116,8 +2119,8 @@ window.__ModuleLoader__.load({
         display: "flex",
         alignItems: "center",
         gap: "6px",
-        padding: "5px 10px",
-        marginTop: "6px",
+        padding: "4px 10px",
+        marginTop: "4px",
         marginBottom: "2px",
         borderRadius: "8px",
         background: T.panel,
@@ -10424,7 +10427,26 @@ window.__ModuleLoader__.load({
                   "button",
                   {
                     type: "button",
-                    style: styles.primaryButton,
+                    style: {
+                      width: "26px",
+                      height: "26px",
+                      borderRadius: "999px",
+                      border: "none",
+                      background: busy || coordinatorBusy ? T.hover : T.brand,
+                      color: "#ffffff",
+                      fontSize: "13px",
+                      lineHeight: 1,
+                      cursor: busy || coordinatorBusy ? "default" : "pointer",
+                      flex: "none",
+                    },
+                    title:
+                      composerTarget === "coordinator"
+                        ? text(t, "detail.coordinatorSend")
+                        : text(t, "detail.threadCreate"),
+                    "aria-label":
+                      composerTarget === "coordinator"
+                        ? text(t, "detail.coordinatorSend")
+                        : text(t, "detail.threadCreate"),
                     // 双锚点：旧冒烟/桌面回归按这两个名字找入口；行为按当前目标分流
                     "data-projects-thread-create": "",
                     "data-projects-coordinator-send": "",
@@ -10435,13 +10457,7 @@ window.__ModuleLoader__.load({
                     },
                     disabled: busy || coordinatorBusy,
                   },
-                  composerTarget === "coordinator"
-                    ? coordinatorBusy
-                      ? text(t, "detail.coordinatorSending")
-                      : text(t, "detail.coordinatorSend")
-                    : busy
-                      ? text(t, "detail.threadCreating")
-                      : text(t, "detail.threadCreate"),
+                  busy || coordinatorBusy ? "…" : "↵",
                 ),
               ),
               // composer 控件行（Claude 输入框下方那一行）：+ / 🎤 / 模型 / effort。
@@ -10675,10 +10691,11 @@ window.__ModuleLoader__.load({
                 style: {
                   display: "flex",
                   gap: "4px",
-                  marginTop: "2px",
                   alignItems: "center",
                   flexWrap: "nowrap",
                   overflow: "hidden",
+                  flexShrink: 0,
+                  marginTop: "12px",
                   borderBottom:
                     colorScheme === "light"
                       ? "1px solid rgba(0,0,0,0.12)"
@@ -10687,7 +10704,7 @@ window.__ModuleLoader__.load({
                   top: 0,
                   zIndex: 2,
                   // 与面板底色一致：透明时 sticky 滚动内容会从页签后面透出来（叠字）
-                  background: colorScheme === "light" ? "#FAFAFB" : "rgba(127,127,127,0.045)",
+                  background: colorScheme === "light" ? "#FAFAFB" : T.panel,
                   paddingTop: "2px",
                 },
                 role: "tablist",
