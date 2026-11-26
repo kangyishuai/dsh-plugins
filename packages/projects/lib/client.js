@@ -9549,8 +9549,10 @@ window.__ModuleLoader__.load({
               ? h(
                   "div",
                   {
-                    // 一行截断 + hover 看全文：这段是行动提示，不该占两行把内容往下推
-                    style: { ...styles.meta, whiteSpace: "nowrap" },
+                    // 默认也收进「详情」里：主列顶部只留一行摘要（参考图顶部没有排障段落）
+                    style: showDiagnostics
+                      ? { ...styles.meta, whiteSpace: "nowrap" }
+                      : { ...styles.meta, whiteSpace: "nowrap", display: "none" },
                     title: text(t, "detail.noDirHint"),
                     "data-projects-no-dir-hint": "",
                   },
