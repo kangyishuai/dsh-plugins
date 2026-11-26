@@ -287,6 +287,13 @@ window.__ModuleLoader__.load({
       "detail.state.working": "进行中",
       "detail.state.done": "已完成",
       "detail.state.idle": "空闲",
+      "detail.diag.workspaceBound": "工作区已绑定",
+      "detail.diag.workspaceUnbound": "工作区未绑定",
+      "detail.diag.coordinatorReady": "协调者在线",
+      "detail.diag.coordinatorEmpty": "协调者未建",
+      "detail.diag.pollRunning": "PR 轮询中",
+      "detail.diag.pollStopped": "PR 轮询停",
+      "detail.diag.details": "详情",
       "detail.mainWelcomeTitle": "欢迎回来。",
       "detail.mainWelcomeBody":
         "把项目当成一段持续对话：直接问、让它协调几条线程并行推进；线程跑完会把结论汇报到这里。",
@@ -807,6 +814,13 @@ window.__ModuleLoader__.load({
       "detail.state.working": "Working",
       "detail.state.done": "Done",
       "detail.state.idle": "Idle",
+      "detail.diag.workspaceBound": "Workspace bound",
+      "detail.diag.workspaceUnbound": "No workspace yet",
+      "detail.diag.coordinatorReady": "coordinator online",
+      "detail.diag.coordinatorEmpty": "no coordinator",
+      "detail.diag.pollRunning": "PR polling on",
+      "detail.diag.pollStopped": "PR polling off",
+      "detail.diag.details": "Details",
       "detail.mainWelcomeTitle": "Welcome back.",
       "detail.mainWelcomeBody":
         "Treat a project as one long conversation: ask directly, or let it coordinate several threads in parallel; each thread reports back here.",
@@ -5615,6 +5629,11 @@ window.__ModuleLoader__.load({
       const routeRowState = useState(false);
       const showRouteRow = routeRowState[0];
       const setShowRouteRow = routeRowState[1];
+      // 主列顶部的排障信息（PR 轮询/compaction/实时监听）默认收起：
+      // 参考图的主列是"对话内容优先"，这些属于诊断，折成一行摘要
+      const diagnosticsState = useState(false);
+      const showDiagnostics = diagnosticsState[0];
+      const setShowDiagnostics = diagnosticsState[1];
       const busyState = useState(false);
       const busy = busyState[0];
       const setBusy = busyState[1];
@@ -7137,7 +7156,7 @@ window.__ModuleLoader__.load({
               alignItems: "flex-start",
               background: threadHover === row.sessionId ? T.hover : "transparent",
               borderRadius: "8px",
-              outline: focused ? `1px solid ${T.borderSoft}` : "none",
+              boxShadow: focused ? `inset 2px 0 0 ${T.accentText}` : "none",
             },
             "data-projects-thread-row": row.sessionId,
             "data-projects-thread-state": state,
@@ -8942,10 +8961,7 @@ window.__ModuleLoader__.load({
                         h(
                           "span",
                           { "data-projects-carousel-position": group.id },
-                          text(t, "detail.carousel", {
-                            index: position + 1,
-                            total: group.rows.length,
-                          }),
+                          `${position + 1}/${group.rows.length}`,
                         ),
                         h(
                           "button",
@@ -9383,6 +9399,40 @@ window.__ModuleLoader__.load({
                   },
               "data-projects-detail-main": "",
             },
+            // 诊断摘要：一行说清"工作区/协调者/轮询"三件事，点「详情」才展开原始行
+            h(
+              "div",
+              {
+                style: { display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" },
+                "data-projects-diagnostics": "",
+              },
+              h(
+                "span",
+                { style: { ...styles.meta, fontSize: "12px" } },
+                [
+                  hasDir
+                    ? text(t, "detail.diag.workspaceBound")
+                    : text(t, "detail.diag.workspaceUnbound"),
+                  data.coordinator?.available === true
+                    ? text(t, "detail.diag.coordinatorReady")
+                    : text(t, "detail.diag.coordinatorEmpty"),
+                  data.poll?.running === true
+                    ? text(t, "detail.diag.pollRunning")
+                    : text(t, "detail.diag.pollStopped"),
+                ].join(" · "),
+              ),
+              h("span", { style: { flex: "1 1 auto" } }),
+              h(
+                "button",
+                {
+                  type: "button",
+                  style: { ...styles.secondaryButton, fontSize: "11px", padding: "0 8px" },
+                  "data-projects-diagnostics-toggle": showDiagnostics ? "open" : "closed",
+                  onClick: () => setShowDiagnostics(!showDiagnostics),
+                },
+                text(t, "detail.diag.details"),
+              ),
+            ),
             // 主列空态：Claude 的项目主页有一段"欢迎 + 怎么用"的文字，不是纯空白
             Number(data.progress?.total ?? 0) === 0 &&
               !(Array.isArray(data.coordinator?.messages) && data.coordinator.messages.length > 0)
@@ -9419,7 +9469,12 @@ window.__ModuleLoader__.load({
             !hasDir && (Array.isArray(data.threads) ? data.threads.length : 0) === 0
               ? h(
                   "div",
-                  { style: styles.meta, "data-projects-no-dir-hint": "" },
+                  {
+                    // 一行截断 + hover 看全文：这段是行动提示，不该占两行把内容往下推
+                    style: { ...styles.meta, whiteSpace: "nowrap" },
+                    title: text(t, "detail.noDirHint"),
+                    "data-projects-no-dir-hint": "",
+                  },
                   text(t, "detail.noDirHint"),
                 )
               : null,
@@ -9504,7 +9559,10 @@ window.__ModuleLoader__.load({
                       "div",
                       {
                         // 窄窗隐藏：这是部署能力说明（无 compaction），不属于对话内容
-                        style: narrow ? { ...styles.meta, display: "none" } : styles.meta,
+                        style:
+                          narrow || !showDiagnostics
+                            ? { ...styles.meta, display: "none" }
+                            : styles.meta,
                         "data-projects-coordinator-compaction": compaction.available ? "yes" : "no",
                         title: String(compaction.note || compaction.mode || ""),
                       },
@@ -9779,7 +9837,7 @@ window.__ModuleLoader__.load({
                   {
                     // 窄窗隐藏：这一行是排障信息（"PR 轮询·上次·间隔"），Claude 的窄屏不摆它
                     style: {
-                      display: narrow ? "none" : "flex",
+                      display: narrow || !showDiagnostics ? "none" : "flex",
                       gap: "8px",
                       alignItems: "center",
                       flexWrap: "wrap",

@@ -619,6 +619,13 @@
     "detail.routeToggle": "Dispatch by rules",
     "detail.mainWelcomeTitle": "Welcome back.",
     "detail.mainWelcomeBody": "Treat a project as one long conversation: ask directly, or let it coordinate several threads in parallel; each thread reports back here.",
-    "detail.composerHintCoordinator": "Enter to send to coordinator"
+    "detail.composerHintCoordinator": "Enter to send to coordinator",
+    "detail.diag.workspaceBound": "Workspace bound",
+    "detail.diag.workspaceUnbound": "No workspace yet",
+    "detail.diag.coordinatorReady": "coordinator online",
+    "detail.diag.coordinatorEmpty": "no coordinator",
+    "detail.diag.pollRunning": "PR polling on",
+    "detail.diag.pollStopped": "PR polling off",
+    "detail.diag.details": "Details"
   }
 }

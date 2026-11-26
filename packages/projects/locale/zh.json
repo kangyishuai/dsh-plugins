@@ -619,6 +619,13 @@
     "detail.routeToggle": "按规则派活",
     "detail.mainWelcomeTitle": "欢迎回来。",
     "detail.mainWelcomeBody": "把项目当成一段持续对话：直接问、让它协调几条线程并行推进；线程跑完会把结论汇报到这里。",
-    "detail.composerHintCoordinator": "回车发送给协调者"
+    "detail.composerHintCoordinator": "回车发送给协调者",
+    "detail.diag.workspaceBound": "工作区已绑定",
+    "detail.diag.workspaceUnbound": "工作区未绑定",
+    "detail.diag.coordinatorReady": "协调者在线",
+    "detail.diag.coordinatorEmpty": "协调者未建",
+    "detail.diag.pollRunning": "PR 轮询中",
+    "detail.diag.pollStopped": "PR 轮询停",
+    "detail.diag.details": "详情"
   }
 }
