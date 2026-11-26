@@ -1702,7 +1702,8 @@ window.__ModuleLoader__.load({
         whiteSpace: "nowrap",
       },
       meta: {
-        color: T.faint,
+        // 小字用 secondary（faint 在浅色下约 3.2:1，达不到可读标准）
+        color: T.dim,
         fontSize: "12px",
         minWidth: 0,
         overflow: "hidden",
@@ -1894,8 +1895,10 @@ window.__ModuleLoader__.load({
         gap: "12px",
         // 与深色 panelCol 同一盒模型（此前 padding/border 不同导致切主题整体位移 18px）
         padding: "12px 16px",
-        borderLeft: "1px solid rgba(0,0,0,0.14)",
-        background: "#ffffff",
+        borderRadius: "12px",
+        border: "1px solid rgba(0,0,0,0.12)",
+        // 淡灰卡：页面是白的，纯白卡在白页上分不出层次
+        background: "#FAFAFB",
       },
       panelColNarrow: {
         minWidth: 0,
@@ -2039,15 +2042,16 @@ window.__ModuleLoader__.load({
       pillBar: {
         display: "flex",
         alignItems: "center",
-        gap: "6px",
-        flexWrap: "wrap",
+        gap: "4px",
+        flexWrap: "nowrap",
+        overflowX: "auto",
         padding: "2px 0 6px",
       },
       filterPill: {
         display: "inline-flex",
         alignItems: "center",
         gap: "6px",
-        padding: "4px 12px",
+        padding: "3px 9px",
         borderRadius: "999px",
         border: "1px solid transparent",
         background: T.panel,
@@ -8954,26 +8958,7 @@ window.__ModuleLoader__.load({
                           },
                           "›",
                         ),
-                        // Preview：展开当前聚焦的那条线程（Claude 轮播右侧的 Preview）
-                        h(
-                          "button",
-                          {
-                            type: "button",
-                            style: {
-                              ...styles.iconButton,
-                              fontSize: "11px",
-                              padding: "0 4px",
-                              marginLeft: "4px",
-                            },
-                            "data-projects-carousel-preview": group.id,
-                            title: text(t, "detail.carouselPreviewHint"),
-                            onClick: () => {
-                              const target = group.rows[position]?.sessionId;
-                              if (target) setExpandedThread(String(target));
-                            },
-                          },
-                          text(t, "detail.carouselPreview"),
-                        ),
+                        // 不渲染「预览」文字按钮：407px 宽下会把分组头挤爆；点行本身即可展开
                       )
                     : null,
                   h(Popover, {
@@ -10568,7 +10553,7 @@ window.__ModuleLoader__.load({
                   top: 0,
                   zIndex: 2,
                   // 与面板底色一致：透明时 sticky 滚动内容会从页签后面透出来（叠字）
-                  background: colorScheme === "light" ? "#ffffff" : "rgba(127,127,127,0.045)",
+                  background: colorScheme === "light" ? "#FAFAFB" : "rgba(127,127,127,0.045)",
                   paddingTop: "2px",
                 },
                 role: "tablist",
