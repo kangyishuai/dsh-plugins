@@ -1761,6 +1761,20 @@ try {
     /^\\d+ 步/u.test(statsText) && !/n\\/a/u.test(statsText) && !/0 步/u.test(statsText),
     statsText,
   );
+  // 摘要必须在**可见的副标题**上，不能只挂在一个 display:none 的 sr-only 节点里（上一轮就是假绿）
+  const subtitleVisible = await page.evaluate(() => {
+    const node = document.querySelector("[data-projects-thread-subtitle]");
+    const rect = node && node.getBoundingClientRect();
+    return {
+      text: (node && node.textContent ? node.textContent : "").trim(),
+      visible: Boolean(rect && rect.width > 0 && rect.height > 0),
+    };
+  });
+  add(
+    "可见副标题不是调试串（可见 + 非空 + 不含 n/a）",
+    subtitleVisible.visible && subtitleVisible.text !== "" && !subtitleVisible.text.includes("n/a"),
+    JSON.stringify(subtitleVisible),
+  );
 
   // —— P0-3：行摘要的 diff 必须来自真实 git numstat（以前 progress 只传 stats，恒 n/a）——
   const diffTarget = await page.evaluate(() => {
@@ -2808,7 +2822,7 @@ try {
   );
 
   add(
-    "composer 提示行存在（Type / for commands），行尾时长是 short 形式（now/Nm/Nh）",
+    "composer 提示行存在（输入「/」调出命令），行尾时长是 short 形式（now/Nm/Nh）",
     await page.evaluate(() => {
       const hint = document.querySelector("[data-projects-composer-hint]")?.textContent || "";
       const durations = [...document.querySelectorAll("[data-projects-thread-duration]")].map(
@@ -2819,7 +2833,10 @@ try {
       const shortOk =
         data.durations.length === 0 ||
         data.durations.every((value) => /^(now|[0-9]+[mhd])$/u.test(value));
-      return shortOk && (data.hint.includes("输入 /") || data.hint.includes("Type /"));
+      return (
+        shortOk &&
+        (data.hint.includes("输入「/」") || data.hint.includes("Type “/”") || data.hint.includes("Type /"))
+      );
     }),
     "hint+duration anchor",
   );
@@ -3161,6 +3178,27 @@ try {
   await page.waitForTimeout(1200);
 
   // 按规则派活：默认 L1 下长任务应被拦成「提议」，线程数不变
+  // 按规则派活的入口在 composer 控件行；默认收起，点开后才显示输入行。
+  // 旧断言直接点 display:none 的节点（querySelector 仍命中），属于假绿。
+  const routeToggleState = await page.evaluate(() => {
+    const row = document.querySelector("[data-projects-route-row]");
+    const visibleBefore = Boolean(row && row.getBoundingClientRect().height > 0);
+    document.querySelector("[data-projects-route-toggle]")?.click();
+    return {
+      toggle: Boolean(document.querySelector("[data-projects-route-toggle]")),
+      visibleBefore,
+    };
+  });
+  await page.waitForTimeout(400);
+  const routeRowVisible = await page.evaluate(() => {
+    const row = document.querySelector("[data-projects-route-row]");
+    return Boolean(row && row.getBoundingClientRect().height > 0);
+  });
+  add(
+    "按规则派活入口在 composer、默认收起、点开可见",
+    routeToggleState.toggle === true && routeRowVisible === true,
+    JSON.stringify({ ...routeToggleState, routeRowVisible }),
+  );
   const beforeRoute = await page.evaluate(
     () => document.querySelectorAll("[data-projects-thread-row]").length,
   );
