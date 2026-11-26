@@ -1172,7 +1172,9 @@ try {
     }),
   );
   // 有分支 → 按钮可点；没分支 → 按钮禁用并写明原因（两种都必须自洽，不能只测一种）
-  const hasBranchLabel = /^分支 \\S+/u.test(String(expanded.branchLabel ?? ""));
+  const branchLabelText = String(expanded.branchLabel ?? "");
+  // 新 PR 条直接展示分支名（参考图 13 的 mono 输入条），旧版是「分支 xxx」文案；两种都算有分支
+  const hasBranchLabel = /^分支 \\S+/u.test(branchLabelText) || /^dsh\\/\\S+$/u.test(branchLabelText);
   add(
     "Create PR 条 + 分支条（F12/F20/U16）：有分支可点、无分支时禁用并写明原因",
     expanded.branchBar === true &&
