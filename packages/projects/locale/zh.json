@@ -613,6 +613,9 @@
     "detail.prCard.mergeFail": "合并失败：{reason}",
     "settings.autoRetry": "失败自动重试（最多 2 次）",
     "settings.autoRetryHint": "线程以失败结束时，60 秒后自动再发一句「继续」；累计最多 2 次（不因中间恢复清零）。这不是「用量恢复续跑」。",
-    "detail.rowSub.result": "已完成"
+    "detail.rowSub.result": "已完成",
+    "detail.composer.targetThread": "新线程",
+    "detail.composer.targetCoordinator": "协调者",
+    "detail.routeToggle": "按规则派活"
   }
 }

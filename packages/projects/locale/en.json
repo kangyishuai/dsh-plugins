@@ -613,6 +613,9 @@
     "detail.prCard.mergeFail": "Merge failed: {reason}",
     "settings.autoRetry": "Auto-retry on failure (max 2)",
     "settings.autoRetryHint": "When a thread ends failed, it re-sends \"continue\" after 60s; at most 2 tries per thread, never reset. Not the same as resuming after a usage limit.",
-    "detail.rowSub.result": "Done"
+    "detail.rowSub.result": "Done",
+    "detail.composer.targetThread": "New thread",
+    "detail.composer.targetCoordinator": "Coordinator",
+    "detail.routeToggle": "Dispatch by rules"
   }
 }

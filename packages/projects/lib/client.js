@@ -287,6 +287,8 @@ window.__ModuleLoader__.load({
       "detail.state.working": "进行中",
       "detail.state.done": "已完成",
       "detail.state.idle": "空闲",
+      "detail.composer.targetThread": "新线程",
+      "detail.composer.targetCoordinator": "协调者",
       "detail.threadPlaceholder": "给这个线程一个任务，回车即建",
       "detail.threadCreate": "新建线程",
       "detail.threadCreating": "正在建…",
@@ -317,6 +319,7 @@ window.__ModuleLoader__.load({
       "detail.deleteImpact": "{summary}",
       "notify.failed": "{count} 个线程失败",
       "notify.waiting": "{count} 个线程在等你",
+      "detail.routeToggle": "按规则派活",
       "detail.routePlaceholder": "按规则派活：输入一句话，由规则决定怎么做",
       "detail.routeDispatch": "按规则派活",
       "detail.routeBusy": "处理中…",
@@ -800,6 +803,8 @@ window.__ModuleLoader__.load({
       "detail.state.working": "Working",
       "detail.state.done": "Done",
       "detail.state.idle": "Idle",
+      "detail.composer.targetThread": "New thread",
+      "detail.composer.targetCoordinator": "Coordinator",
       "detail.threadPlaceholder": "Describe a task for a new thread (Enter to create)",
       "detail.threadCreate": "New thread",
       "detail.threadCreating": "Creating…",
@@ -829,6 +834,7 @@ window.__ModuleLoader__.load({
       "detail.deleteImpact": "{summary}",
       "notify.failed": "{count} threads failed",
       "notify.waiting": "{count} threads waiting on you",
+      "detail.routeToggle": "Dispatch by rules",
       "detail.routePlaceholder": "Dispatch by rule: describe the task and let rules decide",
       "detail.routeDispatch": "Dispatch by rule",
       "detail.routeBusy": "Working…",
@@ -3810,7 +3816,10 @@ window.__ModuleLoader__.load({
           { style: styles.page },
           h(
             "div",
-            { style: styles.headRow },
+            {
+              style: selectedProject ? { ...styles.headRow, display: "none" } : styles.headRow,
+              "data-projects-head-row": "",
+            },
             h(
               "div",
               { style: { minWidth: 0, flex: "1 1 auto" } },
@@ -5585,6 +5594,14 @@ window.__ModuleLoader__.load({
       const draftState = useState("");
       const draft = draftState[0];
       const setDraft = draftState[1];
+      // Claude 只有一个 composer：这里用目标切换统一「协调者 / 新线程」两条发送路
+      const composerTargetState = useState("thread");
+      const composerTarget = composerTargetState[0];
+      const setComposerTarget = composerTargetState[1];
+      // 「按规则派活」默认收起：它是补充入口，不该和 composer 抢视觉位置（Claude 只有一个输入框）
+      const routeRowState = useState(false);
+      const showRouteRow = routeRowState[0];
+      const setShowRouteRow = routeRowState[1];
       const busyState = useState(false);
       const busy = busyState[0];
       const setBusy = busyState[1];
@@ -7000,9 +7017,9 @@ window.__ModuleLoader__.load({
             : state === "working"
               ? T.accentText
               : state === "waiting-user"
-                ? T.success
+                ? T.accentText
                 : state === "resolved"
-                  ? T.accentText
+                  ? T.success
                   : T.faint;
         // 行标题用人话（Claude 是"任务/主题"当标题）：title → 副标题/任务 → 线程短 id；
         // 不再暴露 turn 号与 session id（真机走查里最"脏"的一处）。
@@ -7778,6 +7795,20 @@ window.__ModuleLoader__.load({
                         : text(t, "detail.noBranch"),
                     ),
                     h("span", { style: { flex: "1 1 auto" } }),
+                    h(
+                      "button",
+                      {
+                        type: "button",
+                        style: {
+                          ...styles.secondaryButton,
+                          fontSize: "11.5px",
+                          padding: "1px 8px",
+                        },
+                        "data-projects-route-toggle": showRouteRow ? "open" : "closed",
+                        onClick: () => setShowRouteRow(!showRouteRow),
+                      },
+                      text(t, "detail.routeToggle"),
+                    ),
                     h(
                       "button",
                       {
@@ -8784,11 +8815,12 @@ window.__ModuleLoader__.load({
                 { style: styles.emptyCta, "data-projects-threads-empty": "" },
                 h("span", { style: styles.name }, text(t, "detail.emptyOverview")),
                 h("span", { style: styles.emptyHint }, text(t, "detail.threadsEmpty")),
+                // 不再给第二个「派一件事」按钮：底部 composer 就是唯一入口（Claude 形状）
                 h(
                   "button",
                   {
                     type: "button",
-                    style: styles.primaryButton,
+                    style: { ...styles.secondaryButton, display: "none" },
                     "data-projects-empty-cta": "",
                     onClick: focusComposer,
                   },
@@ -9375,7 +9407,12 @@ window.__ModuleLoader__.load({
               // 宽窗让 composer 贴左列底部（Claude 形状）；窄窗单列时不撑高，避免中间一大段空白
               style: narrow
                 ? styles.mainCol
-                : { ...styles.mainCol, minHeight: "calc(100vh - 300px)" },
+                : {
+                    ...styles.mainCol,
+                    minHeight: "calc(100vh - 160px)",
+                    display: "flex",
+                    flexDirection: "column",
+                  },
               "data-projects-detail-main": "",
             },
             threadAction.message !== ""
@@ -9808,20 +9845,16 @@ window.__ModuleLoader__.load({
                       ),
                     )
                   : null,
+                // 协调者输入已并入底部 composer（目标切换）；这里只留模型药丸，且只在有会话时显示
                 h(
                   "div",
-                  { style: { display: "flex", gap: "6px", alignItems: "center" } },
-                  h("input", {
-                    style: styles.input,
-                    value: coordinatorDraft,
-                    placeholder: text(t, "detail.coordinatorPlaceholder"),
-                    "data-projects-coordinator-input": "",
-                    disabled: coordinatorBusy,
-                    onChange: (/** @type {any} */ event) => setCoordinatorDraft(event.target.value),
-                    onKeyDown: (/** @type {any} */ event) => {
-                      if (event.key === "Enter") sendCoordinator();
+                  {
+                    style: {
+                      display: coordinator?.available === true ? "flex" : "none",
+                      gap: "6px",
+                      alignItems: "center",
                     },
-                  }),
+                  },
                   h(
                     "div",
                     { style: { position: "relative", flex: "none" } },
@@ -9957,19 +9990,6 @@ window.__ModuleLoader__.load({
                         )
                       : null,
                   ),
-                  h(
-                    "button",
-                    {
-                      type: "button",
-                      style: styles.primaryButton,
-                      "data-projects-coordinator-send": "",
-                      disabled: coordinatorBusy,
-                      onClick: sendCoordinator,
-                    },
-                    coordinatorBusy
-                      ? text(t, "detail.coordinatorSending")
-                      : text(t, "detail.coordinatorSend"),
-                  ),
                 ),
                 coordinatorMsg !== ""
                   ? h(
@@ -9980,6 +10000,173 @@ window.__ModuleLoader__.load({
                   : null,
               );
             })(),
+            // 按规则派活：保留既有语义（一句话决定怎么做），锚点与旧 UI 一致；
+            // 窄窗隐藏（三行输入框堆叠太吵），入口仍在「项目设置 → 通用」的指令里
+            h(
+              "div",
+              {
+                style: {
+                  display: narrow || !showRouteRow ? "none" : "flex",
+                  gap: "8px",
+                  alignItems: "center",
+                },
+                "data-projects-route-row": "",
+              },
+              h("input", {
+                style: styles.input,
+                value: routeText,
+                placeholder: text(t, "detail.routePlaceholder"),
+                "data-projects-route-input": "",
+                onChange: (/** @type {any} */ event) => setRouteText(event.target.value),
+                onKeyDown: (/** @type {any} */ event) => {
+                  if (event.key === "Enter") dispatchRoute();
+                },
+                disabled: routeBusy,
+              }),
+              h(
+                "button",
+                {
+                  type: "button",
+                  style: styles.secondaryButton,
+                  "data-projects-route-dispatch": "",
+                  "data-projects-route-run": "",
+                  onClick: dispatchRoute,
+                  disabled: routeBusy,
+                },
+                routeBusy ? text(t, "detail.routeBusy") : text(t, "detail.routeDispatch"),
+              ),
+            ),
+            routeResult
+              ? h(
+                  "div",
+                  {
+                    style: styles.meta,
+                    "data-projects-route-result": "",
+                    "data-projects-route-executed": routeResult.executed ? "yes" : "no",
+                    title: routeResult.decision
+                      ? `by=${String(routeResult.decision.by)} action=${String(routeResult.decision.action)}${routeResult.decision.ruleId ? ` rule=${String(routeResult.decision.ruleId)}` : ""}${routeResult.decision.blockedReason ? ` reason=${String(routeResult.decision.blockedReason)}` : ""}`
+                      : "",
+                  },
+                  (() => {
+                    const decision = routeResult.decision;
+                    if (!decision) return routeResult.reason ? String(routeResult.reason) : "";
+                    const action = String(decision.action);
+                    const actionText = text(t, `detail.routeAction.${action}`);
+                    const how =
+                      decision.ruleId && decision.by !== "fallback"
+                        ? text(t, "detail.routeBy.rule", { rule: String(decision.ruleId) })
+                        : text(t, "detail.routeBy.fallback");
+                    if (routeResult.executed)
+                      return text(t, "detail.routeOk", { how, action: actionText });
+                    // 被拦下的情况：说清"想做什么、为什么没做、可以怎么办"
+                    const level = String(decision.blockedReason ?? "").replace(/^autonomy\//u, "");
+                    const head = text(t, "detail.routeBlocked", {
+                      how,
+                      action: actionText,
+                      level: level || "?",
+                    });
+                    return `${head}（${text(t, "detail.routeBlockedHint")}）`;
+                  })(),
+                )
+              : null,
+            (() => {
+              const all = Array.isArray(data.approvals) ? data.approvals : [];
+              const pending = all.filter((/** @type {any} */ item) => item.status === "pending");
+              // 已批准但还没执行：这才是「批准 ≠ 可执行」里那独立的一步，必须有入口
+              const runnable = all.filter(
+                (/** @type {any} */ item) =>
+                  item.status === "approved" &&
+                  !(typeof item.executedAt === "string" && item.executedAt !== ""),
+              );
+              if (pending.length === 0 && runnable.length === 0) return null;
+              const row = (/** @type {any} */ item, /** @type {any} */ actions) =>
+                h(
+                  "div",
+                  {
+                    key: item.requestId,
+                    style: { display: "flex", gap: "8px", alignItems: "center" },
+                    "data-projects-approval-row": item.requestId,
+                  },
+                  h(
+                    "span",
+                    { style: { ...styles.meta, flex: 1, minWidth: 0 } },
+                    `${item.action} · ${item.reason}`,
+                  ),
+                  ...actions,
+                );
+              return h(
+                "div",
+                {
+                  "data-projects-approvals": "",
+                  style: {
+                    border: `1px solid ${T.borderSoft}`,
+                    borderRadius: "10px",
+                    padding: "10px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "6px",
+                  },
+                },
+                h("div", { style: styles.name }, text(t, "detail.approvalsTitle")),
+                pending.map((/** @type {any} */ item) =>
+                  row(item, [
+                    h(
+                      "button",
+                      {
+                        key: "approve",
+                        type: "button",
+                        style: styles.secondaryButton,
+                        "data-projects-approval-approve": item.requestId,
+                        onClick: () => resolveApproval(item.requestId, "approved"),
+                      },
+                      text(t, "detail.approve"),
+                    ),
+                    h(
+                      "button",
+                      {
+                        key: "reject",
+                        type: "button",
+                        style: { ...styles.secondaryButton, color: T.danger },
+                        "data-projects-approval-reject": item.requestId,
+                        onClick: () => resolveApproval(item.requestId, "rejected"),
+                      },
+                      text(t, "detail.reject"),
+                    ),
+                  ]),
+                ),
+                runnable.map((/** @type {any} */ item) =>
+                  row(item, [
+                    h(
+                      "button",
+                      {
+                        key: "execute",
+                        type: "button",
+                        style: styles.secondaryButton,
+                        disabled: exec.busy === item.requestId,
+                        "data-projects-approval-execute": item.requestId,
+                        onClick: () => executeApproval(item.requestId),
+                      },
+                      text(t, "detail.execute"),
+                    ),
+                  ]),
+                ),
+              );
+            })(),
+            exec.message !== ""
+              ? h(
+                  "div",
+                  {
+                    style: { ...styles.meta, color: exec.ok === false ? T.danger : T.text },
+                    "data-projects-approval-exec-result": "",
+                  },
+                  exec.message,
+                )
+              : null,
+            // 把对话内容留在上方，composer 贴左列底部（Claude 形状）
+            h("div", {
+              style: { flex: "1 1 auto", minHeight: "12px" },
+              "data-projects-composer-spacer": "",
+            }),
             h(
               "div",
               {
@@ -10035,6 +10222,36 @@ window.__ModuleLoader__.load({
                     ),
                   )
                 : null,
+              // 目标切换：协调者 / 新线程（同一个输入框，Claude 只有一个 composer）
+              h(
+                "div",
+                { style: { display: "flex", gap: "4px", marginBottom: "2px" } },
+                [
+                  { id: "thread", label: text(t, "detail.composer.targetThread") },
+                  { id: "coordinator", label: text(t, "detail.composer.targetCoordinator") },
+                ].map((item) =>
+                  h(
+                    "button",
+                    {
+                      key: item.id,
+                      type: "button",
+                      "data-projects-composer-target": item.id,
+                      "aria-selected": composerTarget === item.id ? "true" : "false",
+                      style: {
+                        border: "none",
+                        background: composerTarget === item.id ? T.hover : "transparent",
+                        color: composerTarget === item.id ? T.text : T.faint,
+                        fontSize: "11.5px",
+                        padding: "2px 8px",
+                        borderRadius: "999px",
+                        cursor: "pointer",
+                      },
+                      onClick: () => setComposerTarget(item.id),
+                    },
+                    item.label,
+                  ),
+                ),
+              ),
               h("input", {
                 ref: threadInputRef,
                 style: {
@@ -10044,10 +10261,20 @@ window.__ModuleLoader__.load({
                   padding: "2px 0",
                   fontSize: "14px",
                 },
-                value: draft,
-                placeholder: text(t, "detail.threadPlaceholder"),
+                value: composerTarget === "coordinator" ? coordinatorDraft : draft,
+                placeholder: text(
+                  t,
+                  composerTarget === "coordinator"
+                    ? "detail.coordinatorPlaceholder"
+                    : "detail.threadPlaceholder",
+                ),
                 "data-projects-thread-input": "",
-                onChange: (/** @type {any} */ event) => setDraft(event.target.value),
+                "data-projects-coordinator-input": "",
+                "data-projects-composer-target-value": composerTarget,
+                onChange: (/** @type {any} */ event) => {
+                  if (composerTarget === "coordinator") setCoordinatorDraft(event.target.value);
+                  else setDraft(event.target.value);
+                },
                 onKeyDown: (/** @type {any} */ event) => {
                   if (slashOpen) {
                     if (event.key === "Escape") {
@@ -10070,7 +10297,10 @@ window.__ModuleLoader__.load({
                       return;
                     }
                   }
-                  if (event.key === "Enter") createThread();
+                  if (event.key === "Enter") {
+                    if (composerTarget === "coordinator") sendCoordinator();
+                    else createThread();
+                  }
                 },
                 disabled: busy,
               }),
@@ -10083,11 +10313,23 @@ window.__ModuleLoader__.load({
                   {
                     type: "button",
                     style: styles.primaryButton,
+                    // 双锚点：旧冒烟/桌面回归按这两个名字找入口；行为按当前目标分流
                     "data-projects-thread-create": "",
-                    onClick: createThread,
-                    disabled: busy,
+                    "data-projects-coordinator-send": "",
+                    "data-projects-composer-send": composerTarget,
+                    onClick: () => {
+                      if (composerTarget === "coordinator") sendCoordinator();
+                      else createThread();
+                    },
+                    disabled: busy || coordinatorBusy,
                   },
-                  busy ? text(t, "detail.threadCreating") : text(t, "detail.threadCreate"),
+                  composerTarget === "coordinator"
+                    ? coordinatorBusy
+                      ? text(t, "detail.coordinatorSending")
+                      : text(t, "detail.coordinatorSend")
+                    : busy
+                      ? text(t, "detail.threadCreating")
+                      : text(t, "detail.threadCreate"),
                 ),
               ),
               // composer 控件行（Claude 输入框下方那一行）：+ / 🎤 / 模型 / effort。
@@ -10267,168 +10509,6 @@ window.__ModuleLoader__.load({
               },
               text(t, "detail.composerHint"),
             ),
-            // 按规则派活：保留既有语义（一句话决定怎么做），锚点与旧 UI 一致；
-            // 窄窗隐藏（三行输入框堆叠太吵），入口仍在「项目设置 → 通用」的指令里
-            h(
-              "div",
-              {
-                style: {
-                  display: narrow ? "none" : "flex",
-                  gap: "8px",
-                  alignItems: "center",
-                },
-                "data-projects-route-row": "",
-              },
-              h("input", {
-                style: styles.input,
-                value: routeText,
-                placeholder: text(t, "detail.routePlaceholder"),
-                "data-projects-route-input": "",
-                onChange: (/** @type {any} */ event) => setRouteText(event.target.value),
-                onKeyDown: (/** @type {any} */ event) => {
-                  if (event.key === "Enter") dispatchRoute();
-                },
-                disabled: routeBusy,
-              }),
-              h(
-                "button",
-                {
-                  type: "button",
-                  style: styles.secondaryButton,
-                  "data-projects-route-dispatch": "",
-                  "data-projects-route-run": "",
-                  onClick: dispatchRoute,
-                  disabled: routeBusy,
-                },
-                routeBusy ? text(t, "detail.routeBusy") : text(t, "detail.routeDispatch"),
-              ),
-            ),
-            routeResult
-              ? h(
-                  "div",
-                  {
-                    style: styles.meta,
-                    "data-projects-route-result": "",
-                    "data-projects-route-executed": routeResult.executed ? "yes" : "no",
-                    title: routeResult.decision
-                      ? `by=${String(routeResult.decision.by)} action=${String(routeResult.decision.action)}${routeResult.decision.ruleId ? ` rule=${String(routeResult.decision.ruleId)}` : ""}${routeResult.decision.blockedReason ? ` reason=${String(routeResult.decision.blockedReason)}` : ""}`
-                      : "",
-                  },
-                  (() => {
-                    const decision = routeResult.decision;
-                    if (!decision) return routeResult.reason ? String(routeResult.reason) : "";
-                    const action = String(decision.action);
-                    const actionText = text(t, `detail.routeAction.${action}`);
-                    const how =
-                      decision.ruleId && decision.by !== "fallback"
-                        ? text(t, "detail.routeBy.rule", { rule: String(decision.ruleId) })
-                        : text(t, "detail.routeBy.fallback");
-                    if (routeResult.executed)
-                      return text(t, "detail.routeOk", { how, action: actionText });
-                    // 被拦下的情况：说清"想做什么、为什么没做、可以怎么办"
-                    const level = String(decision.blockedReason ?? "").replace(/^autonomy\//u, "");
-                    const head = text(t, "detail.routeBlocked", {
-                      how,
-                      action: actionText,
-                      level: level || "?",
-                    });
-                    return `${head}（${text(t, "detail.routeBlockedHint")}）`;
-                  })(),
-                )
-              : null,
-            (() => {
-              const all = Array.isArray(data.approvals) ? data.approvals : [];
-              const pending = all.filter((/** @type {any} */ item) => item.status === "pending");
-              // 已批准但还没执行：这才是「批准 ≠ 可执行」里那独立的一步，必须有入口
-              const runnable = all.filter(
-                (/** @type {any} */ item) =>
-                  item.status === "approved" &&
-                  !(typeof item.executedAt === "string" && item.executedAt !== ""),
-              );
-              if (pending.length === 0 && runnable.length === 0) return null;
-              const row = (/** @type {any} */ item, /** @type {any} */ actions) =>
-                h(
-                  "div",
-                  {
-                    key: item.requestId,
-                    style: { display: "flex", gap: "8px", alignItems: "center" },
-                    "data-projects-approval-row": item.requestId,
-                  },
-                  h(
-                    "span",
-                    { style: { ...styles.meta, flex: 1, minWidth: 0 } },
-                    `${item.action} · ${item.reason}`,
-                  ),
-                  ...actions,
-                );
-              return h(
-                "div",
-                {
-                  "data-projects-approvals": "",
-                  style: {
-                    border: `1px solid ${T.borderSoft}`,
-                    borderRadius: "10px",
-                    padding: "10px",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "6px",
-                  },
-                },
-                h("div", { style: styles.name }, text(t, "detail.approvalsTitle")),
-                pending.map((/** @type {any} */ item) =>
-                  row(item, [
-                    h(
-                      "button",
-                      {
-                        key: "approve",
-                        type: "button",
-                        style: styles.secondaryButton,
-                        "data-projects-approval-approve": item.requestId,
-                        onClick: () => resolveApproval(item.requestId, "approved"),
-                      },
-                      text(t, "detail.approve"),
-                    ),
-                    h(
-                      "button",
-                      {
-                        key: "reject",
-                        type: "button",
-                        style: { ...styles.secondaryButton, color: T.danger },
-                        "data-projects-approval-reject": item.requestId,
-                        onClick: () => resolveApproval(item.requestId, "rejected"),
-                      },
-                      text(t, "detail.reject"),
-                    ),
-                  ]),
-                ),
-                runnable.map((/** @type {any} */ item) =>
-                  row(item, [
-                    h(
-                      "button",
-                      {
-                        key: "execute",
-                        type: "button",
-                        style: styles.secondaryButton,
-                        disabled: exec.busy === item.requestId,
-                        "data-projects-approval-execute": item.requestId,
-                        onClick: () => executeApproval(item.requestId),
-                      },
-                      text(t, "detail.execute"),
-                    ),
-                  ]),
-                ),
-              );
-            })(),
-            exec.message !== ""
-              ? h(
-                  "div",
-                  {
-                    style: { ...styles.meta, color: exec.ok === false ? T.danger : T.text },
-                    "data-projects-approval-exec-result": "",
-                  },
-                  exec.message,
-                )
-              : null,
           ),
           // —— 右列：Threads 面板（页签 + Welcome + 药丸条 + 列表/记忆/Routines）——
           h(
@@ -10587,7 +10667,11 @@ window.__ModuleLoader__.load({
               );
               return h(
                 "div",
-                { style: styles.welcome, "data-projects-welcome": "" },
+                {
+                  style:
+                    tab === "threads" ? styles.welcome : { ...styles.welcome, display: "none" },
+                  "data-projects-welcome": "",
+                },
                 h(
                   "div",
                   { style: { minWidth: 0, flex: "1 1 auto" } },
@@ -10633,7 +10717,11 @@ window.__ModuleLoader__.load({
             // —— F26/U13 药丸条：5 类计数 + 在跑的时间估计；点击 = 过滤该状态 ——
             h(
               "div",
-              { style: styles.pillBar, "data-projects-pills": "", "data-projects-counts": "" },
+              {
+                style: tab === "threads" ? styles.pillBar : { ...styles.pillBar, display: "none" },
+                "data-projects-pills": "",
+                "data-projects-counts": "",
+              },
               h(
                 "button",
                 {
