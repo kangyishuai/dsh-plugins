@@ -1000,7 +1000,7 @@ try {
   );
   add(
     "副标题缺数据时不编造（只允许状态词或空）",
-    overview?.subtitleText === "" || /空闲|在跑|等你|待审|失败|归档/u.test(String(overview?.subtitleText)),
+    overview?.subtitleText === "" || /空闲|在跑|等你|待你确认|失败|归档/u.test(String(overview?.subtitleText)),
     JSON.stringify({ subtitle: overview?.subtitle, text: overview?.subtitleText }),
   );
   add(
@@ -1956,10 +1956,14 @@ try {
   const panelSummary = await page.evaluate(
     () => (document.querySelector("[data-projects-summary]")?.textContent || "").trim(),
   );
+  const panelHero = await page.evaluate(() => ({
+    display: document.querySelector("[data-projects-head-row]")?.style.display || "",
+    text: (document.querySelector("[data-projects-summary]")?.textContent || "").trim(),
+  }));
   add(
-    "头部统计给出线程数",
-    panelSummary.length > 0 && /线程/u.test(panelSummary),
-    panelSummary.slice(0, 80),
+    "详情页隐藏页面 hero，但头部统计仍在 DOM 且含线程数（列表页可见）",
+    panelHero.display === "none" && panelHero.text.length > 0 && /线程/u.test(panelHero.text),
+    JSON.stringify({ ...panelHero, text: panelHero.text.slice(0, 40) }),
   );
 
   // 详情页改成 Claude 项目主页的两列布局：主列（composer + 页签 + 线程）在 DOM 里先于右栏，
@@ -3181,22 +3185,32 @@ try {
   // 按规则派活的入口在 composer 控件行；默认收起，点开后才显示输入行。
   // 旧断言直接点 display:none 的节点（querySelector 仍命中），属于假绿。
   const routeToggleState = await page.evaluate(() => {
-    const row = document.querySelector("[data-projects-route-row]");
-    const visibleBefore = Boolean(row && row.getBoundingClientRect().height > 0);
-    document.querySelector("[data-projects-route-toggle]")?.click();
-    return {
-      toggle: Boolean(document.querySelector("[data-projects-route-toggle]")),
-      visibleBefore,
+    const visible = (node) => {
+      if (!node) return false;
+      const rect = node.getBoundingClientRect();
+      return rect.width >= 8 && rect.height >= 8;
     };
+    const toggle = document.querySelector("[data-projects-route-toggle]");
+    const row = document.querySelector("[data-projects-route-row]");
+    const visibleBefore = visible(row);
+    const inComposer = Boolean(toggle && toggle.closest("[data-projects-composer]"));
+    const toggleVisible = visible(toggle);
+    toggle?.click();
+    return { toggleVisible, visibleBefore, inComposer };
   });
   await page.waitForTimeout(400);
   const routeRowVisible = await page.evaluate(() => {
     const row = document.querySelector("[data-projects-route-row]");
-    return Boolean(row && row.getBoundingClientRect().height > 0);
+    if (!row) return false;
+    const rect = row.getBoundingClientRect();
+    return rect.width >= 8 && rect.height >= 8;
   });
   add(
     "按规则派活入口在 composer、默认收起、点开可见",
-    routeToggleState.toggle === true && routeRowVisible === true,
+    routeToggleState.toggleVisible === true &&
+      routeToggleState.inComposer === true &&
+      routeToggleState.visibleBefore === false &&
+      routeRowVisible === true,
     JSON.stringify({ ...routeToggleState, routeRowVisible }),
   );
   const beforeRoute = await page.evaluate(
