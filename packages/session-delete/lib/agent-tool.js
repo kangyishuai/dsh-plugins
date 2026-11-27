@@ -10,10 +10,37 @@ const DEFAULT_TTL_MS = 120_000;
  * @param {{ plan: (sessionId: string) => Promise<any>, trash: (sessionId: string, request: any) => Promise<any> }} options.ops
  * @param {() => number} [options.now]
  * @param {number} [options.ttlMs]
+ * @param {(event: { action: string, sessionId?: string, code: string, operator: string }) => Promise<void> | void} [options.onRefusal]
+ *   拒绝钩子：宿主用来写审计（AUD-SD-04）。钩子失败不改变拒绝结论。
  */
-export function createAgentToolController({ ops, now = Date.now, ttlMs = DEFAULT_TTL_MS }) {
+export function createAgentToolController({
+  ops,
+  now = Date.now,
+  ttlMs = DEFAULT_TTL_MS,
+  onRefusal,
+}) {
   /** @type {Map<string, { sessionId: string, digest: string, cascade: boolean, expiresAt: number }>} */
   const tokens = new Map();
+
+  /**
+   * 记录一次拒绝。模型工具的所有 return {ok:false} 都要经过这里。
+   * @param {string} action
+   * @param {unknown} sessionId
+   * @param {string} code
+   */
+  async function refuse(action, sessionId, code) {
+    if (typeof onRefusal !== "function") return;
+    try {
+      await onRefusal({
+        action,
+        sessionId: typeof sessionId === "string" && sessionId.length > 0 ? sessionId : undefined,
+        code,
+        operator: "agent",
+      });
+    } catch {
+      // 审计写入失败不改变「这次调用被拒绝」的结论；宿主侧另有 logger 告警。
+    }
+  }
 
   /** @param {string} token */
   function takeToken(token) {
@@ -31,6 +58,7 @@ export function createAgentToolController({ ops, now = Date.now, ttlMs = DEFAULT
   async function plan(args) {
     const plan = await ops.plan(args.sessionId);
     if (plan.blockers.length > 0) {
+      await refuse("plan", plan.sessionId, "blocked");
       return {
         ok: false,
         code: "blocked",
@@ -75,34 +103,42 @@ export function createAgentToolController({ ops, now = Date.now, ttlMs = DEFAULT
    */
   async function remove(args) {
     if (args.callerSessionId && args.callerSessionId === args.sessionId) {
+      await refuse("trash", args.sessionId, "caller-session");
       return {
         ok: false,
         code: "caller-session",
         message: "refusing to delete the session that is calling this tool",
       };
     }
-    if (!args.token)
+    if (!args.token) {
+      await refuse("trash", args.sessionId, "token-required");
       return {
         ok: false,
         code: "token-required",
         message: "call action=plan first to obtain a token",
       };
+    }
     const taken = takeToken(args.token);
-    if (taken.error)
+    if (taken.error) {
+      await refuse("trash", args.sessionId, taken.error);
       return {
         ok: false,
         code: taken.error,
         message: "token is invalid or expired; run action=plan again",
       };
+    }
     const entry = /** @type {any} */ (taken.entry);
     if (entry.sessionId !== args.sessionId) {
+      await refuse("trash", args.sessionId, "token-mismatch");
       return { ok: false, code: "token-mismatch", message: "token was issued for another session" };
     }
     const plan = await ops.plan(args.sessionId);
     if (plan.blockers.length > 0) {
+      await refuse("trash", args.sessionId, "blocked");
       return { ok: false, code: "blocked", blockers: plan.blockers };
     }
     if (plan.digest !== entry.digest) {
+      await refuse("trash", args.sessionId, "stale-plan");
       return {
         ok: false,
         code: "stale-plan",

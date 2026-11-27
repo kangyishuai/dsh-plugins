@@ -89,7 +89,7 @@ window.__ModuleLoader__.load({
       "panel.size": "{size}",
       "panel.trashedAt": "{time}",
       "panel.unknown": "{n} 个无法识别的目录已保留",
-      "panel.pending": "{n} 个未完成的操作",
+      "panel.pending": "{n} 个未完成的操作（重启后自动对账；仍未处理需人工核对）",
       "panel.readOnly": "只读模式：当前 DSH 版本缺少依赖接口，删除功能已禁用。",
       "panel.close": "关闭",
       "trash.selectAll": "全选",
@@ -101,7 +101,11 @@ window.__ModuleLoader__.load({
       "batch.stop": "停止",
       "batch.done": "完成：{ok}/{total} 成功",
       "batch.failed": "{n} 个失败，已保留选中",
+      "batch.partial": "其中 {n} 条引用未还原",
       "toast.failed": "操作失败：{message}",
+      "toast.trashPartial": "已移入回收站，但收尾未完成：{message}（会话可在回收站恢复）",
+      "toast.restorePartial": "会话已恢复，但 {n} 处引用/校验未通过（详见操作回执）",
+      "toast.undoFailed": "撤销失败：{message}",
       "settings.nav": "会话回收站",
       "settings.group.delete": "删除偏好",
       "settings.cascade.title": "记住「同时删除子会话」",
@@ -113,8 +117,10 @@ window.__ModuleLoader__.load({
       "settings.trash.open": "打开回收站",
       "settings.group.maintenance": "维护",
       "settings.health.title": "体检",
-      "settings.health.desc": "检查指向已不存在会话的登记条目（只读）。",
+      "settings.health.desc": "检查指向已不存在会话的登记条目（只读；需要时手动运行）。",
       "settings.health.ok": "未发现失效引用。",
+      "settings.health.idle": "尚未体检。点「运行体检」会扫描全库会话（只读）。",
+      "settings.health.run": "运行体检",
       "settings.health.items": "{n} 条待清理",
       "settings.health.unavailable": "无法体检：{reason}",
       "settings.health.clean": "清理 {n} 条",
@@ -175,7 +181,8 @@ window.__ModuleLoader__.load({
       "panel.size": "{size}",
       "panel.trashedAt": "{time}",
       "panel.unknown": "{n} unrecognized director(ies) kept",
-      "panel.pending": "{n} unfinished operation(s)",
+      "panel.pending":
+        "{n} unfinished operation(s) (reconciled on next start; leftovers need review)",
       "panel.readOnly":
         "Read-only: this DSH version is missing required APIs; deletion is disabled.",
       "panel.close": "Close",
@@ -188,7 +195,13 @@ window.__ModuleLoader__.load({
       "batch.stop": "Stop",
       "batch.done": "Done: {ok}/{total} succeeded",
       "batch.failed": "{n} failed; kept selected",
+      "batch.partial": "{n} restored with incomplete references",
       "toast.failed": "Operation failed: {message}",
+      "toast.trashPartial":
+        "Moved to the trash, but cleanup did not finish: {message} (the session is restorable)",
+      "toast.restorePartial":
+        "Session restored, but {n} reference/check(s) did not pass (see the receipt)",
+      "toast.undoFailed": "Undo failed: {message}",
       "settings.nav": "Session trash",
       "settings.group.delete": "Deletion preferences",
       "settings.cascade.title": 'Remember "also delete child sessions"',
@@ -201,8 +214,10 @@ window.__ModuleLoader__.load({
       "settings.group.maintenance": "Maintenance",
       "settings.health.title": "Health",
       "settings.health.desc":
-        "Checks bookkeeping that points at sessions that no longer exist (read-only).",
+        "Checks bookkeeping that points at sessions that no longer exist (read-only; run it on demand).",
       "settings.health.ok": "No dangling references found.",
+      "settings.health.idle": "No check yet. Run it to scan the whole library (read-only).",
+      "settings.health.run": "Run check",
       "settings.health.items": "{n} to clean",
       "settings.health.unavailable": "Cannot run the check: {reason}",
       "settings.health.clean": "Clean {n}",
@@ -268,6 +283,8 @@ window.__ModuleLoader__.load({
           title: props.title,
           "aria-label": props.ariaLabel,
           "data-modal-autofocus": props.modalAutofocus ? "" : undefined,
+          // 稳定的动作锚点：冒烟/桌面回归按它定位，不再依赖 CSS class 或文案。
+          "data-session-delete-action": props.action,
           onClick: props.onClick,
           className: `dsh-sdel-btn${variant}${quiet}${props.tight ? " dsh-sdel-btn--tight" : ""}`,
           style: {
@@ -341,7 +358,10 @@ window.__ModuleLoader__.load({
     function SettingRow(/** @type {any} */ props) {
       return h(
         "div",
-        { className: "dsh-sdel-setting-row" },
+        {
+          className: "dsh-sdel-setting-row",
+          "data-session-delete-setting-row": props.anchor,
+        },
         h(
           "div",
           { className: "dsh-sdel-setting-text" },
@@ -368,6 +388,7 @@ window.__ModuleLoader__.load({
           {
             type: "button",
             className: "dsh-sdel-disclosure",
+            "data-session-delete-disclosure": props.anchor,
             "aria-expanded": open ? "true" : "false",
             onClick: () => setOpen(!open),
           },
@@ -593,6 +614,47 @@ window.__ModuleLoader__.load({
       return String(error);
     }
 
+    /**
+     * 「会话已进回收站、只是收尾没做完」（AUD-SD-03）。
+     * RPC 的 RemoteError 会保留 details；同时容忍 partial 直接挂在错误上。
+     * @param {any} reason
+     */
+    function isPartialFailure(reason) {
+      if (!reason || typeof reason !== "object") return false;
+      if (reason.code === "session-delete/partial") return true;
+      if (reason.partial === true) return true;
+      return reason.details?.partial === true;
+    }
+
+    /**
+     * 删除失败要按磁盘事实说话：已进回收站但收尾失败 ≠ 删除失败。
+     * @param {any} reason
+     * @param {(key: string, values?: any) => string} t
+     */
+    function trashFailureText(reason, t) {
+      if (isPartialFailure(reason)) return t("toast.trashPartial", { message: errorText(reason) });
+      return errorText(reason);
+    }
+
+    /**
+     * 恢复的收尾提示：引用/校验没全过时返回一句「哪里不完整」，全过时返回 null。
+     * @param {any} result
+     * @param {(key: string, values?: any) => string} t
+     * @returns {string | null}
+     */
+    function restoreNotice(result, t) {
+      var failedRefs = Array.isArray(result?.refs)
+        ? result.refs.filter((/** @type {any} */ item) => item.status === "failed").length
+        : 0;
+      var failedChecks = Array.isArray(result?.checks)
+        ? result.checks.filter((/** @type {any} */ item) => item.status === "failed").length
+        : 0;
+      var count = failedRefs + failedChecks;
+      if (result?.partial === true && count === 0) count = 1;
+      if (count === 0) return null;
+      return t("toast.restorePartial", { n: count });
+    }
+
     function DeleteSessionMenuItem(/** @type {any} */ props) {
       var menuState =
         typeof props.useMenuOpenState === "function" ? props.useMenuOpenState() : [false, () => {}];
@@ -664,6 +726,7 @@ window.__ModuleLoader__.load({
           "aria-label": label,
           onClick: () => props.openPanel(),
           className: "dsh-sdel-footer",
+          "data-session-delete-footer": "",
           style: {
             display: "flex",
             alignItems: "center",
@@ -682,6 +745,8 @@ window.__ModuleLoader__.load({
           ? h(
               "span",
               {
+                "data-session-delete-count": "",
+                "data-session-delete-count-value": String(count),
                 style: {
                   marginLeft: props.wide ? "auto" : 0,
                   minWidth: "16px",
@@ -809,7 +874,27 @@ window.__ModuleLoader__.load({
           })
           .catch((/** @type {any} */ reason) => {
             setBusy(false);
-            setError(errorText(reason));
+            if (!isWorkspace && isPartialFailure(reason)) {
+              // 已移入回收站但收尾失败（AUD-SD-03）：磁盘事实变了，别让用户以为「删除失败」
+              // 再点一次（重试只会得到 not-found）。关框、按事实提示、照常刷新列表。
+              props.requestStore.set(null);
+              const partialEntryId = reason?.details?.entryId ?? null;
+              props.onTrashed?.({
+                sessionId: request.sessionId,
+                entryId: partialEntryId,
+                title: request.title || null,
+              });
+              // 错误 toast 也带上 entryId：partial 的「已进回收站」仍然给撤销入口，
+              // 否则用户只剩面板一条路（复审 F12）。
+              props.toastStore?.set({
+                entryId: partialEntryId,
+                title: request.title || null,
+                text: trashFailureText(reason, props.t),
+                error: true,
+              });
+              return;
+            }
+            setError(trashFailureText(reason, props.t));
           });
       };
 
@@ -838,11 +923,14 @@ window.__ModuleLoader__.load({
               request.title,
             )
           : null,
-        h("div", { style: { color: T.dim } }, impact),
+        h("div", { style: { color: T.dim }, "data-session-delete-impact": "" }, impact),
         !isWorkspace && removes.length > 0
           ? h(
               "div",
-              { style: { color: T.faint, fontSize: "12px", marginTop: "2px" } },
+              {
+                style: { color: T.faint, fontSize: "12px", marginTop: "2px" },
+                "data-session-delete-refs": "",
+              },
               props.t("confirm.refs", { n: removes.length }),
             )
           : null,
@@ -875,11 +963,21 @@ window.__ModuleLoader__.load({
         blocked
           ? h(
               "div",
-              { style: { color: T.danger, marginTop: "10px" }, role: "alert" },
+              {
+                style: { color: T.danger, marginTop: "10px" },
+                role: "alert",
+                "data-session-delete-blocked": "",
+              },
               props.t("confirm.blocked", { reason: plan.blockers[0].message }),
             )
           : null,
-        error ? h("div", { style: { color: T.danger, marginTop: "8px" } }, error) : null,
+        error
+          ? h(
+              "div",
+              { style: { color: T.danger, marginTop: "8px" }, "data-session-delete-error": "" },
+              error,
+            )
+          : null,
         plan
           ? h(
               "div",
@@ -956,13 +1054,14 @@ window.__ModuleLoader__.load({
             null,
             h(
               Btn,
-              { innerRef: cancelRef, onClick: close, disabled: busy },
+              { innerRef: cancelRef, action: "cancel", onClick: close, disabled: busy },
               props.t("confirm.cancel"),
             ),
             h(
               Btn,
               {
                 innerRef: confirmRef,
+                action: "confirm",
                 modalAutofocus: true,
                 onClick: confirm,
                 variant: "danger",
@@ -1054,11 +1153,13 @@ window.__ModuleLoader__.load({
         setBusyId(entryId);
         props
           .call("restore", { entryId: entryId })
-          .then(() => {
+          .then((/** @type {any} */ result) => {
             setBusyId(null);
             refresh();
             props.bump?.();
             props.onRestored?.(sessionId);
+            // 引用/校验没全过时把话说清楚，而不是一律「恢复成功」（AUD-SD-02）。
+            setError(restoreNotice(result, props.t));
           })
           .catch((/** @type {any} */ reason) => {
             setBusyId(null);
@@ -1122,7 +1223,7 @@ window.__ModuleLoader__.load({
 
       var toolbar = h(
         "div",
-        { className: "dsh-sdel-toolbar" },
+        { className: "dsh-sdel-toolbar", "data-session-delete-toolbar": "" },
         h(Check, {
           checked: allSelected,
           disabled: batchRunning || entries.length === 0,
@@ -1146,6 +1247,7 @@ window.__ModuleLoader__.load({
           Btn,
           {
             disabled: batchRunning || selectedIds.length === 0,
+            action: "batch-restore",
             onClick: () => startBatch(selectedIds, "restore"),
           },
           props.t("trash.restoreMany", { n: selectedIds.length }),
@@ -1155,6 +1257,7 @@ window.__ModuleLoader__.load({
           {
             variant: "danger",
             disabled: batchRunning || selectedIds.length === 0,
+            action: "batch-purge",
             onClick: () => setConfirmPurge("__batch__"),
           },
           props.t("trash.purgeMany", { n: selectedIds.length }),
@@ -1164,7 +1267,7 @@ window.__ModuleLoader__.load({
       var batchLine = batch
         ? h(
             "div",
-            { className: "dsh-sdel-batch" },
+            { className: "dsh-sdel-batch", "data-session-delete-batch": "" },
             h(
               "span",
               { role: "status" },
@@ -1178,8 +1281,15 @@ window.__ModuleLoader__.load({
             batch.failures.length > 0
               ? h(
                   "span",
-                  { style: { color: T.danger } },
+                  { style: { color: T.danger }, "data-session-delete-batch-failed": "" },
                   props.t("batch.failed", { n: batch.failures.length }),
+                )
+              : null,
+            batch.partials > 0
+              ? h(
+                  "span",
+                  { style: { color: T.danger }, "data-session-delete-batch-partial": "" },
+                  props.t("batch.partial", { n: batch.partials }),
                 )
               : null,
             batch.running
@@ -1201,20 +1311,21 @@ window.__ModuleLoader__.load({
         confirmPurge === "__batch__"
           ? h(
               "div",
-              { className: "dsh-sdel-confirm" },
+              { className: "dsh-sdel-confirm", "data-session-delete-confirm-row": "" },
               h("span", null, props.t("trash.purgeManyConfirm", { n: selectedIds.length })),
               h(
                 Btn,
                 {
                   tight: true,
                   variant: "danger",
+                  action: "batch-purge-confirm",
                   onClick: () => startBatch(selectedIds, "purge"),
                 },
                 props.t("panel.purge"),
               ),
               h(
                 Btn,
-                { tight: true, onClick: () => setConfirmPurge(null) },
+                { tight: true, action: "batch-purge-cancel", onClick: () => setConfirmPurge(null) },
                 props.t("panel.cancelConfirm"),
               ),
             )
@@ -1227,7 +1338,12 @@ window.__ModuleLoader__.load({
         rows.push(
           h(
             "div",
-            { key: entry.entryId, className: "dsh-sdel-row" },
+            {
+              key: entry.entryId,
+              className: "dsh-sdel-row",
+              "data-session-delete-row": String(entry.entryId),
+              "data-session-delete-row-session": String(entry.sessionId ?? ""),
+            },
             h(Check, {
               checked: Boolean(selected[entry.entryId]),
               disabled: batchRunning,
@@ -1245,41 +1361,51 @@ window.__ModuleLoader__.load({
                 {
                   className: "dsh-sdel-row-title dsh-sdel-truncate",
                   title: entry.title || entry.sessionId,
+                  "data-session-delete-row-title": "",
                 },
                 entry.title || entry.sessionId,
               ),
               h(
                 "span",
-                { className: "dsh-sdel-row-meta" },
+                { className: "dsh-sdel-row-meta", "data-session-delete-row-meta": "" },
                 `${props.t("panel.size", { size: formatBytes(entry.bytes) })} · ${props.t("panel.trashedAt", { time: formatTime(entry.trashedAt) })}`,
               ),
             ),
             confirmThis
               ? h(
                   "span",
-                  { className: "dsh-sdel-row-actions dsh-sdel-row-actions--open" },
+                  {
+                    className: "dsh-sdel-row-actions dsh-sdel-row-actions--open",
+                    "data-session-delete-row-actions": "confirm",
+                  },
                   h(
                     Btn,
                     {
                       tight: true,
                       variant: "danger",
+                      action: "row-purge-confirm",
                       onClick: () => doPurge(entry.entryId, entry.sessionId),
                     },
                     props.t("panel.purgeConfirm"),
                   ),
                   h(
                     Btn,
-                    { tight: true, onClick: () => setConfirmPurge(null) },
+                    {
+                      tight: true,
+                      action: "row-purge-cancel",
+                      onClick: () => setConfirmPurge(null),
+                    },
                     props.t("panel.cancelConfirm"),
                   ),
                 )
               : h(
                   "span",
-                  { className: "dsh-sdel-row-actions" },
+                  { className: "dsh-sdel-row-actions", "data-session-delete-row-actions": "" },
                   h(
                     Btn,
                     {
                       tight: true,
+                      action: "row-restore",
                       disabled: busyId === entry.entryId || batchRunning,
                       onClick: () => doRestore(entry.entryId, entry.sessionId),
                     },
@@ -1290,6 +1416,7 @@ window.__ModuleLoader__.load({
                     {
                       tight: true,
                       variant: "danger",
+                      action: "row-purge",
                       disabled: busyId === entry.entryId || batchRunning,
                       onClick: () => setConfirmPurge(entry.entryId),
                     },
@@ -1306,32 +1433,51 @@ window.__ModuleLoader__.load({
         readOnly
           ? h(
               "div",
-              { style: { color: T.danger, marginBottom: "10px" } },
+              {
+                style: { color: T.danger, marginBottom: "10px" },
+                "data-session-delete-readonly": "",
+              },
               props.t("panel.readOnly"),
             )
           : null,
-        error ? h("div", { style: { color: T.danger, marginBottom: "10px" } }, error) : null,
+        error
+          ? h(
+              "div",
+              { style: { color: T.danger, marginBottom: "10px" }, "data-session-delete-error": "" },
+              error,
+            )
+          : null,
         entries.length === 0
-          ? h("div", { style: { color: T.dim, padding: "12px 0" } }, props.t("panel.empty"))
+          ? h(
+              "div",
+              { "data-session-delete-panel": "", "data-session-delete-empty": "" },
+              h("div", { style: { color: T.dim, padding: "12px 0" } }, props.t("panel.empty")),
+            )
           : h(
               "div",
-              { className: "dsh-sdel-panel" },
+              { className: "dsh-sdel-panel", "data-session-delete-panel": "" },
               toolbar,
               confirmLine,
               batchLine,
-              h("div", { className: "dsh-sdel-list" }, rows),
+              h("div", { className: "dsh-sdel-list", "data-session-delete-list": "" }, rows),
             ),
         (data?.unknown?.length ?? 0) > 0
           ? h(
               "div",
-              { style: { color: T.faint, fontSize: "12px", marginTop: "8px" } },
+              {
+                style: { color: T.faint, fontSize: "12px", marginTop: "8px" },
+                "data-session-delete-unknown": "",
+              },
               props.t("panel.unknown", { n: data.unknown.length }),
             )
           : null,
         (data?.pending?.length ?? 0) > 0
           ? h(
               "div",
-              { style: { color: T.faint, fontSize: "12px", marginTop: "4px" } },
+              {
+                style: { color: T.faint, fontSize: "12px", marginTop: "4px" },
+                "data-session-delete-pending": "",
+              },
               props.t("panel.pending", { n: data.pending.length }),
             )
           : null,
@@ -1365,13 +1511,16 @@ window.__ModuleLoader__.load({
      * 设置页「会话回收站」：偏好 + 回收站概览 + 维护（体检/回执/审计）。
      * 原来这四块是回收站面板里的四个页签，搬到这里后主面板只剩一件事。
      */
+    /** 设置页体检结论的页面级缓存：重开设置页复用，不重复扫全库（AUD-SD-08）。 */
+    var settingsHealthCache = createSettingsCache();
+
     function SettingsSection(/** @type {any} */ props) {
       var prefsState = useStore(props.prefsStore);
       var prefs = prefsState[0];
       var infoState = React.useState(null);
       var info = infoState[0];
       var setInfo = infoState[1];
-      var healthState = React.useState(null);
+      var healthState = React.useState(settingsHealthCache.health);
       var health = healthState[0];
       var setHealth = healthState[1];
       var healthErrorState = React.useState(null);
@@ -1383,6 +1532,9 @@ window.__ModuleLoader__.load({
       var auditState = React.useState(null);
       var audit = auditState[0];
       var setAudit = auditState[1];
+      var scanningState = React.useState(false);
+      var scanning = scanningState[0];
+      var setScanning = scanningState[1];
       var cleaningState = React.useState(false);
       var cleaning = cleaningState[0];
       var setCleaning = cleaningState[1];
@@ -1393,42 +1545,26 @@ window.__ModuleLoader__.load({
       var message = msgState[0];
       var setMessage = msgState[1];
 
+      var loader = React.useMemo(
+        () =>
+          createSettingsLoader(
+            props.call,
+            {
+              setInfo: setInfo,
+              setReceipts: setReceipts,
+              setAudit: setAudit,
+              setHealth: setHealth,
+              setHealthError: setHealthError,
+              setMessage: setMessage,
+            },
+            settingsHealthCache,
+          ),
+        [],
+      );
+
       React.useEffect(() => {
-        var alive = true;
-        props
-          .call("list")
-          .then((/** @type {any} */ value) => {
-            if (alive) setInfo(value);
-          })
-          .catch(() => {});
-        props
-          .call("healthScan")
-          .then((/** @type {any} */ value) => {
-            if (alive) setHealth(value);
-          })
-          .catch((/** @type {any} */ reason) => {
-            if (alive) setHealthError(errorText(reason));
-          });
-        props
-          .call("receipts", { limit: 50 })
-          .then((/** @type {any} */ value) => {
-            if (alive) setReceipts(value?.entries || []);
-          })
-          .catch((/** @type {any} */ reason) => {
-            // 空白 + 一声不响是最差的失败姿态：把原因写进页面里。
-            if (alive) setMessage(errorText(reason));
-          });
-        props
-          .call("audit", { limit: 100 })
-          .then((/** @type {any} */ value) => {
-            if (alive) setAudit(value?.entries || []);
-          })
-          .catch((/** @type {any} */ reason) => {
-            if (alive) setMessage(errorText(reason));
-          });
-        return () => {
-          alive = false;
-        };
+        // 只拉轻量数据；体检是用户动作（曾经一挂载就跑全库扫描，见 AUD-SD-08）。
+        void loader.load();
       }, []);
 
       var entries = info?.entries || [];
@@ -1441,6 +1577,13 @@ window.__ModuleLoader__.load({
       var setCascade = (/** @type {any} */ next) => {
         props.prefsStore.set({ cascadeChildren: next });
         props.call("setPrefs", { cascadeChildren: next }).catch(() => {});
+      };
+
+      var runScan = () => {
+        setScanning(true);
+        loader.scanHealth().then(() => {
+          setScanning(false);
+        });
       };
 
       var cleanable = health?.ok ? health.cleanable : null;
@@ -1460,6 +1603,7 @@ window.__ModuleLoader__.load({
               {
                 tight: true,
                 variant: "danger",
+                action: "health-clean",
                 disabled: cleaning,
                 onClick: () => {
                   setCleaning(true);
@@ -1469,6 +1613,8 @@ window.__ModuleLoader__.load({
                       setCleaning(false);
                       setConfirmClean(false);
                       setMessage(props.t("settings.health.cleaned", { n: result.total }));
+                      // 刚清理过，缓存里的数字已经不对了：重新扫一次让结论刷新。
+                      return loader.scanHealth();
                     })
                     .catch((/** @type {any} */ reason) => {
                       setCleaning(false);
@@ -1480,7 +1626,7 @@ window.__ModuleLoader__.load({
             ),
             h(
               Btn,
-              { tight: true, onClick: () => setConfirmClean(false) },
+              { tight: true, action: "health-clean-cancel", onClick: () => setConfirmClean(false) },
               props.t("confirm.cancel"),
             ),
           ),
@@ -1489,9 +1635,14 @@ window.__ModuleLoader__.load({
 
       return h(
         "div",
-        { className: "dsh-sdel-settings" },
-        h("div", { className: "dsh-sdel-group" }, props.t("settings.group.delete")),
+        { className: "dsh-sdel-settings", "data-session-delete-settings": "" },
+        h(
+          "div",
+          { className: "dsh-sdel-group", "data-session-delete-group": "delete" },
+          props.t("settings.group.delete"),
+        ),
         h(SettingRow, {
+          anchor: "cascade",
           title: props.t("settings.cascade.title"),
           description: props.t("settings.cascade.desc"),
           action: h(Toggle, {
@@ -1501,12 +1652,14 @@ window.__ModuleLoader__.load({
           }),
         }),
         h(SettingRow, {
+          anchor: "cascade-reset",
           title: "",
           description: null,
           action: h(
             Btn,
             {
               tight: true,
+              action: "cascade-reset",
               disabled: !cascade,
               onClick: () => {
                 setCascade(false);
@@ -1516,8 +1669,13 @@ window.__ModuleLoader__.load({
             props.t("settings.cascade.reset"),
           ),
         }),
-        h("div", { className: "dsh-sdel-group" }, props.t("settings.group.trash")),
+        h(
+          "div",
+          { className: "dsh-sdel-group", "data-session-delete-group": "trash" },
+          props.t("settings.group.trash"),
+        ),
         h(SettingRow, {
+          anchor: "trash",
           title: props.t("settings.trash.summary", {
             n: entries.length,
             size: formatBytes(totalBytes),
@@ -1527,6 +1685,7 @@ window.__ModuleLoader__.load({
             Btn,
             {
               tight: true,
+              action: "open-trash",
               onClick: () => {
                 props.close?.();
                 props.panelStore.set(true);
@@ -1535,58 +1694,103 @@ window.__ModuleLoader__.load({
             props.t("settings.trash.open"),
           ),
         }),
-        h("div", { className: "dsh-sdel-group" }, props.t("settings.group.maintenance")),
-        h(SettingRow, {
-          title: props.t("settings.health.title"),
-          description: props.t("settings.health.desc"),
-          action:
-            cleanable && cleanable.total > 0
-              ? h(
-                  Btn,
-                  { tight: true, disabled: cleaning, onClick: () => setConfirmClean(true) },
-                  props.t("settings.health.items", { n: cleanable.total }),
-                )
-              : null,
-          children: healthError
-            ? h(
-                "div",
-                { style: { color: T.danger, fontSize: "12px" } },
-                props.t("settings.health.unavailable", { reason: healthError }),
-              )
-            : !health
+        h(
+          "div",
+          { className: "dsh-sdel-group", "data-session-delete-group": "maintenance" },
+          props.t("settings.group.maintenance"),
+        ),
+        h(
+          "div",
+          {
+            "data-session-delete-health": "",
+            "data-session-delete-health-state": healthError
+              ? "error"
+              : scanning
+                ? "scanning"
+                : health
+                  ? health.ok
+                    ? "ok"
+                    : "unavailable"
+                  : "idle",
+          },
+          h(SettingRow, {
+            anchor: "health",
+            title: props.t("settings.health.title"),
+            description: props.t("settings.health.desc"),
+            action: h(
+              React.Fragment,
+              null,
+              h(
+                Btn,
+                { tight: true, action: "health-run", disabled: scanning, onClick: runScan },
+                props.t("settings.health.run"),
+              ),
+              cleanable && cleanable.total > 0
+                ? h(
+                    Btn,
+                    {
+                      tight: true,
+                      action: "health-clean-confirm",
+                      disabled: cleaning,
+                      onClick: () => setConfirmClean(true),
+                    },
+                    props.t("settings.health.items", { n: cleanable.total }),
+                  )
+                : null,
+            ),
+            children: healthError
               ? h(
                   "div",
-                  { style: { color: T.faint, fontSize: "12px" } },
-                  props.t("settings.loading"),
+                  { style: { color: T.danger, fontSize: "12px" } },
+                  props.t("settings.health.unavailable", { reason: healthError }),
                 )
-              : !health.ok
+              : scanning
                 ? h(
                     "div",
-                    { style: { color: T.dim, fontSize: "12px" } },
-                    props.t("settings.health.unavailable", { reason: health.reason || "" }),
+                    { style: { color: T.faint, fontSize: "12px" } },
+                    props.t("settings.loading"),
                   )
-                : health.findings && health.findings.length === 0
+                : !health
                   ? h(
                       "div",
-                      { style: { color: T.dim, fontSize: "12px" } },
-                      props.t("settings.health.ok"),
+                      { style: { color: T.faint, fontSize: "12px" } },
+                      props.t("settings.health.idle"),
                     )
-                  : h(
-                      "div",
-                      { style: { color: T.dim, fontSize: "12px" } },
-                      joinList(
-                        (health.findings || []).map((/** @type {any} */ finding) => finding.label),
-                        4,
-                      ),
-                    ),
-        }),
+                  : !health.ok
+                    ? h(
+                        "div",
+                        { style: { color: T.dim, fontSize: "12px" } },
+                        props.t("settings.health.unavailable", { reason: health.reason || "" }),
+                      )
+                    : health.findings && health.findings.length === 0
+                      ? h(
+                          "div",
+                          { style: { color: T.dim, fontSize: "12px" } },
+                          props.t("settings.health.ok"),
+                        )
+                      : h(
+                          "div",
+                          { style: { color: T.dim, fontSize: "12px" } },
+                          joinList(
+                            (health.findings || []).map(
+                              (/** @type {any} */ finding) => finding.label,
+                            ),
+                            4,
+                          ),
+                        ),
+          }),
+        ),
         cleanRows.length > 0 ? h("div", { style: { padding: "0 0 12px" } }, cleanRows) : null,
         h(
           "div",
-          { className: "dsh-sdel-setting-row dsh-sdel-setting-row--stack" },
+          {
+            className: "dsh-sdel-setting-row dsh-sdel-setting-row--stack",
+            "data-session-delete-receipts": "",
+          },
           h(
             Disclosure,
             {
+              anchor: "receipts",
               label: props.t("settings.receipts.title"),
               meta: receipts ? String(receipts.length) : "",
             },
@@ -1603,26 +1807,38 @@ window.__ModuleLoader__.load({
         ),
         h(
           "div",
-          { className: "dsh-sdel-setting-row dsh-sdel-setting-row--stack" },
-          h(
-            Disclosure,
-            { label: props.t("settings.audit.title"), meta: audit ? String(audit.length) : "" },
-            !audit || audit.length === 0
-              ? h("div", null, props.t("settings.audit.empty"))
-              : audit
-                  .slice()
-                  .reverse()
-                  .map((/** @type {any} */ entry, /** @type {any} */ auditIndex) =>
-                    h(
-                      "div",
-                      { key: `audit-${auditIndex}`, className: "dsh-sdel-truncate" },
-                      `${formatTime(entry.ts)} · ${String(entry.action || "")} · ${String(entry.result || "")}${entry.detail ? ` · ${entry.detail}` : ""}`,
+          {
+            className: "dsh-sdel-setting-row dsh-sdel-setting-row--stack",
+            "data-session-delete-audit": "",
+          },
+          h(Disclosure, {
+            anchor: "audit",
+            label: props.t("settings.audit.title"),
+            meta: audit ? String(audit.length) : "",
+            children:
+              !audit || audit.length === 0
+                ? h("div", null, props.t("settings.audit.empty"))
+                : audit
+                    .slice()
+                    .reverse()
+                    .map((/** @type {any} */ entry, /** @type {any} */ auditIndex) =>
+                      h(
+                        "div",
+                        { key: `audit-${auditIndex}`, className: "dsh-sdel-truncate" },
+                        `${formatTime(entry.ts)} · ${String(entry.action || "")} · ${String(entry.result || "")}${entry.detail ? ` · ${entry.detail}` : ""}`,
+                      ),
                     ),
-                  ),
-          ),
+          }),
         ),
         message
-          ? h("div", { style: { color: T.dim, fontSize: "12px", paddingTop: "8px" } }, message)
+          ? h(
+              "div",
+              {
+                style: { color: T.dim, fontSize: "12px", paddingTop: "8px" },
+                "data-session-delete-message": "",
+              },
+              message,
+            )
           : null,
       );
     }
@@ -1632,6 +1848,7 @@ window.__ModuleLoader__.load({
       var toast = toastState[0];
       var entryId = toast ? toast.entryId : null;
       var text = toast ? toast.text : null;
+      var isError = toast?.error === true;
       var shownState = React.useState(false);
       var shown = shownState[0];
       var setShown = shownState[1];
@@ -1647,12 +1864,16 @@ window.__ModuleLoader__.load({
         var raise = setTimeout(() => {
           setShown(true);
         }, 10);
-        var timer = setTimeout(() => {
-          props.toastStore.set(null);
-        }, 6000);
+        // 失败要能读到：错误 toast 不自动消失（AUD-SD-09 之前 6 秒就没了）。
+        var timer =
+          toast.error === true
+            ? null
+            : setTimeout(() => {
+                props.toastStore.set(null);
+              }, 6000);
         return () => {
           clearTimeout(raise);
-          clearTimeout(timer);
+          if (timer !== null) clearTimeout(timer);
         };
       }, [toast]);
 
@@ -1660,14 +1881,16 @@ window.__ModuleLoader__.load({
       return h(
         "div",
         {
+          "data-session-delete-toast": isError ? "error" : "ok",
+          role: isError ? "alert" : "status",
           style: {
             position: "fixed",
             bottom: "24px",
             right: "24px",
             zIndex: 2147000000,
             background: T.toastBg,
-            color: T.toastText,
-            border: `1px solid ${T.border}`,
+            color: isError ? T.danger : T.toastText,
+            border: `1px solid ${isError ? T.danger : T.border}`,
             borderRadius: "10px",
             padding: "10px 14px",
             fontSize: "13px",
@@ -1675,27 +1898,53 @@ window.__ModuleLoader__.load({
             display: "flex",
             alignItems: "center",
             gap: "12px",
+            maxWidth: "min(520px, 92vw)",
             opacity: shown ? 1 : 0,
             transform: shown ? "translateY(0)" : "translateY(8px)",
             transition: "opacity .18s ease, transform .18s ease",
           },
         },
-        h("span", null, text ? text : props.t("confirm.done")),
+        h("span", { "data-session-delete-toast-text": "" }, text ? text : props.t("confirm.done")),
+        isError
+          ? h(
+              Btn,
+              {
+                tight: true,
+                action: "toast-dismiss",
+                onClick: () => props.toastStore.set(null),
+              },
+              props.t("panel.close"),
+            )
+          : null,
         entryId
           ? h(
               Btn,
               {
                 disabled: restoring,
+                action: "undo",
                 onClick: () => {
                   setRestoring(true);
                   props
                     .call("restore", { entryId: toast.entryId })
-                    .then(() => {
+                    .then((/** @type {any} */ result) => {
                       setRestoring(false);
+                      var notice = restoreNotice(result, props.t);
+                      if (notice) {
+                        // 会话回来了但引用没全回来：说清楚，别让人以为完整撤销了。
+                        props.toastStore.set({ text: notice, error: true });
+                        return;
+                      }
                       props.toastStore.set(null);
+                      props.onRestored?.(result?.sessionId);
+                      props.bump?.();
                     })
-                    .catch(() => {
+                    .catch((/** @type {any} */ reason) => {
                       setRestoring(false);
+                      // 撤销失败曾经完全静默（AUD-SD-09）：现在留在 toast 里直到用户关掉。
+                      props.toastStore.set({
+                        text: props.t("toast.undoFailed", { message: errorText(reason) }),
+                        error: true,
+                      });
                     });
                 },
               },
@@ -1756,6 +2005,100 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 设置页体检结论的缓存（AUD-SD-08）：页面会话内复用，重开设置页不再扫全库。
+     */
+    function createSettingsCache() {
+      return { health: /** @type {any} */ (null), healthAt: 0 };
+    }
+
+    /**
+     * 设置页加载器。设计目标（ADR 0004 §7）：
+     * - 挂载时只拉轻量数据（list / receipts / audit），**绝不**自动跑全库体检；
+     * - 体检是用户动作（`scanHealth()`），结果写进缓存供下次打开复用；
+     * - 任何一个请求失败都只影响自己那一块，不许把设置页整体打挂。
+     * @param {(method: string, request?: any) => Promise<any>} call
+     * @param {{ setInfo?: (value: any) => void, setReceipts?: (value: any) => void,
+     *   setAudit?: (value: any) => void, setHealth?: (value: any) => void,
+     *   setHealthError?: (value: any) => void, setMessage?: (value: string) => void }} sinks
+     * @param {{ health: any, healthAt: number }} [cache]
+     */
+    function createSettingsLoader(call, sinks, cache) {
+      var shared = cache || createSettingsCache();
+      /**
+       * @param {((value: any) => void) | undefined} setter
+       * @param {any} value
+       */
+      var push = (setter, value) => {
+        try {
+          setter?.(value);
+        } catch (_error) {
+          /* 渲染层挂了不该让 RPC 的 rejection 逃逸 */
+        }
+      };
+      /**
+       * @param {string} method
+       * @param {((value: any) => void) | undefined} setter
+       * @param {(value: any) => any} pick
+       */
+      var fetchInto = (method, setter, pick) =>
+        Promise.resolve()
+          .then(() => call(method))
+          .then(
+            (/** @type {any} */ value) => {
+              push(setter, pick(value));
+              return value;
+            },
+            (/** @type {any} */ reason) => {
+              push(sinks.setMessage, errorText(reason));
+              return null;
+            },
+          );
+
+      var load = () => {
+        // 先显示上次的体检结论（或 null = 尚未体检），不触发任何扫描。
+        push(sinks.setHealth, shared.health);
+        return Promise.all([
+          fetchInto("list", sinks.setInfo, (/** @type {any} */ value) => value),
+          fetchInto(
+            "receipts",
+            sinks.setReceipts,
+            (/** @type {any} */ value) => value?.entries || [],
+          ),
+          fetchInto("audit", sinks.setAudit, (/** @type {any} */ value) => value?.entries || []),
+        ]);
+      };
+
+      var scanHealth = () =>
+        Promise.resolve()
+          .then(() => call("healthScan"))
+          .then(
+            (/** @type {any} */ value) => {
+              shared.health = value;
+              shared.healthAt = Date.now();
+              push(sinks.setHealth, value);
+              push(sinks.setHealthError, null);
+              return value;
+            },
+            (/** @type {any} */ reason) => {
+              // 扫描失败只影响体检那一行：把原因放在那里，别抛进 React。
+              shared.health = null;
+              shared.healthAt = 0;
+              push(sinks.setHealth, null);
+              push(sinks.setHealthError, errorText(reason));
+              return null;
+            },
+          );
+
+      var invalidate = () => {
+        shared.health = null;
+        shared.healthAt = 0;
+        push(sinks.setHealth, null);
+      };
+
+      return { load: load, scanHealth: scanHealth, invalidate: invalidate, cache: shared };
+    }
+
+    /**
      * 分批执行批量动作。宿主单次上限是防御性硬上限，界面按 chunkSize 切块；
      * 每块之间让出一帧：进度可见、可中途停止、部分失败不中断其余批次。
      * 抽成纯函数是为了在单测里用假 call 直接验证「>50 条不会被整单拒绝」与
@@ -1763,7 +2106,8 @@ window.__ModuleLoader__.load({
      * @param {{ ids: string[], kind: "purge" | "restore", call: (method: string, request?: any) => Promise<any>,
      *   chunkSize?: number, onProgress?: (state: any) => void, shouldStop?: () => boolean,
      *   onRestored?: (sessionId: string) => void }} options
-     * @returns {Promise<{ kind: string, total: number, done: number, ok: number, failures: any[], stopped: boolean }>}
+     * @returns {Promise<{ kind: string, total: number, done: number, ok: number, failures: any[],
+     *   partials: number, stopped: boolean }>}
      */
     async function runBatch(options) {
       var ids = options.ids || [];
@@ -1772,6 +2116,7 @@ window.__ModuleLoader__.load({
       var groups = chunk(ids, chunkSize);
       /** @type {any[]} */
       var failures = [];
+      var partials = 0;
       var done = 0;
       var stopped = false;
       const emit = (/** @type {boolean} */ running) => {
@@ -1782,6 +2127,7 @@ window.__ModuleLoader__.load({
             done: done,
             total: ids.length,
             failures: failures.slice(),
+            partials: partials,
           });
         } catch (_error) {}
       };
@@ -1799,7 +2145,11 @@ window.__ModuleLoader__.load({
           for (let itemIndex = 0; itemIndex < results.length; itemIndex += 1) {
             const item = results[itemIndex];
             if (!item.ok) failures.push(item);
-            else if (kind === "restore" && item.sessionId) options.onRestored?.(item.sessionId);
+            else {
+              // 条目回来了但引用没全回来：单独计数，批量行里要说出来（AUD-SD-02）。
+              if (item.partial === true) partials += 1;
+              if (kind === "restore" && item.sessionId) options.onRestored?.(item.sessionId);
+            }
           }
         } catch (reason) {
           for (let groupIndex = 0; groupIndex < group.length; groupIndex += 1) {
@@ -1818,6 +2168,7 @@ window.__ModuleLoader__.load({
         done: done,
         ok: done - failures.length,
         failures: failures,
+        partials: partials,
         stopped: stopped,
       };
     }
@@ -2421,6 +2772,11 @@ window.__ModuleLoader__.load({
         batchChunk: BATCH_CHUNK,
         menuFallback: MENU_FALLBACK,
         createPanelLoader: createPanelLoader,
+        createSettingsLoader: createSettingsLoader,
+        createSettingsCache: createSettingsCache,
+        trashFailureText: trashFailureText,
+        restoreNotice: restoreNotice,
+        isPartialFailure: isPartialFailure,
         runBatch: runBatch,
         panelPollMs: PANEL_POLL_MS,
         // 词典也暴露出来：单测要比对「内联词典 / locale/*.json」的键集，防止两处漂移。

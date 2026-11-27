@@ -1,19 +1,22 @@
 // @ts-check
 // 操作编排层：不依赖 typert，可在单元测试里用假 ctx 跑（真实宿主交互全部经 capability.js 探测）。
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { setTimeout as delayMs } from "node:timers/promises";
 import { createAudit } from "./audit.js";
 import { describeCapabilities, probeCapabilities } from "./capability.js";
-import { beginOperation, finishOperation, listPending } from "./journal.js";
+import { beginOperation, finishOperation, listPending, updateOperation } from "./journal.js";
 import { directorySize, locateSession } from "./locate.js";
 import { auditPath, requireSessionId, sessionsRoot, trashRoot } from "./paths.js";
 import { buildPlan, digestOfWorkspace, planExecutable, summarizePlan } from "./plan.js";
 import { readPreferences, writePreferences } from "./preferences.js";
 import { listReceipts, writeReceipt } from "./receipts.js";
-import { buildRefs } from "./refs.js";
+import { createRecovery } from "./recovery.js";
+import { buildRefs, removeAllRefs, restoreAllRefs, snapshotAllRefs } from "./refs.js";
+import { restoreSummary, verifyRestored } from "./restore.js";
 import { listEntries, moveIntoTrash, purgeEntry, readEntry, restoreEntry } from "./trash.js";
+import { readWorkspaceState } from "./workspace-state.js";
 
 const nodeRequire = createRequire(import.meta.url);
 const pkg = nodeRequire("../package.json");
@@ -79,9 +82,33 @@ export function normalizeActivity(raw) {
 export function createOperations({ ctx, dataRoot, logger }) {
   const caps = probeCapabilities(ctx);
   const audit = createAudit(dataRoot);
-  const refs = buildRefs(caps, logger);
+  // dataRoot 只用于读取置顶集合（没有公开读接口）——见 refs.js 的 workspace-pin。
+  const refs = buildRefs(caps, logger, { dataRoot });
   /** 当前进程里正在操作中的会话，防止双击/并发把同一个会话删两遍。 */
   const inFlight = new Set();
+  /** 上一次启动对账的结论（内存里一份，磁盘上另有审计）。 @type {any} */
+  let lastRecovery = null;
+  /** @type {Promise<any> | null} */
+  let recoveryInFlight = null;
+
+  /**
+   * 写审计。失败只降级成 logger 告警，绝不静默——但也不让审计故障阻断删除。
+   * @param {any} entry
+   */
+  async function note(entry) {
+    const result = await audit.append(entry);
+    if (!result.ok) logger.warn(`session-delete: audit append failed: ${result.error}`);
+    return result;
+  }
+
+  const recovery = createRecovery({
+    dataRoot,
+    refs,
+    logger,
+    audit,
+    reconcile: (/** @type {string} */ sessionId, /** @type {any} */ options) =>
+      reconcile(sessionId, options),
+  });
 
   /**
    * 收集一份完整事实并生成 Plan。
@@ -222,26 +249,21 @@ export function createOperations({ ctx, dataRoot, logger }) {
   }
 
   /**
-   * 移走之后复查一次原路径；目录若被迟到写入重建，就再移一次并记审计。
-   * @param {string} sessionId
+   * 移走之后复查一次原路径；目录若被迟到的写入重建，就**真的**再移一次（AUD-SD-07）。
+   * 只查一次、不循环：活句柄若持续写盘，由「未完成的操作」与体检暴露，而不是互相对抗。
+   * @param {import("./plan.js").Plan} plan
    * @param {string} originalPath
+   * @param {string} entryId 本次生成的回收站条目；它被 restore/purge 后守卫必须放手（B2）。
    */
-  function scheduleReviveCheck(sessionId, originalPath) {
+  function scheduleReviveCheck(plan, originalPath, entryId) {
     const timer = setTimeout(async () => {
       try {
-        const { stat } = await import("node:fs/promises");
-        const exists = await stat(originalPath)
-          .then(() => true)
-          .catch(() => false);
-        if (!exists) return;
-        await audit.append({
-          action: "trash",
-          result: "ok",
-          sessionId,
-          operator: "system",
-          detail: "会话目录在移走后被重建，已记录（复活守卫）",
+        await recovery.reviveGuard({
+          sessionId: plan.sessionId,
+          originalPath,
+          entryId,
+          meta: { title: plan.title, cwd: plan.cwd },
         });
-        logger.warn(`session-delete: session ${sessionId} was recreated after deletion`);
       } catch (error) {
         logger.warn(`session-delete: revive check failed: ${messageOf(error)}`);
       }
@@ -255,9 +277,29 @@ export function createOperations({ ctx, dataRoot, logger }) {
    *   all?: unknown[] }} request all = 预加载的 persistence.list()（工作区批量复用）
    */
   async function trash(sessionIdRaw, request = {}) {
-    const loaded = await makePlan(sessionIdRaw, { all: request.all });
+    const operator = request.operator ?? "ui";
+    /** @type {Awaited<ReturnType<typeof makePlan>>} */
+    let loaded;
+    try {
+      loaded = await makePlan(sessionIdRaw, { all: request.all });
+    } catch (error) {
+      // AUD-SD-04：plan 阶段的拒绝（not-found / invalid-id）同样是拒绝，必须进审计，
+      // 否则「一次拒绝都没有记录过」的取证缺口会一直在。
+      const code = /** @type {any} */ (error)?.code;
+      if (code === "session/not-found" || code === "session-delete/invalid-id") {
+        await note({ action: "trash", result: "refused", operator, detail: `plan:${code}` });
+      }
+      throw error;
+    }
     const { plan, location, header } = loaded;
     if (request.digest && request.digest !== plan.digest) {
+      await note({
+        action: "trash",
+        result: "refused",
+        sessionId: plan.sessionId,
+        operator,
+        detail: "stale-plan：会话状态在确认期间发生变化",
+      });
       throw failure(
         "session-delete/stale-plan",
         "会话状态在确认期间发生了变化，请重新查看影响面。",
@@ -268,11 +310,11 @@ export function createOperations({ ctx, dataRoot, logger }) {
       );
     }
     if (!planExecutable(plan)) {
-      await audit.append({
+      await note({
         action: "trash",
         result: "refused",
         sessionId: plan.sessionId,
-        operator: request.operator ?? "ui",
+        operator,
         detail: plan.blockers.map((b) => b.code).join(","),
       });
       throw failure("session-delete/blocked", plan.blockers[0].message, {
@@ -287,7 +329,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
     if (request.cascade === true && request.child !== true) {
       for (const child of plan.children) {
         try {
-          const result = await trash(child.id, { operator: request.operator, child: true });
+          const result = await trash(child.id, { operator, child: true });
           cascaded.push({ id: child.id, ok: true, entryId: result.entryId });
         } catch (error) {
           cascaded.push({ id: child.id, ok: false, error: messageOf(error) });
@@ -303,36 +345,32 @@ export function createOperations({ ctx, dataRoot, logger }) {
     const record = await beginOperation({
       dataRoot,
       action: "trash",
-      extra: { sessionId: plan.sessionId, digest: plan.digest, operator: request.operator ?? "ui" },
+      extra: { sessionId: plan.sessionId, digest: plan.digest, operator },
     });
 
     let moved = false;
     let entryId = "";
+    /** @type {{ id: string, label: string, status: string, detail?: string }[]} */
+    let removed = [];
     try {
-      // 1. 先归档：归档集合就是 provider 的 agent/pre-step 闸门。
+      // 1. 先记录引用状态，供恢复时还原 —— **必须早于归档**：
+      //    宿主归档会在同一次写里清掉 pin（docs/runtime/0.2.1-rc.5 §6），
+      //    归档后再读 storages/workspace.json 只能读到「未置顶」。
+      const snapshots = await snapshotAllRefs(refs, plan.sessionId, logger);
+      const pinned = snapshots["workspace-pin"]?.pinned;
+
+      // 2. 归档：归档集合就是 provider 的 agent/pre-step 闸门。
       if (caps.checks["workspace.archive"]) {
         await caps.services.workspace.archiveSession(plan.sessionId, { stopActivity: true });
       }
-      // 2. 官方停止通道（跑着的轮次、子代理、后台任务、提醒）。
+      // 3. 官方停止通道（跑着的轮次、子代理、后台任务、提醒）。
       if (caps.checks["event.session-stop"]) {
         await ctx.parallel("workspace/session-stop", { sessionId: plan.sessionId });
       }
-      // 3. 落盘并等写入稳定。
+      // 4. 落盘并等写入稳定。
       const live = caps.services.sessions?.get?.(plan.sessionId);
       if (live && caps.checks["sessions.flush"]) await caps.services.sessions.flush(live);
       await delayMs(SETTLE_MS);
-
-      // 4. 记录引用状态，供恢复时还原。
-      /** @type {Record<string, any>} */
-      const snapshots = {};
-      for (const ref of refs) {
-        if (typeof ref.snapshot !== "function") continue;
-        try {
-          snapshots[ref.id] = await ref.snapshot(plan.sessionId);
-        } catch (error) {
-          logger.warn(`session-delete: snapshot ${ref.id} failed: ${messageOf(error)}`);
-        }
-      }
 
       // 5. 移入回收站（原子 rename）。
       const movedResult = await moveIntoTrash({
@@ -348,48 +386,29 @@ export function createOperations({ ctx, dataRoot, logger }) {
           live: plan.live,
           children: plan.children,
           workspaceIds: snapshots["workspace-slot"]?.workspaceIds ?? [],
-          pinned: null,
+          pinned: typeof pinned === "boolean" ? pinned : null,
         },
       });
       moved = true;
       entryId = movedResult.entryId;
+      // AUD-SD-01/03：把 entryId 记进 journal —— 崩溃后启动对账能精确知道是哪一条，
+      // 已移动但收尾失败的路径也能写出带 entryId 的 partial 回执。
+      await updateOperation(dataRoot, record.id, { entryId });
 
       // 6. 摘掉所有还指向它的引用。
-      /** @type {{ id: string, label: string, status: string, detail?: string }[]} */
-      const removed = [];
-      for (const ref of refs) {
-        if (typeof ref.remove !== "function" || ref.tier === "unknown") {
-          removed.push({
-            id: ref.id,
-            label: ref.label,
-            status: "skipped",
-            detail: "当前宿主不提供该接口",
-          });
-          continue;
-        }
-        try {
-          await ref.remove(plan.sessionId, snapshots[ref.id] ?? {});
-          removed.push({ id: ref.id, label: ref.label, status: "ok" });
-        } catch (error) {
-          removed.push({
-            id: ref.id,
-            label: ref.label,
-            status: "failed",
-            detail: messageOf(error),
-          });
-        }
-      }
+      removed = await removeAllRefs(refs, plan.sessionId, snapshots);
 
       // 7. 复活复查 + 对账回执。
-      scheduleReviveCheck(plan.sessionId, location.path);
+      //    把本次 entryId 交给守卫：它被 restore/purge 之后就不该再移（B2）。
+      scheduleReviveCheck(plan, location.path, entryId);
       const checks = await reconcile(plan.sessionId, { skipDirCheck: true });
       await finishOperation({ dataRoot, id: record.id, state: "done" });
-      await audit.append({
+      await note({
         action: "trash",
         result: "ok",
         sessionId: plan.sessionId,
         entryId,
-        operator: request.operator ?? "ui",
+        operator,
         detail: summarizePlan(plan),
       });
       const receiptId = await writeReceipt(dataRoot, {
@@ -423,21 +442,86 @@ export function createOperations({ ctx, dataRoot, logger }) {
         try {
           await caps.services.workspace?.unarchiveSession?.(plan.sessionId);
         } catch {
-          // 尽力而为。
+          // 尽力而为：回滚归档闸门失败不改变「会话没动过」的事实。
         }
+        try {
+          await finishOperation({
+            dataRoot,
+            id: record.id,
+            state: "failed",
+            detail: messageOf(error),
+          });
+        } catch (journalError) {
+          logger.warn(`session-delete: finishOperation failed: ${messageOf(journalError)}`);
+        }
+        await note({
+          action: "trash",
+          result: "failed",
+          sessionId: plan.sessionId,
+          operator,
+          detail: messageOf(error),
+        });
+        throw failure("session-delete/failed", `删除失败：${messageOf(error)}`, {
+          partial: false,
+          entryId: null,
+        });
       }
-      await finishOperation({ dataRoot, id: record.id, state: "failed", detail: messageOf(error) });
-      await audit.append({
+      // AUD-SD-03：已移动但收尾失败。磁盘事实是「会话已在回收站」，所以：
+      // 审计写明「已进入回收站」，回执标 partial，错误码也单独区分——用户重试会拿到
+      // not-found，必须能在回执里看到到底哪一步没做完。
+      // 收尾本身也可能坏（例如 journal 目录不可写）：每一步都单独兜住，
+      // 否则「二次异常」会把真正的 partial 结论和回执一起吞掉。
+      try {
+        await finishOperation({
+          dataRoot,
+          id: record.id,
+          state: "failed",
+          detail: `已移动但收尾失败：${messageOf(error)}`,
+        });
+      } catch (journalError) {
+        logger.warn(`session-delete: partial finishOperation failed: ${messageOf(journalError)}`);
+      }
+      const checks = await reconcile(plan.sessionId, { skipDirCheck: true }).catch(
+        (/** @type {unknown} */ reconcileError) => [
+          {
+            id: "reconcile",
+            label: "对账",
+            status: "skipped",
+            detail: `对账失败：${messageOf(reconcileError)}`,
+          },
+        ],
+      );
+      /** @type {string | undefined} */
+      let receiptId;
+      try {
+        receiptId = await writeReceipt(dataRoot, {
+          action: "trash",
+          at: new Date().toISOString(),
+          sessionId: plan.sessionId,
+          entryId,
+          title: plan.title,
+          sizeBytes: plan.sizeBytes,
+          partial: true,
+          removed,
+          checks,
+        });
+      } catch (receiptError) {
+        logger.warn(`session-delete: partial receipt failed: ${messageOf(receiptError)}`);
+      }
+      const cleaned = removed.filter((item) => item.status === "ok").length;
+      await note({
         action: "trash",
         result: "failed",
         sessionId: plan.sessionId,
-        operator: request.operator ?? "ui",
-        detail: messageOf(error),
+        entryId,
+        operator,
+        detail: `已移入回收站（${entryId}），引用清理 ${cleaned}/${removed.length} 项后收尾失败：${messageOf(error)}`,
       });
-      throw failure("session-delete/failed", `删除失败：${messageOf(error)}`, {
-        partial: moved,
-        entryId: moved ? entryId : null,
-      });
+      throw failure(
+        "session-delete/partial",
+        `会话已移入回收站，但收尾未完成：${messageOf(error)}`,
+        { partial: true, entryId, receiptId: receiptId ?? null, removed, checks },
+      );
     } finally {
       inFlight.delete(plan.sessionId);
     }
@@ -469,36 +553,37 @@ export function createOperations({ ctx, dataRoot, logger }) {
    */
   async function restore(entryId, request = {}) {
     const meta = await readEntry(dataRoot, entryId);
+    const operator = request.operator ?? "ui";
     const record = await beginOperation({
       dataRoot,
       action: "restore",
-      extra: { sessionId: meta.sessionId, entryId },
+      extra: { sessionId: meta.sessionId, entryId, operator },
     });
     try {
       const restored = await restoreEntry({ dataRoot, entryId });
-      try {
-        await caps.services.workspace?.unarchiveSession?.(meta.sessionId);
-      } catch {
-        // 恢复失败不阻断：文件已经回去了。
-      }
-      for (const ref of refs) {
-        if (typeof ref.restore !== "function") continue;
-        try {
-          await ref.restore(meta.sessionId, {
-            workspaceIds: meta.workspaceIds,
-            pinned: meta.pinned,
-          });
-        } catch (error) {
-          logger.warn(`session-delete: restore ${ref.id} failed: ${messageOf(error)}`);
-        }
-      }
+      // 引用恢复逐项记录：文件回来了只是「会话可用」，归属/置顶回来才算「恢复完整」。
+      // 单项失败不再静默 —— 进回执、进 checks、进界面（AUD-SD-02）。
+      const refResults = await restoreAllRefs(refs, meta.sessionId, {
+        workspaceIds: meta.workspaceIds,
+        pinned: meta.pinned,
+      });
+      const checks = await verifyRestored({
+        refs,
+        sessionId: meta.sessionId,
+        restoredTo: restored.restoredTo,
+        meta,
+      });
+      const summary = restoreSummary(refResults, checks);
       await finishOperation({ dataRoot, id: record.id, state: "done" });
-      await audit.append({
+      await note({
         action: "restore",
         result: "ok",
         sessionId: meta.sessionId,
         entryId,
-        operator: request.operator ?? "ui",
+        operator,
+        detail: summary.partial
+          ? `恢复完成，但引用 ${summary.failedRefs} 处 / 校验 ${summary.failedChecks} 项未通过`
+          : "恢复完成，引用与校验全部通过",
       });
       const receiptId = await writeReceipt(dataRoot, {
         action: "restore",
@@ -507,16 +592,38 @@ export function createOperations({ ctx, dataRoot, logger }) {
         entryId,
         title: meta.title,
         restoredTo: restored.restoredTo,
+        refs: refResults,
+        checks,
+        partial: summary.partial,
       });
-      return { ok: true, sessionId: meta.sessionId, restoredTo: restored.restoredTo, receiptId };
+      return {
+        ok: true,
+        sessionId: meta.sessionId,
+        restoredTo: restored.restoredTo,
+        receiptId,
+        refs: refResults,
+        checks,
+        partial: summary.partial,
+        failedRefs: summary.failedRefs,
+        failedChecks: summary.failedChecks,
+      };
     } catch (error) {
-      await finishOperation({ dataRoot, id: record.id, state: "failed", detail: messageOf(error) });
-      await audit.append({
+      try {
+        await finishOperation({
+          dataRoot,
+          id: record.id,
+          state: "failed",
+          detail: messageOf(error),
+        });
+      } catch (journalError) {
+        logger.warn(`session-delete: finishOperation failed: ${messageOf(journalError)}`);
+      }
+      await note({
         action: "restore",
         result: "failed",
         sessionId: meta.sessionId,
         entryId,
-        operator: request.operator ?? "ui",
+        operator,
         detail: messageOf(error),
       });
       throw failure("session-delete/restore-failed", `恢复失败：${messageOf(error)}`);
@@ -537,7 +644,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
     try {
       const result = await purgeEntry({ dataRoot, entryId });
       await finishOperation({ dataRoot, id: record.id, state: "done" });
-      await audit.append({
+      await note({
         action: "purge",
         result: "ok",
         entryId,
@@ -554,8 +661,17 @@ export function createOperations({ ctx, dataRoot, logger }) {
       });
       return { ok: true, bytes: result.bytes, sessionId: meta.sessionId, receiptId };
     } catch (error) {
-      await finishOperation({ dataRoot, id: record.id, state: "failed", detail: messageOf(error) });
-      await audit.append({
+      try {
+        await finishOperation({
+          dataRoot,
+          id: record.id,
+          state: "failed",
+          detail: messageOf(error),
+        });
+      } catch (journalError) {
+        logger.warn(`session-delete: finishOperation failed: ${messageOf(journalError)}`);
+      }
+      await note({
         action: "purge",
         result: "failed",
         entryId,
@@ -609,42 +725,6 @@ export function createOperations({ ctx, dataRoot, logger }) {
   }
 
   /**
-   * 读取 workspace 存储快照（只读）。这是文件级兜底：
-   * 归档/置顶集合没有公开的读接口，只能读 storages/workspace.json。
-   * @returns {Promise<{ ok: boolean, reason?: string, archivedIds: string[], pinnedIds: string[],
-   *   workspaces: { id: string, sessionIds: string[] }[] }>}
-   */
-  async function readWorkspaceState() {
-    const file = join(dataRoot, "storages", "workspace.json");
-    let parsed;
-    try {
-      parsed = JSON.parse(await readFile(file, "utf8"));
-    } catch (error) {
-      return {
-        ok: false,
-        reason: `无法读取 ${file}：${messageOf(error)}`,
-        archivedIds: [],
-        pinnedIds: [],
-        workspaces: [],
-      };
-    }
-    const global = parsed?.global ?? {};
-    const tables = parsed?.tables ?? {};
-    const workspaces = Object.entries(tables.workspaces ?? {}).map(([id, value]) => ({
-      id,
-      sessionIds: Array.isArray(value?.sessionIds) ? value.sessionIds.map(String) : [],
-    }));
-    return {
-      ok: true,
-      archivedIds: Array.isArray(global.archivedSessionIds)
-        ? global.archivedSessionIds.map(String)
-        : [],
-      pinnedIds: Array.isArray(global.pinnedSessionIds) ? global.pinnedSessionIds.map(String) : [],
-      workspaces,
-    };
-  }
-
-  /**
    * 全库体检：找出指向已不存在会话的登记条目。只读，不修改任何东西。
    */
   async function scanHealth() {
@@ -670,7 +750,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
     }
     const known = new Set([...storedIds, ...liveIds]);
 
-    const state = await readWorkspaceState();
+    const state = await readWorkspaceState(dataRoot);
     /** @type {{ id: string, label: string, severity: "warn" | "info", items: any[] }[]} */
     const findings = [];
     /** @type {{ archived: string[], pinned: string[], workspace: { workspaceId: string, sessionId: string }[] }} */
@@ -775,7 +855,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
     if (pending.length > 0) {
       findings.push({
         id: "pending-operation",
-        label: "未完成的操作（重启后自愈）",
+        label: "未完成的操作（重启后自动对账；仍未处理需人工核对）",
         severity: "info",
         items: pending.map((record) => record.id),
       });
@@ -814,7 +894,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
     const scan = await scanHealth();
     if (!scan.ok)
       throw failure("session-delete/health-unavailable", `无法体检：${scan.reason ?? "未知原因"}`);
-    const state = await readWorkspaceState();
+    const state = await readWorkspaceState(dataRoot);
     const counts = { archived: 0, pinned: 0, workspace: 0 };
     /** @type {string[]} */
     const errors = [];
@@ -858,7 +938,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
       }
     }
     const total = counts.archived + counts.pinned + counts.workspace;
-    await audit.append({
+    await note({
       action: "health",
       result: errors.length > 0 ? "failed" : "ok",
       operator: request.operator ?? "ui",
@@ -902,8 +982,53 @@ export function createOperations({ ctx, dataRoot, logger }) {
       trashRoot: trashRoot(dataRoot),
       capabilities: describeCapabilities(caps),
       pending: pending.length,
+      // 启动对账的结论（本轮进程内），磁盘上另有 recover 审计可查。
+      lastRecovery,
       readOnly: caps.tier === "unknown",
     };
+  }
+
+  /**
+   * 启动对账（AUD-SD-01）：扫 journal 的未完成记录，按落盘事实补做或回滚。
+   * 幂等，可重复调用；并发调用共用同一次（宿主服务重建时 ctx.inject 会重复触发）。
+   * @param {{ operator?: string }} [options]
+   */
+  async function recoverPending(options = {}) {
+    if (recoveryInFlight) return recoveryInFlight;
+    const job = recovery
+      .recoverPending({ operator: options.operator ?? "system" })
+      .then((summary) => {
+        lastRecovery = summary;
+        if (summary.examined > 0) {
+          logger.info(
+            `session-delete: startup recovery examined ${summary.examined} record(s): ` +
+              `${summary.completed} completed / ${summary.rolledBack} rolled back / ` +
+              `${summary.unresolved} unresolved / ${summary.failed} failed`,
+          );
+        }
+        return summary;
+      })
+      .finally(() => {
+        recoveryInFlight = null;
+      });
+    recoveryInFlight = job;
+    return job;
+  }
+
+  /**
+   * 记录一次「拒绝」（AUD-SD-04）。模型工具的 token/stale-plan 拒绝同样要留痕，
+   * 否则审计里会出现「20 天 0 条 refused」这种取证缺口。
+   * @param {{ sessionId?: string, code?: string, operator?: string, action?: string }} event
+   */
+  async function recordRefusal(event = {}) {
+    const result = await note({
+      action: event.action ?? "trash",
+      result: "refused",
+      sessionId: typeof event.sessionId === "string" ? event.sessionId : undefined,
+      operator: event.operator ?? "agent",
+      detail: event.code ?? "refused",
+    });
+    return { ok: result.ok };
   }
 
   /**
@@ -919,12 +1044,18 @@ export function createOperations({ ctx, dataRoot, logger }) {
         `一次最多 ${MAX_BATCH_IDS} 条（界面会自动分批）`,
       );
     }
-    /** @type {{ entryId: string, ok: boolean, sessionId?: string, error?: string }[]} */
+    /** @type {{ entryId: string, ok: boolean, sessionId?: string, partial?: boolean, error?: string }[]} */
     const results = [];
     for (const entryId of ids) {
       try {
         const result = await restore(entryId, { operator: request.operator ?? "ui" });
-        results.push({ entryId, ok: true, sessionId: result.sessionId });
+        // partial 也要带出去：批量行要能说「其中 N 条引用没还原」。
+        results.push({
+          entryId,
+          ok: true,
+          sessionId: result.sessionId,
+          partial: result.partial === true,
+        });
       } catch (error) {
         results.push({ entryId, ok: false, error: messageOf(error) });
       }
@@ -989,7 +1120,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
       }
     }
     // 文件兜底：老版本/headless 组合里没有 workspaceRegistry。
-    const state = await readWorkspaceState();
+    const state = await readWorkspaceState(dataRoot);
     const fromFile = state.workspaces.find((row) => row.id === workspaceId);
     if (fromFile) {
       return { workspaceId, title: null, sessionIds: fromFile.sessionIds.map(String) };
@@ -1144,6 +1275,10 @@ export function createOperations({ ctx, dataRoot, logger }) {
 
   return {
     caps,
+    // 启动对账与复活守卫的实现（暴露出来是为了单测能直接驱动它，不是公开契约）。
+    recovery,
+    recoverPending,
+    recordRefusal,
     health,
     restoreMany,
     purgeMany,
