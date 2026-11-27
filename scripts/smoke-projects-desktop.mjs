@@ -19,7 +19,8 @@
 //   B1 首启引导只断言存在不点击（**不写 live profile 的 firstRunDone**）/ data-projects-status 形状 /
 //   无渲染崩溃 / 摘要已本地化 / 新建控件存在（不提交）/
 //   详情页两列栅格 + 6 个状态药丸 + 3 个页签（§7.3）+ Library 右栏入口 + 审计不在详情页 /
-//   设置四个分区 + 审计在 Debug 分区（设置页被禁用时如实 SKIP）/ Esc 关闭后界面仍可用 / 截图落盘。
+//   设置四个分区 + 审计在 Debug 分区 + PR 档位/预授权入口（设置页被禁用时如实 SKIP）/
+//   审批卡片影响面（每行都有 data-projects-approval-impact）/ Esc 关闭后界面仍可用 / 截图落盘。
 //   `--create` 另有：建临时项目 / 删除进回收站 / 彻底删除 / 盘上 projects.json 校验。
 // 未装进 live profile 时默认 SKIP（门禁加 --require 则失败）。
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -386,6 +387,14 @@ const main = async () => {
           hasInstructions: Boolean(document.querySelector("[data-projects-instructions]")),
           hasContextSection: /指令|Instructions/u.test(text) && /记忆|Memory/u.test(text) && /上下文|Context/u.test(text),
           hasThreads: Boolean(document.querySelector("[data-projects-threads], [data-projects-threads-empty]")),
+          // AUD-PROJ-07：危险动作审批卡片必须显示影响面（PR 号/仓库/分支/目录）。
+          // 只读断言：没有待审批时是 0/0；有的话每一行都要有影响面节点。
+          approvalRows: document.querySelectorAll("[data-projects-approval-row]").length,
+          approvalImpacts: document.querySelectorAll("[data-projects-approval-impact]").length,
+          approvalImpactText: (() => {
+            const node = document.querySelector("[data-projects-approval-impact]");
+            return node ? String(node.innerText || "").slice(0, 120) : "";
+          })(),
         };
       })()`);
 
@@ -543,6 +552,16 @@ const main = async () => {
         "Library 走右栏入口、审计不在详情页（§7.3 外迁后无残留）",
         snap.libraryOpen === true && snap.auditInDetail === false,
         JSON.stringify({ libraryOpen: snap.libraryOpen, auditInDetail: snap.auditInDetail }),
+      );
+      // AUD-PROJ-07（只读）：审批行必须带「影响面」；没有待审批时两边都是 0。
+      check(
+        "审批卡片显示影响面（每行都有 data-projects-approval-impact；无审批时 0=0）",
+        snap.approvalRows === snap.approvalImpacts,
+        JSON.stringify({
+          rows: snap.approvalRows,
+          impacts: snap.approvalImpacts,
+          sample: snap.approvalImpactText,
+        }),
       );
       // 结构对齐 Claude 后：详情页 = 左对话 + 右面板；指令/记忆/上下文在「项目设置」抽屉里
       const drawer = await cdp.evaluate(`(async () => {
@@ -784,6 +803,15 @@ const main = async () => {
               debugPanel: Boolean(document.querySelector("[data-projects-settings-debug]")),
               auditTitle: document.querySelector("[data-projects-audit-title]")?.textContent || "",
               audit: Boolean(document.querySelector("[data-projects-audit], [data-projects-audit-empty]")),
+              // AUD-PROJ-05/30：PR 四档与预授权必须有界面入口（以前 client 零引用）。
+              prTier: document.querySelector("[data-projects-policy-pr-tier]")?.value || "",
+              prTierOptions: [...document.querySelectorAll("[data-projects-policy-pr-tier] option")].map(
+                (node) => node.getAttribute("value"),
+              ),
+              preapprovePanel: Boolean(document.querySelector("[data-projects-policy-preapprove]")),
+              preapproveActions: [...document.querySelectorAll("[data-projects-preapprove-action]")].map(
+                (node) => node.getAttribute("data-projects-preapprove-action"),
+              ),
             };
           })()`)
         : null;
@@ -802,14 +830,38 @@ const main = async () => {
         settingsSnap?.audit === true && /审计|Audit/u.test(String(settingsSnap.auditTitle)),
         JSON.stringify({ audit: settingsSnap?.audit, title: settingsSnap?.auditTitle }),
       );
+      // AUD-PROJ-05/30（只读）：PR 档位可选四档、预授权有入口（以前完全不可达）。
+      check(
+        "设置里有 PR 档位（四档）与预授权入口",
+        settingsSnap?.prTier !== "" &&
+          ["off", "draft", "ready", "auto-merge"].every((tier) =>
+            (settingsSnap?.prTierOptions ?? []).includes(tier),
+          ) &&
+          settingsSnap?.preapprovePanel === true &&
+          [
+            "push-branch",
+            "delete-thread",
+            "delete-project",
+            "purge-trash",
+            "change-settings",
+          ].every((action) => (settingsSnap?.preapproveActions ?? []).includes(action)),
+        JSON.stringify({
+          prTier: settingsSnap?.prTier,
+          options: settingsSnap?.prTierOptions,
+          preapprovePanel: settingsSnap?.preapprovePanel,
+          preapproveActions: settingsSnap?.preapproveActions,
+        }),
+      );
     } else if (openedSettings === "no-button") {
       const reason = "找不到设置入口（该 profile/宿主版本没有设置页）";
       skip("设置页出现「项目」分节（四个分区，Debug 可进入）", reason);
       skip("审计在设置 Debug 分区（原项目详情页签外迁；空态也算）", reason);
+      skip("设置里有 PR 档位（四档）与预授权入口", reason);
     } else {
       const reason = `点开设置入口后没有项目分节（${openedSettings}）`;
       skip("设置页出现「项目」分节（四个分区，Debug 可进入）", reason);
       skip("审计在设置 Debug 分区（原项目详情页签外迁；空态也算）", reason);
+      skip("设置里有 PR 档位（四档）与预授权入口", reason);
     }
     await cdp.screenshot(join(SHOTS, "02-projects-settings.png"));
 
