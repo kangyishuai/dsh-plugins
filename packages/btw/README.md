@@ -11,14 +11,15 @@ Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/de
 `/btw <question>` asks a side question about the current work **without interrupting the main task and without adding to the conversation history**.
 
 - **Available while the agent is working.** The command dispatches immediately instead of queueing behind the running turn (measured: 215 ms, no user message created).
+- **Immediate acknowledgement.** A toast at the top of the frame confirms the question was dispatched and updates when the answer is ready (if the panel is already showing the answer, the notice simply goes away). In a **blank/first session** — where DSH renders no command card at all for a slash command ([runtime rc.5 §5.2](../../docs/runtime/0.2.2-rc.5.md#52-命令卡片只在非空白会话里渲染2026-11-20-实测)) — the side-question panel is opened automatically so the streaming answer has a visible place.
 - **Read-only.** The side question runs in a forked child agent with **no tools**; a tool guard is armed on that child's own scope and denies any tool call from it, and `send_message` is always denied.
 - **Cheap.** The fork reuses the parent conversation's prompt prefix, so the provider serves most of it from cache (measured: 57% on the first fork, 94% on a repeat). Cache writes are not billed.
 - **Kept.** Answers are written to a per-session JSONL history so you can reopen the last one with a bare `/btw`.
-- **Threads.** Follow up on a side question without losing the earlier exchange; the thread's history is replayed to the model each turn.
+- **Threads.** Follow up on a side question without losing the earlier exchange; the thread's history is replayed to the model each turn. The panel's follow-up input sends on **Enter** and inserts a newline on **Shift+Enter** (⌘/Ctrl+Enter also sends).
 - **Streaming.** The drawer renders the answer as it is generated instead of waiting for the whole reply (the host buffers the child's text deltas; the panel reads them through `btw/live`).
 - **Markdown.** Headings, lists, tables, quotes, fenced code and inline styles render properly. The promote draft keeps its Markdown source, so it renders correctly once you send it.
 - **Readable numbers.** The cost badge adapts tokens to `K/M/B/T` and duration to `ms/s/m/h` (for example `new 12.3K · cached 988K · 32.5s`).
-- **Promote to draft.** Turn the **whole thread** into a four-section Markdown draft (first question / latest conclusion / key details including every follow-up / still unresolved) and **insert it into the composer — never send it**. You decide whether to send.
+- **Promote to draft.** Turn the **whole thread** into a four-section Markdown draft (first question / latest conclusion / key details / still unresolved) and **insert it into the composer — never send it**. You decide whether to send. The draft does not repeat itself: the latest answer appears once as the conclusion, and the key-details section lists the follow-up questions (plus any earlier answers that differ from the conclusion).
 - **Native right sidebar.** The「旁问」button opens a tab in the DSH right sidebar: the conversation becomes narrower but is **never covered**.the sidebar's own collapse button (⌥⌘B) collapses the column and clicking the「旁问」button expands it again. Hosts without the sidebar service fall back to a right-edge overlay drawer.
 - **Chat order.** Threads list oldest first with every turn expanded, the newest answer at the bottom, and the view follows the latest content.
 - **Honest scope badge.** The drawer states how many side questions exist and reminds you that **the model can see the whole conversation**; a scope choice only narrows the instruction, it does not cut context.
@@ -65,7 +66,15 @@ thin edge rail.
 Threads are listed oldest first with every turn expanded, and the newest answer is at the bottom —
 the view scrolls to the latest content when you open the drawer or when new content arrives. Each
 answer renders Markdown; a long answer is clamped with「Show all」. The composer at the bottom starts
-a new side question, while「Follow up」inside a thread opens that thread's own input.
+a new side question, while「Follow up」inside a thread opens that thread's own input; both inputs send
+on **Enter** and break the line on **Shift+Enter** (the hint under each input says so). The follow-up
+button is labelled「Send」so it is not confused with the thread's「Follow up」/「Cancel follow-up」
+toggle.
+
+A toast at the top of the frame reports the state of every `/btw` run (dispatched → finished, or the
+failure reason). In a blank/first session the side-question panel also opens automatically on dispatch,
+because that is the only place the answer can appear there; in a materialized session the command card
+shows the result and the panel is left closed unless you open it.
 
 ## Configuration
 
@@ -88,13 +97,14 @@ Runtime settings (editable in **Settings → Side questions**, stored in `<dataR
 
 The settings file is re-read on every use, so edits take effect without restarting the host.
 
-Promotion inserts an **unsent draft** only; it never sends. The draft is fitted to the current composer width and capped at six lines: a short thread keeps the four-section Markdown source, a long thread becomes a question-plus-conclusion summary that ends with a pointer to the side-question panel (the full answer stays there).
+Promotion inserts an **unsent draft** only; it never sends. The draft is fitted to the current composer width and capped at six lines: a short thread keeps the four-section Markdown source, a long thread becomes a question-plus-conclusion summary that ends with a pointer to the side-question panel (the full answer stays there). The latest answer is never written twice: it is the conclusion, and the key-details section only carries the follow-up questions plus earlier answers that differ from it.
 
 Panel details: the bottom「New question」input hides while a thread follow-up is open (no two similar inputs); the follow-up button reads「Follow up」/「Cancel follow-up」. `Esc` closes the panel unless the settings dialog owns focus; the input is focused when the panel opens; long answers can be expanded and collapsed without losing the reading position. The panel footer has an「Answer only in this panel」toggle (same as `echoAnswer`, no need to open Settings).
 
 ## Side effects & risks
 
 - **Spends one model call** per side question (a fork of the current conversation).
+- **Polls an in-memory receipt while a conversation is open.** The client calls `btw/notice` about every 1.5 s to obtain the state of the latest `/btw` run (that is what drives the toast and the automatic panel open). The host keeps that receipt in memory only — it reads no files, writes nothing and never triggers a model call — and polling stops when the conversation view is left.
 - **Creates a child session**, then archives it. If archiving is unavailable the child stays visible in the session list — the answer itself is unaffected.
 - **Writes** `<dataRoot>/btw/<parentSessionId>.jsonl` (up to `historyLimit` records per session; default 50, configurable 1–200; atomically replaced). Two side questions in the same session cannot lose each other's record: appends are serialized per file inside the host process. It never copies the main conversation to disk.
 - **Read-only is enforced in-process by a tool guard**, not by prompt text: the guard is armed on the side-question child's own scope, so a tool call from that child is denied with a model-facing reason while other sessions stay unaffected. The scope mechanics are confirmed against the shipped host source on DSH 0.2.2-rc.5 (`tools.guard()` registers in the calling scope; `checkGuards()` walks `[global, ...agent scope chain]`); an end-to-end live denial was not re-run for this release (**pending live verification**). If the child context cannot be resolved — not observed in practice — no guard is armed, a warning is logged, and read-only falls back to the prompt only.

@@ -20,6 +20,7 @@ import { clip, LIMITS } from "./limits.js";
 import { createLiveTracker } from "./live.js";
 import { parseMarkdown } from "./markdown.js";
 import { format, loadMessagesSync, pickLanguage } from "./messages.js";
+import { createNoticeTracker } from "./notice.js";
 import { historyFile, resolveDataRoot } from "./paths.js";
 import {
   buildSettingsPatch,
@@ -110,6 +111,9 @@ export class BtwService extends TypertRemoteService {
     this.usageBySession = observeUsage(ctx);
     // 面板流式：按 childSessionId 旁听 text-delta，`btw/live` 轮询取快照。
     this.liveTracker = createLiveTracker(ctx);
+    // `/btw` 的可见回执（内存态，按会话限界）：空白会话里宿主的命令卡片不渲染，
+    // client 半轮询 `btw/notice` 用它画 toast / 自动开面板（USIM-U2-06）。
+    this.notices = createNoticeTracker({ maxSessions: LIMITS.noticeSessions });
     // 抽屉追问借 composer 提交裸 `/btw`，真实参数从这里取（见 followup-queue.js）。
     this.followUps = createFollowUpQueue({});
     // locale 必须在注册命令**之前**同步读完：宿主没有 locale 服务，命令的 description /
@@ -166,7 +170,9 @@ export class BtwService extends TypertRemoteService {
    */
   async handle(invocation) {
     const agent = invocation?.agent;
-    const file = historyFile(this.dataRoot, agent?.id ?? "");
+    // 回执/历史都按父会话 id 归属；抽出来避免多处 `agent?.id ?? ""` 漂移。
+    const parentSessionId = String(agent?.id ?? "");
+    const file = historyFile(this.dataRoot, parentSessionId);
     // 追问用 `/btw --thread <id> <问题>` 标记线程（见 threads.js 的 parseThreadFlag 说明）。
     const parsed = parseCommandArgs(String(invocation?.rawInput ?? ""));
     let threadId = parsed.threadId;
@@ -175,7 +181,7 @@ export class BtwService extends TypertRemoteService {
     // 裸 `/btw`（无参数）时先看有没有抽屉登记的追问：
     // 有就当追问处理，没有才走「重开上一条」的老语义。
     if (threadId === "" && rawQuestion === "") {
-      const queued = this.followUps.take(String(agent?.id ?? ""));
+      const queued = this.followUps.take(parentSessionId);
       if (queued !== undefined) {
         threadId = queued.threadId;
         scope = queued.scope;
@@ -209,7 +215,7 @@ export class BtwService extends TypertRemoteService {
     const sessionHistory = await listRecent(file, replayLimit).catch(() => []);
     // 成本提示（Phase 1，只提示不阻断）：父会话 contextPressure 粗估 + 上次真实 prompt 总量。
     // 探针结论：fork prompt 约为 contextPressure 的 0.75–1.2 倍，见 notes/btw/fork-cost.md §5。
-    const pressure = this.pressureOf(String(agent?.id ?? ""));
+    const pressure = this.pressureOf(parentSessionId);
     const costHint = buildCostHint({
       pressureTokens: Number(pressure?.pressureTokens),
       contextWindow: Number(pressure?.contextWindow),
@@ -257,8 +263,11 @@ export class BtwService extends TypertRemoteService {
     }
     // 线程 id 在 fork 之前就定下来：面板流式卡片和最终记录必须是同一个线程。
     const recordThreadId = threadId === "" ? newThreadId() : threadId;
+    // 可见回执从这里开始：`/btw` 一旦真的开始跑，就给 client 一个「进行中」状态
+    // （空白会话里宿主的命令卡片不渲染，用户否则完全看不到反馈）。
+    this.notices.begin(parentSessionId, { threadId: recordThreadId });
     // 面板流式：登记这次 run；fork 拿到 childId 后 onChild 会接上实时文本。
-    const run = this.liveTracker.begin(String(agent?.id ?? ""), {
+    const run = this.liveTracker.begin(parentSessionId, {
       threadId: recordThreadId,
       question: question.text,
     });
@@ -279,12 +288,21 @@ export class BtwService extends TypertRemoteService {
         usageBySession: this.usageBySession,
         onChild: (childId) => this.liveTracker.attachChild(run, childId),
       });
+    } catch (error) {
+      // 运行体抛错（而不是返回错误码）时也要收掉回执，不能把 toast 永远停在「进行中」。
+      this.notices.fail(parentSessionId, {
+        threadId: recordThreadId,
+        text: this.messages.forkFailed ?? FALLBACK.forkFailed,
+      });
+      throw error;
     } finally {
       this.liveTracker.finish(run);
     }
 
     if (outcome.code === "subagents_unavailable") {
-      return { kind: "error", text: this.messages.forkUnavailable ?? FALLBACK.forkUnavailable };
+      const text = this.messages.forkUnavailable ?? FALLBACK.forkUnavailable;
+      this.notices.fail(parentSessionId, { threadId: recordThreadId, text });
+      return { kind: "error", text };
     }
     if (!outcome.ok) {
       const key =
@@ -295,7 +313,9 @@ export class BtwService extends TypertRemoteService {
             : outcome.code === "empty_answer"
               ? "emptyAnswer"
               : "forkFailed";
-      return { kind: "error", text: this.messages[key] ?? FALLBACK[key] ?? FALLBACK.forkFailed };
+      const text = this.messages[key] ?? FALLBACK[key] ?? FALLBACK.forkFailed;
+      this.notices.fail(parentSessionId, { threadId: recordThreadId, text });
+      return { kind: "error", text };
     }
 
     const recordId = `btw_${Date.now().toString(36)}`;
@@ -303,7 +323,7 @@ export class BtwService extends TypertRemoteService {
       id: recordId,
       // 线程：追问沿用传入的 threadId；首问用 fork 前就定下的新线程 id（v0.4 流式共用）
       threadId: recordThreadId,
-      parentSessionId: String(agent?.id ?? ""),
+      parentSessionId,
       childSessionId: outcome.childId ?? null,
       question: question.text,
       answer: outcome.text,
@@ -315,6 +335,13 @@ export class BtwService extends TypertRemoteService {
       at: Date.now(),
     };
     await appendRecord(file, record, historyLimit).catch(() => {});
+    // 成功回执：只带答案预览与耗时（完整答案在面板/命令结果里）。
+    this.notices.done(parentSessionId, {
+      threadId: recordThreadId,
+      ms: record.ms,
+      preview: outcome.text,
+      answerChars: String(outcome.text ?? "").length,
+    });
     // 设置里关掉「主对话显示完整答案」时，只回一行提示；面板历史里仍有完整答案。
     // bounded 已经把成本封顶；此时再贴「fork 可能花几十万 tokens」的警告会误导，所以跳过。
     const answerHint = mode === "bounded" ? null : costHint;
@@ -399,6 +426,20 @@ export class BtwService extends TypertRemoteService {
         blocks: parseMarkdown(run.text).blocks,
       })),
     };
+  }
+
+  /**
+   * 最近一次 `/btw` 的可见回执（client 半轮询用；**纯内存**快照，不读写磁盘）。
+   *
+   * 为什么需要它：空白/首启会话里，宿主的命令卡片一个都不渲染（docs/runtime
+   * 0.2.2-rc.5 §5.2 实测 log-only），`/btw` 的输出只能靠插件自己的 UI 面显示；
+   * client 半拿不到 host 的命令生命周期，所以由 host 记一条内存通知供轮询。
+   * @param {{ sessionId?: string } | undefined} request
+   * @returns {Promise<any | null>}
+   */
+  async notice(request) {
+    const input = request ?? {};
+    return this.notices.latest(String(input.sessionId ?? ""));
   }
 
   /**
@@ -578,6 +619,7 @@ export class BtwService extends TypertRemoteService {
 declareRemote(BtwService, "history");
 declareRemote(BtwService, "last");
 declareRemote(BtwService, "live");
+declareRemote(BtwService, "notice");
 declareRemote(BtwService, "stats");
 declareRemote(BtwService, "queueFollowUp");
 declareRemote(BtwService, "threads");

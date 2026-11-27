@@ -38,6 +38,16 @@ window.__ModuleLoader__.load({
     const LIVE_IDLE_MS = 1000;
     /** 空闲时每 N 次 live 轮询才刷一次线程列表（约 4s）。 */
     const LIVE_IDLE_REFRESH_EVERY = 4;
+    /**
+     * `/btw` 可见回执的轮询间隔（USIM-U2-06）：host 在执行命令时就写一条内存通知
+     * （begin/done/fail），client 轮询 `btw/notice` 画 toast；空白会话里命令卡片不渲染，
+     * 这是唯一的即时反馈通道。1.5s 是「立刻看得见」和「别把 RPC 打满」的折中。
+     */
+    const NOTICE_POLL_MS = 1500;
+    /** 面板刚挂载时的第一次回执轮询延迟（别和首屏渲染抢资源）。 */
+    const NOTICE_FIRST_DELAY_MS = 300;
+    /** 自动开面板后等多久检查 tab 是否真的渲染出来（宿主右栏在空白会话里可能拒绝 per-session tab）。 */
+    const REVEAL_FALLBACK_MS = 700;
 
     const zh = {
       button: "旁问",
@@ -45,7 +55,8 @@ window.__ModuleLoader__.load({
       subtitle: "最近的旁问",
       placeholder: "提一个只读旁问…",
       send: "提问",
-      empty: "本会话还没有旁问。在下面提一个，或直接用 /btw <问题>。",
+      empty:
+        "本会话还没有旁问。旁问是只读的：不打断主任务，也不写进主对话历史；在下面提一个，或直接用 /btw <问题>。",
       close: "关闭",
       collapse: "收起为侧边条",
       collapseShort: "收起",
@@ -56,11 +67,11 @@ window.__ModuleLoader__.load({
       costLast: "上次实际 {tokens} tokens。",
       costHintTitle: "旁问会 fork 整个会话；这是按父会话上下文做的量级估算，不是精确账单。",
       failed: "读取旁问历史失败",
-      sent: "已提交，答案会出现在对话里",
+      sent: "已提交；答案会出现在本面板（主对话回显开启时也会同步）",
       followUp: "追问",
       followPlaceholder: "在这个线程里追问…",
       followUpLabel: "追问",
-      followSend: "追问",
+      followSend: "发送",
       followCancel: "取消追问",
       followInputLabel: "追问该线程",
       thinking: "思考中",
@@ -68,6 +79,12 @@ window.__ModuleLoader__.load({
       resizeHint: "拖动右侧栏分隔条可调宽度；⌥⌘B 收起侧栏",
       panelOnlyToggle: "只在旁问面板显示答案",
       echoFailed: "保存失败，请重试",
+      inputHint: "Enter 发送 · Shift+Enter 换行",
+      "notice.running": "旁问已提交 · 正在等待答案…（通常 20–40 秒）",
+      "notice.done": "旁问完成（{ms}），可在右侧栏查看",
+      "notice.doneWithPreview": "旁问完成（{ms}）：{preview}",
+      "notice.error": "旁问失败：{reason}",
+      "notice.open": "打开旁问面板（点击这条提示也可以）",
       turns: "轮",
       promote: "转正",
       promoted: "已插入输入框草稿（未发送）",
@@ -79,7 +96,7 @@ window.__ModuleLoader__.load({
       sending: "正在等待答案…",
       streaming: "正在生成回答",
       waitHint: "通常 20–40 秒",
-      sentPending: "命令已提交，答案稍后出现在对话里",
+      sentPending: "命令已提交，答案稍后出现在本面板",
       expandAnswer: "展开全文",
       collapseAnswer: "收起",
       submitHint: "提交时会以 /btw 命令写入对话",
@@ -114,7 +131,8 @@ window.__ModuleLoader__.load({
       subtitle: "Recent side questions",
       placeholder: "Ask a read-only side question…",
       send: "Ask",
-      empty: "No side question yet. Ask one below, or use /btw <question>.",
+      empty:
+        "No side questions in this session yet. A side question is read-only: it does not interrupt the main task and is not added to the conversation history. Ask one below, or use /btw <question>.",
       close: "Close",
       collapse: "Collapse to side rail",
       collapseShort: "Collapse",
@@ -126,11 +144,11 @@ window.__ModuleLoader__.load({
       costHintTitle:
         "A side question forks the whole session; this is an order-of-magnitude estimate from the parent context, not an exact bill.",
       failed: "Could not read side-question history",
-      sent: "Submitted; the answer appears in the conversation",
+      sent: "Submitted; the answer appears in this panel (and in the conversation when echo is on)",
       followUp: "Follow up",
       followPlaceholder: "Ask a follow-up in this thread…",
       followUpLabel: "Follow-up",
-      followSend: "Follow up",
+      followSend: "Send",
       followCancel: "Cancel follow-up",
       followInputLabel: "Follow up in this thread",
       thinking: "Thinking",
@@ -138,6 +156,12 @@ window.__ModuleLoader__.load({
       resizeHint: "Drag the sidebar divider to resize; ⌥⌘B collapses the sidebar",
       panelOnlyToggle: "Answer only in this panel",
       echoFailed: "Save failed; try again",
+      inputHint: "Enter sends · Shift+Enter for a new line",
+      "notice.running": "Side question submitted · waiting for the answer… (usually 20–40s)",
+      "notice.done": "Side answer ready ({ms}) — open the panel to read it",
+      "notice.doneWithPreview": "Side answer ready ({ms}): {preview}",
+      "notice.error": "Side question failed: {reason}",
+      "notice.open": "Open the side-question panel (clicking this notice works too)",
       turns: "turns",
       promote: "Promote",
       promoted: "Inserted into the composer as a draft (not sent)",
@@ -150,7 +174,7 @@ window.__ModuleLoader__.load({
       sending: "Waiting for the answer…",
       streaming: "Generating the answer",
       waitHint: "usually 20–40s",
-      sentPending: "Command submitted; the answer will appear in the conversation",
+      sentPending: "Command submitted; the answer will appear in this panel",
       expandAnswer: "Show all",
       collapseAnswer: "Collapse",
       submitHint: "Submitting writes a /btw command into the conversation",
@@ -165,6 +189,9 @@ window.__ModuleLoader__.load({
       "settings.tools": "Tools the side question may use",
       "settings.toolsHint":
         "Empty = fully read-only (recommended). Separate names with commas; send_message is never allowed.",
+      "settings.bounded": "Use a trimmed context for very large sessions (bounded)",
+      "settings.boundedHint":
+        "Only when the session context exceeds 400K tokens: hand only the last 12 messages to a spawn child agent. Cost is capped, but older context may be missed; off by default.",
       "settings.limit": "Records kept per session",
       "settings.limitHint":
         "1–200, default 50. Lowering it hides older records and trims them from the history file on the next side question.",
@@ -220,6 +247,15 @@ window.__ModuleLoader__.load({
       ".dsh-btw-dim{color:var(--dsw-alias-label-tertiary,GrayText);padding:6px 0;}",
       ".dsh-btw-err{color:var(--dsw-alias-state-error-primary,#d9534f);padding:6px 0;word-break:break-word;}",
       ".dsh-btw-cost-hint{margin:0 0 8px;padding:5px 8px;border-radius:var(--dsw-radius-sm,6px);background:var(--dsw-alias-bg-layer-3,var(--dsw-alias-bg-layer-2,Canvas));color:var(--dsw-alias-state-warn-primary,#b8860b);font-size:11.5px;line-height:1.5;}",
+      // ---- 执行回执 toast（USIM-U2-06）-------------------------------------
+      // 顶部居中、不盖 composer / 右侧栏按钮；tray 常驻（aria-live）便于屏幕阅读器，
+      // 只有真的通知时才有子节点。宿主没有 toast 服务（runtime rc.5 §16），自绘并挂
+      // 在 shell.overlay —— 与 advisor 的做法一致。
+      ".dsh-btw-toast-tray{position:fixed;top:56px;left:50%;transform:translateX(-50%);z-index:2147482001;display:flex;flex-direction:column;align-items:center;gap:6px;max-width:min(560px,calc(100vw - 32px));pointer-events:none;}",
+      ".dsh-btw-toast{display:flex;align-items:flex-start;gap:8px;max-width:100%;padding:8px 12px;border-radius:10px;background:var(--dsw-alias-toast-bg,var(--dsw-alias-bg-layer-2,Canvas));color:var(--dsw-alias-toast-label,CanvasText);border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));box-shadow:0 10px 30px rgba(0,0,0,.28);font-size:12.5px;line-height:1.5;pointer-events:auto;cursor:pointer;}",
+      ".dsh-btw-toast:hover{filter:brightness(1.06);}",
+      ".dsh-btw-toast-mark{flex:none;font-weight:600;line-height:1.4;}",
+      ".dsh-btw-toast-text{flex:1 1 auto;min-width:0;word-break:break-word;white-space:pre-wrap;}",
       ".dsh-btw-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px;}",
       // ---- Markdown --------------------------------------------------------
       ".dsh-btw-md{overflow-wrap:anywhere;}",
@@ -319,6 +355,115 @@ window.__ModuleLoader__.load({
       const minutes = seconds / 60;
       if (minutes < 59.95) return `${scaledText(minutes)}m`;
       return `${scaledText(minutes / 60)}h`;
+    }
+
+    // ---- 输入 / 回执的纯逻辑（单测用 node:vm 直接跑真实 client.js，不复制一份）----
+
+    /**
+     * 旁问输入框的 Enter 语义（USIM-U2-13）。
+     *
+     * Enter 发送、Shift+Enter 换行、⌘/Ctrl+Enter 也发送；**输入法组字中**按 Enter 是
+     * 「确认候选」，绝不能当成发送（中文用户必踩）。
+     * @param {any} event
+     * @returns {boolean}
+     */
+    function shouldSubmitOnKey(event) {
+      if (event === null || typeof event !== "object") return false;
+      if (event.isComposing === true) return false;
+      if (Number(event.keyCode) === 229) return false;
+      if (event.key !== "Enter") return false;
+      if (event.shiftKey === true) return false;
+      return true;
+    }
+
+    /**
+     * 会话是否停在**空白/首启**态：宿主的命令卡片在这个阶段一个都不渲染
+     * （docs/runtime 0.2.2-rc.5 §5.2），只有这时才值得替它把旁问面板自动打开。
+     * @param {{ phase?: string, chatRows?: number } | null | undefined} snapshot
+     * @returns {boolean}
+     */
+    function isBlankConversation(snapshot) {
+      const rows = Math.max(0, Math.trunc(Number(snapshot?.chatRows) || 0));
+      if (rows > 0) return false;
+      const phase = String(snapshot?.phase ?? "");
+      return phase === "" || phase === "hero" || phase === "blank";
+    }
+
+    /**
+     * 通知去重 + 动作规划：`seq` 全局单调递增，轮询会重复读到同一条。
+     *
+     * 首帧（`prevSeq` 为空）只建基线：**历史通知不回放**（别在重开页面时补弹旧的完成 toast），
+     * 但「正在进行中」的那条仍要提示 —— 它不是回放，是当前状态。
+     * @param {number | undefined | null} prevSeq
+     * @param {any} notice
+     * @returns {{ seq: number | undefined, show: boolean }}
+     */
+    function planNotice(prevSeq, notice) {
+      const seq = Number(notice?.seq);
+      if (!Number.isFinite(seq) || seq <= 0) return { seq: prevSeq ?? undefined, show: false };
+      const state = String(notice?.state ?? "");
+      const known = prevSeq === undefined || prevSeq === null;
+      if (known) return { seq, show: state === "running" };
+      if (seq <= prevSeq) return { seq: prevSeq, show: false };
+      if (state !== "running" && state !== "done" && state !== "error") {
+        return { seq, show: false };
+      }
+      return { seq, show: true };
+    }
+
+    /**
+     * 通知 → toast：进行中常驻（等待期间不能自己消失），完成带耗时 + 答案预览，
+     * 失败带宿主给的原因。
+     * @param {any} notice
+     * @param {(key: string) => string} tLocale
+     * @returns {{ tone: string, text: string, autoHideMs: number } | null}
+     */
+    function composeNoticeToast(notice, tLocale) {
+      const state = String(notice?.state ?? "");
+      if (state === "running") {
+        return { tone: "info", text: String(tLocale("notice.running")), autoHideMs: 0 };
+      }
+      if (state === "done") {
+        const ms = formatDuration(notice?.ms);
+        const preview = String(notice?.preview ?? "").trim();
+        return {
+          tone: "ok",
+          text:
+            preview === ""
+              ? fmt(tLocale("notice.done"), { ms })
+              : fmt(tLocale("notice.doneWithPreview"), { ms, preview }),
+          autoHideMs: 8000,
+        };
+      }
+      if (state === "error") {
+        const reason = String(notice?.text ?? "").trim();
+        const template = tLocale("notice.error");
+        return {
+          tone: "error",
+          text: reason === "" ? template : fmt(template, { reason }),
+          autoHideMs: 12000,
+        };
+      }
+      return null;
+    }
+
+    /**
+     * 终态回执的动作：`show` = 弹/换 toast、`dismiss` = 撤掉屏幕上的提示、`none` = 不动。
+     *
+     * 关键一条：**面板已经把答案显示出来时必须撤掉「正在等待」的常驻 toast**，
+     * 否则用户会看到一条永远停在「已提交 · 正在等待答案…」的提示（面板里答案其实早到了）。
+     * @param {any} notice
+     * @param {boolean} show planNotice 的结论（这条回执是不是新的）
+     * @param {boolean} panelVisible 面板是否已经在显示这次旁问
+     * @returns {"show" | "dismiss" | "none"}
+     */
+    function noticeAction(notice, show, panelVisible) {
+      if (!show) return "none";
+      const state = String(notice?.state ?? "");
+      if (state === "error") return "show";
+      if (state === "done") return panelVisible ? "dismiss" : "show";
+      if (state === "running") return panelVisible ? "dismiss" : "show";
+      return "none";
     }
 
     // ---- Markdown：host 已解析成 JSON 树，这里只做元素映射 --------------------
@@ -583,6 +728,176 @@ window.__ModuleLoader__.load({
         const [, force] = React.useState(0);
         React.useEffect(() => store.subscribe(() => force((/** @type {number} */ n) => n + 1)), []);
         return store.get();
+      };
+
+      /**
+       * 打开「旁问」面板的唯一实现：输入框旁的按钮、toast 点击、回执自动打开共用。
+       * 首选 DSH 原生右侧栏 tab（不遮挡主对话）；宿主没有右栏服务时退到浮层抽屉。
+       * @returns {boolean} 是否走了右栏
+       */
+      const openSidebarTab = () => {
+        if (!tabReady) return false;
+        const sidebarRight = serviceOf(ctx, "sidebarRight");
+        if (!sidebarRight || typeof sidebarRight.openTab !== "function") return false;
+        try {
+          // 侧栏已被收起时，openTab 只会 focus 已存在的 tab、不会展开栏，
+          // 所以先显式展开（track=true、非 fullscreen），再打开/聚焦 tab。
+          const layout = serviceOf(ctx, "layout");
+          if (layout && typeof layout.openRightbar === "function") {
+            try {
+              layout.openRightbar(true, false);
+            } catch {
+              /* 展开失败不阻塞打开 */
+            }
+          }
+          sidebarRight.openTab("btw");
+          // 若之前用过回退抽屉，打开 tab 时把它收掉，避免两套面板同时在场。
+          store.patch({ open: false, collapsed: false });
+          return true;
+        } catch {
+          return false;
+        }
+      };
+
+      /** 面板是否真的挂在 DOM 上（BtwBody 维护的挂载计数，避免到处查 DOM）。 */
+      let panelVisibleCount = 0;
+
+      /**
+       * 让面板可见：先试原生右侧栏；宿主右栏在空白会话里可能不渲染 per-session tab，
+       * 稍等后仍没有面板就退回浮层抽屉 —— 两种形态都不会「什么都没发生」。
+       */
+      const revealPanel = () => {
+        if (!openSidebarTab()) {
+          store.patch({ open: true, collapsed: false });
+          return;
+        }
+        setTimeout(() => {
+          let hasPanel = true;
+          try {
+            hasPanel = document.querySelector("[data-btw-panel]") !== null;
+          } catch {
+            hasPanel = true;
+          }
+          if (!hasPanel) store.patch({ open: true, collapsed: false });
+        }, REVEAL_FALLBACK_MS);
+      };
+
+      /**
+       * toast 状态（自绘 toast 栈，挂 `shell.overlay`；宿主没有 toast/notify 服务，
+       * 见 docs/runtime 0.2.2-rc.5 §16）。单条、可自动消失；autoHideMs=0 = 常驻。
+       */
+      const toastStore = (() => {
+        /** @type {{ id: number, tone: string, text: string } | null} */
+        let state = null;
+        /** @type {Set<() => void>} */
+        const listeners = new Set();
+        let seq = 0;
+        /** @type {any} */
+        let timer;
+        const emit = () => {
+          for (const listener of listeners) listener();
+        };
+        const dismiss = () => {
+          if (timer !== undefined) {
+            clearTimeout(timer);
+            timer = undefined;
+          }
+          if (state === null) return;
+          state = null;
+          emit();
+        };
+        /** @param {string} tone @param {string} text @param {number} autoHideMs */
+        const show = (tone, text, autoHideMs) => {
+          const message = String(text ?? "").trim();
+          if (message === "") return;
+          seq += 1;
+          const id = seq;
+          state = { id, tone, text: message };
+          if (timer !== undefined) {
+            clearTimeout(timer);
+            timer = undefined;
+          }
+          if (autoHideMs > 0) {
+            timer = setTimeout(() => {
+              if (state !== null && state.id === id) dismiss();
+            }, autoHideMs);
+          }
+          emit();
+        };
+        return {
+          get: () => state,
+          subscribe(/** @type {() => void} */ listener) {
+            listeners.add(listener);
+            return () => listeners.delete(listener);
+          },
+          show,
+          dismiss,
+        };
+      })();
+
+      /** 已处理过 seq 的会话（去重轮询重复读到的同一条通知）。 */
+      const noticeSeen = new Map();
+      /** 已自动开过面板的 `sessionId:threadId`（用户手动关掉后不再抢焦点）。 */
+      const noticeRevealed = new Set();
+
+      /** 当前会话的对话状态快照（空白判定用）。 */
+      const conversationSnapshot = () => {
+        try {
+          const phaseEl = document.querySelector("[data-phase]");
+          return {
+            phase: phaseEl === null ? "" : String(phaseEl.getAttribute("data-phase") ?? ""),
+            chatRows: document.querySelectorAll("[data-chat-flow-kind]").length,
+          };
+        } catch {
+          return { phase: "", chatRows: 0 };
+        }
+      };
+
+      /**
+       * 空白会话里自动打开面板（**只开一次**：用户手动关掉后不再抢焦点）。
+       * 非空白会话不抢布局 —— 那里命令卡片自己会渲染结果。
+       * @param {string} sessionId
+       * @param {any} notice
+       */
+      const maybeRevealPanel = (sessionId, notice) => {
+        const threadId = String(notice?.threadId ?? "");
+        const key = `${sessionId}:${threadId}`;
+        if (noticeRevealed.has(key)) return;
+        if (!isBlankConversation(conversationSnapshot())) return;
+        if (noticeRevealed.size > 200) noticeRevealed.clear();
+        noticeRevealed.add(key);
+        revealPanel();
+      };
+
+      /**
+       * 收到一条回执：去重 → 弹 toast → 空白会话的第一次「进行中」顺带打开面板。
+       * 面板开着时进行中/完成已有就地反馈（live 卡片 / 线程更新），不叠 toast；
+       * 失败始终弹（面板里没有错误展示位）。
+       * @param {string} sessionId
+       * @param {any} notice
+       */
+      const applyNotice = (sessionId, notice) => {
+        if (notice === null || typeof notice !== "object") {
+          // 第一轮就没有通知：建立基线 0，之后任何新回执都算新事件。
+          // （否则「开始 → 立刻失败」比首轮轮询还快时，失败会被当成基线静默掉 ——
+          //  正是 U2-06 要消灭的「什么都没发生」。）
+          if (!noticeSeen.has(sessionId)) noticeSeen.set(sessionId, 0);
+          return;
+        }
+        if (noticeSeen.size > 200) noticeSeen.clear();
+        const planned = planNotice(noticeSeen.get(sessionId), notice);
+        if (planned.seq !== undefined) noticeSeen.set(sessionId, planned.seq);
+        const panelVisible = panelVisibleCount > 0;
+        const action = noticeAction(notice, planned.show, panelVisible);
+        if (action === "none") return;
+        // 面板已经把答案显示出来 → 撤掉可能还停在屏幕上的「正在等待」常驻提示。
+        if (action === "dismiss") {
+          toastStore.dismiss();
+          return;
+        }
+        const toast = composeNoticeToast(notice, t);
+        if (toast !== null) toastStore.show(toast.tone, toast.text, toast.autoHideMs);
+        if (String(notice?.state ?? "") === "running") maybeRevealPanel(sessionId, notice);
       };
 
       /** 当前界面语言（转正草稿用）。取不到默认 zh。 */
@@ -864,30 +1179,16 @@ window.__ModuleLoader__.load({
         React.useEffect(() => {
           if (shared.sessionId !== sessionId) store.patch({ sessionId });
         }, [sessionId, shared.sessionId]);
-        /** 首选形态：在 DSH 原生右侧栏打开「旁问」tab（不遮挡主对话）。 */
-        const openSidebarTab = () => {
-          if (!tabReady) return false;
-          const sidebarRight = serviceOf(ctx, "sidebarRight");
-          if (!sidebarRight || typeof sidebarRight.openTab !== "function") return false;
-          try {
-            // 侧栏已被收起时，openTab 只会 focus 已存在的 tab、不会展开栏，
-            // 所以先显式展开（track=true、非 fullscreen），再打开/聚焦 tab。
-            const layout = serviceOf(ctx, "layout");
-            if (layout && typeof layout.openRightbar === "function") {
-              try {
-                layout.openRightbar(true, false);
-              } catch {
-                /* 展开失败不阻塞打开 */
-              }
-            }
-            sidebarRight.openTab("btw");
-            // 若之前用过回退抽屉，打开 tab 时把它收掉，避免两套面板同时在场。
-            store.patch({ open: false, collapsed: false });
-            return true;
-          } catch {
-            return false;
-          }
-        };
+        // 组件卸载（离开会话视图）时清掉 store 里的会话：回执轮询据此停掉，
+        // 不至于在别的页面上替一个看不见的会话弹面板。
+        const sessionRef = React.useRef(sessionId);
+        sessionRef.current = sessionId;
+        React.useEffect(
+          () => () => {
+            if (store.get().sessionId === sessionRef.current) store.patch({ sessionId: "" });
+          },
+          [],
+        );
         const toggle = () => {
           if (openSidebarTab()) return;
           const current = store.get();
@@ -946,6 +1247,15 @@ window.__ModuleLoader__.load({
           },
           [],
         );
+
+        // 面板真实挂载计数：回执侧据此判断「用户已经在看面板」，不重复弹 toast。
+        React.useEffect(() => {
+          if (!visible) return undefined;
+          panelVisibleCount += 1;
+          return () => {
+            panelVisibleCount = Math.max(0, panelVisibleCount - 1);
+          };
+        }, [visible]);
 
         // 面板底部直接暴露「只在面板显示答案」开关：不用进设置页，减少主对话重复答案。
         React.useEffect(() => {
@@ -1447,18 +1757,25 @@ window.__ModuleLoader__.load({
                       h("textarea", {
                         className: "dsh-btw-input",
                         "data-btw-input": "true",
+                        "data-btw-follow-input": "true",
                         placeholder: t("followPlaceholder"),
                         value: followQuestion,
                         rows: 2,
                         onChange: (/** @type {any} */ event) =>
                           setFollowQuestion(String(event?.target?.value ?? "")),
+                        // Enter 发送、Shift+Enter 换行（USIM-U2-13）；输入法组字中不发送。
                         onKeyDown: (/** @type {any} */ event) => {
-                          if (event?.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                            event.preventDefault();
-                            void submit(threadId);
-                          }
+                          if (!shouldSubmitOnKey(event)) return;
+                          event.preventDefault();
+                          if (busy || followQuestion.trim() === "") return;
+                          void submit(threadId);
                         },
                       }),
+                      h(
+                        "div",
+                        { className: "dsh-btw-meta", "data-btw-input-hint": "true" },
+                        t("inputHint"),
+                      ),
                       h(
                         "div",
                         { className: "dsh-btw-row" },
@@ -1563,7 +1880,9 @@ window.__ModuleLoader__.load({
         // 有 live 卡片时不显示状态条：卡片里已经有「正在生成回答 · 12s」，不需要重复。
         const statusBusy = busy;
         const statusText = busy ? `${t("sending")}（${t("waitHint")}）` : notice;
-        const statusVisible = liveRuns.length === 0 && (statusBusy || notice !== "");
+        // 有 live 卡片时不必重复「正在等待」，但**失败/提示**必须仍然可见
+        // （否则面板里提交失败时会静默，USIM-U2-13）。
+        const statusVisible = notice !== "" || (statusBusy && liveRuns.length === 0);
 
         return h(
           "div",
@@ -1664,12 +1983,18 @@ window.__ModuleLoader__.load({
                   onChange: (/** @type {any} */ event) =>
                     setQuestion(String(event?.target?.value ?? "")),
                   onKeyDown: (/** @type {any} */ event) => {
-                    if (event?.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                      event.preventDefault();
-                      void submit("");
-                    }
+                    // 与线程内追问同一套 Enter 语义：Enter 发送、Shift+Enter 换行。
+                    if (!shouldSubmitOnKey(event)) return;
+                    event.preventDefault();
+                    if (busy || question.trim() === "") return;
+                    void submit("");
                   },
                 }),
+                h(
+                  "div",
+                  { className: "dsh-btw-meta", "data-btw-input-hint": "true" },
+                  t("inputHint"),
+                ),
                 h(
                   "div",
                   { className: "dsh-btw-row" },
@@ -1717,11 +2042,106 @@ window.__ModuleLoader__.load({
         );
       }
 
+      /**
+       * 自绘 toast（`shell.overlay`）：`/btw` 的执行回执。
+       * - 进行中常驻（等待期间不能自己消失）；完成/失败自动消失；
+       * - 点击 = 打开旁问面板并收起提示（标题栏也有同样的提示）；
+       * - 顶部居中，不盖 composer 与右侧栏按钮。
+       */
+      function BtwToast() {
+        const toast = React.useSyncExternalStore(toastStore.subscribe, toastStore.get);
+        if (!toast) return null;
+        const tone = toast.tone === "error" ? "error" : toast.tone === "ok" ? "ok" : "info";
+        const color =
+          tone === "error"
+            ? "var(--dsw-alias-state-error-primary,#d9534f)"
+            : tone === "ok"
+              ? "var(--dsw-alias-state-success-primary,#2f9e63)"
+              : "var(--dsw-alias-label-secondary,GrayText)";
+        return h(
+          "div",
+          {
+            className: "dsh-btw-toast",
+            "data-btw-toast": tone,
+            role: "status",
+            title: t("notice.open"),
+            onClick: () => {
+              toastStore.dismiss();
+              revealPanel();
+            },
+          },
+          tone === "info"
+            ? h(
+                "span",
+                { className: "dsh-btw-toast-mark" },
+                h("span", { className: "dsh-btw-spinner" }, "⟳"),
+              )
+            : h(
+                "span",
+                { className: "dsh-btw-toast-mark", style: { color } },
+                tone === "error" ? "!" : "✓",
+              ),
+          h("span", { className: "dsh-btw-toast-text" }, toast.text),
+        );
+      }
+
+      /**
+       * 回执轮询（`shell.overlay` 常驻）：`/btw` 在 host 半执行，client 拿不到命令生命周期，
+       * 所以轮询内存快照 `btw/notice`。空白会话里宿主的命令卡片不渲染（runtime rc.5 §5.2），
+       * 这条通道是用户唯一能立刻看到的反馈（USIM-U2-06）。
+       */
+      function BtwNotifier() {
+        const shared = useStore();
+        const sessionId = shared.sessionId;
+        React.useEffect(() => {
+          if (sessionId === "") return undefined;
+          let cancelled = false;
+          /** @type {any} */
+          let timer;
+          const tick = () => {
+            if (cancelled) return;
+            callRemote("notice", { sessionId }).then(
+              (/** @type {any} */ notice) => {
+                if (cancelled) return;
+                // null = 该会话还没有旁问（也会建基线，见 applyNotice）；畸形值同理。
+                applyNotice(sessionId, notice);
+                timer = setTimeout(tick, NOTICE_POLL_MS);
+              },
+              () => {
+                if (!cancelled) timer = setTimeout(tick, NOTICE_POLL_MS);
+              },
+            );
+          };
+          timer = setTimeout(tick, NOTICE_FIRST_DELAY_MS);
+          return () => {
+            cancelled = true;
+            clearTimeout(timer);
+          };
+        }, [sessionId]);
+        return h(
+          "div",
+          {
+            className: "dsh-btw-toast-tray",
+            "data-btw-toast-tray": "true",
+            "aria-live": "polite",
+            "aria-atomic": "true",
+          },
+          h(BtwToast, null),
+        );
+      }
+
+      /** `shell.overlay` 的根：回执 tray + 回退抽屉（两者互不遮挡）。 */
+      function BtwOverlay() {
+        return h(React.Fragment, null, h(BtwNotifier, null), h(BtwDrawer, null));
+      }
+
       /** 回退形态：`shell.overlay` 里的右侧抽屉（宿主没有右侧栏服务时）。 */
       function BtwDrawer(/** @type {any} */ props) {
         void props;
         const shared = useStore();
-        if (!shared.open) return null;
+        // 宿主提供了右侧栏时面板只走 tab 形态：抽屉仅在「右栏服务缺失」时兜底，
+        // 也避免 tab 渲染比自动打开慢一帧时两套面板同时在场。
+        if (!shared.open || tabReady) return null;
         if (shared.collapsed) {
           return h(
             "button",
@@ -2028,9 +2448,22 @@ window.__ModuleLoader__.load({
       // 回退：右侧浮层抽屉，挂在 shell.overlay（frame-wide，不受 composer 裁剪）。
       ctx.slots.inject("shell.overlay", () =>
         ctx.slots.register({ name: "shell.overlay", id: "btw-panel", order: 60, locale: NS }, () =>
-          h(BtwDrawer, null),
+          h(BtwOverlay, null),
         ),
       );
+    };
+
+    /**
+     * 单测入口：client 半是 classic script（不能 import），用 node:vm 加载本文件后
+     * 直接跑这里的真实函数（见 test/client.test.js）。
+     */
+    exports.__test = {
+      messages: { zh, en },
+      shouldSubmitOnKey,
+      isBlankConversation,
+      planNotice,
+      noticeAction,
+      composeNoticeToast,
     };
 
     return module.exports;
