@@ -23,6 +23,14 @@ export const MIN_SHOWN = 25;
 export const REPORT_KEEP = 20;
 /** Wilson 区间的 z 值（95%）。 */
 export const WILSON_Z = 1.96;
+/** 非空格式失败占比超过这个值，才判「解析 / 修复调用」需要动。 */
+export const SCHEMA_FAILURE_SHARE = 0.15;
+/** 空输出至少这么多条、且占 schema 失败过半，才判「模型空输出」而不是格式问题。 */
+export const MIN_EMPTY_GENERATIONS = 5;
+/** 空输出占 schema 失败的比例阈值（高于它说明主要矛盾不是解析）。 */
+export const EMPTY_SHARE_THRESHOLD = 0.5;
+/** 空输出的 detail 归一类（service 写入的 `json:empty`）。 */
+export const EMPTY_DETAIL = "json:empty";
 
 /**
  * 逐行解析事件文件（坏行跳过并计数，绝不抛错）。
@@ -82,6 +90,38 @@ export function wilson(k, n, z = WILSON_Z) {
 export function intervalsOverlap(left, right) {
   if (left === null || right === null) return true;
   return Math.max(left.low, right.low) <= Math.min(left.high, right.high);
+}
+
+/**
+ * schema 类 error 的 `detail` 归一成一个可数的桶。
+ *
+ * 为什么需要这层（AUD-HIST-01）：0.4.3 的 `schema` 错误从 pv3 的 19 涨到 pv4 的 102，但其中
+ * 79 条（77%）是**模型返回空文本**（`json:empty`）——那是 0.4.3 把「空输出重发原请求」的恢复
+ * 路径暴露出来的口径变化，不是校验变严。报表若把两者混在一个 `schemaShare` 里，就会得出
+ * 「解析要放宽」的错误结论。所以这里只做「空 / 非空」两类的拆分，供 summarize 与 verdicts 用。
+ *
+ * 识别的形状（service.js 实际写入）：
+ * - `model output did not match the card schema (json:empty)` → `json:empty`
+ * - `... (json:no-object)` / `... (json:unparsable)` / `... (value:...)` → 原样保留
+ * - `... (options:dropped-option:0:label-length:22)` → 归成 `options`（内部细节不参与计数）
+ * - `generated card failed validation` → `card-validation`
+ * - 缺失 / 认不出 → `unknown`（按非空格式失败处理，宁可算进 schemaShare 也不藏起来）
+ * @param {unknown} detail
+ * @returns {string}
+ */
+export function schemaDetailBucket(detail) {
+  const text = typeof detail === "string" ? detail.trim() : "";
+  if (text === "") return "unknown";
+  if (/^generated card failed validation/u.test(text)) return "card-validation";
+  // 截断的 200 字 detail 仍保留结尾的 `(...)`，所以从右括号回取即可。
+  const wrapped = /\(([^()]*)\)\s*$/u.exec(text);
+  const tail = (wrapped === null ? text : wrapped[1]).trim();
+  if (tail === "") return "unknown";
+  const colon = tail.indexOf(":");
+  if (colon === -1) return tail;
+  // options 的 detail 自带冒号（dropped-option:0:label-length:22），桶名只留一类。
+  if (tail.slice(0, colon) === "options") return "options";
+  return tail;
 }
 
 /**
@@ -268,6 +308,17 @@ export function summarize(events) {
     errorKinds[String(error.kind ?? "unknown")] =
       (errorKinds[String(error.kind ?? "unknown")] ?? 0) + 1;
 
+  // schema 失败拆成「模型返回空文本」与「非空格式失败」两类（口径见 schemaDetailBucket）。
+  const schemaErrors = errors.filter((error) => error.kind === "schema");
+  /** @type {Record<string, number>} */
+  const schemaDetails = {};
+  for (const error of schemaErrors) {
+    const bucket = schemaDetailBucket(error.detail);
+    schemaDetails[bucket] = (schemaDetails[bucket] ?? 0) + 1;
+  }
+  const emptyGenerations = schemaDetails[EMPTY_DETAIL] ?? 0;
+  const formatFailures = schemaErrors.length - emptyGenerations;
+
   const gateOkTurns = (gateCounts.ok ?? 0) + errors.length;
   return {
     scheme: typeof meta?.scheme === "string" ? meta.scheme : "v0.4",
@@ -308,8 +359,19 @@ export function summarize(events) {
     byLabelBucket,
     byPromptVersion,
     gates: gateCounts,
-    errors: { total: errors.length, byKind: errorKinds },
-    schemaShare: gateOkTurns === 0 ? 0 : (errorKinds.schema ?? 0) / gateOkTurns,
+    errors: {
+      total: errors.length,
+      byKind: errorKinds,
+      // 仅 schema 类（格式失败 / 空输出 / 落地后校验失败）的 detail 拆分。
+      byDetail: schemaDetails,
+      schema: schemaErrors.length,
+      empty: emptyGenerations,
+      format: formatFailures,
+    },
+    // 格式失败率：分子只算**非空**的格式失败（空输出是 provider/输出长度问题，不是「解析要放宽」）。
+    schemaShare: gateOkTurns === 0 ? 0 : formatFailures / gateOkTurns,
+    // 空输出占 schema 失败的比例；没有 schema 失败时没分母 → null（不是 0）。
+    emptyShare: schemaErrors.length === 0 ? null : emptyGenerations / schemaErrors.length,
     // 落地校验丢弃率：结构合法但讲不到这段对话的卡（自述生成过程 / 凭空想象）。
     // 单独一个指标，因为它对应的病根和「格式失败」完全不同（见 docs/adr/0023）。
     ungroundedShare: gateOkTurns === 0 ? 0 : (errorKinds.ungrounded ?? 0) / gateOkTurns,
@@ -378,11 +440,32 @@ export function verdicts(metrics) {
     });
   }
 
-  if (metrics.schemaShare > 0.15) {
+  // 格式失败率只算非空输出：空输出由下面的 empty-generations 单独判读。
+  if (metrics.schemaShare > SCHEMA_FAILURE_SHARE) {
+    const format = Number(metrics.errors?.format ?? 0);
     out.push({
       code: "schema-failures",
-      text: `有 ${Math.round(metrics.schemaShare * 100)}% 的生成是格式失败（${metrics.errors.byKind.schema ?? 0}/${metrics.turns + metrics.errors.total}）。`,
+      text: `有 ${Math.round(metrics.schemaShare * 100)}% 的生成是非空格式失败（${format}/${metrics.turns + metrics.errors.total}）。`,
       action: "解析还需要放宽，或修复调用没有生效——先看 error.detail 的前缀分布。",
+    });
+  }
+
+  // 空输出不是「格式需要放宽」：同一请求重发几乎仍是空（本机 81 次只救回 2 次）。
+  // 它通常是 provider / 输出长度（maxTokens）问题，提示词与解析都不该先动。
+  const emptyGenerations = Number(metrics.errors?.empty ?? 0);
+  const schemaFailures = Number(metrics.errors?.schema ?? 0);
+  const emptyShare = typeof metrics.emptyShare === "number" ? metrics.emptyShare : null;
+  if (
+    schemaFailures > 0 &&
+    emptyGenerations >= MIN_EMPTY_GENERATIONS &&
+    emptyShare !== null &&
+    emptyShare >= EMPTY_SHARE_THRESHOLD
+  ) {
+    out.push({
+      code: "empty-generations",
+      text: `schema 失败里有 ${Math.round(emptyShare * 100)}% 是模型返回空文本（${emptyGenerations}/${schemaFailures}）。`,
+      action:
+        "这不是「解析要放宽」：空输出通常是 provider / 输出长度（maxTokens）问题，同一请求重发大概率仍为空——先看模型与路由、调 maxTokens，不要动校验。",
     });
   }
 
@@ -484,6 +567,16 @@ export function renderMarkdown(metrics, list) {
         .join(" · ") || "无"
     }）`,
   );
+  const schemaTotal = Number(metrics.errors?.schema ?? 0);
+  if (schemaTotal > 0) {
+    const details =
+      Object.entries(metrics.errors?.byDetail ?? {})
+        .map(([key, value]) => `${key}=${value}`)
+        .join(" · ") || "无";
+    lines.push(
+      `  - schema 拆分：空输出 ${Number(metrics.errors?.empty ?? 0)}（占 schema ${pct(metrics.emptyShare ?? null)}）· 非空格式失败 ${Number(metrics.errors?.format ?? schemaTotal)}（detail：${details}）`,
+    );
+  }
   lines.push("");
   lines.push("## 4. 内容与按钮");
   lines.push("");
@@ -529,6 +622,9 @@ export function renderMarkdown(metrics, list) {
   lines.push("");
   lines.push("口径说明：忽略 = 出过的卡 − 点击 − 主动关闭（左连接，不写状态机）；");
   lines.push("曝光 = 卡片真正进入视口（IntersectionObserver 相交 ≥0.5 且持续 ≥300ms）；");
+  lines.push(
+    "schema 失败拆成「模型返回空文本（json:empty）」与「非空格式失败」；格式失败率不含空输出。",
+  );
   lines.push("比例区间为 Wilson 95%，两组比较只在区间不重叠时才算有差别。");
   return `${lines.join("\n")}\n`;
 }

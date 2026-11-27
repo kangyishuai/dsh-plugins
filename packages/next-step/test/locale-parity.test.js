@@ -144,3 +144,22 @@ test("firstSentenceOf：取首句、压缩空白、超长截断并加省略号",
   assert.equal(firstSentenceOf(""), "");
   assert.equal(firstSentenceOf(undefined), "");
 });
+
+test("firstSentenceOf：英文句号只在后接空白/结尾时切句（F-6）", () => {
+  const { firstSentenceOf } = client.__test;
+  // 英文摘要：句号后接空格才是句末（旧实现不认 `.`，英文折叠行是「整段截断」）
+  assert.equal(
+    firstSentenceOf("Tests pass 42. Next we can release v0.5.0."),
+    "Tests pass 42.",
+    "英文句号也要切句（注释原本就写「中英文句号」）",
+  );
+  // 小数点 / 版本号里的点不算句末
+  assert.equal(
+    firstSentenceOf("Bump dsh to v0.5.0 before release"),
+    "Bump dsh to v0.5.0 before release",
+  );
+  // 英文分号仍是句末（与旧行为一致，不因补 `.` 而丢）
+  assert.equal(firstSentenceOf("Fix the parser; then run tests."), "Fix the parser;");
+  // 结尾的英文句号算在首句里
+  assert.equal(firstSentenceOf("Done. Ship it."), "Done.");
+});

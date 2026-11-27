@@ -116,7 +116,43 @@ test("foldSessionRecords：三张表都按「每回合第一条赢」，非法�
   const events = [
     { plugin: { type: CARD_RECORD, data: card(1) } },
     { plugin: { type: CARD_RECORD, data: card(1) } }, // 同回合第二条：丢
-    { plugin: { type: CARD_RECORD, data: { turn: 2, summary: "" } } }, // 结构不合法：丢
+    // F-7：下面三条都能原样过 `readCard()`（不会抛错），只能由 `isCardData` 拦下。
+    // 删掉 session-records.js 里的 `isCardData` 校验后，它们会进 cards 表 → 断言变红。
+    {
+      plugin: {
+        type: CARD_RECORD,
+        data: { turn: 2, summary: "摘要 2", question: "问题 2", options: [] },
+      },
+    }, // 0 条选项（契约 1–2 条）
+    {
+      plugin: {
+        type: CARD_RECORD,
+        data: {
+          turn: 3,
+          summary: "摘要 3",
+          question: "问题 3",
+          options: [
+            { stance: "a", label: "甲" },
+            { stance: "a", label: "乙" },
+          ],
+        },
+      },
+    }, // 两条同 stance（方向必须互斥）
+    {
+      plugin: {
+        type: CARD_RECORD,
+        data: {
+          turn: 4,
+          summary: "摘要 4",
+          question: "问题 4",
+          options: [
+            { stance: "a", label: "甲" },
+            { stance: "b", label: "乙" },
+            { stance: "c", label: "丙" },
+          ],
+        },
+      },
+    }, // 3 条选项（上限 2 条）
     { plugin: { type: DECISION_RECORD, data: { turn: 1, phase: "sent", index: 0 } } },
     { plugin: { type: DECISION_RECORD, data: { turn: 1, phase: "dismissed" } } }, // 同回合第二条：丢
     { plugin: { type: REVEAL_RECORD, data: { turn: 3 } } },

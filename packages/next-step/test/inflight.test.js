@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createInflightRegistry } from "../lib/inflight.js";
+import { createInflightRegistry, inflightBlocksGenerateNow } from "../lib/inflight.js";
 
 /**
  * 假的 AbortController：记录 abort 有没有被调用、原因是什么。
@@ -98,4 +98,28 @@ test("按会话隔离：一个会话的在途生成不会影响另一个会话",
   assert.equal(registry.isSuperseded("s2", b.controller), false);
   assert.equal(b.state.aborted, false);
   assert.equal(registry.size, 2);
+});
+
+test("手动补生成（generateNow）：同一回合且未取代才等；异回合 / 已被取代 → 取消后继续", () => {
+  // 背景（F-2）：0.4.4 之前 turn/start 会 abort 在途生成，补生成按钮那时候 `inflight` 必为空；
+  // 现在 superseded 的旧回合会跑到 20s，用户点「补生成」会撞上 `{ok:false, reason:"inflight"}`，
+  // 按钮显示「正在生成，请稍候」而什么都不发生。旧的那笔既然注定 shown:false（或根本不是本回合），
+  // 就该取消掉、让补生成真的发出去。
+  assert.equal(inflightBlocksGenerateNow(undefined, 5), false, "没有在途生成：不挡");
+  assert.equal(
+    inflightBlocksGenerateNow({ turn: 5, superseded: false }, 5),
+    true,
+    "同一回合、正常在途：等它跑完（补生成会重复调用模型）",
+  );
+  assert.equal(
+    inflightBlocksGenerateNow({ turn: 5, superseded: true }, 5),
+    false,
+    "同一回合但已被取代：结果注定 shown:false，取消后重新生成",
+  );
+  assert.equal(
+    inflightBlocksGenerateNow({ turn: 4, superseded: false }, 5),
+    false,
+    "在途的是别的回合：不是用户要的那张卡，取消",
+  );
+  assert.equal(inflightBlocksGenerateNow({ turn: 4, superseded: true }, 5), false);
 });
