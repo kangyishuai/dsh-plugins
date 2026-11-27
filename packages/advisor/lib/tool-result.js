@@ -2,10 +2,14 @@
 // 工具结果对模型的暴露规则（纯函数，单测可直接导入）。
 //
 // 审计 USIM-U1-11：助手回复里出现了「Advisor 当前是关闭状态」——用户不认识 Advisor，
-// 也不关心某个插件开没开。来源是 advisor 工具的 skip 结果把内部开关状态写进了 `code` /
-// `reason`，而宿主把这些字段作为**工具结果的 JSON value** 交给模型
-// （`@deepseek-ai/dsh-tools/src/pipeline.ts` 的 `createSuccessResult`：`value` 给模型，
-// `output.render` 只给界面）。所以能从插件侧控制的就是这一份 value。
+// 也不关心某个插件开没开。来源是 advisor 工具的 skip 结果把内部开关状态写进了 `code` / `reason`。
+//
+// 通道事实（2026-11-28 复核宿主源码，复审 F2 曾把方向写反）：工具结果的 `value` 是
+// **execution-local** 的，「deliberately omitted from durable events」；模型读到的是
+// `output.render(args, value)` 渲染出的 `content`——`dsh-tools` 用这份 content 构造
+// `tool/result` 消息并持久化，UI 工具卡与模型上下文**共用同一份**。所以模型可见文本由
+// `renderToolOutput` 决定，而它读的正是这份 value 的 `reason`/`code`；要收敛泄漏，
+// 既要把 value 里的内部状态换成中性文案（本文件），也要保证 render 只吐这份中性文案。
 //
 // 收敛规则：
 // - 只在 `trigger === "tool"` 时改（其它触发的结果只进账本/面板，不会成为工具结果）；

@@ -1,15 +1,19 @@
 // @ts-check
 // 工具结果「对模型暴露什么」的纯函数测试（审计 USIM-U1-11）。
 //
-// 事实链（宿主编译面 `@deepseek-ai/dsh-tools/src/pipeline.ts` 的 `createSuccessResult`）：
-// 模型拿到的是工具返回的 **JSON value**，`output.render` 只是给界面看的 content。
-// 所以「Advisor 当前是关闭状态」这句出现在用户可见回复里，来源是 runAdvisor 的
-// skip 结果把 `code: "disabled" / reason: "顾问已关闭（/advisor on 打开）"` 一起喂给了模型。
+// 事实链（2026-11-28 复核宿主源码，复审 F2 指出旧注释把通道写反了）：
+// 工具结果的 `value` 是 execution-local，**不进持久化事件**；模型读到的是
+// `output.render(args, value)` 渲染出的 `content`（宿主用它构造并持久化 `tool/result`，
+// UI 工具卡与模型上下文共用同一份）。所以「Advisor 当前是关闭状态」这句能进用户可见回复，
+// 是因为 runAdvisor 的 skip 结果把 `code: "disabled" / reason: "顾问已关闭（/advisor on 打开）"`
+// 留在 value 里、而 `renderToolOutput` 把它原样渲染成了模型可见文本 —— 下面最后一条用例
+// 用 exposeSkip + renderToolOutput 的组合钉住「真正进模型的那段字符串」。
 //
 // service.js 依赖宿主包、单测里导入不了，所以「对模型暴露哪一份」这个决策放这里测。
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { exposeSkip, INTERNAL_STATE_CODES, NEUTRAL_SKIP_REASON } from "../lib/tool-result.js";
+import { renderToolOutput } from "../lib/tool-schema.js";
 
 test("工具触发的内部开关跳过不再携带开关状态", () => {
   assert.ok(INTERNAL_STATE_CODES.includes("disabled"));
@@ -52,6 +56,32 @@ test("被动投递（shadow / post-answer）不经过模型，保留内部原因
   });
   assert.equal(exposed.code, "not_configured");
   assert.equal(exposed.reason, "还没配置顾问模型（/advisor 选择）");
+});
+
+test("renderToolOutput + exposeSkip 组合：真正进模型的文本不含开关状态（复审 F2/F7a）", () => {
+  // 这是 U1-11 真正防泄漏的那一行：value 会被 renderToolOutput 渲染成 content，
+  // 而 content 就是模型读到的工具结果。三种内部状态都要渲染成中性跳过。
+  for (const code of INTERNAL_STATE_CODES) {
+    const value = exposeSkip({
+      trigger: "tool",
+      code,
+      reason: "顾问已关闭（/advisor on 打开）",
+    });
+    const rendered = renderToolOutput({}, value);
+    assert.equal(rendered.length, 1);
+    assert.equal(rendered[0].type, "text");
+    const modelVisible = String(rendered[0].text);
+    // 中性语义仍在（模型知道「这次没有建议」），但开关状态/操作指引一个字都不能有。
+    assert.match(modelVisible, /未征询/u);
+    for (const banned of ["关闭", "未配置", "shadow", "advisor on", "shadow_mode"]) {
+      assert.equal(
+        modelVisible.includes(banned),
+        false,
+        `模型可见文本泄漏了内部状态「${banned}」：${modelVisible}`,
+      );
+    }
+    assert.ok(modelVisible.includes(NEUTRAL_SKIP_REASON), `应渲染中性 reason：${modelVisible}`);
+  }
 });
 
 test("畸形输入不抛，且永远不会把「内部 code」留在 tool 结果里", () => {
