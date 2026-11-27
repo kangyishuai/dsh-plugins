@@ -364,13 +364,21 @@ window.__ModuleLoader__.load({
      *
      * Enter 发送、Shift+Enter 换行、⌘/Ctrl+Enter 也发送；**输入法组字中**按 Enter 是
      * 「确认候选」，绝不能当成发送（中文用户必踩）。
+     *
+     * React 合成事件在部分浏览器/IME 上不暴露 `isComposing`（复审 B2），所以判据与
+     * projects 的 `isImeConfirmKey` 对齐：合成事件 → `nativeEvent` → keyCode/which 229
+     * （旧 IME）→ `key === "Process"` → composition 期间的 ref 标记。
      * @param {any} event
+     * @param {{active?: boolean}|null|undefined} [ime] 组字期间的 ref 快照
      * @returns {boolean}
      */
-    function shouldSubmitOnKey(event) {
+    function shouldSubmitOnKey(event, ime) {
       if (event === null || typeof event !== "object") return false;
       if (event.isComposing === true) return false;
-      if (Number(event.keyCode) === 229) return false;
+      if (event.nativeEvent && event.nativeEvent.isComposing === true) return false;
+      if (Number(event.keyCode) === 229 || Number(event.which) === 229) return false;
+      if (event.key === "Process") return false;
+      if (ime && ime.active === true) return false;
       if (event.key !== "Enter") return false;
       if (event.shiftKey === true) return false;
       return true;
@@ -387,6 +395,22 @@ window.__ModuleLoader__.load({
       if (rows > 0) return false;
       const phase = String(snapshot?.phase ?? "");
       return phase === "" || phase === "hero" || phase === "blank";
+    }
+
+    /**
+     * 回退抽屉是否该渲染（复审 B1 的核心判定）。
+     *
+     * 抽屉是「宿主没有右侧栏服务」时的兜底形态；但右侧栏服务在、`openTab` 抛错或打开后
+     * 仍没有面板时，也必须降级到抽屉（`drawerFallback`），否则用户只看到一条 toast、
+     * 面板永远不会出现。抽成纯函数是为了让单测钉得住这条（而不是只读源码字符串）。
+     * @param {{ open?: boolean, drawerFallback?: boolean } | null | undefined} shared
+     * @param {boolean} tabReady
+     * @returns {boolean}
+     */
+    function shouldRenderDrawer(shared, tabReady) {
+      if (shared === null || typeof shared !== "object") return false;
+      if (shared.open !== true) return false;
+      return tabReady !== true || shared.drawerFallback === true;
     }
 
     /**
@@ -698,14 +722,23 @@ window.__ModuleLoader__.load({
        * （不会像右侧边栏那样把主对话挤窄）。
        */
       const store = (() => {
-        /** @type {{ open: boolean, collapsed: boolean, sessionId: string }} */
-        let state = { open: false, collapsed: false, sessionId: "" };
+        /**
+         * `drawerFallback`：右栏服务在、但 `openTab` 抛错 / 打开后 700ms 仍没有面板时，显式
+         * 退回浮层抽屉。以前只 patch `open:true`，而抽屉要求 `!tabReady`，于是「回退」这条
+         * 分支永远渲染不出东西（复审 B1）——降级标记必须跟着状态一起走。
+         * @type {{ open: boolean, collapsed: boolean, sessionId: string, drawerFallback: boolean }}
+         */
+        let state = { open: false, collapsed: false, sessionId: "", drawerFallback: false };
         /** @type {Set<() => void>} */
         const listeners = new Set();
         return {
           get: () => state,
           patch(
-            /** @type {Partial<{ open: boolean, collapsed: boolean, sessionId: string }>} */ next,
+            /**
+             * @type {Partial<{ open: boolean, collapsed: boolean, sessionId: string,
+             * drawerFallback: boolean }>}
+             */
+            next,
           ) {
             state = { ...state, ...next };
             for (const listener of listeners) listener();
@@ -751,8 +784,8 @@ window.__ModuleLoader__.load({
             }
           }
           sidebarRight.openTab("btw");
-          // 若之前用过回退抽屉，打开 tab 时把它收掉，避免两套面板同时在场。
-          store.patch({ open: false, collapsed: false });
+          // 若之前用过回退抽屉，打开 tab 时把它清掉并收起来，避免两套面板同时在场。
+          store.patch({ open: false, collapsed: false, drawerFallback: false });
           return true;
         } catch {
           return false;
@@ -764,11 +797,12 @@ window.__ModuleLoader__.load({
 
       /**
        * 让面板可见：先试原生右侧栏；宿主右栏在空白会话里可能不渲染 per-session tab，
-       * 稍等后仍没有面板就退回浮层抽屉 —— 两种形态都不会「什么都没发生」。
+       * `openTab` 也可能直接抛错，稍等后仍没有面板就退回浮层抽屉 —— 两条降级都显式打
+       * `drawerFallback`，否则 `tabReady` 为 true 时抽屉会静默不渲染（复审 B1）。
        */
       const revealPanel = () => {
         if (!openSidebarTab()) {
-          store.patch({ open: true, collapsed: false });
+          store.patch({ open: true, collapsed: false, drawerFallback: true });
           return;
         }
         setTimeout(() => {
@@ -778,7 +812,7 @@ window.__ModuleLoader__.load({
           } catch {
             hasPanel = true;
           }
-          if (!hasPanel) store.patch({ open: true, collapsed: false });
+          if (!hasPanel) store.patch({ open: true, collapsed: false, drawerFallback: true });
         }, REVEAL_FALLBACK_MS);
       };
 
@@ -1192,7 +1226,8 @@ window.__ModuleLoader__.load({
         const toggle = () => {
           if (openSidebarTab()) return;
           const current = store.get();
-          if (!current.open) store.patch({ open: true, collapsed: false });
+          // 右栏在但 openTab 失败时同样要落抽屉（tabReady 仍为 true，抽屉需要显式标记）。
+          if (!current.open) store.patch({ open: true, collapsed: false, drawerFallback: true });
           else if (current.collapsed) store.patch({ collapsed: false });
           else store.patch({ open: false });
         };
@@ -1240,6 +1275,9 @@ window.__ModuleLoader__.load({
         const scrollRef = React.useRef(/** @type {any} */ (null));
         const pinnedRef = React.useRef(true);
         const questionRef = React.useRef(/** @type {any} */ (null));
+        // 组字期间的标记（复审 B2）：合成事件的 isComposing 不一定有值，靠 composition
+        // 事件维护一份 ref，两个输入框共用（同一时刻只有一个在组字）。
+        const compositionRef = React.useRef({ active: false });
 
         React.useEffect(
           () => () => {
@@ -1763,9 +1801,15 @@ window.__ModuleLoader__.load({
                         rows: 2,
                         onChange: (/** @type {any} */ event) =>
                           setFollowQuestion(String(event?.target?.value ?? "")),
+                        onCompositionStart: () => {
+                          compositionRef.current = { active: true };
+                        },
+                        onCompositionEnd: () => {
+                          compositionRef.current = { active: false };
+                        },
                         // Enter 发送、Shift+Enter 换行（USIM-U2-13）；输入法组字中不发送。
                         onKeyDown: (/** @type {any} */ event) => {
-                          if (!shouldSubmitOnKey(event)) return;
+                          if (!shouldSubmitOnKey(event, compositionRef.current)) return;
                           event.preventDefault();
                           if (busy || followQuestion.trim() === "") return;
                           void submit(threadId);
@@ -1982,9 +2026,15 @@ window.__ModuleLoader__.load({
                   ref: questionRef,
                   onChange: (/** @type {any} */ event) =>
                     setQuestion(String(event?.target?.value ?? "")),
+                  onCompositionStart: () => {
+                    compositionRef.current = { active: true };
+                  },
+                  onCompositionEnd: () => {
+                    compositionRef.current = { active: false };
+                  },
                   onKeyDown: (/** @type {any} */ event) => {
                     // 与线程内追问同一套 Enter 语义：Enter 发送、Shift+Enter 换行。
-                    if (!shouldSubmitOnKey(event)) return;
+                    if (!shouldSubmitOnKey(event, compositionRef.current)) return;
                     event.preventDefault();
                     if (busy || question.trim() === "") return;
                     void submit("");
@@ -2139,9 +2189,9 @@ window.__ModuleLoader__.load({
       function BtwDrawer(/** @type {any} */ props) {
         void props;
         const shared = useStore();
-        // 宿主提供了右侧栏时面板只走 tab 形态：抽屉仅在「右栏服务缺失」时兜底，
-        // 也避免 tab 渲染比自动打开慢一帧时两套面板同时在场。
-        if (!shared.open || tabReady) return null;
+        // 宿主提供了右侧栏时面板默认只走 tab 形态；只有「右栏服务缺失」或「这次打开明确
+        // 降级成抽屉」（drawerFallback）才渲染抽屉，避免 tab 渲染慢一帧时两套面板同时在场。
+        if (!shouldRenderDrawer(shared, tabReady)) return null;
         if (shared.collapsed) {
           return h(
             "button",
@@ -2451,6 +2501,19 @@ window.__ModuleLoader__.load({
           h(BtwOverlay, null),
         ),
       );
+
+      // 单测钩子：回退抽屉的「打开失败 / 700ms 没渲染出面板」两条降级路径只有驱动真实
+      // `apply()` 才能验证（复审 B1），生产里 `exports.__test` 一直存在但没人读 hooks。
+      if (exports.__test) {
+        exports.__test.hooks = {
+          store,
+          revealPanel,
+          /** @param {boolean} ready */
+          setTabReady: (ready) => {
+            tabReady = ready === true;
+          },
+        };
+      }
     };
 
     /**
@@ -2461,6 +2524,7 @@ window.__ModuleLoader__.load({
       messages: { zh, en },
       shouldSubmitOnKey,
       isBlankConversation,
+      shouldRenderDrawer,
       planNotice,
       noticeAction,
       composeNoticeToast,

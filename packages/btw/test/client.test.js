@@ -167,6 +167,20 @@ test("client Enter 语义：Enter 发送、Shift+Enter 换行、输入法组字�
   // 中文输入法选词时按 Enter 是「确认候选」，不能被当成发送。
   assert.equal(pure.shouldSubmitOnKey({ key: "Enter", isComposing: true }), false);
   assert.equal(pure.shouldSubmitOnKey({ key: "Enter", keyCode: 229 }), false);
+  // 复审 B2：React 合成事件不保证暴露 isComposing，四条判据要与 projects 对齐。
+  assert.equal(
+    pure.shouldSubmitOnKey({ key: "Enter", nativeEvent: { isComposing: true } }),
+    false,
+    "nativeEvent.isComposing 也要挡住",
+  );
+  assert.equal(pure.shouldSubmitOnKey({ key: "Enter", which: 229 }), false, "which=229 旧 IME");
+  assert.equal(pure.shouldSubmitOnKey({ key: "Process" }), false, "IE/旧 Edge 的 Process 键");
+  assert.equal(
+    pure.shouldSubmitOnKey({ key: "Enter" }, { active: true }),
+    false,
+    "composition 期间的 ref 标记也要挡住",
+  );
+  assert.equal(pure.shouldSubmitOnKey({ key: "Enter" }, { active: false }), true);
 });
 
 test("client 通知：首帧只建基线（不回放旧通知），进行中的仍提示", () => {
@@ -267,6 +281,97 @@ test("client 空白会话判定：只有 hero/blank 且没有任何对话节点�
   assert.equal(pure.isBlankConversation(null), true);
 });
 
+// --- 复审 B1：回退抽屉必须真的能渲染出来 -----------------------------------
+
+test("client 回退抽屉判定：tabReady 时也能因为「这次打开失败」落到抽屉（复审 B1）", () => {
+  assert.equal(typeof pure.shouldRenderDrawer, "function", "client 必须导出 shouldRenderDrawer");
+  assert.equal(
+    pure.shouldRenderDrawer({ open: true, drawerFallback: true }, true),
+    true,
+    "B1 的 bug：tabReady 为 true 时抽屉也要能渲染，否则降级路径上用户什么都看不到",
+  );
+  assert.equal(
+    pure.shouldRenderDrawer({ open: true }, true),
+    false,
+    "正常打开 tab 时不重复渲染抽屉",
+  );
+  assert.equal(
+    pure.shouldRenderDrawer({ open: true }, false),
+    true,
+    "没有右侧栏服务时抽屉是唯一形态",
+  );
+  assert.equal(
+    pure.shouldRenderDrawer({ open: false, drawerFallback: true }, true),
+    false,
+    "关掉就是关掉",
+  );
+  assert.equal(pure.shouldRenderDrawer(null, false), false);
+  assert.equal(pure.shouldRenderDrawer(undefined, true), false);
+});
+
+test("client 回退抽屉：openTab 抛错立刻落抽屉，700ms 后没面板也落抽屉（复审 B1 行为）", async () => {
+  // 场景 1：右栏服务在、openTab 抛错 → 以前只 patch open:true，而抽屉要求 !tabReady，
+  // 于是「回退」永远渲染不出东西；现在必须落到抽屉。
+  const failing = makeCtx({
+    services: {
+      sidebarRightTabs: { register: () => () => {} },
+      sidebarRight: {
+        openTab: () => {
+          throw new Error("openTab boom");
+        },
+      },
+    },
+  });
+  assert.doesNotThrow(() => module.apply(failing.ctx));
+  const hooks = module.__test.hooks;
+  assert.ok(hooks, "client 必须导出单测钩子（回退抽屉行为只能驱动真实 apply）");
+  assert.equal(hooks.store.get().open, false, "初始不显示面板");
+  hooks.revealPanel();
+  const afterThrow = hooks.store.get();
+  assert.equal(afterThrow.open, true, "openTab 抛错后要打开回退抽屉");
+  assert.equal(hooks.store.get().drawerFallback, true, "必须显式打降级标记（tabReady 仍是 true）");
+  assert.equal(
+    pure.shouldRenderDrawer(afterThrow, true),
+    true,
+    "降级路径上抽屉必须真的渲染（这正是复审 B1 的死代码）",
+  );
+
+  // 场景 2：openTab 成功但宿主没渲染 tab → 700ms 后落抽屉；随后打开成功要清掉降级标记。
+  const working = makeCtx({
+    services: {
+      sidebarRightTabs: { register: () => () => {} },
+      sidebarRight: { openTab: () => {} },
+      layout: { openRightbar: () => {} },
+    },
+  });
+  assert.doesNotThrow(() => module.apply(working.ctx));
+  const hooks2 = module.__test.hooks;
+  hooks2.revealPanel();
+  assert.equal(hooks2.store.get().open, false, "openTab 成功时先等 tab 渲染，不立刻开抽屉");
+  // vm 沙箱的 document.querySelector 恒为 null，等价于「700ms 后仍然没有面板」。
+  await new Promise((/** @type {any} */ done) => setTimeout(done, 900));
+  const afterTimeout = hooks2.store.get();
+  assert.equal(afterTimeout.open, true, "700ms 后仍没有 [data-btw-panel] 就落抽屉");
+  assert.equal(pure.shouldRenderDrawer(afterTimeout, true), true, "超时降级同样要真的渲染");
+  // 右栏恢复后重新打开：清掉降级标记并收起抽屉，避免 tab + 抽屉两套面板同时在场。
+  hooks2.revealPanel();
+  assert.equal(hooks2.store.get().drawerFallback, false, "openTab 成功后必须清掉降级标记");
+  assert.equal(hooks2.store.get().open, false, "tab 打开时抽屉要收起");
+});
+
+test("client 回退抽屉：BtwDrawer 的渲染判定与打开降级共用同一实现（防漂移）", () => {
+  const source = readFileSync(clientPath, "utf8");
+  assert.ok(
+    source.includes("shouldRenderDrawer(shared, tabReady)"),
+    "BtwDrawer 必须走 shouldRenderDrawer（否则行为测试与实现漂移，B1 会再退化成死代码）",
+  );
+  assert.equal(
+    (source.match(/drawerFallback: true/gu) ?? []).length,
+    3,
+    "三条降级入口（立即回退 / 700ms 超时 / 按钮打开失败）都要打 drawerFallback",
+  );
+});
+
 test("client 中英字典键集一一对应（新增通知/输入提示键不能只加一份）", () => {
   const zh = pure.messages.zh;
   const en = pure.messages.en;
@@ -347,6 +452,14 @@ test("client 接线：通知与追问提示的元素锚点在源码里（冒烟�
     (source.match(/shouldSubmitOnKey\(/gu) ?? []).length >= 2,
     true,
     "两个 textarea 都要用 shouldSubmitOnKey",
+  );
+  // 复审 B2：合成事件不可靠，两个输入框都要接 composition 事件并把 ref 传进去。
+  assert.ok(source.includes("onCompositionStart:"), "输入框要接 compositionstart 维护组字标记");
+  assert.ok(source.includes("onCompositionEnd:"), "输入框要接 compositionend 清掉组字标记");
+  assert.equal(
+    (source.match(/shouldSubmitOnKey\(event, compositionRef\.current\)/gu) ?? []).length,
+    2,
+    "两个 textarea 都要把 composition ref 传给 shouldSubmitOnKey",
   );
   // 发送中的反馈不能被 live 卡片吞掉：notice 有内容时必须可见
   assert.ok(
