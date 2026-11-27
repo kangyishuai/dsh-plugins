@@ -35,7 +35,7 @@
     "detail.auditEmpty": "还没有审计记录。",
     "detail.state.waiting-user": "待你处理",
     "detail.state.failed": "失败",
-    "detail.state.working": "进行中",
+    "detail.state.working": "在跑",
     "detail.state.done": "已完成",
     "detail.state.idle": "空闲",
     "detail.threadPlaceholder": "给这个线程一个任务，回车即建",
@@ -164,7 +164,7 @@
     "detail.memoryIndexHint": "MEMORY.md 索引里有内容，会话会读到。",
     "detail.memoryEmptyHint": "还没有记忆；会话里说「记住…」就会写进来。",
     "detail.moreActions": "更多操作",
-    "detail.autoResolve": "自动 resolve",
+    "detail.autoResolve": "自动解决",
     "detail.autoResolveOff": "关",
     "detail.autoResolveDays": "{days} 天无活动",
     "detail.projectState": "项目状态",
@@ -412,10 +412,10 @@
     "detail.dirInvalidHint": "需要绝对路径（以 / 开头）；相对路径无法作为会话目录，已拒绝保存。",
     "detail.configTitle": "高级设置（仓库授权 / 回收站）",
     "b3.modelManual": "provider|model（手填）",
-    "b3.effortManual": "effort（手填）",
+    "b3.effortManual": "推理强度（手填）",
     "b3.modelManualHint": "目录不可用时手填；保存写的就是这两个值。",
-    "b3.modelManualToggle": "手填模型 / effort",
-    "detail.modelSavedEffort": "已切到 {model} / effort {effort}",
+    "b3.modelManualToggle": "手填模型 / 推理强度",
+    "detail.modelSavedEffort": "已切到 {model} / 推理强度 {effort}",
     "detail.effort": "推理强度",
     "detail.effortInherit": "继承默认",
     "detail.modelSelection": "宿主回读：{selection}",
@@ -688,6 +688,7 @@
     "detail.groupCollapse": "折叠分组",
     "detail.groupExpand": "展开分组",
     "detail.threadIsolationHint": "未绑定项目目录：线程跑在插件数据目录里（{reason}）。",
-    "library.openedHint": "已请求在右栏打开「产物」页签；当前布局不显示右栏时，请切回会话查看。"
+    "library.openedHint": "已请求在右栏打开「产物」页签；当前布局不显示右栏时，请切回会话查看。",
+    "detail.sparkLabel": "近 7 天 token：{tokens}（峰值 {peak}）"
   }
 }

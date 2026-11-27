@@ -58,7 +58,7 @@ export function impactOf(input) {
     contentBytes,
     hasContentDir,
     restorable: true,
-    summary: parts.join(" · "),
+    summary: parts.filter(Boolean).join(" · "),
   };
 }
 
