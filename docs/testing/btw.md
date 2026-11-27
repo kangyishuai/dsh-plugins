@@ -2,13 +2,13 @@
 
 ## 分层次
 
-| 层                   | 命令                                      | 覆盖                                                                                                                                              |
-| -------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 单测                 | `pnpm --filter @kangyishuai/dsh-btw test` | 路径解析、历史上限与坏行、提示词消毒、只读 guard、locale 摊平/映射、转正行数预算、成本提示纯逻辑、白名单解析、fork 执行体与 settle 分类（100 项） |
-| 规范 + 类型 + 文档   | `pnpm verify`                             | biome / tsc / check-plugins / index-meta / docs 一致性                                                                                            |
-| web 冒烟（不花钱）   | `pnpm smoke:btw`                          | 临时 `DSH_HOME` 起真实宿主：页面可交互、过掉预览版说明、能新建会话、**斜杠菜单列出 btw**                                                          |
-| web 冒烟（真实调用） | `pnpm smoke:btw --deep`                   | 上述 + **真跑一次 `/btw`**，断言 history 落盘与耗时/缓存数字                                                                                      |
-| 桌面回归             | _v0.2 起_                                 | 有 client 半后按约定 §6.1 补 `pnpm smoke:btw-desktop --require`                                                                                   |
+| 层                   | 命令                                      | 覆盖                                                                                                                                                                                                |
+| -------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 单测                 | `pnpm --filter @kangyishuai/dsh-btw test` | 路径解析、历史上限与坏行、提示词消毒、只读 guard、locale 摊平/映射、转正行数预算、成本提示纯逻辑、白名单解析、fork 执行体与 settle 分类、执行回执（notice）与 vm 驱动的 client 交互纯函数（118 项） |
+| 规范 + 类型 + 文档   | `pnpm verify`                             | biome / tsc / check-plugins / index-meta / docs 一致性                                                                                                                                              |
+| web 冒烟（不花钱）   | `pnpm smoke:btw`                          | 临时 `DSH_HOME` 起真实宿主：页面可交互、过掉预览版说明、能新建会话、**斜杠菜单列出 btw**                                                                                                            |
+| web 冒烟（真实调用） | `pnpm smoke:btw --deep`                   | 上述 + **真跑一次 `/btw`**，断言 history 落盘与耗时/缓存数字                                                                                                                                        |
+| 桌面回归             | _v0.2 起_                                 | 有 client 半后按约定 §6.1 补 `pnpm smoke:btw-desktop --require`                                                                                                                                     |
 
 ## web 冒烟为什么默认不提交
 
@@ -1102,3 +1102,61 @@ document body because the docked composer contains them**"，而浮层原本就�
 消息 → `digest.messages===0` → 静默退回 full fork，正是 bounded 要避免的一次几十万 tokens）。
 现改为「命中阈值时**全量** `snapshotEvents()`」，并补了「消息之间夹 step/tool/job 事件」的真实配比
 单测（旧实现下该测试变红）。上面的 0.6.3 表格保留历史数据，当前行为以本段为准。
+
+## 2026-11-28 UX 修复批次（USIM-U2-06 / U2-13 / U2-18 + AUD-BTW-09 复核）
+
+分支 `fix/btw-ux`（**代码**只改 `packages/btw/**` + 该插件的 web/桌面冒烟断言；文档同步本文件与两份 README，另有 changeset）。
+
+### 行为变化
+
+- **USIM-U2-06 空白会话 `/btw` 无反馈**：host 半在执行 `/btw` 时记一条**内存回执**
+  （`lib/notice.js`：`begin → done/fail`，`seq` 全局递增、按会话限界 64），client 半在
+  `shell.overlay` 里常驻轮询 `btw/notice`（约 1.5 s）画自绘 toast：进行中常驻、完成带耗时与答案
+  预览、失败带宿主给的原因；点击 toast 打开面板。**空白/首启会话**（`[data-phase]` 为 `hero`/空、
+  `[data-chat-flow-kind]` 为 0）里第一次「进行中」还会自动打开右侧栏「旁问」tab（右栏没渲染出来时
+  700 ms 后回退到浮层抽屉）—— 这是空白会话里答案唯一可见的位置。宿主侧不需要任何改动：
+  宿主没有 toast 服务，`shell.overlay` 就是官方给的浮层座位（[runtime rc.5 §16](../runtime/0.2.2-rc.5.md#16-client-座位shelloverlay--contextmenus--sidebarpanellistmainsettingssection)），
+  空白会话命令卡片不渲染也已实测（[runtime rc.5 §5.2](../runtime/0.2.2-rc.5.md#52-命令卡片只在非空白会话里渲染2026-11-20-实测)）。
+  新增 Remote：`btw/notice`（**纯内存**，不落盘、不触发模型调用；取值 `null` = 该会话还没有回执）。
+- **回执终态不卡住**：面板已经显示答案时，完成/失败回执会把屏幕上常驻的「已提交 ·
+  正在等待答案…」toast 撤掉（失败仍弹一次）；面板没打开时完成 toast 带耗时与预览替换它。
+- **USIM-U2-13 追问输入框 Enter 不发送**：两个输入框（底部「新旁问」与线程内追问）统一为
+  **Enter 发送、Shift+Enter 换行、⌘/Ctrl+Enter 也发送**；输入法组字中（`isComposing` / keyCode 229）
+  的 Enter 不发送。输入框下方新增一行提示「Enter 发送 · Shift+Enter 换行」（`data-btw-input-hint`）。
+  线程内发送按钮由「追问」改为**「发送」**（英文 `Send`），与线程头的「追问 / 取消追问」开关区分；
+  状态条在 live 卡片存在时也不再吞掉失败/提示（原来 `liveRuns.length === 0` 才算可见）。
+- **USIM-U2-18 转正草稿重复**：`renderThreadDetails` 不再把**末答**写进「关键细节」（它已经是「结论」），
+  与结论答案完全相同的较早答案也跳过；问题全部保留。四节模板与「保留 Markdown 源码」的能力不变。
+- **空态（U1-20 同类）**：面板首次打开的空态文案改成解释「旁问是什么」——只读、不打断主任务、
+  不写进主对话历史——而不是只写「还没有」。
+- **AUD-BTW-09 复核**：两份 README 的「卸载与残留」段已存在（`<dataRoot>/btw/` 与已归档子会话），
+  本批不改代码，只在上面这条空态里补了首次使用的解释。
+- 顺带修一个既有 i18n 缺键：client 内嵌英文字典缺 `settings.bounded` / `settings.boundedHint`
+  （英文界面里 bounded 开关会露出裸键），新增「zh/en 键集一一对应」单测后补齐。
+
+### 测试（先红后绿）
+
+先写测试再改实现，红→绿证据：
+
+| 新增测试                                                                                                                                                                | 红灯（改实现前）                       | 绿灯（改实现后） |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- | ---------------- |
+| `test/notice.test.js`（9 项：begin/done/fail、会话隔离、seq、限界淘汰、快照、previewOf）                                                                                | 模块不存在，整个文件失败               | 9/9              |
+| `test/client.test.js`（9 项：vm 驱动真实 `client.js` 的 `shouldSubmitOnKey` / `planNotice` / `composeNoticeToast` / `isBlankConversation`、zh/en 键集、接线座位、锚点） | 6 项红（`__test` / 纯函数 / 新键缺失） | 9/9              |
+| `test/index.test.js` 两条转正去重（末答只出现一次、与结论相同答案不重复）                                                                                               | 2 项红（末答重复）                     | 全部 117/117     |
+
+| 检查                               | 结果                                                                                                                                                                                                |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `node --test`（包内）              | **117 pass / 0 fail**（原 100，新增 17）                                                                                                                                                            |
+| `pnpm verify`（worktree 根）       | **EXIT=0**（biome / tsc / check-plugins / index-meta / check:docs / check:public / 全部单测；btw **118 pass / 0 fail**）                                                                            |
+| `pnpm smoke:btw`                   | **本批未运行**（web 端口被其它会话占用）；脚本新增 4 条默认段断言（回执 tray、Enter 提示、空态解释）+ `--deep` 2 条（提交后有 toast 回执、追问发送按钮不与「追问」重名/提示），计数以 lead 实跑为准 |
+| `pnpm smoke:btw-desktop --require` | **本批未运行**（不驱动 live 桌面版）；脚本新增 5 条只读断言（回执 tray、Enter 提示、空态解释、发送按钮不与「追问」重名、线程内 Enter 提示），计数以 lead 实跑为准                                   |
+
+### 剩余风险
+
+1. **空白会话里自动打开右侧栏 tab 未在 live 桌面版实测**：宿主右栏是 per-session dockkit，
+   空白会话里 `openTab("btw")` 是否真的渲染出 tab 只做了静态判断；插件已加「700 ms 后没有
+   `[data-btw-panel]` 就退回浮层抽屉」的兜底，但真机观感（会不会挤窄主对话）需要一次 live 复验。
+2. **toast 位置**：顶部居中（`top: 56px`），刻意不盖 composer 与右侧栏按钮；不同窗口宽度下的
+   视觉观感未实拍。
+3. `shell.overlay` 是 frame-wide 座位，宿主升级若改浮层点击穿透语义，toast 的点击打开面板会失效
+   （不影响「看得见回执」这条主承诺）。

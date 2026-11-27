@@ -171,6 +171,11 @@ export function promoteRecordForThread(records, threadId) {
  *
  * 只用首问 + 末答会语义错位：首问问 A，最后一轮追问问 B，结论回答的是 B。
  * 把每一轮追问的 Q/A 追加进草稿，读者能看到上下文（2026-11-18 复测发现）。
+ *
+ * **去重（USIM-U2-18，2026-11-28 审计）**：末答已经作为草稿的「结论」出现一次，
+ * 若在「关键细节」里再贴一遍，同一段答案会占两次预算（实测草稿一半是重复内容）。
+ * 所以：最后一轮的答案不写；与结论答案完全相同的中间轮答案也不写 —— 但**问题全保留**，
+ * 读者仍然知道结论回答了哪些追问。
  * @param {any[]} records
  * @param {string} threadId
  * @param {string} [lang]
@@ -185,12 +190,20 @@ export function renderThreadDetails(records, threadId, lang = "zh") {
   const heading = en ? "Follow-up" : "追问";
   const qLabel = en ? "Q" : "问";
   const aLabel = en ? "A" : "答";
-  return thread.items
-    .slice(1)
+  // 结论 = 最后一轮答案（promoteRecordForThread 用它填「结论」节）。
+  const conclusion = String(thread.items[thread.items.length - 1]?.answer ?? "").trim();
+  const followUps = thread.items.slice(1);
+  return followUps
     .map((item, index) => {
       const question = String(item?.question ?? "").trim();
       const answer = String(item?.answer ?? "").trim();
-      return `### ${heading} ${index + 1}\n\n**${qLabel}**：${question}\n\n**${aLabel}**：${answer}`;
+      const isLast = index === followUps.length - 1;
+      // 末答进「结论」；与结论相同的答案同样跳过（不同排版也会被 trim 后相等拦下）。
+      const showAnswer = !isLast && answer !== "" && answer !== conclusion;
+      /** @type {string[]} */
+      const lines = [`### ${heading} ${index + 1}`, "", `**${qLabel}**：${question}`];
+      if (showAnswer) lines.push("", `**${aLabel}**：${answer}`);
+      return lines.join("\n");
     })
     .join("\n\n");
 }

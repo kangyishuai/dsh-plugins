@@ -902,6 +902,41 @@ test("promote: 多轮线程把追问明细放进「关键细节」", () => {
   assert.equal(renderThreadDetails(records.slice(0, 1), "t_x"), "");
 });
 
+test("promote: 末答只在「结论」出现一次（USIM-U2-18 去重）", () => {
+  const records = [
+    { id: "a", at: 1, threadId: "t_x", question: "首问：旁问和主对话有什么区别", answer: "A0" },
+    { id: "b", at: 2, threadId: "t_x", question: "追问一：再短一点", answer: "A1" },
+    { id: "c", at: 3, threadId: "t_x", question: "追问二：一句话", answer: "A2 末答" },
+  ];
+  const details = renderThreadDetails(records, "t_x");
+  // 末答同时是「结论」，不能在「关键细节」里再贴一遍（审计实测重复把草稿白耗一倍）
+  assert.ok(!details.includes("A2 末答"), `末答不应重复出现在关键细节：${details}`);
+  assert.ok(details.includes("追问二：一句话"), "最后一轮的问题仍保留（否则不知道结论从哪来");
+  assert.ok(details.includes("A1"), "中间轮的答案仍保留（首答之后只有它是细节）");
+  const record = promoteRecordForThread(records, "t_x");
+  const draft = renderPromoteDraft(record, { details, maxChars: 1200 });
+  assert.equal(
+    (draft.match(/A2 末答/gu) ?? []).length,
+    1,
+    `末答在整份草稿里只能出现一次：${draft}`,
+  );
+  assert.equal((draft.match(/A1/gu) ?? []).length, 1, "中间轮答案出现一次");
+  // 关键细节至少保留信息，不能因为去重被整节删掉
+  assert.match(draft, /## 关键细节/u);
+});
+
+test("promote: 追问答案与末答相同时不重复贴（去重按答案内容，不只按位置）", () => {
+  const records = [
+    { id: "a", at: 1, threadId: "t_x", question: "q0", answer: "共同答案" },
+    { id: "b", at: 2, threadId: "t_x", question: "q1", answer: "共同答案" },
+    { id: "c", at: 3, threadId: "t_x", question: "q2", answer: "共同答案" },
+  ];
+  const details = renderThreadDetails(records, "t_x");
+  assert.ok(!details.includes("共同答案"), "与结论相同的答案在细节里全部跳过");
+  assert.match(details, /q1/u);
+  assert.match(details, /q2/u);
+});
+
 test("promote: 草稿是四节 Markdown 模板，只生成文本不发送", () => {
   const draft = renderPromoteDraft({ question: "配置文件叫什么？", answer: "config.json" });
   assert.ok(draft.startsWith("## 我问了什么"), "用 Markdown 标题");

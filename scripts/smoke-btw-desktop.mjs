@@ -112,6 +112,9 @@ const STATE = `(() => {
     rightbar: rightbar !== null,
     rightbarCollapsed: !!document.querySelector('[data-rightbar-collapsed="true"]'),
     rail: !!document.querySelector('[data-btw-rail]'),
+    // USIM-U2-06：执行回执走 shell.overlay 的自绘 tray（空白会话里
+    // 宿主的命令卡片不渲染，这是唯一的即时反馈通道）。
+    toastTray: !!document.querySelector('[data-btw-toast-tray]'),
     markdown: document.querySelectorAll('[data-btw-md]').length,
     turns: document.querySelectorAll('[data-btw-turn]').length,
     error: err ? err.getAttribute('data-btw-error') : null,
@@ -234,6 +237,11 @@ const main = async () => {
     // 只有**会碰 composer 草稿**的断言（转正）需要空闲会话——见文件末尾的 running 判断。
     // 早期版本「忙就全 SKIP」，导致 agent 自己跑时 0 断言执行，正好是门禁要防的假绿。
     check("输入框左侧出现 btw 按钮", initial.toggle === true, JSON.stringify(initial));
+    check(
+      "旁问回执通道已挂载（toast tray，空白会话 /btw 的即时反馈）",
+      initial.toastTray === true,
+      JSON.stringify(initial),
+    );
 
     // 快照用户进来时的草稿：非空就不做任何会改动输入框的断言，走完也不清空。
     const initialDraft = await cdp.evaluate(
@@ -283,7 +291,30 @@ const main = async () => {
       );
       check("面板底部有「只在面板显示答案」开关", v03.echoToggle === true, JSON.stringify(v03));
 
+      // USIM-U2-13：输入框要写清 Enter 发送 / Shift+Enter 换行；旁问输入框一共只有一个可见。
+      const inputUi = await cdp.evaluate(`(() => ({
+        hintCount: document.querySelectorAll('[data-btw-input-hint]').length,
+        hint: ((document.querySelector('[data-btw-panel] [data-btw-input-hint]') || {}).innerText || '').trim(),
+      }))()`);
+      check(
+        "旁问输入框给出 Enter/Shift+Enter 提示",
+        inputUi.hintCount >= 1 && /Enter/.test(inputUi.hint) && /Shift/.test(inputUi.hint),
+        JSON.stringify(inputUi),
+      );
+
       if (v03.threads === 0) {
+        // USIM-U2-06 / U1-20 同类：首次打开的空态必须解释「旁问是什么」，
+        // 不能只写「还没有」——空白会话里这是用户唯一看到的说明。
+        const emptyUi = await cdp.evaluate(`(() => ({
+          text: ((document.querySelector('[data-btw-empty]') || {}).innerText || '').trim(),
+        }))()`);
+        check(
+          "空态解释旁问是只读、不打断、不进历史",
+          /只读|read-only/.test(emptyUi.text) &&
+            /不打断|does not interrupt/.test(emptyUi.text) &&
+            emptyUi.text.length >= 40,
+          JSON.stringify(emptyUi),
+        );
         skip("追问/转正按钮", "当前会话还没有旁问记录（先提一个 /btw 再跑）");
       } else {
         check("每条线程都有追问按钮", v03.followup === v03.threads, JSON.stringify(v03));
@@ -306,13 +337,23 @@ const main = async () => {
         const followUi = await cdp.evaluate(`(() => ({
           visibleTextareas: [...document.querySelectorAll('[data-btw-panel] textarea')].filter((el) => el.offsetParent !== null).length,
           sendText: ((document.querySelector('[data-btw-thread-input] [data-btw-send]') || {}).innerText || '').trim(),
+          toggleText: ((document.querySelector('[data-btw-followup]') || {}).innerText || '').trim(),
+          followHint: ((document.querySelector('[data-btw-thread-input] [data-btw-input-hint]') || {}).innerText || '').trim(),
           scope: !!document.querySelector('[data-btw-thread-input] [data-btw-scope]'),
         }))()`);
+        // USIM-U2-13：线程头的「追问/取消追问」是开关，发送按钮不能再叫「追问」，
+        // 否则同一屏两个「追问」含义不同。
         check(
-          "追问时只保留一个输入框且按钮叫「追问」",
+          "追问时只保留一个输入框，发送按钮不与「追问」重名",
           followUi.visibleTextareas === 1 &&
             followUi.scope === true &&
-            !/提问$/.test(followUi.sendText),
+            followUi.sendText !== followUi.toggleText &&
+            !/追问|Follow up/.test(followUi.sendText),
+          JSON.stringify(followUi),
+        );
+        check(
+          "线程内追问输入框同样有 Enter/Shift+Enter 提示",
+          /Enter/.test(followUi.followHint) && /Shift/.test(followUi.followHint),
           JSON.stringify(followUi),
         );
         // 转正：只插草稿，**不发送** —— 断言 composer 有内容但对话流没有新节点
