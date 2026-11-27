@@ -16,7 +16,7 @@
 // `--workspace <侧栏里的工作区标题>`：把会话相关操作**严格限制**在该工作区内。
 // 指定后脚本只在那个工作区的分组里找会话行；找不到就判失败，**不会**去碰别的工作区的会话。
 //
-// 定位方式（2026-11-28 起）：全部走插件自己声明的稳定 `data-sdel-*` 锚点（plugin-conventions §7.8），
+// 定位方式（2026-11-28 起）：全部走插件自己声明的稳定 `data-session-delete-*` 锚点（plugin-conventions §7.8），
 // 不再依赖 `.dsh-sdel-*` CSS class 或界面文案——改样式/改文案都不该让回归假红或空转。
 // 数据相关分支（2026-11-19 补）：回收站**为空**时插件只渲染空态，不渲染工具条（全选 / 恢复（n））
 // 与条目行，所以「保留全选与批量操作」「条目布局」两条断言在空回收站下记为 SKIP 而不是 FAIL。
@@ -212,7 +212,7 @@ const main = async () => {
             return section ? section.querySelectorAll('[data-row-key^="session:"]').length : 0;
           })()`);
     const info = await cdp.evaluate(`(() => {
-      const footer = document.querySelector("[data-sdel-footer]");
+      const footer = document.querySelector("[data-session-delete-footer]");
       return {
         title: document.title,
         pluginStyles: [...document.querySelectorAll("style[data-plugin]")].map((s) => s.dataset.plugin).filter((p) => p && p.includes("session-delete")),
@@ -231,7 +231,7 @@ const main = async () => {
       JSON.stringify(info?.pluginStyles ?? []),
     );
     check(
-      "侧栏页脚有回收站入口（data-sdel-footer）",
+      "侧栏页脚有回收站入口（data-session-delete-footer）",
       info?.footerEntry === true,
       JSON.stringify(info?.footerLabel ?? ""),
     );
@@ -249,11 +249,11 @@ const main = async () => {
 
     // ---------- B. 回收站面板（只读：打开 → 单页列表 → Esc 关闭） ----------
     await cdp.evaluate(`(() => {
-      const btn = document.querySelector("[data-sdel-footer]");
+      const btn = document.querySelector("[data-session-delete-footer]");
       if (btn) btn.click();
     })()`);
     await sleep(900);
-    const panel = await anchorDialogText(cdp, "data-sdel-panel");
+    const panel = await anchorDialogText(cdp, "data-session-delete-panel");
     check(
       "点击页脚打开回收站面板",
       panel !== null,
@@ -261,19 +261,19 @@ const main = async () => {
     );
     // 0.5.x：审计 / 体检 / 回执 已搬到设置页，面板只做回收站一件事。
     const panelShape = await cdp.evaluate(`(() => {
-      const root = document.querySelector("[data-sdel-panel]");
+      const root = document.querySelector("[data-session-delete-panel]");
       if (!root) return null;
       const dlg = root.closest('[role="dialog"]') || root;
       const text = dlg.textContent || "";
       const buttons = [...dlg.querySelectorAll("button")].map((b) => (b.textContent || "").trim());
       return {
         hasTabs: ["审计", "体检", "回执"].some((tab) => buttons.some((label) => label.startsWith(tab))),
-        hasToolbar: Boolean(root.querySelector("[data-sdel-toolbar]")),
+        hasToolbar: Boolean(root.querySelector("[data-session-delete-toolbar]")),
         hasBatch: buttons.some((label) => label.startsWith("恢复（")) || text.includes("全选"),
-        // 空回收站只渲染空态（data-sdel-empty），工具条与条目都不存在：
+        // 空回收站只渲染空态（data-session-delete-empty），工具条与条目都不存在：
         // 这属于**数据相关分支**，相关断言记 SKIP，不算失败。
-        empty: Boolean(root.querySelector("[data-sdel-empty]")),
-        rows: root.querySelectorAll("[data-sdel-row]").length,
+        empty: Boolean(root.querySelector("[data-session-delete-empty]")),
+        rows: root.querySelectorAll("[data-session-delete-row]").length,
         text: (root.textContent || "").replace(/\\s+/g, " ").slice(0, 120),
       };
     })()`);
@@ -304,12 +304,12 @@ const main = async () => {
     // 行布局：条目标题必须能读出来（不能被压缩成「…」），体积/时间在第二行。
     // 之前行的 flex 分配有问题，面板一窄标题就只剩 `❗…`。
     const rowLayout = await cdp.evaluate(`(() => {
-      const root = document.querySelector("[data-sdel-panel]");
+      const root = document.querySelector("[data-session-delete-panel]");
       if (!root) return { status: "no-panel" };
-      const rows = [...root.querySelectorAll("[data-sdel-row]")];
+      const rows = [...root.querySelectorAll("[data-session-delete-row]")];
       const detail = rows.map((row) => {
-        const title = row.querySelector("[data-sdel-row-title]");
-        const meta = row.querySelector("[data-sdel-row-meta]");
+        const title = row.querySelector("[data-session-delete-row-title]");
+        const meta = row.querySelector("[data-session-delete-row-meta]");
         const titleRect = title ? title.getBoundingClientRect() : null;
         const metaRect = meta ? meta.getBoundingClientRect() : null;
         return {
@@ -337,8 +337,9 @@ const main = async () => {
     await sleep(600);
     check(
       "Esc 关闭回收站面板",
-      (await cdp.evaluate(`(() => document.querySelector("[data-sdel-panel]") === null)()`)) ===
-        true,
+      (await cdp.evaluate(
+        `(() => document.querySelector("[data-session-delete-panel]") === null)()`,
+      )) === true,
       "面板仍在",
     );
 
@@ -360,9 +361,9 @@ const main = async () => {
       return "clicked";
     })()`);
     const confirmShape = await cdp.evaluate(`(() => {
-      const impact = document.querySelector("[data-sdel-impact]");
-      const blocked = document.querySelector("[data-sdel-blocked]");
-      const error = document.querySelector("[data-sdel-error]");
+      const impact = document.querySelector("[data-session-delete-impact]");
+      const blocked = document.querySelector("[data-session-delete-blocked]");
+      const error = document.querySelector("[data-session-delete-error]");
       return {
         hasImpact: Boolean(impact),
         impactText: impact ? (impact.textContent || "").replace(/\\s+/g, " ").trim() : "",
@@ -371,7 +372,7 @@ const main = async () => {
       };
     })()`);
     check(
-      "会话菜单能打开删除确认框（data-sdel-impact / 阻断原因）",
+      "会话菜单能打开删除确认框（data-session-delete-impact / 阻断原因）",
       // 没给 --workspace 时这一步是**故意跳过**的（不碰任何真实会话），不算失败。
       opened === "skipped" ||
         (opened === "clicked" &&
@@ -392,9 +393,9 @@ const main = async () => {
     await sleep(700);
     const afterEsc = await cdp.evaluate(`(() => {
       return (
-        document.querySelector("[data-sdel-impact]") === null &&
-        document.querySelector("[data-sdel-blocked]") === null &&
-        document.querySelector("[data-sdel-error]") === null
+        document.querySelector("[data-session-delete-impact]") === null &&
+        document.querySelector("[data-session-delete-blocked]") === null &&
+        document.querySelector("[data-session-delete-error]") === null
       );
     })()`);
     check("Esc 关闭确认框且未执行删除", afterEsc === true, "");
@@ -437,14 +438,14 @@ const main = async () => {
       if (!nav) return { status: "no-section-nav" };
       nav.click();
       await sleepMs(1500);
-      const root = document.querySelector("[data-sdel-settings]");
+      const root = document.querySelector("[data-session-delete-settings]");
       return {
         status: root ? "ok" : "no-section-root",
         hasRoot: Boolean(root),
         groups: root
-          ? [...root.querySelectorAll("[data-sdel-group]")].map((el) => el.getAttribute("data-sdel-group"))
+          ? [...root.querySelectorAll("[data-session-delete-group]")].map((el) => el.getAttribute("data-session-delete-group"))
           : [],
-        hasHealthRow: root ? Boolean(root.querySelector("[data-sdel-health]")) : false,
+        hasHealthRow: root ? Boolean(root.querySelector("[data-session-delete-health]")) : false,
         text: (shell.textContent || "").replace(/\\s+/g, " ").slice(0, 400),
       };
     })()`);
