@@ -57,3 +57,11 @@ test("scope 一并带过去", () => {
   q.push("s1", { threadId: "t_1", question: "q", scope: "recent" });
   assert.equal(q.take("s1")?.scope, "recent");
 });
+
+test("槽位有上限：只增不删的 Map 不能无限增长", () => {
+  const q = createFollowUpQueue({ maxSlots: 3 });
+  for (let i = 0; i < 10; i += 1) q.push(`s${i}`, { threadId: `t_${i}`, question: `q${i}` });
+  assert.equal(q.size(), 3, "超过上限时淘汰最旧的会话槽");
+  assert.equal(q.take("s0"), undefined, "最旧的已被淘汰");
+  assert.equal(q.take("s9")?.threadId, "t_9", "最新的保留");
+});

@@ -7,6 +7,7 @@
 // host 处理命令时先查队列，取到就当追问处理，取不到才走「重开上一条」的老语义。
 //
 // 纯逻辑、不 import 宿主包，便于单测。
+import { LIMITS } from "./limits.js";
 
 /**
  * @typedef {{ threadId: string, question: string, scope: string, at: number }} PendingFollowUp
@@ -17,10 +18,13 @@
  *
  * 单槽而非数组：同一个会话在任意时刻只会有一次「即将提交的追问」，
  * 覆盖旧值比排队更符合实际（用户连点两次时后一次生效）。
- * @param {{ ttlMs?: number, now?: () => number }} [options]
+ * 槽位有上限（LIMITS.followUpSlots）：client 异常、用户没提交就关面板时槽会留下，
+ * 不能让它按会话数只增不删（AUD-BTW-08）。
+ * @param {{ ttlMs?: number, maxSlots?: number, now?: () => number }} [options]
  */
 export function createFollowUpQueue(options = {}) {
   const ttlMs = Number(options.ttlMs) || 60_000;
+  const maxSlots = Math.max(1, Math.trunc(Number(options.maxSlots) || LIMITS.followUpSlots));
   const now = options.now ?? Date.now;
   /** @type {Map<string, PendingFollowUp>} */
   const slots = new Map();
@@ -35,12 +39,19 @@ export function createFollowUpQueue(options = {}) {
       const threadId = String(input?.threadId ?? "");
       const question = String(input?.question ?? "");
       if (sessionId === "" || threadId === "" || question === "") return;
+      // 先删再插：Map 插入序即最近使用序，热会话不会被当成最旧淘汰。
+      slots.delete(sessionId);
       slots.set(sessionId, {
         threadId,
         question,
         scope: String(input?.scope ?? ""),
         at: now(),
       });
+      while (slots.size > maxSlots) {
+        const oldest = slots.keys().next().value;
+        if (oldest === undefined) break;
+        slots.delete(oldest);
+      }
     },
 
     /**

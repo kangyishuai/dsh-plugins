@@ -1,11 +1,17 @@
 // @ts-check
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { renderBadge, renderScopeInstruction } from "../lib/badge.js";
-import { buildBoundedDigest, buildBoundedPrompt, extractBoundedMessages } from "../lib/bounded.js";
+import {
+  buildBoundedDigest,
+  buildBoundedPrompt,
+  collectBoundedEvents,
+  extractBoundedMessages,
+  isBoundedEligible,
+} from "../lib/bounded.js";
 import { parseAllowedTools } from "../lib/config.js";
 import {
   buildCostHint,
@@ -36,7 +42,11 @@ import {
 import {
   buildSettingsPatch,
   DEFAULT_SETTINGS,
+  HISTORY_LIMIT_MAX,
+  HISTORY_LIMIT_MIN,
+  historyLimitOf,
   loadSettings,
+  readHistoryLimit,
   sanitizeSettings,
   saveSettings,
   settingsPath,
@@ -145,6 +155,34 @@ test("history: 落盘内容只包含旁问本身（不 dump 会话）", async ()
 
 test("history: 未提供文件路径时不写盘也不抛", async () => {
   assert.deepEqual(await appendRecord(undefined, { id: "x" }), []);
+});
+
+test("history: 同一文件并发 append 不丢记录（同会话两次 /btw）", async () => {
+  const dir = await tempDir();
+  const file = join(dir, "s.jsonl");
+  // 读全量 → push → 整体重写，之前并发三条只会剩下最后一条（后写覆盖前写）。
+  const results = await Promise.all([
+    appendRecord(file, { id: "a" }, 50),
+    appendRecord(file, { id: "b" }, 50),
+    appendRecord(file, { id: "c" }, 50),
+  ]);
+  assert.equal(results.length, 3);
+  assert.deepEqual(
+    (await readRecords(file)).map((record) => record.id),
+    ["a", "b", "c"],
+    "并发写入必须串行化，不能互相覆盖",
+  );
+  // 临时文件必须唯一且都被 rename 掉，不能留残骸
+  const left = (await readdir(dir)).filter((name) => name.endsWith(".tmp"));
+  assert.deepEqual(left, []);
+});
+
+test("history: 并发 append 时 lastRecord 仍是最后一条", async () => {
+  const dir = await tempDir();
+  const file = join(dir, "s.jsonl");
+  await Promise.all(Array.from({ length: 6 }, (_, i) => appendRecord(file, { id: `r${i}` }, 50)));
+  assert.equal((await readRecords(file)).length, 6);
+  assert.equal((await lastRecord(file))?.id, "r5");
 });
 
 // --- prompts ---------------------------------------------------------------
@@ -366,6 +404,59 @@ test("settings: 保存是原子替换且只合并已知字段", async () => {
   assert.ok(raw.trim().startsWith("{"), "落盘是 JSON");
 });
 
+test("settings: historyLimit 的 1–200 边界只有一个来源，服务端读到的就是保存值", async () => {
+  assert.equal(HISTORY_LIMIT_MIN, 1);
+  assert.equal(HISTORY_LIMIT_MAX, 200);
+  assert.equal(historyLimitOf(undefined), LIMITS.perSessionRecords, "没有设置时用默认值");
+  assert.equal(historyLimitOf({ historyLimit: 7 }), 7);
+  assert.equal(historyLimitOf({ historyLimit: "12" }), 12, "设置面板可能传字符串");
+  assert.equal(historyLimitOf({ historyLimit: 0 }), HISTORY_LIMIT_MIN, "下限夹到 1");
+  assert.equal(historyLimitOf({ historyLimit: 10_000 }), HISTORY_LIMIT_MAX, "上限夹到 200");
+  assert.equal(historyLimitOf({ historyLimit: "abc" }), LIMITS.perSessionRecords, "非法值回落默认");
+
+  const dir = await tempDir();
+  assert.equal(await readHistoryLimit(dir), LIMITS.perSessionRecords, "无设置文件时用默认值");
+  await saveSettings(dir, { historyLimit: 7 });
+  assert.equal(await readHistoryLimit(dir), 7, "服务端读到的就是设置页保存的值（死设置回归）");
+  await writeFile(settingsPath(dir), JSON.stringify({ historyLimit: 0 }), "utf8");
+  assert.equal(await readHistoryLimit(dir), HISTORY_LIMIT_MIN, "越界值按下限夹紧");
+});
+
+test("history: 降低 historyLimit 后读侧立即只返回 N 条，下次写入物理裁掉", async () => {
+  const dir = await tempDir();
+  const file = join(dir, "s.jsonl");
+  for (let i = 0; i < 8; i += 1) await appendRecord(file, { id: `r${i}` }, 50);
+  assert.equal((await readRecords(file)).length, 8);
+  // 读侧用配置值：设置一保存就只展示最后 N 条，不需要先全盘重写历史文件。
+  assert.deepEqual(
+    (await listRecent(file, 3)).map((record) => record.id),
+    ["r5", "r6", "r7"],
+  );
+  // 下一次旁问落盘时按新上限裁剪（appendRecord 的 limit 来自同一条设置）。
+  await appendRecord(file, { id: "r8" }, 3);
+  assert.deepEqual(
+    (await readRecords(file)).map((record) => record.id),
+    ["r6", "r7", "r8"],
+  );
+});
+
+test("service: 服务端历史读写都用设置里的 historyLimit（死设置回归）", async () => {
+  const source = await readFile(join(import.meta.dirname, "..", "lib", "service.js"), "utf8");
+  assert.equal(
+    (source.match(/LIMITS\.perSessionRecords/g) ?? []).length,
+    0,
+    "service.js 不能再硬编码 perSessionRecords：那样 historyLimit 就是可改、可存、但永不生效的死设置",
+  );
+  assert.ok(
+    (source.match(/readHistoryLimit\(/g) ?? []).length >= 4,
+    "history 读写路径（history/stats/threads/promote/costHint）都要读配置上限",
+  );
+  assert.ok(
+    source.includes("historyLimitOf(") && source.includes("appendRecord(file, record,"),
+    "handle() 落盘时要用设置里的上限",
+  );
+});
+
 // --- 旁问成本提示（Phase 1，纯逻辑）-----------------------------------------
 
 test("cost-hint: 拿不到 pressure 就是 unknown，不伪造 0", () => {
@@ -553,6 +644,95 @@ test("bounded: prompt 含裁剪声明、excerpt、线程历史，问题在末尾
   // 无消息时也不抛，并明确说没有可用消息
   const empty = buildBoundedPrompt("q", { text: "" });
   assert.match(empty[0].text, /no recent messages available/u);
+});
+
+test("bounded: 不 eligible 时完全不物化父会话事件（长会话性能，AUD-BTW-07）", () => {
+  let calls = 0;
+  const session = {
+    seq: 50_000,
+    snapshotEvents: () => {
+      calls += 1;
+      return [];
+    },
+  };
+  assert.deepEqual(collectBoundedEvents(session, false), { events: [], windowed: false });
+  assert.equal(calls, 0, "bounded 没开时不能先 snapshotEvents() 全量再筛 12 条");
+  // 开关与阈值都来自设置：默认关；到 400K tokens 才算 eligible
+  assert.equal(isBoundedEligible(undefined, 999_999), false);
+  assert.equal(isBoundedEligible({ boundedContext: false }, 999_999), false);
+  assert.equal(isBoundedEligible({ boundedContext: true }, LIMITS.boundedTriggerTokens - 1), false);
+  assert.equal(isBoundedEligible({ boundedContext: true }, LIMITS.boundedTriggerTokens), true);
+});
+
+test("bounded: eligible 时只取尾部事件窗口，digest 仍能拿到最近消息", () => {
+  /** @type {any[]} */
+  const events = [];
+  for (let i = 0; i < 400; i += 1) {
+    events.push({
+      type: "user/message",
+      data: { source: { kind: "user" }, content: [{ type: "text", text: `q${i}` }] },
+    });
+    events.push({
+      type: "assistant/message",
+      data: { message: { content: [{ type: "text", text: `a${i}` }] } },
+    });
+  }
+  /** @type {number[]} */
+  const calls = [];
+  const session = {
+    seq: events.length,
+    snapshotEvents: (/** @type {number} */ from = 0) => {
+      calls.push(from);
+      return events.slice(from);
+    },
+  };
+  const collected = collectBoundedEvents(session, true);
+  assert.deepEqual(calls, [events.length - LIMITS.boundedTailEvents], "只取尾部窗口");
+  assert.equal(collected.windowed, true);
+  assert.equal(collected.events.length, LIMITS.boundedTailEvents);
+  const digest = buildBoundedDigest(collected.events);
+  assert.equal(digest.messages, LIMITS.boundedMessages);
+  assert.ok(digest.text.includes("q399"), "最近的消息仍在 digest 里");
+});
+
+test("bounded: 事件不足一窗 / 没有 snapshotEvents / 抛错都降级为空", () => {
+  const small = {
+    seq: 3,
+    snapshotEvents: (/** @type {number} */ from = 0) => [{}, {}, {}].slice(from),
+  };
+  const smallWindow = collectBoundedEvents(small, true);
+  assert.equal(smallWindow.windowed, false, "事件数小于窗口时不标记 windowed");
+  assert.equal(smallWindow.events.length, 3);
+  assert.deepEqual(collectBoundedEvents({}, true), { events: [], windowed: false });
+  assert.deepEqual(
+    collectBoundedEvents(
+      {
+        seq: 10,
+        snapshotEvents: () => {
+          throw new Error("boom");
+        },
+      },
+      true,
+    ),
+    { events: [], windowed: false },
+  );
+  assert.deepEqual(collectBoundedEvents(undefined, true), { events: [], windowed: false });
+  // seq 不可用时退回全量（行为与旧版一致），但只会在 eligible 时才走到这里
+  const noSeq = { snapshotEvents: () => [{ type: "user/message" }] };
+  assert.equal(collectBoundedEvents(noSeq, true).events.length, 1);
+});
+
+test("service: bounded 只在 eligible 时取事件，不再无条件 snapshotEvents（AUD-BTW-07）", async () => {
+  const source = await readFile(join(import.meta.dirname, "..", "lib", "service.js"), "utf8");
+  // 只看代码，注释里提到旧实现不算违规
+  const code = source.replace(/\/\*[\s\S]*?\*\//gu, "").replace(/\/\/[^\n]*/gu, "");
+  assert.equal(
+    (code.match(/snapshotEvents/g) ?? []).length,
+    0,
+    "service.js 必须通过 collectBoundedEvents 取事件，不能先全量物化父会话",
+  );
+  assert.ok(source.includes("isBoundedEligible("), "触发条件要与 bounded 模块同一处判定");
+  assert.ok(source.includes("collectBoundedEvents("), "取事件要走 bounded 模块（可单测）");
 });
 
 test("bounded: threadTurn 透出 mode（老记录为空 = fork）", () => {
@@ -900,6 +1080,25 @@ test("client 转正：promote 走的是行数预算后的草稿（不是 host �
   assert.ok(source.includes("fitDraftToLines(full"), "promote 必须用 fitDraftToLines 收紧草稿");
   assert.ok(source.includes("composerDraftLines()"), "promote 必须量一次实际渲染行数");
   assert.ok(source.includes("promotedShort"), "截断时给用户不同提示（完整内容在面板）");
+});
+
+test("client 设置分节：order 95、保留条数输入 1–200 且带语义提示", async () => {
+  const source = await readFile(join(import.meta.dirname, "..", "lib", "client.js"), "utf8");
+  const order = source.match(/name: "settings\.section",\s*id: "btw",\s*order: (\d+)/u);
+  assert.ok(order !== null, "settings.section 必须声明 order");
+  assert.equal(order?.[1], "95", "与 projects(94)/casefile(96) 去重，不能同 order 抢占时序");
+  for (const attribute of ['min: "1"', 'max: "200"', 'step: "1"']) {
+    assert.ok(source.includes(attribute), `保留条数输入要声明 ${attribute}`);
+  }
+  assert.ok(
+    source.includes('"data-btw-setting-limit-hint": "true"'),
+    "保留条数要有语义提示（改了要生效、范围 1–200）",
+  );
+  assert.equal(
+    (source.match(/"settings\.limitHint":/gu) ?? []).length,
+    2,
+    "中英内嵌字典各一条（只加一份会让另一语言露出字面键）",
+  );
 });
 
 // --- Markdown 渲染树（v0.4）------------------------------------------------

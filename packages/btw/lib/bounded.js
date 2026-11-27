@@ -25,6 +25,45 @@ CRITICAL CONSTRAINTS:
 Simply answer the question with the trimmed context you have.</system-reminder>`;
 
 /**
+ * bounded 模式的触发条件：用户显式开启 **且** 父会话上下文压力到阈值。
+ * 与 `limits.js` 的阈值同源，避免 service 与 UI 各写一遍（AUD-BTW-07）。
+ * @param {{ boundedContext?: unknown } | null | undefined} stored 设置快照
+ * @param {unknown} pressureTokens 父会话 contextPressure
+ * @returns {boolean}
+ */
+export function isBoundedEligible(stored, pressureTokens) {
+  return stored?.boundedContext === true && Number(pressureTokens) >= LIMITS.boundedTriggerTokens;
+}
+
+/**
+ * 取父会话尾部事件窗口（**只在 eligible 时**调用）。
+ *
+ * 背景：bounded 默认关；过去 service 无条件 `parentSession.snapshotEvents()` 把整棵事件
+ * 数组物化一遍，哪怕最后只用到 12 条消息 —— 触发条件本身就是 400K+ tokens 的长会话
+ * （事件数可达数万），纯浪费（AUD-BTW-07）。宿主的 `snapshotEvents(fromSeq)` 支持从
+ * 指定 seq 开始切片（`this.log.slice(fromSeq, toSeqExclusive)`），`session.seq` 是
+ * 「下一个事件的序号 = 日志长度」，所以可以直接从尾部取。
+ * @param {any} session 父会话（宿主 Session；拿不到就降级为空）
+ * @param {boolean} eligible 是否命中 bounded 触发条件
+ * @returns {{ events: any[], windowed: boolean }} windowed = 是否真的做了尾部裁剪
+ */
+export function collectBoundedEvents(session, eligible) {
+  if (eligible !== true || typeof session?.snapshotEvents !== "function") {
+    return { events: [], windowed: false };
+  }
+  try {
+    const seq = Number(session.seq);
+    const tail = LIMITS.boundedTailEvents;
+    const from = Number.isFinite(seq) && seq > tail ? seq - tail : 0;
+    const events = session.snapshotEvents(from);
+    return { events: Array.isArray(events) ? events : [], windowed: from > 0 };
+  } catch {
+    // 取事件失败不该让旁问失败：digest 为空时 service 会退回 fork。
+    return { events: [], windowed: false };
+  }
+}
+
+/**
  * 从消息内容块里取纯文本（忽略 reasoning / tool-call 等非回复块）。
  * @param {any} content
  * @returns {string}

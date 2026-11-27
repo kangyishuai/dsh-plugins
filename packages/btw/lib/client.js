@@ -94,6 +94,8 @@ window.__ModuleLoader__.load({
       "settings.tools": "允许旁问使用的工具",
       "settings.toolsHint": "留空 = 完全只读（推荐）。多个工具用逗号分隔；send_message 永不放行。",
       "settings.limit": "每会话保留条数",
+      "settings.limitHint":
+        "1–200，默认 50。改小后旧记录不再展示，并在下一次旁问时从历史文件里裁掉。",
       "settings.more": "更多设置",
       "settings.save": "保存",
       "settings.saved": "已保存",
@@ -164,6 +166,8 @@ window.__ModuleLoader__.load({
       "settings.toolsHint":
         "Empty = fully read-only (recommended). Separate names with commas; send_message is never allowed.",
       "settings.limit": "Records kept per session",
+      "settings.limitHint":
+        "1–200, default 50. Lowering it hides older records and trims them from the history file on the next side question.",
       "settings.more": "More settings",
       "settings.save": "Save",
       "settings.saved": "Saved",
@@ -1941,11 +1945,20 @@ window.__ModuleLoader__.load({
                   h("input", {
                     className: "dsh-btw-input",
                     "data-btw-setting-limit": "true",
+                    type: "number",
+                    min: "1",
+                    max: "200",
+                    step: "1",
                     value: limit,
                     onChange: (/** @type {any} */ event) =>
                       setLimit(String(event?.target?.value ?? "")),
                   }),
                   "",
+                ),
+                h(
+                  "div",
+                  { className: "dsh-btw-meta", "data-btw-setting-limit-hint": "true" },
+                  t("settings.limitHint"),
                 ),
                 h("div", { className: "dsh-btw-meta" }, t("settings.toolsHint")),
               )
@@ -1955,10 +1968,11 @@ window.__ModuleLoader__.load({
 
       ctx.slots.inject("settings.section", () =>
         ctx.slots.register(
+          // order 与 casefile（96）/projects（94）错开：同 order 时分节顺序取决于注册时序。
           {
             name: "settings.section",
             id: "btw",
-            order: 94,
+            order: 95,
             label: () => t("settings.nav"),
             locale: NS,
             inject: () => ({
