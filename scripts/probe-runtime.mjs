@@ -565,6 +565,10 @@ const SLOT_CHECKS = [
   { slot: "conversation.input.left", purpose: "输入框左侧按钮（btw 开关）" },
   { slot: "conversation.chat.turnTail", purpose: "答后卡片（advisor / next-step）" },
   { slot: "conversation.chat.node", purpose: "消息行（↶ 按钮注入）" },
+  {
+    slot: "conversation.chat.commandview",
+    purpose: "命令渲染器 keyed 子槽（advisor 命令回执；§23.4）",
+  },
   { slot: "contextMenu.icon", purpose: "菜单图标（session-delete 的回收站图标，缺了菜单仍可用）" },
 ];
 
