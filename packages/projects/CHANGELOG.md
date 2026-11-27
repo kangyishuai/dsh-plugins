@@ -1,5 +1,16 @@
 # @kangyishuai/dsh-projects
 
+## 0.10.8
+
+### Patch Changes
+
+- [#341](https://github.com/kangyishuai/dsh-plugins/pull/341) [`94327d2`](https://github.com/kangyishuai/dsh-plugins/commit/94327d2b6f70cef5d021a6438468ea4715d9e1a7) Thanks [@kangyishuai](https://github.com/kangyishuai)! - UI 复审剩余小项：
+  
+  - 自动解决（N 天无活动）下拉补 `aria-label`（此前只有视觉标签）
+  - 文案：`协调者未建`→`未创建协调者`、`盘上到期时间`→`已保存的到期时间`、视图空态说明改为「保存『筛选条件 + 名称』即可创建一个」
+  
+  验证：verify 710、web 冒烟 270 PASS/0/0。
+
 ## 0.10.7
 
 ### Patch Changes
