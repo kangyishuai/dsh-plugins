@@ -2617,7 +2617,8 @@ window.__ModuleLoader__.load({
         );
         if (
           preview.files.tracked &&
-          preview.files.restore.length + preview.files.trash.length > 0
+          (preview.files.restore.length + preview.files.trash.length > 0 ||
+            preview.files.skipped.length > 0)
         ) {
           blocks.push(
             h(FileSummary, {

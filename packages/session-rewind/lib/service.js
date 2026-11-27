@@ -16,8 +16,10 @@ import { estimateMessage } from "@deepseek-ai/dsh-token-meter/estimate";
 import { Remote, RemoteError, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 import { settleAgent } from "./agent-settle.js";
 import {
+  bothModeBlockedReason,
   formatBothConflicts,
   formatBothPreview,
+  formatBothUnavailable,
   formatRewindReceipt,
   parseRewindCommand,
 } from "./command.js";
@@ -452,6 +454,10 @@ export class SessionRewindService extends TypertRemoteService {
         }
         if (Array.isArray(preview?.files?.conflicts) && preview.files.conflicts.length > 0) {
           return { kind: "error", text: formatBothConflicts(preview) };
+        }
+        const blocked = bothModeBlockedReason(preview);
+        if (blocked !== null) {
+          return { kind: "error", text: formatBothUnavailable(blocked) };
         }
         return { kind: "success", text: formatBothPreview(preview, parsed.targetSeq) };
       }

@@ -58,14 +58,40 @@ export function formatBothPreview(preview, targetSeq) {
   const restore = Array.isArray(files.restore) ? files.restore.length : 0;
   const trash = Array.isArray(files.trash) ? files.trash.length : 0;
   const skipped = Array.isArray(files.skipped) ? files.skipped.length : 0;
-  const removed = preview?.chat?.removedCount ?? 0;
+  // USIM-U2-20 / N6：与面板 ghost 同口径（用户/助手消息），不要退回 surface 节点数。
+  const removed = preview?.chat?.removedMessageCount ?? preview?.chat?.removedCount ?? 0;
   const parts = [
-    `Rewind to before message ${targetSeq} withdraws ${removed} message(s).`,
+    `Rewind to before message ${targetSeq} withdraws ${removed} user/assistant message(s).`,
     `File mode writes to the workspace: restore ${restore} file(s), move ${trash} new file(s) to the plugin trash${skipped > 0 ? `, skip ${skipped} file(s)` : ""}.`,
     "A rescue point is created before any write, and the trash can be restored from the panel.",
     "Nothing has been written yet. Re-run the same command with `confirm` to execute, or pick the message in the UI to review and confirm there.",
   ];
   return parts.join(" ");
+}
+
+/**
+ * `both` 是否因「文件模式不可用」而不能执行（tracking 关闭 / 无 cwd / 文件引擎不可用 / 存储满）。
+ * N6：旧回执在这种情况下仍提示「再带 confirm 执行」，与实际执行时的 `files-unavailable` 矛盾。
+ * @param {any} preview
+ * @returns {string | null} 不可用原因码；可用时 null
+ */
+export function bothModeBlockedReason(preview) {
+  const warnings = Array.isArray(preview?.warnings) ? preview.warnings : [];
+  const blocked = warnings.find((/** @type {any} */ warning) =>
+    ["tracking-disabled", "cwd-missing", "files-unavailable", "storage-unavailable"].includes(
+      String(warning?.code ?? ""),
+    ),
+  );
+  return blocked === undefined ? null : String(blocked.code);
+}
+
+/**
+ * `both` 因文件模式不可用被拒绝时的回执（不写任何东西）。
+ * @param {string} reason 原因码
+ * @returns {string}
+ */
+export function formatBothUnavailable(reason) {
+  return `File mode is unavailable for this session (${reason}); nothing was written. Use \`/rewind @<seq> chat\` to rewind the conversation only, or pick the message in the UI and choose "Rewind conversation only".`;
 }
 
 /**

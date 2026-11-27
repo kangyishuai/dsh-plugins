@@ -2157,6 +2157,26 @@ describe("confirm dialog helpers (AUD-REW-06/07/16)", () => {
     assert.equal(fullText.includes("host english skip warning"), false);
   });
 
+  it("ConfirmBody: 纯 skipped 预览也展示原因与数量（N2 / AUD-REW-04）", () => {
+    const skippedOnly = previewFixture();
+    skippedOnly.files.restore = [];
+    skippedOnly.files.trash = [];
+    const tree = testApi.ConfirmBody({
+      state: confirmState({ preview: skippedOnly, rewindMode: "chat" }),
+      api: noopApi(),
+      t: tr,
+    });
+    const elements = elementsOf(tree);
+    const skipped = elements.filter((element) => element.props["data-srw-skipped"] !== undefined);
+    assert.equal(skipped.length, 1, "skipped-only preview must still render FileSummary");
+    assert.equal(skipped[0].props["data-srw-skipped"], "5");
+    assert.ok(elementText(skipped[0]).includes("confirm.skipped"));
+    const reasons = elements
+      .filter((element) => element.props["data-reason"] !== undefined)
+      .map((element) => element.props["data-reason"]);
+    assert.deepEqual(reasons.sort(), ["excluded", "outside-cwd", "symlink", "too-large"]);
+  });
+
   it("ConfirmBody: chat 模式不出现文件可恢复性那一段", () => {
     const tree = testApi.ConfirmBody({
       state: confirmState({ rewindMode: "chat" }),

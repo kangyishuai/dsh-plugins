@@ -2134,8 +2134,10 @@ export function createFileStore(input = {}) {
   /**
    * 从回收站恢复一次操作的产物（目标已存在则拒绝覆盖）。
    *
-   * ADR 0002 / AUD-REW-08：恢复前先对「当前受影响的文件」再建一个 rescue-of-rescue，
-   * 这样「恢复回收站」本身也是可逆的；安全网建不出来就一个文件都不动。
+   * ADR 0002 / AUD-REW-08：恢复前先对「当前受影响的文件」再建一份安全网（rescue-of-rescue），
+   * 建不出来就一个文件都不动（fail-closed）。**注意它只保存「当时存在」的文件内容**：恢复期间
+   * 由本插件新建的文件（原 manifest `existed:false`）不在安全网里，再恢复这份安全网也不会删除它们
+   * （真正反向删除需要另做 reverse-trash；本注释不再声称「恢复回收站本身可逆」）。
    * @param {{sessionId: string, cwd?: string, auditId: string}} request
    * @returns {Promise<{restored: string[], failed: Array<{path: string, reason: string}>, safetyRescueId: string | null}>}
    */
@@ -2162,7 +2164,8 @@ export function createFileStore(input = {}) {
       await removeTree(dir);
       return { restored: [], failed: [], safetyRescueId: null };
     }
-    // rescue-of-rescue：与 restoreRescue 同一套安全网（先存当前内容，再写回）。
+    // rescue-of-rescue：与 restoreRescue 同一套 fail-closed 安全网（先存当前内容，再写回）；
+    // 它不覆盖「当前不存在、恢复时才出现」的文件（撤销这类创建需要 reverse-trash，见 N1）。
     const safetyPlan = {
       ...planRestoreShell(),
       cwd,

@@ -736,7 +736,12 @@ await page.waitForTimeout(1400);
 const confirmDialog = await dialogInfo();
 check("点击 ↶ 打开确认框", clicked && confirmDialog !== null && matches(confirmDialog.title, LABELS.dialogConfirm), JSON.stringify(confirmDialog && confirmDialog.title));
 check("确认框写明影响面", confirmDialog !== null && /移除|Remove/u.test(confirmDialog.text), confirmDialog && confirmDialog.text.slice(0, 120));
-check("确认框展示预览（将撤回 N 条消息）", confirmDialog !== null && /将撤回|This withdraws/u.test(confirmDialog.text), confirmDialog && confirmDialog.text.slice(0, 160));
+// B1：新文案是「将截断 N 条上下文记录（撤回 M 条用户/助手消息）」；同时接受旧口径。
+check(
+  "确认框展示预览（截断上下文记录 / 撤回用户或助手消息）",
+  confirmDialog !== null && /将截断|将撤回|truncates|withdraws/iu.test(confirmDialog.text),
+  confirmDialog && confirmDialog.text.slice(0, 160),
+);
 const modeInfo = await page.evaluate(() => {
   const dialog = [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')].find((d) => (d.className || "").includes("dsh-srw"));
   if (!dialog) return null;
@@ -744,7 +749,14 @@ const modeInfo = await page.evaluate(() => {
   return { radios, text: (dialog.textContent || "").replace(/s+/g, " ") };
 });
 check("确认框有仅对话/对话+文件两个范围", modeInfo !== null && modeInfo.radios.length === 2, JSON.stringify(modeInfo && modeInfo.radios));
-check("没有文件变更时文件模式被禁用", modeInfo !== null && modeInfo.radios.some((r) => r.value === "both" && r.disabled) && /无文件变更|No file changes/u.test(modeInfo.text), JSON.stringify(modeInfo && modeInfo.radios));
+// B1：新文案是「本轮没有可追踪的文件改动」；同时接受旧口径。
+check(
+  "没有可追踪的文件改动时文件模式被禁用",
+  modeInfo !== null &&
+    modeInfo.radios.some((r) => r.value === "both" && r.disabled) &&
+    /没有可追踪|No trackable|无文件变更|No file changes/iu.test(modeInfo.text),
+  JSON.stringify(modeInfo && modeInfo.radios),
+);
 const recoveryInfo = await page.evaluate(() => {
   const dialog = [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')].find((d) => (d.className || "").includes("dsh-srw"));
   if (!dialog) return null;
@@ -760,10 +772,19 @@ const recoveryInfo = await page.evaluate(() => {
     focusOnAutofocus: autofocus === document.activeElement,
   };
 });
+// B1：默认 chat 模式只有「撤回不可撤销、内容留在已撤回页签」这一行；只有 both（且该会话
+// 有 tracked 文件）才追加「救援点/回收站」那一行。断言按当前选中的模式分档。
+const recoverableHasFileLine = recoveryInfo !== null && /救援点|rescue|回收站|trash/iu.test(recoveryInfo.recoverable);
+const bothSelected = modeInfo !== null && modeInfo.radios.some((r) => r.value === "both" && r.checked === true);
 check(
-  "确认框写明可恢复性（消息留在已撤回页签 / 文件有救援点与回收站）",
-  recoveryInfo !== null && /撤回|withdrawn/u.test(recoveryInfo.recoverable) && /救援点|rescue|回收站|trash/iu.test(recoveryInfo.recoverable),
+  "确认框写明「撤回不可撤销、内容留在已撤回页签」（可恢复性基础行）",
+  recoveryInfo !== null && /撤回|withdrawn/iu.test(recoveryInfo.recoverable),
   JSON.stringify(recoveryInfo),
+);
+check(
+  "可恢复性文案按模式分档（chat 不出现文件救援点 / both 必含）",
+  bothSelected ? recoverableHasFileLine : !recoverableHasFileLine,
+  JSON.stringify({ bothSelected, recoverable: recoveryInfo && recoveryInfo.recoverable }),
 );
 const trackingScope = await page.evaluate(() => {
   const dialog = [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')].find((d) => (d.className || "").includes("dsh-srw"));

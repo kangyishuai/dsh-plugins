@@ -3,9 +3,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  bothModeBlockedReason,
   COMMAND_USAGE,
   formatBothConflicts,
   formatBothPreview,
+  formatBothUnavailable,
   formatRewindReceipt,
   parseRewindCommand,
 } from "../lib/command.js";
@@ -52,7 +54,7 @@ test("parseRewindCommand: 缺目标/非法目标返回用法提示", () => {
 test("formatBothPreview: 执行前回执影响面，并明确「尚未写任何东西」", () => {
   const text = formatBothPreview(
     {
-      chat: { removedCount: 4 },
+      chat: { removedCount: 4, removedMessageCount: 3 },
       files: {
         restore: [{ path: "a.txt" }],
         trash: [{ path: "b.txt" }, { path: "c.txt" }],
@@ -63,7 +65,8 @@ test("formatBothPreview: 执行前回执影响面，并明确「尚未写任何�
     9,
   );
   assert.match(text, /message 9/u);
-  assert.match(text, /withdraws 4 message/u);
+  // USIM-U2-20 / N6：口径是「用户/助手消息」，并用 removedMessageCount。
+  assert.match(text, /withdraws 3 user\/assistant message/u);
   assert.match(text, /restore 1 file/u);
   assert.match(text, /move 2 new file/u);
   assert.match(text, /skip 1 file/u);
@@ -122,4 +125,28 @@ test("formatRewindReceipt: 报对话与文件结果（含跳过/失败/救援点
     "chat",
   );
   assert.doesNotMatch(chat, /file\(s\)/u);
+});
+
+test("bothModeBlockedReason: tracking/cwd/文件引擎/存储不可用都算 blocked（N6）", () => {
+  assert.equal(bothModeBlockedReason({ warnings: [] }), null);
+  assert.equal(bothModeBlockedReason({}), null);
+  for (const code of [
+    "tracking-disabled",
+    "cwd-missing",
+    "files-unavailable",
+    "storage-unavailable",
+  ]) {
+    assert.equal(bothModeBlockedReason({ warnings: [{ code }, { code: "files-skipped" }] }), code);
+  }
+  // 不相关的 warning 不算 blocked。
+  assert.equal(bothModeBlockedReason({ warnings: [{ code: "files-skipped", skipped: [] }] }), null);
+});
+
+test("formatBothUnavailable: 文件模式不可用时不再提示「带 confirm 执行」（N6）", () => {
+  const text = formatBothUnavailable("files-unavailable");
+  assert.match(text, /File mode is unavailable/u);
+  assert.match(text, /files-unavailable/u);
+  assert.match(text, /Nothing was written|nothing was written/u);
+  assert.match(text, /chat/u);
+  assert.doesNotMatch(text, /confirm/u, "不可用时不能提示 confirm 执行");
 });

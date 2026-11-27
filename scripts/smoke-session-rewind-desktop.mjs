@@ -735,9 +735,10 @@ const main = async () => {
       picked && confirm !== null,
       confirm ? confirm.title : "没有确认框",
     );
+    // B1：新文案是「将截断 N 条上下文记录（撤回 M 条用户/助手消息）」；同时接受旧口径。
     check(
-      "确认框写明影响面与预览",
-      typeof confirm?.text === "string" && /将撤回|This withdraws/u.test(confirm.text),
+      "确认框写明影响面与预览（截断记录 / 撤回消息）",
+      typeof confirm?.text === "string" && /将截断|将撤回|truncates|withdraws/iu.test(confirm.text),
       (confirm?.text ?? "").slice(0, 160),
     );
     check(
@@ -753,12 +754,23 @@ const main = async () => {
       JSON.stringify(confirm?.resend ?? null),
     );
     // AUD-REW-06 / ADR 0002：破坏性确认框必须写清「能否恢复」。
-    check(
-      "确认框写明可恢复性（撤回内容留在面板 / 文件有救援点与回收站）",
+    // B1：默认 chat 模式只有基础行；both（且有 tracked 文件）才追加救援点/回收站。
+    const dialogBothSelected = await cdp.evaluate(`(() => {
+      const radio = document.querySelector('.dsh-srw-dialog input[type="radio"][value="both"]');
+      return radio ? radio.checked : false;
+    })()`);
+    const recoverableHasFileLine =
       typeof confirm?.recoverable === "string" &&
-        /撤回|withdrawn/u.test(confirm.recoverable) &&
-        /救援点|rescue|回收站|trash/iu.test(confirm.recoverable),
+      /救援点|rescue|回收站|trash/iu.test(confirm.recoverable);
+    check(
+      "确认框写明「撤回不可撤销、内容留在已撤回页签」（可恢复性基础行）",
+      typeof confirm?.recoverable === "string" && /撤回|withdrawn/iu.test(confirm.recoverable),
       (confirm?.recoverable ?? "").slice(0, 240),
+    );
+    check(
+      "可恢复性文案按模式分档（chat 不出现文件救援点 / both 必含）",
+      dialogBothSelected === true ? recoverableHasFileLine : !recoverableHasFileLine,
+      JSON.stringify({ dialogBothSelected, recoverable: confirm?.recoverable }),
     );
     // AUD-REW-07：主按钮默认聚焦，且焦点陷阱生效。
     check(
@@ -1186,7 +1198,17 @@ const main = async () => {
           const radio = document.querySelector('.dsh-srw-dialog input[type="radio"][value="both"]');
           if (radio && !radio.disabled) radio.click();
         })()`);
-        await sleep(400);
+        await sleep(500);
+        // B1 的另一半：切到 both 后，可恢复性文案才追加「救援点/回收站」。
+        const bothModeRecoverable = await cdp.evaluate(`(() => {
+          const el = document.querySelector('.dsh-srw-dialog [data-rewind-recoverable]');
+          return el ? (el.textContent || '').trim() : '';
+        })()`);
+        check(
+          "both 模式的可恢复性文案包含救援点/回收站",
+          /救援点|rescue|回收站|trash/iu.test(bothModeRecoverable),
+          bothModeRecoverable.slice(0, 240),
+        );
         const confirmed = await clickDialogButton(cdp, ["开始回退", "Rewind"]);
         let dialogGone = false;
         for (let i = 0; i < 40; i += 1) {
