@@ -1138,18 +1138,18 @@ document body because the docked composer contains them**"，而浮层原本就�
 
 先写测试再改实现，红→绿证据：
 
-| 新增测试                                                                                                                                                                | 红灯（改实现前）                       | 绿灯（改实现后） |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- | ---------------- |
-| `test/notice.test.js`（9 项：begin/done/fail、会话隔离、seq、限界淘汰、快照、previewOf）                                                                                | 模块不存在，整个文件失败               | 9/9              |
-| `test/client.test.js`（9 项：vm 驱动真实 `client.js` 的 `shouldSubmitOnKey` / `planNotice` / `composeNoticeToast` / `isBlankConversation`、zh/en 键集、接线座位、锚点） | 6 项红（`__test` / 纯函数 / 新键缺失） | 9/9              |
-| `test/index.test.js` 两条转正去重（末答只出现一次、与结论相同答案不重复）                                                                                               | 2 项红（末答重复）                     | 全部 117/117     |
+| 新增测试                                                                                                                                                                 | 红灯（改实现前）                       | 绿灯（改实现后） |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------- | ---------------- |
+| `test/notice.test.js`（6 项：begin/done/fail、会话隔离、seq、限界淘汰、快照、previewOf）                                                                                 | 模块不存在，整个文件失败               | 6/6              |
+| `test/client.test.js`（10 项：vm 驱动真实 `client.js` 的 `shouldSubmitOnKey` / `planNotice` / `composeNoticeToast` / `isBlankConversation`、zh/en 键集、接线座位、锚点） | 6 项红（`__test` / 纯函数 / 新键缺失） | 10/10            |
+| `test/index.test.js` 两条转正去重（末答只出现一次、与结论相同答案不重复）                                                                                                | 2 项红（末答重复）                     | 全部 118/118     |
 
-| 检查                               | 结果                                                                                                                                                                                                |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `node --test`（包内）              | **117 pass / 0 fail**（原 100，新增 17）                                                                                                                                                            |
-| `pnpm verify`（worktree 根）       | **EXIT=0**（biome / tsc / check-plugins / index-meta / check:docs / check:public / 全部单测；btw **118 pass / 0 fail**）                                                                            |
-| `pnpm smoke:btw`                   | **本批未运行**（web 端口被其它会话占用）；脚本新增 4 条默认段断言（回执 tray、Enter 提示、空态解释）+ `--deep` 2 条（提交后有 toast 回执、追问发送按钮不与「追问」重名/提示），计数以 lead 实跑为准 |
-| `pnpm smoke:btw-desktop --require` | **本批未运行**（不驱动 live 桌面版）；脚本新增 5 条只读断言（回执 tray、Enter 提示、空态解释、发送按钮不与「追问」重名、线程内 Enter 提示），计数以 lead 实跑为准                                   |
+| 检查                               | 结果                                                                                                                                                                                                                                            |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `node --test`（包内）              | **118 pass / 0 fail**（原 100，新增 18）                                                                                                                                                                                                        |
+| `pnpm verify`（worktree 根）       | **EXIT=0**（biome / tsc / check-plugins / index-meta / check:docs / check:public / 全部单测；btw **118 pass / 0 fail**）                                                                                                                        |
+| `pnpm smoke:btw`                   | **本批未运行**（web 端口被其它会话占用）；脚本默认段新增 3 条断言（回执 tray、Enter 提示、空态解释）、`--deep` 新增 2 条（提交后的 toast 回执、线程内 Enter 提示），另改写 1 条既有断言（追问发送按钮不再与「追问」重名），计数以 lead 实跑为准 |
+| `pnpm smoke:btw-desktop --require` | **本批未运行**（不驱动 live 桌面版）；脚本新增 5 条只读断言（回执 tray、Enter 提示、空态解释、发送按钮不与「追问」重名、线程内 Enter 提示），计数以 lead 实跑为准                                                                               |
 
 ### 剩余风险
 
@@ -1160,3 +1160,22 @@ document body because the docked composer contains them**"，而浮层原本就�
    视觉观感未实拍。
 3. `shell.overlay` 是 frame-wide 座位，宿主升级若改浮层点击穿透语义，toast 的点击打开面板会失效
    （不影响「看得见回执」这条主承诺）。
+
+### 复审 follow-up（batch-ui-2 B1 / B2）
+
+`notes/audit/2026-11-28/reviews/batch-ui-2.md` 的两条非阻塞项：
+
+- **B1 回退抽屉不可达**：`revealPanel` 的两条降级分支与 `BtwTrigger` 的「右栏打不开」分支以前只
+  `patch({open:true})`，而 `BtwDrawer` 在 `tabReady === true` 时直接返回 null —— 右侧栏服务在、
+  `openTab` 抛错或打开后没渲染出面板时，用户只看到一条 toast，面板永远不出现（旧版「`openTab` 抛错
+  落抽屉」的行为也一起退化了）。现在 store 里多一个显式 `drawerFallback` 标记：`openTab` 抛错 →
+  立刻落抽屉；700 ms 后仍没有 `[data-btw-panel]` → 落抽屉；再次成功 `openTab` → 清标记并收起抽屉
+  （避免 tab 与抽屉两套面板同时在场）。抽屉的渲染判定抽成纯函数 `shouldRenderDrawer(shared, tabReady)`，
+  测试用 `__test.hooks`（`store` / `revealPanel` / `setTabReady`）驱动真实 `apply()`，覆盖「抛错立即
+  回退」「700 ms 超时回退」「恢复后清标记」三条路径，不再靠源码字符串证明行为。
+- **B2 IME 判据补齐**：`shouldSubmitOnKey` 新增 `nativeEvent.isComposing`、`which === 229`、
+  `key === "Process"` 与 composition ref 四条判据（对齐 projects 的 `isImeConfirmKey`）；两个输入框
+  都接 `onCompositionStart/End` 维护 `compositionRef`，`onKeyDown` 把 ref 传进去。
+- 顺手把上表写错的计数改真（`notice.test.js` 6 项、`client.test.js` 10 项、总数 118 / +18；冒烟实际是
+  默认段 +3、`--deep` +2、改写 1 条）。本轮 follow-up 后 `client.test.js` 13 项（B1 行为 2 条 + 防漂移
+  1 条），btw 包内 **121 pass / 0 fail**。
