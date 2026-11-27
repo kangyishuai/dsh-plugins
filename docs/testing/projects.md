@@ -985,7 +985,7 @@ AGENTS.md 受管区块幂等合并、`@` 候选排序）。`pnpm smoke:projects`
 
 对齐 Claude Projects 本地 space 的布局后，新增/更新的验证口径（数字以本 commit 输出为准）：
 
-- `pnpm verify`：projects 单测 **779**（含 i18n 三处一致性、`attachThread` 幂等、`pickRepoRoot`、
+- `pnpm verify`：projects 单测 **786**（含 i18n 三处一致性、`attachThread` 幂等、`pickRepoRoot`、
   `assessMergePr` 合并门禁、写入口路径校验、saveSoon 失败可见、源码守卫等；2026-11-28 审计修复新增 59 条，
   见 §20）。
 - `pnpm smoke:projects`：**270 PASS / 0 SKIP / 0 FAIL**（临时 `DSH_HOME`，ego 浏览器）。
@@ -1103,22 +1103,23 @@ task(s) could not be removed`）——否则记录没了就再没有入口去停
 
 ### 20.2 P3（本轮修掉的）
 
-| 编号        | 修法                                                                                                                                      | 测试                                                                      |
-| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| AUD-PROJ-08 | `claimedAt` 有 TTL（10 分钟）：超过可被接管（写 `approval/claim-recovered`）；启动时 `releaseStaleApprovals` 回收                         | `store-hardening.test.js`（接管 / 新鲜的保持 / 启动回收）                 |
-| AUD-PROJ-09 | `appendApproval` 上限 `MAX_APPROVALS=500`（先淘汰已了结，全 pending 则拒绝新申请）；`listApprovals(projectId,{limit,offset})`             | `store-hardening.test.js`                                                 |
-| AUD-PROJ-10 | `removeProject` 同步删 `usage` 桶并返回；manifest 带上桶，`restoreProject` 放回                                                           | `store-hardening.test.js`                                                 |
-| AUD-PROJ-11 | `restoreProject` 用 `isSafeRecordKey` 校验 manifest 的 `project.id`（不安全的 thread sessionId 也跳过）；`restoreTrash` 先校验再搬        | `store-hardening.test.js` + service 守卫                                  |
-| AUD-PROJ-12 | 记忆去重从子串匹配改为**块完全相等**（复用 `parseMemoryBlocks`）                                                                          | `memory.test.js`（短条目不再被误吞）                                      |
-| AUD-PROJ-13 | 删掉 `checkExecutable` 里由模型控制的 `impact.worktreeClean` 死闸，注释指向真正的保护 `reclaimThread`                                     | `executor.test.js`（该字段不再影响判定）                                  |
-| AUD-PROJ-14 | `repoGrants` / `preapprove` / `pr.tier` 变更写入 `project/policy-changed`（granted/revoked、from→to）                                     | service 守卫                                                              |
-| AUD-PROJ-17 | 用量桶键统一**本地日期**（读取兼容旧 UTC 键），`usageDays` 同口径                                                                         | `store-hardening.test.js`                                                 |
-| AUD-PROJ-19 | token 入账从每条 `save()` 改成 `saveSoon(250)`（与事件路径同一合并写盘）                                                                  | service 守卫                                                              |
-| AUD-PROJ-21 | `createSession` 失败时回滚刚建的 worktree + 分支并写 `thread/worktree-rolled-back` 审计                                                   | `thread.test.js`（真 git）                                                |
-| AUD-PROJ-22 | 删掉零调用的 `cleanupThreadBranch` 与 `pickPollRoot`；V1 分支删除判据标 `@deprecated`（禁止新代码使用）                                   | 相关测试随之删除/替换，`worktree.test.js` 的 V1/V2 对照保留               |
-| AUD-PROJ-24 | `setThreadDefaults`/`setCoordinatorDefaults` 写前按模型目录校验（目录拿不到则不校验）；`createThread` 失败回执带 `modelWarning`，面板提示 | `model-choice.test.js`、service 守卫、locale 双语键                       |
-| AUD-PROJ-26 | 协调器工具 `project_thread_message` 走 `promptOwnedThread`：会话必须属于本项目的线程或协调器                                              | service 守卫                                                              |
-| AUD-PROJ-27 | 线程序号取「已用分支/线程序号最大值 + 1」（记录 + 仓库里现存 `dsh/` 分支），删线程后不复用旧分支名                                        | `thread.test.js`（`nextThreadIndex` + 真 git 不复用）+ `worktree.test.js` |
+| 编号        | 修法                                                                                                                                                                                                                                                              | 测试                                                                                                                                                                                 |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| AUD-PROJ-08 | `claimedAt` 有 TTL（10 分钟）：超过可被接管（写 `approval/claim-recovered`）；启动时 `releaseStaleApprovals` 回收                                                                                                                                                 | `store-hardening.test.js`（接管 / 新鲜的保持 / 启动回收）                                                                                                                            |
+| AUD-PROJ-09 | `appendApproval` 上限 `MAX_APPROVALS=500`（先淘汰已了结，全 pending 则拒绝新申请）；`listApprovals(projectId,{limit,offset})`                                                                                                                                     | `store-hardening.test.js`                                                                                                                                                            |
+| AUD-PROJ-10 | `removeProject` 同步删 `usage` 桶并返回；manifest 带上桶，`restoreProject` 放回                                                                                                                                                                                   | `store-hardening.test.js`                                                                                                                                                            |
+| AUD-PROJ-11 | `restoreProject` 用 `isSafeRecordKey` 校验 manifest 的 `project.id`（不安全的 thread sessionId 也跳过）；`restoreTrash` 先校验再搬                                                                                                                                | `store-hardening.test.js` + service 守卫                                                                                                                                             |
+| AUD-PROJ-12 | 记忆去重从子串匹配改为**块完全相等**（复用 `parseMemoryBlocks`）                                                                                                                                                                                                  | `memory.test.js`（短条目不再被误吞）                                                                                                                                                 |
+| AUD-PROJ-13 | 删掉 `checkExecutable` 里由模型控制的 `impact.worktreeClean` 死闸，注释指向真正的保护 `reclaimThread`                                                                                                                                                             | `executor.test.js`（该字段不再影响判定）                                                                                                                                             |
+| AUD-PROJ-14 | `repoGrants` / `preapprove` / `pr.tier` 变更写入 `project/policy-changed`（granted/revoked、from→to）                                                                                                                                                             | service 守卫                                                                                                                                                                         |
+| AUD-PROJ-17 | 用量桶键统一**本地日期**（读取兼容旧 UTC 键），`usageDays` 同口径                                                                                                                                                                                                 | `store-hardening.test.js`                                                                                                                                                            |
+| AUD-PROJ-19 | token 入账从每条 `save()` 改成 `saveSoon(250)`（与事件路径同一合并写盘）                                                                                                                                                                                          | service 守卫                                                                                                                                                                         |
+| AUD-PROJ-21 | `createSession` 失败时回滚刚建的 worktree + 分支并写 `thread/worktree-rolled-back` 审计                                                                                                                                                                           | `thread.test.js`（真 git）                                                                                                                                                           |
+| AUD-PROJ-22 | 删掉零调用的 `cleanupThreadBranch` 与 `pickPollRoot`；V1 分支删除判据标 `@deprecated`（禁止新代码使用）                                                                                                                                                           | 相关测试随之删除/替换，`worktree.test.js` 的 V1/V2 对照保留                                                                                                                          |
+| AUD-PROJ-24 | `setThreadDefaults`/`setCoordinatorDefaults` 写前按模型目录校验（目录拿不到则不校验）；`createThread` 失败回执带 `modelWarning`，面板提示                                                                                                                         | `model-choice.test.js`、service 守卫、locale 双语键                                                                                                                                  |
+| AUD-PROJ-26 | 协调器工具 `project_thread_message` 走 `promptOwnedThread`：会话必须属于本项目的线程或协调器                                                                                                                                                                      | service 守卫                                                                                                                                                                         |
+| AUD-PROJ-27 | 线程序号取「已用分支/线程序号最大值 + 1」（记录 + 仓库里现存 `dsh/` 分支），删线程后不复用旧分支名                                                                                                                                                                | `thread.test.js`（`nextThreadIndex` + 真 git 不复用）+ `worktree.test.js`                                                                                                            |
+| AUD-HIST-06 | 无协调者的项目不再每轮写 `wake/skipped`：无协调者分支**早于信封构造**返回，审计改为「同项目+同理由 6 小时一条」（`shouldRecordWakeSkip` 纯函数 + 内存水位 `wakeSkipAudit`，步数预算跳过同款限频）；项目详情协调者卡空态新增 `data-projects-coordinator-wake-hint` | `wake.test.js`（冷却判定：首次/窗口内静默/到点再写/时钟回拨也写/窗口可覆盖）、service 守卫（分支走限频、早于 `buildEnvelope`、无直接 `appendAudit`）、桌面只读断言（empty ↔ 有提示） |
 
 ### 20.3 defer（本轮不修，及理由）
 
@@ -1135,9 +1136,10 @@ task(s) could not be removed`）——否则记录没了就再没有入口去停
 `paths.test.js`（+3）、`schedules.test.js`（新，10）、`approval-view.test.js`（新，6）、
 `model-choice.test.js`（新，5）、`store-hardening.test.js`（+20）、`budget.test.js`（+3）、
 `memory.test.js`（+2）、`thread.test.js`（+4，去掉 2 条 V1 死代码用例）、`service-execute.test.js`（+3）、
-`service-wiring-guards.test.js`（+9）、`executor.test.js`（替换 1）、`b3.test.js`（默认预算含 `weeklyTokens`）。
+`service-wiring-guards.test.js`（+12）、`executor.test.js`（替换 1）、`b3.test.js`（默认预算含 `weeklyTokens`）、
+`wake.test.js`（+4，跳过唤醒的审计限频）。
 
-合计 **779** 条（720 + 59），`node --test` 0 fail。
+合计 **786** 条（720 + 66；含 AUD-HIST-06 的 7 条），`node --test` 0 fail。
 
 **红→绿证据（本批做过一次）**：把 `packages/projects/lib/` 的改动 `git stash` 掉、只留新测试，
 再跑这几个文件，得到的就是修复前的失败：
