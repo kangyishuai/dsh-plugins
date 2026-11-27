@@ -24,6 +24,13 @@ window.__ModuleLoader__.load({
     let NS = "advisor";
     /** 插件标识：样式标签的归属，桌面端只读回归靠 style[data-plugin] 判断 client 半已加载。 */
     let PLUGIN_ID = "@kangyishuai/dsh-advisor";
+    /** 命令名：与 host 半 `commands.register()` 的 name 一致（commandview 的 entryKey）。 */
+    let COMMAND_NAME = "advisor";
+    /**
+     * 最近一条命令回执（只给 `__test` 断言用；不参与渲染，也不跨会话累积）。
+     * @type {{ tone: "ok" | "error", text: string } | null}
+     */
+    let lastCommandReceipt = null;
     /** 轻量提示停留时间；到点后把自己清掉。 */
     let TOAST_MS = 4000;
     /**
@@ -57,7 +64,7 @@ window.__ModuleLoader__.load({
       "search.empty": "还没有可选的顾问模型",
       "search.noResults": "没有匹配的模型",
       "effort.auto": "自动",
-      "toast.applied": "顾问已设为 {route}（思考档 {effort}），下一次徵询生效",
+      "toast.applied": "顾问已设为 {route}（思考档 {effort}），下一次征询生效",
       "toast.off": "顾问已关闭，随时可用 /advisor 重新开启",
       "toast.stale": "这项选择已过期，请重新打开 /advisor",
       "error.failed": "设置失败，请重试",
@@ -81,7 +88,7 @@ window.__ModuleLoader__.load({
       "settings.route.unset": "还没选",
       "settings.budget.unlimited": "不限",
       "settings.mode": "模式",
-      "settings.mode.offHint": "不发起任何徵询，也不产生费用。",
+      "settings.mode.offHint": "不发起任何征询，也不产生费用。",
       "settings.provider.empty": "（未选择）",
       "settings.provider.declared": "自定义",
       "settings.provider.none": "宿主没有返回任何路由（llm 服务不可用？）",
@@ -135,7 +142,7 @@ window.__ModuleLoader__.load({
       "tail.anchors": "证据锚点未对上（{checked} 条）",
       "tail.downgraded": "严重度已降级",
       "tail.aria": "顾问建议（点击展开或收起）",
-      "tail.trace.label": "本次徵询",
+      "tail.trace.label": "本次征询",
       "tail.trace.sep": "：",
       "tail.trace.chars": "{chars} 字符",
       "tail.trigger.tool": "模型发起",
@@ -262,6 +269,11 @@ window.__ModuleLoader__.load({
       ".dsh-advisor-toast{position:fixed;right:24px;bottom:24px;z-index:2147000000;display:flex;align-items:flex-start;gap:10px;max-width:min(440px,86vw);padding:10px 14px;border-radius:10px;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base,Canvas));color:var(--dsw-alias-label-primary,CanvasText);border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));box-shadow:0 10px 30px rgba(0,0,0,.28);font-size:13px;line-height:1.5;cursor:pointer;transition:opacity .18s ease,transform .18s ease;}",
       ".dsh-advisor-toast-mark{font-weight:600;line-height:1.4;}",
       ".dsh-advisor-toast-text{flex:1;min-width:0;word-break:break-word;white-space:pre-wrap;}",
+      ".dsh-advisor-receipt{display:flex;flex-direction:column;gap:6px;max-width:min(520px,90vw);}",
+      ".dsh-advisor-receipt-head{display:flex;align-items:center;gap:8px;}",
+      ".dsh-advisor-receipt-title{flex:1 1 auto;min-width:0;font-weight:600;}",
+      ".dsh-advisor-receipt-close{flex:none;border:none;background:transparent;color:var(--dsw-alias-label-secondary,#a4a4a4);font-size:13px;line-height:18px;cursor:pointer;padding:2px 4px;border-radius:4px;}",
+      ".dsh-advisor-receipt-body{margin:0;max-height:42vh;overflow:auto;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.6;}",
       ".dsh-advisor-settings{display:flex;flex-direction:column;gap:12px;font-size:13px;line-height:1.5;color:var(--dsw-alias-label-primary,CanvasText);}",
       // 设置分节的首屏摘要：三行只读信息 + 一个紧凑的模式下拉。
       ".dsh-advisor-summary{display:flex;flex-direction:column;gap:0;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.22));border-radius:8px;overflow:hidden;}",
@@ -269,6 +281,17 @@ window.__ModuleLoader__.load({
       ".dsh-advisor-summary-row+.dsh-advisor-summary-row{border-top:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.16));}",
       ".dsh-advisor-summary-label{flex:none;width:4.5em;color:var(--dsw-alias-label-secondary,#a4a4a4);}",
       ".dsh-advisor-summary-value{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
+      ".dsh-advisor-summary-mode{display:flex;align-items:center;gap:8px;flex:1 1 auto;min-width:0;flex-wrap:wrap;}",
+      ".dsh-advisor-effective{flex:0 0 auto;max-width:100%;font-size:12px;line-height:18px;padding:1px 7px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));color:var(--dsw-alias-label-secondary,#a4a4a4);word-break:break-word;}",
+      ".dsh-advisor-effective[data-advisor-effective=on]{color:var(--dsw-alias-state-success-primary,#2f9e63);border-color:var(--dsw-alias-state-success-primary,#2f9e63);}",
+      ".dsh-advisor-effective[data-advisor-effective=off]{color:var(--dsw-alias-state-warn-label,#b8860b);border-color:var(--dsw-alias-state-warn-label,#b8860b);}",
+      ".dsh-advisor-command{display:flex;flex-direction:column;gap:6px;padding:8px 10px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.22));background:var(--dsw-alias-bg-layer-2,transparent);}",
+      ".dsh-advisor-command[data-state=error]{border-color:var(--dsw-alias-state-error-primary,#d9534f);}",
+      ".dsh-advisor-command-head{display:flex;align-items:center;gap:8px;min-width:0;}",
+      ".dsh-advisor-command-icon{flex:none;color:var(--dsw-alias-label-secondary,#a4a4a4);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}",
+      ".dsh-advisor-command-line{flex:1 1 auto;min-width:0;font-weight:600;word-break:break-word;}",
+      ".dsh-advisor-command-state{flex:none;color:var(--dsw-alias-label-secondary,#a4a4a4);}",
+      ".dsh-advisor-command-body{margin:0;max-height:40vh;overflow:auto;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-primary,CanvasText);}",
       ".dsh-advisor-select-compact{max-width:min(320px,100%);}",
       ".dsh-advisor-head{display:flex;flex-direction:column;gap:2px;}",
       ".dsh-advisor-title{font-size:14px;font-weight:600;}",
@@ -645,7 +668,7 @@ window.__ModuleLoader__.load({
     let SETTINGS_MODES = ["off", "shadow", "advisory"];
     let SETTINGS_SCOPES = ["off", "summary", "full"];
 
-    /** 回合结束后的自动徵询方式，与 settings.js 一致。 */
+    /** 回合结束后的自动征询方式，与 settings.js 一致。 */
     let SETTINGS_POST_ANSWER = ["off", "card"];
 
     /** 「记录发送内容」的取值，与 settings.js 一致。 */
@@ -759,6 +782,91 @@ window.__ModuleLoader__.load({
         if (out.length >= 50) break;
       }
       return out;
+    }
+
+    /**
+     * 保存态 → 真实生效态（与 host 半 `lib/command-text.js` 的 `effectiveStateOf` 同语义）。
+     * 设置页摘要必须显示这个，而不是只显示保存的 mode（审计 USIM-U2-08）。
+     * @param {any} settings
+     * @returns {{ effective: "on" | "shadow" | "off", reason: "mode" | "unconfigured" | null, key: string }}
+     */
+    function effectiveState(settings) {
+      let mode =
+        settings?.mode === "advisory" || settings?.mode === "shadow" ? settings.mode : "off";
+      let provider = asString(settings?.provider).trim();
+      let model = asString(settings?.model).trim();
+      let configured = provider !== "" && model !== "";
+      if (mode === "off") {
+        return { effective: "off", reason: "mode", key: "settings.effective.off.mode" };
+      }
+      if (!configured) {
+        return {
+          effective: "off",
+          reason: "unconfigured",
+          key: "settings.effective.off.unconfigured",
+        };
+      }
+      if (mode === "shadow") {
+        return { effective: "shadow", reason: null, key: "settings.effective.shadow" };
+      }
+      return { effective: "on", reason: null, key: "settings.effective.on" };
+    }
+
+    /**
+     * 宿主的命令节点 → 原始命令行（`/advisor status`）。
+     * `node.args` 是宿主 `command/run.args` 原文（含分隔空白，管理员默认记录）。
+     * @param {any} node
+     * @returns {string}
+     */
+    function commandLineOf(node) {
+      if (node === null || node === undefined) return "";
+      let name = asString(node.name);
+      let args = typeof node.args === "string" ? node.args.trim() : "";
+      return args === "" ? `/${name}` : `/${name} ${args}`;
+    }
+
+    /**
+     * 宿主的命令节点 → 插件命令卡片的展示数据。
+     *
+     * 宿主通用命令卡片只显示 `node.name`、单行 summary 被省略号截断、多行正文要点开第二层
+     * 折叠（`GenericCommandCard.tsx`）。所以插件自己的卡片把「命令行 + 完整多行正文」一次
+     * 给全（审计 USIM-U2-07）：正文不再省略、也不再要求用户猜到可以点开。
+     * @param {any} node
+     * @returns {{ line: string, state: "running" | "ok" | "error", body: string, hasEcho: boolean }}
+     */
+    function commandCardView(node) {
+      let line = commandLineOf(node);
+      let name = asString(node?.name);
+      let outcome = node?.outcome;
+      if (outcome === null || typeof outcome !== "object") {
+        return { line: line, state: "running", body: "", hasEcho: false };
+      }
+      /** @type {"error" | "ok"} */
+      let state = outcome.kind === "error" ? "error" : "ok";
+      let text = asString(outcome.text).trim();
+      if (text === "") return { line: line, state: state, body: "", hasEcho: false };
+      let lines = text.split("\n");
+      let first = lines[0].trim();
+      // host 半的命令回执第一行就是原始命令行；卡片标头已经有同一行，正文去掉它。
+      let hasEcho = name !== "" && first.startsWith(`/${name}`);
+      let body = hasEcho ? lines.slice(1).join("\n").trim() : text;
+      return { line: line, state: state, body: body, hasEcho: hasEcho };
+    }
+
+    /**
+     * 本地命令执行回执（宿主 client 事件 `command/executed`）：只处理 advisor。
+     * 事件只在本浏览器本地提交时触发（换 tab / 另一客户端不会收到），所以不会把
+     * 别人的历史命令弹出来。
+     * @param {unknown} name
+     * @param {any} result
+     * @returns {{ tone: "ok" | "error", text: string } | null}
+     */
+    function receiptOf(name, result) {
+      if (name !== "advisor") return null;
+      /** @type {"ok" | "error"} */
+      let tone = result?.kind === "error" ? "error" : "ok";
+      let text = asString(result?.text).trim();
+      return text === "" ? null : { tone: tone, text: text };
     }
 
     /**
@@ -1305,7 +1413,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 顾问线展开后的「本次徵询」摘要：触发方式 · 时间 · 模型 · 字符数 · 用量/成本。
+     * 顾问线展开后的「本次征询」摘要：触发方式 · 时间 · 模型 · 字符数 · 用量/成本。
      * @param {any} record
      * @param {(key: string) => string} t
      * @returns {string}
@@ -1354,10 +1462,27 @@ window.__ModuleLoader__.load({
     // toast 组件（属于 shell.overlay；没有提示时返回 null）
     // ------------------------------------------------------------------
 
-    /** @param {any} props */
+    /**
+     * shell.overlay 里的轻提示 + 命令回执面板。
+     *
+     * - 普通 toast（选中模型、设置成功等）：一行、4 秒后自动消失（旧的反馈路径不动）。
+     * - **命令回执**（`mode: "receipt"`）：`/advisor status|doctor` 这类多行输出一次给全，
+     *   不自动消失（长文本 4 秒读不完），保留到用户关闭或下一条回执替换它。
+     *   这是审计 USIM-U2-07 允许的「宿主的命令回执/toast」通道：命令节点在宿主 Chat 里
+     *   被折叠进 process 分组，插件无法展开分组，所以输出必须另有一条立即可见的通路。
+     * @param {any} props slot props：`store` + locale 的 `t`
+     * @returns {any}
+     */
     function AdvisorToast(props) {
+      let t =
+        typeof props.t === "function"
+          ? props.t
+          : function passthroughKey(/** @type {string} */ key) {
+              return key;
+            };
       let toast = React.useSyncExternalStore(props.store.subscribe, props.store.getSnapshot);
       let entryId = toast ? toast.id : null;
+      let receipt = toast !== null && toast.mode === "receipt";
       let shownState = React.useState(false);
       let shown = shownState[0];
       let setShown = shownState[1];
@@ -1370,6 +1495,12 @@ window.__ModuleLoader__.load({
         let raise = setTimeout(() => {
           setShown(true);
         }, 10);
+        if (receipt) {
+          // 回执不自动消失（多行输出要留到用户读完/复制完）；只清理淡入定时器。
+          return () => {
+            clearTimeout(raise);
+          };
+        }
         let timer = setTimeout(() => {
           props.store.set(null);
         }, TOAST_MS);
@@ -1377,7 +1508,7 @@ window.__ModuleLoader__.load({
           clearTimeout(raise);
           clearTimeout(timer);
         };
-      }, [entryId, props.store]);
+      }, [entryId, props.store, receipt]);
 
       if (!toast) return null;
       let tone = toast.tone === "error" ? "error" : toast.tone === "ok" ? "ok" : "info";
@@ -1387,6 +1518,48 @@ window.__ModuleLoader__.load({
           : tone === "ok"
             ? "var(--dsw-alias-state-success-primary,#2f9e63)"
             : "var(--dsw-alias-label-secondary,GrayText)";
+
+      if (receipt) {
+        return h(
+          "section",
+          {
+            className: "dsh-advisor-toast dsh-advisor-receipt",
+            role: "status",
+            "aria-label": t("receipt.title"),
+            "data-advisor-receipt": "",
+            "data-tone": tone,
+            style: {
+              borderLeft: `3px solid ${color}`,
+              opacity: shown ? 1 : 0,
+              transform: shown ? "translateY(0)" : "translateY(8px)",
+            },
+          },
+          h(
+            "div",
+            { className: "dsh-advisor-receipt-head", key: "head" },
+            h("span", { className: "dsh-advisor-receipt-title", key: "title" }, t("receipt.title")),
+            h(
+              "button",
+              {
+                className: "dsh-advisor-receipt-close",
+                "aria-label": t("receipt.close"),
+                key: "close",
+                onClick: () => {
+                  props.store.set(null);
+                },
+                type: "button",
+              },
+              "✕",
+            ),
+          ),
+          h(
+            "pre",
+            { className: "dsh-advisor-receipt-body", key: "body", "data-advisor-receipt-body": "" },
+            asString(toast.message),
+          ),
+        );
+      }
+
       return h(
         "div",
         {
@@ -1409,6 +1582,75 @@ window.__ModuleLoader__.load({
           tone === "error" ? "!" : tone === "ok" ? "✓" : "i",
         ),
         h("span", { className: "dsh-advisor-toast-text" }, asString(toast.message)),
+      );
+    }
+
+    // ------------------------------------------------------------------
+    // 命令卡片（conversation.chat.commandview，key = advisor）
+    // ------------------------------------------------------------------
+
+    /**
+     * `/advisor` 命令卡片：原始命令行 + 完整多行输出。
+     *
+     * 宿主 `CommandNodeView` 把 command 节点渲染成 `GenericCommandCard`：只显示
+     * `node.name`（看不到用户敲了 status 还是 doctor）、单行 summary 被省略号截断、
+     * 多行正文要点开第二层折叠。宿主的 `conversation.chat.commandview` 是 keyed 子 slot
+     * （按命令名分发），插件在这里一次把这两件事做好（审计 USIM-U2-07）。
+     *
+     * 注意：命令节点仍会被宿主 Chat 折叠进 process 分组（「已完成分析」标题），插件没有
+     * 能力改变分组；所以立刻可见的输出另走 shell.overlay 的命令回执。
+     * @param {any} props slot props：owner `{ node }` + locale 的 `t`
+     * @returns {any}
+     */
+    function AdvisorCommandCard(props) {
+      let t =
+        typeof props.t === "function"
+          ? props.t
+          : function passthroughKey(/** @type {string} */ key) {
+              return key;
+            };
+      let view = commandCardView(props?.node);
+      let running = view.state === "running";
+      let body = running ? "" : view.body;
+      let children = [
+        h(
+          "div",
+          { className: "dsh-advisor-command-head", key: "head" },
+          h("span", { className: "dsh-advisor-command-icon", key: "icon" }, ">_"),
+          h("span", { className: "dsh-advisor-command-line", key: "line" }, view.line),
+          running
+            ? h(
+                "span",
+                { className: "dsh-advisor-command-state", key: "state" },
+                t("command.running"),
+              )
+            : null,
+        ),
+      ];
+      if (body !== "") {
+        children.push(
+          h(
+            "pre",
+            {
+              className: "dsh-advisor-command-body",
+              key: "body",
+              "data-advisor-command-body": "",
+            },
+            body,
+          ),
+        );
+      }
+      return h(
+        "div",
+        {
+          className: "dsh-advisor-command",
+          role: "group",
+          "aria-label": t("command.card.aria"),
+          "data-advisor-command-card": "",
+          "data-command-line": view.line,
+          "data-state": view.state,
+        },
+        children,
       );
     }
 
@@ -3622,8 +3864,34 @@ window.__ModuleLoader__.load({
           h("option", { key: value, value: value }, t(`settings.mode.${value}`)),
         ),
       );
+      // 生效状态徽标：保存的 mode 只是偏好（advisory + 没选模型时宿主会直接跳过），
+      // 摘要必须显示**真实生效状态与停用原因**（审计 USIM-U2-08）。
+      // 用 `snap.settings`（宿主回来的保存值）而不是 `draft`：草稿里的改动尚未生效。
+      let savedState = effectiveState(snap.settings);
+      let effectiveChip = h(
+        "span",
+        {
+          className: "dsh-advisor-effective",
+          "data-advisor-effective": savedState.effective,
+          "data-advisor-effective-reason": savedState.reason === null ? "" : savedState.reason,
+          key: "effective",
+          title: t("settings.effective.note"),
+        },
+        t(savedState.key),
+      );
+      let modeSummaryRow = h("div", { className: "dsh-advisor-summary-row", key: "mode" }, [
+        h(
+          "span",
+          { className: "dsh-advisor-summary-label", key: "label" },
+          t("settings.summary.mode"),
+        ),
+        h("span", { className: "dsh-advisor-summary-mode", key: "value" }, [
+          modeSelect,
+          effectiveChip,
+        ]),
+      ]);
       let summary = h("div", { className: "dsh-advisor-summary", "data-advisor-summary": "" }, [
-        summaryRow(t("settings.summary.mode"), modeSelect),
+        modeSummaryRow,
         summaryRow(t("settings.summary.route"), routeText),
         summaryRow(t("settings.summary.budget"), budgetText),
       ]);
@@ -3730,8 +3998,20 @@ window.__ModuleLoader__.load({
           "settings.confirm": "跨 provider 发送",
           "settings.confirm.run": "确认跨 provider 发送",
           "settings.confirm.running": "确认中…",
-          "settings.confirm.hint": "把当前 provider 加进确认名单；跨 provider 徵询不再中断。",
+          "settings.confirm.hint": "把当前 provider 加进确认名单；跨 provider 征询不再中断。",
           "settings.confirm.done": "已确认 {provider}",
+          "settings.effective.aria": "生效状态",
+          "settings.effective.on": "已生效",
+          "settings.effective.shadow": "影子：只记账",
+          "settings.effective.off": "已关闭",
+          "settings.effective.off.unconfigured": "已关闭：未选择顾问模型",
+          "settings.effective.off.mode": "已关闭：模式为 off",
+          "settings.effective.note": "设置里保存的是偏好；这里显示的是真实生效状态。",
+          "command.running": "正在运行…",
+          "command.failed": "执行失败",
+          "command.card.aria": "顾问命令输出",
+          "receipt.title": "顾问命令回执",
+          "receipt.close": "关闭回执",
           "settings.error.preview": "预览失败，稍后重试",
           "settings.error.confirm": "确认失败，稍后重试",
           "settings.tracePrompt": "记录发送内容",
@@ -3769,7 +4049,7 @@ window.__ModuleLoader__.load({
           "tail.trace.previewFull": "实际发送（脱敏后，共 {chars} 字符）",
           "tail.trace.previewNone":
             "这条记录没有保存发送内容（可能是旧记录，或已在高级设置里关闭记录）。",
-          "settings.desc": "基础设置开箱即用；高级项默认折叠。保存后的改动对下一次徵询生效。",
+          "settings.desc": "基础设置开箱即用；高级项默认折叠。保存后的改动对下一次征询生效。",
           "settings.group.basic": "基础设置",
           "settings.group.budget": "预算与限额",
           "settings.group.advanced": "高级设置",
@@ -3777,7 +4057,7 @@ window.__ModuleLoader__.load({
           "settings.mode.shadow": "影子",
           "settings.mode.advisory": "顾问",
           "settings.mode.shadowHint": "会调用顾问并记账，但不会把建议放进对话；适合先观察。",
-          "settings.mode.advisoryHint": "会徵询顾问，并把建议交给模型；模型可以采纳或忽略。",
+          "settings.mode.advisoryHint": "会征询顾问，并把建议交给模型；模型可以采纳或忽略。",
           "settings.provider": "服务商",
           "settings.model": "模型",
           "settings.budget.maxCallsPerTurn": "每回合调用上限",
@@ -3836,7 +4116,7 @@ window.__ModuleLoader__.load({
           "settings.advanced.maxInputCharsHint":
             "一次最多发送多少字符的会话内容；超出会保留首尾、省略中间。",
           "settings.advanced.sessionCapHint": "一个会话最多展示几条建议；到顶后只保留 blocker 级。",
-          "settings.help.calls": "超过上限就跳过本次徵询；0 = 不限。",
+          "settings.help.calls": "超过上限就跳过本次征询；0 = 不限。",
           "settings.help.tech": "技术名：{key}",
           "settings.help.open": "查看 {field} 的说明",
           "settings.help.defaultOn": "默认：开",
@@ -3885,6 +4165,19 @@ window.__ModuleLoader__.load({
           "settings.confirm.hint":
             "Add the current provider to the confirmed list so cross-provider consultations stop being interrupted.",
           "settings.confirm.done": "Confirmed {provider}",
+          "settings.effective.aria": "Effective status",
+          "settings.effective.on": "In effect",
+          "settings.effective.shadow": "Shadow: log only",
+          "settings.effective.off": "Off",
+          "settings.effective.off.unconfigured": "Off: no advisor model selected",
+          "settings.effective.off.mode": "Off: mode is off",
+          "settings.effective.note":
+            "Settings save a preference; this shows what actually takes effect.",
+          "command.running": "Running…",
+          "command.failed": "Failed",
+          "command.card.aria": "Advisor command output",
+          "receipt.title": "Advisor command receipt",
+          "receipt.close": "Dismiss receipt",
           "settings.error.preview": "Preview failed — try again later",
           "settings.error.confirm": "Confirmation failed — try again later",
           "settings.tracePrompt": "Keep sent content",
@@ -4068,6 +4361,44 @@ window.__ModuleLoader__.load({
           message: text,
           tone: tone === "error" || tone === "ok" ? tone : "info",
         });
+      }
+
+      /**
+       * 命令回执（多行、常驻到关闭）。与 toast 共用同一个 overlay 槽：
+       * 后一条替换前一条，避免右下角堆叠。
+       * @param {string} message
+       * @param {"ok" | "error" | "info"} [tone]
+       */
+      function showReceipt(message, tone) {
+        let text = asString(message).trim();
+        if (text === "") return;
+        toastSeq += 1;
+        toastStore.set({
+          id: toastSeq,
+          message: text,
+          mode: "receipt",
+          tone: tone === "error" || tone === "ok" ? tone : "info",
+        });
+      }
+
+      /**
+       * 宿主的本地命令回执事件（`command/executed`，见
+       * `dsh-client-ui-commands/src/client/service.ts` 的 `notifyExecuted`）。
+       *
+       * **参数顺序必须是宿主声明 `(sessionId, name, result)`**：监听器是被
+       * `listener(sessionId, name, result)` 直接调用的；写成 `(name, result)` 会把
+       * sessionId 当命令名，结果永远收不到回执（审计 USIM-U2-07 修复里最隐蔽的一处）。
+       * 只有本浏览器实际提交成功才触发，因此不会把历史/别的客户端的命令弹出来。
+       * @param {any} _sessionId
+       * @param {any} name
+       * @param {any} result
+       */
+      function onCommandExecuted(_sessionId, name, result) {
+        let receipt = receiptOf(name, result);
+        if (receipt === null) return;
+        // 测试观测点（`__test.lastCommandReceipt` 读取）；生产路径没有额外副作用。
+        lastCommandReceipt = receipt;
+        showReceipt(receipt.text, receipt.tone);
       }
 
       /**
@@ -4505,6 +4836,39 @@ window.__ModuleLoader__.load({
       );
 
       /**
+       * `/advisor` 命令卡片：宿主 command 节点的 keyed 子 slot（`CommandNodeView` 用
+       * `entryKey: node.name` 分发）。key 必须是命令名，否则永远落到宿主的通用卡片上。
+       * 槽不存在时宿主自己的 fallback 仍然生效（只是回到单行省略号），不影响插件激活。
+       */
+      ctx.effect(
+        () =>
+          ctx.slots.inject("conversation.chat.commandview", () =>
+            ctx.slots.register(
+              {
+                name: "conversation.chat.commandview",
+                id: "advisor-command",
+                key: COMMAND_NAME,
+                locale: NS,
+              },
+              AdvisorCommandCard,
+            ),
+          ),
+        "advisor: command card",
+      );
+
+      // 命令回执：宿主的本地执行确认事件（缺失时静默降级）。
+      try {
+        if (typeof ctx.on === "function") {
+          ctx.effect(
+            () => ctx.on("command/executed", onCommandExecuted),
+            "advisor: command receipt",
+          );
+        }
+      } catch (_error) {
+        /* 旧宿主没有这个事件：卡片仍可读，只是少了即时回执 */
+      }
+
+      /**
        * 装饰 `/advisor`：宿主 popupSelect 打开模型选择器。
        * 必须等 commandUi 服务就绪（它不一定在 apply 时已挂载），否则装饰会被静默跳过。
        * @param {any} scope
@@ -4569,6 +4933,11 @@ window.__ModuleLoader__.load({
         formatMoneyInput: formatMoneyInput,
         convertCurrency: convertCurrency,
         normalizeSettingsView: normalizeSettingsView,
+        effectiveState: effectiveState,
+        commandLineOf: commandLineOf,
+        commandCardView: commandCardView,
+        receiptOf: receiptOf,
+        lastCommandReceipt: () => lastCommandReceipt,
         normalizeOptions: normalizeOptions,
         normalizeModels: normalizeModels,
         normalizeModelInfo: normalizeModelInfo,

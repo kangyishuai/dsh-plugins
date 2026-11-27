@@ -2,7 +2,7 @@
 // 账本：宿主**不**给额外模型调用记 usage（只有主循环写 assistant/message 的 usage），
 // 所以顾问花了多少 token 必须由我们自己记账。这里同时是四级预算的计数器来源。
 //
-// 落盘：`<dataRoot>/advisor/usage.jsonl`，一次徵询一行；文件只追加，超过上限时滚动重命名。
+// 落盘：`<dataRoot>/advisor/usage.jsonl`，一次征询一行；文件只追加，超过上限时滚动重命名。
 // 追加走 `appendJsonLine`（O_APPEND + 进程内单写队列），不再「读全文 + 覆盖」——
 // 后者既不是原子写，并发回合结束时还会互相覆盖丢行（审计 AUD-ADV-01）。
 import { mkdir, readFile, stat } from "node:fs/promises";
@@ -189,7 +189,7 @@ export function createLedger(options) {
     advicePath,
 
     /**
-     * 记录一次徵询（先落盘再更新内存；落盘失败不让调用失败）。
+     * 记录一次征询（先落盘再更新内存；落盘失败不让调用失败）。
      * @param {LedgerEntry} entry
      * @returns {Promise<void>}
      */
@@ -252,7 +252,7 @@ export function createLedger(options) {
     },
 
     /**
-     * 追加一条建议到跨会话账本（失败只告警，不影响徵询）。
+     * 追加一条建议到跨会话账本（失败只告警，不影响征询）。
      * @param {any} entry
      * @returns {Promise<void>}
      */

@@ -4,7 +4,7 @@
 // 为什么需要：会话级上限挡不住「开十个会话各花满一次」，而日报表又要跨会话累计。
 // 落盘 `<dataRoot>/advisor/budget.json`，按本地日键滚动；写入走临时文件 + rename。
 //
-// 并发（审计 AUD-ADV-02）：`add` 是读-改-写，必须串行；否则两个会话同时徵询会各自读到
+// 并发（审计 AUD-ADV-02）：`add` 是读-改-写，必须串行；否则两个会话同时征询会各自读到
 // 同一份基线、后写覆盖前写，工作区闸被多放行。这里用 per-path 队列 + 唯一 tmp + rename。
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";

@@ -59,7 +59,7 @@ describe("turnFeatures", () => {
 });
 
 describe("buildDecision", () => {
-  it("徵询过：带建议字段，原因码为空，outcome 待回填", () => {
+  it("征询过：带建议字段，原因码为空，outcome 待回填", () => {
     const record = buildDecision({
       sessionId: "s1",
       turn: 3,
@@ -76,7 +76,7 @@ describe("buildDecision", () => {
     assert.equal(record.usedTools, true);
   });
 
-  it("没徵询：记原因码与原因文本，建议字段为空", () => {
+  it("没征询：记原因码与原因文本，建议字段为空", () => {
     const record = buildDecision({
       sessionId: "s1",
       turn: 4,
@@ -167,7 +167,7 @@ describe("summarize", () => {
   records[0].outcome = "accepted";
   records[2].outcome = "user-typed-other";
 
-  it("徵询率与采纳率分开算", () => {
+  it("征询率与采纳率分开算", () => {
     const stats = summarize(records);
     assert.equal(stats.turns, 3);
     assert.equal(stats.consulted, 2);
@@ -184,10 +184,10 @@ describe("summarize", () => {
     );
     assert.equal(long.turns, 2);
     assert.equal(long.consulted, 1);
-    // 有工具 + 长回答 + 无报错却没徵询 → 疑似漏徵询
+    // 有工具 + 长回答 + 无报错却没征询 → 疑似漏征询
     assert.equal(stats.missed.length, 1);
     assert.equal(stats.missed[0].turn, 2);
-    // 徵询了但用户另打字 → 疑似无效徵询
+    // 征询了但用户另打字 → 疑似无效征询
     assert.equal(stats.overConsulted.length, 1);
     assert.equal(stats.skipCodes["skipped-empty"], 1);
   });
@@ -276,7 +276,7 @@ describe("summarize：outcome 覆盖率（AUD-ADV-07）", () => {
     assert.ok(Math.abs(stats.outcomeCoverage - 0.75) < 1e-9);
   });
 
-  it("没有徵询时覆盖率为 null（不是 0，避免读成「一条都没采纳」）", () => {
+  it("没有征询时覆盖率为 null（不是 0，避免读成「一条都没采纳」）", () => {
     const stats = summarize([buildDecision({ sessionId: "s", turn: 1 })]);
     assert.equal(stats.outcomeCoverage, null);
     assert.equal(stats.pendingOutcomes, 0);

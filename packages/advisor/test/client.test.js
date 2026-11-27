@@ -323,3 +323,129 @@ describe("injected styles: theme tokens", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// 命令输出 / 生效状态（审计 USIM-U2-07 / USIM-U2-08）
+// ---------------------------------------------------------------------------
+
+describe("command line and card view", () => {
+  it("rebuilds the original command line from name + args", () => {
+    assert.equal(api.commandLineOf({ name: "advisor", args: " status" }), "/advisor status");
+    assert.equal(api.commandLineOf({ name: "advisor", args: "  doctor  " }), "/advisor doctor");
+    assert.equal(api.commandLineOf({ name: "advisor", args: "" }), "/advisor");
+    assert.equal(api.commandLineOf({ name: "advisor", args: null }), "/advisor");
+    assert.equal(api.commandLineOf({ name: null, args: null }), "/");
+    assert.equal(api.commandLineOf(null), "");
+  });
+
+  it("uses the settled text as body and strips the plugin's command echo line", () => {
+    const view = api.commandCardView({
+      name: "advisor",
+      args: " status",
+      outcome: { kind: "success", text: "/advisor status\n模式：off\n顾问：未配置" },
+    });
+    assert.equal(view.line, "/advisor status");
+    assert.equal(view.state, "ok");
+    assert.equal(view.body, "模式：off\n顾问：未配置");
+
+    const error = api.commandCardView({
+      name: "advisor",
+      args: " on",
+      outcome: { kind: "error", text: "/advisor on\n还没有选顾问模型。用 /advisor 打开选择器" },
+    });
+    assert.equal(error.state, "error");
+    assert.equal(error.body, "还没有选顾问模型。用 /advisor 打开选择器");
+
+    // 没有 echo 行时整段都是正文（兼容旧文本 / 其它入口）。
+    const plain = api.commandCardView({
+      name: "advisor",
+      args: " report",
+      outcome: { kind: "success", text: "顾问报告（跨会话）\n累计 3 条建议" },
+    });
+    assert.equal(plain.body, "顾问报告（跨会话）\n累计 3 条建议");
+
+    // 还在跑：没有正文，状态是 running。
+    const running = api.commandCardView({ name: "advisor", args: " doctor", outcome: null });
+    assert.equal(running.state, "running");
+    assert.equal(running.body, "");
+  });
+
+  it("keeps multi-line output intact (no truncation, no ellipsis)", () => {
+    const lines = [
+      "模式：advisory",
+      "生效：已生效：会征询顾问",
+      "顾问：p/m",
+      "本会话：2 次",
+      "最近一次：reviewed",
+    ];
+    const view = api.commandCardView({
+      name: "advisor",
+      args: " status",
+      outcome: { kind: "success", text: `/advisor status\n${lines.join("\n")}` },
+    });
+    assert.equal(view.body.split("\n").length, lines.length);
+    assert.doesNotMatch(view.body, /…/u);
+    assert.match(view.body, /^生效：/mu);
+  });
+});
+
+describe("receipt of a local command execution", () => {
+  it("only reacts to the advisor command", () => {
+    assert.equal(api.receiptOf("btw", { kind: "success", text: "OK" }), null);
+    assert.equal(api.receiptOf(undefined, { kind: "success", text: "OK" }), null);
+  });
+
+  it("carries the full multi-line text and the error tone", () => {
+    const ok = api.receiptOf("advisor", {
+      kind: "success",
+      text: "/advisor doctor\n✅ 宿主 llm 服务可用",
+    });
+    assert.equal(ok.tone, "ok");
+    assert.equal(ok.text, "/advisor doctor\n✅ 宿主 llm 服务可用");
+    const failed = api.receiptOf("advisor", {
+      kind: "error",
+      text: "/advisor on\n还没有选顾问模型。",
+    });
+    assert.equal(failed.tone, "error");
+  });
+
+  it("ignores malformed or empty results", () => {
+    assert.equal(api.receiptOf("advisor", null), null);
+    assert.equal(api.receiptOf("advisor", { kind: "success" }), null);
+    assert.equal(api.receiptOf("advisor", { kind: "success", text: "   " }), null);
+  });
+});
+
+describe("effective advisor state (saved vs in effect)", () => {
+  it("reports off with the real reason instead of echoing the saved mode", () => {
+    const state = api.effectiveState({ mode: "advisory", provider: "", model: "" });
+    assert.equal(state.effective, "off");
+    assert.equal(state.reason, "unconfigured");
+    assert.equal(state.key, "settings.effective.off.unconfigured");
+  });
+
+  it("covers on / shadow / off-mode", () => {
+    assert.deepEqual(api.effectiveState({ mode: "advisory", provider: "p", model: "m" }), {
+      effective: "on",
+      reason: null,
+      key: "settings.effective.on",
+    });
+    assert.deepEqual(api.effectiveState({ mode: "shadow", provider: "p", model: "m" }), {
+      effective: "shadow",
+      reason: null,
+      key: "settings.effective.shadow",
+    });
+    assert.deepEqual(api.effectiveState({ mode: "off", provider: "p", model: "m" }), {
+      effective: "off",
+      reason: "mode",
+      key: "settings.effective.off.mode",
+    });
+  });
+
+  it("never throws on malformed settings", () => {
+    const state = api.effectiveState(null);
+    assert.equal(state.effective, "off");
+    assert.equal(state.reason, "mode");
+    assert.equal(api.effectiveState({ mode: "nope", provider: 3, model: 4 }).effective, "off");
+  });
+});

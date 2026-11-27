@@ -610,6 +610,15 @@ const main = async () => {
       ok: /顾问报告|还没有任何建议记录/u.test(joined),
       detail: "",
     });
+    // 审计 USIM-U2-07：命令回执的第一行必须是用户实际敲的命令行（宿主的通用卡片
+    // 只显示命令名，所以文本自己带上「我敲了什么」）。
+    const firstLines = outputs.map((text) => String(text).split("\n")[0].trim());
+    checks.push({
+      name: "/advisor 命令回执第一行是原始命令行（日志）",
+      ok:
+        outputs.length >= 4 && firstLines.every((line) => /^\/advisor(?:\s+[^\n]+)?$/u.test(line)),
+      detail: `firsts=${JSON.stringify(firstLines)}`,
+    });
     const ledger = await readIfExists(join(home, "advisor", "usage.jsonl"));
     const advice = await readIfExists(join(home, "advisor", "advice.jsonl"));
     checks.push({

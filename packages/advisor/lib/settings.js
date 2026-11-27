@@ -1,5 +1,5 @@
 // @ts-check
-// 插件设置：落在 DSH 数据根下的一个 JSON 文件，host 每次徵询前重读（1s 缓存）。
+// 插件设置：落在 DSH 数据根下的一个 JSON 文件，host 每次征询前重读（1s 缓存）。
 // 单独成文件的理由与 next-step 相同：冒烟脚本改文件即可验证行为，不需要重启宿主。
 // 数据根必须可注入（config.dataRoot > $DSH_HOME > ~/.dsh），见 docs/plugin-conventions.md §2。
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
@@ -10,7 +10,7 @@ import { fromUsd, normalizeCurrency } from "./money.js";
 /** 设置文件名（位于数据根下）。 */
 export const SETTINGS_FILE = "advisor.settings.json";
 
-/** 三种模式：关闭 / 影子（只记账不回灌）/ 顾问（正常徵询）。 */
+/** 三种模式：关闭 / 影子（只记账不回灌）/ 顾问（正常征询）。 */
 export const MODES = Object.freeze(/** @type {const} */ (["off", "shadow", "advisory"]));
 
 /** 「记录发送内容」的取值：首尾预览 / 不记录。 */

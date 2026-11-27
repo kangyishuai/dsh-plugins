@@ -142,7 +142,7 @@ export function renderToolOutput(_args, value) {
     return [{ type: "text", text: `顾问认为无需建议${tail === "" ? "" : `\n${tail}`}` }];
   }
   if (status === "skipped") {
-    return [{ type: "text", text: `顾问未徵询：${String(value?.reason ?? value?.code ?? "")}` }];
+    return [{ type: "text", text: `顾问未征询：${String(value?.reason ?? value?.code ?? "")}` }];
   }
   return [
     {
