@@ -364,7 +364,10 @@ export function createArtifactLibrary({ store, routePrefix = "/artifacts" }) {
           previewUrl: rowMeta.previewUrl,
           downloadUrl: rowMeta.downloadUrl,
           // 版本自身的来源：能反查"这一版是哪次线程/哪次工具调用产出的"。
-          versionSource: found.meta.versions[found.version - 1]?.source ?? null,
+          // 按 version 查而不是 `versions[version - 1]`：O_EXCL 抢占/崩溃占位会让版本号跳号
+          // （如 [1, 3]），下标会静默取空、丢掉来源追溯（复审 F6）。
+          versionSource:
+            found.meta.versions.find((item) => item.version === found.version)?.source ?? null,
         };
         if (found.kind === "html") payload.html = found.html;
         if (isTextKind(found.kind)) payload.text = found.text;

@@ -12,7 +12,11 @@
 //   5) 刷新页面后恢复（丢 params 时回退到最近打开的工件），仍是 v3；
 //   6) 需求 10：按 projectId 打开库视图（`__dshArtifactsOpenTab({projectId})`）只列本项目产物；
 //      多类型预览：markdown 走 <pre>、图片走 <img> 且真的加载；
-//   7) 路由：带 cookie 200 / 无 cookie 401 / 未知 id 404 / 封面 200 / 编码斜杠 400。
+//   7) 路由：带 cookie 200 / 无 cookie 401 / 未知 id 404 / 封面 200 / 编码斜杠 400；
+//   8) 面板预览硬化：srcDoc 已注入文档级 CSP、sandbox 不含 allow-scripts（复审 B1）。
+//
+// 时间线行（tool.call.toolview）需要真实工具调用；本冒烟不触发模型，所以中文 id/中性行
+// 的解析由 `packages/artifacts/test/client.test.js` 用 node:vm 跑真实 client.js 覆盖。
 //
 // 前置：本机有 `dsh` 与 `ego-browser`；缺任意一个打印 SKIP（退出码 0）。
 import { spawn } from "node:child_process";
@@ -345,12 +349,31 @@ await page.evaluate(() => {
   if (card) card.click();
 });
 await page.waitForTimeout(2200);
-const panel = await page.evaluate(() => ({
-  frames: document.querySelectorAll("[data-dsh-artifact-frame]").length,
-  version: document.querySelector("[data-dsh-artifact-version]")?.textContent ?? null,
-  back: Boolean(document.querySelector("[data-dsh-artifact-back]")),
-}));
-check("点卡片打开面板", panel.frames === 1 && panel.back === true, JSON.stringify(panel));
+const panel = await page.evaluate(() => {
+  const frame = document.querySelector("[data-dsh-artifact-frame]");
+  return {
+    frames: document.querySelectorAll("[data-dsh-artifact-frame]").length,
+    version: document.querySelector("[data-dsh-artifact-version]")?.textContent ?? null,
+    back: Boolean(document.querySelector("[data-dsh-artifact-back]")),
+    sandbox: frame?.getAttribute("sandbox") ?? null,
+    srcdoc: frame?.getAttribute("srcdoc") ?? "",
+  };
+});
+check(
+  "点卡片打开面板",
+  panel.frames === 1 && panel.back === true,
+  JSON.stringify({ ...panel, srcdoc: panel.srcdoc.slice(0, 120) }),
+);
+// AUD-ARTIFACTS-03 / 复审 B1：预览 iframe 的文档级 CSP 真的进了 srcDoc（且在我们可控的
+// 头部位置），sandbox 不带 allow-scripts（脚本不可能执行，CSP 是第二道闸）。
+check(
+  "面板预览硬化：srcDoc 含 CSP、sandbox 无 allow-scripts",
+  panel.sandbox !== null &&
+    !/allow-scripts/u.test(panel.sandbox) &&
+    /http-equiv="Content-Security-Policy"/u.test(panel.srcdoc) &&
+    /base-uri 'none'/u.test(panel.srcdoc),
+  JSON.stringify({ sandbox: panel.sandbox, srcdoc: panel.srcdoc.slice(0, 200) }),
+);
 await page.reload({ timeout: 120000 });
 await page.waitForTimeout(3500);
 const restored = await page.evaluate(() => ({

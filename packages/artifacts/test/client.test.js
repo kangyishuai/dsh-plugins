@@ -141,30 +141,104 @@ test("AUD-ARTIFACTS-01：行组件用 Unicode id 渲染，按钮可打开该 id"
   assert.deepEqual(opened, ["q3-报告-2026"]);
 });
 
-test("A-伪-5：list/read 的调用不渲染时间线行（publish/append 仍渲染）", async () => {
+/** 节点树里有没有"打开预览"按钮（info 行不该有）。 @param {any} node @returns {any} */
+function findOpenButton(node) {
+  if (node === null || node === undefined) return undefined;
+  if (typeof node !== "object") return undefined;
+  if (node?.props?.["data-dsh-artifact-open"] !== undefined) return node;
+  const children = node?.props?.children;
+  for (const child of Array.isArray(children) ? children : [children]) {
+    const hit = findOpenButton(child);
+    if (hit !== undefined) return hit;
+  }
+  return undefined;
+}
+
+test("B2：list/read 渲染紧凑中性行（整卡不消失、无预览按钮、不认领 id）", async () => {
   const client = await loadClient();
   const base = {
     rpc: async () => ({ ok: true, artifacts: [] }),
-    open: () => {},
+    open: () => {
+      throw new Error("list/read rows must not open the preview panel");
+    },
   };
+  // read：显示 id + 请求的版本；没有预览按钮；不能挂成写摘要行（data-dsh-artifact-row 只属于写 action）。
+  const readRow = client.__test.ArtifactRow({
+    ...base,
+    block: {
+      phase: "result",
+      kind: "tool-result",
+      call: {
+        name: "artifact",
+        argsRaw: JSON.stringify({ action: "read", id: "q3-报告-2026", version: 2 }),
+      },
+      content: [{ type: "text", text: "<h1>artifact body</h1>" }],
+    },
+  });
+  assert.equal(readRow?.props?.["data-dsh-artifact-row-info"], "read");
+  assert.equal(readRow?.props?.["data-dsh-artifact-row-info-state"], "ok");
+  assert.match(textOf(readRow), /Artifact/u);
+  assert.match(textOf(readRow), /读取/u);
+  assert.match(textOf(readRow), /q3-报告-2026 v2/u);
+  assert.equal(findOpenButton(readRow), undefined, "info row must not have a preview button");
+  assert.equal(readRow?.props?.["data-dsh-artifact-row"], undefined);
+
+  // list：解析结果首行的条数，给「N 项」。
+  const listRow = client.__test.ArtifactRow({
+    ...base,
+    block: {
+      phase: "result",
+      kind: "tool-result",
+      call: { name: "artifact", argsRaw: JSON.stringify({ action: "list" }) },
+      content: [{ type: "text", text: "3 artifact(s), 42 B total:\n- a · t · html · v1 · 1 B" }],
+    },
+  });
+  assert.equal(listRow?.props?.["data-dsh-artifact-row-info"], "list");
+  assert.match(textOf(listRow), /列表/u);
+  assert.match(textOf(listRow), /3 项/u);
+  assert.equal(findOpenButton(listRow), undefined);
+
+  // 空库也有中性行（不是整卡消失）。
+  const emptyRow = client.__test.ArtifactRow({
+    ...base,
+    block: {
+      phase: "result",
+      kind: "tool-result",
+      call: { name: "artifact", argsRaw: JSON.stringify({ action: "list" }) },
+      content: [{ type: "text", text: "No artifacts yet." }],
+    },
+  });
+  assert.match(textOf(emptyRow), /0 项/u);
+
+  // start 阶段只有 argsRaw：也要可见（宿主 start→result 会重渲染同一行）。
+  const started = client.__test.ArtifactRow({
+    ...base,
+    block: { phase: "start", argsRaw: JSON.stringify({ action: "list" }) },
+  });
+  assert.equal(started?.props?.["data-dsh-artifact-row-info"], "list");
+
+  // 失败信封：中性行 + 错误态（不是 null → 整卡空白）。
   for (const action of ["list", "read"]) {
-    const result = client.__test.ArtifactRow({
+    const failed = client.__test.ArtifactRow({
       ...base,
       block: {
         phase: "result",
         kind: "tool-result",
-        call: { name: "artifact", argsRaw: JSON.stringify({ action }) },
-        content: [{ type: "text", text: action === "list" ? "0 artifact(s):" : "<h1>x</h1>" }],
+        call: { name: "artifact", argsRaw: JSON.stringify({ action, id: "gone-000000" }) },
+        content: [
+          { type: "text", text: "artifact failed: unknown artifact or version: gone-000000" },
+        ],
+        isError: true,
       },
     });
-    assert.equal(result, null, `${action} must not render a timeline row`);
-    // start 阶段拿不到解析后的 args，但 argsRaw 里有 action，也不该渲染。
-    const started = client.__test.ArtifactRow({
-      ...base,
-      block: { phase: "start", argsRaw: JSON.stringify({ action }) },
-    });
-    assert.equal(started, null, `${action} (start phase) must not render a timeline row`);
+    assert.equal(failed?.props?.["data-dsh-artifact-row-info"], action);
+    assert.equal(failed?.props?.["data-dsh-artifact-row-info-state"], "error");
+    assert.match(textOf(failed), /失败/u);
+    assert.match(textOf(failed), /unknown artifact/u);
+    assert.equal(findOpenButton(failed), undefined);
   }
+
+  // 写 action 仍是原来的摘要行（有按钮）。
   const publish = client.__test.ArtifactRow({
     ...base,
     block: {
@@ -174,47 +248,76 @@ test("A-伪-5：list/read 的调用不渲染时间线行（publish/append 仍渲
       content: [{ type: "text", text: "artifact ok-abc123 · title · v1 · 3 B · html" }],
     },
   });
-  assert.ok(publish, "publish/append keep their timeline row");
+  assert.equal(publish?.props?.["data-dsh-artifact-row"], "ok-abc123");
+  assert.ok(findOpenButton(publish), "publish/append keep their preview button");
 });
 
-test("AUD-ARTIFACTS-03：srcDoc 渲染前注入等价 CSP meta（保留样式与图片能力）", async () => {
+test("B1：CSP meta 注入在任何不可信字节之前；sandbox 去掉 allow-scripts（含绕过对抗用例）", async () => {
   const client = await loadClient();
   const { withPanelCsp, htmlFrameProps } = client.__test;
-  assert.equal(typeof withPanelCsp, "function");
+  const META = '<meta http-equiv="Content-Security-Policy"';
+  const CSP_MARK = "Content-Security-Policy";
 
+  // 正常文档：DOCTYPE 之后、`<html>`/`<head>` 之前；样式与图片标记不被破坏。
   const page =
-    '<html><head><style>body{color:red}</style></head><body><img src="data:image/png;base64,AA"></body></html>';
+    '<!DOCTYPE html>\n<html><head><style>body{color:red}</style></head><body><img src="data:image/png;base64,AA"></body></html>';
   const injected = withPanelCsp(page);
-  assert.match(injected, /<meta http-equiv="Content-Security-Policy" content="[^"]+">/u);
-  assert.match(injected, /default-src 'none'/u);
-  assert.match(injected, /style-src 'unsafe-inline'/u);
-  assert.match(injected, /img-src data: blob:/u);
-  // meta 必须在 </head> 之前（否则浏览器可能不生效）。
-  assert.ok(injected.indexOf("Content-Security-Policy") < injected.indexOf("</head>"));
-  // 原有样式/图片标记不被破坏。
+  assert.ok(injected.startsWith(`<!DOCTYPE html>${META}`), injected.slice(0, 120));
+  assert.ok(injected.indexOf(CSP_MARK) < injected.indexOf("<html>"));
+  for (const directive of [
+    "default-src 'none'",
+    "script-src 'none'",
+    "style-src 'unsafe-inline'",
+    "img-src data: blob:",
+    "font-src data:",
+    // base-uri 不在 default-src 回落范围里：必须显式写，否则产物可用 <base href> 改导航目标。
+    "base-uri 'none'",
+    "form-action 'none'",
+  ]) {
+    assert.ok(injected.includes(directive), `panel CSP must include ${directive}`);
+  }
   assert.ok(injected.includes("<style>body{color:red}</style>"));
   assert.ok(injected.includes('src="data:image/png;base64,AA"'));
 
-  // 没有 <head> 的片段：meta 前置，仍是有效策略。
-  const fragment = withPanelCsp("<p>hi</p>");
-  assert.ok(fragment.startsWith('<meta http-equiv="Content-Security-Policy"'));
-  assert.ok(fragment.endsWith("<p>hi</p>"));
-  // 作者自己写了 CSP 也照样注入：多份策略取交集，不允许用一条宽松 CSP 绕过面板硬化。
-  const authored =
-    '<head><meta http-equiv="Content-Security-Policy" content="default-src \'none\'"></head>';
-  const guarded = withPanelCsp(authored);
-  assert.ok(
-    guarded.startsWith(
-      '<head><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src',
-    ),
-    `panel CSP must stay first in <head>: ${guarded}`,
-  );
-  assert.ok(guarded.includes("content=\"default-src 'none'\""), "author CSP is preserved");
+  // 没有 DOCTYPE 的片段：meta 在文档最前（BOM 之后）。
+  assert.ok(withPanelCsp("<p>hi</p>").startsWith(META));
+  assert.ok(withPanelCsp("\uFEFF<p>hi</p>").startsWith(`\uFEFF${META}`));
 
-  // 面板真正用的 iframe 属性：srcDoc 是注入后的文档，sandbox 仍保持不透明源。
+  // 对抗用例：产物在注释 / 属性值 / 脚本字符串里先写一个 `<head`，注入点也不能被带走。
+  const bypasses = [
+    "<!-- <head> --><html><body>x</body></html>",
+    '<html><body><div title="<head>">x</div></body></html>',
+    '<script>var s="<head>";</script><p>x</p>',
+    "<style>/* <head> */</style><p>x</p>",
+    '<!DOCTYPE html><!-- <head> --><html><body data-x="<head>">x</body></html>',
+  ];
+  for (const payload of bypasses) {
+    const hardened = withPanelCsp(payload);
+    const metaAt = hardened.indexOf(CSP_MARK);
+    assert.ok(metaAt >= 0, `CSP meta missing for ${payload}`);
+    // meta 必须出现在所有不可信字节之前：要么紧跟 DOCTYPE，要么就是文档开头（BOM 除外）。
+    assert.ok(
+      hardened.startsWith(`<!DOCTYPE html>${META}`) ||
+        hardened.startsWith(`\uFEFF${META}`) ||
+        hardened.startsWith(META),
+      `CSP meta must be before any untrusted byte: ${hardened.slice(0, 120)}`,
+    );
+    assert.ok(metaAt < hardened.indexOf("<head"), `payload must not preempt the meta: ${payload}`);
+  }
+
+  // 作者自己写了 CSP 也照样注入（多份策略取交集），且我们的 meta 在最前。
+  const authored =
+    '<!DOCTYPE html><html><head><meta http-equiv="Content-Security-Policy" content="default-src *"></head></html>';
+  const guarded = withPanelCsp(authored);
+  assert.ok(guarded.startsWith(`<!DOCTYPE html>${META}`), guarded.slice(0, 120));
+  assert.ok(guarded.includes('content="default-src *"'), "author CSP is preserved");
+
+  // 面板真正用的 iframe：sandbox 完全沙箱（脚本不可能执行，CSP 只是第二道闸）。
   const frame = htmlFrameProps("q3-报告-2026", "Q3 报告", page);
   assert.equal(frame["data-dsh-artifact-frame"], "q3-报告-2026");
-  assert.equal(frame.sandbox, "allow-scripts");
+  assert.equal(frame.sandbox, "");
+  assert.equal(/allow-scripts/u.test(String(frame.sandbox)), false);
+  assert.equal(/allow-same-origin/u.test(String(frame.sandbox)), false);
   assert.match(frame.srcDoc, /Content-Security-Policy/u);
   assert.ok(frame.srcDoc.includes("<style>body{color:red}</style>"));
 });

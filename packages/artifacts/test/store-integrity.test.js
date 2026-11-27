@@ -85,7 +85,10 @@ test("AUD-ARTIFACTS-02：已有未登记的 vN 文件（别的写者抢到的版
     const dir = join(lib.root, "artifacts", meta.id);
     // 模拟另一个写者已经用 O_EXCL 抢到 v2、但 meta 还没落盘（崩溃/并发窗口）。
     await writeFile(join(dir, "v2.html"), "<h1>other writer</h1>", "utf8");
-    const appended = await lib.store.append(meta.id, { html: "<h1>mine</h1>" });
+    const appended = await lib.store.append(meta.id, {
+      html: "<h1>mine</h1>",
+      source: { sessionId: "sess-jump", toolCallId: "call-jump", via: "tool" },
+    });
     assert.equal(appended.latest, 3, "must skip the claimed v2 instead of overwriting it");
     assert.equal(await readFile(join(dir, "v2.html"), "utf8"), "<h1>other writer</h1>");
     assert.equal(await readFile(join(dir, "v3.html"), "utf8"), "<h1>mine</h1>");
@@ -93,6 +96,14 @@ test("AUD-ARTIFACTS-02：已有未登记的 vN 文件（别的写者抢到的版
       appended.versions.map((item) => item.version),
       [1, 3],
     );
+    // F6：跳号后 `latest` 的来源仍按 version 查得到（不能用 versions[latest-1]，那是 v2 的占位）。
+    const latest = await createArtifactLibrary({ store: lib.store }).latest({ id: meta.id });
+    assert.equal(latest.version, 3);
+    assert.deepEqual(latest.versionSource, {
+      sessionId: "sess-jump",
+      toolCallId: "call-jump",
+      via: "tool",
+    });
   } finally {
     await lib.cleanup();
   }
@@ -179,6 +190,25 @@ test("AUD-ARTIFACTS-07：latest=0 且没有版本的残骸目录不进列表，�
     );
   } finally {
     console.warn = originalWarn;
+    await lib.cleanup();
+  }
+});
+
+test("F7：同一 trashKey 的 restore / purge 并发被同一把锁串行（不双成功、不 ENOENT）", async () => {
+  const lib = await makeStore();
+  try {
+    const meta = await lib.store.create({ title: "Trash race", html: "<p>race</p>" });
+    assert.equal(await lib.store.remove(meta.id), true);
+    const trash = await lib.store.listTrash();
+    assert.equal(trash.length, 1);
+    const key = trash[0].trashKey;
+    // 并发「恢复 + 清空」同一个回收站条目：结果必须是二者之一，不能都成功/都失败。
+    const [restored, purged] = await Promise.all([lib.store.restore(key), lib.store.purge(key)]);
+    assert.equal(Number(restored) + Number(purged), 1, "exactly one of restore/purge wins");
+    const live = (await lib.store.list()).length;
+    const remain = (await lib.store.listTrash()).length;
+    assert.equal(live + remain, 1, "the artifact ends up either live or purged, never both");
+  } finally {
     await lib.cleanup();
   }
 });

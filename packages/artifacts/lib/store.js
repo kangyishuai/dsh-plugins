@@ -1028,22 +1028,32 @@ export function createArtifactStore({ root }) {
   }
 
   /**
+   * 回收站条目的锁键：`restore` 与 `purge` 共用同一把，保证「恢复 + 清空」同一 trashKey
+   * 串行执行（否则 purge 可能报成功但实际被 restore 先搬走，或 restore 撞 ENOENT，复审 F7）。
+   * @type {(key: string) => string}
+   */
+  const trashLockKey = (key) => `trash:${key}`;
+
+  /**
    * 从回收站恢复到它原本的 id。目标 id 已存在时返回 false（不覆盖活工件）。
    * @param {string} trashKey 回收站目录名（`listTrash()` 的 `trashKey`）
    * @returns {Promise<boolean>}
    */
   async function restore(trashKey) {
     const key = assertSafeArtifactId(trashKey, trashDir);
-    const meta = await readMetaFrom(trashDir, key);
-    if (meta === undefined) return false;
-    const target = /** @type {string} */ (meta.id);
-    // 旧数据里可能有 id 不安全的 meta：留在回收站（不猜、不动），由调用方记为 unknown。
-    if (!isSafeArtifactId(target)) return false;
-    return withWriteLock(target, async () => {
-      if ((await readMeta(target)) !== undefined) return false;
-      await mkdir(dir, { recursive: true });
-      await rename(join(trashDir, key), artifactDir(target));
-      return true;
+    return withWriteLock(trashLockKey(key), async () => {
+      const meta = await readMetaFrom(trashDir, key);
+      if (meta === undefined) return false;
+      const target = /** @type {string} */ (meta.id);
+      // 旧数据里可能有 id 不安全的 meta：留在回收站（不猜、不动），由调用方记为 unknown。
+      if (!isSafeArtifactId(target)) return false;
+      // 内层再锁目标 id：与 append/remove 串行（顺序固定 trash → artifact，无死锁）。
+      return withWriteLock(target, async () => {
+        if ((await readMeta(target)) !== undefined) return false;
+        await mkdir(dir, { recursive: true });
+        await rename(join(trashDir, key), artifactDir(target));
+        return true;
+      });
     });
   }
 
@@ -1054,9 +1064,11 @@ export function createArtifactStore({ root }) {
    */
   async function purge(trashKey) {
     const key = assertSafeArtifactId(trashKey, trashDir);
-    if ((await readMetaFrom(trashDir, key)) === undefined) return false;
-    await rm(join(trashDir, key), { recursive: true, force: true });
-    return true;
+    return withWriteLock(trashLockKey(key), async () => {
+      if ((await readMetaFrom(trashDir, key)) === undefined) return false;
+      await rm(join(trashDir, key), { recursive: true, force: true });
+      return true;
+    });
   }
 
   return {

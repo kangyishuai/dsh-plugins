@@ -87,8 +87,10 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 这次工具调用的 action（publish/append/list/read）。宿主在 start 阶段只给 `argsRaw`，
-     * result 阶段给 `call.argsRaw`（回填的 tool/call）；解析失败返回 undefined，不抛。
+     * 这次工具调用的 action（publish/append/list/read）。
+     * 宿主在 start 阶段只给 `argsRaw`，result 阶段给 `call.argsRaw`（回填的 tool/call）。
+     * 用轻量正则只取 `action` 字段：publish/append 的 argsRaw 可达 ~2 MiB（正文就在里面），
+     * 行渲染阶段没必要整体 JSON.parse；解析失败也不抛。
      * @param {any} props
      * @returns {string | undefined}
      */
@@ -100,60 +102,130 @@ window.__ModuleLoader__.load({
           : typeof block?.argsRaw === "string"
             ? block.argsRaw
             : "";
+      const match = /"action"\s*:\s*"([a-z]+)"/u.exec(raw);
+      return match === null ? undefined : match[1];
+    }
+
+    /**
+     * list/read 的完整参数（只在要展示 id/version 时解析；这两类的 args 很小）。
+     * @param {any} props
+     * @returns {any}
+     */
+    function argsOf(props) {
+      const block = props?.block;
+      const raw =
+        typeof block?.call?.argsRaw === "string"
+          ? block.call.argsRaw
+          : typeof block?.argsRaw === "string"
+            ? block.argsRaw
+            : "";
       if (raw === "") return undefined;
       try {
-        const parsed = JSON.parse(raw);
-        return typeof parsed?.action === "string" ? parsed.action : undefined;
+        return JSON.parse(raw);
       } catch {
         return undefined;
       }
     }
 
     /**
-     * 时间线行只对写 action（publish/append）有意义：list/read 的调用没有"打开这个产物"的
-     * 语义，渲染一行「（未识别 id）+ 打开预览（跳去库）」是噪声（报告 A-伪-5）。
-     * @param {any} props
+     * list/read 不是"写"：它们没有"打开这个产物"的语义，但**必须仍然渲染一行**。
+     * 宿主 `tool.call.toolview` 是 keyed replacement point——组件返回 null 会让整张卡消失
+     * （宿主 fallback 只在这个 key **没有**注册 entry 时生效），这两类调用（含失败信封）
+     * 就会在时间线里完全不可见（复审 B2）。
+     * @param {string | undefined} action
      * @returns {boolean}
      */
+    function isInfoAction(action) {
+      return action === "list" || action === "read";
+    }
+
+    /** 只有写 action（publish/append）才渲染"可打开预览"的摘要行。 @param {any} props */
     function shouldRenderRow(props) {
-      const action = actionOf(props);
-      return action !== "list" && action !== "read";
+      return !isInfoAction(actionOf(props));
     }
 
     /**
-     * 右栏面板 iframe 的文档级 CSP（AUD-ARTIFACTS-03）。srcDoc 不继承宿主文档 CSP，
-     * 这里注入与只读路由等价（宽松到能渲染自包含页面，收紧到不能外连）：
-     *   - `default-src 'none'`：禁止脚本/外连/表单；
-     *   - `style-src 'unsafe-inline'`：保留内联样式；
-     *   - `img-src data: blob:`：保留 data:/blob: 图片（相对 URL 在 opaque 源里本来也取不到）；
-     *   - `font-src data:`：保留内嵌字体（与路由 CSP 同一口径）。
+     * list/read 的中性行内容：`Artifact 列表 · 3 项` / `Artifact 读取 · <id> [vN]` /
+     * `Artifact 列表失败 · <message>`。不拉 RPC、不给预览按钮（复审 B2）。
+     * @param {any} props
+     * @param {"list" | "read"} action
+     * @returns {{ label: string, detail: string, error: string }}
      */
-    const PANEL_CSP =
-      "default-src 'none'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:";
+    function infoRowOf(props, action) {
+      const block = props?.block;
+      /** @type {any[]} */
+      const content = Array.isArray(block?.content) ? block.content : [];
+      const text = content
+        .map((item) => (typeof item?.text === "string" ? item.text : ""))
+        .join("\n")
+        .trim();
+      // 工具失败走 `{ok:false}` 正常结果（不一定置 isError），正文首行是 `artifact failed: …`。
+      const failure = /^artifact failed:\s*(.+)$/u.exec(text);
+      const isError = block?.isError === true || failure !== null;
+      const label = action === "list" ? "列表" : "读取";
+      if (isError) {
+        const message = failure === null ? "" : String(failure[1]).trim().split("\n")[0];
+        return {
+          label,
+          detail: "",
+          error: message === "" ? "失败" : `失败 · ${message.slice(0, 120)}`,
+        };
+      }
+      /** @type {string} */
+      let detail = "";
+      if (action === "read") {
+        const args = argsOf(props);
+        const id = typeof args?.id === "string" ? args.id : "";
+        const version = typeof args?.version === "number" ? args.version : undefined;
+        if (id !== "") detail = version === undefined ? id : `${id} v${version}`;
+      } else {
+        const count = /^(\d+) artifact\(s\)/u.exec(text);
+        if (count !== null) detail = `${count[1]} 项`;
+        else if (/^No artifacts yet\./u.test(text)) detail = "0 项";
+      }
+      return { label, detail, error: "" };
+    }
+
+    /**
+     * 面板 iframe 的文档级 CSP（AUD-ARTIFACTS-03）。srcDoc 不继承宿主文档 CSP；脚本另有
+     * **sandbox（无 allow-scripts）** 兜底，这里是第二道闸，不是唯一防线。
+     * 与只读路由同口径（路由的 `frame-ancestors` 在 meta 里无效，面板本身就在 sandbox iframe 里）：
+     *   - `default-src 'none'` + 显式 `script-src 'none'`：禁止脚本与外连；
+     *   - `style-src 'unsafe-inline'` / `img-src data: blob:` / `font-src data:`：保留自包含页面的样式与图片；
+     *   - `base-uri 'none'`：禁止 `<base href>` 改写相对链接/导航（default-src **不**覆盖 base-uri）；
+     *   - `form-action 'none'`：表单提交同样掐掉（sandbox 也挡，双保险）。
+     */
+    const PANEL_CSP = [
+      "default-src 'none'",
+      "script-src 'none'",
+      "style-src 'unsafe-inline'",
+      "img-src data: blob:",
+      "font-src data:",
+      "base-uri 'none'",
+      "form-action 'none'",
+    ].join("; ");
     const PANEL_CSP_META = `<meta http-equiv="Content-Security-Policy" content="${PANEL_CSP}">`;
 
     /**
-     * 把 CSP meta 插进待渲染的 html：有 `<head>` 插到它最前面，没有就整体前置
-     * （浏览器会把开头的 meta 归到隐式 head，照样生效）。
+     * 把 CSP meta 放到**任何不可信字节之前**（复审 B1）：DOCTYPE 之后（有的话），否则文档开头
+     * （只跳过 BOM/前导空白）。不要"找 `<head>` 再插"——产物只要在注释/属性值/脚本字符串里
+     * 更早写一个 `<head`，meta 就会落进无效位置、策略完全不生效。
      *
-     * **始终注入**，即使作者自己写了 CSP：多份策略是"同时强制"（取交集），我们的
-     * `default-src 'none'` 不会因为作者写了一份宽松策略而失效；反过来若在这里跳过注入，
-     * 产物只要写一条宽松 CSP 就能绕过面板硬化。
+     * **始终注入**：多份 CSP 是"同时强制"（取交集），作者自己写宽松 CSP 也绕不过。
      * @param {string} html
      * @returns {string}
      */
     function withPanelCsp(html) {
       const source = typeof html === "string" ? html : "";
-      const head = /<head(?:\s[^>]*)?>/iu.exec(source);
-      if (head !== null) {
-        const at = head.index + head[0].length;
-        return `${source.slice(0, at)}${PANEL_CSP_META}${source.slice(at)}`;
-      }
-      return `${PANEL_CSP_META}${source}`;
+      const doctype = /^(?:\uFEFF)?\s*<!doctype[^>]*>/iu.exec(source);
+      const at = doctype === null ? (source.startsWith("\uFEFF") ? 1 : 0) : doctype[0].length;
+      return `${source.slice(0, at)}${PANEL_CSP_META}${source.slice(at)}`;
     }
 
     /**
-     * html 预览 iframe 的属性（抽出来是为了单测能直接断言 srcDoc 已注入 CSP）。
+     * html 预览 iframe 的属性（抽出来是为了单测能直接断言 srcDoc/CSP/sandbox）。
+     * `sandbox: ""` = 完全沙箱（不含 `allow-scripts` / `allow-same-origin`）：不透明源、
+     * 脚本不执行，样式与图片不受影响。这是 AUD-ARTIFACTS-03 的硬保证，CSP meta 只是第二道闸。
      * @param {string} id
      * @param {string} title
      * @param {string} html
@@ -163,8 +235,7 @@ window.__ModuleLoader__.load({
       return {
         "data-dsh-artifact-frame": id,
         title: title || id,
-        // 保持不透明源（无 allow-same-origin）；脚本本来就由文档 CSP 的 default-src 'none' 掐掉。
-        sandbox: "allow-scripts",
+        sandbox: "",
         srcDoc: withPanelCsp(html),
         style: { flex: 1, width: "100%", border: "0", background: "#fff", minHeight: 0 },
       };
@@ -198,6 +269,16 @@ window.__ModuleLoader__.load({
         return "";
       }
     }
+
+    /** 时间线行容器（写摘要行与 list/read 中性行共用）。 */
+    const ROW_STYLE = {
+      display: "flex",
+      alignItems: "center",
+      gap: "8px",
+      padding: "4px 0",
+      fontSize: "12px",
+      minWidth: 0,
+    };
 
     const BUTTON = {
       font: "inherit",
@@ -735,14 +816,16 @@ window.__ModuleLoader__.load({
      * @param {any} props
      */
     function ArtifactRow(props) {
-      const id = pickId(props);
+      const action = actionOf(props);
+      // list/read 不认领 artifact id（正文是列表/整份内容，不是摘要行），也不拉 RPC。
+      const id = isInfoAction(action) ? undefined : pickId(props);
       const [latest, setLatest] = React.useState(0);
       const [kind, setKind] = React.useState("html");
       const open = props.open;
 
       React.useEffect(() => {
-        // list/read 的调用不渲染行（A-伪-5）：没必要为它们拉一次全量列表。
-        if (!shouldRenderRow(props)) return undefined;
+        // list/read 的中性行不需要列表 RPC（复审 B2：保留可见性，但不放大 I/O）。
+        if (isInfoAction(actionOf(props))) return undefined;
         let alive = true;
         const load = async () => {
           const result = await props.rpc("list");
@@ -761,22 +844,55 @@ window.__ModuleLoader__.load({
         };
       }, [id, props]);
 
-      // hooks 必须无条件调用（宿主可能在 start→result 阶段重渲染同一行）；先算完再决定不渲染。
-      if (!shouldRenderRow(props)) return null;
+      // hooks 必须无条件调用（宿主可能在 start→result 阶段重渲染同一行），所以先跑完 hooks 再分支。
+      if (isInfoAction(action)) {
+        const info = infoRowOf(props, /** @type {"list" | "read"} */ (action));
+        return h(
+          "div",
+          {
+            "data-dsh-artifact-row-info": action,
+            "data-dsh-artifact-row-info-state": info.error === "" ? "ok" : "error",
+            style: ROW_STYLE,
+          },
+          h("span", { style: { opacity: 0.7, whiteSpace: "nowrap" } }, "Artifact"),
+          h(
+            "span",
+            { "data-dsh-artifact-row-info-label": action, style: { opacity: 0.6 } },
+            info.label,
+          ),
+          info.detail === ""
+            ? null
+            : h(
+                "code",
+                {
+                  style: {
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    minWidth: 0,
+                  },
+                },
+                info.detail,
+              ),
+          info.error === ""
+            ? null
+            : h(
+                "span",
+                {
+                  "data-dsh-artifact-row-info-error": action,
+                  style: { opacity: 0.6, whiteSpace: "nowrap" },
+                },
+                info.error,
+              ),
+        );
+      }
 
       return h(
         "div",
         {
           "data-dsh-artifact-row": id ?? "",
           "data-dsh-artifact-row-version": String(latest),
-          style: {
-            display: "flex",
-            alignItems: "center",
-            gap: "8px",
-            padding: "4px 0",
-            fontSize: "12px",
-            minWidth: 0,
-          },
+          style: ROW_STYLE,
         },
         h("span", { style: { opacity: 0.7, whiteSpace: "nowrap" } }, "Artifact"),
         id === undefined
@@ -969,14 +1085,18 @@ window.__ModuleLoader__.load({
 
     exports.inject = ["slots", "locale", "connection", "sidebarRightTabs", "sidebarRight"];
     exports.apply = apply;
-    // 单测入口（test/client.test.js 用 node:vm 执行真实源码）：只暴露纯函数与行组件，
-    // 不挂 window 全局、不暴露服务/数据；宿主只消费 inject/apply，额外字段无副作用。
+    // 单测入口（test/client.test.js 用 node:vm 执行真实源码）：只暴露纯函数与行组件。
+    // 仅测试用、生产无副作用：不挂 window 全局、不暴露服务/数据，宿主只消费 inject/apply；
+    // 若将来要求发布包零测试面，可改为 debug 开关挂载（复审 F13，目前接受这点体积/暴露面）。
     exports.__test = {
       collectStrings,
       pickId,
       pickIdFromText,
       actionOf,
+      argsOf,
+      isInfoAction,
       shouldRenderRow,
+      infoRowOf,
       withPanelCsp,
       htmlFrameProps,
       ArtifactRow,
