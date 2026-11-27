@@ -194,21 +194,35 @@ test("AUD-ARTIFACTS-07：latest=0 且没有版本的残骸目录不进列表，�
   }
 });
 
-test("F7：同一 trashKey 的 restore / purge 并发被同一把锁串行（不双成功、不 ENOENT）", async () => {
-  const lib = await makeStore();
-  try {
-    const meta = await lib.store.create({ title: "Trash race", html: "<p>race</p>" });
-    assert.equal(await lib.store.remove(meta.id), true);
-    const trash = await lib.store.listTrash();
-    assert.equal(trash.length, 1);
-    const key = trash[0].trashKey;
-    // 并发「恢复 + 清空」同一个回收站条目：结果必须是二者之一，不能都成功/都失败。
-    const [restored, purged] = await Promise.all([lib.store.restore(key), lib.store.purge(key)]);
-    assert.equal(Number(restored) + Number(purged), 1, "exactly one of restore/purge wins");
-    const live = (await lib.store.list()).length;
-    const remain = (await lib.store.listTrash()).length;
-    assert.equal(live + remain, 1, "the artifact ends up either live or purged, never both");
-  } finally {
-    await lib.cleanup();
+test("F7：同一 trashKey 的 restore / purge 并发被同一把锁串行（两种入队顺序都不双成功/不 ENOENT）", async () => {
+  // 入队顺序决定谁先拿到 trash 锁；两种顺序都要测（复审建议参数化）。
+  for (const first of ["restore", "purge"]) {
+    const lib = await makeStore();
+    try {
+      const meta = await lib.store.create({ title: "Trash race", html: "<p>race</p>" });
+      assert.equal(await lib.store.remove(meta.id), true);
+      const trash = await lib.store.listTrash();
+      assert.equal(trash.length, 1);
+      const key = trash[0].trashKey;
+      const calls =
+        first === "restore"
+          ? [lib.store.restore(key), lib.store.purge(key)]
+          : [lib.store.purge(key), lib.store.restore(key)];
+      const [a, b] = await Promise.all(calls);
+      const restored = first === "restore" ? a : b;
+      const purged = first === "purge" ? a : b;
+      assert.equal(Number(restored) + Number(purged), 1, `${first}-first: exactly one wins`);
+      const live = (await lib.store.list()).length;
+      const remain = (await lib.store.listTrash()).length;
+      if (restored) {
+        assert.equal(live, 1, `${first}-first: restored artifact is live`);
+        assert.equal(remain, 0, `${first}-first: nothing left in trash`);
+      } else {
+        assert.equal(live, 0, `${first}-first: purged artifact is gone from the library`);
+        assert.equal(remain, 0, `${first}-first: purged artifact is gone from trash`);
+      }
+    } finally {
+      await lib.cleanup();
+    }
   }
 });

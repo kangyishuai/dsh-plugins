@@ -1030,9 +1030,11 @@ export function createArtifactStore({ root }) {
   /**
    * 回收站条目的锁键：`restore` 与 `purge` 共用同一把，保证「恢复 + 清空」同一 trashKey
    * 串行执行（否则 purge 可能报成功但实际被 restore 先搬走，或 restore 撞 ENOENT，复审 F7）。
+   * 前缀用 `\u0000`（artifact id 校验不允许控制字符）：坏数据里即使 `meta.id === "trash:X"`，
+   * restore 也不会在同一把锁上自我等待。
    * @type {(key: string) => string}
    */
-  const trashLockKey = (key) => `trash:${key}`;
+  const trashLockKey = (key) => `\u0000trash:${key}`;
 
   /**
    * 从回收站恢复到它原本的 id。目标 id 已存在时返回 false（不覆盖活工件）。

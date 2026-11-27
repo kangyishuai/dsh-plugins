@@ -10,7 +10,9 @@
 //   - 0.2 起库视图是"列表 + 缩略图"，并接受 `{ projectId }` 参数：项目页可以打开"本项目产物"，
 //     不再只有全局封面网格。搜索/类型过滤走宿主过滤（不是前端假过滤）。
 //
-// 宿主没有兜底 CSP，隔离由 sandbox="allow-scripts"（不透明源）自己焊。
+// 宿主没有兜底 CSP：隔离由两层自己焊——iframe `sandbox=""`（不含 `allow-scripts` /
+// `allow-same-origin` 的不透明源，脚本不执行）+ 渲染前注入的文档级 CSP（自动请求/导航被拦；
+// 用户点 `<a href>` 只会在预览 iframe 内自导航，碰不到宿主页面）。
 
 window.__ModuleLoader__.load({
   id: "@kangyishuai/dsh-artifacts",
@@ -137,11 +139,6 @@ window.__ModuleLoader__.load({
      */
     function isInfoAction(action) {
       return action === "list" || action === "read";
-    }
-
-    /** 只有写 action（publish/append）才渲染"可打开预览"的摘要行。 @param {any} props */
-    function shouldRenderRow(props) {
-      return !isInfoAction(actionOf(props));
     }
 
     /**
@@ -1095,7 +1092,6 @@ window.__ModuleLoader__.load({
       actionOf,
       argsOf,
       isInfoAction,
-      shouldRenderRow,
       infoRowOf,
       withPanelCsp,
       htmlFrameProps,

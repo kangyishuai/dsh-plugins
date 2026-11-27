@@ -217,7 +217,7 @@ test("B2：list/read 渲染紧凑中性行（整卡不消失、无预览按钮�
   });
   assert.equal(started?.props?.["data-dsh-artifact-row-info"], "list");
 
-  // 失败信封：中性行 + 错误态（不是 null → 整卡空白）。
+  // 失败信封：中性行 + 错误态（不是 null → 整卡空白）；`isError` 形态在这里覆盖。
   for (const action of ["list", "read"]) {
     const failed = client.__test.ArtifactRow({
       ...base,
@@ -250,6 +250,34 @@ test("B2：list/read 渲染紧凑中性行（整卡不消失、无预览按钮�
   });
   assert.equal(publish?.props?.["data-dsh-artifact-row"], "ok-abc123");
   assert.ok(findOpenButton(publish), "publish/append keep their preview button");
+});
+
+test("B2（复审 M8）：失败信封不依赖 isError——正文 `artifact failed:` 前缀也能识别", async () => {
+  // 真实工具失败走 `{ ok:false }` 正常结果，宿主不一定置 `isError`；这一路必须被独立钉住，
+  // 否则 mutation「只认 isError」仍会全绿（复审 M8）。
+  const client = await loadClient();
+  for (const action of ["list", "read"]) {
+    const failed = client.__test.ArtifactRow({
+      rpc: async () => ({ ok: true, artifacts: [] }),
+      open: () => {
+        throw new Error("failure rows must not open the preview panel");
+      },
+      block: {
+        phase: "result",
+        kind: "tool-result",
+        call: { name: "artifact", argsRaw: JSON.stringify({ action, id: "gone-000000" }) },
+        content: [
+          { type: "text", text: "artifact failed: unknown artifact or version: gone-000000" },
+        ],
+        // 注意：故意不设 isError。
+      },
+    });
+    assert.equal(failed?.props?.["data-dsh-artifact-row-info"], action, `${action} row must stay`);
+    assert.equal(failed?.props?.["data-dsh-artifact-row-info-state"], "error");
+    assert.match(textOf(failed), /失败/u);
+    assert.match(textOf(failed), /unknown artifact/u);
+    assert.equal(findOpenButton(failed), undefined);
+  }
 });
 
 test("B1：CSP meta 注入在任何不可信字节之前；sandbox 去掉 allow-scripts（含绕过对抗用例）", async () => {
