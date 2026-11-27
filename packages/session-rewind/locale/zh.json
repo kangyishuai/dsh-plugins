@@ -24,6 +24,7 @@
     "confirm.filesConflicts": "有 {n} 个文件与预期不一致，无法执行文件回退",
     "confirm.filesUnavailable": "当前无法回退文件",
     "confirm.fileSummary": "将还原 {restored} 个文件、移入回收站 {trashed} 个",
+    "confirm.restoreDeleted": "其中 {n} 个文件已被删除，将按记录重建",
     "confirm.pathsMore": "展开全部 {n} 个路径",
     "confirm.pathsLess": "收起路径",
     "confirm.skipped": "{n} 个文件被跳过",

@@ -207,11 +207,44 @@ export class SessionRewindService extends TypertRemoteService {
 
   /**
    * 删除已不存在会话的插件数据（entries/trash/rescues）。audit.jsonl 保留。
+   *
+   * 安全约定（AUD-REW-01）：
+   * - `pruneOrphans` 枚举不到任何存活会话时视为「枚举失败」并跳过清理；
+   * - 删除前先把 dry-run 计划写审计（`cleanup-orphans-plan`），审计失败则不删；
+   * - 删除结果（含逐条失败）写审计并告警。
    * @returns {Promise<void>}
    */
   async cleanupOrphans() {
     try {
-      const result = await pruneOrphans({ dataRoot: this.dataRoot, dryRun: false });
+      const result = await pruneOrphans({
+        dataRoot: this.dataRoot,
+        onPlan: async (report) => {
+          await this.store.appendAudit({
+            id: `cleanup-plan-${Date.now()}`,
+            action: "cleanup-orphans-plan",
+            time: Date.now(),
+            sessionId: null,
+            sessions: report.sessionIds,
+            trash: report.trashIds,
+            rescues: report.rescueIds,
+            bytes: report.bytes,
+            liveSessionCount: report.liveSessionCount,
+            enumerationFailed: report.enumerationFailed,
+          });
+        },
+      });
+      if (result.reason === "enumeration-failed") {
+        this.ctx?.logger?.warn?.(
+          "session-rewind: cannot enumerate live sessions (found 0); skipped orphan cleanup",
+        );
+        return;
+      }
+      if (result.reason === "plan-audit-failed") {
+        this.ctx?.logger?.warn?.(
+          "session-rewind: cannot write the orphan-cleanup audit plan; skipped orphan cleanup",
+        );
+        return;
+      }
       const removed =
         result.removed.sessions.length +
         result.removed.trash.length +
@@ -220,6 +253,13 @@ export class SessionRewindService extends TypertRemoteService {
         this.ctx?.logger?.info?.(
           `session-rewind: cleaned ${removed} orphan data dir(s) (${result.report.bytes} bytes)`,
         );
+      }
+      for (const failure of result.failed) {
+        this.ctx?.logger?.warn?.(
+          `session-rewind: cannot remove orphan data "${failure.target}": ${failure.error}`,
+        );
+      }
+      if (removed > 0 || result.failed.length > 0) {
         try {
           await this.store.appendAudit({
             id: `cleanup-${Date.now()}`,
@@ -230,6 +270,7 @@ export class SessionRewindService extends TypertRemoteService {
             trash: result.removed.trash,
             rescues: result.removed.rescues,
             bytes: result.report.bytes,
+            liveSessionCount: result.report.liveSessionCount,
             failed: result.failed,
           });
         } catch (_error) {
@@ -949,12 +990,17 @@ export class SessionRewindService extends TypertRemoteService {
     );
     try {
       const orphans = await findOrphans({ dataRoot: this.dataRoot });
-      const count = orphans.sessionIds.length + orphans.trashIds.length + orphans.rescueIds.length;
-      push(
-        "孤儿数据",
-        count === 0,
-        count === 0 ? "none" : `${count} dir(s), ${orphans.bytes} bytes`,
-      );
+      if (orphans.enumerationFailed) {
+        push("孤儿数据", false, "cannot enumerate live sessions; orphan cleanup is skipped");
+      } else {
+        const count =
+          orphans.sessionIds.length + orphans.trashIds.length + orphans.rescueIds.length;
+        push(
+          "孤儿数据",
+          count === 0,
+          count === 0 ? "none" : `${count} dir(s), ${orphans.bytes} bytes`,
+        );
+      }
     } catch (error) {
       push("孤儿数据", false, error instanceof Error ? error.message : String(error));
     }

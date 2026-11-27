@@ -24,6 +24,7 @@
     "confirm.filesConflicts": "{n} file(s) differ from the expected state; file rewind is unavailable",
     "confirm.filesUnavailable": "File rewind is unavailable",
     "confirm.fileSummary": "Restore {restored} file(s), move {trashed} new file(s) to trash",
+    "confirm.restoreDeleted": "{n} of them were deleted and will be recreated",
     "confirm.pathsMore": "Show all {n} paths",
     "confirm.pathsLess": "Hide paths",
     "confirm.skipped": "{n} file(s) skipped",

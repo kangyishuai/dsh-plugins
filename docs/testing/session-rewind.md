@@ -55,7 +55,7 @@ pnpm gate session-rewind --deep --workspace ~/Workspace/dsh-rewind-ui-smoke
 
 按「便宜的先跑」排序，任何一步失败立刻停并给出下一步提示：
 
-1. `pnpm verify`（lint + 类型 + 规范 + 公开边界 + 208 单测）
+1. `pnpm verify`（lint + 类型 + 规范 + 公开边界 + 223 单测）
 2. `pnpm probe:runtime`（宿主包/API/slot/私有 seam，72 项）
 3. `pnpm smoke:session-rewind`（临时 DSH_HOME 的 web 端到端，52 项）
 4. 桌面只读回归（25 项，**永远带 `--require`**：没开调试端口就是失败，不是跳过）
@@ -155,15 +155,25 @@ pnpm smoke:session-rewind
 
 ## 2.5 文件引擎单测（每次提交）
 
-`cd packages/session-rewind && pnpm test` 里包含 47 个文件引擎/追踪单测（临时目录）：
+`cd packages/session-rewind && pnpm test` 里包含 58 个文件引擎/追踪单测（临时目录）：
 
 - 捕获与记录：write create/update、edit、apply_patch add/update/delete/move；
 - 路径安全：cwd 逃逸、符号链接、`.git`/`node_modules`、非普通文件；
 - 限制：单文件 8 MiB 跳过、不可读文件跳过；
-- 恢复计划：多 anchor 同一路径取最早 before、冲突（外部修改/缺失/意外出现）、trash 列表；
+- 恢复计划：多 anchor 同一路径取最早 before、trash 列表、按**目标状态**判定（已满足即 no-op；
+  只有当前内容既不是 before 也不是该路径记录过的状态才算 `modified-externally` 冲突）；
+- 删除文件还原：agent 删除的文件回退时按记录重建（父目录 `mkdir -p`）、重命名（delete+add）
+  回退后源名字恢复、目标名字进回收站；
+- 重复回溯：先回溯到后一轮（新建文件进回收站）再回溯到更早一轮不被拒绝；两次「只还原内容」
+  的回溯都成功；上次回溯留下的中间态不被当成外部改动；
 - 执行：救援点失败不写、写后哈希校验、失败回滚、回收站移动、保留/GC/软上限；
+- 写入安全：还原 / 救援点恢复 / 回收站恢复三处共用 `assertWriteTarget`——父目录换成指向
+  工作区外的 symlink、或目标本身是 symlink 时全部拒绝，工作区外文件不被改写；
 - 工具钩子：`parsePatchPaths`、`commitFromToolResult`、`latestHumanUserSeq`、install 后
   tools/execute + post-execute 的正常/异常路径。
+- 孤儿清理（`test/orphans.test.js`）：用真实宿主 slug 形态（`--Users-someone-Workspace-project--`）
+  断言「存活会话的数据不被删」「真正孤儿被删」；枚举不到存活会话时视为枚举失败、一个字节都不删；
+  计划审计失败时不执行删除；不认识的插件数据条目保留。
 
 ## 2.6 文件模式端到端（桌面版，已自动化）
 
@@ -171,6 +181,9 @@ pnpm smoke:session-rewind
 自动跑通：冲突时文件模式置灰并列出冲突、创建文件后回退进回收站、修改文件后回退还原内容、
 救援点恢复、面板/审计/诊断。脚本思路：`/json/list` 取 renderer → `Runtime.evaluate` 点按钮/
 填 composer → `Page.captureScreenshot` 留证；工作区用临时目录，prompt 只让 agent 写一个测试文件。
+
+上表列的是**真实外部改动**造成的冲突；删除文件还原、重复回溯、写入侧 symlink 拒绝与孤儿清理
+的安全护栏目前由上面的单测覆盖，`--deep` 段落仍只覆盖「新建文件→回收站→救援点恢复」。
 
 桌面版（Electron）一键回归，**只读**：只切会话、开关对话框与面板、点取消；不回溯、不写文件、
 不发模型请求，可以直接跑在真实 profile 上。

@@ -406,8 +406,10 @@ test("planRestore: 无 entry 时 available=false，且计划阶段不写任何�
   await rm(root, { recursive: true, force: true });
 });
 
-test("planRestore: 冲突检测 modified-externally / missing / unexpected-file", async () => {
+test("planRestore: 按目标状态判定 —— 只有「既不是 before 也不是 after」才是冲突", async () => {
   const { root, cwd, store } = await makeStore();
+  // 记录：新建 modified.txt（after=v1），新建 missing.txt（after=m），删除 unexpected.txt
+  //（before=u / after=null）。
   await writeFile(path.join(cwd, "modified.txt"), "v1");
   await store.recordChange({
     sessionId: "s",
@@ -440,18 +442,321 @@ test("planRestore: 冲突检测 modified-externally / missing / unexpected-file"
     beforeContent: "u",
     afterContent: null,
   });
+  // 删除后又用不同内容重建：当前既不是 before(u) 也不是 after(不存在)。
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 2,
+    tool: "apply_patch",
+    callId: "c4",
+    path: "deleted-recreated.txt",
+    beforeContent: "z",
+    afterContent: null,
+  });
 
+  // modified.txt 被外部改成第三种内容；missing.txt 被外部删掉（目标本来就是「不存在」）。
   await writeFile(path.join(cwd, "modified.txt"), "external");
   await rm(path.join(cwd, "missing.txt"));
+  // unexpected.txt 被外部按 before 内容重新建出来（目标态 = before），应视为已满足。
   await writeFile(path.join(cwd, "unexpected.txt"), "u");
+  await writeFile(path.join(cwd, "deleted-recreated.txt"), "different");
 
   const plan = await store.planRestore({ sessionId: "s", targetSeq: 2, cwd });
   assert.equal(plan.available, false);
   const byPath = new Map(plan.conflicts.map((conflict) => [conflict.path, conflict.reason]));
   assert.equal(byPath.get("modified.txt"), CONFLICT_REASONS.modifiedExternally);
-  assert.equal(byPath.get("missing.txt"), CONFLICT_REASONS.missing);
-  assert.equal(byPath.get("unexpected.txt"), CONFLICT_REASONS.unexpectedFile);
+  assert.equal(byPath.get("deleted-recreated.txt"), CONFLICT_REASONS.modifiedExternally);
+  // 已满足的路径：不是冲突、也不需要动作。
+  assert.equal(byPath.has("missing.txt"), false);
+  assert.equal(byPath.has("unexpected.txt"), false);
   assert.deepEqual(plan.actions, []);
+  await rm(root, { recursive: true, force: true });
+});
+
+test("planRestore/applyRestore: agent 删除的文件回溯时重建（AUD-REW-02）", async () => {
+  const { root, cwd, store } = await makeStore();
+  await writeFile(path.join(cwd, "victim.txt"), "precious");
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 5,
+    tool: "apply_patch",
+    callId: "c1",
+    path: "victim.txt",
+    beforeContent: "precious",
+    afterContent: null,
+  });
+  await rm(path.join(cwd, "victim.txt"));
+
+  const plan = await store.planRestore({ sessionId: "s", targetSeq: 5, cwd });
+  assert.equal(plan.available, true);
+  assert.deepEqual(plan.conflicts, []);
+  assert.deepEqual(
+    plan.restore.map((item) => [item.path, item.deleted === true]),
+    [["victim.txt", true]],
+  );
+  assert.deepEqual(plan.actions[0].action, "restore");
+  assert.equal(plan.actions[0].currentExists, false);
+
+  const result = await store.applyRestore({ sessionId: "s", cwd, plan, auditId: "audit-deleted" });
+  assert.deepEqual(result.restored, ["victim.txt"]);
+  assert.deepEqual(result.failed, []);
+  await assertText(path.join(cwd, "victim.txt"), "precious");
+  await rm(root, { recursive: true, force: true });
+});
+
+test("planRestore/applyRestore: 未知父目录被删除后也能重建（mkdir -p）", async () => {
+  const { root, cwd, store } = await makeStore();
+  await mkdir(path.join(cwd, "nested", "deep"), { recursive: true });
+  await writeFile(path.join(cwd, "nested", "deep", "f.txt"), "v1");
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 5,
+    tool: "apply_patch",
+    callId: "c1",
+    path: "nested/deep/f.txt",
+    beforeContent: "v1",
+    afterContent: null,
+  });
+  await rm(path.join(cwd, "nested"), { recursive: true, force: true });
+
+  const plan = await store.planRestore({ sessionId: "s", targetSeq: 5, cwd });
+  assert.deepEqual(plan.conflicts, []);
+  const result = await store.applyRestore({ sessionId: "s", cwd, plan, auditId: "audit-mkdir" });
+  assert.deepEqual(result.restored, ["nested/deep/f.txt"]);
+  await assertText(path.join(cwd, "nested", "deep", "f.txt"), "v1");
+  await rm(root, { recursive: true, force: true });
+});
+
+test("planRestore/applyRestore: 重命名（delete + add）回溯后两个名字状态正确", async () => {
+  const { root, cwd, store } = await makeStore();
+  // apply_patch move：源删除 + 目标新增。
+  await writeFile(path.join(cwd, "src.txt"), "moved-content");
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 5,
+    tool: "apply_patch",
+    callId: "c1",
+    path: "src.txt",
+    beforeContent: "moved-content",
+    afterContent: null,
+  });
+  await rm(path.join(cwd, "src.txt"));
+  await writeFile(path.join(cwd, "dst.txt"), "moved-content");
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 5,
+    tool: "apply_patch",
+    callId: "c1",
+    path: "dst.txt",
+    beforeContent: null,
+    afterContent: "moved-content",
+  });
+
+  const plan = await store.planRestore({ sessionId: "s", targetSeq: 5, cwd });
+  assert.deepEqual(plan.conflicts, []);
+  assert.deepEqual(plan.restore.map((item) => item.path).sort(), ["src.txt"]);
+  assert.deepEqual(plan.trash.map((item) => item.path).sort(), ["dst.txt"]);
+
+  const result = await store.applyRestore({ sessionId: "s", cwd, plan, auditId: "audit-rename" });
+  assert.deepEqual(result.restored, ["src.txt"]);
+  assert.deepEqual(result.trashed, ["dst.txt"]);
+  assert.deepEqual(result.failed, []);
+  await assertText(path.join(cwd, "src.txt"), "moved-content");
+  await assert.rejects(readFile(path.join(cwd, "dst.txt"), "utf8"), /ENOENT/);
+  // 旧名字内容进了回收站，可手动取回。
+  const trash = await store.listTrash({ sessionId: "s" });
+  assert.deepEqual(
+    trash[0].paths.map((item) => item.path),
+    ["dst.txt"],
+  );
+  await rm(root, { recursive: true, force: true });
+});
+
+test("planRestore/applyRestore: 先回溯到后一轮，再回溯到更早一轮不被拒绝（AUD-REW-03）", async () => {
+  const { root, cwd, store } = await makeStore();
+  // turn1（anchor 5）改 A；turn2（anchor 10）新建 B。
+  await writeFile(path.join(cwd, "A.txt"), "a-v1");
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 5,
+    tool: "edit",
+    callId: "c1",
+    path: "A.txt",
+    beforeContent: "a-v0",
+    afterContent: "a-v1",
+  });
+  await writeFile(path.join(cwd, "B.txt"), "b");
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 10,
+    tool: "write",
+    callId: "c2",
+    path: "B.txt",
+    beforeContent: null,
+    afterContent: "b",
+  });
+
+  // 第一次：回溯到 10，新建的 B 进回收站。
+  const first = await store.planRestore({ sessionId: "s", targetSeq: 10, cwd });
+  assert.deepEqual(first.conflicts, []);
+  const firstResult = await store.applyRestore({
+    sessionId: "s",
+    cwd,
+    plan: first,
+    auditId: "audit-first",
+  });
+  assert.deepEqual(firstResult.trashed, ["B.txt"]);
+  await assert.rejects(readFile(path.join(cwd, "B.txt"), "utf8"), /ENOENT/);
+
+  // 第二次：往更早（5）。上一次回溯自己移走的 B 不能被当成「外部缺失」冲突。
+  const second = await store.planRestore({ sessionId: "s", targetSeq: 5, cwd });
+  assert.deepEqual(second.conflicts, []);
+  assert.equal(second.available, true);
+  assert.deepEqual(
+    second.restore.map((item) => item.path),
+    ["A.txt"],
+  );
+  assert.deepEqual(second.trash, []);
+  const secondResult = await store.applyRestore({
+    sessionId: "s",
+    cwd,
+    plan: second,
+    auditId: "audit-second",
+  });
+  assert.deepEqual(secondResult.restored, ["A.txt"]);
+  assert.deepEqual(secondResult.failed, []);
+  await assertText(path.join(cwd, "A.txt"), "a-v0");
+  // B 仍然是「目标之前不存在」的状态，没有被复活。
+  await assert.rejects(readFile(path.join(cwd, "B.txt"), "utf8"), /ENOENT/);
+  await rm(root, { recursive: true, force: true });
+});
+
+test("planRestore/applyRestore: 两次「只还原内容」的回溯都成功（AUD-REW-03）", async () => {
+  const { root, cwd, store } = await makeStore();
+  // turn1（anchor 5）改 A；turn2（anchor 10）改 C。
+  await writeFile(path.join(cwd, "A.txt"), "a-v1");
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 5,
+    tool: "edit",
+    callId: "c1",
+    path: "A.txt",
+    beforeContent: "a-v0",
+    afterContent: "a-v1",
+  });
+  await writeFile(path.join(cwd, "C.txt"), "c-v1");
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 10,
+    tool: "edit",
+    callId: "c2",
+    path: "C.txt",
+    beforeContent: "c-v0",
+    afterContent: "c-v1",
+  });
+
+  const first = await store.planRestore({ sessionId: "s", targetSeq: 10, cwd });
+  assert.deepEqual(first.conflicts, []);
+  await store.applyRestore({ sessionId: "s", cwd, plan: first, auditId: "audit-content-1" });
+  await assertText(path.join(cwd, "C.txt"), "c-v0");
+  await assertText(path.join(cwd, "A.txt"), "a-v1");
+
+  // 第二次：C 当前等于它的 before（上次回溯的产物），不是 modified-externally。
+  const second = await store.planRestore({ sessionId: "s", targetSeq: 5, cwd });
+  assert.deepEqual(second.conflicts, []);
+  assert.equal(second.available, true);
+  assert.deepEqual(
+    second.restore.map((item) => item.path),
+    ["A.txt"],
+  );
+  const secondResult = await store.applyRestore({
+    sessionId: "s",
+    cwd,
+    plan: second,
+    auditId: "audit-content-2",
+  });
+  assert.deepEqual(secondResult.restored, ["A.txt"]);
+  await assertText(path.join(cwd, "A.txt"), "a-v0");
+  await assertText(path.join(cwd, "C.txt"), "c-v0");
+  await rm(root, { recursive: true, force: true });
+});
+
+test("planRestore: 中间态（上次回溯留下的旧 before）不被当成外部改动", async () => {
+  const { root, cwd, store } = await makeStore();
+  // 同一文件在 anchor 5 与 10 各改一次：v0 -> v1 -> v2。
+  await writeFile(path.join(cwd, "F.txt"), "v1");
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 5,
+    tool: "edit",
+    callId: "c1",
+    path: "F.txt",
+    beforeContent: "v0",
+    afterContent: "v1",
+  });
+  await writeFile(path.join(cwd, "F.txt"), "v2");
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 10,
+    tool: "edit",
+    callId: "c2",
+    path: "F.txt",
+    beforeContent: "v1",
+    afterContent: "v2",
+  });
+
+  // 先回溯到 10 -> F 回到 v1（中间态，等于 anchor 10 的 before）。
+  const first = await store.planRestore({ sessionId: "s", targetSeq: 10, cwd });
+  await store.applyRestore({ sessionId: "s", cwd, plan: first, auditId: "audit-mid-1" });
+  await assertText(path.join(cwd, "F.txt"), "v1");
+
+  // 再回溯到 5：当前 v1 是本会话记录过的状态，应继续还原到 v0，而不是冲突拒绝。
+  const second = await store.planRestore({ sessionId: "s", targetSeq: 5, cwd });
+  assert.deepEqual(second.conflicts, []);
+  assert.equal(second.available, true);
+  const result = await store.applyRestore({
+    sessionId: "s",
+    cwd,
+    plan: second,
+    auditId: "audit-mid-2",
+  });
+  assert.deepEqual(result.failed, []);
+  await assertText(path.join(cwd, "F.txt"), "v0");
+  await rm(root, { recursive: true, force: true });
+});
+
+test("planRestore: 目标态已满足（全部 no-op）时不产生冲突，也不误报可用", async () => {
+  const { root, cwd, store } = await makeStore();
+  await writeFile(path.join(cwd, "A.txt"), "v1");
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 5,
+    tool: "edit",
+    path: "A.txt",
+    beforeContent: "v0",
+    afterContent: "v1",
+  });
+  const first = await store.planRestore({ sessionId: "s", targetSeq: 5, cwd });
+  await store.applyRestore({ sessionId: "s", cwd, plan: first, auditId: "audit-noop-1" });
+  await assertText(path.join(cwd, "A.txt"), "v0");
+
+  // 再回溯到同一个目标：所有路径都等于目标态 -> 没有动作、没有冲突。
+  const again = await store.planRestore({ sessionId: "s", targetSeq: 5, cwd });
+  assert.deepEqual(again.conflicts, []);
+  assert.deepEqual(again.actions, []);
+  assert.equal(again.tracked, true);
+  assert.equal(again.available, false);
   await rm(root, { recursive: true, force: true });
 });
 
@@ -901,6 +1206,158 @@ test("救援点: restoreRescue 先存 rescue-of-rescue 再写回", async () => {
     (/** @type {any} */ error) => error.code,
   );
   assert.equal(missing, FILE_ERROR_CODES.rescueNotFound);
+  await rm(root, { recursive: true, force: true });
+});
+
+test("写入安全: 父目录被换成指向工作区外的 symlink 时 applyRestore 拒绝（AUD-REW-05）", async () => {
+  const { root, cwd, store } = await makeStore();
+  await mkdir(path.join(cwd, "sub"), { recursive: true });
+  await writeFile(path.join(cwd, "sub", "f.txt"), "after-content");
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 5,
+    tool: "edit",
+    callId: "c1",
+    path: "sub/f.txt",
+    beforeContent: "before-content",
+    afterContent: "after-content",
+  });
+  // 计划制定之后（或之前）把父目录换成指向工作区外的符号链接：外部 f.txt 内容与 afterHash 相同。
+  const outside = path.join(root, "outside");
+  await mkdir(outside, { recursive: true });
+  await writeFile(path.join(outside, "f.txt"), "after-content");
+  const plan = await store.planRestore({ sessionId: "s", targetSeq: 5, cwd });
+  assert.deepEqual(plan.conflicts, []);
+  assert.deepEqual(
+    plan.actions.map((item) => item.action),
+    ["restore"],
+  );
+  await rm(path.join(cwd, "sub"), { recursive: true, force: true });
+  await symlink(outside, path.join(cwd, "sub"));
+
+  const result = await store.applyRestore({ sessionId: "s", cwd, plan, auditId: "audit-linkdir" });
+  assert.deepEqual(result.restored, []);
+  assert.deepEqual(
+    result.failed.map((item) => item.path),
+    ["sub/f.txt"],
+  );
+  assert.match(result.failed[0].reason, /outside-cwd/u);
+  // 工作区外那个文件没有被改写。
+  await assertText(path.join(outside, "f.txt"), "after-content");
+  await rm(root, { recursive: true, force: true });
+});
+
+test("写入安全: 目标自身是 symlink 时 applyRestore 拒绝（AUD-REW-05）", async () => {
+  const { root, cwd, store } = await makeStore();
+  await writeFile(path.join(cwd, "f.txt"), "after-content");
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 5,
+    tool: "edit",
+    callId: "c1",
+    path: "f.txt",
+    beforeContent: "before-content",
+    afterContent: "after-content",
+  });
+  const outside = path.join(root, "outside.txt");
+  await writeFile(outside, "after-content");
+  const plan = await store.planRestore({ sessionId: "s", targetSeq: 5, cwd });
+  // 先把救援点建好（此时目标还是普通文件），再把目标换成 symlink 复用救援点应用。
+  const rescue = await store.createRescue({ sessionId: "s", cwd, plan });
+  await rm(path.join(cwd, "f.txt"));
+  await symlink(outside, path.join(cwd, "f.txt"));
+
+  const result = await store.applyRestore({
+    sessionId: "s",
+    cwd,
+    plan,
+    auditId: "audit-linkfile",
+    rescueId: rescue.rescueId,
+  });
+  assert.deepEqual(result.restored, []);
+  assert.equal(result.failed.length, 1);
+  assert.match(result.failed[0].reason, /symlink/u);
+  await assertText(outside, "after-content");
+  await rm(root, { recursive: true, force: true });
+});
+
+test("写入安全: 父目录 symlink 逃逸时 restoreRescue 拒绝（AUD-REW-05）", async () => {
+  const { root, cwd, store } = await makeStore();
+  await mkdir(path.join(cwd, "sub"), { recursive: true });
+  await writeFile(path.join(cwd, "sub", "f.txt"), "after-content");
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 5,
+    tool: "edit",
+    callId: "c1",
+    path: "sub/f.txt",
+    beforeContent: "before-content",
+    afterContent: "after-content",
+  });
+  const plan = await store.planRestore({ sessionId: "s", targetSeq: 5, cwd });
+  const applied = await store.applyRestore({
+    sessionId: "s",
+    cwd,
+    plan,
+    auditId: "audit-rescue-link",
+  });
+  assert.deepEqual(applied.restored, ["sub/f.txt"]);
+  await assertText(path.join(cwd, "sub", "f.txt"), "before-content");
+
+  // 恢复救援点之前把父目录换成工作区外的 symlink。
+  const outside = path.join(root, "outside");
+  await mkdir(outside, { recursive: true });
+  await writeFile(path.join(outside, "f.txt"), "outside-content");
+  await rm(path.join(cwd, "sub"), { recursive: true, force: true });
+  await symlink(outside, path.join(cwd, "sub"));
+
+  const rescueId = String(applied.rescueId);
+  const restored = await store.restoreRescue({ sessionId: "s", cwd, rescueId });
+  assert.deepEqual(restored.restored, []);
+  assert.deepEqual(
+    restored.failed.map((item) => item.path),
+    ["sub/f.txt"],
+  );
+  assert.match(restored.failed[0].reason, /outside-cwd/u);
+  await assertText(path.join(outside, "f.txt"), "outside-content");
+  await rm(root, { recursive: true, force: true });
+});
+
+test("写入安全: 父目录 symlink 逃逸时 restoreTrash 拒绝（AUD-REW-05）", async () => {
+  const { root, cwd, store } = await makeStore();
+  await mkdir(path.join(cwd, "sub"), { recursive: true });
+  await writeFile(path.join(cwd, "sub", "new.txt"), "created");
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 5,
+    tool: "write",
+    callId: "c1",
+    path: "sub/new.txt",
+    beforeContent: null,
+    afterContent: "created",
+  });
+  const plan = await store.planRestore({ sessionId: "s", targetSeq: 5, cwd });
+  await store.applyRestore({ sessionId: "s", cwd, plan, auditId: "audit-trash-link" });
+  await assert.rejects(readFile(path.join(cwd, "sub", "new.txt"), "utf8"), /ENOENT/);
+
+  const outside = path.join(root, "outside");
+  await mkdir(outside, { recursive: true });
+  await writeFile(path.join(outside, "new.txt"), "outside-content");
+  await rm(path.join(cwd, "sub"), { recursive: true, force: true });
+  await symlink(outside, path.join(cwd, "sub"));
+
+  const restored = await store.restoreTrash({ sessionId: "s", cwd, auditId: "audit-trash-link" });
+  assert.deepEqual(restored.restored, []);
+  assert.deepEqual(
+    restored.failed.map((item) => item.path),
+    ["sub/new.txt"],
+  );
+  assert.match(restored.failed[0].reason, /outside-cwd/u);
+  await assertText(path.join(outside, "new.txt"), "outside-content");
   await rm(root, { recursive: true, force: true });
 });
 

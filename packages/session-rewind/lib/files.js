@@ -134,15 +134,21 @@ export class FileStoreError extends Error {
 
 /**
  * 恢复计划里的单个文件动作。
+ *
+ * 判定按「目标状态」而不是「当前必须等于 afterHash」：`beforeHash` 就是回溯后的目标态
+ * （null 表示「目标态是不存在」）。因上次回溯而处于中间态的路径仍可继续还原（AUD-REW-03），
+ * 目标存在但当前不存在时允许重建（AUD-REW-02）。
  * @typedef {object} RestoreAction
  * @property {string} path 相对 cwd 的 POSIX 路径
  * @property {"restore" | "trash"} action 写回 before 内容 / 移入回收站
  * @property {string|null} beforeHash 恢复目标内容哈希（创建时 null）
  * @property {string|null} afterHash 计划制定时记录的「最新 after」哈希
- * @property {string|null} currentHash 计划制定时读到的当前哈希（apply 前复核用）
+ * @property {string|null} currentHash 计划制定时读到的当前哈希（apply 前复核用；不存在时 null）
+ * @property {boolean} [currentExists] 计划制定时目标是否存在（apply 前复核用）
  * @property {number} bytes 预估字节数
  * @property {number|null} mode 恢复时使用的权限位
  * @property {number} anchorSeq 该动作最早 entry 的 anchor
+ * @property {string} [note] 可读的诊断注记（例如 `missing-because-deleted`），不参与执行
  */
 
 /**
@@ -153,7 +159,8 @@ export class FileStoreError extends Error {
  * @property {string} sessionId 会话 id
  * @property {number} targetSeq 目标 seq
  * @property {string|null} cwd 会话工作目录
- * @property {Array<{path: string, bytes: number}>} restore 将还原的文件
+ * @property {Array<{path: string, bytes: number, deleted?: boolean, note?: string}>} restore 将还原的文件
+ *   `deleted: true` 表示该文件当前不存在、将按记录重建（AUD-REW-02）
  * @property {Array<{path: string, bytes: number}>} trash 将移入回收站的文件
  * @property {Array<{path: string, reason: string}>} skipped 未跟踪/不可处理的文件
  * @property {Array<{path: string, reason: string}>} conflicts 冲突文件（有冲突时整体拒绝）
@@ -897,6 +904,41 @@ export function createFileStore(input = {}) {
     };
   }
 
+  /**
+   * 写入前的路径校验：与捕获侧同一套 canonical 规则（AUD-REW-05）。
+   *
+   * 纯词法校验不够：父目录被换成指向工作区外的符号链接时，写文件会写到工作区外。
+   * 这里对**父目录**重跑 `realpath` + `isInside(cwd)`，并 `lstat` 拒绝目标本身是符号链接；
+   * `applyRestore` / `restoreRescue` / `restoreTrash` 三处共用。
+   * @param {string} cwd 会话工作目录
+   * @param {unknown} input 相对或绝对的写入路径
+   * @returns {Promise<{ok: true, relPath: string, absPath: string} | {ok: false, reason: string}>}
+   */
+  async function assertWriteTarget(cwd, input) {
+    const base = safeRelativePath(cwd, input);
+    if (!base.ok) return base;
+    if (isInside(home, base.absPath)) return { ok: false, reason: SKIP_REASONS.excluded };
+    let realRoot;
+    let realDir;
+    try {
+      realRoot = await fs.realpath(path.resolve(cwd));
+      realDir = await realpathDeepest(path.dirname(base.absPath));
+    } catch (error) {
+      return {
+        ok: false,
+        reason: errorCode(error) === "ENOENT" ? SKIP_REASONS.invalidCwd : SKIP_REASONS.unreadable,
+      };
+    }
+    if (!isInside(realRoot, realDir)) return { ok: false, reason: SKIP_REASONS.outsideCwd };
+    try {
+      const info = await fs.lstat(base.absPath);
+      if (info.isSymbolicLink()) return { ok: false, reason: SKIP_REASONS.symlink };
+    } catch (error) {
+      if (errorCode(error) !== "ENOENT") return { ok: false, reason: SKIP_REASONS.unreadable };
+    }
+    return { ok: true, relPath: base.relPath, absPath: base.absPath };
+  }
+
   // ---------------------------------------------------------------- before 捕获
 
   /**
@@ -1178,6 +1220,59 @@ export function createFileStore(input = {}) {
   }
 
   /**
+   * 一组 entry 里记录过的全部内容哈希（before/after 两端的已知状态）。
+   * @param {FileEntry[]} entries
+   * @returns {Set<string>}
+   */
+  function recordedHashesOf(entries) {
+    /** @type {Set<string>} */
+    const hashes = new Set();
+    for (const entry of entries) {
+      if (entry.skipped !== undefined) continue;
+      if (typeof entry.beforeHash === "string") hashes.add(entry.beforeHash);
+      if (typeof entry.afterHash === "string") hashes.add(entry.afterHash);
+    }
+    return hashes;
+  }
+
+  /**
+   * 会话回收站里出现过的 path -> 内容哈希集合（用于区分「上次回溯自己移走的」）。
+   * 读失败时退化为空表（只影响诊断注记，不影响判定）。
+   * @param {string} sessionId
+   * @returns {Promise<Map<string, Set<string>>>}
+   */
+  async function trashedHashesOf(sessionId) {
+    /** @type {Map<string, Set<string>>} */
+    const map = new Map();
+    if (typeof sessionId !== "string" || sessionId.length === 0) return map;
+    try {
+      const sessionDir = path.join(home, "trash", safeSegment(sessionId));
+      for (const id of await listSubdirs(sessionDir)) {
+        const manifest = await readJson(path.join(sessionDir, id, "manifest.json"));
+        const entries = isRecord(manifest) && Array.isArray(manifest.paths) ? manifest.paths : [];
+        for (const entry of entries) {
+          if (
+            !isRecord(entry) ||
+            typeof entry.path !== "string" ||
+            typeof entry.sha256 !== "string"
+          ) {
+            continue;
+          }
+          let hashes = map.get(entry.path);
+          if (hashes === undefined) {
+            hashes = new Set();
+            map.set(entry.path, hashes);
+          }
+          hashes.add(entry.sha256);
+        }
+      }
+    } catch {
+      map.clear();
+    }
+    return map;
+  }
+
+  /**
    * 计算恢复计划（**只读，不写任何东西**）。
    *
    * 选中 `anchorSeq >= targetSeq` 的 entry；每个 path 取最早一条的 before 作为恢复目标，
@@ -1240,16 +1335,19 @@ export function createFileStore(input = {}) {
     }
     plan.cwd = cwd;
 
-    /** @type {Map<string, {path: string, first: FileEntry, latest: FileEntry}>} */
+    /** @type {Map<string, {path: string, first: FileEntry, latest: FileEntry, entries: FileEntry[]}>} */
     const groups = new Map();
     for (const entry of selected) {
       const group = groups.get(entry.path);
       if (group === undefined) {
-        groups.set(entry.path, { path: entry.path, first: entry, latest: entry });
+        groups.set(entry.path, { path: entry.path, first: entry, latest: entry, entries: [entry] });
       } else {
         group.latest = entry;
+        group.entries.push(entry);
       }
     }
+    // 回收站里出现过的 (path, sha256)：用来区分「上次回溯自己移走的文件」与真正的外部改动。
+    const trashed = await trashedHashesOf(sessionId);
 
     for (const group of groups.values()) {
       const beforeHash = group.first.existedBefore ? group.first.beforeHash : null;
@@ -1259,30 +1357,46 @@ export function createFileStore(input = {}) {
         plan.skipped.push({ path: group.path, reason: SKIP_REASONS.symlink });
         continue;
       }
-      if (!current.exists) {
-        if (afterHash !== null) {
-          plan.conflicts.push({ path: group.path, reason: CONFLICT_REASONS.missing });
-        }
-        continue;
-      }
-      if (afterHash === null) {
-        plan.conflicts.push({ path: group.path, reason: CONFLICT_REASONS.unexpectedFile });
-        continue;
-      }
-      if (current.hash === null || current.hash !== afterHash) {
-        plan.conflicts.push({ path: group.path, reason: CONFLICT_REASONS.modifiedExternally });
-        continue;
-      }
+      // 目标态 = before 状态：beforeHash 为 null 表示「回溯后这个路径不存在」。
+      const targetIsAbsent = beforeHash === null;
+      const currentAtTarget = targetIsAbsent
+        ? !current.exists
+        : current.exists && current.hash !== null && current.hash === beforeHash;
+      // 已经等于目标态：不需要动作（两次回溯、新建文件已进回收站等都属于这一类）。
+      if (currentAtTarget) continue;
+      // 记录本身没有内容变化：没有可还原的东西。
       if (beforeHash === afterHash) continue;
+      // 当前仍存在时，内容必须是「本会话记录过的某个状态」，否则视为外部改动。
+      // 当前不存在不在冲突之列：目标态存在就按 before 内容重建（AUD-REW-02）。
+      if (current.exists) {
+        if (current.hash === null || !recordedHashesOf(group.entries).has(current.hash)) {
+          plan.conflicts.push({ path: group.path, reason: CONFLICT_REASONS.modifiedExternally });
+          continue;
+        }
+      }
+      /** @type {string | undefined} */
+      let note;
+      if (beforeHash !== null && !current.exists) {
+        // 目标存在但当前不存在：允许按 before 内容重建（AUD-REW-02），并留下可读原因。
+        if (afterHash !== null && trashed.get(group.path)?.has(afterHash) === true) {
+          note = "missing-because-trashed";
+        } else if (afterHash === null) {
+          note = "missing-because-deleted";
+        } else {
+          note = "missing-because-external";
+        }
+      }
       plan.actions.push({
         path: group.path,
         action: beforeHash === null ? "trash" : "restore",
         beforeHash,
         afterHash,
-        currentHash: current.hash,
+        currentHash: current.exists ? current.hash : null,
+        currentExists: current.exists,
         bytes: beforeHash === null ? current.bytes : Math.max(group.first.beforeBytes ?? 0, 0),
         mode: group.first.mode ?? null,
         anchorSeq: group.first.anchorSeq,
+        ...(note === undefined ? {} : { note }),
       });
     }
 
@@ -1297,9 +1411,15 @@ export function createFileStore(input = {}) {
     }
 
     for (const action of plan.actions) {
-      if (action.action === "restore")
-        plan.restore.push({ path: action.path, bytes: action.bytes });
-      else plan.trash.push({ path: action.path, bytes: action.bytes });
+      if (action.action === "restore") {
+        /** @type {{path: string, bytes: number, deleted?: boolean, note?: string}} */
+        const item = { path: action.path, bytes: action.bytes };
+        if (action.currentExists === false) item.deleted = true;
+        if (action.note !== undefined) item.note = action.note;
+        plan.restore.push(item);
+      } else {
+        plan.trash.push({ path: action.path, bytes: action.bytes });
+      }
       plan.totalBytes += action.bytes;
     }
     if (plan.skipped.length > 0) {
@@ -1559,14 +1679,15 @@ export function createFileStore(input = {}) {
     for (const saved of savedPaths) {
       if (saved.existed !== true) continue;
       try {
-        const safe = safeRelativePath(cwd, saved.path);
-        if (!safe.ok) throw new Error(safe.reason);
-        const buffer = await fs.readFile(rescueFileOf(loaded.dir, safe.relPath));
+        // 与捕获侧同一套 canonical 校验：救援点是任意时刻恢复的，写入窗口可能很长。
+        const target = await assertWriteTarget(cwd, saved.path);
+        if (!target.ok) throw new Error(target.reason);
+        const buffer = await fs.readFile(rescueFileOf(loaded.dir, target.relPath));
         if (typeof saved.sha256 === "string" && hashOf(buffer) !== saved.sha256) {
           throw new Error("rescue content hash mismatch");
         }
-        await writeFileAtomic(safe.absPath, buffer, saved.mode ?? undefined);
-        restored.push(safe.relPath);
+        await writeFileAtomic(target.absPath, buffer, saved.mode ?? undefined);
+        restored.push(target.relPath);
       } catch (error) {
         failed.push({ path: String(saved.path), reason: messageOf(error) });
       }
@@ -1688,19 +1809,25 @@ export function createFileStore(input = {}) {
     const trashRecords = [];
 
     for (const action of actions) {
-      const safe = safeRelativePath(cwd, action.path);
-      if (!safe.ok) {
-        result.failed.push({ path: String(action.path), reason: safe.reason });
+      // 写入前与捕获侧同一套路径校验：父目录 realpath 必须在会话 cwd 内、目标不得是符号链接。
+      const target = await assertWriteTarget(cwd, action.path);
+      if (!target.ok) {
+        result.failed.push({ path: String(action.path), reason: target.reason });
         continue;
       }
-      const relPath = safe.relPath;
+      const relPath = target.relPath;
       try {
         const current = await currentStateOf(cwd, relPath);
-        if (!current.exists) {
-          result.failed.push({ path: relPath, reason: CONFLICT_REASONS.missing });
-          continue;
-        }
-        if (current.hash === null || current.hash !== action.currentHash) {
+        // 计划与执行之间复核当前状态。`currentExists` 让「计划时不存在、执行时仍不存在」的
+        // 重建动作（AUD-REW-02）能通过，而不是一律判 missing。
+        const expectedExists =
+          typeof action.currentExists === "boolean"
+            ? action.currentExists
+            : action.currentHash !== null;
+        if (
+          current.exists !== expectedExists ||
+          (current.exists && (current.hash === null || current.hash !== action.currentHash))
+        ) {
           result.failed.push({ path: relPath, reason: "modified-during-apply" });
           continue;
         }
@@ -1711,9 +1838,10 @@ export function createFileStore(input = {}) {
             continue;
           }
           const mode = action.mode ?? rescueModes.get(relPath) ?? undefined;
-          await writeFileAtomic(safe.absPath, buffer, mode);
+          // writeFileAtomic 会先 mkdir -p 父目录：agent 删除文件（甚至删掉空目录）后也能重建。
+          await writeFileAtomic(target.absPath, buffer, mode);
           applied.push({ action });
-          const written = await fs.readFile(safe.absPath);
+          const written = await fs.readFile(target.absPath);
           if (hashOf(written) !== action.beforeHash) {
             result.failed.push({ path: relPath, reason: "verify-failed" });
             continue;
@@ -1722,11 +1850,15 @@ export function createFileStore(input = {}) {
           continue;
         }
         // 新建文件 -> 移入回收站（不硬删）。
+        if (!current.exists) {
+          result.failed.push({ path: relPath, reason: CONFLICT_REASONS.missing });
+          continue;
+        }
         const destination = joinRelative(
           path.join(trashDirOf(sessionId, auditId), "files"),
           relPath,
         );
-        await moveFile(safe.absPath, destination, current.mode ?? undefined);
+        await moveFile(target.absPath, destination, current.mode ?? undefined);
         applied.push({ action, trashPath: destination });
         const moved = await fs.readFile(destination);
         if (hashOf(moved) !== current.hash) {
@@ -1828,15 +1960,17 @@ export function createFileStore(input = {}) {
       const saved = savedByPath.get(item.action.path);
       try {
         if (saved === undefined) throw new Error("path is not in the rescue manifest");
-        const absPath = joinRelative(cwd, item.action.path);
+        // 回滚同样是写入：复用写入侧 canonical 校验，避免回滚时被换成 symlink 的父目录带出工作区。
+        const target = await assertWriteTarget(cwd, item.action.path);
+        if (!target.ok) throw new Error(target.reason);
         if (saved.existed) {
           const buffer = await fs.readFile(rescueFileOf(rescue.dir, item.action.path));
           if (typeof saved.sha256 === "string" && hashOf(buffer) !== saved.sha256) {
             throw new Error("rescue content hash mismatch");
           }
-          await writeFileAtomic(absPath, buffer, saved.mode ?? undefined);
+          await writeFileAtomic(target.absPath, buffer, saved.mode ?? undefined);
         } else {
-          await fs.rm(absPath, { force: true });
+          await fs.rm(target.absPath, { force: true });
         }
         if (item.trashPath !== undefined) await fs.rm(item.trashPath, { force: true });
         rolledBack.push(item.action.path);
@@ -1909,23 +2043,29 @@ export function createFileStore(input = {}) {
     const remaining = [];
     for (const entry of paths) {
       const relPath = isRecord(entry) && typeof entry.path === "string" ? entry.path : "";
-      const safe = safeRelativePath(cwd, relPath);
-      if (!safe.ok) {
-        failed.push({ path: relPath, reason: safe.reason });
+      const target = await assertWriteTarget(cwd, relPath);
+      if (!target.ok) {
+        failed.push({ path: relPath, reason: target.reason });
+        remaining.push({
+          path: relPath,
+          bytes: seqOf(entry.bytes),
+          sha256: typeof entry.sha256 === "string" ? entry.sha256 : "",
+          mode: typeof entry.mode === "number" ? entry.mode : null,
+        });
         continue;
       }
-      const source = joinRelative(path.join(dir, "files"), safe.relPath);
+      const source = joinRelative(path.join(dir, "files"), target.relPath);
       try {
         let exists = true;
         try {
-          await fs.lstat(safe.absPath);
+          await fs.lstat(target.absPath);
         } catch (error) {
           if (errorCode(error) !== "ENOENT") throw error;
           exists = false;
         }
         if (exists) throw new Error("destination already exists");
-        await moveFile(source, safe.absPath, entry.mode ?? undefined);
-        restored.push(safe.relPath);
+        await moveFile(source, target.absPath, entry.mode ?? undefined);
+        restored.push(target.relPath);
       } catch (error) {
         failed.push({ path: relPath, reason: messageOf(error) });
         remaining.push({

@@ -62,6 +62,7 @@ window.__ModuleLoader__.load({
       "confirm.filesConflicts": "有 {n} 个文件与预期不一致，无法执行文件回退",
       "confirm.filesUnavailable": "当前无法回退文件",
       "confirm.fileSummary": "将还原 {restored} 个文件、移入回收站 {trashed} 个",
+      "confirm.restoreDeleted": "其中 {n} 个文件已被删除，将按记录重建",
       "confirm.pathsMore": "展开全部 {n} 个路径",
       "confirm.pathsLess": "收起路径",
       "confirm.skipped": "{n} 个文件被跳过",
@@ -209,6 +210,7 @@ window.__ModuleLoader__.load({
         "{n} file(s) differ from the expected state; file rewind is unavailable",
       "confirm.filesUnavailable": "File rewind is unavailable",
       "confirm.fileSummary": "Restore {restored} file(s), move {trashed} new file(s) to trash",
+      "confirm.restoreDeleted": "{n} of them were deleted and will be recreated",
       "confirm.pathsMore": "Show all {n} paths",
       "confirm.pathsLess": "Hide paths",
       "confirm.skipped": "{n} file(s) skipped",
@@ -883,6 +885,30 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 文件还原列表：在通用 path 形状上带 `deleted`（当前不存在、将按记录重建，AUD-REW-02）。
+     * 其它列表（trash/skipped/conflicts/failed）保持通用形状不变。
+     * @param {any} raw
+     * @returns {any[]}
+     */
+    function normalizeRestoreList(raw) {
+      let list = normalizePathList(raw);
+      for (let i = 0; i < list.length; i += 1) list[i].deleted = false;
+      if (!Array.isArray(raw)) return list;
+      let index = 0;
+      for (let i = 0; i < raw.length; i += 1) {
+        let item = raw[i];
+        if (typeof item === "string") {
+          index += 1;
+          continue;
+        }
+        if (!item || typeof item !== "object" || typeof item.path !== "string") continue;
+        if (list[index]) list[index].deleted = item.deleted === true;
+        index += 1;
+      }
+      return list;
+    }
+
+    /**
      * preview.files 的归一化形状（任何字段缺失都退化为空/0）。
      * @param {any} value
      * @returns {any}
@@ -893,7 +919,7 @@ window.__ModuleLoader__.load({
         available: source.available === true,
         tracked: source.tracked === true,
         totalBytes: typeof source.totalBytes === "number" ? source.totalBytes : 0,
-        restore: normalizePathList(source.restore),
+        restore: normalizeRestoreList(source.restore),
         trash: normalizePathList(source.trash),
         skipped: normalizePathList(source.skipped),
         conflicts: normalizePathList(source.conflicts),
@@ -998,9 +1024,11 @@ window.__ModuleLoader__.load({
             code === "storage-unavailable"
           );
         });
+        // 记录过文件改动、但全部已满足目标态（例如第二次回溯到同一目标）时，
+        // 说明「无文件变更」，而不是「无法回退文件」。
         return {
           available: false,
-          reasonKey: blocking || files.tracked ? "confirm.filesUnavailable" : "confirm.filesNone",
+          reasonKey: blocking ? "confirm.filesUnavailable" : "confirm.filesNone",
           reasonParams: {},
         };
       }
@@ -2060,6 +2088,10 @@ window.__ModuleLoader__.load({
           reason: files.skipped[k].reason,
         });
       }
+      let deletedCount = 0;
+      for (let i = 0; i < files.restore.length; i += 1) {
+        if (files.restore[i].deleted === true) deletedCount += 1;
+      }
       let visible = expanded ? entries : entries.slice(0, 5);
       let rows = visible.map((/** @type {any} */ entry) =>
         h(
@@ -2093,6 +2125,16 @@ window.__ModuleLoader__.load({
             trashed: files.trash.length,
           }),
         ),
+        deletedCount > 0
+          ? h(
+              "div",
+              {
+                className: "dsh-srw-dim dsh-srw-deleted",
+                "data-srw-deleted": String(deletedCount),
+              },
+              t("confirm.restoreDeleted", { n: deletedCount }),
+            )
+          : null,
         h("div", { className: "dsh-srw-paths" }, rows),
         more,
         files.skipped.length > 0 && !expanded
@@ -5194,6 +5236,7 @@ window.__ModuleLoader__.load({
         formatClock: formatClock,
         formatDateTime: formatDateTime,
         normalizePathList: normalizePathList,
+        normalizeRestoreList: normalizeRestoreList,
         normalizeFiles: normalizeFiles,
         normalizePreview: normalizePreview,
         normalizeStateChanges: normalizeStateChanges,
