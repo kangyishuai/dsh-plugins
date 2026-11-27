@@ -5,7 +5,6 @@ import { describe, it } from "node:test";
 
 import {
   buildPrText,
-  canAutoMerge,
   MAX_PR_ATTEMPTS,
   nextPrAction,
   PR_TIERS,
@@ -104,35 +103,6 @@ describe("auto-merge", () => {
       nextPrAction({ tier: "auto-merge", thread: thread({ prNumber: 1, ciState: "pending" }) })
         .action,
       "wait-ci",
-    );
-  });
-});
-
-describe("canAutoMerge（真正执行前的额外门槛）", () => {
-  it("档位、开关、CI、可合并性四者都要满足", () => {
-    assert.deepEqual(
-      canAutoMerge({ tier: "auto-merge", dangerMerge: true, ciState: "passing", mergeable: true }),
-      {
-        ok: true,
-        reason: "",
-      },
-    );
-    assert.equal(
-      canAutoMerge({ tier: "draft", dangerMerge: true, ciState: "passing" }).reason,
-      "tier-not-auto-merge",
-    );
-    assert.equal(
-      canAutoMerge({ tier: "auto-merge", dangerMerge: false, ciState: "passing" }).reason,
-      "switch-off",
-    );
-    assert.equal(
-      canAutoMerge({ tier: "auto-merge", dangerMerge: true, ciState: "pending" }).reason,
-      "ci-not-passing",
-    );
-    assert.equal(
-      canAutoMerge({ tier: "auto-merge", dangerMerge: true, ciState: "passing", mergeable: false })
-        .reason,
-      "not-mergeable",
     );
   });
 });

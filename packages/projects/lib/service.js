@@ -3606,6 +3606,8 @@ export class ProjectsService extends TypertRemoteService {
     const prNumber = gh.code === 0 ? parsePrNumber(gh.stdout) : null;
     if (gh.code !== 0 || prNumber === null) {
       const tryCount = Number(thread.prAttempts ?? 0) + 1;
+      // 以前只把 tryCount 写进审计、从不落盘 → nextPrAction 的 give-up 上限永远不触发
+      store.setThreadWorktree(sessionId, { prAttempts: tryCount });
       store.setThreadAutoFix(sessionId, {});
       store.appendAudit({
         action: "pr/failed",

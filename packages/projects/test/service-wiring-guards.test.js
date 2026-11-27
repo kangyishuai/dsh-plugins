@@ -186,3 +186,17 @@ describe("审查 P2 回归防线（第三批）", () => {
     assert.match(storeSource, /onSaveError\?\.\(/u);
   });
 });
+
+describe("审查 P2（第四批）回归防线", () => {
+  it("PR 失败次数真的落盘（give-up 上限才会触发）", () => {
+    const start = serviceSource.indexOf("const tryCount = Number(thread.prAttempts ?? 0) + 1;");
+    assert.ok(start >= 0);
+    const region = serviceSource.slice(start, start + 400);
+    assert.match(region, /prAttempts: tryCount/u);
+  });
+
+  it("不再保留没有调用者的 canAutoMerge（死代码已清）", () => {
+    const autoprSource = readFileSync(join(here, "..", "lib", "autopr.js"), "utf8");
+    assert.doesNotMatch(autoprSource, /export function canAutoMerge/u);
+  });
+});

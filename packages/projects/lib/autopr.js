@@ -69,20 +69,6 @@ export function buildPrText(input) {
 }
 
 /**
- * 是否允许合并（auto-merge 档的额外门槛；真正执行仍要过执行器闸门）。
- * @param {{ tier?: string, ciState?: string, mergeable?: boolean, dangerMerge?: boolean }} input
- * @returns {{ ok: boolean, reason: string }}
- */
-export function canAutoMerge(input) {
-  if (String(input?.tier ?? "") !== "auto-merge")
-    return { ok: false, reason: "tier-not-auto-merge" };
-  if (input?.dangerMerge !== true) return { ok: false, reason: "switch-off" };
-  if (String(input?.ciState ?? "") !== "passing") return { ok: false, reason: "ci-not-passing" };
-  if (input?.mergeable === false) return { ok: false, reason: "not-mergeable" };
-  return { ok: true, reason: "" };
-}
-
-/**
  * 生成 `gh pr create` 的 argv（不做 shell 插值）。
  * @param {{ title: string, body: string, base?: string, draft?: boolean, branch: string, repo?: string }} input
  * @returns {{ argv: string[] } | { error: string }}
