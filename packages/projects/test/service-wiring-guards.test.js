@@ -125,3 +125,28 @@ describe("审查 P1 回归防线", () => {
     assert.doesNotMatch(threadSource, /: \[dataRoot\];/u);
   });
 });
+
+describe("审查 P1（第二批）回归防线", () => {
+  it("模板 instructions.md 写到数据根（读路径），不是 dirs[0]/相对路径", () => {
+    const start = serviceSource.indexOf("applyProjectTemplate(");
+    assert.ok(start >= 0);
+    const region = serviceSource.slice(start, start + 3000);
+    assert.match(region, /join\(this\.dataRoot, project\.id, "instructions\.md"\)/u);
+    assert.doesNotMatch(region, /const instructions = join\(base/u);
+  });
+
+  it("协调器会话的 token 也归到项目桶（预算闸不再漏账）", () => {
+    const start = serviceSource.indexOf("const threadProject = this.store?.projectOfSession");
+    assert.ok(start >= 0);
+    const region = serviceSource.slice(start, start + 1600);
+    assert.match(region, /coordinatorSessionId/u);
+    assert.match(region, /addTokenUsage\(usageProject\.id/u);
+  });
+
+  it("attachThread 拒绝空 sessionId", () => {
+    const start = serviceSource.indexOf("  attachThread(sessionId, projectId) {");
+    assert.ok(start >= 0);
+    const region = serviceSource.slice(start, start + 400);
+    assert.match(region, /sessionId is required/u);
+  });
+});

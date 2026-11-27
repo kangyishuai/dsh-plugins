@@ -33,6 +33,51 @@ export const FORMAT_VERSION = 1;
 
 /** 项目 Context 的上限（F2/F35）。宿主侧没有目录数配额，这个上限是产品约束 + 防误贴一大串路径。 */
 export const MAX_DIRS = 10;
+/** 项目名上限（RPC 输入不能无上限；200k 字符的名字以前也能落盘）。 */
+const MAX_PROJECT_NAME = 200;
+/** 单个项目目录字符串上限。 */
+const MAX_DIR_CHARS = 1024;
+/** 审批 args 序列化上限（500k 的 args 会把 projects.json 撑爆）。 */
+const MAX_APPROVAL_ARGS_CHARS = 8192;
+/** 审批 reason 上限。 */
+const MAX_APPROVAL_REASON_CHARS = 2000;
+
+/**
+ * 写入口的目录校验：必须是绝对路径、不能含 `..` 段、长度有上限。
+ * 相对路径/`/etc` 之类的目录会让后续 git/gh 跑到错误位置（审查实测）。
+ * @param {string[]} dirs
+ */
+export function assertSafeDirs(dirs) {
+  for (const raw of Array.isArray(dirs) ? dirs : []) {
+    const path = String(raw ?? "").trim();
+    if (path === "") continue;
+    if (!path.startsWith("/")) {
+      throw new Error(`projects: project dirs must be absolute paths (got ${path.slice(0, 120)})`);
+    }
+    if (path.split("/").includes("..")) {
+      throw new Error("projects: project dirs must not contain '..' segments");
+    }
+    if (path.length > MAX_DIR_CHARS) {
+      throw new Error(`projects: project dir path exceeds ${MAX_DIR_CHARS} characters`);
+    }
+  }
+}
+
+/**
+ * 项目/线程 id 的安全形状：会被拼进数据根路径，绝不允许路径分隔符、`..` 或控制字符。
+ * @param {string} id
+ * @returns {boolean}
+ */
+export function isSafeRecordKey(id) {
+  const value = String(id ?? "");
+  if (value === "" || value.length > 120) return false;
+  if (value.includes("/") || value.includes("\\")) return false;
+  for (const ch of value) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) return false;
+  }
+  return true;
+}
 /** 项目可关联的 GitHub 仓库上限（F2 的 Context 多选里的「仓库」维度）。 */
 export const MAX_REPOS = 10;
 /** 图标是短标记（emoji 或一两个字符），不是图片路径。 */
@@ -425,6 +470,8 @@ export function normalize(raw, root) {
   if (raw.projects && typeof raw.projects === "object") {
     for (const [id, value] of Object.entries(raw.projects)) {
       if (!value || typeof value !== "object") continue;
+      // 损坏/被手改的 id 会被拼进路径（delete/restore 会搬走数据根外的目录）：直接跳过
+      if (!isSafeRecordKey(id)) continue;
       const project = /** @type {any} */ (value);
       state.projects[id] = {
         ...project,
@@ -508,6 +555,7 @@ export function normalize(raw, root) {
   }
   if (raw.threads && typeof raw.threads === "object") {
     for (const [sessionId, value] of Object.entries(raw.threads)) {
+      if (!isSafeRecordKey(sessionId)) continue;
       const thread = /** @type {any} */ (value);
       if (!thread || typeof thread.projectId !== "string") continue;
       state.threads[sessionId] = {
@@ -668,6 +716,9 @@ export class ProjectStore {
   createProject(name, input = {}) {
     const trimmed = String(name ?? "").trim();
     if (trimmed === "") throw new Error("projects: project name is required");
+    if (trimmed.length > MAX_PROJECT_NAME) {
+      throw new Error(`projects: project name exceeds ${MAX_PROJECT_NAME} characters`);
+    }
     const goal = typeof input.goal === "string" ? input.goal : "";
     if (goal.length > MAX_GOAL_CHARS) {
       throw new Error(`projects: goal exceeds ${MAX_GOAL_CHARS} characters (got ${goal.length})`);
@@ -676,6 +727,7 @@ export class ProjectStore {
     const stamp = iso(this.now());
     // P2 复审：与 updateProject 同口径——超上限就明确拒绝，不再静默截断（静默丢用户数据）
     const dirs = filterDirs(input.dirs);
+    assertSafeDirs(dirs);
     if (dirs.length > MAX_DIRS) {
       throw new Error(`projects: at most ${MAX_DIRS} project dirs (got ${dirs.length})`);
     }
@@ -796,7 +848,12 @@ export class ProjectStore {
     const current = this.state.projects[id];
     if (!current) throw new Error(`projects: unknown project ${id}`);
     const next = { ...current };
-    if (typeof patch.name === "string" && patch.name.trim() !== "") next.name = patch.name.trim();
+    if (typeof patch.name === "string" && patch.name.trim() !== "") {
+      if (patch.name.trim().length > MAX_PROJECT_NAME) {
+        throw new Error(`projects: project name exceeds ${MAX_PROJECT_NAME} characters`);
+      }
+      next.name = patch.name.trim();
+    }
     if (typeof patch.goal === "string") {
       if (patch.goal.length > MAX_GOAL_CHARS) {
         throw new Error(
@@ -839,6 +896,7 @@ export class ProjectStore {
       if (requested.length > MAX_DIRS) {
         throw new Error(`projects: at most ${MAX_DIRS} project dirs (got ${requested.length})`);
       }
+      assertSafeDirs(requested);
       next.dirs = normalizeDirs(patch.dirs);
     }
     if (Array.isArray(patch.repos)) {
@@ -1554,13 +1612,22 @@ export class ProjectStore {
    * @returns {{ requestId: string }}
    */
   appendApproval(request) {
+    let argsText = "";
+    try {
+      argsText = JSON.stringify(request.args ?? null);
+    } catch {
+      argsText = "";
+    }
+    if (argsText.length > MAX_APPROVAL_ARGS_CHARS) {
+      throw new Error(`projects: approval args exceed ${MAX_APPROVAL_ARGS_CHARS} characters`);
+    }
     const requestId = `apr_${this.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     this.state.approvals.push({
       requestId,
       projectId: String(request.projectId),
       action: String(request.action),
       args: request.args ?? null,
-      reason: String(request.reason ?? ""),
+      reason: String(request.reason ?? "").slice(0, MAX_APPROVAL_REASON_CHARS),
       status: "pending",
       at: iso(this.now()),
       resolvedAt: null,

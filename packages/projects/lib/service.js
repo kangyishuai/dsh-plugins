@@ -677,16 +677,27 @@ export class ProjectsService extends TypertRemoteService {
         if (text !== "") this.lastMessages.set(sessionId, text);
         // token 用量挂在同一条事件上（宿主无独立 usage 记录）；累计到项目当天分桶
         const threadProject = this.store?.projectOfSession?.(sessionId);
+        // 协调器会话不在 state.threads 里：不单独归桶的话，它的自动唤醒/对话 token 永不入账，
+        // 「到线暂停」的预算闸对这部分支出永远不生效（审查指出）。
+        const coordinatorProject = threadProject
+          ? null
+          : this.store
+              ?.listProjects?.()
+              .find(
+                (/** @type {any} */ project) =>
+                  String(project.coordinatorSessionId ?? "") === sessionId,
+              );
+        const usageProject = threadProject ?? coordinatorProject ?? null;
         const usage = event?.data?.message?.usage ?? event?.data?.usage;
-        if (threadProject && usage) {
+        if (usageProject && usage) {
           const nowMs = Date.now();
           const tokens = tokensOf({ at: new Date(nowMs).toISOString(), usage }, nowMs);
           if (tokens > 0) {
-            this.store.addTokenUsage(threadProject.id, tokens, nowMs);
+            this.store.addTokenUsage(usageProject.id, tokens, nowMs);
             // 必须落盘：token 分桶的设计要求「跨重启保留」（store 单测覆盖了 save 路径，
             // 但这里曾经只改内存不保存 —— 重启就丢，等于预算闸永远从 0 开始）。
             this.store.save();
-            void this.enforceTokenBudget(threadProject.id, nowMs);
+            void this.enforceTokenBudget(usageProject.id, nowMs);
           }
         }
       }
@@ -2420,7 +2431,9 @@ export class ProjectsService extends TypertRemoteService {
    */
   attachThread(sessionId, projectId) {
     const store = this.requireStore();
-    const thread = store.attachThread(sessionId, projectId);
+    const id = String(sessionId ?? "").trim();
+    if (id === "") throw new Error("projects: sessionId is required");
+    const thread = store.attachThread(id, projectId);
     store.save();
     // 不需要在这里补挂上下文：项目上下文是**全局注册 + 按会话求值**的
     // （见构造函数的 registerProjectContext），归属一落盘，下一次请求就会渲染出来。
@@ -4883,21 +4896,22 @@ export class ProjectsService extends TypertRemoteService {
     const existing = existsSync(agentsPath) ? readFileSync(agentsPath, "utf8") : "";
     const merged = mergeManagedBlock(existing, block);
     writeFileSync(agentsPath, merged.text, { mode: 0o600 });
-    const instructions = join(base, "instructions.md");
+    // instructions.md 的**读路径**固定在数据根（project-files.js）；写进用户仓库等于
+    // 模板永远读不到 + 往别人仓库丢未跟踪文件（审查实测）。AGENTS.md 仍写项目目录（受管块）。
+    const instructions = join(this.dataRoot, project.id, "instructions.md");
     let instructionsCreated = false;
     if (!existsSync(instructions)) {
       const plan = planTemplate({
         dir: base,
         exists: { dirExists: true, agentsMd: false, instructionsMd: false },
       });
-      for (const file of plan.files) {
-        mkdirSync(dirname(file.path), { recursive: true });
-        try {
-          writeFileSync(file.path, file.content, { flag: "wx" });
-          instructionsCreated = true;
-        } catch {
-          /* 并发创建：已存在就跳过 */
-        }
+      const template = plan.files.find((file) => String(file.path).endsWith("instructions.md"));
+      mkdirSync(dirname(instructions), { recursive: true });
+      try {
+        writeFileSync(instructions, template?.content ?? "", { flag: "wx" });
+        instructionsCreated = true;
+      } catch {
+        /* 并发创建：已存在就跳过 */
       }
     }
     store.appendAudit({
