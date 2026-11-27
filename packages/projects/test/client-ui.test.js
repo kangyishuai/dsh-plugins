@@ -335,6 +335,51 @@ test("AUD-01：composer 输入框接了 composition 事件与 IME 守卫（接�
   assert.match(source, /composerKeyIntent\(event\.key/u);
 });
 
+test("AUD-01/A4：其余 8 个 Enter 提交输入框也接了 IME 守卫（复审 A4 回归）", async () => {
+  const source = await readFile(CLIENT_URL, "utf8");
+  // 锚点 → 该输入框 Enter 触发的提交动作。steer / route 会真的发消息 / 起协调者回合，
+  // IME 上词被当成 Enter 的代价与 composer 同级，所以这 8 处必须复用同一个判断。
+  /** @type {[string, string][]} */
+  const inputs = [
+    ["data-projects-create-input", "submit()"],
+    ["data-projects-new-dir", "addDir()"],
+    ["data-projects-new-repo", "addRepo()"],
+    ["data-projects-library-search", "runSearch()"],
+    ["data-projects-thread-steer-input", "steerThreadNow("],
+    ["data-projects-memory-append-input", "appendMemoryLine()"],
+    ["data-projects-route-input", "dispatchRoute()"],
+    ["data-projects-dir-input", "submitDir()"],
+  ];
+  for (const [anchor, action] of inputs) {
+    const at = source.indexOf(`"${anchor}"`);
+    assert.ok(at >= 0, `缺少输入框锚点 ${anchor}`);
+    // 输入框的 props 里锚点在 onKeyDown 之前；取足够长的一段把 handler 包进来。
+    const chunk = source.slice(at, at + 1400);
+    const handlerAt = chunk.indexOf("onKeyDown:");
+    assert.ok(handlerAt >= 0, `${anchor} 的输入框没有 onKeyDown`);
+    const handler = chunk.slice(handlerAt);
+    assert.ok(handler.includes(action), `${anchor} 的 Enter 提交动作 ${action} 不见了`);
+    const enterAt = handler.indexOf('event.key === "Enter"');
+    assert.ok(enterAt >= 0, `${anchor} 的 onKeyDown 里找不到 Enter 分支`);
+    assert.match(
+      handler.slice(0, enterAt),
+      /if \(isImeConfirmKey\(event\)\) return;/u,
+      `${anchor} 的 Enter 提交前没有 isImeConfirmKey 守卫（IME 上词会误提交）`,
+    );
+  }
+});
+
+test("A3：目录超限 toast 传齐两个占位符（{count} + {used}），不再渲染裸占位符", async () => {
+  const source = await readFile(CLIENT_URL, "utf8");
+  const calls = [...source.matchAll(/text\(t, "detail\.dirLimit", \{[\s\S]{0,240}?\}\)/gu)];
+  // 两处：详情页输入框旁的上限提示行 + 超限 toast。
+  assert.equal(calls.length, 2, `detail.dirLimit 的调用点数量变了：${calls.length}`);
+  for (const call of calls) {
+    assert.match(call[0], /count:/u, `缺少 count 参数：${call[0]}`);
+    assert.match(call[0], /used:/u, `缺 used 参数会渲染出裸 {used}：${call[0]}`);
+  }
+});
+
 /* ------------------------------------------------------------------ */
 /* AUD-projects-ui-04/05/16/19 + 07：弹层焦点契约（真实行为）           */
 /* ------------------------------------------------------------------ */
