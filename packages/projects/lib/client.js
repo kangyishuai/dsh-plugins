@@ -3983,7 +3983,18 @@ window.__ModuleLoader__.load({
             "data-projects-row-unread-count": String(unread),
             onMouseEnter: () => setHovered(project.id),
             onMouseLeave: () => setHovered(""),
-            onClick: () => setSelectedId(project.id),
+            onClick: (/** @type {any} */ event) => {
+              // 行内 ⋯ 菜单/弹窗的点击不能冒泡成「打开详情」：
+              // 以前点「删除…」会先弹确认框、同时把详情页也打开（真机复验发现）。
+              if (
+                event?.target?.closest?.(
+                  "button, [role=menu], [role=menuitem], input, a, select, label",
+                )
+              ) {
+                return;
+              }
+              setSelectedId(project.id);
+            },
           },
           pinned
             ? h(

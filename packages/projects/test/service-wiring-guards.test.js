@@ -397,3 +397,14 @@ describe("第 3 轮复审 P0/P1 守卫", () => {
     assert.match(region, /pickRepoRoot\(/u);
   });
 });
+
+describe("第 3 轮 UI 复审补充：行菜单点击不能打开详情", () => {
+  const client = readFileSync(join(here, "..", "lib", "client.js"), "utf8");
+  it("项目行 onClick 忽略行内按钮/菜单的冒泡", () => {
+    const start = client.indexOf('"data-projects-row": project.id');
+    assert.ok(start >= 0);
+    const region = client.slice(start, start + 1800);
+    assert.match(region, /closest\?\.\(/u);
+    assert.match(region, /\[role=menuitem\]/u);
+  });
+});
