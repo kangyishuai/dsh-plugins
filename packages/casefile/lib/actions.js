@@ -88,6 +88,36 @@ export function createActions(options) {
   const onWaitChange = options.onWaitChange;
   const runner = options.runner ?? null;
   const provenance = options.provenance ?? null;
+
+  // 会话 → 项目的指针落盘（AUD-CASEFILE-01）：重启后同一个会话仍能 recall。
+  // 只存「会话 → 项目 id」的轻量索引；项目数据本身仍在 projects/<id>/。
+  const pointerFile = join(dataRoot, "session-pointers.json");
+  const MAX_POINTERS = 200;
+  let pointersLoaded = false;
+  /** 懒加载：第一次 recall/remember 时才读盘，避免每个会话启动都摸文件。 */
+  const loadPointers = () => {
+    if (pointersLoaded) return;
+    pointersLoaded = true;
+    const value = store.readJson(pointerFile);
+    const pointers = value?.pointers;
+    if (pointers == null || typeof pointers !== "object") return;
+    for (const [sessionId, projectId] of Object.entries(pointers)) {
+      if (typeof sessionId === "string" && typeof projectId === "string") {
+        currentProject.set(sessionId, projectId);
+      }
+    }
+  };
+  const persistPointers = () => {
+    /** @type {Record<string, string>} */
+    const pointers = {};
+    for (const [sessionId, projectId] of currentProject) pointers[sessionId] = projectId;
+    // Map 尾部是最近使用过的会话（remember 会先 delete 再 set）；超上限时丢最久没用的。
+    const keys = Object.keys(pointers);
+    for (const key of keys.slice(0, Math.max(0, keys.length - MAX_POINTERS))) {
+      delete pointers[key];
+    }
+    store.writeJson(pointerFile, { version: 1, updatedAt: nowIso(), pointers });
+  };
   // checker 需要固定形状的 runner；外层 runner 更宽松，这里做一次归一。
   const checkerRunner =
     runner == null
@@ -151,21 +181,43 @@ export function createActions(options) {
     // ---------- 会话记忆 ----------
 
     /**
+     * 记住「本会话当前项目」，并落盘（重启后仍可 recall）。
+     * 任何拿到显式 projectId 的工具调用都会走到这里，不再只依赖 open。
      * @param {any} exec
      * @param {string} projectId
      */
     remember(exec, projectId) {
       const sessionId = sessionOf(exec);
-      if (sessionId) currentProject.set(sessionId, projectId);
+      const id = String(projectId ?? "");
+      if (sessionId === undefined || id === "") return;
+      // 先删后设：让刚用过的会话排到 Map 尾部，淘汰时先丢最久没用的（LRU，不是 FIFO）。
+      currentProject.delete(sessionId);
+      currentProject.set(sessionId, id);
+      persistPointers();
     },
 
     /**
+     * 取「本会话当前项目」；项目已不存在时自清理悬空指针。
      * @param {any} exec
      * @returns {string | undefined}
      */
     recall(exec) {
+      loadPointers();
       const sessionId = sessionOf(exec);
-      return sessionId ? currentProject.get(sessionId) : undefined;
+      if (sessionId === undefined) return undefined;
+      const id = currentProject.get(sessionId);
+      if (typeof id !== "string" || id === "") return undefined;
+      try {
+        if (!store.getProject(id)) {
+          currentProject.delete(sessionId);
+          persistPointers();
+          return undefined;
+        }
+      } catch {
+        // 读不了（高版本文件 / 非法 id）时保持指针，让下一步动作自己报稳定错误码。
+        return id;
+      }
+      return id;
     },
 
     // ---------- 项目 ----------
@@ -179,11 +231,23 @@ export function createActions(options) {
     },
 
     /**
+     * 打开项目：显式 id 命中已有项目时直接打开它（不再报 project-exists），
+     * 否则新建。两种情况都会建立「本会话当前项目」指针。
      * @param {Record<string, any>} input
      * @param {any} [exec]
      * @returns {Promise<Record<string, any>>}
      */
     async openProject(input, exec) {
+      const wantedId = input?.id == null ? null : String(input.id);
+      if (wantedId != null && wantedId !== "") {
+        const existing = store.getProject(wantedId);
+        if (existing) {
+          store.markLastOpened(existing.id);
+          if (exec) this.remember(exec, existing.id);
+          // 不重写 project.json：打开已有项目不应改它的标题/授权档/工具锚点。
+          return { ...existing, reopened: true };
+        }
+      }
       const project = store.createProject(input ?? {});
       // 把"当时用的哪套工具"锚进项目：REA 版本 + 工具面哈希。
       const probe = typeof provenance === "function" ? provenance() : null;
@@ -193,7 +257,8 @@ export function createActions(options) {
             capabilityHash: probe.capabilityHash,
           })
         : project;
-      if (exec) this.remember(exec, project.id);
+      store.markLastOpened(anchored.id);
+      if (exec) this.remember(exec, anchored.id);
       return anchored;
     },
 
@@ -203,6 +268,8 @@ export function createActions(options) {
      */
     async detail(projectId) {
       const project = requireProject(projectId);
+      // UI 选中项目走的也是这条：记「最近打开」，供缺失 projectId 时的提示使用。
+      store.markLastOpened(project.id);
       const data = store.readAll(project.id);
       return {
         project,
@@ -268,19 +335,19 @@ export function createActions(options) {
      */
     async addEvidence(projectId, input, exec) {
       const project = requireProject(projectId);
-      // 产物接管：/tmp 里的东西会被清理，清了 sha256 就无法复算，项目只能停在 investigating。
-      const archived =
-        typeof input?.artifactPath === "string" && input.artifactPath.trim() !== ""
-          ? store.archiveArtifact(project.id, input.artifactPath)
-          : null;
       const record = normalizeEvidence({
         ...input,
         // 外部摄入时，同一份报告可以同时是多条证据的出处：允许直接传入已归档对象。
-        artifact: archived ?? input?.artifact ?? null,
+        artifact: input?.artifact ?? null,
         sessionId: input?.sessionId ?? sessionOf(exec) ?? null,
       });
+      // 先校验后归档：其余字段校验失败时不应该先把文件复制进项目目录（AUD-CASEFILE-06 孤儿产物）。
+      // 产物接管：/tmp 里的东西会被清理，清了 sha256 就无法复算，项目只能停在 investigating。
+      if (typeof input?.artifactPath === "string" && input.artifactPath.trim() !== "") {
+        record.artifact = store.archiveArtifact(project.id, input.artifactPath);
+      }
       store.appendRecord(project.id, "evidence", record);
-      store.touch(project.id);
+      await store.touch(project.id);
       store.audit(project.id, {
         actor: "agent",
         action: "evidence/add",
@@ -328,7 +395,7 @@ export function createActions(options) {
       const project = requireProject(projectId);
       const record = normalizeClaim(input);
       store.appendRecord(project.id, "claims", record);
-      store.touch(project.id);
+      await store.touch(project.id);
       store.audit(project.id, {
         actor: "agent",
         action: "claim/add",
@@ -394,7 +461,7 @@ export function createActions(options) {
       if (updated.length === 0) {
         throw new CaseStoreError("not-found", `没有匹配的结论：${[...wanted].join("、")}`);
       }
-      store.touch(project.id);
+      await store.touch(project.id);
       store.audit(project.id, {
         actor: "agent",
         action: "claim/select",
@@ -415,7 +482,7 @@ export function createActions(options) {
       const project = requireProject(projectId);
       const record = normalizeFeature(input);
       store.appendRecord(project.id, "features", record);
-      store.touch(project.id);
+      await store.touch(project.id);
       store.audit(project.id, {
         actor: "agent",
         action: "feature/add",
@@ -443,7 +510,7 @@ export function createActions(options) {
       const project = requireProject(projectId);
       const record = normalizeUnknown(input);
       store.appendRecord(project.id, "unknowns", record);
-      store.touch(project.id);
+      await store.touch(project.id);
       store.audit(project.id, {
         actor: "agent",
         action: "unknown/add",
@@ -480,7 +547,7 @@ export function createActions(options) {
         resolvedAt: nowIso(),
       };
       store.appendRecord(project.id, "unknowns", next);
-      store.touch(project.id);
+      await store.touch(project.id);
       store.audit(project.id, { actor: "agent", action: "unknown/resolve", target: next.id });
       return next;
     },
@@ -496,7 +563,7 @@ export function createActions(options) {
       const project = requireProject(projectId);
       const record = normalizeObligation(input);
       store.appendRecord(project.id, "obligations", record);
-      store.touch(project.id);
+      await store.touch(project.id);
       store.audit(project.id, {
         actor: "agent",
         action: "obligation/add",
@@ -545,7 +612,7 @@ export function createActions(options) {
         at: nowIso(),
       };
       store.appendRecord(project.id, "checks", record);
-      store.touch(project.id);
+      await store.touch(project.id);
       store.audit(project.id, {
         actor: "agent",
         action: "check/add",
@@ -632,7 +699,7 @@ export function createActions(options) {
         version: Number(obligation.version ?? 1) + 1,
       };
       store.appendRecord(project.id, "obligations", next);
-      store.touch(project.id);
+      await store.touch(project.id);
       store.audit(project.id, {
         actor: "agent",
         action: "obligation/close",
@@ -661,7 +728,7 @@ export function createActions(options) {
         version: Number(obligation.version ?? 1) + 1,
       };
       store.appendRecord(project.id, "obligations", next);
-      store.touch(project.id);
+      await store.touch(project.id);
       store.audit(project.id, { actor: "agent", action: "obligation/reopen", target: next.id });
       return next;
     },
@@ -715,7 +782,7 @@ export function createActions(options) {
         detail: JSON.stringify(result.detail ?? {}),
       });
       store.appendRecord(project.id, "builds", build);
-      store.touch(project.id);
+      await store.touch(project.id);
       store.audit(project.id, {
         actor: "agent",
         action: "build/run",
@@ -791,7 +858,7 @@ export function createActions(options) {
         at: checkedAt,
       };
       store.appendRecord(project.id, "checks", record);
-      store.touch(project.id);
+      await store.touch(project.id);
       store.audit(project.id, {
         actor: "agent",
         action: "check/run",
@@ -838,7 +905,7 @@ export function createActions(options) {
           detail: { reasons: entry.reasons },
         });
       }
-      if (reopened.length > 0) store.touch(project.id);
+      if (reopened.length > 0) await store.touch(project.id);
       return reopened;
     },
 
@@ -1074,7 +1141,7 @@ export function createActions(options) {
         reason: input?.reason,
       });
       store.appendRecord(project.id, "attestations", attestation);
-      store.touch(project.id);
+      await store.touch(project.id);
       store.audit(project.id, {
         actor: "agent",
         action: "builder/start",
@@ -1515,22 +1582,148 @@ export function createActions(options) {
     },
 
     /**
-     * 丢弃项目：整个目录移进 dataRoot/trash（可手动移回）。
-     * 破坏性，必须 confirm。
+     * 丢弃项目：整个目录移进 dataRoot/trash（可恢复）。
+     * ADR 0002：默认进回收站、必须显式 confirm、支持 dry-run 且给出影响面、写数据根审计。
      * @param {string} projectId
-     * @param {{ confirm?: boolean }} [options]
+     * @param {{ confirm?: boolean, dryRun?: boolean }} [options]
      * @returns {Promise<Record<string, any>>}
      */
     async dropProject(projectId, options = {}) {
       const project = requireProject(projectId);
+      const impact = store.projectImpact(project.id);
+      // 预览路径每次取当前时间戳，**不是**最终落点：真正 drop 时会重新生成目录名（F5）。
+      const previewTrashPath = store.expectedTrashPath(project.id);
+      if (options?.dryRun === true) {
+        return {
+          dryRun: true,
+          projectId: project.id,
+          projects: 1,
+          bytes: impact.bytes,
+          files: impact.files,
+          trashRoot: store.trashRoot,
+          previewTrashPath,
+          recoverable: true,
+          summary: `将把项目 ${project.id}（${impact.files} 个文件 / ${impact.bytes} 字节）移进 ${store.trashRoot}/（预览路径 ${previewTrashPath}；实际落点会带新的时间戳，可在回收站恢复）`,
+        };
+      }
       if (options?.confirm !== true) {
         throw new CasefileActionError(
           "confirm-required",
-          `丢弃项目会把 projects/${project.id} 整个移进 trash（可手动移回）。确认请传 confirm: true。`,
+          `丢弃项目会把 projects/${project.id}（${impact.files} 个文件 / ${impact.bytes} 字节）整个移进 trash（可在回收站恢复，不会硬删）。确认请传 confirm: true。`,
         );
       }
       const result = store.dropProject(project.id);
-      return { trashedTo: result.trashedTo, project: result.project };
+      store.auditRoot({
+        actor: "user",
+        action: "project/drop",
+        target: project.id,
+        detail: {
+          trashedTo: result.trashedTo,
+          bytes: impact.bytes,
+          files: impact.files,
+          recoverable: true,
+        },
+      });
+      return {
+        trashedTo: result.trashedTo,
+        project: result.project,
+        bytes: impact.bytes,
+        files: impact.files,
+      };
+    },
+
+    /**
+     * 列回收站（ADR 0002「影响」条：回收站要能查看/清空）。
+     * @returns {Promise<Record<string, any>[]>}
+     */
+    async listTrash() {
+      return store.scanTrash().entries;
+    },
+
+    /**
+     * 从回收站恢复一个项目。
+     * @param {string} name
+     * @returns {Promise<Record<string, any>>}
+     */
+    async restoreTrash(name) {
+      /** @type {{ project: Record<string, any>, restoredTo: string }} */
+      let result;
+      try {
+        result = store.restoreTrash(name);
+      } catch (error) {
+        // 坏条目/不一致条目会被拒绝且**留在回收站**；失败也留痕，别让审计链断在这里（F3）。
+        // 审计本身写不进去（只读/写满的数据根）时只告警：不能把 not-found 顶成 EACCES（N3）。
+        try {
+          store.auditRoot({
+            actor: "user",
+            action: "project/restore-failed",
+            target: String(name ?? ""),
+            detail: {
+              code: String(/** @type {any} */ (error)?.code ?? "unknown"),
+              message: String(/** @type {any} */ (error)?.message ?? error).slice(0, 300),
+            },
+          });
+        } catch (auditError) {
+          store.logger.warn?.(`casefile: 恢复失败审计写入失败：${String(auditError)}`);
+        }
+        throw error;
+      }
+      store.auditRoot({
+        actor: "user",
+        action: "project/restore",
+        target: String(name ?? ""),
+        detail: { projectId: result.project.id, restoredTo: result.restoredTo },
+      });
+      return {
+        project: result.project,
+        restoredTo: result.restoredTo,
+        summary: `已恢复项目 ${result.project.id}`,
+      };
+    },
+
+    /**
+     * 清空回收站（显式硬删）：必须 confirm；dry-run 只给影响面；来历不明的条目保留。
+     * @param {{ names?: string[], confirm?: boolean, dryRun?: boolean }} [options]
+     * @returns {Promise<Record<string, any>>}
+     */
+    async purgeTrash(options = {}) {
+      const scan = store.scanTrash();
+      const names = Array.isArray(options?.names) ? options.names.map(String) : null;
+      const selected =
+        names == null ? scan.entries : scan.entries.filter((entry) => names.includes(entry.name));
+      if (names != null && selected.length === 0) {
+        throw new CaseStoreError("not-found", `回收站里没有这些条目：${names.join("、")}`);
+      }
+      const bytes = selected.reduce((sum, entry) => sum + (Number(entry.bytes) || 0), 0);
+      /** @type {Record<string, any>} */
+      const impact = {
+        count: selected.length,
+        bytes,
+        names: selected.map((entry) => entry.name),
+        skipped: scan.unknown.length,
+        trashRoot: store.trashRoot,
+        recoverable: false,
+      };
+      if (options?.dryRun === true) return { dryRun: true, ...impact };
+      if (options?.confirm !== true) {
+        throw new CasefileActionError(
+          "confirm-required",
+          `清空回收站会硬删 ${impact.count} 个条目（${impact.bytes} 字节，不可恢复）；来历不明的条目会保留。确认请传 confirm: true。`,
+        );
+      }
+      const result = store.purgeTrash(names ?? undefined);
+      store.auditRoot({
+        actor: "user",
+        action: "trash/purge",
+        target: result.names.join(","),
+        detail: { purged: result.purged, bytes: result.bytes, skipped: result.skipped },
+      });
+      return {
+        ...result,
+        ...impact,
+        count: result.purged,
+        summary: `已清空 ${result.purged} 个回收站条目（${result.bytes} 字节，不可恢复）`,
+      };
     },
 
     /**
@@ -1588,14 +1781,11 @@ export function createActions(options) {
     },
 
     /**
-     * 导出验收报告（md + json）。
-     * @param {string} projectId
-     * @returns {Promise<Record<string, any>>}
-     */
-    /**
      * 导出报告。
+     * 与 brief/bundle 共用脱敏（redactPack），默认 true：报告自称"可外发归档"，
+     * 就不能把本机绝对路径与目标标识原样带出去（AUD-CASEFILE-04）。
      * @param {string} projectId
-     * @param {{ format?: "md" | "html" | "both" }} [options]
+     * @param {{ format?: "md" | "html" | "both", redact?: boolean, redactOptions?: Record<string, any> }} [options]
      * @returns {Promise<Record<string, any>>}
      */
     async exportReport(projectId, options = {}) {
@@ -1603,6 +1793,7 @@ export function createActions(options) {
       if (!["md", "html", "both"].includes(format)) {
         throw new CasefileInputError("invalid-input", `format 只能是 md / html / both：${format}`);
       }
+      const redacted = options?.redact !== false;
       const project = requireProject(projectId);
       const data = store.readAll(project.id);
       const current = latestBuild(data.builds);
@@ -1612,7 +1803,21 @@ export function createActions(options) {
         checks: data.checks,
         openObligations: coverage.open,
       });
-      const report = buildReport({ project, data, coverage, stop });
+      const built = buildReport({
+        project,
+        data,
+        coverage,
+        stop,
+        redaction: { redacted },
+      });
+      const report = redacted
+        ? redactPack(built, {
+            home: process.env.HOME ?? process.env.USERPROFILE,
+            cwd: process.cwd(),
+            extraPaths: [dataRoot],
+            ...(options?.redactOptions ?? {}),
+          })
+        : built;
       const stamp = String(report.generatedAt).replace(/[:.]/g, "-");
       const dir = join(store.projectDir(project.id), "reports", stamp);
       mkdirSync(dir, { recursive: true });
@@ -1637,13 +1842,15 @@ export function createActions(options) {
         detail: {
           coverage: coverage.ratio.toFixed(2),
           digest: shortDigest(current?.implementationDigest),
+          redacted,
         },
       });
       return {
         path: dir,
         files,
         coverage,
-        summary: `报告已写入 ${dir}（覆盖率 ${(coverage.ratio * 100).toFixed(0)}%）`,
+        redacted,
+        summary: `报告已写入 ${dir}（覆盖率 ${(coverage.ratio * 100).toFixed(0)}%，${redacted ? "已脱敏" : "未脱敏"}）`,
       };
     },
 

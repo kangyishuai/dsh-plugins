@@ -235,6 +235,23 @@ async function main() {
       `rows=${hasRows} empty=${hasEmpty}`,
     );
 
+    // 4b) 回收站入口（只读：点开、看到空/条目、返回；不点恢复/清空）
+    const trashToggle = await clickTextScoped(page, "回收站", "[data-casefile-page]");
+    check("「回收站」入口可点击（data-casefile-trash-toggle）", trashToggle === true);
+    const trashView = await waitFor(page, "[data-casefile-trash-view]", 4000);
+    check("回收站视图渲染（data-casefile-trash-view）", trashView === true);
+    const trashEmpty = await exists(page, "[data-casefile-trash-empty]");
+    const trashRows = await exists(page, "[data-casefile-trash-row]");
+    check(
+      "回收站列表不是空白（有条目或空状态）",
+      trashEmpty === true || trashRows === true,
+      `rows=${trashRows} empty=${trashEmpty}`,
+    );
+    await screenshot(page, "trash");
+    const trashBack = await clickTextScoped(page, "返回项目列表", "[data-casefile-trash-view]");
+    check("回收站能返回项目列表", trashBack === true);
+    await waitFor(page, "[data-casefile-empty], [data-casefile-project-row]", 3000);
+
     // 5) 设置分节：账号菜单 → 设置 → 在设置面板内点「案卷」
     const menuHit = await clickAria(page, "账号菜单");
     check("能打开账号菜单", menuHit === true);

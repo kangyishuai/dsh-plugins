@@ -283,14 +283,30 @@ export function normalizeArtifact(raw) {
 }
 
 /**
+ * 证据种类：已知值原样保留，未知值归 `other` 并把原文记进 `kindRaw`。
+ * 背景（AUD-CASEFILE-02）：kind 曾是自由字符串，模型写 `docs`/`static-analysis` 时整条证据被拒；
+ * 现在工具 schema 已给出 enum，落库层也不再因为"叫不出名字"而丢证据。
+ * @param {unknown} value
+ * @returns {{ kind: string, kindRaw?: string }}
+ */
+function normalizeEvidenceKind(value) {
+  const raw = String(value ?? "").trim();
+  if (raw === "") return { kind: "other" };
+  if (CLAIM_KINDS.includes(/** @type {any} */ (raw))) return { kind: raw };
+  return { kind: "other", kindRaw: raw.slice(0, 64) };
+}
+
+/**
  * 规范化一条证据（只投影 REA 的结论）。
  * @param {Record<string, any>} input
  * @returns {Record<string, any>}
  */
 export function normalizeEvidence(input) {
+  const kind = normalizeEvidenceKind(input?.kind);
   return {
     id: newId("ev"),
-    kind: oneOf(input?.kind ?? "other", CLAIM_KINDS, "kind"),
+    kind: kind.kind,
+    ...(kind.kindRaw ? { kindRaw: kind.kindRaw } : {}),
     sourceTool: text(input?.sourceTool ?? "unknown", "sourceTool", { max: 200 }),
     sessionId: input?.sessionId == null ? null : text(input.sessionId, "sessionId", { max: 200 }),
     observedAt:

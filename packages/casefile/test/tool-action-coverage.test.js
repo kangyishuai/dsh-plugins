@@ -60,3 +60,22 @@ test("每个工具都声明了 action 的 required（避免参数漏传被静默
     assert.match(body, /required: \["action"\]/, `${tool} 的 parameters.required 里缺 action`);
   }
 });
+
+test("反向对账：switch 处理了但枚举里没有的 action 也要拦（AUD-CASEFILE-08）", () => {
+  let checkedTools = 0;
+  for (const { tool, body } of toolBlocks()) {
+    const enumMatch = body.match(/action:\s*\{[^}]*?enum:\s*\[([^\]]+)\]/s);
+    if (!enumMatch) continue;
+    const cases = new Set([...body.matchAll(/case "([a-z-]+)":/g)].map((m) => m[1]));
+    if (cases.size === 0) continue;
+    checkedTools += 1;
+    const values = [...enumMatch[1].matchAll(/"([a-z-]+)"/g)].map((m) => m[1]);
+    const extra = [...cases].filter((value) => !values.includes(value));
+    assert.deepEqual(
+      extra,
+      [],
+      `工具 ${tool} 的 switch 实现了枚举之外的 action：${extra.join("、")}（schema 里不可达）`,
+    );
+  }
+  assert.ok(checkedTools >= 1, `只检查到 ${checkedTools} 个带 case 分支的工具`);
+});

@@ -997,6 +997,182 @@ async function main() {
     );
 
     check("没有写进仓库工作目录", stray.length === 0, stray.join(","));
+
+    // 15) 本轮修复的契约面：打开已有项目 / 未知证据种类 / 回收站 dry-run+审计+恢复 / 报告默认脱敏
+    const reopenedExisting = await remote(session, "createProject", {
+      input: { title: "Todo App Smoke", id: "todo-app-smoke" },
+    });
+    check(
+      "createProject 显式 id 命中已有项目时打开而不是 project-exists",
+      reopenedExisting.ok === true && reopenedExisting.value?.id === "todo-app-smoke",
+      reopenedExisting.raw.slice(0, 300),
+    );
+    const unknownKind = await remote(session, "addEvidence", {
+      projectId: "ingest-e2e",
+      input: { kind: "docs", summary: "外部文档类证据（schema 之外）" },
+    });
+    check(
+      "未知证据 kind 归 other 并保留 kindRaw（不再整条被拒）",
+      unknownKind.ok === true &&
+        unknownKind.value?.kind === "other" &&
+        unknownKind.value?.kindRaw === "docs",
+      unknownKind.raw.slice(0, 300),
+    );
+
+    const dropPreview = await remote(session, "dropProject", {
+      projectId: "research-only",
+      options: { dryRun: true },
+    });
+    check(
+      "dropProject dry-run 给出项目数/字节/预览路径且不移走目录",
+      dropPreview.ok === true &&
+        dropPreview.value?.dryRun === true &&
+        dropPreview.value?.projects === 1 &&
+        dropPreview.value?.bytes > 0 &&
+        /trash/u.test(String(dropPreview.value?.previewTrashPath)) &&
+        /casefile\/trash/u.test(String(dropPreview.value?.trashRoot)) &&
+        (await exists(join(home, "casefile", "projects", "research-only"))),
+      dropPreview.raw.slice(0, 400),
+    );
+    const dropped = await remote(session, "dropProject", {
+      projectId: "research-only",
+      options: { confirm: true },
+    });
+    check(
+      "dropProject confirm 把项目移进回收站",
+      dropped.ok === true && (await exists(join(dropped.value?.trashedTo ?? "/nonexistent"))),
+      dropped.raw.slice(0, 300),
+    );
+    const trashList = await remote(session, "listTrash");
+    check(
+      "listTrash 列出回收站条目（含 projectId / bytes）",
+      trashList.ok === true &&
+        (trashList.value || []).some(
+          (/** @type {any} */ entry) =>
+            entry.projectId === "research-only" && Number(entry.bytes) > 0,
+        ),
+      trashList.raw.slice(0, 400),
+    );
+    const dropPreviewName = (trashList.value || []).find(
+      (/** @type {any} */ entry) => entry.projectId === "research-only",
+    )?.name;
+    check(
+      "回收站条目名可解析（listTrash 的 name 与 drop 生成的目录名同源）",
+      typeof dropPreviewName === "string" && dropPreviewName.includes("research-only"),
+      String(dropPreviewName),
+    );
+    const purgePreview = await remote(session, "purgeTrash", { options: { dryRun: true } });
+    check(
+      "purgeTrash dry-run 给出条数/字节且不删目录",
+      purgePreview.ok === true &&
+        purgePreview.value?.dryRun === true &&
+        Number(purgePreview.value?.count) === 1 &&
+        Number(purgePreview.value?.bytes) > 0,
+      purgePreview.raw.slice(0, 300),
+    );
+    const purgeNeedConfirm = await remote(session, "purgeTrash", { options: {} });
+    check(
+      "purgeTrash 缺 confirm 时被拒（confirm-required → bad-request）",
+      purgeNeedConfirm.ok === false &&
+        purgeNeedConfirm.error?.code === "gateway/bad-request" &&
+        /confirm/u.test(String(purgeNeedConfirm.error?.message ?? "")),
+      purgeNeedConfirm.raw.slice(0, 300),
+    );
+    const purged = await remote(session, "purgeTrash", { options: { confirm: true } });
+    check(
+      "purgeTrash confirm 后回收站清空",
+      purged.ok === true &&
+        Number(purged.value?.purged) === 1 &&
+        ((await remote(session, "listTrash")).value || []).length === 0,
+      purged.raw.slice(0, 300),
+    );
+
+    // 恢复路径单独用一个一次性项目验证
+    await remote(session, "createProject", {
+      input: { title: "Trash Restore Demo", target: { kind: "other", ref: "demo" } },
+    });
+    const droppedDemo = await remote(session, "dropProject", {
+      projectId: "trash-restore-demo",
+      options: { confirm: true },
+    });
+    const demoEntry = ((await remote(session, "listTrash")).value || []).find(
+      (/** @type {any} */ entry) => entry.projectId === "trash-restore-demo",
+    );
+    const restored = await remote(session, "restoreTrashEntry", { name: demoEntry?.name });
+    check(
+      "restoreTrashEntry 把项目移回 projects/",
+      droppedDemo.ok === true &&
+        restored.ok === true &&
+        (await exists(join(home, "casefile", "projects", "trash-restore-demo"))),
+      restored.raw.slice(0, 300),
+    );
+    await remote(session, "dropProject", {
+      projectId: "trash-restore-demo",
+      options: { confirm: true },
+    });
+    const rootAudit = await readIfExists(join(home, "casefile", "audit.jsonl"));
+    check(
+      "回收站操作写数据根审计（drop / restore / purge）",
+      rootAudit.includes("project/drop") &&
+        rootAudit.includes("project/restore") &&
+        rootAudit.includes("trash/purge"),
+      rootAudit.slice(0, 500),
+    );
+
+    const redactedReport = await remote(session, "exportReport", {
+      projectId: "todo-app-smoke",
+      options: { format: "both" },
+    });
+    const redactedMd = await readIfExists(join(redactedReport.value?.path, "report.md"));
+    const redactedHtml = await readIfExists(join(redactedReport.value?.path, "report.html"));
+    check(
+      "exportReport 默认脱敏并在报告里标注",
+      redactedReport.ok === true &&
+        redactedReport.value?.redacted === true &&
+        !redactedMd.includes(home) &&
+        redactedMd.includes("脱敏：已脱敏") &&
+        redactedHtml.includes("已脱敏"),
+      redactedMd.slice(0, 300),
+    );
+    // 强断言（F10）：用一个 target.ref 就是本机绝对路径的探针项目，验证报告真的发生了脱敏，
+    // 而不是只验证「页脚文案 + redacted:true」这种对泄漏永远为真的弱断言。
+    const probeReportSource = join(work, "report-probe.mjs");
+    await writeFile(probeReportSource, "console.log('probe');\n", "utf8");
+    await remote(session, "createProject", {
+      input: {
+        title: "Report Redact Probe",
+        target: { kind: "app", ref: "/Applications/Foo.app" },
+      },
+    });
+    await remote(session, "startBuild", {
+      projectId: "report-redact-probe",
+      input: { command: `node ${probeReportSource}`, cwd: work },
+    });
+    const probeReport = await remote(session, "exportReport", {
+      projectId: "report-redact-probe",
+      options: { format: "both" },
+    });
+    const probeJsonRaw = await readIfExists(join(probeReport.value?.path, "report.json"));
+    const probeJson = probeJsonRaw === "" ? {} : JSON.parse(probeJsonRaw);
+    const probeMd = await readIfExists(join(probeReport.value?.path, "report.md"));
+    const probeHtml = await readIfExists(join(probeReport.value?.path, "report.html"));
+    const probeCommand = String(probeJson.latestBuild?.command ?? "");
+    check(
+      "报告默认脱敏：target.ref（本机路径）与构建命令都变成 <path>（强断言）",
+      probeReport.ok === true &&
+        probeReport.value?.redacted === true &&
+        probeJson.project?.target?.ref === "<path>" &&
+        probeCommand.includes("<path>") &&
+        !probeCommand.includes(work) &&
+        !probeMd.includes("/Applications/Foo.app") &&
+        !probeHtml.includes("/Applications/Foo.app") &&
+        probeMd.includes("<path>") &&
+        probeMd.includes("脱敏：已脱敏"),
+      JSON.stringify({
+        target: probeJson.project?.target ?? null,
+        command: probeCommand,
+      }).slice(0, 300),
+    );
   } catch (error) {
     failed += 1;
     console.error(`FAIL 冒烟异常：${String(error)}`);

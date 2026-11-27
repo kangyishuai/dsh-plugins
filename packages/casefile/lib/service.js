@@ -77,6 +77,7 @@ function fail(error) {
     "coverage-not-met",
     "builder-unavailable",
     "auth-tier-blocked",
+    "artifact-too-large",
   ]);
   if (BUSINESS_CODES.has(code)) {
     throw new RemoteError("gateway/bad-request", message, {});
@@ -95,7 +96,11 @@ export class CasefileService extends TypertRemoteService {
     this.config = config ?? {};
     this.logger = ctx?.logger ?? console;
     this.dataRoot = resolveDataRoot(this.config);
-    this.store = new CaseStore({ dataRoot: this.dataRoot, logger: this.logger });
+    this.store = new CaseStore({
+      dataRoot: this.dataRoot,
+      logger: this.logger,
+      maxArtifactBytes: this.config.maxArtifactBytes,
+    });
     /** 会话 → 最近打开的项目（工具省略 projectId 时用）。 @type {Map<string, string>} */
     this.currentProject = new Map();
     this.accessWait = null;
@@ -314,6 +319,8 @@ export class CasefileService extends TypertRemoteService {
   toolHandlers() {
     return {
       openProject: (input, exec) => this.actions.openProject(input, exec),
+      rememberProject: (exec, projectId) => this.actions.remember(exec, projectId),
+      lastOpenedProjectId: () => this.store.lastOpenedProjectId(),
       listProjects: () => this.actions.listProjects(),
       getProject: (projectId) => this.actions.detail(projectId),
       updateProject: (projectId, patch) => this.actions.updateProject(projectId, patch),
@@ -343,6 +350,9 @@ export class CasefileService extends TypertRemoteService {
       inspectApp: (input) => this.actions.inspectAppBundle(input),
       archiveProject: (projectId, options) => this.actions.archiveProject(projectId, options),
       dropProject: (projectId, options) => this.actions.dropProject(projectId, options),
+      listTrash: () => this.actions.listTrash(),
+      restoreTrash: (name) => this.actions.restoreTrash(name),
+      purgeTrash: (options) => this.actions.purgeTrash(options),
       runCycle: (projectId, input) => this.actions.runCycle(projectId, input),
       isBuilderSession: (sessionId) =>
         this.store.listBuilderSessions().has(String(sessionId ?? "")),
@@ -629,6 +639,44 @@ export class CasefileService extends TypertRemoteService {
   }
 
   /**
+   * 回收站列表（ADR 0002「影响」条）。
+   * @returns {Promise<Record<string, any>[]>}
+   */
+  async listTrash() {
+    try {
+      return await this.actions.listTrash();
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * 从回收站恢复一个条目。
+   * @param {string} name 回收站条目名
+   * @returns {Promise<Record<string, any>>}
+   */
+  async restoreTrashEntry(name) {
+    try {
+      return await this.actions.restoreTrash(name);
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
+   * 清空回收站（显式硬删，需 confirm；支持 dryRun）。
+   * @param {{ names?: string[], confirm?: boolean, dryRun?: boolean }} [options]
+   * @returns {Promise<Record<string, any>>}
+   */
+  async purgeTrash(options) {
+    try {
+      return await this.actions.purgeTrash(options ?? {});
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /**
    * @param {string} projectId
    * @param {Record<string, any>} input
    * @returns {Promise<Record<string, any>>}
@@ -905,6 +953,9 @@ declareRemote(CasefileService, "inspectApp");
 declareRemote(CasefileService, "provenanceInfo");
 declareRemote(CasefileService, "archiveProject");
 declareRemote(CasefileService, "dropProject");
+declareRemote(CasefileService, "listTrash");
+declareRemote(CasefileService, "restoreTrashEntry");
+declareRemote(CasefileService, "purgeTrash");
 declareRemote(CasefileService, "awaitLogin");
 declareRemote(CasefileService, "runCycle");
 declareRemote(CasefileService, "closeProject");

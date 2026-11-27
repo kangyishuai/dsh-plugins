@@ -1,7 +1,7 @@
 // @ts-check
 // 单元测试：core/store.js（全部在 mkdtemp 临时目录里跑）。
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -111,4 +111,51 @@ test("audit 追加且可读", () => {
   store.audit("a", { actor: "user", action: "test/one" });
   const rows = store.readAudit("a");
   assert.ok(rows.some((row) => row.action === "test/one"));
+});
+
+test("writeJson 写完不留 .tmp 残骸（实现用 pid+随机后缀，跨进程写同一文件不会互相截断）", () => {
+  const store = makeStore();
+  store.createProject({ title: "A" });
+  const file = join(store.rootDir, "projects", "a", "project.json");
+  for (let index = 0; index < 8; index += 1) {
+    const value = JSON.parse(readFileSync(file, "utf8"));
+    value.note = `round-${index}`;
+    store.writeJson(file, value);
+  }
+  const leftovers = readdirSync(join(store.rootDir, "projects", "a")).filter((name) =>
+    name.includes(".tmp-"),
+  );
+  assert.deepEqual(leftovers, [], "写完后不应留下临时文件");
+});
+
+test("updateJson 串行化「读 → await → 写」：撤掉锁会丢更新（F9）", async () => {
+  const store = makeStore();
+  store.createProject({ title: "A" });
+  const file = join(store.rootDir, "projects", "a", "project.json");
+  // mutate 里 await 一个 tick：这是单线程下唯一可能让读-改-写交错的情形。
+  // 没有锁时 6 个回调会读到同一个旧值、互相覆盖；有锁时依次完成。
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+  await Promise.all(
+    Array.from({ length: 6 }, (_, index) =>
+      store.updateJson(file, async (current) => {
+        await tick();
+        return { ...current, notes: [...(current.notes ?? []), `n${index}`] };
+      }),
+    ),
+  );
+  const value = JSON.parse(readFileSync(file, "utf8"));
+  assert.equal(value.notes.length, 6, "6 次更新都必须在最终文件里");
+  assert.deepEqual([...value.notes].sort(), ["n0", "n1", "n2", "n3", "n4", "n5"]);
+});
+
+test("touch 只更新 updatedAt；并发调用不会写坏 project.json（同步 IO 下本就不会交错，防回归）", async () => {
+  const store = makeStore();
+  store.createProject({ title: "A" });
+  const file = join(store.rootDir, "projects", "a", "project.json");
+  const before = JSON.parse(readFileSync(file, "utf8"));
+  await Promise.all([store.touch("a"), store.touch("a"), store.touch("a")]);
+  const value = JSON.parse(readFileSync(file, "utf8"));
+  assert.equal(value.title, before.title);
+  assert.equal(value.createdAt, before.createdAt);
+  assert.match(String(value.updatedAt), /^\d{4}-/u);
 });

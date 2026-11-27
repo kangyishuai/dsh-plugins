@@ -15,15 +15,59 @@ import { sha256Text } from "./digest.js";
 /** 规格包版本。 */
 export const SPEC_VERSION = 1;
 
-/** 常见 token 形态（宁可多遮，不可漏）。 */
-const SECRET_PATTERNS = [
-  /\bsk-[A-Za-z0-9_-]{16,}\b/g,
-  /\bghp_[A-Za-z0-9]{20,}\b/g,
-  /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g,
-  /\bAKIA[0-9A-Z]{16}\b/g,
-  /\bxox[abp]-[A-Za-z0-9-]{10,}\b/g,
-  /\bBearer\s+[A-Za-z0-9._-]{16,}\b/gi,
-];
+/**
+ * 常见 token 形态（宁可多遮，不可漏）。
+ * AUD-CASEFILE-05 补全：Google/Firebase 客户端 key、AWS 临时凭证、npm token、JWT、私钥块，
+ * 以及 `password=` / `api_key=` 这类键值形态。
+ */
+const SECRET_PATTERNS = /** @type {const} */ ([
+  [/\bsk-[A-Za-z0-9_-]{16,}\b/gu, "[redacted]"],
+  [/\bghp_[A-Za-z0-9]{20,}\b/gu, "[redacted]"],
+  [/\bgithub_pat_[A-Za-z0-9_]{20,}\b/gu, "[redacted]"],
+  [/\bAKIA[0-9A-Z]{16}\b/gu, "[redacted]"],
+  [/\bASIA[0-9A-Z]{16}\b/gu, "[redacted]"],
+  [/\bAIza[0-9A-Za-z_-]{20,}\b/gu, "[redacted]"],
+  [/\bnpm_[A-Za-z0-9]{20,}\b/gu, "[redacted]"],
+  [/\bxox[abp]-[A-Za-z0-9-]{10,}\b/gu, "[redacted]"],
+  [/\bBearer\s+[A-Za-z0-9._-]{16,}\b/giu, "[redacted]"],
+  [/\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/gu, "[redacted]"],
+  [
+    /-----BEGIN(?: [A-Z]+)? PRIVATE KEY-----[\s\S]*?-----END(?: [A-Z]+)? PRIVATE KEY-----/gu,
+    "[redacted]",
+  ],
+  [
+    /(\b(?:password|passwd|api[_-]?key|apikey|secret|token)\s*[=:]\s*)(?:"[^"]+"|'[^']+'|[^\s"',;)]{6,})/giu,
+    "$1[redacted]",
+  ],
+]);
+
+/**
+ * 常见系统根目录：这些前缀下的任意路径都按绝对路径遮（AUD-CASEFILE-05）。
+ * 覆盖 macOS 的 /Applications /Volumes /Library /System /private，Linux 的 /opt /etc /usr /home /var /tmp 等。
+ */
+const SYSTEM_ROOT_RE = String.raw`\/(?:Users|home|var|tmp|private|Applications|Volumes|opt|etc|Library|usr|System|bin|sbin|dev|proc|boot|root|mnt|media|snap|nix|data|srv|workspace)\/`;
+
+/** 路径 token 的终止字符（引号、括号、中文标点、分隔符）。 */
+const PATH_TAIL = String.raw`[^\s"'\x60()（）{}<>|、。；,;]+`;
+
+/**
+ * 任意绝对 POSIX 路径 / 未展开的 `~/` 路径（AUD-CASEFILE-05）。
+ *
+ * 三条分支：
+ *   1. `~/…`（未展开的 home，任何一段都遮）；
+ *   2. 已知系统根目录下的路径（`/Applications`、`/Volumes`、`/etc`、`/usr`…）；
+ *   3. 带文件扩展名的路径（`/custom/report.har` 这种未知根目录）。
+ *
+ * 刻意**不**把任意 `/x/y` 都遮掉：`POST /api/todos`、`/auth/token` 这类 API 路由
+ * 是规格包要交付的信息，遮掉会把可复算的规格变成 <path> 噪声。
+ * 前面的字符限定为非路径字符，避免把 URL（`https://…`）吃掉。
+ * @param {string} text
+ * @returns {string}
+ */
+function redactAbsolutePaths(text) {
+  const pattern = String.raw`(^|[^A-Za-z0-9_:/.-])(?:(?:~\/${PATH_TAIL})|(?:${SYSTEM_ROOT_RE}${PATH_TAIL})|(?:\/${PATH_TAIL}\.(?:[A-Za-z0-9]{1,8})\b(?:${PATH_TAIL})?))`;
+  return text.replace(new RegExp(pattern, "gu"), (_match, prefix) => `${prefix}<path>`);
+}
 
 /**
  * 脱敏一段文本。
@@ -34,9 +78,9 @@ const SECRET_PATTERNS = [
 export function redactText(text, options = {}) {
   let out = String(text);
   const { home, cwd, extraPaths = [] } = options;
-  // 顺序很重要：先按「绝对路径整段」抹掉，再按已知根目录兜底替换。
+  // 顺序很重要：先把「任意绝对路径」整段抹掉，再按已知根目录兜底替换。
   // 反过来会先替换前缀，留下 `<path>/x.bin` 这种半截路径。
-  out = out.replace(/(?:\/Users|\/home|\/var|\/tmp|\/private)\/[^\s"'`)]+/g, "<path>");
+  out = redactAbsolutePaths(out);
   out = out.replace(/[A-Za-z]:\\[^\s"'`)]+/g, "<path>");
   /** @param {string | undefined} item @returns {item is string} */
   const isPath = (item) => typeof item === "string" && item.length > 1;
@@ -44,7 +88,9 @@ export function redactText(text, options = {}) {
   for (const path of paths.sort((a, b) => b.length - a.length)) {
     out = out.split(path).join("<path>");
   }
-  for (const pattern of SECRET_PATTERNS) out = out.replace(pattern, "[redacted]");
+  for (const [pattern, replacement] of SECRET_PATTERNS) {
+    out = out.replace(pattern, replacement);
+  }
   return out;
 }
 

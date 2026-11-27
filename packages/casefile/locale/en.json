@@ -25,6 +25,16 @@
     "blocker.openUnknowns": "unresolved unknowns",
     "blocker.failedObligations": "failed obligations",
     "blocker.blockedObligations": "blocked obligations",
-    "blocker.coverageBelow": "coverage below target"
+    "blocker.coverageBelow": "coverage below target",
+    "trash.toggle": "Trash",
+    "trash.title": "Trash (restorable)",
+    "trash.empty": "The trash is empty.",
+    "trash.meta": "{id} · {files} files · {bytes}",
+    "trash.restore": "Restore",
+    "trash.back": "Back to projects",
+    "trash.purge": "Empty trash",
+    "trash.purgePreview": "Permanently deletes {count} entries ({bytes}); {skipped} unknown entries are kept.",
+    "trash.purgeConfirm": "Empty it",
+    "trash.cancel": "Cancel"
   }
 }

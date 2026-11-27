@@ -6,7 +6,7 @@
 
 Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). Not affiliated with DeepSeek. It is an adapter on top of [REA](https://github.com/morluto/rea) (MIT); it ships none of REA's code and no analysis engine.
 
-> **Status: M3 complete (five checkers + one-call cycle + near-miss + coverage gate + report).** Persists projects, evidence, claims, features, unknowns, obligations and check records; exports a redacted spec pack; ships a workbench page (evidence / obligations / runs), a sidebar entry and a settings section. A **builder session** can be started from a project: casefile creates a child session, feeds it only the spec pack (never the original target), and returns the session id; `awaitBuilder` reports why it stopped. The build/check loop runs real commands: `case_build start` records a `BuildRun` with an implementation digest, `case_check run` records a result bound to that digest, and a later build whose digest differs automatically **reopens** the obligations it had closed. Verified by 70 unit tests, a 30-assertion web end-to-end smoke on a throwaway DSH home (including the stale-reopen path), and a manual GUI pass in a real browser; the desktop read-only suite is written but still needs the plugin installed in the desktop profile before it can run. Treat it as young software.
+> **Status: M3 complete (five checkers + one-call cycle + near-miss + coverage gate + report).** Persists projects, evidence, claims, features, unknowns, obligations and check records; exports a redacted spec pack; ships a workbench page (evidence / obligations / runs), a sidebar entry and a settings section. A **builder session** can be started from a project: casefile creates a child session, feeds it only the spec pack (never the original target), and returns the session id; `awaitBuilder` reports why it stopped. The build/check loop runs real commands: `case_build start` records a `BuildRun` with an implementation digest, `case_check run` records a result bound to that digest, and a later build whose digest differs automatically **reopens** the obligations it had closed. Verified by the package unit suite (counts and commands are listed in [docs/testing/casefile.md](../../docs/testing/casefile.md)) plus a web end-to-end smoke on a throwaway DSH home (including the stale-reopen path) and a desktop read-only regression. Treat it as young software.
 
 ## What it does
 
@@ -19,7 +19,17 @@ Casefile is the missing layer:
 - **Claims you can cite and select.** A `Claim` is the unit you quote in a handoff: it references evidence ids, carries its own limitations, and can be selected (`case_claim select`) for export.
 - **Feature grouping for scoped work.** Group selected claims into a `Feature` with boundaries and non-goals — the unit later used by "rebuild only these features".
 - **Unknowns are shipped, not hidden.** Open unknowns are part of the spec pack; a pack that silently drops them is a lie.
-- **Spec pack export.** `case_brief export` writes `spec/<timestamp>/spec.json` + `brief.md`: selected claims, their evidence, features, open unknowns, a coverage summary, and a content hash. Redaction is on by default (home directory, absolute paths, common token shapes).
+- **Spec pack export.** `case_brief export` writes `spec/<timestamp>/spec.json` + `brief.md`: selected claims, their evidence, features, open unknowns, a coverage summary, and a content hash. Redaction is on by default and shared by spec packs, machine-readable bundles **and** the HTML/Markdown acceptance report (see [Privacy](#side-effects--risks)).
+
+## Redaction
+
+All three exports (spec pack, bundle, report) go through the same `redactPack` pass, and `case_project report` redacts by default too:
+
+- **Paths:** any path under a common system root (`/Users`, `/home`, `/var`, `/tmp`, `/private`, `/Applications`, `/Volumes`, `/opt`, `/etc`, `/Library`, `/usr`, `/System`, `/bin`, `/sbin`, `/dev`, `/proc`, `/boot`, `/root`, `/mnt`, `/media`, `/snap`, `/nix`, `/data`, `/srv`, `/workspace`), any unexpanded `~/…`, and any **absolute** path ending in a **1–8 character** file extension — replaced with `<path>`.
+- **Tokens:** `sk-…`, `ghp_…`, `github_pat_…`, AWS `AKIA…`/`ASIA…`, Google `AIza…`, `npm_…`, `xox[abp]-…`, `Bearer …`, JWT (`eyJ…`), PEM private-key blocks, and `password=` / `api_key=` / `secret=` / `token=` values — replaced with `[redacted]`.
+- **Deliberately kept:** URLs and API routes **without a file extension** (`https://example.test/api/todos`, `POST /api/todos`, `/auth/token`) stay readable, because a spec pack that turns every route into `<path>` is useless to the builder. An absolute path ending in a file extension is redacted even when it looks like a route (`/static/app.js`, `/api/v1/openapi.json`).
+
+Known limit: a path that contains spaces is redacted only up to the first space (the remainder stays). Redaction is a safety net, not a guarantee: review a pack before sharing it.
 - **Capability detection.** `case_project` and `diagnose()` report whether `mcp__rea__*` tools are visible and which casefile-required tools are missing, instead of silently degrading.
 
 ## Install
@@ -53,13 +63,15 @@ The plugin adds a **Casefile** entry to the sidebar. The page lists projects on 
 
 The list view opens with an **overview strip** (project count, breakdown by target kind and state, obligation pass/total, unresolved unknowns across projects); `case_project overview` returns the same data as JSON. The panel header shows the selected project's **autonomy level** (L0–L3); the badge's tooltip explains that L3 only applies to `scope=selected` projects whose obligations all carry check recipes.
 
+The header also exposes a **Trash** entry. It lists projects dropped with `case_project drop` (id, size, file count), restores one with a click, and empties the trash only after a dry-run shows the impact (`N entries / size; unknown entries are kept`). Dropped projects are moved, never deleted, until you confirm the hard delete. Per [ADR 0002](https://github.com/kangyishuai/dsh-plugins/blob/main/docs/adr/0002-destructive-operations.md) there is also `case_project purge` (`dryRun` + `confirm`) for scripted use, and every drop/restore/purge is written to the data root's `audit.jsonl` (a dropped project can no longer write into its own audit file).
+
 A settings section shows the data root, project count and REA capability status, so "is REA actually connected" is answerable without reading logs.
 
 ## Tools
 
 | Tool              | Actions                                     | Purpose                                                                                                          |
 | ----------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `case_project`    | `open`, `list`, `get`, `update`             | Create/open a project, list, inspect, change authorization tier / scope / state                                  |
+| `case_project`    | `open`, `list`, `get`, `update`             | Open a new **or existing** project, list, inspect, change authorization tier / scope / state                     |
 | `case_evidence`   | `add`, `list`, `show`                       | Store an REA observation as evidence; filter; read one                                                           |
 | `case_claim`      | `add`, `list`, `search`, `select`           | Store a citable conclusion; search; select it for export                                                         |
 | `case_feature`    | `add`, `list`                               | Group claims into a feature with boundaries and non-goals                                                        |
@@ -72,9 +84,13 @@ A settings section shows the data root, project count and REA capability status,
 | `case_brief`      | `export`                                    | Write the redacted spec pack (`spec.json` + `brief.md`)                                                          |
 | `case_ingest`     | `ingest`, `schema`                          | Ingest an external agent's report under a stable contract (recorded, not endorsed); `schema` prints the contract |
 
-`case_project` also carries `close`, `report` (`format: md | html | both`), `bundle` (machine-readable, deterministic), `overview`, `archive`, `drop`, and `autonomy` (L0–L3 gating).
+`case_project` also carries `close`, `report` (`format: md | html | both`, redacted by default), `bundle` (machine-readable, deterministic), `overview`, `archive`, `drop` (`dryRun` / `confirm`), `trash`, `restore`, `purge` (`dryRun` / `confirm`), and `autonomy` (L0–L3 gating).
+
+**Session memory:** every call that receives an explicit `projectId` also makes it the session's current project, and that pointer is persisted under the data root — `case_project open` with an existing project id opens it instead of failing, and after a restart the same session can keep calling tools without repeating `projectId`. If a call still omits it, the error names the last opened project as a hint instead of just failing.
 
 Every tool returns `{ ok, data?, error?{code,message,hint}, summary }`; errors carry a stable code, so the model can correct itself instead of guessing.
+
+**Tool-surface cost:** these 12 definitions total ~13.6 KB of `description`+`parameters` JSON (≈3.4K tokens at ~4 bytes/token) and are resident in every session, while only a small fraction of sessions use casefile. That is a deliberate trade-off (each tool keeps a self-explanatory schema); the low-frequency ones (`case_access`, `case_app`, `case_ingest`) are the first candidates to merge into a `case_misc` tool if the surface needs shrinking.
 
 Obligations may carry `featureIds`, so a **scoped replica** can report coverage per feature: an obligation tagged with a feature only counts toward that feature's ratio; untagged ones count only globally.
 
@@ -134,14 +150,14 @@ Rules: JSON files carry a `version`; a file written by a newer casefile is repor
 
 ## Config
 
-| Key                | Default               | Meaning                                                             |
-| ------------------ | --------------------- | ------------------------------------------------------------------- |
-| `dataRoot`         | `<DSH_HOME>/casefile` | Where project data lives; injectable for tests                      |
-| `defaultAuthTier`  | `research`            | Default authorization tier for new projects                         |
-| `cleanRoomDefault` | `true`                | Reserved for the builder milestone: builder cannot see the original |
-| `checkers`         | `["cli","web"]`       | Reserved for the verification milestone                             |
-| `maxRounds`        | `5`                   | Reserved for the verification loop                                  |
-| `redactOnExport`   | `true`                | Force redaction on spec pack export                                 |
+| Key                | Default               | Meaning                                                               |
+| ------------------ | --------------------- | --------------------------------------------------------------------- |
+| `dataRoot`         | `<DSH_HOME>/casefile` | Where project data lives; injectable for tests                        |
+| `defaultAuthTier`  | `research`            | Default authorization tier for new projects                           |
+| `cleanRoomDefault` | `true`                | Reserved for the builder milestone: builder cannot see the original   |
+| `checkers`         | `["cli","web"]`       | Reserved for the verification milestone                               |
+| `maxRounds`        | `5`                   | Reserved for the verification loop                                    |
+| `maxArtifactBytes` | `67108864` (64 MiB)   | Reject archiving artifacts larger than this (stat pre-check, no read) |
 
 Config is read from the `casefile` row in `cordis.patch.yml`. Do not edit the profile by hand — change the row's `config:`.
 
@@ -161,8 +177,8 @@ Host APIs used here were verified by runtime inspection; the findings are record
 ## Side effects & risks
 
 - **Files it writes:** only under the data root above. It never writes into the investigated project, never modifies the REA binary, and never edits the profile.
-- **Destructive actions:** none in M0. Future milestones (project deletion, artifact cleanup) follow the repo's [ADR 0002](https://github.com/kangyishuai/dsh-plugins/blob/main/docs/adr/0002-destructive-operations.md): trash by default, confirmation with a one-line impact, dry-run, audit log.
-- **Privacy:** project data stays on this machine. Spec packs are redacted by default (`HOME`, absolute paths, common token shapes) but **you should still review a pack before sharing it** — redaction is a safety net, not a guarantee.
+- **Destructive actions:** following [ADR 0002](https://github.com/kangyishuai/dsh-plugins/blob/main/docs/adr/0002-destructive-operations.md). `case_project drop` moves the whole project directory into `<dataRoot>/trash/<timestamp>-<id>` (recoverable), needs `confirm: true`, supports `dryRun` with a count / size / target path, and writes a data-root audit entry. The trash can be listed, restored and emptied (`case_project purge`, `dryRun` + `confirm`; unknown entries in the trash are kept and reported, never `rm -rf`ed). Nothing is hard-deleted without an explicit confirmation.
+- **Privacy:** project data stays on this machine. Spec packs, bundles and reports are redacted by default (system-root paths, `~/…`, extended paths, and the token shapes listed above) but **you should still review a file before sharing it** — redaction is a safety net, not a guarantee.
 - **Evidence quality:** casefile stores what you tell it. It does not verify an observation, and it never upgrades a claim's confidence or authority.
 - **Legal:** intended for research and for software you own or are authorized to analyze. It deliberately ships **no** DRM/anti-debugging bypass and no way to reuse third-party assets. Read [DISCLAIMER.md](./DISCLAIMER.md) before use.
 

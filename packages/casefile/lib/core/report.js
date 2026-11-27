@@ -152,6 +152,7 @@ export function summarizeProducers(evidence) {
  *   coverage?: ReturnType<typeof computeCoverage>,
  *   stop?: Record<string, any> | null,
  *   generatedAt?: string,
+ *   redaction?: Record<string, any>,
  * }} input
  * @returns {Record<string, any>}
  */
@@ -167,6 +168,7 @@ export function buildReport(input) {
   return {
     version: 1,
     generatedAt: input.generatedAt ?? nowIso(),
+    ...(input.redaction == null ? {} : { redaction: input.redaction }),
     project: {
       id: input.project.id,
       title: input.project.title,
@@ -238,6 +240,7 @@ export function buildReport(input) {
 export function renderReportMarkdown(report) {
   const lines = [];
   const percent = (report.coverage.ratio * 100).toFixed(0);
+  const redacted = report.redaction?.redacted !== false;
   lines.push(`# 验收报告：${report.project.title}`);
   lines.push("");
   lines.push(`- 项目：\`${report.project.id}\``);
@@ -355,6 +358,9 @@ export function renderReportMarkdown(report) {
   lines.push("");
   lines.push("- 本报告对应上面「最近构建」的实现 digest；实现或原件变化后，旧结论不再有效。");
   lines.push("- 检查结论来自 casefile 的 checker，`unknown` 表示无法判定，不等于通过。");
+  lines.push(
+    `- 脱敏：${redacted ? "已脱敏（分享前仍建议自己复核一遍）" : "未脱敏（含原始路径与目标标识，分享前请自行处理）"}`,
+  );
   lines.push("");
   return lines.join("\n");
 }
@@ -384,6 +390,7 @@ export function renderReportHtml(report) {
   const project = r.project ?? {};
   const counts = r.counts ?? {};
   const coverage = r.coverage ?? {};
+  const redacted = r.redaction?.redacted !== false;
   const e = escapeHtml;
   /**
    * @param {unknown[]} cells
@@ -497,6 +504,6 @@ export function renderReportHtml(report) {
   ${section("证据生产者", producers)}
   ${section("未知项", unknowns)}
   ${section("循环状态", stop)}
-  <footer>本报告不评估目标安全性；只陈述静态分析与验收记录。<br>生成器：@kangyishuai/dsh-casefile</footer>
+  <footer>本报告不评估目标安全性；只陈述静态分析与验收记录。<br>脱敏：${redacted ? "已脱敏（分享前仍建议自己复核一遍）" : "未脱敏（含原始路径与目标标识，分享前请自行处理）"}<br>生成器：@kangyishuai/dsh-casefile</footer>
 </div></body></html>`;
 }

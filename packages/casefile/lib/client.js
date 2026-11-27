@@ -37,6 +37,17 @@ window.__ModuleLoader__.load({
       "panel.error": "加载失败：{reason}",
       "panel.projects": "{count} 个项目",
       "panel.back": "返回列表",
+      "trash.toggle": "回收站",
+      "trash.title": "回收站（可恢复）",
+      "trash.empty": "回收站是空的。",
+      "trash.meta": "{id} · {files} 个文件 · {bytes}",
+      "trash.restore": "恢复",
+      "trash.back": "返回项目列表",
+      "trash.purge": "清空回收站",
+      "trash.purgePreview":
+        "将硬删 {count} 个条目（{bytes}，不可恢复）；{skipped} 个来历不明的条目会保留。",
+      "trash.purgeConfirm": "确认清空",
+      "trash.cancel": "取消",
       "tab.evidence": "证据",
       "tab.obligation": "义务",
       "tab.run": "运行",
@@ -132,6 +143,17 @@ window.__ModuleLoader__.load({
       "panel.error": "Failed to load: {reason}",
       "panel.projects": "{count} projects",
       "panel.back": "Back to list",
+      "trash.toggle": "Trash",
+      "trash.title": "Trash (restorable)",
+      "trash.empty": "The trash is empty.",
+      "trash.meta": "{id} · {files} files · {bytes}",
+      "trash.restore": "Restore",
+      "trash.back": "Back to projects",
+      "trash.purge": "Empty trash",
+      "trash.purgePreview":
+        "Permanently deletes {count} entries ({bytes}); {skipped} unknown entries are kept.",
+      "trash.purgeConfirm": "Empty it",
+      "trash.cancel": "Cancel",
       "tab.evidence": "Evidence",
       "tab.obligation": "Obligations",
       "tab.run": "Runs",
@@ -226,6 +248,18 @@ window.__ModuleLoader__.load({
       return String(raw).replace(/\{(\w+)\}/g, (_, name) =>
         vars[name] === undefined || vars[name] === null ? "—" : String(vars[name]),
       );
+    }
+
+    /**
+     * 字节数转短文本（回收站条目影响面用）。
+     * @param {number} value
+     * @returns {string}
+     */
+    function formatBytes(value) {
+      var bytes = Number(value) || 0;
+      if (bytes < 1024) return bytes + " B";
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+      return (bytes / (1024 * 1024)).toFixed(1) + " MB";
     }
 
     // 业务拒绝里的 blocker 令牌 → 文案 key（与 actions 产出的字符串一一对应）。
@@ -683,6 +717,18 @@ window.__ModuleLoader__.load({
       var busyState = useState(false);
       var busy = busyState[0];
       var setBusy = busyState[1];
+      var showTrashState = useState(false);
+      var showTrash = showTrashState[0];
+      var setShowTrash = showTrashState[1];
+      var trashState = useState(null);
+      var trash = trashState[0];
+      var setTrash = trashState[1];
+      var trashBusyState = useState(false);
+      var trashBusy = trashBusyState[0];
+      var setTrashBusy = trashBusyState[1];
+      var purgePreviewState = useState(null);
+      var purgePreview = purgePreviewState[0];
+      var setPurgePreview = purgePreviewState[1];
 
       var loadList = useCallback(() => {
         setLoading(true);
@@ -721,6 +767,85 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         loadList();
       }, [loadList]);
+
+      // ---------- 回收站（ADR 0002：能查看 / 恢复 / 清空） ----------
+
+      var loadTrash = useCallback(() => {
+        setLoading(true);
+        return call(ctx, "listTrash")
+          .then((value) => {
+            setTrash(value || []);
+            setError("");
+          })
+          .catch((/** @type {any} */ err) => {
+            setError(err?.message ? err.message : String(err));
+          })
+          .finally(() => {
+            setLoading(false);
+          });
+      }, [ctx]);
+
+      var openTrash = () => {
+        setShowTrash(true);
+        setDetail(null);
+        setPurgePreview(null);
+        loadTrash();
+      };
+
+      var closeTrash = () => {
+        setShowTrash(false);
+        setPurgePreview(null);
+        setTrash(null);
+      };
+
+      var restoreEntry = (/** @type {string} */ name) => {
+        if (trashBusy) return;
+        setTrashBusy(true);
+        call(ctx, "restoreTrashEntry", { name: name })
+          .then(() => {
+            setPurgePreview(null);
+            return loadTrash();
+          })
+          .then(() => loadList())
+          .catch((/** @type {any} */ err) => {
+            setError(humanizeError(err, t));
+          })
+          .finally(() => {
+            setTrashBusy(false);
+          });
+      };
+
+      var previewPurge = () => {
+        if (trashBusy) return;
+        setTrashBusy(true);
+        call(ctx, "purgeTrash", { options: { dryRun: true } })
+          .then((value) => {
+            setPurgePreview(value || null);
+            setError("");
+          })
+          .catch((/** @type {any} */ err) => {
+            setError(humanizeError(err, t));
+          })
+          .finally(() => {
+            setTrashBusy(false);
+          });
+      };
+
+      var confirmPurge = () => {
+        if (trashBusy) return;
+        setTrashBusy(true);
+        call(ctx, "purgeTrash", { options: { confirm: true } })
+          .then(() => {
+            setPurgePreview(null);
+            return loadTrash();
+          })
+          .catch((/** @type {any} */ err) => {
+            setError(humanizeError(err, t));
+          })
+          .finally(() => {
+            setTrashBusy(false);
+          });
+      };
 
       var create = () => {
         if (busy) return;
@@ -770,7 +895,118 @@ window.__ModuleLoader__.load({
       var builds;
       var checks;
       var tabs;
-      if (detail) {
+      if (showTrash) {
+        body = h(
+          "div",
+          { className: "cf-body" },
+          h(
+            "div",
+            { className: "cf-detail", "data-casefile-trash-view": "1" },
+            h(
+              "div",
+              { style: { display: "flex", gap: 8, alignItems: "baseline", marginBottom: 8 } },
+              h("h3", { style: { fontSize: 14, margin: 0 } }, text(t, "trash.title")),
+              h("span", { className: "cf-grow" }),
+              h(
+                "button",
+                { className: "cf-btn", "data-casefile-trash-back": "1", onClick: closeTrash },
+                text(t, "trash.back"),
+              ),
+            ),
+            (trash || []).length === 0
+              ? h(
+                  "div",
+                  { className: "cf-empty", "data-casefile-trash-empty": "1" },
+                  text(t, "trash.empty"),
+                )
+              : h(
+                  "div",
+                  null,
+                  (trash || []).map((/** @type {any} */ entry) =>
+                    h(
+                      "div",
+                      {
+                        key: entry.name,
+                        className: "cf-card",
+                        "data-casefile-trash-row": entry.name,
+                      },
+                      h(
+                        "div",
+                        { className: "cf-row-text" },
+                        h("div", { className: "cf-card-title" }, entry.title || entry.projectId),
+                        h(
+                          "div",
+                          { className: "cf-row-meta" },
+                          text(t, "trash.meta", {
+                            id: entry.projectId,
+                            files: entry.files,
+                            bytes: formatBytes(entry.bytes),
+                          }),
+                        ),
+                      ),
+                      h(
+                        "button",
+                        {
+                          className: "cf-btn",
+                          "data-casefile-trash-restore": entry.name,
+                          disabled: trashBusy,
+                          onClick: () => {
+                            restoreEntry(entry.name);
+                          },
+                        },
+                        text(t, "trash.restore"),
+                      ),
+                    ),
+                  ),
+                  purgePreview
+                    ? h(
+                        "div",
+                        { className: "cf-card", "data-casefile-trash-purge-preview": "1" },
+                        h(
+                          "div",
+                          null,
+                          text(t, "trash.purgePreview", {
+                            count: purgePreview.count ?? 0,
+                            bytes: formatBytes(purgePreview.bytes),
+                            skipped: purgePreview.skipped ?? 0,
+                          }),
+                        ),
+                        h(
+                          "button",
+                          {
+                            className: "cf-btn cf-btn-primary",
+                            "data-casefile-trash-purge-confirm": "1",
+                            disabled: trashBusy,
+                            onClick: confirmPurge,
+                          },
+                          text(t, "trash.purgeConfirm"),
+                        ),
+                        h(
+                          "button",
+                          {
+                            className: "cf-btn",
+                            disabled: trashBusy,
+                            onClick: () => {
+                              setPurgePreview(null);
+                            },
+                          },
+                          text(t, "trash.cancel"),
+                        ),
+                      )
+                    : h(
+                        "button",
+                        {
+                          className: "cf-btn",
+                          "data-casefile-trash-purge": "1",
+                          disabled: trashBusy,
+                          onClick: previewPurge,
+                        },
+                        text(t, "trash.purge"),
+                      ),
+                ),
+          ),
+        );
+      } else if (detail) {
         stats = detail.stats || {};
         claims = detail.claims || [];
         evidence = detail.evidence || [];
@@ -1125,6 +1361,16 @@ window.__ModuleLoader__.load({
           h(
             "button",
             {
+              className: "cf-btn",
+              "data-casefile-trash-toggle": "1",
+              "data-active": showTrash ? "true" : "false",
+              onClick: showTrash ? closeTrash : openTrash,
+            },
+            text(t, "trash.toggle"),
+          ),
+          h(
+            "button",
+            {
               className: "cf-btn cf-btn-primary",
               "data-casefile-new": "1",
               onClick: () => {
@@ -1356,7 +1602,7 @@ window.__ModuleLoader__.load({
               {
                 name: "settings.section",
                 id: PANEL_ID,
-                order: 94,
+                order: 96,
                 label: () => text(t, "settings.section"),
                 locale: NS,
                 inject: () => ({ api: api, t: t }),
