@@ -24,14 +24,51 @@ window.__ModuleLoader__.load({
       "panel.title": "案卷",
       "panel.subtitle": "证据 · 义务 · 运行",
       "panel.empty": "还没有项目。建一个，把目标、证据和结论收进来。",
+      "panel.emptyTitle": "把调查过程留成可复查的案卷",
+      "panel.emptyWhat":
+        "案卷把一次逆向 / 审计调查里的观察、结论和验收条件记录在本机：每条结论带出处，每个义务要能复算。",
+      "panel.emptyWho": "适合做安全研究、软件审计与取证的人；也适合让 AI 一边分析一边留证据。",
+      "panel.emptyFirst":
+        "第一步：点右上角「新建项目」，填一个目标（文件路径或网址）。之后在对话里让 AI 往里记证据和结论。",
+      "panel.emptyTools":
+        "在对话里可以直接调用：case_project（项目）、case_evidence（证据）、case_claim（结论）、case_obligation（义务）、case_build（构建）、case_check（检查）。REA 未接入时采集类工具不可用，但手工 / 让 AI 记录仍然可用。",
+      "advanced.title": "给开发者 / AI 的说明",
       "panel.new": "新建项目",
       "panel.createTitle": "项目标题",
+      "panel.createTitleLabel": "项目标题（必填）",
       "panel.createTarget": "目标（路径 / URL）",
-      "panel.createKind": "目标类型",
-      "panel.createAuth": "授权档",
+      "panel.createKind": "对象类型",
+      "panel.createAuth": "授权范围",
+      "panel.titlePlaceholder": "例如：某 App 1.2 的登录流程",
+      "panel.targetPlaceholder": "文件路径或网址（可留空，默认用标题）",
+      "panel.titleRequired": "请填写项目标题（必填）。",
+      "panel.createFailed": "创建失败：{reason}",
       "panel.create": "创建",
       "panel.creating": "创建中…",
       "panel.cancel": "取消",
+      "kind.binary": "可执行文件",
+      "kind.web": "网页 / URL",
+      "kind.app": "应用包",
+      "kind.game": "游戏",
+      "kind.artifact": "产物文件",
+      "kind.other": "其他",
+      "scope.all": "全部范围",
+      "scope.selected": "选定范围",
+      "authOption.owned": "自有：自己的软件",
+      "authOption.authorized": "已授权：有书面许可",
+      "authOption.research": "研究：只分析，不重建",
+      "checkStatus.pass": "通过",
+      "checkStatus.fail": "失败",
+      "checkStatus.running": "进行中",
+      "checkStatus.error": "出错",
+      "checkStatus.unknown": "无法判定",
+      "confidence.observed": "实测",
+      "confidence.derived": "推导",
+      "confidence.inferred": "推断",
+      "authority.shipped-artifact": "随包产物",
+      "authority.controlled-replay": "受控复现",
+      "authority.live-observation": "实测观察",
+      "authority.external": "外部",
       "panel.refresh": "刷新",
       "panel.loading": "加载中…",
       "panel.error": "加载失败：{reason}",
@@ -54,15 +91,22 @@ window.__ModuleLoader__.load({
       "tab.evidence.count": "证据 {evidence} · 结论 {claims} · 选中 {selected}",
       "tab.obligation.count": "开 {open} · 已关 {passed} · 未知 {unknowns}",
       "claims.title": "结论（每条带出处与局限）",
-      "claims.empty": "还没有结论。用 case_claim 记录一条。",
+      "claims.empty": "还没有结论。结论是这次调查里能引用的一句话，需要有证据支撑。",
+      "claims.emptyHint": "在对话里让 AI 调 case_claim add 记录一条；参数见工具说明。",
       "claims.selected": "已选中",
       "claims.evidence": "证据 {count}",
       "claims.limits": "局限：{text}",
       "evidence.title": "证据",
-      "evidence.empty": "还没有证据。用 case_evidence 记录一条。",
+      "evidence.empty":
+        "还没有证据。证据是一条带出处的观察，例如「登录请求里带了一个硬编码的 key」。",
+      "evidence.emptyHint":
+        "在对话里让 AI 调 case_evidence add 记录一条；REA 接通后也可以直接摄入 REA 的产出。",
       "evidence.confidence": "{confidence} / {authority}",
       "obligation.title": "义务（关闭必须有新鲜 PASS 检查）",
-      "obligation.empty": "还没有义务。用 case_obligation 加一条可验收的断言。",
+      "obligation.empty":
+        "还没有义务。义务是一条可验收的断言，例如「登录页有两个输入框」；关闭前必须有一条新的通过检查。",
+      "obligation.emptyHint":
+        "在对话里让 AI 调 case_obligation add 加一条，再用 case_check run 跑检查。",
       "obligation.open": "待关闭",
       "obligation.pass": "已关闭",
       "obligation.fail": "失败",
@@ -73,7 +117,8 @@ window.__ModuleLoader__.load({
       "obligation.closing": "关闭中…",
       "obligation.blockedReason": "还不能关闭：缺新鲜 PASS 检查",
       "run.title": "构建与验收",
-      "run.empty": "还没有构建记录。用 case_build 起一轮构建。",
+      "run.empty": "还没有构建记录。构建用于复算实现：跑一条命令，并记下它的摘要。",
+      "run.emptyHint": "在对话里让 AI 调 case_build start 起一轮构建。",
       "run.builds": "构建轮次",
       "run.checks": "检查结论",
       "run.round": "第 {round} 轮",
@@ -95,8 +140,16 @@ window.__ModuleLoader__.load({
       "blocker.blockedObligations": "有阻塞的义务",
       "blocker.coverageBelow": "覆盖率不足",
       "autonomy.label": "自主性",
-      "autonomy.hint":
-        "L3 无人值守仅对 scope=selected 且义务全带检查配方的项目开放；任一失败即停。",
+      "autonomy.hint": "让 AI 自己反复尝试的权限等级；等级越高越自动，任何一次失败都会停下。",
+      "autonomy.scale": "L0–L3：L3 = 无人值守，仅限「选定范围」且义务全带检查配方的项目",
+      "danger.title": "危险操作",
+      "danger.dropHint": "把整个项目移进本机回收站；可以恢复，不会硬删。",
+      "danger.drop": "移入回收站…",
+      "danger.dropPreview":
+        "将把项目 {id}（{files} 个文件 / {bytes}）移进回收站；可以在「回收站」里恢复。",
+      "danger.dropConfirm": "确认移入回收站",
+      "danger.dropCancel": "取消",
+      "danger.dropBusy": "移动中…",
       "wait.title": "案卷：等待登录",
       "wait.hint": "请在弹出的浏览器窗口里完成登录；就绪后会自动继续。",
       "wait.elapsed": "已等待 {seconds}s",
@@ -106,9 +159,13 @@ window.__ModuleLoader__.load({
       "settings.section": "案卷",
       "settings.summary": "{count} 个项目",
       "settings.dataRoot": "数据根目录",
-      "settings.rea": "REA 能力",
-      "settings.reaMissing": "未检测到 mcp__rea__*（先接好 REA）",
-      "settings.reaOk": "已连接（{count} 个工具）",
+      "settings.rea": "REA 接入",
+      "settings.reaMissing": "未接入（可选）",
+      "settings.reaMissingHint":
+        "不影响建项目和手工记录证据；要自动采集与分析，先注册 REA 的 MCP 服务器（见 README 的 Requirements）。",
+      "settings.reaDetailMissing": "检测结果：本会话未发现 mcp__rea__* 工具。",
+      "settings.reaDetailOk": "检测结果：找到 {count} 个 mcp__rea__* 工具。",
+      "settings.reaOk": "已接入（{count} 个工具）",
       "settings.hint": "项目数据只在本机；规格包默认脱敏，但分享前请自己过一遍。",
       "nav.title": "案卷",
       "auth.owned": "自有",
@@ -130,14 +187,52 @@ window.__ModuleLoader__.load({
       "panel.title": "Casefile",
       "panel.subtitle": "Evidence · Obligations · Runs",
       "panel.empty": "No projects yet. Create one and collect targets, evidence, and claims.",
+      "panel.emptyTitle": "Keep an investigation reviewable as a case file",
+      "panel.emptyWhat":
+        "A case file records the observations, claims and acceptance criteria of one investigation on this machine: every claim keeps its sources, every obligation must be recomputable.",
+      "panel.emptyWho":
+        "For people doing security research, software audit or forensics — and for letting the AI leave evidence as it works.",
+      "panel.emptyFirst":
+        "First step: click “New project” at the top right and enter a target (a file path or a URL). Then ask the AI to record evidence and claims as you go.",
+      "panel.emptyTools":
+        "In the chat you can call: case_project (projects), case_evidence (evidence), case_claim (claims), case_obligation (obligations), case_build (builds) and case_check (checks). Without REA the acquisition tools are unavailable, but manual / AI-recorded evidence still works.",
+      "advanced.title": "For developers / the AI agent",
       "panel.new": "New project",
       "panel.createTitle": "Project title",
+      "panel.createTitleLabel": "Project title (required)",
       "panel.createTarget": "Target (path / URL)",
       "panel.createKind": "Target kind",
       "panel.createAuth": "Authorization",
+      "panel.titlePlaceholder": "e.g. the sign-in flow of App 1.2",
+      "panel.targetPlaceholder": "File path or URL (optional; defaults to the title)",
+      "panel.titleRequired": "Please enter a project title (required).",
+      "panel.createFailed": "Create failed: {reason}",
       "panel.create": "Create",
       "panel.creating": "Creating…",
       "panel.cancel": "Cancel",
+      "kind.binary": "Binary",
+      "kind.web": "Web / URL",
+      "kind.app": "App bundle",
+      "kind.game": "Game",
+      "kind.artifact": "Artifact",
+      "kind.other": "Other",
+      "scope.all": "All scope",
+      "scope.selected": "Selected scope",
+      "authOption.owned": "Owned: my own software",
+      "authOption.authorized": "Authorized: written permission",
+      "authOption.research": "Research: analyze only, no rebuild",
+      "checkStatus.pass": "pass",
+      "checkStatus.fail": "fail",
+      "checkStatus.running": "running",
+      "checkStatus.error": "error",
+      "checkStatus.unknown": "unknown",
+      "confidence.observed": "observed",
+      "confidence.derived": "derived",
+      "confidence.inferred": "inferred",
+      "authority.shipped-artifact": "shipped artifact",
+      "authority.controlled-replay": "controlled replay",
+      "authority.live-observation": "live observation",
+      "authority.external": "external",
       "panel.refresh": "Refresh",
       "panel.loading": "Loading…",
       "panel.error": "Failed to load: {reason}",
@@ -160,15 +255,24 @@ window.__ModuleLoader__.load({
       "tab.evidence.count": "{evidence} evidence · {claims} claims · {selected} selected",
       "tab.obligation.count": "{open} open · {passed} closed · {unknowns} unknowns",
       "claims.title": "Claims (each with provenance and limits)",
-      "claims.empty": "No claims yet. Record one with case_claim.",
+      "claims.empty":
+        "No claims yet. A claim is one sentence you can cite from this investigation; it needs evidence behind it.",
+      "claims.emptyHint":
+        "Ask the AI to record one with case_claim add; see the tool description for arguments.",
       "claims.selected": "selected",
       "claims.evidence": "evidence {count}",
       "claims.limits": "limits: {text}",
       "evidence.title": "Evidence",
-      "evidence.empty": "No evidence yet. Record one with case_evidence.",
+      "evidence.empty":
+        "No evidence yet. Evidence is an observation with a source, e.g. “the sign-in request carries a hard-coded key”.",
+      "evidence.emptyHint":
+        "Ask the AI to record one with case_evidence add; once REA is connected you can also ingest REA output.",
       "evidence.confidence": "{confidence} / {authority}",
       "obligation.title": "Obligations (closing needs a fresh PASS check)",
-      "obligation.empty": "No obligations yet. Add a verifiable statement with case_obligation.",
+      "obligation.empty":
+        "No obligations yet. An obligation is a verifiable statement, e.g. “the sign-in page has two inputs”; closing it needs a new passing check.",
+      "obligation.emptyHint":
+        "Ask the AI to add one with case_obligation add, then run a check with case_check run.",
       "obligation.open": "open",
       "obligation.pass": "closed",
       "obligation.fail": "failed",
@@ -179,7 +283,9 @@ window.__ModuleLoader__.load({
       "obligation.closing": "Closing…",
       "obligation.blockedReason": "Cannot close yet: needs a fresh PASS check",
       "run.title": "Build & verification",
-      "run.empty": "No builds yet. Start one with case_build.",
+      "run.empty":
+        "No builds yet. A build recomputes the implementation: run one command and record its summary.",
+      "run.emptyHint": "Ask the AI to start one with case_build start.",
       "run.builds": "Build rounds",
       "run.checks": "Check verdicts",
       "run.round": "Round {round}",
@@ -202,7 +308,18 @@ window.__ModuleLoader__.load({
       "blocker.coverageBelow": "coverage below target",
       "autonomy.label": "Autonomy",
       "autonomy.hint":
-        "L3 unattended runs are limited to scope=selected projects whose obligations all carry check recipes; any failure stops the loop.",
+        "How far the AI may retry on its own; higher levels are more automatic and any failure stops the run.",
+      "autonomy.scale":
+        "L0–L3; L3 = unattended, only for “selected scope” projects whose obligations all carry check recipes",
+      "danger.title": "Danger zone",
+      "danger.dropHint":
+        "Move the whole project into this machine's trash; it stays restorable and is never hard-deleted.",
+      "danger.drop": "Move to trash…",
+      "danger.dropPreview":
+        "This moves project {id} ({files} files / {bytes}) to the trash; you can restore it from “Trash”.",
+      "danger.dropConfirm": "Move to trash",
+      "danger.dropCancel": "Cancel",
+      "danger.dropBusy": "Moving…",
       "wait.title": "Casefile: waiting for sign-in",
       "wait.hint":
         "Finish signing in in the browser window; it continues automatically once ready.",
@@ -213,8 +330,12 @@ window.__ModuleLoader__.load({
       "settings.section": "Casefile",
       "settings.summary": "{count} projects",
       "settings.dataRoot": "Data root",
-      "settings.rea": "REA capability",
-      "settings.reaMissing": "No mcp__rea__* detected (connect REA first)",
+      "settings.rea": "REA connection",
+      "settings.reaMissing": "Not connected (optional)",
+      "settings.reaMissingHint":
+        "Creating projects and recording evidence by hand still works; for automatic acquisition and analysis, register REA's MCP server first (see Requirements in the README).",
+      "settings.reaDetailMissing": "Detection: no mcp__rea__* tools in this session.",
+      "settings.reaDetailOk": "Detection: {count} mcp__rea__* tools found.",
       "settings.reaOk": "Connected ({count} tools)",
       "settings.hint":
         "Project data stays local; spec packs are redacted by default but review them before sharing.",
@@ -283,6 +404,29 @@ window.__ModuleLoader__.load({
       "original-changed": "blocker.originalChanged",
       "check-stale": "blocker.checkStale",
     };
+
+    // 中英混排收敛：UI 里出现的枚举值（目标类型 / 范围 / 状态 / 可信度 / 权威性）
+    // 按组查文案；未知值原样回退，绝不把新值悄悄吞掉。
+    var VOCAB = {
+      kind: ["binary", "web", "app", "game", "artifact", "other"],
+      scope: ["all", "selected"],
+      checkStatus: ["pass", "fail", "running", "error", "unknown"],
+      confidence: ["observed", "derived", "inferred"],
+      authority: ["shipped-artifact", "controlled-replay", "live-observation", "external"],
+    };
+
+    /**
+     * @param {any} t
+     * @param {string} group
+     * @param {any} value
+     * @returns {string}
+     */
+    function vocab(t, group, value) {
+      var raw = value === undefined || value === null ? "" : String(value);
+      var known = /** @type {Record<string, string[]>} */ (VOCAB)[group] || [];
+      if (raw !== "" && known.indexOf(raw) >= 0) return text(t, group + "." + raw);
+      return raw;
+    }
 
     /**
      * 把宿主返回的错误变成人能读的一句话：去掉 `[code]` 前缀，
@@ -378,6 +522,24 @@ window.__ModuleLoader__.load({
       ".cf-settings{padding:4px 0}",
       ".cf-kv{display:flex;gap:8px;padding:2px 0;font-size:12px}",
       ".cf-kv b{font-weight:500;flex:none;min-width:92px;color:var(--dsw-alias-label-secondary)}",
+      ".cf-empty-guide{max-width:640px;margin:0 auto;padding:28px 20px;text-align:left;display:flex;flex-direction:column;gap:8px}",
+      ".cf-empty-guide h3{font-size:15px;margin:0;font-weight:600;color:var(--dsw-alias-label-primary)}",
+      ".cf-empty-guide p{margin:0;line-height:1.6;color:var(--dsw-alias-label-secondary);font-size:12px}",
+      ".cf-empty-guide .cf-empty-step{color:var(--dsw-alias-label-primary)}",
+      ".cf-advanced{margin-top:8px;font-size:11px;color:var(--dsw-alias-label-secondary);text-align:left}",
+      ".cf-advanced summary{cursor:pointer;font-size:11px;color:var(--dsw-alias-label-secondary)}",
+      ".cf-advanced-body{margin-top:4px;line-height:1.6;word-break:break-word}",
+      ".cf-field{display:flex;flex-direction:column;gap:2px;flex:1 1 180px;min-width:0}",
+      ".cf-field-label{font-size:11px;color:var(--dsw-alias-label-secondary)}",
+      ".cf-field .cf-input,.cf-field .cf-select{width:100%;box-sizing:border-box}",
+      ".cf-input[data-invalid=true]{border-color:var(--dsw-alias-state-error-primary)}",
+      ".cf-form-error{flex:1 1 100%;color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:1.5}",
+      ".cf-info{border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);border-radius:8px;padding:8px 10px;font-size:12px;line-height:1.55}",
+      ".cf-info-title{font-weight:500}",
+      ".cf-info[data-state=unavailable]{color:var(--dsw-alias-label-secondary)}",
+      ".cf-danger{margin-top:20px;border-top:1px dashed var(--dsw-alias-border-l1);padding-top:10px}",
+      ".cf-danger summary{cursor:pointer;font-size:12px;color:var(--dsw-alias-label-secondary)}",
+      ".cf-danger-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}",
     ].join("\n");
 
     /**
@@ -408,6 +570,53 @@ window.__ModuleLoader__.load({
       );
     }
 
+    /**
+     * 「高级 / 开发者」折叠：工具名与检测细节都收在这里，普通用户默认看不到。
+     * @param {{ t: any, children?: any }} props
+     */
+    function AdvancedHint(props) {
+      return h(
+        "details",
+        { className: "cf-advanced", "data-casefile-advanced": "1" },
+        h("summary", null, text(props.t, "advanced.title")),
+        h("div", { className: "cf-advanced-body" }, props.children),
+      );
+    }
+
+    /**
+     * 页签空态：人话在前，工具名收进高级折叠。
+     * @param {{ t: any, kind: string, human: string, hint: string }} props
+     */
+    function EmptyHint(props) {
+      return h(
+        "div",
+        { className: "cf-empty", "data-casefile-empty": props.kind },
+        h("div", null, props.human),
+        h(AdvancedHint, { t: props.t }, props.hint),
+      );
+    }
+
+    /**
+     * 项目列表空态：这是什么、适合谁、第一步做什么；工具名收进高级折叠。
+     * @param {{ t: any }} props
+     */
+    function ProjectEmptyGuide(props) {
+      var t = props.t;
+      return h(
+        "div",
+        { className: "cf-empty", "data-casefile-empty": "projects" },
+        h(
+          "div",
+          { className: "cf-empty-guide" },
+          h("h3", null, text(t, "panel.emptyTitle")),
+          h("p", null, text(t, "panel.emptyWhat")),
+          h("p", null, text(t, "panel.emptyWho")),
+          h("p", { className: "cf-empty-step" }, text(t, "panel.emptyFirst")),
+          h(AdvancedHint, { t: t }, text(t, "panel.emptyTools")),
+        ),
+      );
+    }
+
     /** @param {{ t: any, project: any, active: boolean, onClick: () => void }} props */
     function ProjectRow(props) {
       var project = props.project;
@@ -428,7 +637,9 @@ window.__ModuleLoader__.load({
           h(
             "div",
             { className: "cf-row-meta" },
-            project.target ? `${project.target.kind} · ${project.target.ref}` : project.id,
+            project.target
+              ? `${vocab(props.t, "kind", project.target.kind)} · ${project.target.ref}`
+              : project.id,
           ),
           h(
             "div",
@@ -465,7 +676,7 @@ window.__ModuleLoader__.load({
                     ? "warn"
                     : "neutral",
             },
-            claim.status,
+            vocab(props.t, "confidence", claim.status),
           ),
           claim.selected
             ? h(Tag, { t: props.t, tone: "ok" }, text(props.t, "claims.selected"))
@@ -500,7 +711,11 @@ window.__ModuleLoader__.load({
           h(
             Tag,
             { t: props.t, tone: item.confidence === "observed" ? "ok" : "warn" },
-            `${item.confidence} / ${item.authority}`,
+            `${vocab(props.t, "confidence", item.confidence)} / ${vocab(
+              props.t,
+              "authority",
+              item.authority,
+            )}`,
           ),
         ),
         h(
@@ -553,7 +768,13 @@ window.__ModuleLoader__.load({
               obligation.status === "pass" ? "obligation.status.pass" : "obligation.status.open",
             ),
           ),
-          h(Tag, { t: props.t }, obligation.authorityRequired),
+          h(
+            Tag,
+            { t: props.t },
+            obligation.authorityRequired
+              ? vocab(props.t, "authority", obligation.authorityRequired)
+              : "",
+          ),
         ),
         h(
           "div",
@@ -729,6 +950,25 @@ window.__ModuleLoader__.load({
       var purgePreviewState = useState(null);
       var purgePreview = purgePreviewState[0];
       var setPurgePreview = purgePreviewState[1];
+      // 新建表单：必填反馈（失焦或提交过才显示）+ 表单内错误（不顶掉全局错误）
+      var titleTouchedState = useState(false);
+      var titleTouched = titleTouchedState[0];
+      var setTitleTouched = titleTouchedState[1];
+      var submitAttemptedState = useState(false);
+      var submitAttempted = submitAttemptedState[0];
+      var setSubmitAttempted = submitAttemptedState[1];
+      var formErrorState = useState("");
+      var formError = formErrorState[0];
+      var setFormError = formErrorState[1];
+      // 危险操作：先 dry-run 拿影响面，再显式确认（ADR 0002）
+      var dropPreviewState = useState(null);
+      var dropPreview = dropPreviewState[0];
+      var setDropPreview = dropPreviewState[1];
+      var dropBusyState = useState(false);
+      var dropBusy = dropBusyState[0];
+      var setDropBusy = dropBusyState[1];
+
+      var titleInvalid = (titleTouched || submitAttempted) && title.trim() === "";
 
       var loadList = useCallback(() => {
         setLoading(true);
@@ -752,6 +992,7 @@ window.__ModuleLoader__.load({
           return call(ctx, "projectDetail", { projectId: id })
             .then((value) => {
               setDetail(value);
+              setDropPreview(null);
               setError("");
             })
             .catch((/** @type {any} */ err) => {
@@ -849,6 +1090,12 @@ window.__ModuleLoader__.load({
 
       var create = () => {
         if (busy) return;
+        // 必填校验失败必须有可见反馈（点「创建」不能像没反应）
+        if (title.trim() === "") {
+          setSubmitAttempted(true);
+          return;
+        }
+        setFormError("");
         setBusy(true);
         call(ctx, "createProject", {
           input: {
@@ -861,13 +1108,51 @@ window.__ModuleLoader__.load({
             setShowForm(false);
             setTitle("");
             setTarget("");
+            setTitleTouched(false);
+            setSubmitAttempted(false);
+            setFormError("");
             return loadList().then(() => openProject(project.id));
           })
           .catch((/** @type {any} */ err) => {
-            setError(err?.message ? err.message : String(err));
+            setFormError(text(t, "panel.createFailed", { reason: humanizeError(err, t) }));
           })
           .finally(() => {
             setBusy(false);
+          });
+      };
+
+      var previewDrop = () => {
+        if (dropBusy || !detail) return;
+        setDropBusy(true);
+        call(ctx, "dropProject", { projectId: detail.project.id, options: { dryRun: true } })
+          .then((value) => {
+            setDropPreview(value || null);
+            setError("");
+          })
+          .catch((/** @type {any} */ err) => {
+            setError(humanizeError(err, t));
+          })
+          .finally(() => {
+            setDropBusy(false);
+          });
+      };
+
+      var confirmDrop = () => {
+        if (dropBusy || !detail) return;
+        setDropBusy(true);
+        call(ctx, "dropProject", { projectId: detail.project.id, options: { confirm: true } })
+          .then(() => {
+            setDropPreview(null);
+            setDetail(null);
+            setShowTrash(true);
+            setPurgePreview(null);
+            return Promise.all([loadList(), loadTrash()]);
+          })
+          .catch((/** @type {any} */ err) => {
+            setError(humanizeError(err, t));
+          })
+          .finally(() => {
+            setDropBusy(false);
           });
       };
 
@@ -1033,21 +1318,23 @@ window.__ModuleLoader__.load({
             ),
             h("h3", { style: { fontSize: 13, margin: "12px 0 8px" } }, text(t, "claims.title")),
             claims.length === 0
-              ? h(
-                  "div",
-                  { className: "cf-empty", "data-casefile-empty": "claims" },
-                  text(t, "claims.empty"),
-                )
+              ? h(EmptyHint, {
+                  t: t,
+                  kind: "claims",
+                  human: text(t, "claims.empty"),
+                  hint: text(t, "claims.emptyHint"),
+                })
               : claims.map((/** @type {any} */ claim) =>
                   h(ClaimCard, { key: claim.id, t: t, claim: claim }),
                 ),
             h("h3", { style: { fontSize: 13, margin: "16px 0 8px" } }, text(t, "evidence.title")),
             evidence.length === 0
-              ? h(
-                  "div",
-                  { className: "cf-empty", "data-casefile-empty": "evidence" },
-                  text(t, "evidence.empty"),
-                )
+              ? h(EmptyHint, {
+                  t: t,
+                  kind: "evidence",
+                  human: text(t, "evidence.empty"),
+                  hint: text(t, "evidence.emptyHint"),
+                })
               : evidence.map((/** @type {any} */ item) =>
                   h(EvidenceCard, { key: item.id, t: t, item: item }),
                 ),
@@ -1067,11 +1354,12 @@ window.__ModuleLoader__.load({
             ),
             h("h3", { style: { fontSize: 13, margin: "12px 0 8px" } }, text(t, "obligation.title")),
             obligations.length === 0
-              ? h(
-                  "div",
-                  { className: "cf-empty", "data-casefile-empty": "obligations" },
-                  text(t, "obligation.empty"),
-                )
+              ? h(EmptyHint, {
+                  t: t,
+                  kind: "obligations",
+                  human: text(t, "obligation.empty"),
+                  hint: text(t, "obligation.emptyHint"),
+                })
               : obligations.map((/** @type {any} */ item) =>
                   h(ObligationCard, {
                     key: item.id,
@@ -1101,19 +1389,20 @@ window.__ModuleLoader__.load({
           content = h(
             "div",
             null,
-            h(
-              "div",
-              { className: "cf-muted", style: { marginBottom: 8 } },
-              builds.length === 0
-                ? text(t, "run.empty")
-                : `${text(t, "run.builds")} · ${builds.length}`,
-            ),
             builds.length === 0
-              ? h(
+              ? null
+              : h(
                   "div",
-                  { className: "cf-empty", "data-casefile-empty": "runs" },
-                  text(t, "run.empty"),
-                )
+                  { className: "cf-muted", style: { marginBottom: 8 } },
+                  `${text(t, "run.builds")} · ${builds.length}`,
+                ),
+            builds.length === 0
+              ? h(EmptyHint, {
+                  t: t,
+                  kind: "runs",
+                  human: text(t, "run.empty"),
+                  hint: text(t, "run.emptyHint"),
+                })
               : builds
                   .slice()
                   .sort(
@@ -1144,7 +1433,7 @@ window.__ModuleLoader__.load({
                                   ? "err"
                                   : "warn",
                           },
-                          build.status,
+                          vocab(t, "checkStatus", build.status),
                         ),
                         h("span", null, text(t, "run.round", { round: build.round })),
                         build.implementationDigest
@@ -1192,7 +1481,7 @@ window.__ModuleLoader__.load({
                                 ? "err"
                                 : "warn",
                         },
-                        check.verdict,
+                        vocab(t, "checkStatus", check.verdict),
                       ),
                       h(
                         "span",
@@ -1242,9 +1531,13 @@ window.__ModuleLoader__.load({
               "div",
               { style: { display: "flex", gap: 8, alignItems: "baseline", marginBottom: 4 } },
               h("h3", { style: { fontSize: 14, margin: 0 } }, detail.project.title),
-              h(Tag, { t: t }, detail.project.target ? detail.project.target.kind : "other"),
+              h(
+                Tag,
+                { t: t },
+                vocab(t, "kind", detail.project.target ? detail.project.target.kind : "other"),
+              ),
               h(Tag, { t: t, tone: "warn" }, text(t, `auth.${detail.project.authTier}`)),
-              h(Tag, { t: t }, detail.project.scope === "selected" ? "selected" : "all"),
+              h(Tag, { t: t }, vocab(t, "scope", detail.project.scope)),
             ),
             h(
               "div",
@@ -1274,6 +1567,74 @@ window.__ModuleLoader__.load({
               ),
             ),
             content,
+            h(
+              "details",
+              { className: "cf-danger", "data-casefile-danger": "1" },
+              h("summary", null, text(t, "danger.title")),
+              h(
+                "p",
+                { className: "cf-muted", style: { fontSize: 11, margin: "8px 0 0" } },
+                text(t, "danger.dropHint"),
+              ),
+              dropPreview
+                ? h(
+                    "div",
+                    {
+                      className: "cf-card",
+                      "data-casefile-drop-preview": "1",
+                      style: { marginTop: 8 },
+                    },
+                    h(
+                      "div",
+                      null,
+                      text(t, "danger.dropPreview", {
+                        id: detail.project.id,
+                        files: dropPreview.files ?? 0,
+                        bytes: formatBytes(dropPreview.bytes),
+                      }),
+                    ),
+                    h(
+                      "div",
+                      { className: "cf-danger-row" },
+                      h(
+                        "button",
+                        {
+                          className: "cf-btn cf-btn-primary",
+                          "data-casefile-drop-confirm": "1",
+                          disabled: dropBusy,
+                          onClick: confirmDrop,
+                        },
+                        dropBusy ? text(t, "danger.dropBusy") : text(t, "danger.dropConfirm"),
+                      ),
+                      h(
+                        "button",
+                        {
+                          className: "cf-btn",
+                          "data-casefile-drop-cancel": "1",
+                          disabled: dropBusy,
+                          onClick: () => {
+                            setDropPreview(null);
+                          },
+                        },
+                        text(t, "danger.dropCancel"),
+                      ),
+                    ),
+                  )
+                : h(
+                    "div",
+                    { className: "cf-danger-row" },
+                    h(
+                      "button",
+                      {
+                        className: "cf-btn",
+                        "data-casefile-drop": "1",
+                        disabled: dropBusy,
+                        onClick: previewDrop,
+                      },
+                      text(t, "danger.drop"),
+                    ),
+                  ),
+            ),
           ),
         );
       } else {
@@ -1304,11 +1665,7 @@ window.__ModuleLoader__.load({
                 )
               : null,
             projects.length === 0
-              ? h(
-                  "div",
-                  { className: "cf-empty", "data-casefile-empty": "projects" },
-                  text(t, "panel.empty"),
-                )
+              ? h(ProjectEmptyGuide, { t: t })
               : h(
                   "div",
                   null,
@@ -1343,7 +1700,7 @@ window.__ModuleLoader__.load({
             {
               className: "cf-muted",
               "data-casefile-autonomy": detail?.autonomy?.level || "L2",
-              title: text(t, "autonomy.hint"),
+              title: `${text(t, "autonomy.hint")}\n${text(t, "autonomy.scale")}`,
               style: { marginRight: 8 },
             },
             `${text(t, "autonomy.label")} ${detail?.autonomy?.level || "L2"}`,
@@ -1384,54 +1741,103 @@ window.__ModuleLoader__.load({
           ? h(
               "div",
               { className: "cf-form", "data-casefile-create": "1" },
-              h("input", {
-                className: "cf-input",
-                placeholder: text(t, "panel.createTitle"),
-                value: title,
-                onInput: (/** @type {any} */ event) => {
-                  setTitle(event.target.value);
-                },
-              }),
-              h("input", {
-                className: "cf-input",
-                placeholder: text(t, "panel.createTarget"),
-                value: target,
-                onInput: (/** @type {any} */ event) => {
-                  setTarget(event.target.value);
-                },
-              }),
               h(
-                "select",
-                {
-                  className: "cf-select",
-                  value: kind,
-                  onChange: (/** @type {any} */ event) => {
-                    setKind(event.target.value);
+                "label",
+                { className: "cf-field", "data-casefile-field": "title" },
+                h("span", { className: "cf-field-label" }, text(t, "panel.createTitleLabel")),
+                h("input", {
+                  className: "cf-input",
+                  "data-casefile-field-input": "title",
+                  "data-invalid": titleInvalid ? "true" : "false",
+                  "aria-label": text(t, "panel.createTitle"),
+                  "aria-required": "true",
+                  required: true,
+                  disabled: busy,
+                  placeholder: text(t, "panel.titlePlaceholder"),
+                  value: title,
+                  onInput: (/** @type {any} */ event) => {
+                    setTitle(event.target.value);
                   },
-                },
-                ["binary", "web", "app", "game", "artifact", "other"].map((item) =>
-                  h("option", { key: item, value: item }, item),
+                  onBlur: () => {
+                    setTitleTouched(true);
+                  },
+                }),
+              ),
+              h(
+                "label",
+                { className: "cf-field", "data-casefile-field": "target" },
+                h("span", { className: "cf-field-label" }, text(t, "panel.createTarget")),
+                h("input", {
+                  className: "cf-input",
+                  "data-casefile-field-input": "target",
+                  "aria-label": text(t, "panel.createTarget"),
+                  disabled: busy,
+                  placeholder: text(t, "panel.targetPlaceholder"),
+                  value: target,
+                  onInput: (/** @type {any} */ event) => {
+                    setTarget(event.target.value);
+                  },
+                }),
+              ),
+              h(
+                "label",
+                { className: "cf-field", "data-casefile-field": "kind" },
+                h("span", { className: "cf-field-label" }, text(t, "panel.createKind")),
+                h(
+                  "select",
+                  {
+                    className: "cf-select",
+                    "data-casefile-field-input": "kind",
+                    "aria-label": text(t, "panel.createKind"),
+                    disabled: busy,
+                    value: kind,
+                    onChange: (/** @type {any} */ event) => {
+                      setKind(event.target.value);
+                    },
+                  },
+                  ["binary", "web", "app", "game", "artifact", "other"].map((item) =>
+                    h("option", { key: item, value: item }, vocab(t, "kind", item)),
+                  ),
                 ),
               ),
               h(
-                "select",
-                {
-                  className: "cf-select",
-                  value: auth,
-                  onChange: (/** @type {any} */ event) => {
-                    setAuth(event.target.value);
+                "label",
+                { className: "cf-field", "data-casefile-field": "auth" },
+                h("span", { className: "cf-field-label" }, text(t, "panel.createAuth")),
+                h(
+                  "select",
+                  {
+                    className: "cf-select",
+                    "data-casefile-field-input": "auth",
+                    "aria-label": text(t, "panel.createAuth"),
+                    disabled: busy,
+                    value: auth,
+                    onChange: (/** @type {any} */ event) => {
+                      setAuth(event.target.value);
+                    },
                   },
-                },
-                ["owned", "authorized", "research"].map((item) =>
-                  h("option", { key: item, value: item }, text(t, `auth.${item}`)),
+                  ["owned", "authorized", "research"].map((item) =>
+                    h("option", { key: item, value: item }, text(t, `authOption.${item}`)),
+                  ),
                 ),
               ),
+              formError !== "" || titleInvalid
+                ? h(
+                    "div",
+                    {
+                      className: "cf-form-error",
+                      role: "alert",
+                      "data-casefile-create-error": "1",
+                    },
+                    formError !== "" ? formError : text(t, "panel.titleRequired"),
+                  )
+                : null,
               h(
                 "button",
                 {
                   className: "cf-btn cf-btn-primary",
                   "data-casefile-submit": "1",
-                  disabled: busy || title.trim() === "",
+                  disabled: busy,
                   onClick: create,
                 },
                 busy ? text(t, "panel.creating") : text(t, "panel.create"),
@@ -1440,6 +1846,8 @@ window.__ModuleLoader__.load({
                 "button",
                 {
                   className: "cf-btn",
+                  "data-casefile-cancel": "1",
+                  disabled: busy,
                   onClick: () => {
                     setShowForm(false);
                   },
@@ -1541,14 +1949,35 @@ window.__ModuleLoader__.load({
         ),
         h(
           "div",
-          { className: "cf-kv" },
-          h("b", null, text(t, "settings.rea")),
+          {
+            className: "cf-info",
+            "data-casefile-rea-notice": "1",
+            "data-state": grade.ok ? "connected" : "unavailable",
+          },
           h(
-            "span",
-            { "data-casefile-rea": grade.level || "unknown" },
+            "div",
+            { className: "cf-info-title" },
+            `${text(t, "settings.rea")} · `,
+            h(
+              "span",
+              {
+                "data-casefile-rea": grade.level || "unknown",
+                "data-state": grade.ok ? "connected" : "unavailable",
+              },
+              grade.ok
+                ? text(t, "settings.reaOk", { count: rea.availableTools || 0 })
+                : text(t, "settings.reaMissing"),
+            ),
+          ),
+          grade.ok
+            ? null
+            : h("div", { style: { marginTop: 2 } }, text(t, "settings.reaMissingHint")),
+          h(
+            AdvancedHint,
+            { t: t },
             grade.ok
-              ? text(t, "settings.reaOk", { count: rea.availableTools || 0 })
-              : text(t, "settings.reaMissing"),
+              ? text(t, "settings.reaDetailOk", { count: rea.availableTools || 0 })
+              : text(t, "settings.reaDetailMissing"),
           ),
         ),
         h(

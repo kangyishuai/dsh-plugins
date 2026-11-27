@@ -62,11 +62,17 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-casefile-*.tgz
 - **义务** —— 义务、状态与未解决未知项。关闭义务需要**新鲜的 PASS 检查，且与当前实现 digest 绑定**；否则按钮会点名具体阻塞项（`no-fresh-check`、`coverage-below`、`open-unknowns` 等），而不是假装能关。
 - **运行** —— 构建轮次（状态、实现 digest、命令）与绑定到该 digest 的检查结论。
 
-列表页顶部有一条**总览**：项目数、按目标类型与状态的分布、义务通过数/总数、跨项目的未解决未知项；`case_project overview` 以 JSON 返回同一份数据。面板头部显示当前项目的**自主性级别**（L0–L3）；徽章提示里说明 L3 只适用于 `scope=selected` 且所有义务都带检查配方的项目。
+列表页顶部有一条**总览**：项目数、按目标类型与状态的分布、义务通过数/总数、跨项目的未解决未知项；`case_project overview` 以 JSON 返回同一份数据。**空工作台**用人话说清这是什么、适合谁、第一步做什么；工具名（`case_evidence`、`case_claim` 等）收在「给开发者 / AI 的说明」折叠里，不再作为新用户首先读到的东西。**新建项目**表单给每个字段加了标签（标题、目标、对象类型、授权范围），必填标题在失焦与提交时校验并给出可读错误，而不是一个按了没反应的按钮。
 
-头部还有**回收站**入口：列出被 `case_project drop` 丢弃的项目（id、体积、文件数），可一键恢复；清空回收站前先用 dry-run 展示影响面（`N 个条目 / 体积；来历不明的条目会保留`）。丢弃只是移走，确认硬删之前都能恢复。按 [ADR 0002](https://github.com/kangyishuai/dsh-plugins/blob/main/docs/adr/0002-destructive-operations.md)，脚本化场景用 `case_project purge`（`dryRun` + `confirm`）；每次 drop/restore/purge 都会写数据根级 `audit.jsonl`（被丢弃的项目已经写不进自己的 audit 文件）。
+面板头部显示当前项目的**自主性级别**（L0–L3）；徽章提示用一句话解释这个等级是什么，L0–L3 作为副标题保留。
 
-设置分节显示数据根、项目数与 REA 能力状态，「REA 到底接没接上」不用翻日志就能回答。
+头部还有**回收站**入口：列出被 `case_project drop` 丢弃的项目（id、体积、文件数），可一键恢复；清空回收站前先用 dry-run 展示影响面（`N 个条目 / 体积；来历不明的条目会保留`）。丢弃只是移走，确认硬删之前都能恢复。
+
+项目详情页给用户留了一个默认收起的**「危险操作 → 移入回收站」**入口：先 dry-run 展示影响面（文件数 / 体积、可恢复），再显式确认才移动，移完直接进回收站视图。agent 侧的 `case_project drop` 除了 `confirm: true`，工具描述还明确要求「必须用户明确同意后才可执行，不得自行 drop」——完全权限档下宿主不会额外弹审批，所以这条同意要求同时写进工具契约与本文档，属于文档约束而非宿主强制。
+
+按 [ADR 0002](https://github.com/kangyishuai/dsh-plugins/blob/main/docs/adr/0002-destructive-operations.md)，脚本化场景用 `case_project purge`（`dryRun` + `confirm`）；每次 drop/restore/purge 都会写数据根级 `audit.jsonl`（被丢弃的项目已经写不进自己的 audit 文件）。
+
+设置分节显示数据根、项目数与 REA 接入状态。REA 未接入按**可选 / 不可用说明**呈现（不影响建项目和手工记录证据），不是红色错误；`mcp__rea__*` 的原始检测结果放在同一个高级折叠里。
 
 ## 工具
 
@@ -178,10 +184,27 @@ casefile/
 ## 副作用与风险
 
 - **写哪些文件：** 只写上面的数据根。不写被调查的项目、不改 REA 二进制、不编辑 profile。
-- **破坏性操作：** 遵循仓库 [ADR 0002](https://github.com/kangyishuai/dsh-plugins/blob/main/docs/adr/0002-destructive-operations.md)。`case_project drop` 把整个项目目录移进 `<dataRoot>/trash/<时间戳>-<id>`（可恢复），必须传 `confirm: true`，支持 `dryRun` 并给出条目数/体积/目标路径，同时写数据根审计。回收站可查看、可恢复、可清空（`case_project purge`，`dryRun` + `confirm`；回收站里来历不明的条目保留并计数，绝不 `rm -rf`）。没有显式确认就不会硬删任何东西。
+- **破坏性操作：** 遵循仓库 [ADR 0002](https://github.com/kangyishuai/dsh-plugins/blob/main/docs/adr/0002-destructive-operations.md)。`case_project drop` 把整个项目目录移进 `<dataRoot>/trash/<时间戳>-<id>`（可恢复），必须传 `confirm: true`，支持 `dryRun` 并给出条目数/体积/目标路径，同时写数据根审计。工具契约明确要求 agent **只能在用户明确同意后**调用；工作台给用户自己的同一动作放在「危险操作」里，先预览影响面再确认。注意：在 `danger-full-access` / `approval: never` 权限档下宿主不会为这个工具加审批弹窗——完全权限会话被视为可信执行者，因此这条同意要求是文档约束，而不是宿主强制。回收站可查看、可恢复、可清空（`case_project purge`，`dryRun` + `confirm`；回收站里来历不明的条目保留并计数，绝不 `rm -rf`）。没有显式确认就不会硬删任何东西。
 - **隐私：** 项目数据只在本机。规格包、bundle 与报告默认脱敏（系统根目录路径、`~/…`、扩展路径，以及上面列出的 token 形态），但**分享前仍应自己过一遍**——脱敏是安全网，不是保证。
 - **证据质量：** casefile 只存你告诉它的东西。它不验证观察，也从不提升结论的可信度或权威性。
 - **法务：** 面向研究与「你拥有或已获授权分析」的软件。刻意**不提供** DRM/反调试绕过，也不提供复用第三方资产的途径。使用前读 [DISCLAIMER.md](./DISCLAIMER.md)。
+
+## 卸载后残留
+
+卸载插件**不会删任何数据**：宿主只移除包本身。案卷仍留在数据根下（默认 `<DSH_HOME>/casefile`，见[数据布局](#数据布局)）：
+
+- `projects/<id>/` —— 项目记录，以及 `artifacts/`、`spec/`、`reports/`、`bundles/`、`checks/`；
+- `trash/` —— 被 `case_project drop` 移进回收站的项目（重装后仍可恢复）；
+- `audit.jsonl`、`last-opened.json`、`session-pointers.json` —— 数据根审计与会话指针。
+
+数据不上传，卸载时也不清理——这是有意的，重装后证据还在。要手工删除（先确认已经导出需要的东西）：
+
+```bash
+du -sh "$DSH_HOME/casefile"   # 先看体积
+rm -rf "$DSH_HOME/casefile"   # 改过 dataRoot 的话换成你自己的路径
+```
+
+导出的规格包、报告和 bundle 都在项目目录**里面**（`spec/`、`reports/`、`bundles/`），会随目录一起删掉；需要的话先拷出来。
 
 ## 开发
 

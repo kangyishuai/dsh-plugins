@@ -61,11 +61,17 @@ The plugin adds a **Casefile** entry to the sidebar. The page lists projects on 
 - **Obligations** — obligations, their status, and open unknowns. Closing an obligation needs a _fresh PASS check bound to the current implementation digest_; otherwise the button names the exact blocker (`no-fresh-check`, `coverage-below`, `open-unknowns`, …) instead of pretending.
 - **Runs** — build rounds (status, implementation digest, command) and check verdicts bound to each digest.
 
-The list view opens with an **overview strip** (project count, breakdown by target kind and state, obligation pass/total, unresolved unknowns across projects); `case_project overview` returns the same data as JSON. The panel header shows the selected project's **autonomy level** (L0–L3); the badge's tooltip explains that L3 only applies to `scope=selected` projects whose obligations all carry check recipes.
+The list view opens with an **overview strip** (project count, breakdown by target kind and state, obligation pass/total, unresolved unknowns across projects); `case_project overview` returns the same data as JSON. An **empty** workbench explains in plain words what a case file is, who it is for and what the first step is; tool names (`case_evidence`, `case_claim`, …) are folded under “For developers / the AI agent” instead of being the first thing a new user reads. The **New project** form labels every field (title, target, target kind, authorization) and validates the required title on blur and on submit, with a readable error instead of a dead button.
 
-The header also exposes a **Trash** entry. It lists projects dropped with `case_project drop` (id, size, file count), restores one with a click, and empties the trash only after a dry-run shows the impact (`N entries / size; unknown entries are kept`). Dropped projects are moved, never deleted, until you confirm the hard delete. Per [ADR 0002](https://github.com/kangyishuai/dsh-plugins/blob/main/docs/adr/0002-destructive-operations.md) there is also `case_project purge` (`dryRun` + `confirm`) for scripted use, and every drop/restore/purge is written to the data root's `audit.jsonl` (a dropped project can no longer write into its own audit file).
+The panel header shows the selected project's **autonomy level** (L0–L3); the badge's tooltip explains in plain words what the level means, with L0–L3 kept as a subtitle.
 
-A settings section shows the data root, project count and REA capability status, so "is REA actually connected" is answerable without reading logs.
+The header also exposes a **Trash** entry. It lists projects dropped with `case_project drop` (id, size, file count), restores one with a click, and empties the trash only after a dry-run shows the impact (`N entries / size; unknown entries are kept`). Dropped projects are moved, never deleted, until you confirm the hard delete.
+
+A project's detail page carries a collapsed **Danger zone → Move to trash** entry for the user: it first previews the impact (file count / size, restorable) and only moves the project after an explicit confirmation, then shows it in the trash. The agent-side `case_project drop` tool requires `confirm: true` **and** is documented as "only after the user explicitly agreed, never on your own initiative" — under a full-access permission preset the model could technically call it, so the tool description and this README both put the consent requirement in writing.
+
+Per [ADR 0002](https://github.com/kangyishuai/dsh-plugins/blob/main/docs/adr/0002-destructive-operations.md) there is also `case_project purge` (`dryRun` + `confirm`) for scripted use, and every drop/restore/purge is written to the data root's `audit.jsonl` (a dropped project can no longer write into its own audit file).
+
+A settings section shows the data root, project count and REA connection state. REA being absent is shown as an **optional, unavailable notice** (it does not block creating projects or recording evidence), not as an error; the raw `mcp__rea__*` detection detail is available under the same advanced fold.
 
 ## Tools
 
@@ -177,10 +183,27 @@ Host APIs used here were verified by runtime inspection; the findings are record
 ## Side effects & risks
 
 - **Files it writes:** only under the data root above. It never writes into the investigated project, never modifies the REA binary, and never edits the profile.
-- **Destructive actions:** following [ADR 0002](https://github.com/kangyishuai/dsh-plugins/blob/main/docs/adr/0002-destructive-operations.md). `case_project drop` moves the whole project directory into `<dataRoot>/trash/<timestamp>-<id>` (recoverable), needs `confirm: true`, supports `dryRun` with a count / size / target path, and writes a data-root audit entry. The trash can be listed, restored and emptied (`case_project purge`, `dryRun` + `confirm`; unknown entries in the trash are kept and reported, never `rm -rf`ed). Nothing is hard-deleted without an explicit confirmation.
+- **Destructive actions:** following [ADR 0002](https://github.com/kangyishuai/dsh-plugins/blob/main/docs/adr/0002-destructive-operations.md). `case_project drop` moves the whole project directory into `<dataRoot>/trash/<timestamp>-<id>` (recoverable), needs `confirm: true`, supports `dryRun` with a count / size / target path, and writes a data-root audit entry. The tool contract says the agent must only call it **after the user explicitly agreed**; the workbench offers the same action to the user behind a preview + confirmation (Danger zone). Note that under a `danger-full-access` / `approval: never` preset the host does not add an approval prompt for this tool — full-access sessions are trusted to follow their instructions, so this consent requirement is documented rather than enforced by the host. The trash can be listed, restored and emptied (`case_project purge`, `dryRun` + `confirm`; unknown entries in the trash are kept and reported, never `rm -rf`ed). Nothing is hard-deleted without an explicit confirmation.
 - **Privacy:** project data stays on this machine. Spec packs, bundles and reports are redacted by default (system-root paths, `~/…`, extended paths, and the token shapes listed above) but **you should still review a file before sharing it** — redaction is a safety net, not a guarantee.
 - **Evidence quality:** casefile stores what you tell it. It does not verify an observation, and it never upgrades a claim's confidence or authority.
 - **Legal:** intended for research and for software you own or are authorized to analyze. It deliberately ships **no** DRM/anti-debugging bypass and no way to reuse third-party assets. Read [DISCLAIMER.md](./DISCLAIMER.md) before use.
+
+## Uninstall
+
+Uninstalling the plugin does **not** delete anything: the host only removes the package. Your case files stay on disk under the data root (`<DSH_HOME>/casefile` by default — see [Data layout](#data-layout)):
+
+- `projects/<id>/` — project records plus `artifacts/`, `spec/`, `reports/`, `bundles/` and `checks/`;
+- `trash/` — projects moved there by `case_project drop` (still restorable if you reinstall);
+- `audit.jsonl`, `last-opened.json`, `session-pointers.json` — the data-root audit trail and session pointers.
+
+Nothing is uploaded, and nothing is cleaned up on uninstall — deliberately, so a reinstall keeps your evidence. To delete the data manually (only after you have exported what you need):
+
+```bash
+du -sh "$DSH_HOME/casefile"   # see the size first
+rm -rf "$DSH_HOME/casefile"   # use your configured dataRoot if you overrode it
+```
+
+Exported spec packs, reports and bundles live **inside** the project directories (`spec/`, `reports/`, `bundles/`), so they are removed with the tree; copy them out first if they matter.
 
 ## Development
 
