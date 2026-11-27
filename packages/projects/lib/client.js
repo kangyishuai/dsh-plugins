@@ -48,7 +48,7 @@ window.__ModuleLoader__.load({
       "settings.nav.usage": "用量",
       "settings.nav.debug": "调试",
       "settings.sectionTitle": "设置分区",
-      "settings.budget": "预算（日线程 / 并发 / 步数 / token）",
+      "settings.budget": "预算（日线程 / 并发 / 步数 / 日 token / 周 token）",
       "settings.autoRetry": "失败自动重试（最多 2 次）",
       "settings.autoRetryHint":
         "线程以失败结束时，60 秒后自动再发一句「继续」；累计最多 2 次（不因中间恢复清零）。这不是「用量恢复续跑」。",
@@ -173,6 +173,8 @@ window.__ModuleLoader__.load({
       "notify.completed": "{count} 个线程完成了",
       "detail.coordinator": "协调者",
       "detail.coordinatorEmpty": "还没有对话。线程跑完后它会在这里向你汇报。",
+      "detail.coordinatorNoWake":
+        "未配置协调者：线程结束不会唤醒任何会话（没有后台模型调用，也没有自动汇报/汇总）。",
       "detail.coordinatorPlaceholder": "跟协调者说一句话，例如「帮我看下 CI 为什么红」",
       "detail.coordinatorSend": "发送",
       "detail.coordinatorSending": "发送中…",
@@ -218,6 +220,9 @@ window.__ModuleLoader__.load({
       "detail.prCreating": "正在开 PR…",
       "detail.prCreated": "已开 PR #{number}",
       "detail.prFailed": "开 PR 失败：{reason}",
+      "detail.prPendingApproval":
+        "已排入合并审批：PR #{number} 等你在审批队列里确认（插件不会自己合并）。",
+      "detail.prNotReady": "当前不满足继续 PR 流程的条件：{reason}（不是失败，等条件变化后再试）。",
       "detail.prBranch": "分支 {branch}",
       "detail.prCi": "CI {state}",
       "detail.noBranch": "还没有分支（线程还没产出提交）",
@@ -267,7 +272,7 @@ window.__ModuleLoader__.load({
       "detail.threadsEmpty":
         "在下面输入框派个任务，回车即可新建线程；也可以用「…」菜单把已有会话归属进来。",
       "detail.noDirHint":
-        "还没有绑定项目目录：线程会跑在插件的数据目录里（不隔离，也不便接手你的仓库）。建议先在「项目设置 → 环境 → 项目目录」里绑定一个 git 仓库，线程才会各占一个 worktree。",
+        "还没有绑定项目目录：线程会跑在项目专用工作区（插件数据目录下的 workspaces/<id>，不隔离，也不便接手你的仓库）。建议先在「项目设置 → 环境 → 项目目录」里绑定一个 git 仓库，线程才会各占一个 worktree。",
       "detail.threadState": "状态：{state}",
       "detail.instructions": "常设规则（instructions.md）",
       "detail.memoryEdit": "编辑常设规则",
@@ -329,7 +334,9 @@ window.__ModuleLoader__.load({
       "detail.threadRemoveConfirm": "确认移除追踪？",
       "detail.threadRemovedWithWorktree": "已移除追踪（worktree 仍在磁盘：{path}）",
       "detail.threadPromptFailed": "线程已建，但首条任务没送达：{reason}",
-      "detail.threadIsolationHint": "未绑定项目目录：线程跑在插件数据目录里（{reason}）。",
+      "detail.threadModelFailed": "线程已建，但项目默认模型不可用（已退回宿主默认）：{reason}",
+      "detail.threadIsolationHint":
+        "未绑定项目目录：线程跑在项目专用工作区（插件数据目录下的 workspaces/<id>，{reason}）。",
       "detail.threadRemoved": "已移除追踪",
       "detail.threadActionFailed": "操作失败：{reason}",
       "detail.pause": "暂停项目",
@@ -374,6 +381,20 @@ window.__ModuleLoader__.load({
       "settings.fallback": "规则都不命中时允许模型兜底提议",
       "settings.dangerTitle": "危险动作开关（默认全关）",
       "settings.dangerHint": "打开任何一个开关都需要你明确同意；插件不会自行打开。",
+      "settings.prTier": "PR 档位",
+      "settings.prTier.off": "关闭（不自动开 PR）",
+      "settings.prTier.draft": "草稿 PR",
+      "settings.prTier.ready": "可合并 PR",
+      "settings.prTier.auto-merge": "自动合并（CI 通过后进审批队列）",
+      "settings.preapproveTitle": "预授权（勾上即自动执行）",
+      "settings.preapproveHint":
+        "这些动作勾上后不再逐次等审批：命中策略就直接执行（对应的危险开关还必须同时打开，否则仍然不会自动执行）。默认全空，建议只在明确知道后果时打开。",
+      "settings.preapproveRisk": "已启用预授权：命中时动作会被直接执行，不可逆动作也没有二次确认。",
+      "settings.preapprove.push-branch": "推送分支",
+      "settings.preapprove.delete-thread": "删除线程 / 回收 worktree",
+      "settings.preapprove.delete-project": "删除项目（进回收站）",
+      "settings.preapprove.purge-trash": "清空回收站",
+      "settings.preapprove.change-settings": "修改项目配置",
       "settings.danger.forcePushOwnBranch.label": "允许覆盖插件自己创建的远端分支",
       "settings.danger.forcePushOwnBranch.risk":
         "只覆盖插件自己建的分支。覆盖前会核对远端版本：被别人改过、分支受保护、或版本对不上，就停下并把旧版本号记下来，方便恢复。",
@@ -595,6 +616,9 @@ window.__ModuleLoader__.load({
       "detail.prCard.mergeOk": "已合并 #{number}",
       "detail.prCard.mergeFail": "合并失败：{reason}",
       "detail.prCard.copy": "复制链接",
+      "detail.prCard.continueHint":
+        "重跑一次 PR 流程：已开 PR 时不会重复开；auto-merge 档在 CI 通过时会排入合并审批（不会直接合并）。",
+      "detail.prCard.continue": "继续 PR 流程",
       "detail.prCard.copied": "PR 链接已复制",
       "detail.prCard.loading": "读取 PR 信息…",
       "detail.prCard.unavailable": "读不到 PR",
@@ -776,6 +800,8 @@ window.__ModuleLoader__.load({
         "Project metadata and content files stay local; no remote repository is written.",
       "detail.coordinator": "Coordinator",
       "detail.coordinatorEmpty": "No conversation yet. It reports here after a thread finishes.",
+      "detail.coordinatorNoWake":
+        "No coordinator configured: thread endings wake nothing (no background model calls, no automatic summaries).",
       "detail.coordinatorPlaceholder": 'Say one line to the coordinator, e.g. "why is CI red?"',
       "detail.coordinatorSend": "Send",
       "detail.coordinatorSending": "Sending…",
@@ -823,6 +849,10 @@ window.__ModuleLoader__.load({
       "detail.prCreating": "Creating PR…",
       "detail.prCreated": "Opened PR #{number}",
       "detail.prFailed": "Create PR failed: {reason}",
+      "detail.prPendingApproval":
+        "Queued for merge approval: PR #{number} waits for you in the approval queue (the plugin never merges by itself).",
+      "detail.prNotReady":
+        "The PR flow does not advance right now: {reason} (not a failure; retry when conditions change).",
       "detail.prBranch": "Branch {branch}",
       "detail.prCi": "CI {state}",
       "detail.noBranch": "No branch yet (no commits from this thread)",
@@ -873,7 +903,7 @@ window.__ModuleLoader__.load({
       "detail.threadsEmpty":
         "Type a task below and press Enter to start a thread; or use a session’s … menu to add it here.",
       "detail.noDirHint":
-        "No project directory bound yet: threads run inside the plugin’s data directory (no isolation, and they cannot work on your repo). Bind a git repository above first — then each thread gets its own worktree.",
+        "No project directory bound yet: threads run in the project's own workspace (`workspaces/<id>` under the plugin data directory; no isolation, and they cannot work on your repo). Bind a git repository above first — then each thread gets its own worktree.",
       "detail.threadState": "state: {state}",
       "detail.instructions": "Standing rules (instructions.md)",
       "detail.memoryIndex": "Memory index (MEMORY.md)",
@@ -924,8 +954,10 @@ window.__ModuleLoader__.load({
       "detail.threadRemoveConfirm": "Remove tracking?",
       "detail.threadRemovedWithWorktree": "Tracking removed (worktree still on disk: {path})",
       "detail.threadPromptFailed": "Thread created, but the first task was not delivered: {reason}",
+      "detail.threadModelFailed":
+        "Thread created, but the project default model is unavailable (fell back to the host default): {reason}",
       "detail.threadIsolationHint":
-        "No project folder bound: the thread runs in the plugin data folder ({reason}).",
+        "No project folder bound: the thread runs in the project's own workspace (workspaces/<id> under the plugin data folder; {reason}).",
       "detail.threadRemoved": "Tracking removed",
       "detail.threadActionFailed": "Action failed: {reason}",
       "detail.pause": "Pause project",
@@ -971,6 +1003,21 @@ window.__ModuleLoader__.load({
       "settings.dangerTitle": "Danger switches (all off by default)",
       "settings.dangerHint":
         "Every switch needs your explicit consent; the plugin never turns one on by itself.",
+      "settings.prTier": "PR tier",
+      "settings.prTier.off": "off (never open a PR automatically)",
+      "settings.prTier.draft": "draft PR",
+      "settings.prTier.ready": "ready PR",
+      "settings.prTier.auto-merge": "auto-merge (queues an approval once CI passes)",
+      "settings.preapproveTitle": "Pre-approval (runs automatically when checked)",
+      "settings.preapproveHint":
+        "Checked actions stop waiting for per-incident approval: a matching policy request is executed directly (the matching danger switch must also be on, otherwise nothing is auto-executed). Empty by default; only enable what you fully understand.",
+      "settings.preapproveRisk":
+        "Pre-approval is on: matching actions execute immediately, with no second confirmation even for irreversible ones.",
+      "settings.preapprove.push-branch": "push branch",
+      "settings.preapprove.delete-thread": "delete thread / reclaim worktree",
+      "settings.preapprove.delete-project": "delete project (to trash)",
+      "settings.preapprove.purge-trash": "empty trash",
+      "settings.preapprove.change-settings": "change project settings",
       "settings.danger.forcePushOwnBranch.label": "Allow force-pushing your own dsh/ branches",
       "settings.danger.forcePushOwnBranch.risk":
         "Uses --force-with-lease bound to the expected SHA; refuses when the remote moved, the branch is protected, or the old SHA is unknown, and records the old SHA for recovery.",
@@ -1198,6 +1245,9 @@ window.__ModuleLoader__.load({
       "detail.prCard.mergeOk": "Merged #{number}",
       "detail.prCard.mergeFail": "Merge failed: {reason}",
       "detail.prCard.copy": "Copy link",
+      "detail.prCard.continueHint":
+        "Re-run the PR pipeline: it never opens a second PR; in the auto-merge tier a passing-CI PR is queued as a merge approval (never merged directly).",
+      "detail.prCard.continue": "Continue PR flow",
       "detail.prCard.copied": "PR link copied",
       "detail.prCard.loading": "Loading PR…",
       "detail.prCard.unavailable": "PR unavailable",
@@ -1316,7 +1366,8 @@ window.__ModuleLoader__.load({
       "settings.nav.usage": "Usage",
       "settings.nav.debug": "Debug",
       "settings.sectionTitle": "Settings sections",
-      "settings.budget": "Budget (threads/day / concurrent / steps / tokens)",
+      "settings.budget":
+        "Budget (threads/day / concurrent / steps / tokens per day / tokens per week)",
       "settings.autoRetry": "Auto-retry on failure (max 2)",
       "settings.autoRetryHint":
         'When a thread ends failed, it re-sends "continue" after 60s; at most 2 tries per thread, never reset. Not the same as resuming after a usage limit.',
@@ -6441,6 +6492,17 @@ window.__ModuleLoader__.load({
             load();
             // warning 有两种：prompt-failed 才是"任务没送达"（红色）；
             // not-a-git-repository 是"没绑目录 → 跑在插件数据目录"的预期降级（中性提示，6s 自动消失）。
+            // AUD-PROJ-24：项目默认模型失效时以前只写审计，用户以为默认模型生效了。
+            // 现在服务端把原因放进回执的 modelWarning，这里如实提示（线程仍照常跑）。
+            if (created?.modelWarning && !created?.promptFailed) {
+              setThreadAction({
+                pending: "",
+                ok: false,
+                message: text(t, "detail.threadModelFailed", {
+                  reason: String(created.modelWarning).slice(0, 160),
+                }),
+              });
+            }
             if (created?.warning) {
               const warning = String(created.warning);
               if (warning.startsWith("prompt-failed:")) {
@@ -6710,12 +6772,26 @@ window.__ModuleLoader__.load({
             (/** @type {any} */ result) => {
               setBusyAction("");
               const opened = result?.opened === true;
+              const reason = String(result?.reason ?? "?");
+              // 复审 F4：auto-merge 档跑到 CI 通过时，这里返回的是「已排入合并审批」，
+              // 不是失败——如实给一个正向回执，别让用户以为出错了。
+              const awaitingApproval = reason === "merge/awaiting-approval";
+              // 复审 N5：`wait-ci` / `give-up` / `none(tier=off)` / `update(pr-exists)` 都是
+              // 「当前不满足继续条件」，不是故障——中性文案，别再报「开 PR 失败」。
+              const decisionAction = String(result?.decision?.action ?? "");
+              const notReady = ["none", "give-up", "wait-ci", "update"].includes(decisionAction);
               setThreadAction({
                 pending: "",
-                ok: opened,
+                ok: opened || awaitingApproval,
                 message: opened
                   ? text(t, "detail.prCreated", { number: Number(result?.prNumber ?? 0) })
-                  : text(t, "detail.prFailed", { reason: String(result?.reason ?? "?") }),
+                  : awaitingApproval
+                    ? text(t, "detail.prPendingApproval", {
+                        number: Number(result?.prNumber ?? 0),
+                      })
+                    : notReady
+                      ? text(t, "detail.prNotReady", { reason })
+                      : text(t, "detail.prFailed", { reason }),
               });
               load(true);
             },
@@ -8571,6 +8647,26 @@ window.__ModuleLoader__.load({
                                     ? `${text(t, "detail.prCard.unavailable")} · ${String(info?.reason ?? "")}`
                                     : text(t, "detail.prCard.loading"),
                                 ),
+                            // 复审 F4：`nextPrAction` 的 merge 决策只在 `openPr` 里产生，而 UI
+                            // 以前在「已有 PR 号」时把 Create PR 整条隐藏 → auto-merge 档永远
+                            // 触发不到审批队列。这里给一个稳定入口：重跑一次 PR 流程
+                            // （需要合并时它会生成一张 merge 审批，而不是直接合并）。
+                            h(
+                              "button",
+                              {
+                                type: "button",
+                                style: {
+                                  ...styles.secondaryButton,
+                                  padding: "1px 8px",
+                                  fontSize: "11.5px",
+                                },
+                                "data-projects-thread-pr-continue": row.sessionId,
+                                disabled: busyAction !== "",
+                                title: text(t, "detail.prCard.continueHint"),
+                                onClick: () => createPrFor(String(row.sessionId)),
+                              },
+                              text(t, "detail.prCard.continue"),
+                            ),
                             (() => {
                               const dangerOn =
                                 (data.liveProject ?? props.project)?.policy?.danger?.autoMerge ===
@@ -10281,6 +10377,18 @@ window.__ModuleLoader__.load({
                         text(t, "detail.coordinatorCreate"),
                       ),
                 ),
+                // AUD-HIST-06：明确告诉用户「没配协调者 = 线程结束不会唤醒任何人」，
+                // 否则用户会以为自动汇报坏了（真实数据里 154 条 no-coordinator 都来自这种项目）。
+                available
+                  ? null
+                  : h(
+                      "div",
+                      {
+                        style: { ...styles.meta, color: T.faint },
+                        "data-projects-coordinator-wake-hint": "",
+                      },
+                      text(t, "detail.coordinatorNoWake"),
+                    ),
                 compaction
                   ? h(
                       "div",
@@ -10861,6 +10969,29 @@ window.__ModuleLoader__.load({
                   !(typeof item.executedAt === "string" && item.executedAt !== ""),
               );
               if (pending.length === 0 && runnable.length === 0) return null;
+              // AUD-PROJ-07：不可逆动作的确认界面必须写清影响面（ADR 0002 第 2 条）。
+              // 影响面由服务端投影（`listApprovals` 附上 item.impact：白名单 + 截断），
+              // 这里只拼**纯文本**节点——绝不把 args 当 HTML 塞进 DOM。
+              const impactNode = (/** @type {any} */ item) => {
+                const impact = item.impact;
+                if (!impact || !Array.isArray(impact.rows) || impact.rows.length === 0) return null;
+                return h(
+                  "div",
+                  {
+                    style: { ...styles.meta, color: T.faint, fontSize: "11.5px", minWidth: 0 },
+                    "data-projects-approval-impact": item.requestId,
+                    "data-projects-approval-impact-rows": String(impact.rows.length),
+                  },
+                  impact.rows.map((/** @type {any} */ part, /** @type {number} */ index) => [
+                    index > 0 ? h("span", { key: `sep-${part.key}` }, " · ") : null,
+                    h(
+                      "span",
+                      { key: `k-${part.key}`, "data-projects-approval-impact-key": part.key },
+                      `${part.label}=${part.value}`,
+                    ),
+                  ]),
+                );
+              };
               const row = (/** @type {any} */ item, /** @type {any} */ actions) =>
                 h(
                   "div",
@@ -10871,8 +11002,18 @@ window.__ModuleLoader__.load({
                   },
                   h(
                     "span",
-                    { style: { ...styles.meta, flex: 1, minWidth: 0 } },
-                    `${item.action} · ${item.reason}`,
+                    {
+                      style: {
+                        ...styles.meta,
+                        flex: 1,
+                        minWidth: 0,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "1px",
+                      },
+                    },
+                    h("span", { style: { minWidth: 0 } }, `${item.action} · ${item.reason}`),
+                    impactNode(item),
                   ),
                   ...actions,
                 );
@@ -14239,6 +14380,21 @@ window.__ModuleLoader__.load({
       "editProfile",
     ];
 
+    /** PR 四档（与 lib/autopr.js 的 PR_TIERS 一致；AUD-PROJ-05 之前界面没有入口）。 */
+    var PR_TIERS = ["off", "draft", "ready", "auto-merge"];
+
+    /**
+     * 可预授权（policy.preapprove）的动作，与 lib/executor.js 的 POLICY_GRANT_ACTIONS 一致。
+     * merge / push-protected-branch 永远不能预授权（规格 §7.5 表），所以这里没有它们。
+     */
+    var PREAPPROVE_ACTIONS = [
+      "push-branch",
+      "delete-thread",
+      "delete-project",
+      "purge-trash",
+      "change-settings",
+    ];
+
     /**
      * 危险开关：默认全关，每项带一句风险说明。打开需要用户明确勾选。
      * @param {{t: any, policy: any, onChange: (patch: any) => void}} props
@@ -14408,7 +14564,15 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         loadB3();
       }, [loadB3]);
-      var budgetKeys = ["maxThreadsPerDay", "maxConcurrent", "maxStepsPerThread", "dailyTokens"];
+      // 复审 F5：`weeklyTokens` 早就是真预算字段（写入口/归一化/两道闸都有），
+      // 但设置页这里硬编码 4 个 key，用户根本改不到周预算。
+      var budgetKeys = [
+        "maxThreadsPerDay",
+        "maxConcurrent",
+        "maxStepsPerThread",
+        "dailyTokens",
+        "weeklyTokens",
+      ];
       var budgetValues = /** @type {Record<string, any>} */ ({});
       budgetKeys.forEach((/** @type {any} */ key) => {
         var stored = selectedForB3?.budget ? selectedForB3.budget[key] : null;
@@ -15280,6 +15444,106 @@ window.__ModuleLoader__.load({
                             }),
                         }),
                         text(t, "settings.fallback"),
+                      ),
+                      // AUD-PROJ-05：PR 四档以前没有界面入口（`policy.pr.tier` 在 client 零引用），
+                      // 用户只能在 RPC/手改 JSON 里选，auto-merge 档实际不可达。
+                      h(
+                        "label",
+                        { style: { display: "flex", gap: "8px", alignItems: "center" } },
+                        h(
+                          "span",
+                          { style: { color: T.dim, flex: "none" } },
+                          text(t, "settings.prTier"),
+                        ),
+                        h(
+                          "select",
+                          {
+                            style: styles.input,
+                            value: selected.policy?.pr?.tier ?? "draft",
+                            "data-projects-policy-pr-tier": "",
+                            onChange: (/** @type {any} */ event) =>
+                              applyPolicy({
+                                pr: { ...(selected.policy?.pr ?? {}), tier: event.target.value },
+                              }),
+                          },
+                          PR_TIERS.map((tier) =>
+                            h(
+                              "option",
+                              { key: tier, value: tier },
+                              text(t, `settings.prTier.${tier}`),
+                            ),
+                          ),
+                        ),
+                      ),
+                      // AUD-PROJ-30：preapprove（预授权）白名单以前零 UI 引用，而命中后会
+                      // **直接执行**危险动作（含 delete-project）。这里把开关摆出来，
+                      // 并如实写明「勾上就等于预先委托执行权」。
+                      h(
+                        "details",
+                        { "data-projects-policy-preapprove": "" },
+                        h(
+                          "summary",
+                          { style: { cursor: "pointer", color: T.dim } },
+                          text(t, "settings.preapproveTitle"),
+                        ),
+                        h(
+                          "div",
+                          {
+                            style: {
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: "3px",
+                              marginTop: "4px",
+                            },
+                          },
+                          h(
+                            "div",
+                            { style: { color: T.faint, fontSize: "12px" } },
+                            text(t, "settings.preapproveHint"),
+                          ),
+                          PREAPPROVE_ACTIONS.map((action) => {
+                            const list = Array.isArray(selected.policy?.preapprove)
+                              ? selected.policy.preapprove.map((/** @type {any} */ item) =>
+                                  String(item),
+                                )
+                              : [];
+                            return h(
+                              "label",
+                              {
+                                key: action,
+                                style: {
+                                  display: "flex",
+                                  gap: "6px",
+                                  alignItems: "flex-start",
+                                  color: T.dim,
+                                },
+                              },
+                              h("input", {
+                                type: "checkbox",
+                                checked: list.includes(action),
+                                "data-projects-preapprove-action": action,
+                                onChange: (/** @type {any} */ event) =>
+                                  applyPolicy({
+                                    preapprove: event.target.checked
+                                      ? [...list, action]
+                                      : list.filter((/** @type {any} */ item) => item !== action),
+                                  }),
+                              }),
+                              h("span", null, text(t, `settings.preapprove.${action}`)),
+                            );
+                          }),
+                          Array.isArray(selected.policy?.preapprove) &&
+                            selected.policy.preapprove.length > 0
+                            ? h(
+                                "div",
+                                {
+                                  style: { color: T.danger, fontSize: "12px" },
+                                  "data-projects-preapprove-warning": "",
+                                },
+                                text(t, "settings.preapproveRisk"),
+                              )
+                            : null,
+                        ),
                       ),
                     );
                   })(),
@@ -16875,7 +17139,7 @@ window.__ModuleLoader__.load({
               {
                 name: "settings.section",
                 id: PANEL_ID,
-                order: 93,
+                order: 94,
                 label: () => text(t, "settings.section"),
                 locale: NS,
                 inject: () => ({ api: api, t: t }),

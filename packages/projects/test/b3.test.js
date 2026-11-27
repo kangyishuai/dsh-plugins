@@ -158,6 +158,8 @@ describe("F39 goal 上限 / F22 预算默认值", () => {
     try {
       assert.deepEqual(DEFAULT_BUDGET, {
         dailyTokens: null,
+        // AUD-PROJ-04：周 token 预算以前不在默认值/字段表/归一化里（死闸门），现在纳入
+        weeklyTokens: null,
         maxThreadsPerDay: 20,
         maxConcurrent: 2,
         maxStepsPerThread: 60,

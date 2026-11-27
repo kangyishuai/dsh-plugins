@@ -71,3 +71,23 @@ describe("appendEntry", () => {
     assert.match(result.text, /<!-- 2026-11-17T00:20:00Z -->/u);
   });
 });
+
+describe("AUD-PROJ-12：去重按「块完全相等」，不做子串匹配", () => {
+  it("已有长条目时，短条目仍能写进去（以前被 includes 判成 duplicate 静默丢弃）", () => {
+    const long = "always run the full test suite before committing";
+    const first = appendEntry("", long);
+    assert.equal(first.added, true);
+    const short = appendEntry(first.text, "run tests");
+    assert.equal(short.added, true, "短条目是**新的**记忆，不是重复");
+    assert.match(short.text, /run tests/u);
+    assert.match(short.text, new RegExp(long, "u"));
+  });
+
+  it("完全相同的块（含带时间注释的形态）仍判重复", () => {
+    const base = "rule A\n<!-- 2026-11-01T00:00:00Z -->\n\nrule B";
+    assert.equal(appendEntry(base, "rule A").added, false);
+    assert.equal(appendEntry(base, "rule B").reason, "duplicate");
+    // 子串但不同块 → 新增
+    assert.equal(appendEntry(base, "rule").added, true);
+  });
+});

@@ -320,3 +320,39 @@ describe("pendingWakes（冷会话唤醒）", () => {
     assert.deepEqual(pendingWakes(null, views), []);
   });
 });
+
+describe("AUD-HIST-06：跳过唤醒的审计限频（no-coordinator 不再每轮一条）", () => {
+  it("第一次写；冷却窗口内静默；窗口过了再写一条", async () => {
+    const { shouldRecordWakeSkip, WAKE_SKIP_AUDIT_COOLDOWN_MS } = await import("../lib/wake.js");
+    const now = 1_700_000_000_000;
+    assert.equal(shouldRecordWakeSkip({ lastAt: undefined, now }), true, "第一次必须留痕");
+    assert.equal(shouldRecordWakeSkip({ lastAt: 0, now }), true);
+    assert.equal(shouldRecordWakeSkip({ lastAt: now - 1, now }), false, "窗口内静默");
+    assert.equal(
+      shouldRecordWakeSkip({ lastAt: now - WAKE_SKIP_AUDIT_COOLDOWN_MS + 1, now }),
+      false,
+    );
+    assert.equal(
+      shouldRecordWakeSkip({ lastAt: now - WAKE_SKIP_AUDIT_COOLDOWN_MS, now }),
+      true,
+      "刚好到窗口就再记一条（保留周期性证据）",
+    );
+  });
+
+  it("时钟回拨也写（宁可多一条，不要永远静默）", async () => {
+    const { shouldRecordWakeSkip } = await import("../lib/wake.js");
+    assert.equal(shouldRecordWakeSkip({ lastAt: 2_000, now: 1_000 }), true);
+  });
+
+  it("冷却窗口可覆盖（测试与特殊部署用）", async () => {
+    const { shouldRecordWakeSkip } = await import("../lib/wake.js");
+    assert.equal(shouldRecordWakeSkip({ lastAt: 1_000, now: 2_000, cooldownMs: 500 }), true);
+    assert.equal(shouldRecordWakeSkip({ lastAt: 1_000, now: 1_400, cooldownMs: 500 }), false);
+    assert.equal(shouldRecordWakeSkip({ lastAt: 1_000, now: 1_000, cooldownMs: 0 }), true);
+  });
+
+  it("默认窗口是 6 小时（与文档口径一致）", async () => {
+    const { WAKE_SKIP_AUDIT_COOLDOWN_MS } = await import("../lib/wake.js");
+    assert.equal(WAKE_SKIP_AUDIT_COOLDOWN_MS, 6 * 60 * 60 * 1000);
+  });
+});

@@ -157,6 +157,20 @@ const approvedRequest = (
   /** @type {string} */ action,
   /** @type {any} */ args,
 ) => {
+  // AUD-PROJ-06 之后 merge 必须先有「本项目某条线程记录了这个 PR 号」这一前提。
+  // 这里替测试铺好该前提（不带 worktree，仓库仍由 dirs/线程 dir 解析），
+  // 这样 CI/diff/draft 这些用例测的仍是它们自己的闸门；归属校验另有专门用例。
+  if (action === "merge") {
+    const prNumber = Number(args?.prNumber);
+    const hasOwner = store
+      .listThreads(projectId)
+      .some((/** @type {any} */ item) => Number(item?.prNumber) === prNumber);
+    if (Number.isInteger(prNumber) && prNumber > 0 && !hasOwner) {
+      const sessionId = `session-owner-${prNumber}`;
+      store.attachThread(sessionId, projectId);
+      store.setThreadWorktree(sessionId, { prNumber });
+    }
+  }
   const created = store.appendApproval({ projectId, action, args, reason: "test" });
   store.resolveApproval(created.requestId, "approved");
   store.save();
@@ -522,5 +536,71 @@ describe("复审 P2：merge 的文件夹授权闸按线程实际目录判", () =
     });
     assert.equal(resolved.dir, repoB);
     assert.equal(resolved.cwd, repoB);
+  });
+});
+
+// —— 2026-11-28 审计 AUD-PROJ-06：合并审批必须校验 PR 归属 ——
+describe("AUD-PROJ-06：merge 审批的 PR 归属校验（不回落 dirs[0]）", () => {
+  it("找不到本项目线程记录该 PR → merge/pr-not-ours，且不执行任何 gh 命令", async () => {
+    setMode("ok");
+    const { deps, store, project } = makeDeps({ danger: { autoMerge: true } });
+    // 直接写审批（绕过 approvedRequest 的「铺前提」逻辑）
+    const created = store.appendApproval({
+      projectId: project.id,
+      action: "merge",
+      args: { prNumber: 999 },
+      reason: "coordinator wants to merge someone else's PR",
+    });
+    store.resolveApproval(created.requestId, "approved");
+    store.save();
+    ghCalls = [];
+    const result = await executeApprovalCore(deps, created.requestId);
+    assert.equal(result.executed, false);
+    assert.equal(result.reason, "merge/pr-not-ours");
+    assert.deepEqual(ghCalls, [], "归属不明时一条 gh 命令都不能发（以前会合并 dirs[0] 里同号 PR）");
+    assert.equal(approvalOf(store, created.requestId).claimedAt ?? null, null, "占位必须释放");
+  });
+
+  it("多目录项目里 PR 不属于任何线程 → 拒绝（以前回落 dirs[0] 合别人的 PR）", async () => {
+    setMode("ok");
+    const { deps, store, project } = makeDeps({ danger: { autoMerge: true } });
+    const repoA = join(root, "repo-a");
+    const repoB = join(root, "repo-b");
+    store.updateProject(project.id, { dirs: [repoA, repoB] });
+    store.attachThread("session-own-pr", project.id);
+    store.setThreadWorktree("session-own-pr", { worktree: repoB, branch: "dsh/x-1", prNumber: 11 });
+    store.save();
+    remoteByCwd.set(repoA, "repoA");
+    remoteByCwd.set(repoB, "repoB");
+    const created = store.appendApproval({
+      projectId: project.id,
+      action: "merge",
+      args: { prNumber: 12 },
+      reason: "sibling PR number",
+    });
+    store.resolveApproval(created.requestId, "approved");
+    store.save();
+    ghCalls = [];
+    const result = await executeApprovalCore(deps, created.requestId);
+    assert.equal(result.executed, false);
+    assert.equal(result.reason, "merge/pr-not-ours");
+    assert.deepEqual(ghCalls, []);
+  });
+
+  it("PR 号非法（0 / 负数 / 非整数）→ merge/pr-invalid", async () => {
+    setMode("ok");
+    const { deps, store, project } = makeDeps({ danger: { autoMerge: true } });
+    for (const bad of [0, -3, Number.NaN]) {
+      const created = store.appendApproval({
+        projectId: project.id,
+        action: "merge",
+        args: { prNumber: bad },
+        reason: "bad",
+      });
+      store.resolveApproval(created.requestId, "approved");
+      store.save();
+      const result = await executeApprovalCore(deps, created.requestId);
+      assert.equal(result.reason, "merge/pr-invalid", `prNumber=${String(bad)}`);
+    }
   });
 });

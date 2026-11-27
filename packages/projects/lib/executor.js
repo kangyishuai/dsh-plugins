@@ -62,7 +62,7 @@ export const DEFAULT_MERGE_LIMITS = Object.freeze({ maxDiffFiles: 20, maxDiffLin
  * @param {{ status?: string, action?: string }} input.approval
  * @param {Record<string, boolean>} [input.danger] 项目的危险开关
  * @param {{ maxDiffFiles?: number, maxDiffLines?: number }} [input.limits]
- * @param {{ diffFiles?: number, diffLines?: number, baseBranch?: string|null, worktreeClean?: boolean|null }} [input.impact]
+ * @param {{ diffFiles?: number, diffLines?: number, baseBranch?: string|null }} [input.impact]
  * @returns {{ ok: boolean, reason: string }}
  */
 export function checkExecutable(input) {
@@ -95,11 +95,11 @@ export function checkExecutable(input) {
     }
   }
 
-  if (action === "delete-thread" && impact.worktreeClean === false) {
-    // worktree 不干净时不许借"删除线程"顺手删掉未提交内容（M2 三重判据的延续）
-    return { ok: false, reason: "delete-thread/worktree-dirty" };
-  }
-
+  // AUD-PROJ-13：以前这里还有一道 `delete-thread` 的 `impact.worktreeClean === false` 闸，
+  // 但 `impact` 来自**模型可控**的 `approval.args.impact`：不填就通过，填 false 才拒绝——
+  // 等于一道由被审对象自己把关的死闸（同文件注释还写着「不信任模型可控的 args.impact」）。
+  // 真正的保护在 `reclaimThread`（`thread.js` 里自己跑 git status，三重判据不满足就不删）。
+  // 这里删掉假闸，避免有人误以为它有用。
   return { ok: true, reason: "" };
 }
 

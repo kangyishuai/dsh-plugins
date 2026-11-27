@@ -1,7 +1,7 @@
 // @ts-check
 // 源码守卫：这几处是"静默做错事"的高风险接线，纯函数单测覆盖不到，但用文本断言能防回归。
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -17,7 +17,10 @@ const clientSource = readFileSync(join(here, "..", "lib", "client.js"), "utf8");
  * @returns {string}
  */
 function methodRegion(source, name) {
-  const start = source.indexOf(`async ${name}(`);
+  // 同步方法也要能找到（例如 `attachCoordinatorTools(agent, project)`）：先试 async 形态。
+  const asyncStart = source.indexOf(`async ${name}(`);
+  const syncStart = source.indexOf(`\n  ${name}(`);
+  const start = asyncStart >= 0 ? asyncStart : syncStart;
   assert.ok(start >= 0, `找不到方法 ${name}`);
   const rest = source.slice(start + 1);
   // 下一个同级方法：以两个空格缩进的 `async xxx(` 或 `/**` 后的方法名为界
@@ -121,10 +124,55 @@ describe("审查 P1 回归防线", () => {
     assert.doesNotMatch(region, /state !== "active"/u);
   });
 
-  it("无目录项目的线程 cwd 走 workspaces 专用目录", () => {
+  it("无目录项目的线程 cwd 走 workspaces 专用目录（单一出口 projectWorkspaceDir）", () => {
     const threadSource = readFileSync(join(here, "..", "lib", "thread.js"), "utf8");
-    assert.match(threadSource, /workspaces\/\$\{/u);
-    assert.doesNotMatch(threadSource, /: \[dataRoot\];/u);
+    assert.match(threadSource, /projectWorkspaceDir\(/u);
+    assert.doesNotMatch(threadSource, /: \[dataRoot\];/u, "不能回落数据根");
+  });
+
+  it("AUD-PROJ-01：协调者/定时/提醒的 cwd 都走 projectCwd，不再回落 this.dataRoot", () => {
+    // 4 条路径：createCoordinator / updateRoutine / createRoutine / createReminder。
+    for (const name of ["createCoordinator", "updateRoutine", "createRoutine", "createReminder"]) {
+      const region = methodRegion(serviceSource, name);
+      assert.match(region, /projectCwd\(project, this\.dataRoot\)/u, `${name} 的 cwd 必须同源`);
+      assert.doesNotMatch(region, /: this\.dataRoot/u, `${name} 不能回落数据根`);
+    }
+    assert.doesNotMatch(
+      serviceSource,
+      /\? project\.dirs\[0\] : this\.dataRoot/u,
+      "不允许再出现「无目录 → 插件数据根」的回落",
+    );
+    // 协调者创建处必须有兜底短路（异常输入时宁可不建，也不把数据根交出去）
+    const region = methodRegion(serviceSource, "createCoordinator");
+    assert.match(region, /refusing to use the plugin data root/u);
+  });
+
+  it("AUD-PROJ-02：pause/archive/delete 都会对账宿主定时任务", () => {
+    for (const name of ["pauseProject", "resumeProject", "archiveProject", "deleteProject"]) {
+      const region = methodRegion(serviceSource, name);
+      assert.match(region, /reconcileSchedules\(/u, `${name} 必须对账宿主定时`);
+    }
+    // createRoutine / createReminder / updateRoutine 的项目状态闸
+    for (const name of ["createRoutine", "createReminder", "updateRoutine"]) {
+      const region = methodRegion(serviceSource, name);
+      assert.match(region, /checkProjectAcceptsAutomation\(/u, `${name} 必须检查项目状态`);
+    }
+  });
+
+  it("AUD-PROJ-06：merge 审批找不到本项目线程时拒绝，不回落 dirs[0]", () => {
+    const executeSource = readFileSync(join(here, "..", "lib", "execute.js"), "utf8");
+    // 顶层分支（缩进 2）——`.find((item) => { if (approval.action === "merge") … })` 也含同串
+    const start = executeSource.indexOf('\n  if (approval.action === "merge") {');
+    assert.ok(start >= 0);
+    const region = executeSource.slice(start, start + 2600);
+    assert.match(region, /merge\/pr-not-ours/u);
+    assert.match(region, /merge\/pr-invalid/u);
+  });
+
+  it("AUD-PROJ-26：协调器工具 messageThread 走归属校验", () => {
+    const region = methodRegion(serviceSource, "attachCoordinatorTools");
+    assert.match(region, /promptOwnedThread\(/u);
+    assert.doesNotMatch(region, /messageThread:[\s\S]{0,120}this\.promptThread\(/u);
   });
 });
 
@@ -247,11 +295,14 @@ describe("最终自查补漏", () => {
 });
 
 describe("剩余审查项", () => {
-  it("routine 更新：宿主 {ok:false} 也按失败处理（不写本地）", () => {
+  it("routine 更新：按宿主**真实契约**判失败（{code:schedule_not_found|conflict} / 抛错），不写本地", () => {
+    // 复审 F1：宿主从不用 {ok:false} 表达失败（失败是抛错或返回 {code}），
+    // 以前那两条 `ok === false` 断言保护的是一个永远不成立的分支。
     const region = methodRegion(serviceSource, "updateRoutine");
-    assert.match(region, /edited\.ok === false/u);
-    assert.match(region, /created\.ok === false/u);
+    assert.match(region, /classifyHostScheduleResult\(/u);
+    assert.match(region, /create-rejected/u);
     assert.match(region, /schedule-rejected/u);
+    assert.doesNotMatch(region, /created\.ok === false/u);
   });
 
   it("progress 的产物列表只取一次（不再每行克隆）", () => {
@@ -408,5 +459,222 @@ describe("第 3 轮 UI 复审补充：行菜单点击不能打开详情", () => 
     const region = client.slice(start, start + 1800);
     assert.match(region, /closest\?\.\(/u);
     assert.match(region, /\[role=menuitem\]/u);
+  });
+});
+
+describe("2026-11-28 审计：接线守卫（第二批）", () => {
+  it("AUD-PROJ-05：openPr 的 merge 决策交给审批队列，不再落到「push + gh pr create」", () => {
+    const region = methodRegion(serviceSource, "openPr");
+    assert.match(region, /decision\.action === "merge"/u);
+    assert.match(region, /appendApproval\(\{/u);
+    assert.match(region, /action: "merge"/u);
+    assert.match(region, /merge\/awaiting-approval/u);
+    // merge 分支必须在「push + gh pr create」之前 return（否则会重复开 PR）
+    const mergeIndex = region.indexOf('decision.action === "merge"');
+    const pushIndex = region.indexOf('runGit(["push", "-u", "origin"');
+    assert.ok(mergeIndex >= 0 && pushIndex > mergeIndex, "merge 处理必须早于 push/创建 PR");
+    // ciState 要能从线程记录读（否则 auto-merge 档永远停在 wait-ci）
+    assert.match(region, /options\?\.ciState \?\? thread\.ciState/u);
+  });
+
+  it("AUD-PROJ-04/19：周预算进入暂停闸 + token 入账走合并写盘", () => {
+    const region = methodRegion(serviceSource, "enforceTokenBudget");
+    assert.match(region, /checkWeeklyTokenBudget\(/u, "周超支也要暂停项目");
+    assert.match(region, /reconcileSchedules\(projectId, "pause"\)/u, "暂停要停宿主定时");
+    // token 入账不再每条全量 save()，改 saveSoon
+    const usageAnchor = serviceSource.indexOf("addTokenUsage(usageProject.id, tokens, nowMs)");
+    assert.ok(usageAnchor >= 0);
+    const around = serviceSource.slice(usageAnchor, usageAnchor + 420);
+    assert.match(around, /saveSoon\(250\)/u);
+    assert.doesNotMatch(around, /this\.store\.save\(\);/u);
+  });
+
+  it("AUD-PROJ-14：policy 变更审计覆盖 repoGrants / preapprove / pr.tier", () => {
+    const region = methodRegion(serviceSource, "updateProject");
+    assert.match(region, /grantsChanged/u);
+    assert.match(region, /preapproveChanged/u);
+    assert.match(region, /prTierChanged/u);
+  });
+
+  it("AUD-PROJ-08：启动时回收过期占位", () => {
+    assert.match(serviceSource, /releaseStaleApprovals\(/u);
+  });
+
+  it("AUD-PROJ-07：listApprovals 返回带影响面的行", () => {
+    const region = methodRegion(serviceSource, "listApprovals");
+    assert.match(region, /withApprovalImpact\(/u);
+  });
+
+  it("AUD-PROJ-24：默认模型写入口做可用性校验，createThread 把失败带到回执", () => {
+    for (const name of ["setThreadDefaults", "setCoordinatorDefaults"]) {
+      const region = methodRegion(serviceSource, name);
+      assert.match(region, /assertModelUsable\(/u, `${name} 写前校验模型`);
+    }
+    const region = serviceSource.slice(serviceSource.indexOf("// F42：新线程套用项目级默认模型"));
+    assert.match(region.slice(0, 1400), /modelWarning/u, "失败要能被界面看到，不能只写审计");
+  });
+
+  it("AUD-PROJ-11：restoreTrash 校验 manifest 里的 project.id", () => {
+    const region = methodRegion(serviceSource, "restoreTrash");
+    assert.match(region, /isSafeRecordKey\(/u);
+    assert.match(region, /unsafe project id/u);
+  });
+});
+
+describe("AUD-HIST-06：无协调者时不再每轮写 wake/skipped", () => {
+  it("maybeWakeCoordinator 的 no-coordinator 分支走限频审计，不再直接 appendAudit+save", () => {
+    const region = methodRegion(serviceSource, "maybeWakeCoordinator");
+    assert.match(region, /noteWakeSkip\(project\.id, "no-coordinator"/u);
+    assert.doesNotMatch(
+      region,
+      /reason: "no-coordinator"/u,
+      "无协调者分支不能再直接写一条无上限的审计",
+    );
+    // 步数预算的跳过同样限频
+    assert.match(region, /noteWakeSkip\(project\.id, stepVerdict\.reason/u);
+    // 没有协调者时**不要构造信封**（省上下文渲染）
+    const early = region.indexOf('noteWakeSkip(project.id, "no-coordinator"');
+    const envelope = region.indexOf("buildEnvelope({");
+    assert.ok(early >= 0 && envelope > early, "无协调者必须早于信封构造就返回");
+  });
+
+  it("noteWakeSkip 用纯函数判定 + 内存水位，且写盘一次", () => {
+    const region = methodRegion(serviceSource, "noteWakeSkip");
+    assert.match(region, /shouldRecordWakeSkip\(/u);
+    assert.match(region, /wakeSkipAudit/u);
+    assert.match(region, /limited: true/u);
+    assert.match(serviceSource, /this\.wakeSkipAudit = new Map\(\)/u);
+  });
+
+  it("项目详情：没有协调者时显示「唤醒不会执行」提示（AUD-HIST-06 ②）", () => {
+    assert.match(
+      clientSource,
+      /"data-projects-coordinator-wake-hint"/u,
+      "coordinator 卡空态必须有提示锚点",
+    );
+    assert.match(clientSource, /detail\.coordinatorNoWake/u);
+  });
+});
+
+describe("复审 F1/F2/F3/F4/F5：契约与顺序修正", () => {
+  it("F1：全仓不再向宿主发送 patch.status（宿主只认 active:boolean）", () => {
+    assert.doesNotMatch(
+      serviceSource,
+      /patch:\s*\{\s*status:/u,
+      "宿主 SchedulePatch 没有 status 字段，发了会被静默忽略（假成功）",
+    );
+    const schedulesSource = readFileSync(join(here, "..", "lib", "schedules.js"), "utf8");
+    assert.doesNotMatch(schedulesSource, /patch:\s*\{\s*status:/u);
+    // 唯一的启停写入口是 hostActivePatch（防止再手写一份 patch 字面量）
+    assert.match(serviceSource, /hostActivePatch\(/u);
+    assert.match(schedulesSource, /hostActivePatch\(/u);
+    // 反向契约：宿主不用 {ok:false} 表达失败，改用分类函数
+    const updateRoutine = methodRegion(serviceSource, "updateRoutine");
+    assert.match(updateRoutine, /classifyHostScheduleResult\(/u);
+    assert.doesNotMatch(updateRoutine, /edited\.ok === false/u);
+  });
+
+  it("F2：deleteProject 先校验（preview/busy）再删宿主定时", () => {
+    const region = methodRegion(serviceSource, "deleteProject");
+    const previewAt = region.indexOf("previewDeleteProject(");
+    const busyAt = region.indexOf("busy.length > 0");
+    const reconcileAt = region.indexOf('reconcileSchedules(id, "delete")');
+    assert.ok(previewAt >= 0 && busyAt > previewAt, "preview 在 busy 之前");
+    assert.ok(
+      reconcileAt > busyAt,
+      "删宿主定时必须在 preview/busy 校验之后（否则删除被拒时定时已被静默删掉）",
+    );
+    // 无 schedule 服务时不阻断，但要留审计
+    assert.match(region, /schedules-unavailable/u);
+    // 错误文案要可操作（指向宿主页面）
+    assert.match(region, /Automation tasks/u);
+  });
+
+  it("F2：preview 影响面带宿主定时计数", () => {
+    const region = methodRegion(serviceSource, "previewDeleteProject");
+    assert.match(region, /collectHostSchedules\(/u);
+    assert.match(region, /hostScheduleCount/u);
+  });
+
+  it("F3：unarchiveProject 与 archive 对称恢复宿主定时", () => {
+    const region = methodRegion(serviceSource, "unarchiveProject");
+    assert.match(region, /reconcileSchedules\(id, "resume"\)/u);
+  });
+
+  it("F4：PR 卡有「继续 PR 流程」入口，覆盖 auto-merge 审批闭环", () => {
+    assert.match(clientSource, /"data-projects-thread-pr-continue"/u);
+    // 入口必须调 createPr（openPr 的唯一 UI 调用方），否则 merge 决策仍不可达
+    const anchor = clientSource.indexOf('"data-projects-thread-pr-continue"');
+    const around = clientSource.slice(anchor, anchor + 900);
+    assert.match(around, /createPrFor\(/u);
+    // 「已排入合并审批」是正向回执，不能当失败提示
+    assert.match(clientSource, /merge\/awaiting-approval/u);
+    assert.match(clientSource, /detail\.prPendingApproval/u);
+  });
+
+  it("F5：设置页预算包含 weeklyTokens；死导出已删", () => {
+    assert.match(clientSource, /"weeklyTokens",/u);
+    const budgetSource = readFileSync(join(here, "..", "lib", "budget.js"), "utf8");
+    assert.doesNotMatch(budgetSource, /TOKEN_BUDGET_FIELDS/u, "零引用的死导出应删除");
+  });
+
+  it("F6c：noDirHint 文案指向项目专用工作区（不再是数据根本身）", () => {
+    assert.match(clientSource, /workspaces\/<id>/u);
+    // 中文文案不能再写「跑在插件的数据目录里」
+    assert.doesNotMatch(clientSource, /线程会跑在插件的数据目录里/u);
+  });
+});
+
+describe("复审 nit：可预授权动作清单不能漂移", () => {
+  it("client 的 PREAPPROVE_ACTIONS 与 executor 的 POLICY_GRANT_ACTIONS 一致", () => {
+    const executorSource = readFileSync(join(here, "..", "lib", "executor.js"), "utf8");
+    const parse = (/** @type {string} */ source, /** @type {string} */ name) => {
+      const start = source.indexOf(`var ${name} = [`);
+      const start2 = source.indexOf(`export const ${name} = Object.freeze([`);
+      const marker = start >= 0 ? start : start2;
+      assert.ok(marker >= 0, `找不到 ${name}`);
+      const open = source.indexOf("[", marker);
+      const close = source.indexOf("]", open);
+      return [...source.slice(open, close).matchAll(/"([^"]+)"/gu)].map((item) => item[1]);
+    };
+    const clientActions = parse(clientSource, "PREAPPROVE_ACTIONS");
+    const executorActions = parse(executorSource, "POLICY_GRANT_ACTIONS");
+    assert.ok(clientActions.length > 0 && executorActions.length > 0);
+    assert.deepEqual(
+      [...clientActions].sort(),
+      [...executorActions].sort(),
+      "预授权 UI 与执行器白名单必须同源（增删动作时两边一起改）",
+    );
+  });
+});
+
+describe("第 2 轮复审（N1/N5/N11）：契约与文案", () => {
+  it("N1：runRoutineNow 任何宿主 code 都不算成功（含 schedule_execution_pending）", () => {
+    const region = methodRegion(serviceSource, "runRoutineNow");
+    assert.match(region, /ranOutcome\.code !== ""/u, "任何 code 都不是任务条目");
+    assert.match(region, /run-failed/u, "没投递就不能写 run-now 成功历史");
+  });
+
+  it("N5：继续 PR 流程在「不满足条件」时给中性文案，不报开 PR 失败", () => {
+    assert.match(clientSource, /detail\.prNotReady/u);
+    const anchor = clientSource.indexOf('"data-projects-thread-pr-continue"');
+    assert.ok(anchor >= 0);
+    // 判定包含 none/give-up/wait-ci/update 四种决策
+    const region = clientSource.slice(
+      clientSource.indexOf("const notReady ="),
+      clientSource.indexOf("const notReady =") + 400,
+    );
+    assert.match(region, /"none"/u);
+    assert.match(region, /"give-up"/u);
+    assert.match(region, /"wait-ci"/u);
+    assert.match(region, /"update"/u);
+  });
+
+  it("N11：patch.status 守卫扫全部 lib/*.js（不是只看两个文件）", () => {
+    const libDir = join(here, "..", "lib");
+    const offenders = readdirSync(libDir)
+      .filter((file) => file.endsWith(".js"))
+      .filter((file) => /patch:\s*\{\s*status:/u.test(readFileSync(join(libDir, file), "utf8")));
+    assert.deepEqual(offenders, [], "任何 lib 文件都不许向宿主发 patch.status");
   });
 });

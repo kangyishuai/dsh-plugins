@@ -135,3 +135,30 @@ describe("回收站：worktree 影响面与目录名解析", () => {
     assert.equal(trashProjectIdOf("../evil-2026"), "evil", "路径字符必须被剥掉，不能留 ../");
   });
 });
+
+describe("复审 F2：删除影响面必须披露宿主定时任务", () => {
+  it("有 routine/提醒时 summary 写明会删几条，并回传计数", () => {
+    const impact = impactOf({
+      threads: [],
+      contentBytes: 0,
+      hasContentDir: false,
+      name: "alpha",
+      hostScheduleCount: 3,
+    });
+    assert.equal(impact.hostScheduleCount, 3);
+    assert.match(impact.summary, /会删除 3 条宿主定时任务/u);
+    assert.match(impact.summary, /不可从回收站恢复/u);
+  });
+
+  it("没有宿主定时时不提这一项（不制造噪音）", () => {
+    const impact = impactOf({
+      threads: [],
+      contentBytes: 0,
+      hasContentDir: false,
+      name: "alpha",
+      hostScheduleCount: 0,
+    });
+    assert.equal(impact.hostScheduleCount, 0);
+    assert.doesNotMatch(impact.summary, /宿主定时/u);
+  });
+});

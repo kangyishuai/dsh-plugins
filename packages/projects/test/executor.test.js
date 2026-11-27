@@ -124,13 +124,19 @@ describe("checkExecutable", () => {
     assert.equal(result.reason, "merge/too-many-files");
   });
 
-  it("删除线程时 worktree 不干净 → 拒绝（不许顺手删未提交内容）", () => {
-    const result = checkExecutable({
-      approval: approved("delete-thread"),
-      danger: allOn,
-      impact: { worktreeClean: false },
-    });
-    assert.equal(result.reason, "delete-thread/worktree-dirty");
+  it("AUD-PROJ-13：模型可控的 args.impact.worktreeClean 不再充当闸门（死闸已删）", () => {
+    // 以前 `impact.worktreeClean === false` 会拒绝，但 impact 来自模型可控的 args：
+    // 不填就通过、填 false 才拦，等于被审对象自己把关。真正的保护在 reclaimThread
+    // （自己跑 git status，三重判据不满足就不删），所以这里断言该字段**不影响**判定。
+    assert.equal(
+      checkExecutable({
+        approval: approved("delete-thread"),
+        danger: allOn,
+        impact: /** @type {any} */ ({ worktreeClean: false }),
+      }).ok,
+      true,
+    );
+    assert.equal(checkExecutable({ approval: approved("delete-thread"), danger: allOn }).ok, true);
   });
 });
 

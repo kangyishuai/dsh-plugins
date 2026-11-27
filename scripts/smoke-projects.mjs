@@ -3737,9 +3737,9 @@ try {
     () => (document.querySelector("[data-projects-no-dir-hint]")?.textContent || "").trim(),
   );
   add(
-    "未绑目录时说明线程跑在插件数据目录",
-    /数据目录/u.test(noDirHint) && /绑定/u.test(noDirHint),
-    noDirHint.slice(0, 80),
+    "未绑目录时说明线程跑在项目专用工作区（workspaces/<id>，不再是数据根本身）",
+    /workspaces/<id>/u.test(noDirHint) && /绑定/u.test(noDirHint) && !/跑在插件的数据目录里/u.test(noDirHint),
+    noDirHint.slice(0, 90),
   );
 
   // 诊断信息默认收起（主列顶部只留一行摘要），点「详情」才展开未绑定目录/轮询行
@@ -4491,7 +4491,14 @@ try {
       return true;
     };
     const budget = {};
-    for (const key of ["maxThreadsPerDay", "maxConcurrent", "maxStepsPerThread", "dailyTokens"]) {
+    // 复审 F5：周 token 预算必须有设置页入口（weeklyTokens 早已是真字段）。
+    for (const key of [
+      "maxThreadsPerDay",
+      "maxConcurrent",
+      "maxStepsPerThread",
+      "dailyTokens",
+      "weeklyTokens",
+    ]) {
       const input = q('[data-projects-budget-input="' + key + '"]');
       budget[key] = input ? input.value : null;
     }
@@ -4689,11 +4696,13 @@ try {
       JSON.stringify(b3Settings.navItems),
     );
     add(
-      "General 显示默认预算（日线程 20 / 并发 2 / 步数 60 / token 不限）",
+      "General 显示默认预算（日线程 20 / 并发 2 / 步数 60 / 日 token 不限，且有周 token 输入）",
       b3Settings.budget.maxThreadsPerDay === "20" &&
         b3Settings.budget.maxConcurrent === "2" &&
         b3Settings.budget.maxStepsPerThread === "60" &&
-        b3Settings.budget.dailyTokens === "",
+        b3Settings.budget.dailyTokens === "" &&
+        // 复审 F5：周预算必须有输入框（值可以是空 = 不限，但 input 必须存在）
+        b3Settings.budget.weeklyTokens !== null,
       JSON.stringify(b3Settings.budget),
     );
     add(

@@ -18,6 +18,7 @@ import { dirname, join } from "node:path";
 
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 
+import { withApprovalImpact } from "./approval-view.js";
 import { artifactRefFromToolResult } from "./artifact-ref.js";
 import { registerProjectContext } from "./attach.js";
 import { createAutoRetryScheduler, shouldAutoRetry } from "./auto-retry.js";
@@ -59,6 +60,7 @@ import { ARTIFACTS_CONTRACT, refFromArtifactRow, summarizeArtifactRefs } from ".
 import { appendEntry, parseMemoryBlocks } from "./memory.js";
 import { addFragment, forgetMemoryItem, listFragments, readFragment } from "./memory-store.js";
 import { buildMentionItems } from "./mentions.js";
+import { checkCatalogChoice, modelUnavailableMessage } from "./model-choice.js";
 import { normalizeNotifyPatch } from "./notify.js";
 import {
   initialStats,
@@ -84,7 +86,7 @@ import {
   sortRows,
   todoSummary,
 } from "./overview.js";
-import { resolveDataRoot } from "./paths.js";
+import { projectCwd, projectWorkspaceDir, resolveDataRoot } from "./paths.js";
 import {
   fallbackSessionEvents,
   INHERIT_PRESET,
@@ -136,7 +138,14 @@ import {
 } from "./routines.js";
 import { decideRoute } from "./routing.js";
 import { deriveSubtitle, deriveToolState } from "./row-subtitle.js";
-import { ProjectStore } from "./store.js";
+import {
+  checkProjectAcceptsAutomation,
+  classifyHostScheduleResult,
+  collectHostSchedules,
+  hostActivePatch,
+  reconcileHostSchedules,
+} from "./schedules.js";
+import { APPROVAL_CLAIM_TTL_MS, isSafeRecordKey, localDateKey, ProjectStore } from "./store.js";
 import {
   MANAGED_BEGIN,
   mergeManagedBlock,
@@ -146,7 +155,13 @@ import {
 import { createIsolatedThread, reclaimThreadWorktree, reconcileWorktrees } from "./thread.js";
 import { REQUESTABLE_ACTIONS } from "./tools.js";
 import { impactOf, TRASH_DIR, trashDirFor, trashProjectIdOf } from "./trash.js";
-import { buildEnvelope, createInjectionGuard, decideWake, pendingWakes } from "./wake.js";
+import {
+  buildEnvelope,
+  createInjectionGuard,
+  decideWake,
+  pendingWakes,
+  shouldRecordWakeSkip,
+} from "./wake.js";
 import { planDeleteBranch, shouldDeleteBranchV2 } from "./worktree.js";
 import {
   createPrCore,
@@ -320,6 +335,13 @@ export class ProjectsService extends TypertRemoteService {
      * @type {{ shouldInject: (wakeId: string) => boolean, reset: () => void, size: () => number }}
      */
     this.wakeGuard = createInjectionGuard();
+    /**
+     * AUD-HIST-06：跳过唤醒的审计水位（`projectId:reason` → 上次写审计的时间戳）。
+     * `wake/skipped` 以前每个 `turn/end` 一条（真实数据 154 条全是 `no-coordinator`），
+     * 既挤占审计历史又让统计看起来像"有活动"。同 key 在冷却窗口内只写一条。
+     * @type {Map<string, number>}
+     */
+    this.wakeSkipAudit = new Map();
     /** 协调器会话的 agent（用于后续工具约束/提示）。 @type {Map<string, any>} */
     this.coordinatorAgents = new Map();
     /** 协调器工具注册的清理函数。 @type {Map<string, (() => void)[]>} */
@@ -529,6 +551,23 @@ export class ProjectsService extends TypertRemoteService {
       this.logger.info?.(
         `[projects] loaded ${this.store.listProjects().length} project(s) from ${this.store.file}`,
       );
+      // AUD-PROJ-08：执行窗口内崩溃会把审批永久卡在 claimed（界面只能「先拒绝再批准」，
+      // 而拒绝按钮本身也没写原因）。启动时把超时占位收回，让申请重新可执行。
+      try {
+        const released = this.store.releaseStaleApprovals({ ttlMs: APPROVAL_CLAIM_TTL_MS });
+        if (released.length > 0) {
+          for (const item of released) {
+            this.store.appendAudit({
+              action: "approval/claim-expired",
+              projectId: String(item.projectId ?? ""),
+              requestId: String(item.requestId ?? ""),
+            });
+          }
+          this.store.save();
+        }
+      } catch {
+        /* 收不回占位不影响启动：执行时还有一次同样的接管判定 */
+      }
       // F30：启动即恢复计时（关机期间到点的提醒在这里补触发；随后 armReminders 再排其余）。
       this.armReminders();
       // P0-2：用持久事件重建 Overview（重启后视图不再归零）。
@@ -703,7 +742,9 @@ export class ProjectsService extends TypertRemoteService {
             this.store.addTokenUsage(usageProject.id, tokens, nowMs);
             // 必须落盘：token 分桶的设计要求「跨重启保留」（store 单测覆盖了 save 路径，
             // 但这里曾经只改内存不保存 —— 重启就丢，等于预算闸永远从 0 开始）。
-            this.store.save();
+            // AUD-PROJ-19：但不必每条 assistant/message 都全量重写 projects.json（真实文件已 166KB，
+            // 一轮多步对话会写十几次）；走同一套合并写盘（250ms 窗口，dispose 时 flush）。
+            this.store.saveSoon(250);
             void this.enforceTokenBudget(usageProject.id, nowMs);
           }
         }
@@ -768,10 +809,17 @@ export class ProjectsService extends TypertRemoteService {
       const store = this.requireStore();
       const project = store.getProject(projectId);
       if (!project) return;
-      const verdict = checkTokenBudget({
+      const daily = checkTokenBudget({
         dailyTokens: project.budget?.dailyTokens,
         usedTokens: store.tokenUsageToday(projectId, now),
       });
+      // AUD-PROJ-04：周预算以前只有 createThread 里那个读点，而 createThread 只挡「新建线程」；
+      // 自动投递（routines/提醒）不建线程，于是周超支永远拦不住。这里与日预算同口径暂停。
+      const weekly = checkWeeklyTokenBudget({
+        weeklyTokens: project.budget?.weeklyTokens,
+        usedTokens: store.tokenUsageSince(projectId, startOfWeek(now)),
+      });
+      const verdict = daily.ok ? weekly : daily;
       if (verdict.ok || project.state === "paused") return;
       store.updateProject(projectId, { state: "paused" });
       store.appendAudit({
@@ -782,6 +830,8 @@ export class ProjectsService extends TypertRemoteService {
         limit: verdict.limit,
       });
       store.save();
+      // 自动暂停同样要停宿主定时任务：否则「到线暂停」之后 routines 还在投递、继续超支。
+      await this.reconcileSchedules(projectId, "pause");
     } catch (error) {
       this.logger?.warn?.(
         `[projects] token budget enforce failed: ${String(/** @type {any} */ (error)?.message ?? error)}`,
@@ -802,8 +852,11 @@ export class ProjectsService extends TypertRemoteService {
       deps: {
         startThread: (/** @type {string} */ task) => this.createThread(project.id, task),
         listThreads: async () => this.progress(project.id),
+        // AUD-PROJ-26：`project_thread_message` 的 sessionId 是外部输入（模型/coordinator 工具），
+        // 以前直接透传给宿主 prompt —— 拿到任意 sessionId 就能往那个会话（跨项目/主对话）投一条。
+        // 这里校验「该会话属于本项目」（线程或协调器），不属于就拒绝并说明。
         messageThread: (/** @type {string} */ sessionId, /** @type {string} */ text) =>
-          this.promptThread(sessionId, text),
+          this.promptOwnedThread(project.id, sessionId, text),
         writeMemory: async (/** @type {string} */ text) => this.appendMemory(project.id, text),
         readMemory: async () => this.getProjectContent(project.id),
         requestAction: async (/** @type {any} */ request) => {
@@ -968,6 +1021,38 @@ export class ProjectsService extends TypertRemoteService {
    * 给一个线程会话投递一条消息。
    * @param {string} sessionId
    * @param {string} text
+   */
+  /**
+   * AUD-PROJ-26：只往**本项目的**会话投递（线程或本项目协调器）。
+   * @param {string} projectId @param {string} sessionId @param {string} text
+   * @returns {Promise<{ ok: boolean }>}
+   */
+  async promptOwnedThread(projectId, sessionId, text) {
+    const store = this.requireStore();
+    const project = store.getProject(projectId);
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    const target = String(sessionId ?? "").trim();
+    if (target === "") throw new Error("projects: sessionId is required");
+    const asThread = store.state?.threads?.[target];
+    const ownedThread = Boolean(asThread && String(asThread.projectId ?? "") === projectId);
+    const ownedCoordinator = String(project.coordinatorSessionId ?? "") === target;
+    if (!ownedThread && !ownedCoordinator) {
+      store.appendAudit({
+        action: "coordinator/message-refused",
+        projectId,
+        sessionId: target,
+        reason: "session-not-in-project",
+      });
+      store.save();
+      throw new Error("projects: that session does not belong to this project");
+    }
+    return this.promptThread(target, text);
+  }
+
+  /**
+   * @param {string} sessionId
+   * @param {string} text
+   * @returns {Promise<{ ok: boolean }>}
    */
   async promptThread(sessionId, text) {
     const sc = this.sessionController;
@@ -1626,7 +1711,28 @@ export class ProjectsService extends TypertRemoteService {
     const routingChanged =
       JSON.stringify(before?.policy?.routing ?? null) !==
       JSON.stringify(project?.policy?.routing ?? null);
-    if (switched.length > 0 || autonomyChanged || routingChanged) {
+    // AUD-PROJ-14：repoGrants（直推保护分支授权）与 preapprove（预授权自动执行危险动作）
+    // 同样直接扩大插件能动性，以前**没有任何审计**。pr.tier 也一并留痕（改档位=改自动化程度）。
+    const grantsBefore = before?.policy?.repoGrants ?? {};
+    const grantsAfter = project?.policy?.repoGrants ?? {};
+    const grantsChanged = JSON.stringify(grantsBefore) !== JSON.stringify(grantsAfter);
+    const preapproveBefore = Array.isArray(before?.policy?.preapprove)
+      ? before.policy.preapprove
+      : [];
+    const preapproveAfter = Array.isArray(project?.policy?.preapprove)
+      ? project.policy.preapprove
+      : [];
+    const preapproveChanged = JSON.stringify(preapproveBefore) !== JSON.stringify(preapproveAfter);
+    const prTierChanged =
+      String(before?.policy?.pr?.tier ?? "") !== String(project?.policy?.pr?.tier ?? "");
+    if (
+      switched.length > 0 ||
+      autonomyChanged ||
+      routingChanged ||
+      grantsChanged ||
+      preapproveChanged ||
+      prTierChanged
+    ) {
       store.appendAudit({
         action: "project/policy-changed",
         projectId: id,
@@ -1635,6 +1741,25 @@ export class ProjectsService extends TypertRemoteService {
           ? { autonomy: { from: before?.policy?.autonomy, to: project?.policy?.autonomy } }
           : {}),
         ...(routingChanged ? { routing: "changed" } : {}),
+        ...(grantsChanged
+          ? {
+              repoGrants: {
+                granted: Object.keys(grantsAfter).filter((key) => grantsBefore[key] !== true),
+                revoked: Object.keys(grantsBefore).filter((key) => grantsAfter[key] !== true),
+              },
+            }
+          : {}),
+        ...(preapproveChanged
+          ? {
+              preapprove: {
+                from: preapproveBefore,
+                to: preapproveAfter,
+              },
+            }
+          : {}),
+        ...(prTierChanged
+          ? { pr: { from: before?.policy?.pr?.tier ?? "", to: project?.policy?.pr?.tier ?? "" } }
+          : {}),
       });
       store.save();
     }
@@ -1642,25 +1767,71 @@ export class ProjectsService extends TypertRemoteService {
   }
 
   /**
-   * 暂停项目：不再能建新线程，已有线程不受影响（可逆）。
-   * @param {string} id
+   * AUD-PROJ-02：把项目状态对应的处置应用到**宿主定时任务**上。
+   *
+   * routines 与 schedule 档提醒每次投递 = 一次模型调用（`docs/runtime §14`）。以前
+   * pause/archive/delete 只改本地元数据，宿主条目照旧到点投递、继续花 token，而且这批
+   * 投递出来的 session 不在 `state.threads` 里，连项目 token 桶都不计——预算闸也管不到。
+   *
+   * 失败语义：**暂停/恢复**失败只记审计（项目状态已经改了，下一次动作还能再对账）；
+   * **删除**失败要往上抛——否则项目记录没了，就再也没有入口去停那批还在烧 token 的条目。
+   * @param {string} projectId
+   * @param {"pause"|"archive"|"resume"|"delete"} action
+   * @returns {Promise<{ ok: boolean, planned: string, handled: any[], failures: any[], skipped: string[], unavailable?: number }>}
    */
-  pauseProject(id) {
+  async reconcileSchedules(projectId, action) {
     const store = this.requireStore();
-    const project = store.updateProject(id, { state: "paused" });
-    store.save();
-    return project;
+    const project = store.getProject(projectId);
+    if (!project) return { ok: true, planned: "none", handled: [], failures: [], skipped: [] };
+    const result = await reconcileHostSchedules({
+      project,
+      action,
+      schedule: this.scheduleHost(),
+      onAudit: (/** @type {any} */ entry) => {
+        store.appendAudit({ projectId, ...entry });
+      },
+    });
+    if (result.handled.length > 0 || result.failures.length > 0) {
+      store.appendAudit({
+        action: "project/schedules-reconciled",
+        projectId,
+        op: result.planned,
+        handled: result.handled.length,
+        failures: result.failures.map((/** @type {any} */ item) => ({
+          scheduleId: item.scheduleId,
+          kind: item.kind,
+          reason: item.reason,
+        })),
+      });
+      store.save();
+    }
+    return result;
   }
 
   /**
-   * 恢复项目。
+   * 暂停项目：不再能建新线程，已有线程不受影响（可逆）。
+   * AUD-PROJ-02：同时**暂停宿主定时任务**（routines / schedule 提醒），否则 pause
+   * 这个「急停」停不住无人值守的模型调用。
    * @param {string} id
    */
-  resumeProject(id) {
+  async pauseProject(id) {
+    const store = this.requireStore();
+    const project = store.updateProject(id, { state: "paused" });
+    store.save();
+    const schedules = await this.reconcileSchedules(id, "pause");
+    return { ...project, schedules };
+  }
+
+  /**
+   * 恢复项目（同时恢复被暂停的宿主定时任务；用户显式停用的 routine 保持停用）。
+   * @param {string} id
+   */
+  async resumeProject(id) {
     const store = this.requireStore();
     const project = store.updateProject(id, { state: "active" });
     store.save();
-    return project;
+    const schedules = await this.reconcileSchedules(id, "resume");
+    return { ...project, schedules };
   }
 
   /**
@@ -2090,6 +2261,22 @@ export class ProjectsService extends TypertRemoteService {
       scheduleId: String(routine.scheduleId ?? ""),
       wantsTiming,
     });
+    // AUD-PROJ-02：只有「手动 → 自动档」（action=create）会**新开**一条会投递的宿主定时，
+    // 暂停/归档项目下要拒绝（否则 pause 之后还能靠编辑 routine 重新打开花钱的路径）。
+    // 改指令 / 改成手动 / 删除都是收窄或无害，照旧放行。
+    if (action === "create") {
+      const automationGate = checkProjectAcceptsAutomation(project);
+      if (!automationGate.ok) {
+        store.appendAudit({
+          action: "routine/update-refused",
+          projectId,
+          routineId,
+          reason: automationGate.reason,
+        });
+        store.save();
+        return { ok: false, reason: automationGate.reason };
+      }
+    }
     const schedule = this.scheduleHost();
     let nextScheduleId = String(routine.scheduleId ?? "");
     if (action === "delete" || action === "update") {
@@ -2102,17 +2289,19 @@ export class ProjectsService extends TypertRemoteService {
             ? { id: nextScheduleId, action: "delete" }
             : { id: nextScheduleId, action: "update", patch: planned.hostPatch },
         );
-        // 宿主可能用 {ok:false} 而不是抛错来拒绝；以前会当成功继续改本地记录 → 本地/宿主漂移
-        if (edited && typeof edited === "object" && edited.ok === false) {
+        // 宿主契约：拒绝是**抛错**或返回 `{code:'schedule_not_found'|'schedule_conflict'}`，
+        // 没有 `{ok:false}` 这种形状（以前判 ok 的分支永远不成立 → 本地/宿主偷偷漂移）。
+        const outcome = classifyHostScheduleResult(edited);
+        if (outcome.kind === "not-found" || outcome.kind === "conflict") {
           store.appendAudit({
             action: "routine/update-failed",
             projectId: project.id,
             routineId,
             reason: `${action}-rejected`,
-            detail: String(edited.reason ?? "").slice(0, 160),
+            detail: outcome.code,
           });
           store.save();
-          return { ok: false, reason: "schedule-rejected" };
+          return { ok: false, reason: `schedule/${outcome.code}` };
         }
       } catch (error) {
         store.appendAudit({
@@ -2130,8 +2319,8 @@ export class ProjectsService extends TypertRemoteService {
       if (!schedule || typeof schedule.create !== "function") {
         return { ok: false, reason: "schedule-unavailable" };
       }
-      const cwd =
-        Array.isArray(project.dirs) && project.dirs.length > 0 ? project.dirs[0] : this.dataRoot;
+      // AUD-PROJ-01：定时投递的会话 cwd 统一走 projectCwd（绝不回落插件数据根）。
+      const cwd = projectCwd(project, this.dataRoot);
       try {
         mkdirSync(cwd, { recursive: true });
       } catch {
@@ -2147,18 +2336,21 @@ export class ProjectsService extends TypertRemoteService {
           timing: planned.hostPatch.timing,
           target: { kind: "new", create: { cwd } },
         });
-        if (created && typeof created === "object" && created.ok === false) {
+        // 宿主 `create` 失败是**抛错**（契约里没有 {ok:false}）；返回形状是任务条目。
+        // 拿不到 id 就当创建没落地，别继续写本地记录（否则本地/宿主漂移）。
+        const createdOutcome = classifyHostScheduleResult(created);
+        if (createdOutcome.kind !== "task" || String(created?.id ?? "") === "") {
           store.appendAudit({
             action: "routine/update-failed",
             projectId: project.id,
             routineId,
             reason: "create-rejected",
-            detail: String(created.reason ?? "").slice(0, 160),
+            detail: createdOutcome.code || "no-id",
           });
           store.save();
           return { ok: false, reason: "schedule-rejected" };
         }
-        nextScheduleId = String(created?.id ?? "");
+        nextScheduleId = String(created.id);
       } catch (error) {
         store.appendAudit({
           action: "routine/update-failed",
@@ -2351,12 +2543,15 @@ export class ProjectsService extends TypertRemoteService {
    * 取消归档：回到 active，线程归属与内容文件都还在（归档从不删数据）。
    * @param {string} id
    */
-  unarchiveProject(id) {
+  async unarchiveProject(id) {
     const store = this.requireStore();
     const project = store.updateProject(id, { state: "active" });
     store.appendAudit({ action: "project/unarchived", projectId: id });
     store.save();
-    return project;
+    // 复审 F3：archive 会暂停宿主定时，取消归档必须对称恢复（否则 routines 永久停在
+    // 宿主 paused，本地没有任何提示）。用户显式停用的 routine 由 reconcile 自己跳过。
+    const schedules = await this.reconcileSchedules(id, "resume");
+    return { ...project, schedules };
   }
 
   /**
@@ -2366,6 +2561,8 @@ export class ProjectsService extends TypertRemoteService {
     const store = this.requireStore();
     const project = store.archiveProject(id);
     store.save();
+    // AUD-PROJ-02：归档同样要停宿主定时任务（归档项目不再产出，定时投递只烧钱）。
+    const schedules = await this.reconcileSchedules(id, "archive");
     // 归档后立刻摘掉在线会话的项目上下文：否则已挂上的 agent 会带着归档项目的规则继续跑。
     for (const thread of store.listThreads(id)) {
       this.detachSession(thread.sessionId);
@@ -2378,9 +2575,11 @@ export class ProjectsService extends TypertRemoteService {
       action: "project/archived",
       projectId: id,
       cleanup: "skipped-non-destructive",
+      schedulesPaused: schedules.handled.length,
+      scheduleFailures: schedules.failures.length,
     });
     store.save();
-    return { ...project, cleanup: null };
+    return { ...project, cleanup: null, schedules };
   }
 
   /**
@@ -2404,7 +2603,8 @@ export class ProjectsService extends TypertRemoteService {
       hasContentDir = false;
     }
     // 无目录项目的会话 cwd 在 dataRoot/workspaces/<id>：也是插件资产，随删除一起进回收站
-    const workspaceDir = `${this.dataRoot}/workspaces/${id}`;
+    // AUD-PROJ-01：路径只有一个出口（`projectWorkspaceDir`），删/恢复/新建不会各写一份。
+    const workspaceDir = projectWorkspaceDir(this.dataRoot, id);
     let hasWorkspaceDir = false;
     try {
       hasWorkspaceDir = existsSync(workspaceDir);
@@ -2427,12 +2627,16 @@ export class ProjectsService extends TypertRemoteService {
     const liveBusy = threads.filter((/** @type {any} */ thread) =>
       this.threadBusy(thread, live.states, String(thread?.sessionId ?? "")),
     ).length;
+    // 复审 F2：影响面要写出「会删几条宿主定时任务」（删除它们不可从回收站恢复）。
+    // 计数只读项目记录（`collectHostSchedules` 是纯函数），不碰宿主、不产生副作用。
+    const hostSchedules = collectHostSchedules(project);
     const impact = impactOf({
       threads,
       contentBytes,
       hasContentDir,
       name: project.name,
       worktrees,
+      hostScheduleCount: hostSchedules.length,
     });
     impact.liveThreadCount = liveBusy;
     if (liveBusy > 0) {
@@ -2453,6 +2657,11 @@ export class ProjectsService extends TypertRemoteService {
       contentDir,
       workspaceDir,
       hasWorkspaceDir,
+      hostSchedules: hostSchedules.map((entry) => ({
+        scheduleId: entry.scheduleId,
+        kind: entry.kind,
+        id: entry.id,
+      })),
     };
   }
 
@@ -2463,6 +2672,9 @@ export class ProjectsService extends TypertRemoteService {
    */
   async deleteProject(id) {
     const store = this.requireStore();
+    // 顺序（复审 F2）：**先做所有可能失败的校验**（preview/busy），再动宿主定时。
+    // 以前先删宿主条目：删除被 busy/preview 拒绝时项目还在，但 routines/提醒的宿主条目
+    // 已经被静默删掉且没有任何地方可恢复。
     const preview = await this.previewDeleteProject(id);
     // 在跑的线程：删掉记录后 agent 的结果无法回写，用户会以为任务还在跑（审查实测）
     const previewThreads = store.listThreads(id);
@@ -2480,6 +2692,23 @@ export class ProjectsService extends TypertRemoteService {
         `projects: project has ${busy.length} running/waiting thread(s); stop them before deleting`,
       );
     }
+    // 校验都过了才开始动宿主定时：删不掉就**拒绝删除**——记录没了以后就没有入口再去停
+    // 那批还在到点投递（= 花 token）的条目。宿主根本没有 schedule 服务时不存在投递机制，
+    // 按「无可停」处理并写审计，不让项目卡成不可删（复审 F6a/F7）。
+    const schedules = await this.reconcileSchedules(id, "delete");
+    if (schedules.failures.length > 0) {
+      throw new Error(
+        `projects: ${schedules.failures.length} host scheduled task(s) could not be removed (open the host's Automation tasks page to stop them), then retry deleting this project`,
+      );
+    }
+    if ((schedules.unavailable ?? 0) > 0) {
+      store.appendAudit({
+        action: "project/schedules-unavailable",
+        projectId: id,
+        entries: Number(schedules.unavailable),
+      });
+      store.save();
+    }
     const trashDir = trashDirFor({ dataRoot: this.dataRoot, projectId: id });
     const projectRecord = store.getProject(id);
     const threadRecords = store.listThreads(id);
@@ -2496,6 +2725,9 @@ export class ProjectsService extends TypertRemoteService {
           worktrees: preview.worktrees,
           contentDir: preview.contentDir,
           workspaceDir: preview.workspaceDir ?? null,
+          // AUD-PROJ-10：removeProject 会把 token 用量桶一起清掉；写进 manifest 才能在
+          // restore 时放回去（桶里是「已删项目的花费」，删了就不该假装从没花过）。
+          usage: store.state?.usage?.[id] ?? null,
           moved,
           summary: preview.impact.summary,
         },
@@ -2567,9 +2799,15 @@ export class ProjectsService extends TypertRemoteService {
       throw error;
     }
     for (const thread of removed.threads) this.detachSession(thread.sessionId);
-    store.appendAudit({ action: "project/deleted", projectId: id, reason: "trash", trashDir });
+    store.appendAudit({
+      action: "project/deleted",
+      projectId: id,
+      reason: "trash",
+      trashDir,
+      schedulesRemoved: schedules.handled.length,
+    });
     store.save();
-    return { deleted: true, trashDir, summary: preview.impact.summary };
+    return { deleted: true, trashDir, summary: preview.impact.summary, schedules };
   }
 
   /**
@@ -2712,6 +2950,19 @@ export class ProjectsService extends TypertRemoteService {
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
     const project = manifest?.project;
     if (!project?.id) throw new Error("projects: trash manifest has no project");
+    // AUD-PROJ-11：manifest 是**回收站里的文件**，可能被本地改坏/改过。它里面的 project.id
+    // 会被拼进 `<dataRoot>/<id>` 与 `<dataRoot>/workspaces/<id>` 做 rename 目标：
+    // 以前只校验回收站**目录名**，manifest 里改成 `../../x` 就能把内容搬出数据根。
+    // 与 store.load 同口径（isSafeRecordKey）再拒一次，纵深防御。
+    if (!isSafeRecordKey(String(project.id))) {
+      store.appendAudit({
+        action: "project/restore-refused",
+        entryId: id,
+        reason: "unsafe-project-id",
+      });
+      store.save();
+      throw new Error("projects: trash manifest has an unsafe project id");
+    }
 
     // 同一 sessionId 可能已被挂到别的项目：恢复时不能静默覆盖那条线程（复审 P2）。
     const restoredThreads = (Array.isArray(manifest.threads) ? manifest.threads : []).filter(
@@ -2724,7 +2975,11 @@ export class ProjectsService extends TypertRemoteService {
     );
     const skippedThreads =
       (Array.isArray(manifest.threads) ? manifest.threads : []).length - restoredThreads.length;
-    const restored = store.restoreProject({ project, threads: restoredThreads });
+    const restored = store.restoreProject({
+      project,
+      threads: restoredThreads,
+      usage: manifest?.usage ?? null,
+    });
     // 内容目录与 workspace 都搬回原位（失败则报错，元数据已恢复但数据留在回收站，可再试）
     const restoreDir = (
       /** @type {string} */ name,
@@ -2750,7 +3005,7 @@ export class ProjectsService extends TypertRemoteService {
     };
     restoreDir("content", join(this.dataRoot, String(project.id)), "content");
     // 无目录项目的线程 cwd 在 dataRoot/workspaces/<id>：删除时搬进回收站，恢复必须搬回去
-    restoreDir("workspace", join(this.dataRoot, "workspaces", String(project.id)), "workspace");
+    restoreDir("workspace", projectWorkspaceDir(this.dataRoot, project.id), "workspace");
     rmSync(dir, { recursive: true, force: true });
     store.appendAudit({
       action: "project/restored",
@@ -3178,8 +3433,18 @@ export class ProjectsService extends TypertRemoteService {
     }
     const sc = this.sessionController;
     if (!sc) throw new Error("projects: session controller unavailable");
-    const cwd =
-      Array.isArray(project.dirs) && project.dirs.length > 0 ? project.dirs[0] : this.dataRoot;
+    // AUD-PROJ-01：无目录项目以前把 **插件数据根** 当协调者 cwd（projects.json / trash/ /
+    // 其它项目的记忆与规则都在那儿，默认档案又是 danger-full-access）。统一走 projectCwd：
+    // 绑了目录用 dirs[0]，没绑就用该项目的专用工作区 `<dataRoot>/workspaces/<id>`。
+    const cwd = projectCwd(project, this.dataRoot);
+    if (cwd === this.dataRoot) {
+      // 兜底短路：真出现「专用工作区等于数据根」的异常输入，宁可不建也不把数据根交出去。
+      throw new Error("projects: refusing to use the plugin data root as a session cwd");
+    }
+    // 无目录项目才需要建目录（专用工作区不会预先存在）；绑了目录就用用户的目录，不动它。
+    if (!Array.isArray(project.dirs) || project.dirs.length === 0) {
+      mkdirSync(cwd, { recursive: true });
+    }
     const created = await sc.create({ cwd });
     const sessionId = String(created.sessionId);
 
@@ -3273,8 +3538,38 @@ export class ProjectsService extends TypertRemoteService {
   }
 
   /**
+   * AUD-HIST-06：记一条「跳过唤醒」审计，**按项目 + 理由限频**（冷却窗口见
+   * `WAKE_SKIP_AUDIT_COOLDOWN_MS`）。返回是否真的写了。
+   * @param {string} projectId
+   * @param {string} reason
+   * @param {Record<string, any>} [extra]
+   * @returns {boolean}
+   */
+  noteWakeSkip(projectId, reason, extra) {
+    const store = this.requireStore();
+    const key = `${projectId}:${reason}`;
+    const now = Date.now();
+    const record = shouldRecordWakeSkip({ lastAt: this.wakeSkipAudit.get(key), now });
+    if (!record) return false;
+    this.wakeSkipAudit.set(key, now);
+    if (this.wakeSkipAudit.size > 1000) this.wakeSkipAudit.clear(); // 长跑不无限增长
+    store.appendAudit({
+      action: "wake/skipped",
+      projectId,
+      reason,
+      limited: true,
+      ...(extra ?? {}),
+    });
+    store.save();
+    return true;
+  }
+
+  /**
    * 线程一轮结束时唤醒协调器（同一轮只唤醒一次）。
    * 失败只记日志，不影响线程本身。
+   *
+   * AUD-HIST-06：没有协调者的项目**不做任何唤醒工作**，也不每次写审计——
+   * 以前每个 `turn/end` 都写一条 `wake/skipped:no-coordinator` 并全量落盘（166KB 重写）。
    * @param {string} sessionId
    * @param {any} view
    */
@@ -3286,13 +3581,9 @@ export class ProjectsService extends TypertRemoteService {
       if (!project) return;
       const coordinatorSessionId = project.coordinatorSessionId;
       if (typeof coordinatorSessionId !== "string" || coordinatorSessionId === "") {
-        store.appendAudit({
-          action: "wake/skipped",
-          projectId: project.id,
-          sessionId,
-          reason: "no-coordinator",
-        });
-        store.save(); // 不落盘的话，重启后「为什么没反应」就查不到了
+        // 没有协调者 → 没有可投递对象，连信封都不构造（省掉上下文渲染）。
+        // 审计限频：第一次留一条可排查，之后同项目 6 小时内静默（AUD-HIST-06）。
+        this.noteWakeSkip(project.id, "no-coordinator", { sessionId });
         return;
       }
       const thread = store
@@ -3305,15 +3596,12 @@ export class ProjectsService extends TypertRemoteService {
         steps: (this.stats.get(sessionId) ?? initialStats()).steps,
       });
       if (!stepVerdict.ok) {
-        store.appendAudit({
-          action: "wake/skipped",
-          projectId: project.id,
+        // 同一项目连续多轮超步数时不该每轮写一条（AUD-HIST-06 同款限频）。
+        this.noteWakeSkip(project.id, stepVerdict.reason, {
           sessionId,
-          reason: stepVerdict.reason,
           steps: stepVerdict.steps,
           limit: stepVerdict.limit,
         });
-        store.save();
         return;
       }
 
@@ -3610,9 +3898,12 @@ export class ProjectsService extends TypertRemoteService {
   /**
    * 待审批队列（面板用）。
    * @param {string|undefined} projectId
+   * @param {{ limit?: number, offset?: number }} [options] 分页（AUD-PROJ-09）
    */
-  listApprovals(projectId) {
-    return this.requireStore().listApprovals(projectId);
+  listApprovals(projectId, options) {
+    // AUD-PROJ-07：审批卡片要能展示影响面（PR 号/仓库/分支/目录/变更键）。
+    // 投影在服务端做（白名单 + 截断），UI 只渲染纯文本，不把整块 args JSON 泼到界面上。
+    return withApprovalImpact(this.requireStore().listApprovals(projectId, options ?? undefined));
   }
 
   /**
@@ -3712,9 +4003,88 @@ export class ProjectsService extends TypertRemoteService {
         prNumber: thread.prNumber ?? null,
         commits,
         attempts: Number(thread.prAttempts ?? 0),
-        ciState: options?.ciState ?? undefined,
+        // AUD-PROJ-05：以前这里只认调用方传的 ciState，而 UI 调 createPr 不传 →
+        // auto-merge 档在 PR 已存在后**恒为 wait-ci**，merge 决策永远产生不出来。
+        // 线程记录里的 ciState 是 PR 轮询写回的权威值，这里补上。
+        ciState: options?.ciState ?? thread.ciState ?? undefined,
       },
     });
+
+    // AUD-PROJ-05：auto-merge 档的 `merge` 决策**以前没有任何消费者**：落到后面继续
+    // 「push + gh pr create」（已存在 PR 时等于重复开 PR）。合并是不可逆动作，只能走
+    // 审批队列 → 执行器（危险开关 + 人工批准 + 归属校验都在那条路径上）。
+    if (decision.action === "merge") {
+      const prNumber = Number(thread.prNumber ?? 0);
+      if (!Number.isInteger(prNumber) || prNumber <= 0) {
+        store.appendAudit({
+          action: "pr/merge-blocked",
+          projectId,
+          sessionId,
+          reason: "no-pr",
+        });
+        store.save();
+        return { opened: false, decision, reason: "no-pr" };
+      }
+      if (project.policy?.danger?.autoMerge !== true) {
+        // 档位是 auto-merge，但危险开关没开：如实说清「要开哪个开关」，不假装已经排了审批。
+        store.appendAudit({
+          action: "pr/merge-blocked",
+          projectId,
+          sessionId,
+          prNumber,
+          reason: "danger-off",
+        });
+        store.save();
+        return { opened: false, decision, reason: "merge/danger-off", prNumber };
+      }
+      const pending = store
+        .listApprovals(projectId)
+        .find(
+          (/** @type {any} */ item) =>
+            item?.action === "merge" &&
+            item?.status === "pending" &&
+            Number(item?.args?.prNumber) === prNumber,
+        );
+      if (pending) {
+        store.appendAudit({
+          action: "pr/merge-pending",
+          projectId,
+          sessionId,
+          prNumber,
+          requestId: pending.requestId,
+        });
+        store.save();
+        return {
+          opened: false,
+          decision,
+          reason: "merge/awaiting-approval",
+          prNumber,
+          approval: { requestId: pending.requestId, reused: true },
+        };
+      }
+      const created = store.appendApproval({
+        projectId,
+        action: "merge",
+        args: { prNumber },
+        reason: `auto-merge 档：CI 通过，申请合并 PR #${prNumber}`,
+      });
+      store.appendAudit({
+        action: "approval/requested",
+        projectId,
+        requestId: created.requestId,
+        dangerAction: "merge",
+        prNumber,
+        source: "pr-tier-auto-merge",
+      });
+      store.save();
+      return {
+        opened: false,
+        decision,
+        reason: "merge/awaiting-approval",
+        prNumber,
+        approval: { requestId: created.requestId },
+      };
+    }
 
     if (
       decision.action === "none" ||
@@ -4325,7 +4695,8 @@ export class ProjectsService extends TypertRemoteService {
     const out = [];
     const now = Date.now();
     for (let offset = 6; offset >= 0; offset -= 1) {
-      const date = new Date(now - offset * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      // 与写入同口径：本地日期（AUD-PROJ-17）。以前展示用 UTC、闸门用本地，跨时区对不上。
+      const date = localDateKey(now - offset * 24 * 60 * 60 * 1000);
       out.push({ date, tokens: Number(days[date]) || 0 });
     }
     return out;
@@ -4447,13 +4818,17 @@ export class ProjectsService extends TypertRemoteService {
           reasoningEffort: defaults.reasoningEffort || undefined,
         });
       } catch (error) {
+        const reason = String(/** @type {any} */ (error)?.message ?? error).slice(0, 160);
         store.appendAudit({
           action: "thread/model-default-failed",
           projectId,
           sessionId: thread.sessionId,
-          reason: String(/** @type {any} */ (error)?.message ?? error).slice(0, 120),
+          reason,
         });
         store.save();
+        // AUD-PROJ-24：以前只写审计——用户以为「项目默认模型」生效了，实际跑宿主默认。
+        // 把失败原因带到回执上，面板据此提示（真实数据里这件事发生过 5 次）。
+        /** @type {any} */ (thread).modelWarning = reason;
       }
     }
     if (typeof task === "string" && task.trim() !== "") {
@@ -4732,6 +5107,39 @@ export class ProjectsService extends TypertRemoteService {
         reason: String(/** @type {any} */ (error)?.message ?? error).slice(0, 160),
       };
     }
+  }
+
+  /**
+   * AUD-PROJ-24：写项目级默认模型前先对照模型目录校验。
+   *
+   * 目录拿不到（宿主没暴露 / 空）时**不校验**——不能因为读不到目录就把用户的设置拦死。
+   * @param {string} projectId
+   * @param {{ provider?: string, model?: string, kind: string }} input
+   * @returns {Promise<{ checked: boolean, found: boolean }>}
+   */
+  async assertModelUsable(projectId, input) {
+    const model = String(input?.model ?? "").trim();
+    if (model === "") return { checked: false, found: false };
+    const catalog = await this.modelCatalog();
+    const verdict = checkCatalogChoice(catalog, {
+      provider: input?.provider,
+      model,
+    });
+    const store = this.requireStore();
+    store.appendAudit({
+      action: "model/defaults-checked",
+      projectId,
+      kind: String(input?.kind ?? ""),
+      provider: String(input?.provider ?? ""),
+      model,
+      checked: verdict.checked,
+      found: verdict.found,
+    });
+    store.save();
+    if (verdict.checked && !verdict.found) {
+      throw new Error(modelUnavailableMessage({ provider: input?.provider, model }));
+    }
+    return { checked: verdict.checked, found: verdict.found };
   }
 
   /**
@@ -5556,9 +5964,11 @@ export class ProjectsService extends TypertRemoteService {
    * @param {string} projectId @param {string} [provider] @param {string} [model] @param {string} [reasoningEffort]
    * @param {string} [source] 写入口标识（"settings" | "composer"），只用于审计区分
    */
-  setCoordinatorDefaults(projectId, provider, model, reasoningEffort, source) {
+  async setCoordinatorDefaults(projectId, provider, model, reasoningEffort, source) {
     const store = this.requireStore();
     if (!store.getProject(projectId)) throw new Error(`projects: unknown project ${projectId}`);
+    // AUD-PROJ-24：失效模型不写盘（以前只写审计，用户以为生效了，实际跑宿主默认）。
+    await this.assertModelUsable(projectId, { provider, model, kind: "coordinator/defaults" });
     const result = store.setCoordinatorDefaults(projectId, {
       provider: String(provider ?? ""),
       model: String(model ?? ""),
@@ -5583,9 +5993,11 @@ export class ProjectsService extends TypertRemoteService {
    * F42：写项目级线程默认模型 / effort，返回回读值（空串 = 继承宿主默认）。
    * @param {string} projectId @param {string} [provider] @param {string} [model] @param {string} [reasoningEffort]
    */
-  setThreadDefaults(projectId, provider, model, reasoningEffort) {
+  async setThreadDefaults(projectId, provider, model, reasoningEffort) {
     const store = this.requireStore();
     if (!store.getProject(projectId)) throw new Error(`projects: unknown project ${projectId}`);
+    // AUD-PROJ-24：同上——写入口就拦，不在 createThread 才失败（那时用户看不到）。
+    await this.assertModelUsable(projectId, { provider, model, kind: "thread/defaults" });
     const result = store.setThreadDefaults(projectId, {
       provider: String(provider ?? ""),
       model: String(model ?? ""),
@@ -6136,8 +6548,8 @@ export class ProjectsService extends TypertRemoteService {
       manualHint: MANUAL_COST_HINT,
       timeZone: this.hostTimeZone(),
       routines,
-      projectDir:
-        Array.isArray(project.dirs) && project.dirs.length > 0 ? project.dirs[0] : this.dataRoot,
+      // AUD-PROJ-01：这里展示的也该是「定时任务实际会在哪个目录里跑」，与投递 cwd 同源。
+      projectDir: projectCwd(project, this.dataRoot),
     };
   }
 
@@ -6168,11 +6580,19 @@ export class ProjectsService extends TypertRemoteService {
     let scheduleId = "";
     const schedule = this.scheduleHost();
     if (timing.timing !== null) {
+      // AUD-PROJ-02：暂停/归档的项目不能再建「到点自动投递（= 花 token）」的定时任务，
+      // 否则 pause 只是停内存里的东西，花钱的路径照旧。手动档没有宿主条目，不拦。
+      const gate = checkProjectAcceptsAutomation(project);
+      if (!gate.ok) {
+        store.appendAudit({ action: "routine/create-refused", projectId, reason: gate.reason });
+        store.save();
+        return { ok: false, reason: gate.reason };
+      }
       if (!schedule || typeof schedule.create !== "function") {
         return { ok: false, reason: "schedule-unavailable" };
       }
-      const cwd =
-        Array.isArray(project.dirs) && project.dirs.length > 0 ? project.dirs[0] : this.dataRoot;
+      // AUD-PROJ-01：定时投递的会话 cwd 统一走 projectCwd（绝不回落插件数据根）。
+      const cwd = projectCwd(project, this.dataRoot);
       try {
         mkdirSync(cwd, { recursive: true });
       } catch {
@@ -6271,11 +6691,17 @@ export class ProjectsService extends TypertRemoteService {
       if (!schedule || typeof schedule.edit !== "function")
         return { ok: false, reason: "schedule-unavailable" };
       try {
-        await schedule.edit({
+        // 复审 F1：宿主 SchedulePatch 只认 `active: boolean`（以前写 `{status}` 被静默忽略，
+        // Routines 的启停从 0.10.x 起其实从未生效过）。这里也必须判返回值，不能当成功。
+        const edited = await schedule.edit({
           id: routine.scheduleId,
           action: "update",
-          patch: { status: enabled === true ? "active" : "paused" },
+          patch: hostActivePatch(enabled === true ? "resume" : "pause"),
         });
+        const outcome = classifyHostScheduleResult(edited);
+        if (outcome.kind === "not-found" || outcome.kind === "conflict") {
+          return { ok: false, reason: `schedule/${outcome.code || outcome.kind}` };
+        }
         hostResult = enabled === true ? "active" : "paused";
       } catch (error) {
         return {
@@ -6321,7 +6747,12 @@ export class ProjectsService extends TypertRemoteService {
       if (!schedule || typeof schedule.edit !== "function")
         return { ok: false, reason: "schedule-unavailable" };
       try {
-        await schedule.edit({ id: routine.scheduleId, action: "delete" });
+        const removedHost = await schedule.edit({ id: routine.scheduleId, action: "delete" });
+        const outcome = classifyHostScheduleResult(removedHost);
+        // `deleted:false + schedule_not_found` = 宿主里本来就没有：目标已达成，不算失败。
+        if (outcome.kind === "conflict") {
+          return { ok: false, reason: "schedule/schedule_conflict" };
+        }
       } catch (error) {
         return {
           ok: false,
@@ -6357,7 +6788,31 @@ export class ProjectsService extends TypertRemoteService {
     const at = new Date().toISOString();
     if (routine.scheduleId !== "" && schedule && typeof schedule.run === "function") {
       try {
-        await schedule.run({ id: routine.scheduleId });
+        const ran = await schedule.run({ id: routine.scheduleId });
+        // 宿主 `run` 的失败形状是 `{code:'schedule_not_found'|'schedule_execution_pending'}`
+        // （不抛错），以前会把「没投递」当成功写进历史。
+        const ranOutcome = classifyHostScheduleResult(ran);
+        // N1：宿主 `run` 的**任何 `code`** 都不是任务条目——`schedule_execution_pending`
+        // 表示这次请求被 admission 挡住（同一条任务另一次执行占着），以前会被当成功写
+        // lastRunAt/历史（假成功）。只有 kind==="task" 且无 code 才算真的投递了。
+        if (ranOutcome.kind !== "task" || ranOutcome.code !== "") {
+          store.patchRoutine(projectId, routineId, {
+            history: appendRoutineHistory(routine, {
+              at,
+              status: "run-failed",
+              message: String(ranOutcome.code || ranOutcome.kind),
+              source: "run-now",
+            }),
+          });
+          store.appendAudit({
+            action: "routine/run-failed",
+            projectId,
+            routineId,
+            reason: String(ranOutcome.code || ranOutcome.kind),
+          });
+          store.save();
+          return { ok: false, reason: `schedule/${ranOutcome.code || ranOutcome.kind}` };
+        }
         store.patchRoutine(projectId, routineId, {
           lastRunAt: at,
           history: appendRoutineHistory(routine, {
@@ -6534,6 +6989,16 @@ export class ProjectsService extends TypertRemoteService {
     const project = store.getProject(projectId);
     if (!project) throw new Error(`projects: unknown project ${projectId}`);
     const mode = resolveReminderMode(project.reminderDefault, input?.mode);
+    // AUD-PROJ-02：schedule 档提醒会真的投递（= 一次模型调用）。暂停/归档项目下拒绝新建
+    // （timer 档不走宿主、不花钱，仍然允许）。
+    if (mode === "schedule") {
+      const gate = checkProjectAcceptsAutomation(project);
+      if (!gate.ok) {
+        store.appendAudit({ action: "reminder/create-refused", projectId, reason: gate.reason });
+        store.save();
+        return { ok: false, reason: gate.reason };
+      }
+    }
     const checked = validateReminderInput({ at: input?.at, text: input?.text, mode });
     if (!checked.ok) return { ok: false, reason: checked.reason };
     const value = checked.value;
@@ -6544,8 +7009,8 @@ export class ProjectsService extends TypertRemoteService {
       if (!schedule || typeof schedule.create !== "function") {
         return { ok: false, reason: "schedule-unavailable" };
       }
-      const cwd =
-        Array.isArray(project.dirs) && project.dirs.length > 0 ? project.dirs[0] : this.dataRoot;
+      // AUD-PROJ-01：提醒（schedule 档）的投递会话 cwd 也统一走 projectCwd。
+      const cwd = projectCwd(project, this.dataRoot);
       try {
         mkdirSync(cwd, { recursive: true });
       } catch {

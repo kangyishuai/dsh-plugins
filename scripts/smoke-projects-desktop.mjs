@@ -19,7 +19,10 @@
 //   B1 首启引导只断言存在不点击（**不写 live profile 的 firstRunDone**）/ data-projects-status 形状 /
 //   无渲染崩溃 / 摘要已本地化 / 新建控件存在（不提交）/
 //   详情页两列栅格 + 6 个状态药丸 + 3 个页签（§7.3）+ Library 右栏入口 + 审计不在详情页 /
-//   设置四个分区 + 审计在 Debug 分区（设置页被禁用时如实 SKIP）/ Esc 关闭后界面仍可用 / 截图落盘。
+//   设置四个分区 + 审计在 Debug 分区 + PR 档位/预授权入口（设置页被禁用时如实 SKIP）/
+//   审批卡片影响面（有审批行时断言每行非空，profile 无数据则如实 SKIP）/
+//   无协调者时的「唤醒不会执行」提示（data-projects-coordinator-wake-hint）/
+//   Esc 关闭后界面仍可用 / 截图落盘。
 //   `--create` 另有：建临时项目 / 删除进回收站 / 彻底删除 / 盘上 projects.json 校验。
 // 未装进 live profile 时默认 SKIP（门禁加 --require 则失败）。
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -386,6 +389,26 @@ const main = async () => {
           hasInstructions: Boolean(document.querySelector("[data-projects-instructions]")),
           hasContextSection: /指令|Instructions/u.test(text) && /记忆|Memory/u.test(text) && /上下文|Context/u.test(text),
           hasThreads: Boolean(document.querySelector("[data-projects-threads], [data-projects-threads-empty]")),
+          // AUD-PROJ-07：危险动作审批卡片必须显示影响面（PR 号/仓库/分支/目录）。
+          // 只读断言：没有待审批时是 0/0；有的话每一行都要有影响面节点。
+          approvalRows: document.querySelectorAll("[data-projects-approval-row]").length,
+          approvalImpacts: document.querySelectorAll("[data-projects-approval-impact]").length,
+          // AUD-HIST-06：没配协调者时，卡片必须说明「线程结束不会唤醒任何会话」。
+          coordinatorState:
+            document.querySelector("[data-projects-coordinator]")?.getAttribute("data-projects-coordinator") || "",
+          coordinatorWakeHint: Boolean(document.querySelector("[data-projects-coordinator-wake-hint]")),
+          approvalImpactText: (() => {
+            const node = document.querySelector("[data-projects-approval-impact]");
+            return node ? String(node.innerText || "").slice(0, 120) : "";
+          })(),
+          // 每行都必须有**非空**影响面文本（复审 F6d：只看「行数==影响面数」在
+          // approvals 为空的 profile 里是 0=0 恒真，等于没覆盖）。
+          approvalRowsWithText: [...document.querySelectorAll("[data-projects-approval-row]")].filter(
+            (row) => {
+              const node = row.querySelector("[data-projects-approval-impact]");
+              return Boolean(node) && String(node.innerText || "").trim() !== "";
+            },
+          ).length,
         };
       })()`);
 
@@ -544,6 +567,50 @@ const main = async () => {
         snap.libraryOpen === true && snap.auditInDetail === false,
         JSON.stringify({ libraryOpen: snap.libraryOpen, auditInDetail: snap.auditInDetail }),
       );
+      // AUD-HIST-06（只读）：协调者卡的空态与「唤醒不会执行」提示必须一致
+      // （empty ↔ 有提示；ready ↔ 无提示）。没有协调者卡时跳过该断言。
+      if (snap.coordinatorState === "empty" || snap.coordinatorState === "ready") {
+        check(
+          "没有协调者时，卡片明确说明线程结束不会唤醒任何会话",
+          (snap.coordinatorState === "empty") === snap.coordinatorWakeHint,
+          JSON.stringify({
+            coordinator: snap.coordinatorState,
+            wakeHint: snap.coordinatorWakeHint,
+          }),
+        );
+      }
+      // AUD-PROJ-07（只读）：有审批行就必须每行都有**非空**影响面文本。
+      // 复审 F6d：之前写成 `rows === impacts`，live profile 没有待审批时恒 0=0，
+      // 等于把「未覆盖」伪装成 PASS——现在没有数据就如实 SKIP。
+      // 复审 N4：有审批行但某行**投影不出白名单字段**（例如 coordinator 用 args=null 申请
+      // change-settings）时，那一行本来就没有影响面可展示——不能因此判 FAIL。
+      // 判据改成「每个渲染出来的影响面节点都必须非空，且数量不超过行数」。
+      if (snap.approvalRows > 0 && snap.approvalImpacts > 0) {
+        check(
+          "审批卡片显示影响面（每个影响面节点都非空、不超过行数，含对象标识）",
+          snap.approvalRowsWithText === snap.approvalImpacts &&
+            snap.approvalImpacts <= snap.approvalRows &&
+            /(PR|repo|branch|session|project|keys|retentionDays)=/u.test(
+              String(snap.approvalImpactText),
+            ),
+          JSON.stringify({
+            rows: snap.approvalRows,
+            impacts: snap.approvalImpacts,
+            withText: snap.approvalRowsWithText,
+            sample: snap.approvalImpactText,
+          }),
+        );
+      } else if (snap.approvalRows > 0) {
+        skip(
+          "审批卡片显示影响面（每个影响面节点都非空、不超过行数，含对象标识）",
+          "有审批行但都投影不出白名单字段（args=null 之类），本 profile 无可展示影响面；投影逻辑由 approval-view 单测覆盖",
+        );
+      } else {
+        skip(
+          "审批卡片显示影响面（每个影响面节点都非空、不超过行数，含对象标识）",
+          "该 profile 没有待审批/待执行申请（只读回归不造数据；影响面的渲染与投影由 approval-view 单测覆盖）",
+        );
+      }
       // 结构对齐 Claude 后：详情页 = 左对话 + 右面板；指令/记忆/上下文在「项目设置」抽屉里
       const drawer = await cdp.evaluate(`(async () => {
         const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -784,6 +851,15 @@ const main = async () => {
               debugPanel: Boolean(document.querySelector("[data-projects-settings-debug]")),
               auditTitle: document.querySelector("[data-projects-audit-title]")?.textContent || "",
               audit: Boolean(document.querySelector("[data-projects-audit], [data-projects-audit-empty]")),
+              // AUD-PROJ-05/30：PR 四档与预授权必须有界面入口（以前 client 零引用）。
+              prTier: document.querySelector("[data-projects-policy-pr-tier]")?.value || "",
+              prTierOptions: [...document.querySelectorAll("[data-projects-policy-pr-tier] option")].map(
+                (node) => node.getAttribute("value"),
+              ),
+              preapprovePanel: Boolean(document.querySelector("[data-projects-policy-preapprove]")),
+              preapproveActions: [...document.querySelectorAll("[data-projects-preapprove-action]")].map(
+                (node) => node.getAttribute("data-projects-preapprove-action"),
+              ),
             };
           })()`)
         : null;
@@ -802,14 +878,38 @@ const main = async () => {
         settingsSnap?.audit === true && /审计|Audit/u.test(String(settingsSnap.auditTitle)),
         JSON.stringify({ audit: settingsSnap?.audit, title: settingsSnap?.auditTitle }),
       );
+      // AUD-PROJ-05/30（只读）：PR 档位可选四档、预授权有入口（以前完全不可达）。
+      check(
+        "设置里有 PR 档位（四档）与预授权入口",
+        settingsSnap?.prTier !== "" &&
+          ["off", "draft", "ready", "auto-merge"].every((tier) =>
+            (settingsSnap?.prTierOptions ?? []).includes(tier),
+          ) &&
+          settingsSnap?.preapprovePanel === true &&
+          [
+            "push-branch",
+            "delete-thread",
+            "delete-project",
+            "purge-trash",
+            "change-settings",
+          ].every((action) => (settingsSnap?.preapproveActions ?? []).includes(action)),
+        JSON.stringify({
+          prTier: settingsSnap?.prTier,
+          options: settingsSnap?.prTierOptions,
+          preapprovePanel: settingsSnap?.preapprovePanel,
+          preapproveActions: settingsSnap?.preapproveActions,
+        }),
+      );
     } else if (openedSettings === "no-button") {
       const reason = "找不到设置入口（该 profile/宿主版本没有设置页）";
       skip("设置页出现「项目」分节（四个分区，Debug 可进入）", reason);
       skip("审计在设置 Debug 分区（原项目详情页签外迁；空态也算）", reason);
+      skip("设置里有 PR 档位（四档）与预授权入口", reason);
     } else {
       const reason = `点开设置入口后没有项目分节（${openedSettings}）`;
       skip("设置页出现「项目」分节（四个分区，Debug 可进入）", reason);
       skip("审计在设置 Debug 分区（原项目详情页签外迁；空态也算）", reason);
+      skip("设置里有 PR 档位（四档）与预授权入口", reason);
     }
     await cdp.screenshot(join(SHOTS, "02-projects-settings.png"));
 

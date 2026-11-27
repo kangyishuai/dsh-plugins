@@ -4,13 +4,13 @@
 
 import { mkdirSync } from "node:fs";
 
+import { projectWorkspaceDir } from "./paths.js";
 import {
   branchName,
-  parseMergedBranches,
+  nextThreadIndex,
   planCreate,
   planDeleteBranch,
   planRemove,
-  shouldDeleteBranch,
   shouldReclaim,
   worktreePath,
 } from "./worktree.js";
@@ -57,18 +57,23 @@ export async function createIsolatedThread(input) {
   // 给每条项目一个专用工作区目录，agent 只能在这里折腾。
   let fallbackDir = "";
   if (!Array.isArray(project.dirs) || project.dirs.length === 0) {
-    fallbackDir = `${String(dataRoot).replace(/\/+$/u, "")}/workspaces/${String(projectId).replace(/[^A-Za-z0-9_-]/gu, "")}`;
+    // 单一出口（审计 AUD-PROJ-01）：协调者/定时器/提醒用的是同一个 `projectWorkspaceDir`。
+    fallbackDir = projectWorkspaceDir(dataRoot, projectId);
     try {
       mkdirSync(fallbackDir, { recursive: true });
     } catch {
-      fallbackDir = dataRoot;
+      // 连专用工作区都建不出来时仍然**不能**退回数据根（那里是 projects.json/trash/其它项目）。
+      // 保留路径形态：后续 git 探测失败 → 共享目录降级，但 cwd 仍是这个专用目录。
     }
   }
   const candidates =
     Array.isArray(project.dirs) && project.dirs.length > 0
       ? project.dirs.filter((/** @type {unknown} */ dir) => typeof dir === "string" && dir !== "")
-      : [fallbackDir || dataRoot];
-  const index = store.listThreads(projectId).length + 1;
+      : [fallbackDir];
+  // AUD-PROJ-27：序号以前是「当前线程数 + 1」——删掉/脱离一条线程后计数下降，
+  // 新线程会复用已存在的分支名/目录，`worktree add -b` 直接失败再静默降级成共享目录。
+  // 改成「已用分支/线程序号的最大值 + 1」（后面拿到 repoRoot 后还会再看一眼 git 里的分支）。
+  let index = nextThreadIndex(store.listThreads(projectId));
 
   /** 依次尝试：只有「是 git 仓库 + worktree add 成功」才隔离。 */
   let isolated = false;
@@ -90,6 +95,19 @@ export async function createIsolatedThread(input) {
   if (repoRoot === "") {
     warning = "not-a-git-repository";
   } else {
+    // 记录里没有、但仓库里还在的分支也要避开（线程记录删了、分支还在是常态）。
+    const slugPrefix = `${branchName({ projectName: project.name, index: 1, projectId: project.id }).replace(/-1(-[A-Za-z0-9]+)?$/u, "")}-`;
+    const listed = await safeGit(deps.runGit, ["branch", "--list", `${slugPrefix}*`], repoRoot);
+    if (listed.code === 0) {
+      let maxIndex = index - 1;
+      for (const line of String(listed.stdout ?? "").split("\n")) {
+        const name = line.replace(/^[*+ ]+/u, "").trim();
+        if (!name.startsWith(slugPrefix)) continue;
+        const tail = name.slice(slugPrefix.length).match(/^(\d+)/u);
+        if (tail) maxIndex = Math.max(maxIndex, Number(tail[1]));
+      }
+      index = maxIndex + 1;
+    }
     const head = await safeGit(deps.runGit, ["rev-parse", "HEAD"], repoRoot);
     const candidatePath = worktreePath({ repoRoot, projectId, index });
     const candidateBranch = branchName({ projectName: project.name, index, projectId: project.id });
@@ -108,9 +126,33 @@ export async function createIsolatedThread(input) {
     }
   }
 
-  const createdSession = await deps.createSession({
-    cwd: isolated && worktree ? worktree : primaryDir,
-  });
+  /** @type {{ sessionId: string }} */
+  let createdSession;
+  try {
+    createdSession = await deps.createSession({
+      cwd: isolated && worktree ? worktree : primaryDir,
+    });
+  } catch (error) {
+    // AUD-PROJ-21：worktree/分支已经建好，但宿主建会话失败时以前什么都不回滚——
+    // 反复失败会在 `.dsh-worktrees/` 与 `dsh/*` 分支上累积孤儿（启动对账只处理
+    // 「记录在、磁盘没」，反向不删）。这里当场回滚，原始错误照旧抛给调用方。
+    if (isolated && worktree) {
+      try {
+        await safeGit(deps.runGit, planRemove({ path: worktree, force: true }), repoRoot);
+        if (branch) await safeGit(deps.runGit, planDeleteBranch(branch), repoRoot);
+        store.appendAudit?.({
+          action: "thread/worktree-rolled-back",
+          projectId,
+          worktree,
+          branch,
+          reason: "session-create-failed",
+        });
+      } catch {
+        /* 回滚失败不掩盖原始错误 */
+      }
+    }
+    throw error;
+  }
   const sessionId = String(createdSession.sessionId);
   store.attachThread(sessionId, projectId);
   // 记录线程实际落在哪个目录（多目录时 UI 要能说清「这条线程跑在哪个 root」）
@@ -256,51 +298,4 @@ export function reconcileWorktrees(store, deps) {
     }
   }
   return changes;
-}
-
-/**
- * 回收后的分支清理：只删**已合并**的 `dsh/*` 分支，未合并的一律保留。
- * @param {object} input
- * @param {any} input.store
- * @param {string} input.sessionId
- * @param {string} input.repoRoot
- * @param {ReclaimDeps} input.deps
- * @returns {Promise<{ deleted: boolean, reason: string }>}
- */
-export async function cleanupThreadBranch(input) {
-  const { store, sessionId, repoRoot, deps } = input;
-  const record = findThread(store, sessionId);
-  if (!record) return { deleted: false, reason: "unknown-thread" };
-  const branch = typeof record.branch === "string" ? record.branch : "";
-  if (branch === "") return { deleted: false, reason: "no-branch" };
-
-  const base = record.baseSha ? "HEAD" : "HEAD";
-  const merged = await safeGit(deps.runGit, ["branch", "--merged", base], repoRoot);
-  if (merged.code !== 0) return { deleted: false, reason: "merged-check-failed" };
-  const current = await safeGit(deps.runGit, ["rev-parse", "--abbrev-ref", "HEAD"], repoRoot);
-  // 只有在远端确实有这个分支时才查「未推送」；没有远端时 merged-into-HEAD 已是足够的判据
-  const remoteExists = await safeGit(
-    deps.runGit,
-    ["rev-parse", "--verify", `origin/${branch}`],
-    repoRoot,
-  );
-  const unpushed =
-    remoteExists.code === 0
-      ? await safeGit(deps.runGit, ["rev-list", "--count", `origin/${branch}..${branch}`], repoRoot)
-      : { code: 0, stdout: "0", stderr: "" };
-
-  const verdict = shouldDeleteBranch({
-    branch,
-    mergedBranches: parseMergedBranches(merged.stdout),
-    currentBranch: String(current.stdout ?? "").trim(),
-    unpushedCommits:
-      unpushed.code === 0 ? Number(String(unpushed.stdout ?? "0").trim()) : Number.NaN,
-  });
-  if (!verdict.ok) return { deleted: false, reason: verdict.reason };
-
-  const removed = await safeGit(deps.runGit, planDeleteBranch(branch), repoRoot);
-  if (removed.code !== 0)
-    return { deleted: false, reason: `delete-failed: ${firstLine(removed.stderr)}` };
-  store.setThreadWorktree(sessionId, { branch: null });
-  return { deleted: true, reason: "" };
 }
