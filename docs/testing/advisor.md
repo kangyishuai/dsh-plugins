@@ -1,6 +1,6 @@
 # advisor 测试清单
 
-> 目的：证明三件事——**只有主模型真的徵询时才产生模型调用**、**账本与四级预算真的记在账上、到顶会停**、
+> 目的：证明三件事——**只有主模型真的征询时才产生模型调用**、**账本与四级预算真的记在账上、到顶会停**、
 > **客户端只读面（`/advisor` 选择器、`status`、`doctor`）在真实 Electron 里不崩、不误发、不误记**。
 > 四层：**单测 → web 端到端冒烟 → 桌面只读回归 → 手工 GUI 验证**。前三层每次提交都跑（web 冒烟不花 token）；
 > 最后一层在发版、DSH 升级、以及改动客户端私有 seam（`commandUi.decorate`）后必须跑。
@@ -34,8 +34,8 @@ DSH_HOME=$H dsh --profile ad --port 0 --no-open
 | 位置                                             | 看什么                                                                                       |
 | ------------------------------------------------ | -------------------------------------------------------------------------------------------- |
 | `$H/advisor.settings.json`                       | 插件设置：`mode` / `provider` / `model` / 预算 / 隐私档位（改文件即生效）                    |
-| `$H/advisor/usage.jsonl`                         | 账本，一次徵询一行：`trigger`（`tool`/`shadow`/`manual`）、`verdict`、token、`costUsd`、`ms` |
-| 会话日志 `$H/sessions/<projectKey>/<sessionId>/` | `tool/call` + `tool/result`（工具路线的徵询）；`session/event` 里没有额外 usage              |
+| `$H/advisor/usage.jsonl`                         | 账本，一次征询一行：`trigger`（`tool`/`shadow`/`manual`）、`verdict`、token、`costUsd`、`ms` |
+| 会话日志 `$H/sessions/<projectKey>/<sessionId>/` | `tool/call` + `tool/result`（工具路线的征询）；`session/event` 里没有额外 usage              |
 | 工具卡 / `/advisor status`                       | 本次结论（`reviewed`/`declined`/`unavailable`/`skipped`）+ 累计 token + 最近一次跳过原因     |
 
 数据根优先级：`config.dataRoot` > `$DSH_HOME` > `~/.dsh`（所以上面的 `H` 变量就是它）。
@@ -47,7 +47,7 @@ DSH_HOME=$H dsh --profile ad --port 0 --no-open
 | `node --test`（`packages/advisor`）        | **115 pass / 0 fail**（adoption / anchors / catalog / client / guard / locale-parity / money / prompt / redact / route / settings / tool-schema / trace / transcript / twopass / verifier）                           |
 | `pnpm probe:runtime`                       | **67/67 PASS**（含 advisor 的 7 条 seam：`resolveModelInfo` / `prepareCall+configure` / `UNSUPPORTED_REASONING_EFFORT` / usage 分片 / `commands.register` / `commandUi.decorate` / `popupSelect`）                    |
 | `pnpm smoke:advisor-desktop --require`     | **19 PASS + 1 SKIP（20 项；真机 DSH 桌面版 0.2.2-rc.2，冷启动实测）**：插件加载、选择器、设置卡（含「读到的是展开后快照」这条回归断言）、分页 `status`/`doctor`（读会话日志）、收尾清理。`--advice` 再加 4 项共 24 项 |
-| 真机徵询（`pnpm pack` → `add` → 手动徵询） | **已完成**（2026-11-14 用 0.6.0 发布版补做，过程与证据见下面的 0.6.0 小节）                                                                                                                                           |
+| 真机征询（`pnpm pack` → `add` → 手动征询） | **已完成**（2026-11-14 用 0.6.0 发布版补做，过程与证据见下面的 0.6.0 小节）                                                                                                                                           |
 
 ## 0.6.2 在 0.2.2-rc.5 上的复核记录（2026-11-19，DSH 0.2.2-rc.5）
 
@@ -105,6 +105,34 @@ verify 并发时偶发红。现在 `createDecisionLog` 暴露 `flush()`（等所
 web 冒烟与桌面回归（由 lead 统一跑）；本批没有改 client 行为（只删了不生效的重复文案），15 项 web 冒烟与
 19 项桌面只读回归的断言均在本次改动范围之外。
 
+## 0.6.x 用户模拟交互修复批次（2026-11-28，DSH 0.2.2-rc.5）
+
+用户模拟审计（`notes/audit/2026-11-28/user-sim-u2.md` / `user-sim-u1.md`）里属于 advisor 的 5 条。
+这批**只动本插件**（host 半 + client 半 + locale + 本文 + 该插件的两份冒烟断言），没有改根配置/CI。
+
+| issue      | 修法                                                                                                                                                                                                                                                                                                | 守护它的测试                                                                                                                                                           |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| USIM-U2-07 | 命令回执第一行写成**原始命令行**（`commandReply`）；注册 `conversation.chat.commandview` 的 `advisor` keyed 渲染器，卡片显示原始命令行 + 完整多行正文（`pre-wrap`，不省略）；监听宿主 client 事件 `command/executed`，把多行输出放进右下角**命令回执面板**（不自动消失，点 ✕ 关闭；空白会话也可见） | `command-text.test.js`、`client.test.js`「command line and card view」「receipt of a local command execution」、`client-wiring.test.js`、web 冒烟 1 项 + 桌面回归 5 项 |
+| USIM-U2-08 | 设置页模式行加**生效状态徽标**（`effectiveState`，与 host 半 `effectiveStateOf` 同判据）；`/advisor status` 与 `/advisor doctor` 把「模式（保存值）」与「生效（真实状态 + 原因）」分开报；`/advisor on` 在未配置模型时**不再**把保存的 `mode` 改成 `advisory`                                       | `command-text.test.js`「effectiveStateOf / formatStatusText」、`client.test.js`「effective advisor state」、桌面回归 1 项                                              |
+| USIM-U2-14 | 用户可见文案里的繁体「徵询」统一成简体「征询」（`lib/**`、`locale/zh.json`、README、本文）                                                                                                                                                                                                          | `messages.test.js`「中英命令描述不同、都不含繁体「徵」」                                                                                                               |
+| USIM-U2-15 | 斜杠菜单命令描述改为中英双语：host 半自己读 `locale/<lang>.json` 的 `host` 段，按 `config.language` 或 `LANG`/`LC_ALL` 选语言，读不到回落英文（宿主没有 locale 服务，见 runtime §8.1）                                                                                                              | `messages.test.js`（加载/摊平/选语言/中英描述）、`locale-parity.test.js`（`host` 段不进 client 键集）                                                                  |
+| USIM-U1-11 | advisor 工具的 skip 结果不再把「已关闭 / 未配置 / shadow」这类内部开关状态交给主模型：`exposeSkip` 在 tool 触发时换成中性 code + 「不要把顾问状态写进给用户的回复」；`lastSkip` 仍留真实原因供状态/诊断使用                                                                                         | `tool-result.test.js`（4 项）                                                                                                                                          |
+
+验证口径：`node --test`（包内）= **232 pass / 0 fail**（203 → 232，新增 5 个测试文件里的 29 项），
+`pnpm verify` EXIT=0。按批次约定**没有**跑 web 冒烟与桌面回归（由 lead 统一跑）：
+
+- web 冒烟新增 1 项 Node 侧断言：「`/advisor` 命令回执第一行是原始命令行（日志）」；
+- 桌面只读回归新增 6 项断言：`/advisor status|doctor` 回执第一行 / status「生效：」行 / status 卡片 DOM 原始命令行 + 完整输出 / 命令回执面板出现 / doctor 卡片多行；断言选择器用 `data-advisor-command-card`、`data-advisor-receipt`，不依赖文案。**计数以 lead 的统一运行为准**，本文不虚构实测数字。
+
+宿主机制（本批的核心事实，均来自 `app.asar` 内随包源码）：
+
+- 命令节点由宿主 `dsh-client-ui-chat` 的 `command` 定义构建，`feature` 分组把**没有 groupTree** 的节点放进可折叠 process 组（标题固定 `message.stepProcess.done.thinking` =「已完成分析」）——插件没有扩展点把节点移出分组；
+- `GenericCommandCard` 只显示 `node.name`、单行 summary 走 CSS 省略号、`text.includes('
+')` 时才在**卡片第二层**折叠里给 `<pre>`；
+- `conversation.chat.commandview` 是 `command` 渲染器的 keyed 子 slot（`entryKey: command.name`），插件可整卡替换；
+- `command/executed` 只在**本浏览器本地提交成功**时由 `dsh-client-ui-commands` 广播（`notifyExecuted`），别的客户端/历史命令不会触发；
+- 工具结果给模型的是 `value`（JSON），`output.render` 只给界面（`dsh-tools` 的 `createSuccessResult`）——所以 U1-11 的泄漏源是 skip 结果里的 `code`/`reason`。
+
 ## 0.6.1 在 0.2.2-rc.3 上的复核记录（2026-11-14，DSH 0.2.2-rc.3）
 
 插件代码没有改动；这一版只验证「升级后仍然成立」。
@@ -132,7 +160,7 @@ web 冒烟与桌面回归（由 lead 统一跑）；本批没有改 client 行�
 
 结论：不是插件崩、也不是 rc.3 引入的回归，而是**顾问路由太慢、撞上了插件自己的 90 秒单次超时**。
 
-28 次真实徵询的耗时分布（同一份 `usage.jsonl`）：p50 **6.2s**、p90 **52.5s**、max **90.0s**；`>60s` 3 次，`≥90s` **2 次**——其中一次在 **2026-11-12** 就已经发生过（`ms:90007`），早于 rc.3，所以是这条路由的既有特征。
+28 次真实征询的耗时分布（同一份 `usage.jsonl`）：p50 **6.2s**、p90 **52.5s**、max **90.0s**；`>60s` 3 次，`≥90s` **2 次**——其中一次在 **2026-11-12** 就已经发生过（`ms:90007`），早于 rc.3，所以是这条路由的既有特征。
 
 顺带发现两个真问题（已修，见 changeset `advisor-timeout-code`）：
 
@@ -143,7 +171,7 @@ web 冒烟与桌面回归（由 lead 统一跑）；本批没有改 client 行�
 
 ### 修复后的真机端到端复验（2026-11-14 15:26，DSH 0.2.2-rc.3 + advisor 0.6.2）
 
-rc.3 桌面版重启后，在 **live 宿主**上把 `<DSH_HOME>/advisor.settings.json` 的 `timeoutMs` 临时改成 `5000`（允许的最小值），同时把 `maxInputChars` 压到 4000、`maxTokens` 压到 512，这样**万一没有超时，花费也可忽略**。然后触发一次真实徵询：
+rc.3 桌面版重启后，在 **live 宿主**上把 `<DSH_HOME>/advisor.settings.json` 的 `timeoutMs` 临时改成 `5000`（允许的最小值），同时把 `maxInputChars` 压到 4000、`maxTokens` 压到 512，这样**万一没有超时，花费也可忽略**。然后触发一次真实征询：
 
 ```
 顾问不可用（timeout）：顾问调用超时（5 秒）
@@ -203,13 +231,13 @@ rc.3 桌面版重启后，在 **live 宿主**上把 `<DSH_HOME>/advisor.settings
 | `node --test`（`packages/advisor`）     | **135 pass / 0 fail**（新增 `decisions.test.js` 15 项 + `decisions-wiring.test.js` 5 项） |
 | `pnpm probe:runtime`                    | **72/72 PASS**                                                                            |
 | `pnpm smoke:advisor`（web，不花 token） | **14/14**（新增「决策日志格式合法」一项）                                                 |
-| `pnpm smoke:advisor-desktop --require`  | **19 PASS + 1 SKIP**，0 FAIL（SKIP 是「该会话没有顾问记录」，脚本不制造徵询）             |
-| `pnpm advisor:review --home <temp>`     | 用 3 行样本跑通，输出徵询率/采纳率/分桶表与两类可疑样本                                   |
+| `pnpm smoke:advisor-desktop --require`  | **19 PASS + 1 SKIP**，0 FAIL（SKIP 是「该会话没有顾问记录」，脚本不制造征询）             |
+| `pnpm advisor:review --home <temp>`     | 用 3 行样本跑通，输出征询率/采纳率/分桶表与两类可疑样本                                   |
 
 本版新增的决策日志落在 `<数据根>/advisor/decisions.jsonl`，与 `usage.jsonl`（钱的账本）分开：
-一个回合一行，没徵询的回合也写。
+一个回合一行，没征询的回合也写。
 
-**真机徵询（手工 `/advisor ask`，2026-11-14）**：`trigger` 为 `manual` 的路径在真实桌面版上跑通。
+**真机征询（手工 `/advisor ask`，2026-11-14）**：`trigger` 为 `manual` 的路径在真实桌面版上跑通。
 
 ```
 命令输出：顾问认为无需建议。 2.1k in / 72 out / 4.6s / ≈¥0.0260
@@ -221,20 +249,20 @@ advice.jsonl：trigger=manual · status=declined · severity=nit · sessionId �
 两个观察（不是缺陷，记下来免得下次误判）：
 
 1. `/advisor ask` **不接受问句参数**——多带的文字会让命令报「无法识别的参数」；
-   它是「就当前会话内容徵询一次」，要指定重点请用 `/advisor ask` 后的其它子命令或直接让模型调用工具。
+   它是「就当前会话内容征询一次」，要指定重点请用 `/advisor ask` 后的其它子命令或直接让模型调用工具。
 2. `declined` 在界面上被渲染成「失败 advisor 顾问认为无需建议」——前缀来自宿主对「非成功结果」的
    统一渲染，不是插件报错；账本里的 `verdict` 才是准的。
 
 **第一次在真实日志上跑复盘（2026-11-14，16 个回合）**：
 
 ```
-回合：16 · 徵询：0（0.0%）
-未徵询的原因：skipped-not-requested 15 · skipped-other 1
-疑似漏徵询（有工具 + 长回答 + 无报错，但没徵询）：5 条（回答 1098–2860 字）
+回合：16 · 征询：0（0.0%）
+未征询的原因：skipped-not-requested 15 · skipped-other 1
+疑似漏征询（有工具 + 长回答 + 无报错，但没征询）：5 条（回答 1098–2860 字）
 ```
 
-结论：`postAnswer: off` 时徵询完全依赖主模型主动调用工具，实测一个都没发生——
-这正是「该徵询的时候没徵询」的证据，比拍脑袋定触发条件靠谱。顺带从真实数据里抓到一个归类 bug：
+结论：`postAnswer: off` 时征询完全依赖主模型主动调用工具，实测一个都没发生——
+这正是「该征询的时候没征询」的证据，比拍脑袋定触发条件靠谱。顺带从真实数据里抓到一个归类 bug：
 「回合被中断」被归到 `skipped-other`（`skipped-aborted` 从没被产出过），已改为优先用结束原因判定。
 
 单测与 seam 数字都会随实现增长，上面只是本次核对时的快照。
@@ -309,7 +337,7 @@ pnpm verify                        # 仓库门禁（含单测、规范、文档�
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 设置规整     | 默认 `mode: "off"`、未配置顾问；丢弃未知键；数字按区间夹紧（`0` 在预算字段里表示"不限"）；非法 `mode`/`privacyScope` 回落到默认；坏 JSON 不抛错只回落。                                                                                                                                                                                                                  |
 | 设置合并     | `mergeSettings` 只覆盖 patch 里出现的键；写入是原子写、读回一致。                                                                                                                                                                                                                                                                                                        |
-| 选路与配对   | 显式配置 > 会话当前模型 > 空路由（空路由 = 调用方放弃本次徵询）；档位比较 `ok` / `warn`（顾问更弱）/ `block` / `unknown`（**未校验**，不阻断也不假装通过）。                                                                                                                                                                                                             |
+| 选路与配对   | 显式配置 > 会话当前模型 > 空路由（空路由 = 调用方放弃本次征询）；档位比较 `ok` / `warn`（顾问更弱）/ `block` / `unknown`（**未校验**，不阻断也不假装通过）。                                                                                                                                                                                                             |
 | 预算         | 四级预算按固定顺序返回**第一个**不满足的条件；到顶的 code 可区分是哪一级；`0` = 不限制；**边界 `>=`**（已达上限即拒绝）且把本次预估花费算进日预算。                                                                                                                                                                                                                      |
 | 原子写       | `appendJsonLine` 逐行追加、并发不丢行、超阈值滚动；`writeTextAtomic` 唯一 tmp + rename、并发替换不互踩、不留临时文件；同一路径的任务串行、前一个失败不阻塞后一个。                                                                                                                                                                                                       |
 | 账本         | usage 追加不重写历史、并发 record 不丢行、每行带本地日键；启动时按 `day`（旧行按 `at` 的本地日期）恢复今日花费，恢复会话调用数与最近一小时时间戳；advice 追加与按日汇总。                                                                                                                                                                                                |
@@ -325,6 +353,11 @@ pnpm verify                        # 仓库门禁（含单测、规范、文档�
 | 本地日键     | `dayKey` 用本地日期分量（跨日边界、夏令时切换日）；`dayKeyOf` 对 ISO 时间按本地日折算、非法输入返回空串；`dayOfEntry` 合法 `day` 优先、畸形 `day` 回落到 `at`（`day.test.js`，时区无关，复审 F2）。                                                                                                                                                                      |
 | transcript   | 含工具调用与工具结果；**排除我们自己的工具调用**（`purpose: "advisor"` 那条）；`scope=off` 时不发工具往来；`system`/`developer` 消息不进 transcript；超长工具结果被截断并留痕；**脱敏在截断之前**生效；总预算超限时保留首尾并插入省略标记。                                                                                                                              |
 | 工具 schema  | 工具名与参数形状对齐参照实现（**零必填**，只有可选 `focus`）；只使用宿主支持的关键字子集（`minimum` 这类会被抓出来）；`renderToolOutput` 覆盖四种状态且不抛。                                                                                                                                                                                                            |
+| 命令文案     | `commandEcho` / `commandReply` 的第一行永远是 `/advisor <原始参数>`；`formatStatusText` 多行、含「生效」行，四种生效状态（on / shadow / off-mode / off-unconfigured）措辞正确；畸形 settings 不抛。                                                                                                                                                                      |
+| 生效状态     | client 的 `effectiveState` 与 host 半 `effectiveStateOf` 同判据：保存 `advisory` 但没配 provider/model → off/unconfigured；`shadow` 已配置 → shadow；`off` → off/mode。                                                                                                                                                                                                  |
+| 命令卡片     | `commandCardView` 从 `node.args` 还原原始命令行、剥掉正文里的命令行回显行、保留多行不截断；running/ok/error 三态；`receiptOf` 只认 advisor 命令并忽略空/畸形结果。                                                                                                                                                                                                       |
+| host 文案    | `locale/<lang>.json` 的 `host` 段中英都存在且非空；`flattenMessages`/`mapMessages` 兼容嵌套与平面键；`pickLanguage` 显式配置 > `LANG`/`LC_ALL` > 英文；中英描述不同且中文不含繁体「徵」。                                                                                                                                                                                |
+| 工具结果收敛 | `exposeSkip` 在 tool 触发时把 `disabled`/`not_configured`/`shadow_mode` 换成中性 code + 「不要播报」；`needs_confirmation` 与被动投递保留原文。                                                                                                                                                                                                                          |
 
 **没覆盖**：真实宿主槽位、真实 Electron 渲染进程、真实的 `llm.prepareCall/stream` 行为、`commandUi.decorate`
 在宿主里的实际渲染。所以下面两层不能省。
@@ -337,8 +370,8 @@ web 冒烟（`pnpm smoke:advisor`）→ 桌面只读回归（**永远带 `--requ
 
 ## 1.5 决策日志（`decisions.jsonl`）与复盘（`pnpm advisor:review`）
 
-宿主侧**每个回合**往 `<数据根>/advisor/decisions.jsonl` 写一行（没徵询的回合也写），
-用来回答「该徵询的时候有没有徵询」。字段与原因码定义在 `packages/advisor/lib/decisions.js`。
+宿主侧**每个回合**往 `<数据根>/advisor/decisions.jsonl` 写一行（没征询的回合也写），
+用来回答「该征询的时候有没有征询」。字段与原因码定义在 `packages/advisor/lib/decisions.js`。
 
 - 单测：`test/decisions.test.js`（归类/分桶/回填/统计/覆盖率）与 `test/decisions-wiring.test.js`
   （用真实事件序列驱动跟踪器，确认回合结束会落行、三种 outcome 都可达）。接线测试**不用 sleep**：
@@ -358,8 +391,8 @@ web 冒烟（`pnpm smoke:advisor`）→ 桌面只读回归（**永远带 `--requ
   的决策行、pending 也在下一回合才设置（复审 F7，属既有错位，本批只记录不改）。**会话结束不
   flush**：没有后续回合的 pending 会一直保持未回填（覆盖率里体现为 pending）。
 - **只记顶层会话**：`handleSessionEvent` 对子代理会话直接 return（避免 shadow 在子代理里叠加），
-  所以本文件的口径是「主会话的回合」。`pnpm advisor:review` 的徵询率/采纳率都是这个口径，
-  不能用来推断 fork/spawn 子代理里的徵询行为。
+  所以本文件的口径是「主会话的回合」。`pnpm advisor:review` 的征询率/采纳率都是这个口径，
+  不能用来推断 fork/spawn 子代理里的征询行为。
 - 复盘：`pnpm advisor:review [--home <数据根>] [--days N] [--json]`，只读本地文件。
 - 冒烟里只守住格式约定（存在就必须每行一个合法 JSON）；本冒烟不发真实回合，所以文件通常不存在。
 
@@ -368,7 +401,7 @@ web 冒烟（`pnpm smoke:advisor`）→ 桌面只读回归（**永远带 `--requ
 临时 `DSH_HOME`（复制 desktop profile、剥掉第三方插件、只放一个临时工作区）里启动**真实宿主**，
 装当前源码打出的包，再用 ego-browser 跑一遍「装得上、命令注册了、设置卡渲染了、且**什么都没花**」。
 
-**14 项断言（2026-11-14 实测全 PASS）**：
+**16 项断言（2026-11-14 实测 15/15；2026-11-28 新增 1 项 Node 侧断言，本轮未重跑）**：
 
 1. 页面可交互（`contenteditable` 输入框存在）；
 2. 插件 client 半已加载（`style[data-plugin]` 含 `@kangyishuai/dsh-advisor`）；
@@ -378,14 +411,20 @@ web 冒烟（`pnpm smoke:advisor`）→ 桌面只读回归（**永远带 `--requ
 6. 点「配置顾问」并展开高级与状态后：provider 下拉有候选（实测 45 条）、每日预算/发送范围/工作区限额/模型白名单/预览都在，且有 15 个「?」按需帮助按钮、无 `[data-advisor-error]`；
 7. 点开第一个「?」能展开内联说明（不是只靠 `title` 悬停）；
 8. 关闭设置卡（宿主随后弹出的「首次配置凭据」对话框不算失败）；
-   9–12. 会话日志里 `command/done` 依次有 `/advisor doctor`（含 ✅/⚠️ 结论）、`/advisor preview`（目标/将发送）、`/advisor confirm`（已允许或未配置）、`/advisor report all`（顾问报告或空态）；
-9. **整段冒烟没有生成 `advisor/usage.jsonl` 或 `advice.jsonl`** —— 证明它没有发起任何模型调用、没有花钱。
+9. 会话日志里 `command/done` 依次有 `/advisor doctor`（含 ✅/⚠️ 结论）；
+10. 会话日志里出现 `/advisor preview`（目标 / 将发送）；
+11. 会话日志里出现 `/advisor confirm`（已允许或未配置）；
+12. 会话日志里出现 `/advisor report all`（顾问报告或空态）；
+13. **整段冒烟没有生成 `advisor/usage.jsonl` 或 `advice.jsonl`** —— 证明它没有发起任何模型调用、没有花钱；
+14. **（2026-11-28 新增）** 会话日志里每条 `command/done` 的第一行都是原始命令行（`/advisor doctor|preview|confirm|report all`）——宿主的通用命令卡片只显示命令名，所以这条只能靠回执文本自己保证。
 
-设计边界：命令输出以**会话日志**为准（宿主的命令卡片在 DOM 里是折叠的，`innerText` 为空）；
-不点保存、不发消息、不徵询；`SMOKE_KEEP=1` 保留临时目录与 `host.log` 排障。
+（浏览器脚本检查与 Node 侧日志检查合计 16 项；1–8 来自浏览器脚本，9–14 是 Node 侧对会话日志/账本的检查。编号只是清单顺序，不严格对应实现里的 `check()` 调用。）
 
-> 不做「假 provider + 真实徵询」的原因：那需要把 provider 额度或回环网关写进冒烟，成本与可重复性都差；
-> 真实徵询链路由桌面冒烟（只读）与真机手工验证覆盖。
+设计边界：命令输出以**会话日志**为准（宿主的通用命令卡片在 DOM 里是折叠的；2026-11-28 起 advisor 自己注册了 keyed 命令卡片，DOM 里能读到原始命令行与完整正文，桌面回归新增了对应断言）；
+不点保存、不发消息、不征询；`SMOKE_KEEP=1` 保留临时目录与 `host.log` 排障。
+
+> 不做「假 provider + 真实征询」的原因：那需要把 provider 额度或回环网关写进冒烟，成本与可重复性都差；
+> 真实征询链路由桌面冒烟（只读）与真机手工验证覆盖。
 
 ## 3. 桌面只读回归
 
@@ -395,13 +434,13 @@ open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debuggin
 # 2) 跑（--require：连不上端口时失败而不是跳过）
 pnpm smoke:advisor-desktop --require
 # 端口不同时：DSH_CDP_PORT=9333 pnpm smoke:advisor-desktop --require
-# 连真实徵询记录一起看（opt-in；只读，脚本不发起徵询）：
+# 连真实征询记录一起看（opt-in；只读，脚本不发起征询）：
 pnpm smoke:advisor-desktop --require --advice
 ```
 
 默认**只读**：只开菜单/对话框、读 DOM/文本、再 Esc 关闭；**不选任何模型、不改任何设置值、不点保存、
-不触发真实徵询、不写账本**，因此可以直接跑在真实 profile 上。默认 20 项、加 `--advice` 后 24 项
-（没有顾问记录 / 没有选中 provider 的项记 SKIP，不算失败）。断言清单（✅ = 脚本已覆盖；⬜ = 仍是待补项）：
+不触发真实征询、不写账本**，因此可以直接跑在真实 profile 上。默认 20 项、加 `--advice` 后 24 项
+（没有顾问记录 / 没有选中 provider 的项记 SKIP，不算失败）。**2026-11-28 这轮新增 13–18 共 6 项命令面断言，按批次约定没有重跑桌面回归**，所以上面「默认 20 项」是旧口径，实际脚本现在是 26 项；PASS/SKIP 以 lead 统一运行为准。断言清单（✅ = 脚本已覆盖；⬜ = 仍是待补项）：
 
 1. ✅ 连上桌面 UI（CDP）；
 2. ✅ 插件 client 半已加载：`style[data-plugin="@kangyishuai/dsh-advisor"]`；
@@ -411,7 +450,7 @@ pnpm smoke:advisor-desktop --require --advice
    「确认跨 provider 发送」（没选 provider 时这项记 SKIP）；**不点保存、不改任何值**；关掉后对话框消失。
    文案从 `packages/advisor/locale/{zh,en}.json` 读，英文界面同样能过；
 5. ✅ 回合尾部顾问线（只读）：页面上有 `.dsh-advisor-turn` 时 headline 为「顾问 · 严重度」
-   （`declined` 时是「顾问认为无需建议」）；**没有记录就记 SKIP**——脚本不制造徵询；
+   （`declined` 时是「顾问认为无需建议」）；**没有记录就记 SKIP**——脚本不制造征询；
 6. ✅ 输入 `/advisor` 回车 → 打开**宿主选择器**（有搜索框、有行），按 Esc 关闭、焦点回到输入框；
 7. ⬜（未断言）选择器行里至少有一条来自宿主已配置路由（`provider/model` 文本可读），且**没有任何一行**泄露
    `baseURL`/`apiKey`；
@@ -420,8 +459,14 @@ pnpm smoke:advisor-desktop --require --advice
 10. ✅ `/advisor doctor` 每行都有结论（`✅`/`⚠️`/`❌`）+ 下一步动作，不允许只回一句 error；
 11. ✅（**web 冒烟**）整段过程**账本行数不变**：断言临时 `DSH_HOME` 里没有生成 `advisor/usage.jsonl` 与 `advice.jsonl`（即没有任何模型调用）；
 12. ⬜（未断言）仓库 cwd 没有多出文件（脚本自身 cwd 污染是最容易漏的一条）。
+13. ✅（2026-11-28 新增）`/advisor status` 回执第一行是 `/advisor status`（会话日志）；
+14. ✅（新增）`/advisor status` 回执含「生效：」行（会话日志）；
+15. ✅（新增）插件命令卡片 `[data-advisor-command-card]` 的 `data-command-line` = `/advisor status`，`textContent` 含「生效：」（DOM，宿主的通用卡片做不到）；
+16. ✅（新增）提交命令后 `[data-advisor-receipt]` 立即出现且文本含「模式：」（不展开宿主折叠分组也能看见）；
+17. ✅（新增）`/advisor doctor` 回执第一行是 `/advisor doctor`（会话日志）；
+18. ✅（新增）`/advisor doctor` 卡片的 DOM 文本至少 3 行（多行检查结果完整渲染）；
 
-`--advice`（opt-in，只读已有记录，**脚本本身不发起徵询**；会被打印一行 `COST:` 提醒）再加 4 项：
+`--advice`（opt-in，只读已有记录，**脚本本身不发起征询**；会被打印一行 `COST:` 提醒）再加 4 项：
 
 - ✅ `/advisor report` 输出含「顾问报告」或「还没有顾问记录」；
 - ✅ 有 `.dsh-advisor-turn` 时点开 headline，展开体含 `model · usage`（`910 in / 354 out`，上万会缩成 `9.1k`），
@@ -431,7 +476,7 @@ pnpm smoke:advisor-desktop --require --advice
 `data-plugin` 打出来——这是最省事的"是不是装错 profile / 没重启"判断依据。第 4 项的新字段是 P3 才有的：
 桌面装的是旧构建（如 0.1.0；当前 0.2.0 已齐）时会失败，先 `pnpm pack` + `dsh plugin add` 再重跑，失败 detail 里也写了这句提示。
 
-`--deep`（可选，P1 不做）：真要跑徵询链时再补，要求显式传专用工作区、并在临时 profile 里跑。
+`--deep`（可选，P1 不做）：真要跑征询链时再补，要求显式传专用工作区、并在临时 profile 里跑。
 
 ## 3.5 设置页卡片（写操作 5 步，CDP 脚本）
 
@@ -446,7 +491,7 @@ pnpm smoke:advisor-desktop --require --advice
 
 **2026-11-11 真机结果：8/8 PASS**（DSH 桌面版 0.2.2-rc.1）。诊断输出含「44 条 provider 路由」「上下文 1000000 · 思考档 off/low/high/max」「账本 3 次 · 14428 in / 690 out」。
 
-同一次真机会话里还验证了顾问线与报告（花一次徵询）：
+同一次真机会话里还验证了顾问线与报告（花一次征询）：
 
 - 回合尾部出现 `顾问 · 轻微 <摘要>`，点开可见完整建议与 `zhinao/deepseek/deepseek-v4.1-flash · 910 in / 354 out · 4.2s`；
 - **只有带记录的回合渲染**（该会话恰好一条记录、页面恰好一个 `.dsh-advisor-turn`）；
@@ -467,7 +512,7 @@ pnpm smoke:advisor-desktop --require --advice
 
 **真机手工检查（有顾问记录之后）**：
 
-1. `对话里发生过一次徵询` 后，回合尾部应出现「顾问 · <severity> <摘要>」一行；点开能看到完整建议与 `model · usage`；没有顾问记录的回合**不出现空壳**。
+1. `对话里发生过一次征询` 后，回合尾部应出现「顾问 · <severity> <摘要>」一行；点开能看到完整建议与 `model · usage`；没有顾问记录的回合**不出现空壳**。
 2. 若建议里引用的 tool-call id / 路径在对话里找不到，展开内容应带「证据锚点未对上（N 条）」且严重度已降档。
 3. `/advisor report` 输出投递/采纳/锚点三行统计 + 最近 5 条；采纳判定必须给出依据（命中的信号），否则显示「未判定」。
 
@@ -482,11 +527,11 @@ pnpm smoke:advisor-desktop --require --advice
 **手工/真机检查**：
 
 1. `/advisor preview` 不触发任何模型调用，但输出里的「将发送 N 字符」「省略 M 字符」「脱敏命中」「单价来源」「工作区今日」要与实际相符。
-2. 主模型与顾问 provider 不同时，首次徵询应返回 `needs_confirmation`；`/advisor confirm` 之后正常。
+2. 主模型与顾问 provider 不同时，首次征询应返回 `needs_confirmation`；`/advisor confirm` 之后正常。
 3. `advisorTools: true` 时，顾问若返回 `needs`，工具结果里应带 `verification.read`；读不到的文件出现在 `verification.refused`，且首轮结论保留。
 4. `/advisor report all` 读跨会话账本，按严重度/模型/日期汇总。
-5. `workspaceMaxCallsPerDay` 到顶后，任何会话的徵询都返回 `workspace_calls`（跨会话共享）。
-6. 有顾问记录的回合，展开回合尾部顾问线应看到 `本次徵询：<触发方式> · <HH:mm> · <model> · <字符数> · <in/out/耗时/≈$>`；旧记录没有 `requestChars` 时缺字符数，但其余已有字段仍应显示。
+5. `workspaceMaxCallsPerDay` 到顶后，任何会话的征询都返回 `workspace_calls`（跨会话共享）。
+6. 有顾问记录的回合，展开回合尾部顾问线应看到 `本次征询：<触发方式> · <HH:mm> · <model> · <字符数> · <in/out/耗时/≈$>`；旧记录没有 `requestChars` 时缺字符数，但其余已有字段仍应显示。
 7. `tracePrompt: preview` 时，展开顾问线点「查看发送内容」应看到本次实际发送文本的首尾片段（中间有省略标记）；`tracePrompt: off` 时同一位置显示「这条记录没有保存发送内容」。预览是脱敏后的文本，关闭 `redact` 时则是原文片段。
 8. 币种：切到人民币、汇率 7.2，保存后每日预算填 7.2 元；`/advisor preview` 的单价/预算显示 `¥`，预算闸按 7.2 CNY = 1 USD 比较；切回 USD 时金额按汇率折回，真实价值不变。旧 `maxCostPerDayUsd` 文件应自动迁移成 `maxCostPerDay`（USD）。
 9. 缓存单价：填缓存读取/写入单价并保存；`/advisor preview` 的单价行应显示缓存读取/写入价。账本里有缓存 token 且两个缓存单价为 0 时，状态区应提示「缓存 token 未计价」；填了缓存单价后，顾问线 usage 里的缓存 token 与成本应一起变化。
@@ -498,7 +543,7 @@ pnpm smoke:advisor-desktop --require --advice
 | 设置卡 P3 字段        | **PASS**：`工作区每日调用上限` / `工作区每日预算` / `预览会发什么` / `模型白名单` / `确认跨 provider 发送` 全部渲染（默认折叠，桌面冒烟会先展开），`data-advisor-error` 不存在                                             | DOM（`[data-advisor-settings]` 的 `innerText`） |
 | `/advisor preview`    | **PASS**：输出「目标 / 发送范围 / 将发送 60022 字符（约 20008 tokens）/ 上下文省略 20947 字符 / 工具往来 376 调用 376 结果 / 脱敏命中 kv-assignment / 白名单 未设置 / 跨 provider 否 / 单价 内置参考价 / 工作区今日 0 次」 | 会话日志 `command/done`（seq 2736）             |
 | `/advisor confirm`    | **PASS**：「已允许把会话内容发送到「zhinao」」                                                                                                                                                                             | 会话日志（seq 2720）                            |
-| `/advisor report all` | **PASS（空态）**：「还没有任何建议记录。」——P3 之前的 3 次徵询发生在建议账本上线前，所以文件为空                                                                                                                           | 会话日志（cmd-…-14 / -18）                      |
+| `/advisor report all` | **PASS（空态）**：「还没有任何建议记录。」——P3 之前的 3 次征询发生在建议账本上线前，所以文件为空                                                                                                                           | 会话日志（cmd-…-14 / -18）                      |
 
 **一个 UI 观测**：命令结果卡片在聊天流里是**折叠**的，且展开后 `innerText` 仍为空（宿主命令卡片的渲染方式）；命令**执行结果本身**可从会话日志的 `command/done.data.text` 读到。因此自动化断言命令输出时，优先读会话日志而不是 DOM。
 
@@ -508,8 +553,8 @@ pnpm smoke:advisor-desktop --require --advice
 | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `shadow`             | **PASS**：`/advisor shadow` + 一轮「回复两个字」→ 账本新增 `trigger=shadow`、`turn=16`（绝对回合号）；回合尾部渲染出「顾问认为无需建议」                                                                                                                                                |
 | 顾问线渲染           | **PASS**，但修了两个真 bug：①`turn` 曾用插件自己累计的计数，与 `props.turn` 对不上；②client 把 `advice` 结果按 sessionId 永久缓存，而影子建议在 `turn/end` 之后才落盘 → 永不刷新。现在缓存带 3s TTL 且未命中本回合时 2.5s/4s 各强制重取                                                 |
-| 锚点校验（advisory） | **PASS**：真机一次徵询 `anchors: {checked:2, verified:0, downgraded:true}`，即顾问引用的 2 个锚点在会话里都对不上，严重度被降档                                                                                                                                                         |
-| 两阶段取证           | **未端到端触发**：连续三次徵询（含显式 focus）顾问都没有返回 `needs`。编排已抽成 `runEvidencePass` 纯函数并用 4 条单测固定语义（无 needs 不动 / 读到文件则第二轮生效 / 越界记为 refused / 第二轮失败保留首轮）；提示词已把 `needs` 写进契约。模型是否请求证据属于模型行为，不是代码路径 |
+| 锚点校验（advisory） | **PASS**：真机一次征询 `anchors: {checked:2, verified:0, downgraded:true}`，即顾问引用的 2 个锚点在会话里都对不上，严重度被降档                                                                                                                                                         |
+| 两阶段取证           | **未端到端触发**：连续三次征询（含显式 focus）顾问都没有返回 `needs`。编排已抽成 `runEvidencePass` 纯函数并用 4 条单测固定语义（无 needs 不动 / 读到文件则第二轮生效 / 越界记为 refused / 第二轮失败保留首轮）；提示词已把 `needs` 写进契约。模型是否请求证据属于模型行为，不是代码路径 |
 | `/advisor cancel`    | **无法自动化**：命令面串行执行，`/advisor ask` 在 handler 内同步等待，第二个命令进不来；真机没有可并发的在途请求可取消                                                                                                                                                                  |
 
 ## 4. 手工 GUI 验证步骤
@@ -519,12 +564,12 @@ pnpm smoke:advisor-desktop --require --advice
 1. **装包**：`cd packages/advisor && pnpm pack --pack-destination /tmp`，然后
    `DSH_HOME=$H dsh plugin --profile ad add /tmp/kangyishuai-dsh-advisor-*.tgz`。
 2. **重启桌面版**（host 半）并**刷新页面**（client 半）：侧栏/会话区正常，插件已激活，无报错。
-3. **确认默认关闭**：打开一个会话，直接问一句普通问题 → 模型**不应该**徵询（账本文件不存在或行数不变）；
+3. **确认默认关闭**：打开一个会话，直接问一句普通问题 → 模型**不应该**征询（账本文件不存在或行数不变）；
    工具卡里不该出现顾问结果。
 4. **选顾问**：输入 `/advisor` 回车 → 宿主选择器弹出，列出宿主已配置的 provider × model；
    选中一条 → toast 提示"顾问已设为 `provider/model`"；`/advisor status` 里的顾问变了。
    刻意选一条缺凭据的路由 → 行上标 ⚠ 且选中后给"去配置"提示，而不是静默失败。
-5. **徵询一次**：问一个需要动手的任务（例如"先看这个仓库的测试命令再改一个地方"），让模型在动手前调用
+5. **征询一次**：问一个需要动手的任务（例如"先看这个仓库的测试命令再改一个地方"），让模型在动手前调用
    `advisor` → 工具卡出现结论（`reviewed` / `declined` / `unavailable`），展开能看到建议文本与 token；
    账本 `$H/advisor/usage.jsonl` **多一行**，`verdict`/`provider`/`model`/token 与工具卡一致。
 6. **看账本**：`/advisor status` 的累计 token 与账本最后一行对得上；`/advisor doctor` 每行都有结论。
@@ -534,13 +579,13 @@ pnpm smoke:advisor-desktop --require --advice
 8. **off 真的不发请求**：`/advisor off` → 完成一轮 → 账本行数不变。**注意**：`off` 时工具仍然注册
    （缓存安全），`execute` 直接返回 `disabled`——所以你可能看到一条 `skipped`/`disabled` 的工具结果，
    但那不是一次模型调用。
-9. **预算到顶**：把 `maxCallsPerTurn` 或 `maxCallsPerSession` 临时改成 0/1，再让模型徵询 → 得到
+9. **预算到顶**：把 `maxCallsPerTurn` 或 `maxCallsPerSession` 临时改成 0/1，再让模型征询 → 得到
    `budget_exhausted`（说清是哪一级），账本不再增长；改回后恢复。
-10. **隐私**：把 `privacyScope` 改成 `off` → 徵询应被跳过并说明原因；改回 `summary` 后恢复。
-    检查脱敏：在会话里贴一段形如 `sk-xxxx` 的假 token，徵询后看账本/工具卡里没有原文。
-11. **子代理会话**：在子代理会话里让模型徵询 → 要么按配置拒绝（`no_session` 一类原因），要么行为与主会话
-    一致且账本记录 `sessionId`；不允许出现"子代理里徵询把主会话带崩"。
-12. **递归**：跑一个多步回合并让模型徵询 2–3 次，观察**不出现自我循环**（账本行数应等于模型实际徵询次数，
+10. **隐私**：把 `privacyScope` 改成 `off` → 征询应被跳过并说明原因；改回 `summary` 后恢复。
+    检查脱敏：在会话里贴一段形如 `sk-xxxx` 的假 token，征询后看账本/工具卡里没有原文。
+11. **子代理会话**：在子代理会话里让模型征询 → 要么按配置拒绝（`no_session` 一类原因），要么行为与主会话
+    一致且账本记录 `sessionId`；不允许出现"子代理里征询把主会话带崩"。
+12. **递归**：跑一个多步回合并让模型征询 2–3 次，观察**不出现自我循环**（账本行数应等于模型实际征询次数，
     不是指数增长）。这是本插件唯一能把自己跑死的缺陷，手工也要看一眼。
 13. **升级回归**：升级 DSH 后重跑第 4–12 步；选择器打不开、`status` 空白、或账本突然停记，多半是宿主私有
     seam 变了——先看 `/advisor doctor`，再对照 [§5](#5-dsh-升级时要重点看的宿主事实) 核对。

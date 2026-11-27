@@ -218,7 +218,7 @@ export async function callAdvisor(input) {
   };
 
   try {
-    // 整个尝试（含一次降级重试）共用一个 deadline：超时是「这次徵询最多等多久」，
+    // 整个尝试（含一次降级重试）共用一个 deadline：超时是「这次征询最多等多久」，
     // 不是「每一轮最多等多久」。
     const outcome = await raceWithDeadline(attempt(), deadline);
     if (outcome.kind === "timeout" || outcome.kind === "aborted") {

@@ -239,6 +239,22 @@
     "settings.summary.route": "Route",
     "settings.summary.budget": "Budget",
     "settings.route.unset": "not chosen",
-    "settings.budget.unlimited": "Unlimited"
+    "settings.budget.unlimited": "Unlimited",
+    "settings.effective.aria": "Effective status",
+    "settings.effective.on": "In effect",
+    "settings.effective.shadow": "Shadow: log only",
+    "settings.effective.off": "Off",
+    "settings.effective.off.unconfigured": "Off: no advisor model selected",
+    "settings.effective.off.mode": "Off: mode is off",
+    "settings.effective.note": "Settings save a preference; this shows what actually takes effect.",
+    "command.running": "Running…",
+    "command.failed": "Failed",
+    "command.card.aria": "Advisor command output",
+    "receipt.title": "Advisor command receipt",
+    "receipt.close": "Dismiss receipt"
+  },
+  "host": {
+    "command.description": "Consult the advisor: status, choose a model, ask now, or turn it off",
+    "command.hint": "[status|on|off|shadow|ask|cancel|report|doctor|confirm|preview|<provider>/<model>]"
   }
 }

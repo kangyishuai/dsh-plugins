@@ -2,7 +2,7 @@
 // host 半：服务名 advisor。
 //
 // 职责：
-//   1) 注册 `advisor` 工具（主模型在关键时刻徵询第二模型，结果作为工具结果回到主模型）；
+//   1) 注册 `advisor` 工具（主模型在关键时刻征询第二模型，结果作为工具结果回到主模型）；
 //   2) 注册 `/advisor` 命令（status / ask / cancel / doctor / on / off / <route>）；
 //   3) 对客户端暴露代理 RPC（routes / models / modelInfo / candidates / setModel / state / doctor）；
 //   4) shadow 模式：回合结束后跑一次顾问，只记账不回灌。
@@ -13,6 +13,7 @@
 //   - `session/event` 监听器里**同步** append 会撞重入保护 ⇒ 一律异步一拍再写。
 
 import { randomBytes } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { appendPluginRecord, pluginRecordOf } from "@deepseek-ai/dsh-session";
 import { Remote, RemoteError, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 import { summarizeAdoption } from "./adoption.js";
@@ -20,6 +21,13 @@ import { applyAnchorVerdict, buildIndex, verifyAnchors } from "./anchors.js";
 import { checkPool, createBudgetPool } from "./budget.js";
 import { callAdvisor } from "./call.js";
 import { checkAllowlist, effectivePrice } from "./catalog.js";
+import {
+  COMMAND_NAME,
+  commandReply,
+  effectiveLine,
+  effectiveStateOf,
+  formatStatusText,
+} from "./command-text.js";
 import { createDecisionLog, createDecisionTracker } from "./decisions.js";
 import {
   checkBudget,
@@ -30,6 +38,7 @@ import {
   rememberFingerprint,
 } from "./guard.js";
 import { createLedger } from "./ledger.js";
+import { FALLBACK, loadMessagesSync, pickLanguage } from "./messages.js";
 import { formatMoney, fromUsd } from "./money.js";
 import { parseAdvice, summarizeAdvice, TOOL_DESCRIPTION } from "./prompt.js";
 import { pairingCheck, resolveRoute } from "./route.js";
@@ -40,6 +49,7 @@ import {
   saveSettings,
   settingsPath,
 } from "./settings.js";
+import { exposeSkip } from "./tool-result.js";
 import { renderToolOutput, TOOL_NAME, TOOL_OUTPUT_SCHEMA, TOOL_PARAMETERS } from "./tool-schema.js";
 import { buildTracePreview } from "./trace.js";
 import { buildTranscript } from "./transcript.js";
@@ -48,8 +58,8 @@ import { runEvidencePass } from "./twopass.js";
 /** plugin record 类型（必须匹配 ^plugin:[a-z0-9][a-z0-9._-]*(/[...])*$）。 */
 export const ADVICE_RECORD = "plugin:advisor/advice";
 
-/** 命令名：`/advisor`。 */
-export const COMMAND_NAME = "advisor";
+/** 命令名：`/advisor`（定义在 command-text.js，这里重导出保持对外入口不变）。 */
+export { COMMAND_NAME };
 
 /**
  * 与 session-rewind / next-step 相同的原因：运行时不支持装饰器语法，用命令式方式登记 Remote。
@@ -95,6 +105,15 @@ function joinHome() {
 }
 
 /**
+ * 包内 locale 目录：npm 包随 `files` 发布，安装路径里可能有空格，
+ * 所以用 `fileURLToPath(new URL(...))` 而不是手拼字符串。
+ * @returns {string}
+ */
+function localeDirOf() {
+  return fileURLToPath(new URL("../locale/", import.meta.url));
+}
+
+/**
  * 安全取宿主服务。
  * @param {any} ctx
  * @param {string} name
@@ -117,8 +136,8 @@ function serviceOf(ctx, name) {
  * 子代理会话判定（shadow 只在顶层会话跑，避免多份顾问调用叠加）。
  *
  * 同一个判据也决定**决策日志的口径**（审计 AUD-ADV-08）：子代理回合不写 decisions.jsonl，
- * 所以 `pnpm advisor:review` 的徵询率/采纳率是「主会话」口径，不能用来推断 fork/spawn
- * 子代理里的徵询行为。README 的决策日志一节写明了这一点。
+ * 所以 `pnpm advisor:review` 的征询率/采纳率是「主会话」口径，不能用来推断 fork/spawn
+ * 子代理里的征询行为。README 的决策日志一节写明了这一点。
  * @param {any} session
  * @returns {boolean}
  */
@@ -149,8 +168,23 @@ export class AdvisorService extends TypertRemoteService {
     this.config = config ?? {};
     this.logger = ctx?.logger ?? console;
     this.dataRoot = resolveDataRoot(this.config);
+    /**
+     * host 半可见文案：宿主的 `commands.register()` 只认注册时的字面量，
+     * 自己读 `locale/<lang>.json`（见 lib/messages.js 文件头的宿主事实）。
+     * 加载失败一律回落英文 FALLBACK，命令本身不能因为文案读不到而注册失败。
+     * @type {{ description: string, hint: string }}
+     */
+    this.messages = { ...FALLBACK };
+    try {
+      this.messages = {
+        ...FALLBACK,
+        ...loadMessagesSync(localeDirOf(), pickLanguage(this.config?.language)),
+      };
+    } catch (error) {
+      this.warn("cannot load advisor locale messages", error);
+    }
     this.ledger = createLedger({ home: this.dataRoot, logger: this.logger });
-    // 决策日志：一个回合一行，回答「该徵询的时候有没有徵询」，与钱的账本分开。
+    // 决策日志：一个回合一行，回答「该征询的时候有没有征询」，与钱的账本分开。
     this.decisions = createDecisionLog({ home: this.dataRoot, logger: this.logger });
     // 回合跟踪器：事件 → 特征 → 决策行 → outcome 回填（逻辑在 decisions.js，可单测）。
     this.decisionTracker = createDecisionTracker({ log: this.decisions });
@@ -160,7 +194,7 @@ export class AdvisorService extends TypertRemoteService {
     this.settingsCache = { at: 0, value: null };
     /** 每会话回合序号（工具路径拿不到 turn，自己数）。 @type {Map<string, number>} */
     this.turnOf = new Map();
-    /** 在途徵询（cancel 用）。 @type {Map<string, AbortController>} */
+    /** 在途征询（cancel 用）。 @type {Map<string, AbortController>} */
     this.inflight = new Map();
     /** 去重表（被动投递用：shadow / post-answer）。 @type {Map<string, number>} */
     this.seen = new Map();
@@ -170,7 +204,7 @@ export class AdvisorService extends TypertRemoteService {
     this.lastResult = null;
     /** 每会话已投递的建议条数（sessionCap 用）。 @type {Map<string, number>} */
     this.delivered = new Map();
-    /** 每会话最近一次「为什么没徵询」。 @type {Map<string, string>} */
+    /** 每会话最近一次「为什么没征询」。 @type {Map<string, string>} */
     this.lastSkip = new Map();
     /** @type {{ calls: number, failures: number, skipped: number, shadow: number }} */
     this.counters = { calls: 0, failures: 0, skipped: 0, shadow: 0 };
@@ -353,10 +387,10 @@ export class AdvisorService extends TypertRemoteService {
     }
   }
 
-  // ---- 核心：一次徵询 ----------------------------------------------------
+  // ---- 核心：一次征询 ----------------------------------------------------
 
   /**
-   * 跑一次顾问徵询。所有失败都返回结构化结果，绝不抛。
+   * 跑一次顾问征询。所有失败都返回结构化结果，绝不抛。
    * @param {{ session: any, trigger: "tool"|"shadow"|"manual"|"post-answer", focus?: string, signal?: AbortSignal }} input
    * @returns {Promise<any>}
    */
@@ -365,14 +399,20 @@ export class AdvisorService extends TypertRemoteService {
     const settings = await this.currentSettings();
     const sessionId = typeof session?.id === "string" ? session.id : "";
 
-    /** @param {string} reason @param {string} [code] */
+    /**
+     * 记一条内部跳过：`lastSkip` 留真实原因（状态面板/诊断用），
+     * 返回给调用方的 code/reason 走 {@link exposeSkip} —— 工具触发时内部开关状态
+     * 不进模型上下文（审计 USIM-U1-11）。
+     * @param {string} reason @param {string} [code]
+     */
     const skip = (reason, code = "skipped") => {
       if (sessionId !== "") this.lastSkip.set(sessionId, reason);
       this.counters.skipped += 1;
+      const exposed = exposeSkip({ trigger, code, reason });
       return {
         status: "skipped",
-        code,
-        reason,
+        code: exposed.code,
+        reason: exposed.reason,
         advice: "",
         severity: "nit",
         risks: [],
@@ -383,7 +423,7 @@ export class AdvisorService extends TypertRemoteService {
 
     if (settings.mode === "off") return skip("顾问已关闭（/advisor on 打开）", "disabled");
     if (!isConfigured(settings)) return skip("还没配置顾问模型（/advisor 选择）", "not_configured");
-    // shadow 的语义是「只记账、不回灌」。模型主动徵询时同样不给建议，
+    // shadow 的语义是「只记账、不回灌」。模型主动征询时同样不给建议，
     // 否则它照样会把建议吃进上下文，shadow 就名不副实。
     if (trigger === "tool" && settings.mode === "shadow") {
       return skip(
@@ -409,7 +449,7 @@ export class AdvisorService extends TypertRemoteService {
     const allow = checkAllowlist(settings.allowedModels, resolved.route);
     if (!allow.allowed) return skip(`白名单拦截：${allow.reason}`, "not_allowed");
 
-    // 跨 provider 首次徵询需要显式确认（数据会离开本机去另一家）。
+    // 跨 provider 首次征询需要显式确认（数据会离开本机去另一家）。
     const mainProvider = typeof mainModel?.provider === "string" ? mainModel.provider : "";
     if (mainProvider !== "" && mainProvider !== resolved.route.provider) {
       const confirmed =
@@ -419,7 +459,7 @@ export class AdvisorService extends TypertRemoteService {
         return {
           status: "skipped",
           code: "needs_confirmation",
-          reason: `跨 provider 首次徵询需要确认：会话内容会发送到「${resolved.route.provider}」。运行 /advisor confirm 允许，或 /advisor preview 先看会发什么`,
+          reason: `跨 provider 首次征询需要确认：会话内容会发送到「${resolved.route.provider}」。运行 /advisor confirm 允许，或 /advisor preview 先看会发什么`,
           advice: "",
           severity: "nit",
           risks: [],
@@ -738,7 +778,7 @@ export class AdvisorService extends TypertRemoteService {
     advice.severity = verdict.severity;
     advice.advice = verdict.advice;
 
-    // 被动投递（shadow / post-answer）才需要「别重复、别连着烦」；模型主动徵询永远放行。
+    // 被动投递（shadow / post-answer）才需要「别重复、别连着烦」；模型主动征询永远放行。
     const passive = trigger === "shadow" || trigger === "post-answer";
     if (passive && advice.verdict === "reviewed" && !hollow) {
       const fingerprintId = fingerprint(advice.advice);
@@ -835,7 +875,7 @@ export class AdvisorService extends TypertRemoteService {
     };
     this.lastResult = result;
 
-    // 决策日志：本回合确实徵询了，记下结果（回合结束时消费，用来算徵询率与采纳率）。
+    // 决策日志：本回合确实征询了，记下结果（回合结束时消费，用来算征询率与采纳率）。
     if (this.lastResult === result && result.status === "reviewed") {
       this.decisionTracker.noteAdvice(sessionId, {
         adviceId,
@@ -977,10 +1017,10 @@ export class AdvisorService extends TypertRemoteService {
         scope.effect(() => {
           const dispose = scope.commands.register({
             name: COMMAND_NAME,
-            description: "Consult the advisor: status, choose a model, ask now, or turn it off",
-            input: {
-              hint: "[status|on|off|shadow|ask|cancel|report|doctor|confirm|preview|<provider>/<model>]",
-            },
+            // 宿主逐字透传、不会翻译（docs/runtime/0.2.2-rc.5.md §8.1），
+            // 所以文案来自包内 locale/*.json 的 host 段（lib/messages.js）。
+            description: this.messages.description,
+            input: { hint: this.messages.hint },
             /** @param {{ agent: any, rawInput: string }} invocation */
             handler: (invocation) => this.handleCommand(invocation),
           });
@@ -1003,72 +1043,71 @@ export class AdvisorService extends TypertRemoteService {
     const session = invocation?.agent?.session;
     const sessionId = typeof session?.id === "string" ? session.id : "";
     const settings = await this.currentSettings();
+    /**
+     * 所有回执的第一行都是**原始命令行**（审计 USIM-U2-07）：宿主的通用命令卡片只显示
+     * 命令名（`advisor`）、不显示用户敲的子命令；单行 summary 还会被 CSS 省略号截断。
+     * 所以文本本身必须自带「我敲了什么」，插件自己的命令卡片再把正文完整展开。
+     * @param {"success" | "error"} kind
+     * @param {string} text
+     * @returns {{ kind: "success" | "error", text: string }}
+     */
+    const reply = (kind, text) => ({ kind, text: commandReply(raw, text) });
 
     if (raw === "" || raw === "status") {
-      return { kind: "success", text: await this.statusText(settings, sessionId) };
+      return reply("success", await this.statusText(settings, sessionId));
     }
     if (raw === "on") {
-      const next = await this.writeSettings({
-        mode: isConfigured(settings)
-          ? "advisory"
-          : settings.mode === "off"
-            ? "advisory"
-            : settings.mode,
-      });
-      if (!isConfigured(next)) {
-        return {
-          kind: "error",
-          text: "还没有选顾问模型。用 /advisor 打开选择器，或 /advisor <provider>/<model> 直接指定。",
-        };
+      // 没配模型时**不写 mode**：旧实现先把保存值改成 advisory 再报错，结果是设置页
+      // 显示「模式：顾问」、实际生效是 off（审计 USIM-U2-08 的根因）。
+      if (!isConfigured(settings)) {
+        return reply(
+          "error",
+          "还没有选顾问模型。用 /advisor 打开选择器，或 /advisor <provider>/<model> 直接指定。",
+        );
       }
-      return { kind: "success", text: `顾问已开启（${next.provider}/${next.model}）。` };
+      const next = await this.writeSettings({ mode: "advisory" });
+      return reply("success", `顾问已开启（${next.provider}/${next.model}）。`);
     }
     if (raw === "off") {
       await this.writeSettings({ mode: "off" });
-      return { kind: "success", text: "顾问已关闭（/advisor on 重新开启）。" };
+      return reply("success", "顾问已关闭（/advisor on 重新开启）。");
     }
     if (raw === "shadow") {
       await this.writeSettings({ mode: "shadow" });
-      return {
-        kind: "success",
-        text: "已切到 shadow 模式：照常调用并记账，但不把建议回灌给模型。",
-      };
+      return reply("success", "已切到 shadow 模式：照常调用并记账，但不把建议回灌给模型。");
     }
     if (raw === "ask") {
-      if (session === undefined) return { kind: "error", text: "当前没有会话。" };
+      if (session === undefined) return reply("error", "当前没有会话。");
       const result = await this.runAdvisor({ session, trigger: "manual" });
-      return {
-        kind: result.status === "reviewed" ? "success" : "error",
-        text: this.describeResult(result),
-      };
+      return reply(result.status === "reviewed" ? "success" : "error", this.describeResult(result));
     }
     if (raw === "cancel") {
       const controller = this.inflight.get(sessionId);
-      if (controller === undefined) return { kind: "error", text: "没有在途的顾问徵询。" };
+      if (controller === undefined) return reply("error", "没有在途的顾问征询。");
       try {
         controller.abort(new Error("user cancelled"));
       } catch (_error) {
         /* 已中止 */
       }
-      return { kind: "success", text: "已取消本次顾问徵询。" };
+      return reply("success", "已取消本次顾问征询。");
     }
     if (raw === "confirm") {
-      if (!isConfigured(settings)) return { kind: "error", text: "还没选顾问模型。" };
+      if (!isConfigured(settings)) return reply("error", "还没选顾问模型。");
       const list = Array.isArray(settings.confirmedHosts) ? settings.confirmedHosts : [];
       const next = list.includes(settings.provider) ? list : [...list, settings.provider];
       await this.writeSettings({ confirmedHosts: next });
-      return {
-        kind: "success",
-        text: `已允许把会话内容发送到「${settings.provider}」（可随时在设置里清空 confirmedHosts）。`,
-      };
+      return reply(
+        "success",
+        `已允许把会话内容发送到「${settings.provider}」（可随时在设置里清空 confirmedHosts）。`,
+      );
     }
     if (raw === "preview") {
       const preview = await this.previewText(session, settings);
-      return { kind: "success", text: preview };
+      return reply("success", preview);
     }
     if (raw === "report all") {
       const totals = await this.ledger.adviceTotals();
-      if (totals.total === 0) return { kind: "success", text: "还没有任何建议记录。" };
+      if (totals.total === 0) return reply("success", "还没有任何建议记录。");
       /** @param {Record<string, number>} map */
       const fmt = (map) =>
         Object.entries(map)
@@ -1077,9 +1116,9 @@ export class AdvisorService extends TypertRemoteService {
       const days = Object.entries(totals.byDay)
         .sort((a, b) => (a[0] < b[0] ? 1 : -1))
         .slice(0, 7);
-      return {
-        kind: "success",
-        text: [
+      return reply(
+        "success",
+        [
           "顾问报告（跨会话）",
           `累计 ${totals.total} 条建议`,
           `严重度：${fmt(totals.bySeverity)}`,
@@ -1087,17 +1126,17 @@ export class AdvisorService extends TypertRemoteService {
           `最近 7 天：${days.map(([day, count]) => `${day} ${count}`).join(" · ")}`,
           `账本：${this.ledger.advicePath}`,
         ].join("\n"),
-      };
+      );
     }
     if (raw === "report") {
-      return { kind: "success", text: await this.reportText(session) };
+      return reply("success", await this.reportText(session));
     }
     if (raw === "doctor") {
       const checks = await this.doctorChecks(sessionId);
-      return {
-        kind: "success",
-        text: checks.map((check) => `${iconOf(check.status)} ${check.message}`).join("\n"),
-      };
+      return reply(
+        "success",
+        checks.map((check) => `${iconOf(check.status)} ${check.message}`).join("\n"),
+      );
     }
 
     // <provider>/<model> [effort]
@@ -1105,20 +1144,20 @@ export class AdvisorService extends TypertRemoteService {
     const routePart = parts[0] ?? "";
     const slash = routePart.indexOf("/");
     if (slash <= 0) {
-      return {
-        kind: "error",
-        text: `无法识别的参数：${raw}。可用：status / on / off / shadow / ask / cancel / report / doctor / confirm / preview / <provider>/<model>`,
-      };
+      return reply(
+        "error",
+        `无法识别的参数：${raw}。可用：status / on / off / shadow / ask / cancel / report / doctor / confirm / preview / <provider>/<model>`,
+      );
     }
     const provider = routePart.slice(0, slash);
     const model = routePart.slice(slash + 1);
     const effort = parts[1] ?? "";
     const saved = await this.setModel({ provider, model, reasoningEffort: effort });
-    if (!saved.ok) return { kind: "error", text: saved.message };
-    return {
-      kind: "success",
-      text: `顾问已设为 ${provider}/${model}${effort === "" ? "" : ` · 思考档 ${effort}`}（下一次徵询生效）。`,
-    };
+    if (!saved.ok) return reply("error", saved.message);
+    return reply(
+      "success",
+      `顾问已设为 ${provider}/${model}${effort === "" ? "" : ` · 思考档 ${effort}`}（下一次征询生效）。`,
+    );
   }
 
   /**
@@ -1132,17 +1171,9 @@ export class AdvisorService extends TypertRemoteService {
     const totals = this.ledger.totals();
     const last = this.lastResult;
     const skip = sessionId === "" ? undefined : this.lastSkip.get(sessionId);
-    const route = isConfigured(settings) ? `${settings.provider}/${settings.model}` : "（未配置）";
-    return [
-      `模式：${settings.mode}`,
-      `顾问：${route}${settings.reasoningEffort === "" ? "" : ` · 思考档 ${settings.reasoningEffort}`}`,
-      `本会话：${counters.sessionCalls} 次（本回合 ${counters.turnCalls}/${
-        settings.maxCallsPerTurn === 0 ? "∞" : settings.maxCallsPerTurn
-      }，本会话上限 ${settings.maxCallsPerSession === 0 ? "∞" : settings.maxCallsPerSession}）`,
-      `累计 token：${totals.inputTokens} in / ${totals.outputTokens} out（${totals.calls} 次）`,
-      `最近一次：${last === null ? "（还没有）" : `${last.status}${last.code && last.code !== "ok" ? ` · ${last.code}` : ""}${last.usage ? ` · ${last.usage}` : ""}`}`,
-      `最近跳过：${skip ?? "（无）"}`,
-    ].join("\n");
+    // 多行 + 「生效」独立成行：保存的 mode 与真实生效状态分开说（审计 USIM-U2-08）。
+    // 文案规则在 lib/command-text.js（纯函数，可单测）。
+    return formatStatusText({ settings, counters, totals, last, skip });
   }
 
   /**
@@ -1158,7 +1189,7 @@ export class AdvisorService extends TypertRemoteService {
       return `${head}${risks}${acceptance}\n${result.usage}`;
     }
     if (result.status === "declined") return `顾问认为无需建议。\n${result.usage ?? ""}`.trim();
-    if (result.status === "skipped") return `未徵询：${result.reason}`;
+    if (result.status === "skipped") return `未征询：${result.reason}`;
     return `顾问不可用（${result.code}）：${result.reason}`;
   }
 
@@ -1262,7 +1293,7 @@ export class AdvisorService extends TypertRemoteService {
     if (session === undefined || session === null) return "当前没有会话。";
     const { events, records } = this.adviceRecords(session);
     if (records.length === 0) {
-      return "本会话还没有顾问记录。用 /advisor on 打开，或让模型在关键节点徵询。";
+      return "本会话还没有顾问记录。用 /advisor on 打开，或让模型在关键节点征询。";
     }
     const summary = summarizeAdoption(events, records);
     const recent = summary.items
@@ -1310,7 +1341,7 @@ export class AdvisorService extends TypertRemoteService {
    */
   handleSessionEvent(session, event) {
     const sessionId = typeof session?.id === "string" ? session.id : "";
-    // ---- 决策日志：回合特征与 outcome 回填（与徵询逻辑无关，只做记录）----
+    // ---- 决策日志：回合特征与 outcome 回填（与征询逻辑无关，只做记录）----
     if (sessionId !== "" && !isSubagentSession(session)) {
       this.decisionTracker.track(sessionId, event);
     }
@@ -1839,10 +1870,15 @@ export class AdvisorService extends TypertRemoteService {
       }
     }
 
+    // 诊断也报**真实生效状态**：保存的 mode 是 advisory 但没配模型时，
+    // 旧文案「当前模式 advisory」会让人以为已经开着（审计 USIM-U2-08）。
+    const state = effectiveStateOf(settings);
     checks.push({
       id: "mode",
-      status: settings.mode === "off" ? "warn" : "pass",
-      message: settings.mode === "off" ? "当前模式是 off：不会徵询" : `当前模式 ${settings.mode}`,
+      status: state.effective === "off" ? "warn" : "pass",
+      message:
+        `生效状态：${effectiveLine(state)}` +
+        (state.reason === "unconfigured" ? `（保存的模式是 ${settings.mode}）` : ""),
     });
 
     if (sessionId !== "") {

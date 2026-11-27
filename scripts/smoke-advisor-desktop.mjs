@@ -302,9 +302,29 @@ const COMMAND_STATE = `(() => {
 })()`;
 
 // ---------------------------------------------------------------------------
-// 命令输出以**会话日志**为准：宿主的命令卡片在 DOM 里是折叠的，展开后 innerText 仍为空
-// （真机确认过）。所以 /advisor status 与 /advisor doctor 的断言读 `command/done.data.text`。
+// 命令输出的两条断言通道：
+// 1) **会话日志** `command/done.data.text`：插件命令回执的第一行是原始命令行
+//    （审计 USIM-U2-07 的修复），所以日志本身就能证明「用户敲了什么」。
+// 2) **插件自己的命令卡片**（`conversation.chat.commandview` 的 advisor 渲染器）：
+//    宿主的通用卡片只显示命令名、单行省略号截断，插件卡片把完整多行输出放进 DOM。
+//    注意命令节点仍会被宿主 Chat 折叠进 process 分组，所以「不展开也能看见」由
+//    右下角的命令回执（`[data-advisor-receipt]`）负责；这里两条都断言。
 // ---------------------------------------------------------------------------
+
+/** 插件命令卡片 + 命令回执（都带 data-* 锚点，不依赖文案）。 */
+const ADVISOR_CMD_SURFACE = `(() => {
+  const cards = [...document.querySelectorAll('[data-advisor-command-card]')];
+  const read = (el) => el === null ? null : {
+    line: String(el.getAttribute('data-command-line') || ''),
+    state: String(el.getAttribute('data-state') || ''),
+    text: (el.textContent || '').trim().slice(0, 4000),
+  };
+  return {
+    cards: cards.length,
+    last: cards.length === 0 ? null : read(cards[cards.length - 1]),
+    receipt: read(document.querySelector('[data-advisor-receipt]')),
+  };
+})()`;
 
 /** 当前会话 id（宿主的会话根元素带 data-conversation-session）。 */
 const SESSION_ID = `(() => {
@@ -1450,6 +1470,57 @@ const main = async () => {
           "      （命令平面有卡片但这里读不到 = 日志没 flush/扫错目录；命令平面也没有 = 命令没执行）",
         );
       }
+      // 回执第一行 = 原始命令行（审计 USIM-U2-07）；status 还必须带「生效」行（USIM-U2-08）。
+      check(
+        "/advisor status 回执第一行是原始命令行（会话日志）",
+        status.ok && String(status.text).split("\n")[0].trim() === "/advisor status",
+        `first=${JSON.stringify(String(status.text).split("\n")[0].trim())}`,
+      );
+      check(
+        "/advisor status 回执含「生效：」行（会话日志）",
+        status.ok && /生效[:：]/u.test(String(status.text)),
+        `text=${JSON.stringify(String(status.text).replace(/\s+/gu, " ").slice(0, 200))}`,
+      );
+      // 插件自己的命令卡片：原始命令行 + 完整多行正文都在 DOM 里（宿主的通用卡片做不到）。
+      const statusCard = await waitFor(
+        cdp,
+        ADVISOR_CMD_SURFACE,
+        (value) =>
+          String(value?.last?.line ?? "") === "/advisor status" &&
+          /生效[:：]/u.test(String(value?.last?.text ?? "")),
+        8_000,
+      );
+      check(
+        "/advisor status 卡片显示原始命令行与完整输出（DOM）",
+        statusCard.ok,
+        JSON.stringify({ last: statusCard.value?.last ?? null, error: statusCard.error }),
+      );
+      if (statusCard.ok) {
+        console.log(
+          `      status card: ${String(statusCard.value?.last?.text ?? "")
+            .replace(/\s+/gu, " ")
+            .slice(0, 240)}`,
+        );
+      }
+      // 即时回执：不展开宿主的折叠分组也能看到多行输出。
+      const statusReceipt = await waitFor(
+        cdp,
+        ADVISOR_CMD_SURFACE,
+        (value) => value?.receipt !== null && /模式[:：]/u.test(String(value?.receipt?.text ?? "")),
+        8_000,
+      );
+      check(
+        "/advisor status 立即可见的命令回执（DOM）",
+        statusReceipt.ok,
+        JSON.stringify({ receipt: statusReceipt.value?.receipt ?? null }),
+      );
+      if (statusReceipt.ok) {
+        console.log(
+          `      receipt: ${String(statusReceipt.value?.receipt?.text ?? "")
+            .replace(/\s+/gu, " ")
+            .slice(0, 240)}`,
+        );
+      }
       await cdp.screenshot(join(SHOTS, "04-status.png"));
 
       // ---------- G. `/advisor doctor` ----------
@@ -1494,6 +1565,24 @@ const main = async () => {
           "      （命令平面有卡片但这里读不到 = 日志没 flush/扫错目录；命令平面也没有 = 命令没执行）",
         );
       }
+      check(
+        "/advisor doctor 回执第一行是原始命令行（会话日志）",
+        doctor.ok && String(doctor.text).split("\n")[0].trim() === "/advisor doctor",
+        `first=${JSON.stringify(String(doctor.text).split("\n")[0].trim())}`,
+      );
+      const doctorCard = await waitFor(
+        cdp,
+        ADVISOR_CMD_SURFACE,
+        (value) =>
+          String(value?.last?.line ?? "") === "/advisor doctor" &&
+          (String(value?.last?.text ?? "").match(/\n/g) ?? []).length >= 2,
+        8_000,
+      );
+      check(
+        "/advisor doctor 卡片显示多行检查结果（DOM）",
+        doctorCard.ok,
+        JSON.stringify({ last: doctorCard.value?.last ?? null, error: doctorCard.error }),
+      );
       await cdp.screenshot(join(SHOTS, "05-doctor.png"));
 
       // ---------- H. --advice：/advisor report + 展开顾问线（只读，不发起徵询） ----------
@@ -1575,7 +1664,13 @@ const main = async () => {
       skip("/advisor 弹出宿主选择器（浮层出现且至少一项）", "前置未满足，未敲键盘");
       skip("Esc 关闭选择器（浮层消失）", "前置未满足，未敲键盘");
       skip("/advisor status 输出「模式：」「顾问：」", "前置未满足，未敲键盘");
+      skip("/advisor status 回执第一行是原始命令行（会话日志）", "前置未满足，未敲键盘");
+      skip("/advisor status 回执含「生效：」行（会话日志）", "前置未满足，未敲键盘");
+      skip("/advisor status 卡片显示原始命令行与完整输出（DOM）", "前置未满足，未敲键盘");
+      skip("/advisor status 立即可见的命令回执（DOM）", "前置未满足，未敲键盘");
       skip("/advisor doctor 输出至少一条 ✅/⚠️/❌ 检查行", "前置未满足，未敲键盘");
+      skip("/advisor doctor 回执第一行是原始命令行（会话日志）", "前置未满足，未敲键盘");
+      skip("/advisor doctor 卡片显示多行检查结果（DOM）", "前置未满足，未敲键盘");
       if (values.advice === true) {
         skip("把 /advisor report 写进输入框", "前置未满足，未敲键盘");
         skip(

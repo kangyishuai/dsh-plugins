@@ -67,9 +67,9 @@ export function immuneActive(input) {
 
 /**
  * @typedef {object} BudgetCounters
- * @property {number} turnCalls 本回合已徵询次数
- * @property {number} sessionCalls 本会话已徵询次数
- * @property {number[]} hourStamps 最近一小时内的徵询时间戳（毫秒）
+ * @property {number} turnCalls 本回合已征询次数
+ * @property {number} sessionCalls 本会话已征询次数
+ * @property {number[]} hourStamps 最近一小时内的征询时间戳（毫秒）
  * @property {number} dayCostUsd 今日已花（美元，估算值）
  */
 

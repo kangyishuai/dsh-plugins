@@ -23,7 +23,7 @@ export const SCOPE_LIMITS = Object.freeze({
 
 /**
  * 真人输入 / 用户 RPC 之外的消息来源都算「宿主注入的上下文」（技能目录、AGENTS.md、
- * 运行时事实、模型选择记录…）。它们动辄上万 token，整段发给顾问会让一次徵询贵得离谱，
+ * 运行时事实、模型选择记录…）。它们动辄上万 token，整段发给顾问会让一次征询贵得离谱，
  * 而这些内容对「这次改动对不对」几乎没有增量信息 —— 默认只留一个带长度的标记。
  * @param {any} message
  * @returns {boolean}

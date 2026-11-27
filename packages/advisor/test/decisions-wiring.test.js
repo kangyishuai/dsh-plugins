@@ -2,8 +2,8 @@
 // 决策日志的**接线**测试：用真实的事件处理入口驱动，确认
 // 「回合开始 → 回合结束」会写出决策行，且下一条用户消息能回填 outcome。
 //
-// 不碰模型、不联网：handleSessionEvent 里与徵询相关的分支在这里走不到
-//（mode 默认 off → runAdvisor 直接 skip），正好用来验证「没徵询也要记一行」。
+// 不碰模型、不联网：handleSessionEvent 里与征询相关的分支在这里走不到
+//（mode 默认 off → runAdvisor 直接 skip），正好用来验证「没征询也要记一行」。
 //
 // 等待策略：**不用 sleep 猜时序**。回合结束的 `finishTurn` 直接 await；`track()` 里的
 // outcome 回填是 fire-and-forget，用 `decisionLog.flush()`（等所有在途写落盘）兜住。
@@ -85,7 +85,7 @@ const assistantMessage = (text, tools = 0) => ({
 const deliver = (service, event) => service.deliver("s1", event);
 
 describe("决策日志接线", () => {
-  it("一个正常回合写一行：特征被累计、未徵询带原因码", async () => {
+  it("一个正常回合写一行：特征被累计、未征询带原因码", async () => {
     const home = await tempDir("advisor-wiring");
     const service = makeService(home);
     await deliver(service, { type: "turn/start", data: { turn: 1 } });
@@ -99,7 +99,7 @@ describe("决策日志接线", () => {
     assert.equal(records[0].consulted, false);
     assert.equal(records[0].toolCalls, 2);
     assert.ok(records[0].answerChars > 0);
-    // mode 默认 off → 没徵询，原因码要有值（而不是 null）
+    // mode 默认 off → 没征询，原因码要有值（而不是 null）
     assert.equal(typeof records[0].skipCode, "string");
   });
 
@@ -129,12 +129,12 @@ describe("决策日志接线", () => {
     assert.equal(records[0].turn, 0);
   });
 
-  it("徵询过的回合：outcome 由下一条用户消息回填", async () => {
+  it("征询过的回合：outcome 由下一条用户消息回填", async () => {
     const home = await tempDir("advisor-wiring");
     const service = makeService(home);
     await deliver(service, { type: "turn/start", data: { turn: 1 } });
     await deliver(service, assistantMessage("改动完成。", 1));
-    // 模拟本回合确实徵询过（真实路径由 runAdvisor 写入）
+    // 模拟本回合确实征询过（真实路径由 runAdvisor 写入）
     service.tracker.noteAdvice("s1", {
       adviceId: "adv_test",
       severity: "concern",
@@ -186,7 +186,7 @@ describe("决策日志接线", () => {
 
 describe("outcome 回填：accepted / user-typed-other / no-action 三条路径都可达（AUD-ADV-07 / 09）", () => {
   /**
-   * 造一个「第 1 回合徵询过」的现场，返回跟踪器与决策日志目录。
+   * 造一个「第 1 回合征询过」的现场，返回跟踪器与决策日志目录。
    * @param {string} prefix
    */
   async function consulted(prefix) {

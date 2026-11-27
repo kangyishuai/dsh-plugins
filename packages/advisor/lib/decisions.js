@@ -1,9 +1,9 @@
 // @ts-check
-// 决策日志：记录**每个回合**「有没有徵询、为什么没徵询、徵询后用户怎么反应」。
+// 决策日志：记录**每个回合**「有没有征询、为什么没征询、征询后用户怎么反应」。
 //
-// 为什么单独一个文件而不是并进 usage.jsonl：用途不同。usage 是**钱的账本**（一次徵询一行，
-// 有 token 与成本）；decisions 是**策略的证据**（一个回合一行，没有徵询的回合也要记），
-// 用来事后回答「该徵询的时候有没有徵询」。两件事混在一起会让两边都难查。
+// 为什么单独一个文件而不是并进 usage.jsonl：用途不同。usage 是**钱的账本**（一次征询一行，
+// 有 token 与成本）；decisions 是**策略的证据**（一个回合一行，没有征询的回合也要记），
+// 用来事后回答「该征询的时候有没有征询」。两件事混在一起会让两边都难查。
 //
 // 落盘：`<dataRoot>/advisor/decisions.jsonl`。新行用单行 O_APPEND 追加（按文件串行写队列，
 // 并发回合不会互相覆盖）；outcome 回填是「读-改-写整份」，但走唯一 tmp + rename 的原子重写，
@@ -21,7 +21,7 @@ export const DECISIONS_FILE = "decisions.jsonl";
 export const DECISIONS_MAX_BYTES = 2 * 1024 * 1024;
 
 /**
- * 没徵询时的原因码。**从主模型视角分类**，而不是按内部函数名：
+ * 没征询时的原因码。**从主模型视角分类**，而不是按内部函数名：
  * 复盘时要回答的是「这一回合本该问吗」，所以分桶要能对应到「机会成本」。
  * @typedef {"skipped-disabled"|"skipped-not-configured"|"skipped-no-route"|"skipped-empty"|"skipped-budget"|"skipped-limit"|"skipped-immune"|"skipped-duplicate"|"skipped-needs-confirmation"|"skipped-not-requested"|"skipped-aborted"|"skipped-blocked"|"skipped-other"} SkipCode
  */
@@ -59,7 +59,7 @@ export function classifySkip(reason) {
 }
 
 /**
- * 回合特征：用来给「该不该徵询」分桶的、可用不变量化的东西。
+ * 回合特征：用来给「该不该征询」分桶的、可用不变量化的东西。
  * @param {{ answerChars?: number, toolCalls?: number, hadError?: boolean }} input
  * @returns {{ answerChars: number, toolCalls: number, hadError: boolean, longAnswer: boolean, usedTools: boolean }}
  */
@@ -99,7 +99,7 @@ export function buildDecision(input) {
     turn: input.turn,
     endKind,
     consulted,
-    // 没徵询时给出原因码，复盘时先看这一列。
+    // 没征询时给出原因码，复盘时先看这一列。
     skipCode: consulted ? null : (endKindCode ?? classifySkip(input.skipReason)),
     skipReason: consulted ? null : (input.skipReason ?? ""),
     ...turnFeatures(input.features ?? {}),
@@ -206,7 +206,7 @@ export function summarize(records) {
     } else {
       const code = typeof record.skipCode === "string" ? record.skipCode : "skipped-other";
       skipCodes[code] = (skipCodes[code] ?? 0) + 1;
-      // 疑似漏徵询：这一回合有工具、回答也不短，却没有徵询。
+      // 疑似漏征询：这一回合有工具、回答也不短，却没有征询。
       if (record.usedTools === true && record.longAnswer === true && record.hadError !== true) {
         missed.push(record);
       }
@@ -223,7 +223,7 @@ export function summarize(records) {
     accepted,
     ignored,
     noAction,
-    // 采纳率只对「已经出结果」的徵询算，未回填的不进分母；但覆盖率要单独报，
+    // 采纳率只对「已经出结果」的征询算，未回填的不进分母；但覆盖率要单独报，
     // 否则分母很小时「采纳率 0%」会被读成「建议从没被采纳」（审计 AUD-ADV-07）。
     acceptRate: accepted + ignored === 0 ? null : accepted / (accepted + ignored),
     resolvedOutcomes,
@@ -312,7 +312,7 @@ export function createDecisionLog(options) {
      *
      * 为什么这里仍是「读-改-写整份」而不是追加补丁行：`decisions.jsonl` 同时被
      * `pnpm advisor:review` 按「一行一条决策」直接读，补丁行会被它当成一个回合计入统计。
-     * 重写只发生在回填（每次徵询最多一次），且与 append 共用同一个 per-path 队列 +
+     * 重写只发生在回填（每次征询最多一次），且与 append 共用同一个 per-path 队列 +
      * 唯一 tmp + rename，所以既不会丢追加，也不会留下半截文件。
      * @param {string} sessionId
      * @param {number} turn
@@ -407,7 +407,7 @@ export function createDecisionTracker(options) {
     },
 
     /**
-     * 本回合确实徵询过时调用（由 runAdvisor 写入）。
+     * 本回合确实征询过时调用（由 runAdvisor 写入）。
      * @param {string} sessionId
      * @param {any} value
      */

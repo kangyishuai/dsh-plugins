@@ -46,7 +46,7 @@ test("renderToolOutput 覆盖四种状态且不抛", () => {
   assert.match(declined[0].text, /无需建议/u);
 
   const skipped = renderToolOutput({}, { status: "skipped", reason: "顾问已关闭" });
-  assert.match(skipped[0].text, /未徵询/u);
+  assert.match(skipped[0].text, /未征询/u);
 
   const unavailable = renderToolOutput(
     {},

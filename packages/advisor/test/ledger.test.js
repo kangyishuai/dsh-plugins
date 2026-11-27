@@ -88,7 +88,7 @@ describe("usage 账本：追加写", () => {
     assert.ok((await readdir(dir)).includes("usage.jsonl.1"));
   });
 
-  it("写失败只告警，不把徵询拖挂（返回 void）", async () => {
+  it("写失败只告警，不把征询拖挂（返回 void）", async () => {
     const home = await tempDir("advisor-ledger");
     const warnings = [];
     const ledger = createLedger({
