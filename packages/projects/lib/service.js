@@ -2374,42 +2374,57 @@ export class ProjectsService extends TypertRemoteService {
       );
     }
     const trashDir = trashDirFor({ dataRoot: this.dataRoot, projectId: id });
+    const projectRecord = store.getProject(id);
+    const threadRecords = store.listThreads(id);
     mkdirSync(trashDir, { recursive: true, mode: 0o700 });
-    const removed = store.removeProject(id);
-    // 内容文件（如果有）整体搬进回收站；搬不动就把元数据留在回收站里并报错
-    if (preview.impact.hasContentDir && existsSync(preview.contentDir)) {
+    // 事务顺序（审查指出：以前先 removeProject 再搬内容，搬失败就"记录没了、内容还在"）：
+    // ① 先写 manifest（moved:false，崩溃也能从回收站看懂）→ ② 搬内容 → ③ 改 manifest → ④ 删记录。
+    const manifest = (/** @type {boolean} */ moved) =>
+      `${JSON.stringify(
+        {
+          format: 1,
+          deletedAt: new Date().toISOString(),
+          project: projectRecord,
+          threads: threadRecords,
+          worktrees: preview.worktrees,
+          contentDir: preview.contentDir,
+          moved,
+          summary: preview.impact.summary,
+        },
+        null,
+        2,
+      )}\n`;
+    writeFileSync(`${trashDir}/manifest.json`, manifest(false), { mode: 0o600 });
+    const hasContent = preview.impact.hasContentDir && existsSync(preview.contentDir);
+    if (hasContent) {
       try {
         renameSync(preview.contentDir, `${trashDir}/content`);
       } catch (error) {
-        writeFileSync(
-          `${trashDir}/manifest.json`,
-          `${JSON.stringify({ project: removed.project, threads: removed.threads, contentDir: preview.contentDir, moved: false }, null, 2)}\n`,
-          { mode: 0o600 },
-        );
-        store.save();
+        // 搬不动：清掉刚建的回收站目录，项目记录与内容都保持原样
+        rmSync(trashDir, { recursive: true, force: true });
         throw new Error(
           `projects: content move failed (${String(/** @type {any} */ (error)?.message ?? error)})`,
         );
       }
     }
-    writeFileSync(
-      `${trashDir}/manifest.json`,
-      `${JSON.stringify(
-        {
-          format: 1,
-          deletedAt: new Date().toISOString(),
-          project: removed.project,
-          threads: removed.threads,
-          worktrees: preview.worktrees,
-          contentDir: preview.contentDir,
-          moved: preview.impact.hasContentDir,
-          summary: preview.impact.summary,
-        },
-        null,
-        2,
-      )}\n`,
-      { mode: 0o600 },
-    );
+    writeFileSync(`${trashDir}/manifest.json`, manifest(true), { mode: 0o600 });
+    /** @type {any} */
+    let removed;
+    try {
+      removed = store.removeProject(id);
+    } catch (error) {
+      // 删记录失败：把内容搬回去、删掉回收站残留，保持"项目还在、内容也在"
+      try {
+        if (hasContent && existsSync(`${trashDir}/content`)) {
+          renameSync(`${trashDir}/content`, preview.contentDir);
+        }
+        rmSync(trashDir, { recursive: true, force: true });
+      } catch {
+        /* 回滚失败时保留回收站目录，至少内容没丢 */
+      }
+      throw error;
+    }
+    for (const thread of removed.threads) this.detachSession(thread.sessionId);
     for (const thread of removed.threads) this.detachSession(thread.sessionId);
     store.appendAudit({ action: "project/deleted", projectId: id, reason: "trash", trashDir });
     store.save();

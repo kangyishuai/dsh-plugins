@@ -3999,6 +3999,8 @@ window.__ModuleLoader__.load({
             "[data-projects-panel] button:disabled{opacity:.45;cursor:not-allowed}",
             "[data-projects-panel] [data-projects-threads],[data-projects-panel] [data-projects-threads] *{box-sizing:border-box}",
             "[data-projects-panel] [data-projects-threads]{overflow-x:clip}",
+            // 图标按钮的 hover 反馈：内联 style 无法写 :hover，用属性锚点 + !important 限定范围
+            "[data-projects-panel] [data-projects-row-menu]:hover,[data-projects-panel] [data-projects-pin]:hover,[data-projects-panel] [data-projects-bell]:hover,[data-projects-panel] [data-panel-add-view]:hover,[data-projects-panel] [data-panel-settings-open]:hover,[data-projects-panel] [data-projects-thread-menu]:hover,[data-projects-panel] [data-projects-thread-expand]:hover,[data-projects-panel] [data-composer-attach]:hover,[data-projects-panel] [data-projects-composer-model]:hover,[data-projects-panel] [data-projects-search-clear]:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12))!important;border-radius:6px}",
             '[data-projects-panel] [role="button"]:focus-visible,[data-projects-panel] button:focus-visible{outline:2px solid var(--dsw-alias-label-primary-bluish,#2f6fed);outline-offset:2px}',
           ].join("\n"),
         ),

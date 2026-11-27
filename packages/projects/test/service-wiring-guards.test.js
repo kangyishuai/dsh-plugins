@@ -200,3 +200,18 @@ describe("审查 P2（第四批）回归防线", () => {
     assert.doesNotMatch(autoprSource, /export function canAutoMerge/u);
   });
 });
+
+describe("审查 P2（第五批）：删除项目的事务顺序", () => {
+  it("manifest 先写、内容搬完再删记录；失败路径有回滚", () => {
+    const start = serviceSource.indexOf("  async deleteProject(");
+    assert.ok(start >= 0);
+    const region = serviceSource.slice(start, start + 6000);
+    const manifestAt = region.indexOf("manifest(false)");
+    const moveAt = region.indexOf("renameSync(preview.contentDir");
+    const removeAt = region.indexOf("store.removeProject(id)");
+    assert.ok(manifestAt > 0 && moveAt > manifestAt, "manifest 必须在搬内容之前");
+    assert.ok(removeAt > moveAt, "删记录必须在内容搬完之后");
+    assert.match(region, /rmSync\(trashDir/u); // 两条失败路径都清理回收站残留
+    assert.match(region, /renameSync\(`\$\{trashDir\}\/content`, preview\.contentDir\)/u);
+  });
+});
