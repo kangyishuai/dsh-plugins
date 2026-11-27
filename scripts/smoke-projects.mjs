@@ -3738,7 +3738,7 @@ try {
   );
   add(
     "未绑目录时说明线程跑在项目专用工作区（workspaces/<id>，不再是数据根本身）",
-    /workspaces/<id>/u.test(noDirHint) && /绑定/u.test(noDirHint) && !/跑在插件的数据目录里/u.test(noDirHint),
+    /workspaces\\/<id>/u.test(noDirHint) && /绑定/u.test(noDirHint) && !/跑在插件的数据目录里/u.test(noDirHint),
     noDirHint.slice(0, 90),
   );
 

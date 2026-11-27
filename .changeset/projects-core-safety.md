@@ -9,9 +9,11 @@
   `danger-full-access` 的 agent，也不再出现在宿主 Workspace 列表里。
 - **暂停/归档/删除真的会停宿主定时任务**：`pauseProject` / `archiveProject` / `unarchiveProject` /
   `deleteProject` 会暂停、恢复或删除对应的 routines 与 `schedule` 提醒，并且用的是宿主真实契约
-  （`SchedulePatch.active: boolean`，不是会被静默忽略的 `status`）；暂停/归档项目下不能再新建
-  自动投递的 routine/提醒；**删除先做完所有校验（在跑线程等）再动宿主定时**，删除影响面会写明
-  「会删除 N 条宿主定时任务」，条目停不掉时拒绝删除并提示去宿主 Automation 页面处理。
+  （`SchedulePatch.active: boolean`，不是会被静默忽略的 `status`）；暂停/归档项目下新建的自动档
+  routine 采用**建但按住**——宿主条目建成 `paused`（可停用/可删除/可回读，恢复项目时由对账放开），
+  `schedule` 档一次性提醒仍直接拒绝新建；**删除先做完所有校验（在跑线程等）再动宿主定时**，
+  删除影响面会写明「会删除 N 条宿主定时任务」，条目停不掉时拒绝删除并提示去宿主 Automation
+  页面处理。
 - **`policy.repoGrants` 可以撤销了**（显式空列表会落盘，不再回落旧授权）；`repoGrants` /
   `preapprove` / `pr.tier` 的变更都会写 `project/policy-changed` 审计。
 - **`budget.weeklyTokens` 成为真正的预算字段**：设置页有输入框、读盘不丢、建线程与自动暂停两处执行；
@@ -31,3 +33,8 @@
 - **独立复审修正**：`Routines` 的启停开关同样改用宿主 `active` 契约（它从 0.10.x 起其实从未生效）；
   宿主没有 `schedule` 服务时「无可停」不再把项目卡成不可删；`detail.noDirHint` 文案改为
   「项目专用工作区（workspaces/&lt;id&gt;）」；删除影响面披露宿主定时数量。
+
+回归修正（2026-11-28 复审后测试暴露）：① 项目默认模型/协调者默认模型允许「手填目录外的 provider + 部署特有
+effort」，不再因为 provider 不在可用目录里把整条写入清空（AUD-PROJ-24 的校验只拒绝「provider 在目录里但模型不在」）；
+② 暂停/归档项目下新建自动档 routine 由「硬拒绝」改为「建但按住」，修复「建完看不到行、没有可回读状态」的死锁，
+同时仍然不会到点投递。

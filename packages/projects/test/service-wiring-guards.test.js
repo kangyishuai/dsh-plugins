@@ -159,6 +159,25 @@ describe("审查 P1 回归防线", () => {
     }
   });
 
+  it("AUD-PROJ-02 回归修正：暂停/归档项目下建自动档 routine 是「建但按住」，不是硬拒绝", () => {
+    // 硬拒绝会让用户在建完之后看不到任何行（web 冒烟 B4：routineRow=null）。
+    // 唯一正确的收口是「建完立刻按成 paused」：条目可回读/可停用/可删除，但不会到点投递。
+    for (const name of ["createRoutine", "updateRoutine"]) {
+      const region = methodRegion(serviceSource, name);
+      assert.match(region, /holdSchedulePaused\(/u, `${name} 建完要按住宿主条目`);
+      assert.doesNotMatch(
+        region,
+        /return \{ ok: false, reason: (gate|automationGate)\.reason \}/u,
+        `${name} 不再用「项目暂停」直接拒绝`,
+      );
+    }
+    // 按住之后必须回读宿主 status（只看「没抛错」是假成功）
+    const helper = methodRegion(serviceSource, "holdSchedulePaused");
+    assert.match(helper, /hostActivePatch\("pause"\)/u);
+    assert.match(helper, /classifyHostScheduleResult\(/u);
+    assert.match(helper, /outcome\.status !== "paused"/u);
+  });
+
   it("AUD-PROJ-06：merge 审批找不到本项目线程时拒绝，不回落 dirs[0]", () => {
     const executeSource = readFileSync(join(here, "..", "lib", "execute.js"), "utf8");
     // 顶层分支（缩进 2）——`.find((item) => { if (approval.action === "merge") … })` 也含同串

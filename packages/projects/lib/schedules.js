@@ -240,10 +240,13 @@ export async function reconcileHostSchedules(input) {
 }
 
 /**
- * 新建自动投递（routine / schedule 提醒）前的项目状态闸。
+ * 项目状态闸：暂停/归档的项目不该有「到点自动花 token」的定时任务在跑。
  *
- * 暂停/归档的项目不该还能新建「到点自动花 token」的定时任务——否则 pause 这个急停按钮
- * 只停内存里的东西，花钱的路径照旧（审计 AUD-PROJ-02）。
+ * 用途不是「一律拒绝」，而是**决定新建后要不要立刻按住**（审计 AUD-PROJ-02）：
+ *  - `ok:false` 时，自动档 routine 仍会建（用户要能看到、能停用/删除/回读），
+ *    但宿主条目建完会被 `service.holdSchedulePaused()` 按成 paused，恢复项目时才放开；
+ *  - `schedule` 档的一次性提醒仍然直接拒绝新建（按住了再恢复，`at` 时点大概率已过期，
+ *    宿主会以 `not_future` 拒掉——建出来只会是个永远不触发的壳）。
  * @param {{ state?: string } | null | undefined} project
  * @returns {{ ok: true, reason: "" } | { ok: false, reason: string }}
  */

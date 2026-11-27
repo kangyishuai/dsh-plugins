@@ -65,6 +65,29 @@ describe("checkCatalogChoice：三态判定", () => {
     assert.equal(checkCatalogChoice(catalog, { model: "  " }).reason, "model/empty");
   });
 
+  it("provider 不在目录里 → 无法判断，写入口不拦（手填部署特有 provider 的回归修正）", () => {
+    // 宿主目录只列「当前部署可用」的 provider；项目级默认模型允许手填（无凭据/目录未覆盖的
+    // 部署特有 provider）。目录不认识这个 provider 时没有任何依据说模型不可用——
+    // 判成 not-found 会把「手填 provider + 部署特有 effort（max/xhigh/off）」整条写入拒掉
+    // （web 冒烟 F42 的回归就是这个）。
+    const verdict = checkCatalogChoice(catalog, {
+      provider: "smoke-provider",
+      model: "smoke-model",
+    });
+    assert.equal(verdict.checked, false);
+    assert.equal(verdict.found, false);
+    assert.equal(verdict.reason, "provider-unknown");
+    // provider 缺省时仍按「模型名在不在目录里」判（旧行为不变）
+    assert.equal(checkCatalogChoice(catalog, { model: "gone-model" }).reason, "model/unavailable");
+  });
+
+  it("provider 在目录里但模型不在 → 仍然明确拒绝（AUD-PROJ-24 的原意）", () => {
+    const verdict = checkCatalogChoice(catalog, { provider: "acme", model: "acme-2" });
+    assert.equal(verdict.checked, true);
+    assert.equal(verdict.found, false);
+    assert.equal(verdict.reason, "model/unavailable");
+  });
+
   it("拒绝时的可读原因包含 provider/model 与恢复方式", () => {
     const message = modelUnavailableMessage({ provider: "acme", model: "gone" });
     assert.match(message, /acme\/gone/u);
