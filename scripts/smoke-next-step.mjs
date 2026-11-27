@@ -1104,9 +1104,10 @@ check(
   tierCould.ok === true && tierRestored !== null && tierRestored.cardThreshold === "could",
   JSON.stringify({ clicked: tierCould.ok, cardThreshold: tierRestored === null ? null : tierRestored.cardThreshold }),
 );
+// 设置结构 v3（本批 AUD-NS-02）：预算默认 120 → 60；旧文件里恰好 120 的值由 migrateSettings 迁移。
 check(
-  "设置文件带 schemaVersion=2 且预算默认 120",
-  tierRestored !== null && tierRestored.schemaVersion === 2 && tierRestored.maxCardsPerSession === 120,
+  "设置文件带 schemaVersion=3 且预算默认 60",
+  tierRestored !== null && tierRestored.schemaVersion === 3 && tierRestored.maxCardsPerSession === 60,
   JSON.stringify(tierRestored === null ? null : { schemaVersion: tierRestored.schemaVersion, maxCardsPerSession: tierRestored.maxCardsPerSession }),
 );
 

@@ -37,8 +37,11 @@
 //    - **投影健康**：页面上没有「历史加载失败 / failed to project / Cannot read properties」
 //      ——投影一旦坏掉是「静默全灭」（消息能发、会话日志正常，只是历史加载失败、卡片永不渲染），
 //      这条是唯一能把那种状态和「本来就没有卡」区分开的断言；
-//    - 卡片结构不变量（当前会话里已有的卡）：胶囊数 0 或 1–2（交互卡 1–2 粒）、只读态无胶囊、摘要/提问非空、
-//      任何时刻最多一张可交互卡；没有卡时这些断言**空跑通过**（不是验证过卡片）；
+//    - 卡片结构不变量（当前会话里已有的卡）：胶囊数 0 或 1–2（交互卡 1–2 粒）、任何时刻最多一张可交互卡；
+//      只读态分两种：**折叠行**（`data-next-step-collapsed="true"`，只有摘要首句、无提问/胶囊/✕）
+//      与**决策回显**（sent / dismissed，摘要 + 提问 + ✓）；`state="readonly"` 却未折叠直接判红。
+//      「旧卡默认折叠成一行」是数据相关分支：会话里没有更早轮次的未决策卡时记 SKIP。
+//      没有卡时这些断言**空跑通过**（不是验证过卡片）；
 //    - 幽灵提示默认不出现（ghost 默认关）。
 // 2. **插件未安装时必然 FAIL（这是对的，不是脚本坏了）**：
 //    - `插件 client 半已加载（style[data-plugin="@kangyishuai/dsh-next-step"]）`。
@@ -188,6 +191,9 @@ const cardsNow = (cdp) =>
       state: el.getAttribute("data-next-step-state") || "",
       summary: text("[data-next-step-summary]"),
       question: text("[data-next-step-question]"),
+      // 旧卡（更早轮次、未决策）默认折叠成一行：只有摘要首句，没有提问 / 胶囊 / ✕（AUD-NS-02）。
+      collapsed: el.getAttribute("data-next-step-collapsed") === "true",
+      hasQuestion: !!el.querySelector("[data-next-step-question]"),
       hasDismiss: !!el.querySelector("button[data-next-step-dismiss]"),
       hasMore: !!el.querySelector("button[data-next-step-more]"),
       pills: [...el.querySelectorAll("button[data-next-step-pill]")].map((b) => ({
@@ -412,21 +418,64 @@ const main = async () => {
       const readonlyWithPills = cards.filter(
         (c) => c.state !== "interactive" && c.state !== "sending" && c.pills.length !== 0,
       );
-      const emptyText = cards.filter((c) => c.summary === "" || c.question === "");
+      // 只读态有两种形态：
+      // - **折叠行**（更早轮次、未决策）：只有「更早的一轮 · 摘要首句」，没有提问 / 胶囊 / ✕；
+      // - **决策回显**（sent / dismissed）：摘要 + 提问 + ✓ 回显，仍保留完整文本。
+      // 所以「提问为空」只对折叠行合法，不能一刀切成「所有卡提问非空」。
+      const collapsedWithoutText = cards.filter((c) => c.collapsed && c.summary === "");
+      const collapsedWithExtra = cards.filter(
+        (c) => c.collapsed && (c.question !== "" || c.pills.length !== 0 || c.hasDismiss),
+      );
+      const readonlyNotCollapsed = cards.filter((c) => c.state === "readonly" && !c.collapsed);
+      const emptyText = cards.filter(
+        (c) => !c.collapsed && (c.summary === "" || c.question === ""),
+      );
       check(
-        `${label}：每张卡最多 2 粒胶囊、只读态无胶囊、摘要提问非空`,
+        `${label}：每张卡最多 2 粒胶囊、只读态无胶囊、折叠行只有摘要、决策回显摘要提问非空`,
         badPills.length === 0 &&
           interactiveWithWrongPills.length === 0 &&
           readonlyWithPills.length === 0 &&
+          collapsedWithoutText.length === 0 &&
+          collapsedWithExtra.length === 0 &&
+          readonlyNotCollapsed.length === 0 &&
           emptyText.length === 0,
         JSON.stringify({
-          cards: cards.map((c) => ({ turn: c.turn, state: c.state, pills: c.pills.length })),
+          cards: cards.map((c) => ({
+            turn: c.turn,
+            state: c.state,
+            collapsed: c.collapsed,
+            pills: c.pills.length,
+          })),
           badPills: badPills.map((c) => c.turn),
           interactiveWithWrongPills: interactiveWithWrongPills.map((c) => c.turn),
           readonlyWithPills: readonlyWithPills.map((c) => c.turn),
+          collapsedWithoutText: collapsedWithoutText.map((c) => c.turn),
+          collapsedWithExtra: collapsedWithExtra.map((c) => c.turn),
+          readonlyNotCollapsed: readonlyNotCollapsed.map((c) => c.turn),
           emptyText: emptyText.map((c) => c.turn),
         }),
       );
+      // 旧卡折叠（AUD-NS-02）：只读态一律折叠成一行，且折叠行文本有界。
+      // 数据相关分支：会话里没有「更早轮次且未决策」的卡时记 SKIP（不是失败）。
+      const collapsed = cards.filter((c) => c.collapsed);
+      if (collapsed.length > 0) {
+        const oversized = collapsed.filter((c) => c.summary.length > 60);
+        check(
+          `${label}：旧卡默认折叠成一行（只读态：摘要首句 ≤60 字、无提问/胶囊/✕）`,
+          oversized.length === 0 && collapsedWithExtra.length === 0,
+          JSON.stringify({
+            collapsed: collapsed.length,
+            oversized: oversized.map((c) => ({ turn: c.turn, length: c.summary.length })),
+            withExtra: collapsedWithExtra.map((c) => c.turn),
+            sample: collapsed[0].summary.slice(0, 40),
+          }),
+        );
+      } else {
+        skip(
+          `${label}：旧卡默认折叠成一行`,
+          "当前会话没有「更早轮次且未决策」的卡（数据相关分支；只读回归不造卡）",
+        );
+      }
       const interactive = cards.filter((/** @type {any} */ c) => c.state === "interactive");
       check(
         `${label}：最多一张可交互卡`,
@@ -438,14 +487,19 @@ const main = async () => {
     structureCheck(initialCards, "初始会话");
     if (initialCards.length > 0) {
       const newest = initialCards[initialCards.length - 1];
-      check(
-        "当前会话的卡片有摘要 / 提问（可交互态另需 ✕）",
-        newest.summary !== "" &&
+      // 折叠行只有摘要首句（提问为空）；其它状态仍要求摘要 + 提问，可交互态另需 ✕。
+      const shapeOk = newest.collapsed
+        ? newest.summary !== "" && newest.question === ""
+        : newest.summary !== "" &&
           newest.question !== "" &&
-          (newest.state !== "interactive" || newest.hasDismiss === true),
+          (newest.state !== "interactive" || newest.hasDismiss === true);
+      check(
+        "当前会话的卡片结构（折叠行只留摘要首句；其它卡摘要 + 提问，可交互态另需 ✕）",
+        shapeOk,
         JSON.stringify({
           turn: newest.turn,
           state: newest.state,
+          collapsed: newest.collapsed,
           summary: newest.summary.slice(0, 40),
           question: newest.question.slice(0, 40),
           hasDismiss: newest.hasDismiss,
