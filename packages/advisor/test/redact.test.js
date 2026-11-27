@@ -69,3 +69,56 @@ test("redactDeep 有节点预算，超大对象不会无限递归", () => {
   const result = redactDeep(deep, 10);
   assert.equal(JSON.stringify(result.value).includes("truncated"), true);
 });
+
+test("小写 / camelCase 键名的赋值形态也要遮（AUD-ADV-13）", () => {
+  const cases = [
+    "api_key=abcdefghij",
+    "token: abcdefghij",
+    "apiKey: abcdefghij",
+    "password=abcdefghij",
+    "client_secret=abcdefghij",
+    "private_key=abcdefghij",
+  ];
+  for (const input of cases) {
+    const result = redact(`配置里写着 ${input} 这行`);
+    assert.equal(result.text.includes("abcdefghij"), false, `应当被脱敏：${input}`);
+    assert.equal(result.hits.includes("kv-assignment"), true, `命中规则：${input}`);
+  }
+});
+
+test("JWT 与裸 Bearer token 也被遮（AUD-ADV-13）", () => {
+  // 运行时拼接：仓库里不留形似真实凭据的字面量。
+  const jwt = ["eyJhbGciOiJIUzI1NiJ9", "eyJzdWIiOiIxMjM0NTY3ODkwIn0", "c2lnbmF0dXJlLWJ5dGVz"].join(
+    ".",
+  );
+  const bearer = ["Bearer", "abcdefghijklmnopqrstuvwx"].join(" ");
+  const jwtResult = redact(`请求头里带了 ${jwt} 这个值`);
+  assert.equal(jwtResult.text.includes("c2lnbmF0dXJl"), false);
+  assert.equal(jwtResult.hits.includes("jwt"), true);
+
+  const bearerResult = redact(`用 ${bearer} 调接口`);
+  assert.equal(bearerResult.text.includes("abcdefghijklmnopqrstuvwx"), false);
+  assert.equal(bearerResult.hits.includes("bearer-token"), true);
+});
+
+test("正常文本里的普通冒号/等号不被误伤", () => {
+  const text = "结论：把 retry 的 backoff 改成指数退避；key 用 map，value 用数组。";
+  assert.deepEqual(redact(text).hits, []);
+  assert.equal(redact(text).text, text);
+});
+
+test("已知取舍：含 key/token 等词的普通文本键名也会被遮（复审 F5）", () => {
+  // `i` 标志让键名子串匹配不区分大小写，`keywords: implementation details` 这类正常文本
+  // 也会命中 `kv-assignment`。这是「宁可多遮」的有意取舍，不是回归；钉住它避免以后误收窄
+  // 规则、把审计点名要遮的 `apiKey:` 弄丢。
+  const keywords = redact("keywords: implementation details");
+  assert.equal(keywords.text, "keywords: ***REDACTED*** details");
+  assert.equal(keywords.hits.includes("kv-assignment"), true);
+
+  const monkey = redact("monkey: banana peel");
+  assert.equal(monkey.hits.includes("kv-assignment"), true);
+
+  // 同一份规则仍然必须遮住审计要求的驼峰键名。
+  const apiKey = redact("apiKey: abcdefghij");
+  assert.equal(apiKey.text.includes("abcdefghij"), false);
+});

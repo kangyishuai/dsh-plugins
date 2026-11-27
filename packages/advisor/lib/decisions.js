@@ -5,13 +5,15 @@
 // 有 token 与成本）；decisions 是**策略的证据**（一个回合一行，没有徵询的回合也要记），
 // 用来事后回答「该徵询的时候有没有徵询」。两件事混在一起会让两边都难查。
 //
-// 落盘：`<dataRoot>/advisor/decisions.jsonl`，只追加；超过上限时滚动重命名（保留一份历史）。
-import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+// 落盘：`<dataRoot>/advisor/decisions.jsonl`。新行用单行 O_APPEND 追加（按文件串行写队列，
+// 并发回合不会互相覆盖）；outcome 回填是「读-改-写整份」，但走唯一 tmp + rename 的原子重写，
+// 并与追加共用同一个队列（审计 AUD-ADV-01）。超过上限（2 MiB）时滚动重命名保留一份历史。
 import { join } from "node:path";
 
 import { signalsOf } from "./adoption.js";
+import { appendJsonLine, readJsonLines, serializeByPath, writeTextAtomic } from "./fs-atomic.js";
 import { LEDGER_DIR } from "./ledger.js";
-import { textOf, toolCallsOf } from "./transcript.js";
+import { isInjectedContext, textOf, toolCallsOf } from "./transcript.js";
 
 /** 决策日志文件名（与 usage.jsonl / advice.jsonl 同目录）。 */
 export const DECISIONS_FILE = "decisions.jsonl";
@@ -111,9 +113,10 @@ export function buildDecision(input) {
 }
 
 /**
- * 判定上一回合建议的下场。只看**下一条用户消息**：
+ * 判定上一回合建议的下场。**本函数只处理「下一条真人用户消息」这一种反应**：
  * 建议里出现过的可追踪信号（路径、反引号命令、证据 ref）命中就算 accepted，
- * 用户发了别的内容算 user-typed-other，一直没有新消息算 no-action。
+ * 用户发了别的内容算 user-typed-other。`"no-action"` 不由本函数产出——
+ * 它由回合跟踪器在「下个回合结束时仍没有任何真人反应」时回填（见 createDecisionTracker）。
  * @param {{ adviceText?: string, signals?: string[] }} advice
  * @param {string} nextUserText 下一回合用户输入
  * @returns {"accepted"|"user-typed-other"}
@@ -128,6 +131,23 @@ export function outcomeOf(advice, nextUserText) {
   }
   // 没有信号可追踪时退化为「用户是否在说同一件事」：给不出结论就算另打字。
   return "user-typed-other";
+}
+
+/**
+ * 在一段（已序列化的）事件载荷里找建议信号。
+ * 与 `attributeAdoption` 的 `JSON.stringify(event.data)` 口径一致：工具参数、助手文本里
+ * 出现建议提到的路径/命令/证据 ref，就算「主模型照着做了」（审计 AUD-ADV-07）。
+ * @param {string} payload
+ * @param {string[]} signals
+ * @returns {string|null} 命中的信号；没有则 null
+ */
+export function matchSignalIn(payload, signals) {
+  const text = typeof payload === "string" ? payload : "";
+  if (text === "") return null;
+  for (const signal of Array.isArray(signals) ? signals : []) {
+    if (typeof signal === "string" && signal.length >= 3 && text.includes(signal)) return signal;
+  }
+  return null;
 }
 
 /** 分桶键：把回合特征压成有限几个桶，复盘时直接出交叉表。 */
@@ -195,6 +215,7 @@ export function summarize(records) {
   }
 
   const turns = list.length;
+  const resolvedOutcomes = accepted + ignored + noAction;
   return {
     turns,
     consulted,
@@ -202,8 +223,12 @@ export function summarize(records) {
     accepted,
     ignored,
     noAction,
-    // 采纳率只对「已经出结果」的徵询算，未回填的不进分母。
+    // 采纳率只对「已经出结果」的徵询算，未回填的不进分母；但覆盖率要单独报，
+    // 否则分母很小时「采纳率 0%」会被读成「建议从没被采纳」（审计 AUD-ADV-07）。
     acceptRate: accepted + ignored === 0 ? null : accepted / (accepted + ignored),
+    resolvedOutcomes,
+    pendingOutcomes: Math.max(0, consulted - resolvedOutcomes),
+    outcomeCoverage: consulted === 0 ? null : resolvedOutcomes / consulted,
     skipCodes,
     buckets: [...buckets.entries()]
       .map(([bucket, value]) => ({ bucket, ...value }))
@@ -219,20 +244,8 @@ export function summarize(records) {
  * @param {string} path
  * @returns {Promise<any[]>}
  */
-export async function readDecisions(path) {
-  const text = await readFile(path, "utf8").catch(() => "");
-  /** @type {any[]} */
-  const out = [];
-  for (const line of text.split("\n")) {
-    if (line.trim() === "") continue;
-    try {
-      const parsed = JSON.parse(line);
-      if (parsed && typeof parsed === "object") out.push(parsed);
-    } catch (_error) {
-      /* 跳过坏行 */
-    }
-  }
-  return out;
+export function readDecisions(path) {
+  return readJsonLines(path);
 }
 
 /**
@@ -243,63 +256,98 @@ export function createDecisionLog(options) {
   const dir = join(options.home, LEDGER_DIR);
   const path = join(dir, DECISIONS_FILE);
 
+  // 进行中的写操作计数 + `flush()`：调用方（尤其是测试）可以**确定性地**等到落盘，
+  // 不必用 `setTimeout` 猜时序（接线测试曾因此偶发红）。`track()` 里的回填是 fire-and-forget，
+  // 但 `backfillOutcome` 在被调用的同步段就会登记 inflight，所以 flush 不会漏掉它们。
+  let inflight = 0;
+  /** @type {Array<() => void>} */
+  const waiters = [];
+  /** @template T @param {() => Promise<T>} task @returns {Promise<T>} */
+  const trackWrite = async (task) => {
+    inflight += 1;
+    try {
+      return await task();
+    } finally {
+      inflight -= 1;
+      if (inflight === 0) {
+        for (const resolve of waiters.splice(0)) resolve();
+      }
+    }
+  };
+
   return {
     path,
 
     /**
-     * 追加一行。
+     * 等到当前所有写操作（追加 / 回填）落盘。没有在途写时立即 resolve。
+     * @returns {Promise<void>}
+     */
+    flush() {
+      if (inflight === 0) return Promise.resolve();
+      return new Promise((resolve) => {
+        waiters.push(resolve);
+      });
+    },
+
+    /**
+     * 追加一行（O_APPEND 单写 + 进程内单写队列；不再读全文再覆盖，审计 AUD-ADV-01）。
      * @param {any} record
      * @returns {Promise<void>}
      */
-    async append(record) {
-      try {
-        await mkdir(dir, { recursive: true });
-        const info = await stat(path).catch(() => undefined);
-        if (info && info.size > DECISIONS_MAX_BYTES) {
-          await rename(path, `${path}.1`).catch(() => undefined);
+    append(record) {
+      return trackWrite(async () => {
+        try {
+          await appendJsonLine(path, record, {
+            rotateBytes: DECISIONS_MAX_BYTES,
+            rotateTo: `${path}.1`,
+          });
+        } catch (error) {
+          options.logger?.warn?.(`[advisor] 写决策日志失败：${String(error)}`);
         }
-        const existing =
-          info && info.size <= DECISIONS_MAX_BYTES
-            ? await readFile(path, "utf8").catch(() => "")
-            : "";
-        await writeFile(path, `${existing}${JSON.stringify(record)}\n`, "utf8");
-      } catch (error) {
-        options.logger?.warn?.(`[advisor] 写决策日志失败：${String(error)}`);
-      }
+      });
     },
 
     /**
      * 回填上一回合的 outcome（改最后一条匹配记录）。
-     * 日志是追加型；回填用「重写整份文件」实现，文件本身很小，且只在收尾时发生。
+     *
+     * 为什么这里仍是「读-改-写整份」而不是追加补丁行：`decisions.jsonl` 同时被
+     * `pnpm advisor:review` 按「一行一条决策」直接读，补丁行会被它当成一个回合计入统计。
+     * 重写只发生在回填（每次徵询最多一次），且与 append 共用同一个 per-path 队列 +
+     * 唯一 tmp + rename，所以既不会丢追加，也不会留下半截文件。
      * @param {string} sessionId
      * @param {number} turn
      * @param {string} outcome
+     * @param {string} [why] 归因依据（tool-call / assistant-message / user-message / no-follow-up）
      * @returns {Promise<boolean>} 是否真的改到了
      */
-    async backfillOutcome(sessionId, turn, outcome) {
-      try {
-        const records = await readDecisions(path);
-        let changed = false;
-        for (let index = records.length - 1; index >= 0; index -= 1) {
-          const record = records[index];
-          if (record?.sessionId === sessionId && record?.turn === turn) {
-            if (record.outcome === outcome) return true;
-            record.outcome = outcome;
-            changed = true;
-            break;
-          }
+    backfillOutcome(sessionId, turn, outcome, why = "") {
+      return trackWrite(async () => {
+        try {
+          return await serializeByPath(path, async () => {
+            const records = await readDecisions(path);
+            let changed = false;
+            for (let index = records.length - 1; index >= 0; index -= 1) {
+              const record = records[index];
+              if (record?.sessionId === sessionId && record?.turn === turn) {
+                if (record.outcome === outcome && (record.outcomeWhy ?? "") === why) return true;
+                record.outcome = outcome;
+                record.outcomeWhy = why;
+                changed = true;
+                break;
+              }
+            }
+            if (!changed) return false;
+            await writeTextAtomic(
+              path,
+              `${records.map((item) => JSON.stringify(item)).join("\n")}\n`,
+            );
+            return true;
+          });
+        } catch (error) {
+          options.logger?.warn?.(`[advisor] 回填决策日志失败：${String(error)}`);
+          return false;
         }
-        if (!changed) return false;
-        await writeFile(
-          path,
-          `${records.map((item) => JSON.stringify(item)).join("\n")}\n`,
-          "utf8",
-        );
-        return true;
-      } catch (error) {
-        options.logger?.warn?.(`[advisor] 回填决策日志失败：${String(error)}`);
-        return false;
-      }
+      });
     },
   };
 }
@@ -307,6 +355,19 @@ export function createDecisionLog(options) {
 /**
  * 回合跟踪器：把「事件 → 回合特征 → 决策行 → outcome 回填」这条链路从 service 里拆出来，
  * 这样它可以脱离宿主包单独测试（service.js 依赖 @deepseek-ai/*，在单测环境里导入不了）。
+ *
+ * outcome 的三条路径（审计 AUD-ADV-07 / 09）：
+ *   - accepted：后续**助手消息**或**工具调用参数**里出现建议信号，或下一条**真人**用户消息
+ *     复述了信号。这是**启发式、无置信度区分**：路径 / 反引号命令 / 证据 ref 一视同仁，
+ *     模型顺手复述同一条命令也可能被算成 accepted；若 `tools/execute` 的 `data` 含工具
+ *     结果全文，读到的内容也可能被当成命中（`event.data` 形状待真机核实，复审 F6）。
+ *   - user-typed-other：下一条真人用户消息没有命中任何信号；
+ *   - no-action：下个回合结束时仍没有任何真人反应（目标自动继续等）。**会话结束时不会
+ *     flush**：没有后续回合的 pending 会一直保持未回填，覆盖率里体现为 pending。
+ * 宿主注入的 `user/message`（time-context / goal / runtime-context）不是用户反应，直接忽略。
+ * post-answer / shadow 的建议在 `turn/end` 之后异步产生，`noteAdvice` 晚于该回合的
+ * `finishTurn` → 记到**下一回合**的决策行、pending 也在下一回合才设置（复审 F7，既有错位，
+ * 本批只记录不改；见 docs/testing/advisor.md）。
  * @param {{ log: ReturnType<typeof createDecisionLog>, now?: () => number }} options
  */
 export function createDecisionTracker(options) {
@@ -317,6 +378,23 @@ export function createDecisionTracker(options) {
   const advice = new Map();
   /** @type {Map<string, { turn: number, signals: string[] }>} */
   const pending = new Map();
+
+  /**
+   * 后续事件里出现建议信号 → 回填 accepted。
+   * @param {string} sessionId
+   * @param {any} event
+   * @param {string} why assistant-message | tool-call
+   * @returns {{ turn: number, outcome: string } | null}
+   */
+  const claimFromEvent = (sessionId, event, why) => {
+    const waiting = pending.get(sessionId);
+    if (waiting === undefined) return null;
+    const hit = matchSignalIn(JSON.stringify(event?.data ?? ""), waiting.signals);
+    if (hit === null) return null;
+    pending.delete(sessionId);
+    void log.backfillOutcome(sessionId, waiting.turn, "accepted", why);
+    return { turn: waiting.turn, outcome: "accepted" };
+  };
 
   return {
     /**
@@ -338,7 +416,7 @@ export function createDecisionTracker(options) {
     },
 
     /**
-     * 累计事件特征；收到用户消息时回填上一条决策的 outcome。
+     * 累计事件特征；并在后续事件里找建议信号回填 accepted。
      * @param {string} sessionId
      * @param {any} event
      * @returns {{ backfilled: { turn: number, outcome: string } | null }}
@@ -352,12 +430,12 @@ export function createDecisionTracker(options) {
           current.answerChars += textOf(message).length;
           current.toolCalls += toolCallsOf(message).length;
         }
-        return { backfilled: null };
+        return { backfilled: claimFromEvent(sessionId, event, "assistant-message") };
       }
       if (type === "tools/execute") {
         const current = stats.get(sessionId);
         if (current) current.toolCalls += 1;
-        return { backfilled: null };
+        return { backfilled: claimFromEvent(sessionId, event, "tool-call") };
       }
       if (type === "agent/error" || type === "agent/request-error") {
         const current = stats.get(sessionId);
@@ -366,13 +444,16 @@ export function createDecisionTracker(options) {
       }
       if (type !== "user/message") return { backfilled: null };
 
+      const message = event?.data?.message ?? event?.data;
+      // 注入的上下文不是真人反应：既不能算 accepted，也不能算 user-typed-other。
+      if (isInjectedContext(message)) return { backfilled: null };
       const waiting = pending.get(sessionId);
-      if (!waiting) return { backfilled: null };
-      const text = textOf(event?.data?.message ?? event?.data);
+      if (waiting === undefined) return { backfilled: null };
+      const text = textOf(message);
       if (text === "") return { backfilled: null };
       pending.delete(sessionId);
       const outcome = outcomeOf({ signals: waiting.signals }, text);
-      void log.backfillOutcome(sessionId, waiting.turn, outcome);
+      void log.backfillOutcome(sessionId, waiting.turn, outcome, "user-message");
       return { backfilled: { turn: waiting.turn, outcome } };
     },
 
@@ -409,10 +490,16 @@ export function createDecisionTracker(options) {
               ? "回合被阻塞"
               : (input.skipReason ?? input.fallbackReason),
       });
+      // 上一回合的建议等到这个回合结束都没有真人反应 → no-action（该分支以前不可达）。
+      const stale = pending.get(input.sessionId);
+      if (stale !== undefined) {
+        pending.delete(input.sessionId);
+        await log.backfillOutcome(input.sessionId, stale.turn, "no-action", "no-follow-up");
+      }
       if (record.consulted && usedAdvice?.adviceText) {
         pending.set(input.sessionId, {
           turn,
-          signals: signalsOf({ advice: usedAdvice.adviceText }),
+          signals: signalsOf({ advice: usedAdvice.adviceText, evidence: usedAdvice.evidence }),
         });
       }
       await log.append(record);

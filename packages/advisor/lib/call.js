@@ -3,6 +3,7 @@
 // 这是整个插件唯一会花钱的地方，所有失败都必须变成**结构化结果**，绝不向上抛。
 import { BlockAssembler } from "@deepseek-ai/dsh-llm";
 import { classifyAbort } from "./abort-reason.js";
+import { createDeadline, raceWithDeadline } from "./deadline.js";
 import { advisorSystemPrompt, buildAdvisorInput, mintNonce } from "./prompt.js";
 
 /** 额外调用统一打这个 purpose：也是递归防护的判据（监听器按它跳过自己）。 */
@@ -92,19 +93,10 @@ export async function callAdvisor(input) {
     { role: "user", content: [{ type: "text", text: userText }] },
   ]);
 
-  // 超时与用户中断合并：任一触发都中止（绝不留下孤儿请求继续烧 token）。
-  const timeoutSignal = AbortSignal.timeout(settings.timeoutMs);
-  // 超时与用户取消都会让流以 aborted 收尾，事后无法从 finish 分辨；
-  // 这里先记住「信号里的一员确实因超时触发」，收尾时用它区分 code。
-  let timedOut = false;
-  timeoutSignal.addEventListener("abort", () => {
-    timedOut = true;
-  });
-  const signals = [input.signal, timeoutSignal].filter(Boolean);
-  const signal =
-    signals.length > 1 && typeof AbortSignal.any === "function"
-      ? AbortSignal.any(/** @type {AbortSignal[]} */ (signals))
-      : /** @type {AbortSignal|undefined} */ (signals[0]);
+  // 硬超时：到点由**插件侧**主动 abort 并提前返回，不等宿主流自己收尾（审计 AUD-ADV-03）。
+  // 外部取消（用户 / 回合取消）也合并进同一个 signal，宿主只需要看一个。
+  const deadline = createDeadline({ timeoutMs: settings.timeoutMs, external: input.signal });
+  const signal = deadline.signal;
 
   /**
    * @param {string} effortOverride 传空串表示「这次不带思考档」
@@ -170,9 +162,9 @@ export async function callAdvisor(input) {
     }
     if (settled?.kind === "aborted" || finish?.kind === "aborted") {
       const verdict = classifyAbort({
-        // 外部 signal 先于超时触发 → 用户/回合取消；超时 signal 触发 → 超时。
-        cancelled: timedOut !== true && (input.signal?.aborted ?? false),
-        timedOut,
+        // 外部取消 → aborted；配置的超时触发 → timeout。
+        cancelled: deadline.cancelled(),
+        timedOut: deadline.timedOut(),
         timeoutMs: settings.timeoutMs,
       });
       return {
@@ -208,18 +200,45 @@ export async function callAdvisor(input) {
     };
   };
 
-  try {
+  /**
+   * 一次尝试；模型不支持思考档时去掉档位再试一次（不无限重试）。
+   * @returns {Promise<CallResult>}
+   */
+  const attempt = async () => {
     try {
       return await run(effort);
     } catch (error) {
       const code = classifyError(error);
-      // 模型不支持这个思考档：去掉思考档重试**一次**（不无限重试）。
       if (code === "UNSUPPORTED_REASONING_EFFORT" || code === "INVALID_MODEL_REASONING") {
         input.logger?.warn?.(`[advisor] 模型不支持思考档 ${effort || "(默认)"}，已降级重试`);
         return await run("");
       }
       throw error;
     }
+  };
+
+  try {
+    // 整个尝试（含一次降级重试）共用一个 deadline：超时是「这次徵询最多等多久」，
+    // 不是「每一轮最多等多久」。
+    const outcome = await raceWithDeadline(attempt(), deadline);
+    if (outcome.kind === "timeout" || outcome.kind === "aborted") {
+      const verdict = classifyAbort({
+        cancelled: outcome.kind === "aborted",
+        timedOut: outcome.kind === "timeout",
+        timeoutMs: settings.timeoutMs,
+      });
+      // 注意：这里不等流自己收尾，也不把迟到的 usage 记进账本 —— 超时的调用按未计费处理。
+      return {
+        ok: false,
+        code: verdict.code,
+        message: verdict.message,
+        ms: Date.now() - startedAt,
+        model,
+        effort,
+      };
+    }
+    if (outcome.kind === "error") throw outcome.error;
+    return outcome.value;
   } catch (error) {
     return {
       ok: false,
@@ -229,5 +248,7 @@ export async function callAdvisor(input) {
       model,
       effort,
     };
+  } finally {
+    deadline.dispose();
   }
 }

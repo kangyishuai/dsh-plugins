@@ -67,6 +67,43 @@ DSH_HOME=$H dsh --profile ad --port 0 --no-open
 
 结论：**rc.5 上 advisor 无回归**。
 
+## 0.6.3 审计修复批次（2026-11-28，DSH 0.2.2-rc.5）
+
+这批只动 host 半（钱/预算/决策日志/脱敏）与纯函数，没有改 client 模板；对应审计 AUD-ADV-01～15 的
+「建议方向」。逐条修法与证据：
+
+| issue  | 修法                                                                                                                                                            | 守护它的单测                                                                                     |
+| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| ADV-01 | usage/advice/decisions 改为单行 `O_APPEND` 追加 + 按文件串行写队列；outcome 回填是「唯一 tmp + rename」原子重写                                                 | `fs-atomic.test.js`、`ledger.test.js`「并发 record 不丢行」、`decisions.test.js`「并发回填」     |
+| ADV-02 | 工作区池 `add` 读-改-写进 per-path 队列，调用方 `await`；唯一 tmp + rename                                                                                      | `budget.test.js`「并发 add 不丢更新」                                                            |
+| ADV-03 | 插件侧硬超时：`deadline.js` 到点 abort 并提前返回 `timeout`，不落账；残余风险写进 README                                                                        | `deadline.test.js`（9 项）                                                                       |
+| ADV-04 | 账本行写本地日键 `day`（`lib/day.js` 唯一实现），读取优先 `day`、旧行按 `at` 的本地日期折算                                                                     | `ledger.test.js`「day 字段优先」（远古固定日期，任何时区必红）、`day.test.js`（纯函数/DST/跨日） |
+| ADV-05 | 启动时从 usage 尾部恢复 `sessionCalls` 与最近一小时 `hourStamps`；turnCalls 明确为进程内                                                                        | `ledger.test.js`「恢复会话调用数与最近一小时时间戳」                                             |
+| ADV-06 | 新增 `ledger/budget/fs-atomic/deadline/day` 五个测试文件（文件系统相关全部 `mkdtemp`）                                                                          | 见上                                                                                             |
+| ADV-07 | outcome 三条路径可达（assistant/tool 信号 → accepted、下一条真人消息 → user-typed-other、下回合无真人 → no-action）；`summarize`/`/advisor report` 带覆盖率分母 | `decisions.test.js`、`decisions-wiring.test.js`、`adoption.test.js`                              |
+| ADV-08 | 决策日志只记顶层会话的口径写进 README / 本文 §1.5                                                                                                               | —（文档）                                                                                        |
+| ADV-09 | 回填前用 `isInjectedContext` 过滤注入的 `user/message`（goal / time-context 等）                                                                                | `decisions-wiring.test.js`「注入消息不误判」                                                     |
+| ADV-10 | 删除从未被调用的 `ledger.recent()` 与内存副本                                                                                                                   | `ledger.test.js`「不再暴露 recent」                                                              |
+| ADV-11 | 预估成本传进 `checkBudget` / `checkPool`，日预算可「这笔会顶到就拒绝」                                                                                          | `guard.test.js`「边界 + 预估」                                                                   |
+| ADV-12 | 两个预算闸统一 `>=`（已达上限即拒绝）                                                                                                                           | `guard.test.js`、`budget.test.js`                                                                |
+| ADV-13 | 脱敏键名不区分大小写，补 JWT 与裸 `Bearer` token 两条规则                                                                                                       | `redact.test.js`（新增 3 项）                                                                    |
+| ADV-14 | 删掉 client 内嵌字典与 `LOCALE_EXTRA` 重复的 30 个键，并加「键集不相交」断言                                                                                    | `locale-parity.test.js`                                                                          |
+| ADV-15 | 空白会话斜杠命令不可见属上游行为，写进 README 已知边界                                                                                                          | —（文档）                                                                                        |
+
+复审（`notes/audit/2026-11-28/reviews/advisor.md`）的 F2/F4/F5/F6/F7 已在本分支跟进：ADV-04 测试改成
+时区无关的远古日期 + 新增 `day.test.js`；预算预检拒绝文案区分「已用完」与「本次调用预计超出」
+（`guard.js`/`budget.js` 返回值带上 `estimatedCostUsd`）；README 声明脱敏可能误伤普通键名并用
+`keywords:` 用例钉住；决策 outcome 的启发式/无置信度、post-answer 归因按下一回合计、会话结束
+不 flush 都写进注释与本文。F1（review 脚本人类输出缺覆盖率）属 root `scripts/`，由 lead 的批次处理；
+F3（call.js 接线无单测）/F8（失败调用不计次）留给后续批次。
+
+另修一个既有 flake：`decisions-wiring.test.js` 原来用 `setTimeout(50/80/120)` 猜异步写落盘时序，全仓
+verify 并发时偶发红。现在 `createDecisionLog` 暴露 `flush()`（等所有在途 append/回填落盘），接线测试
+的 `deliver()` 改为 await `finishTurn` / `flush`，**不再有 sleep**；该文件连跑 8 次、包内全量连跑 5 次全绿。
+
+验证口径：`node --test`（包内）= **203 pass / 0 fail**，`pnpm verify` EXIT=0。按批次约定**没有**跑
+web 冒烟与桌面回归（由 lead 统一跑）；本批没有改 client 行为（只删了不生效的重复文案），15 项 web 冒烟与
+19 项桌面只读回归的断言均在本次改动范围之外。
 
 ## 0.6.1 在 0.2.2-rc.3 上的复核记录（2026-11-14，DSH 0.2.2-rc.3）
 
@@ -141,6 +178,12 @@ rc.3 桌面版重启后，在 **live 宿主**上把 `<DSH_HOME>/advisor.settings
 > 教训：`$DSH_HOME/advisor.settings.json` 在 **`$DSH_HOME` 根下**，不在 `advisor/` 子目录（那里只有 `usage.jsonl` / `decisions.jsonl` / `advice.jsonl` / `budget.json`）。第一次定位时我查错了路径，误以为「没有设置文件、用的是内置默认 90s」——实际是显式配了 90000。数字巧合导致结论没错，但依据是错的，已更正。
 
 后续动作：默认 90s **没有**改（改默认会连带影响成本与最坏延迟），但把实测分布写进了 README 的 `timeoutMs` 行；这条路由慢就自己调大（5000–600000）。
+
+**2026-11-28 补充（AUD-ADV-03）**：0.6.2 只修了「怎么**命名**超时」，没有保证「超时真的**中止**」——
+真实账本里仍有 6 次调用超过 90s 却以 `reviewed` 计费。0.6.3 起 `lib/deadline.js` 在
+`startedAt + timeoutMs` 主动 abort 请求并让 `callAdvisor` 提前返回 `timeout`，不再等宿主流收尾，
+该次调用按 0 token / `costUsd: 0` 记账。残余风险（provider 侧可能已计费、宿主可能仍持有请求）
+写在 README「副作用、限制与风险」里，不假装解决。
 
 ## 0.6.1 复核记录（2026-11-14，DSH 0.2.2-rc.2）
 
@@ -262,20 +305,26 @@ pnpm verify                        # 仓库门禁（含单测、规范、文档�
 
 只测**纯函数**——不启动宿主、不连模型、不写真实数据根。应覆盖的范围：
 
-| 主题        | 要证明的事                                                                                                                                                                                                                                  |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 设置规整    | 默认 `mode: "off"`、未配置顾问；丢弃未知键；数字按区间夹紧（`0` 在预算字段里表示"不限"）；非法 `mode`/`privacyScope` 回落到默认；坏 JSON 不抛错只回落。                                                                                     |
-| 设置合并    | `mergeSettings` 只覆盖 patch 里出现的键；写入是原子写、读回一致。                                                                                                                                                                           |
-| 选路与配对  | 显式配置 > 会话当前模型 > 空路由（空路由 = 调用方放弃本次徵询）；档位比较 `ok` / `warn`（顾问更弱）/ `block` / `unknown`（**未校验**，不阻断也不假装通过）。                                                                                |
-| 预算        | 四级预算按固定顺序返回**第一个**不满足的条件；到顶的 code 可区分是哪一级；`0` = 不限制。                                                                                                                                                    |
-| 金额        | 单价为 0 时不算钱（只显示 token，不编金额）；单价存在时按输入/输出分别乘。                                                                                                                                                                  |
-| 去重指纹    | 指纹忽略大小写、空白与标点差异；窗口内重复被拒、窗口外放行；指纹表有上限不会无界增长；免疫窗口只在窗口内为真。                                                                                                                              |
-| 空洞建议    | "Looks good" 这类空洞结论被识别为 `declined` 而不是 `reviewed`（精确匹配，不做包含匹配）。                                                                                                                                                  |
-| 严重度      | 严重度排序单调（`nit` < `concern` < `blocker`），预算/归因逻辑用它比较。                                                                                                                                                                    |
-| 输出契约    | 严格 JSON 解析（容忍 ```json 围栏与前后散文）；非法 severity 回落；`reviewed` 但建议为空 → invalid；纯散文 → unparsed；超长建议被截断并**留痕**；证据条目被过滤。                                                                           |
-| 脱敏        | 常见 token 形态（`sk-`、`ghp_`、`AKIA`、`Bearer`、`KEY=VALUE`）被替换；普通文本不被改动；递归处理嵌套对象的字符串，且有节点预算不无限递归。                                                                                                 |
-| transcript  | 含工具调用与工具结果；**排除我们自己的工具调用**（`purpose: "advisor"` 那条）；`scope=off` 时不发工具往来；`system`/`developer` 消息不进 transcript；超长工具结果被截断并留痕；**脱敏在截断之前**生效；总预算超限时保留首尾并插入省略标记。 |
-| 工具 schema | 工具名与参数形状对齐参照实现（**零必填**，只有可选 `focus`）；只使用宿主支持的关键字子集（`minimum` 这类会被抓出来）；`renderToolOutput` 覆盖四种状态且不抛。                                                                               |
+| 主题         | 要证明的事                                                                                                                                                                                                                                                                                                                                                               |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 设置规整     | 默认 `mode: "off"`、未配置顾问；丢弃未知键；数字按区间夹紧（`0` 在预算字段里表示"不限"）；非法 `mode`/`privacyScope` 回落到默认；坏 JSON 不抛错只回落。                                                                                                                                                                                                                  |
+| 设置合并     | `mergeSettings` 只覆盖 patch 里出现的键；写入是原子写、读回一致。                                                                                                                                                                                                                                                                                                        |
+| 选路与配对   | 显式配置 > 会话当前模型 > 空路由（空路由 = 调用方放弃本次徵询）；档位比较 `ok` / `warn`（顾问更弱）/ `block` / `unknown`（**未校验**，不阻断也不假装通过）。                                                                                                                                                                                                             |
+| 预算         | 四级预算按固定顺序返回**第一个**不满足的条件；到顶的 code 可区分是哪一级；`0` = 不限制；**边界 `>=`**（已达上限即拒绝）且把本次预估花费算进日预算。                                                                                                                                                                                                                      |
+| 原子写       | `appendJsonLine` 逐行追加、并发不丢行、超阈值滚动；`writeTextAtomic` 唯一 tmp + rename、并发替换不互踩、不留临时文件；同一路径的任务串行、前一个失败不阻塞后一个。                                                                                                                                                                                                       |
+| 账本         | usage 追加不重写历史、并发 record 不丢行、每行带本地日键；启动时按 `day`（旧行按 `at` 的本地日期）恢复今日花费，恢复会话调用数与最近一小时时间戳；advice 追加与按日汇总。                                                                                                                                                                                                |
+| 工作区预算   | 池子跨日清零、并发 `add` 不丢更新、唯一 tmp 不留临时文件；两个闸按 `>=` 与「已花 + 预估」判定。                                                                                                                                                                                                                                                                          |
+| 硬超时       | 到点 abort 且 `timedOut` 为真；外部取消不算超时；`raceWithDeadline` 超时先到提前返回、迟到的 rejection 不变成 unhandled；dispose 后定时器不再触发。                                                                                                                                                                                                                      |
+| 决策 outcome | `summarize` 报 accepted / ignored / noAction / pending / 覆盖率；跟踪器里三条路径都可达，注入的 `user/message` 不算用户反应；并发回填不丢行。                                                                                                                                                                                                                            |
+| 金额         | 单价为 0 时不算钱（只显示 token，不编金额）；单价存在时按输入/输出分别乘。                                                                                                                                                                                                                                                                                               |
+| 去重指纹     | 指纹忽略大小写、空白与标点差异；窗口内重复被拒、窗口外放行；指纹表有上限不会无界增长；免疫窗口只在窗口内为真。                                                                                                                                                                                                                                                           |
+| 空洞建议     | "Looks good" 这类空洞结论被识别为 `declined` 而不是 `reviewed`（精确匹配，不做包含匹配）。                                                                                                                                                                                                                                                                               |
+| 严重度       | 严重度排序单调（`nit` < `concern` < `blocker`），预算/归因逻辑用它比较。                                                                                                                                                                                                                                                                                                 |
+| 输出契约     | 严格 JSON 解析（容忍 ```json 围栏与前后散文）；非法 severity 回落；`reviewed` 但建议为空 → invalid；纯散文 → unparsed；超长建议被截断并**留痕**；证据条目被过滤。                                                                                                                                                                                                        |
+| 脱敏         | 常见 token 形态（`sk-`、`ghp_`、`AKIA`、`Bearer`、`KEY=VALUE`）被替换；小写 / camelCase 键名赋值（`api_key=`、`token:`、`apiKey:`、`password=`）、JWT、裸 `Bearer` token 也被遮；普通文本不被改动；递归处理嵌套对象的字符串，且有节点预算不无限递归。**已知取舍**：键名按不区分大小写的子串匹配，`keywords: …` / `monkey: …` 这类普通文本也会被遮（用例钉住，复审 F5）。 |
+| 本地日键     | `dayKey` 用本地日期分量（跨日边界、夏令时切换日）；`dayKeyOf` 对 ISO 时间按本地日折算、非法输入返回空串；`dayOfEntry` 合法 `day` 优先、畸形 `day` 回落到 `at`（`day.test.js`，时区无关，复审 F2）。                                                                                                                                                                      |
+| transcript   | 含工具调用与工具结果；**排除我们自己的工具调用**（`purpose: "advisor"` 那条）；`scope=off` 时不发工具往来；`system`/`developer` 消息不进 transcript；超长工具结果被截断并留痕；**脱敏在截断之前**生效；总预算超限时保留首尾并插入省略标记。                                                                                                                              |
+| 工具 schema  | 工具名与参数形状对齐参照实现（**零必填**，只有可选 `focus`）；只使用宿主支持的关键字子集（`minimum` 这类会被抓出来）；`renderToolOutput` 覆盖四种状态且不抛。                                                                                                                                                                                                            |
 
 **没覆盖**：真实宿主槽位、真实 Electron 渲染进程、真实的 `llm.prepareCall/stream` 行为、`commandUi.decorate`
 在宿主里的实际渲染。所以下面两层不能省。
@@ -291,10 +340,26 @@ web 冒烟（`pnpm smoke:advisor`）→ 桌面只读回归（**永远带 `--requ
 宿主侧**每个回合**往 `<数据根>/advisor/decisions.jsonl` 写一行（没徵询的回合也写），
 用来回答「该徵询的时候有没有徵询」。字段与原因码定义在 `packages/advisor/lib/decisions.js`。
 
-- 单测：`test/decisions.test.js`（归类/分桶/回填/统计）与 `test/decisions-wiring.test.js`
-  （用真实事件序列驱动跟踪器，确认回合结束会落行、下一条用户消息能回填 outcome）。
+- 单测：`test/decisions.test.js`（归类/分桶/回填/统计/覆盖率）与 `test/decisions-wiring.test.js`
+  （用真实事件序列驱动跟踪器，确认回合结束会落行、三种 outcome 都可达）。接线测试**不用 sleep**：
+  `createDecisionLog.flush()` 等所有在途写落盘，`deliver()` 是 async 的（等 `finishTurn` / `flush`）。
   注意 `service.js` 依赖 `@deepseek-ai/*`，单测环境里导入不了；所以「事件 → 决策行」这条逻辑
   放在 `decisions.js` 的 `createDecisionTracker`，service 只做薄委托。
+- **outcome 口径（0.6.3 起）**：`accepted` = 下一回合的助手消息或工具调用参数里出现建议的路径/反引号命令/
+  证据 ref（与 `attributeAdoption` 的 `JSON.stringify(event.data)` 口径一致），或下一条真人用户消息复述了信号；
+  `user-typed-other` = 下一条真人用户消息没命中；`no-action` = 下个回合结束时没有任何真人反应。
+  宿主注入的 `user/message`（`time-context` / `goal` / `runtime-context` 等，见 `transcript.js`
+  的 `isInjectedContext`）**不是**用户反应，直接忽略。`summarize()` 输出 `resolvedOutcomes` /
+  `pendingOutcomes` / `outcomeCoverage`，覆盖率与采纳率一起看。
+  **accepted 是启发式、不区分置信度**：路径 / 反引号命令 / 证据 ref 一视同仁，模型顺手复述同一条
+  命令也可能算命中；若 `tools/execute` 事件的 `data` 含工具结果全文，读文件读到的内容也可能被
+  当成命中（事件形状待真机核实，见复审 F6）。**post-answer / shadow 的归因按下一回合计**：
+  这类建议在 `turn/end` 之后异步产生，`noteAdvice` 晚于该回合的 `finishTurn`，于是会记到下一回合
+  的决策行、pending 也在下一回合才设置（复审 F7，属既有错位，本批只记录不改）。**会话结束不
+  flush**：没有后续回合的 pending 会一直保持未回填（覆盖率里体现为 pending）。
+- **只记顶层会话**：`handleSessionEvent` 对子代理会话直接 return（避免 shadow 在子代理里叠加），
+  所以本文件的口径是「主会话的回合」。`pnpm advisor:review` 的徵询率/采纳率都是这个口径，
+  不能用来推断 fork/spawn 子代理里的徵询行为。
 - 复盘：`pnpm advisor:review [--home <数据根>] [--days N] [--json]`，只读本地文件。
 - 冒烟里只守住格式约定（存在就必须每行一个合法 JSON）；本冒烟不发真实回合，所以文件通常不存在。
 

@@ -244,3 +244,108 @@ describe("bucketOf", () => {
     assert.equal(bucketOf({}), "短回答/无工具/无报错");
   });
 });
+
+describe("summarize：outcome 覆盖率（AUD-ADV-07）", () => {
+  /**
+   * @param {string|null} outcome
+   * @param {number} turn
+   */
+  const advised = (outcome, turn) => {
+    const record = buildDecision({
+      sessionId: "s",
+      turn,
+      advice: { adviceId: `adv_${turn}`, severity: "nit", trigger: "tool", costUsd: 0.01 },
+    });
+    record.outcome = outcome;
+    return record;
+  };
+
+  it("三种 outcome 都计入，未回填的单列 pending，并给出覆盖率", () => {
+    const stats = summarize([
+      advised("accepted", 1),
+      advised("user-typed-other", 2),
+      advised("no-action", 3),
+      advised(null, 4),
+    ]);
+    assert.equal(stats.consulted, 4);
+    assert.equal(stats.accepted, 1);
+    assert.equal(stats.ignored, 1);
+    assert.equal(stats.noAction, 1);
+    assert.equal(stats.pendingOutcomes, 1);
+    assert.equal(stats.resolvedOutcomes, 3);
+    assert.ok(Math.abs(stats.outcomeCoverage - 0.75) < 1e-9);
+  });
+
+  it("没有徵询时覆盖率为 null（不是 0，避免读成「一条都没采纳」）", () => {
+    const stats = summarize([buildDecision({ sessionId: "s", turn: 1 })]);
+    assert.equal(stats.outcomeCoverage, null);
+    assert.equal(stats.pendingOutcomes, 0);
+  });
+});
+
+describe("createDecisionLog：回填与追加共用一个写队列（AUD-ADV-01）", () => {
+  it("并发回填不同回合不会互相覆盖、也不会丢行", async () => {
+    const home = await tempDir("advisor-decisions");
+    const log = createDecisionLog({ home });
+    await log.append({ sessionId: "s1", turn: 1, consulted: true, outcome: null });
+    await log.append({ sessionId: "s1", turn: 2, consulted: true, outcome: null });
+    await log.append({ sessionId: "s1", turn: 3, consulted: true, outcome: null });
+    await Promise.all([
+      log.backfillOutcome("s1", 1, "accepted", "tool-call"),
+      log.backfillOutcome("s1", 2, "user-typed-other", "user-message"),
+      log.backfillOutcome("s1", 3, "no-action", "no-follow-up"),
+    ]);
+    const records = await readDecisions(log.path);
+    assert.equal(records.length, 3);
+    assert.deepEqual(
+      records.map((record) => record.outcome),
+      ["accepted", "user-typed-other", "no-action"],
+    );
+    assert.equal(records[0].outcomeWhy, "tool-call");
+  });
+
+  it("回填保留原因（why），重复回填同一结论是幂等的", async () => {
+    const home = await tempDir("advisor-decisions");
+    const log = createDecisionLog({ home });
+    await log.append({ sessionId: "s1", turn: 1, consulted: true, outcome: null });
+    assert.equal(await log.backfillOutcome("s1", 1, "accepted", "assistant"), true);
+    assert.equal(await log.backfillOutcome("s1", 1, "accepted", "assistant"), true);
+    const records = await readDecisions(log.path);
+    assert.equal(records.length, 1);
+    assert.equal(records[0].outcomeWhy, "assistant");
+  });
+});
+
+describe("createDecisionLog.flush（确定性等待，取代 sleep）", () => {
+  it("flush 等到 fire-and-forget 的 outcome 回填落盘", async () => {
+    const home = await tempDir("advisor-decisions");
+    const log = createDecisionLog({ home });
+    await log.append({ sessionId: "s1", turn: 1, consulted: true, outcome: null });
+    // 模拟 tracker 里的 `void log.backfillOutcome(...)`：不 await，再靠 flush 等落盘。
+    void log.backfillOutcome("s1", 1, "accepted", "tool-call");
+    await log.flush();
+    const records = await readDecisions(log.path);
+    assert.equal(records[0].outcome, "accepted");
+    assert.equal(records[0].outcomeWhy, "tool-call");
+  });
+
+  it("没有在途写时 flush 立即 resolve，可重复调用", async () => {
+    const home = await tempDir("advisor-decisions");
+    const log = createDecisionLog({ home });
+    await log.flush();
+    await log.flush();
+    assert.equal(typeof log.flush, "function");
+  });
+
+  it("并发 append + 回填后 flush 一次等到全部落盘", async () => {
+    const home = await tempDir("advisor-decisions");
+    const log = createDecisionLog({ home });
+    await log.append({ sessionId: "s1", turn: 1, consulted: true, outcome: null });
+    void log.append({ sessionId: "s1", turn: 2, consulted: false });
+    void log.backfillOutcome("s1", 1, "no-action", "no-follow-up");
+    await log.flush();
+    const records = await readDecisions(log.path);
+    assert.equal(records.length, 2);
+    assert.equal(records[0].outcome, "no-action");
+  });
+});

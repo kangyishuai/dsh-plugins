@@ -69,3 +69,16 @@ test("summarizeAdoption 汇总投递/采纳/锚点", () => {
   assert.equal(summary.anchorsVerified, 1);
   assert.equal(summary.items[0].adviceId, "adv_1");
 });
+
+test("summarizeAdoption 给出可追踪覆盖率（AUD-ADV-07：没有分母的采纳率会误导）", () => {
+  const summary = summarizeAdoption(events, [
+    { index: 1, data: events[1].data },
+    { index: 3, data: events[3].data },
+    { index: 1, data: { advice: "再想想", severity: "nit", anchors: {} } },
+  ]);
+  assert.equal(summary.total, 3);
+  assert.equal(summary.adopted, 1);
+  assert.equal(summary.traceable, 1, "只有第一条建议带路径信号");
+  assert.equal(summary.untraceable, 2);
+  assert.ok(Math.abs((summary.traceableRate ?? 0) - 1 / 3) < 1e-9);
+});

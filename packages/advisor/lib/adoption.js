@@ -50,19 +50,24 @@ export function attributeAdoption(events, fromIndex, data) {
 
 /**
  * 汇总一批建议记录（供 `/advisor report` 与未来的设置页使用）。
+ *
+ * 采纳率必须带分母：`accepted` 只对「建议里有可追踪信号」的那部分有意义（审计 AUD-ADV-07：
+ * 旧输出只有「采纳 0」，读起来像「建议从没被采纳」，实际是大部分建议根本没有可比对的信号）。
  * @param {any[]} events
  * @param {Array<{ index: number, data: any }>} records
- * @returns {{ total: number, adopted: number, unknown: number, anchorsChecked: number, anchorsVerified: number, items: Array<{ severity: string, summary: string, verdict: string, why: string, confidence: string, adviceId: string }> }}
+ * @returns {{ total: number, adopted: number, unknown: number, traceable: number, untraceable: number, traceableRate: number|null, anchorsChecked: number, anchorsVerified: number, items: Array<{ severity: string, summary: string, verdict: string, why: string, confidence: string, adviceId: string }> }}
  */
 export function summarizeAdoption(events, records) {
   let adopted = 0;
   let anchorsChecked = 0;
   let anchorsVerified = 0;
+  let traceable = 0;
   /** @type {Array<{ severity: string, summary: string, verdict: string, why: string, confidence: string, adviceId: string }>} */
   const items = [];
   for (const { index, data } of Array.isArray(records) ? records : []) {
     const outcome = attributeAdoption(events, index, data);
     if (outcome.verdict === "adopted") adopted += 1;
+    if (signalsOf(data).length > 0) traceable += 1;
     anchorsChecked += Number(data?.anchors?.checked ?? 0) || 0;
     anchorsVerified += Number(data?.anchors?.verified ?? 0) || 0;
     items.push({
@@ -76,10 +81,14 @@ export function summarizeAdoption(events, records) {
       adviceId: String(data?.adviceId ?? ""),
     });
   }
+  const total = items.length;
   return {
-    total: items.length,
+    total,
     adopted,
-    unknown: items.length - adopted,
+    unknown: total - adopted,
+    traceable,
+    untraceable: total - traceable,
+    traceableRate: total === 0 ? null : traceable / total,
     anchorsChecked,
     anchorsVerified,
     items,

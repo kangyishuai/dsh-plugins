@@ -46,11 +46,24 @@ export const RULES = [
     pattern: /\b(Authorization\s*:\s*(?:Bearer|Basic|Token)\s+)[A-Za-z0-9._~+/=-]{8,}/giu,
     replacement: "$1***REDACTED***",
   },
-  // KEY=value / KEY: value / --flag value 形态
+  // 裸 Bearer token（没有 Authorization 头前缀的形态，例如日志里的 "Bearer abc…"）
+  {
+    id: "bearer-token",
+    pattern: /\b(Bearer\s+)[A-Za-z0-9._~+/=-]{16,}/giu,
+    replacement: "$1***REDACTED***",
+  },
+  // JWT（三段 base64url，`eyJ` 是 `{"` 的 base64 前缀）
+  {
+    id: "jwt",
+    pattern: /\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\b/gu,
+    replacement: "eyJ***REDACTED***",
+  },
+  // KEY=value / KEY: value 形态。键名**不区分大小写**：`api_key=`、`token:`、`apiKey:`、
+  // `password=` 这些常见小写/驼峰写法以前全漏（审计 AUD-ADV-13）。
   {
     id: "kv-assignment",
     pattern:
-      /\b((?:[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PRIVATE)[A-Z0-9_]*)\s*[=:]\s*)(?:"[^"\n]{6,}"|'[^'\n]{6,}'|[^\s,;]{6,})/gu,
+      /\b((?:[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PRIVATE)[A-Z0-9_]*)\s*[=:]\s*)(?:"[^"\n]{6,}"|'[^'\n]{6,}'|[^\s,;]{6,})/giu,
     replacement: "$1***REDACTED***",
   },
   // URL 里的凭据 user:pass@host
