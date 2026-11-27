@@ -1025,10 +1025,11 @@ window.__ModuleLoader__.load({
           );
         });
         // 记录过文件改动、但全部已满足目标态（例如第二次回溯到同一目标）时，
-        // 说明「无文件变更」，而不是「无法回退文件」。
+        // 说明「无文件变更」，而不是「无法回退文件」；但「只有被跳过的文件」不能暗示没改过文件。
         return {
           available: false,
-          reasonKey: blocking ? "confirm.filesUnavailable" : "confirm.filesNone",
+          reasonKey:
+            blocking || files.skipped.length > 0 ? "confirm.filesUnavailable" : "confirm.filesNone",
           reasonParams: {},
         };
       }

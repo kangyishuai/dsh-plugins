@@ -5,6 +5,7 @@
 // 首字符是 `-`。旧实现的 SAFE_ID 正则要求首字符是字母数字，于是 46/46 个工作区目录都
 // 被滤掉、`existing` 恒为空，每次插件加载都把 `sessions/ trash/ rescues/` 全删。
 import assert from "node:assert/strict";
+import * as defaultFs from "node:fs/promises";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,6 +27,54 @@ async function touch(root, parts) {
   await mkdir(join(file, ".."), { recursive: true });
   await writeFile(file, "x");
   return file;
+}
+
+/**
+ * 造一个「某个路径 readdir 抛 EACCES」的 fs 替身（模拟数据根局部不可读）。
+ * @param {(dir: string) => boolean} isDenied
+ * @returns {any}
+ */
+function makeDeniedFs(isDenied) {
+  return {
+    ...defaultFs,
+    /**
+     * @param {string} dir
+     * @param {any} [options]
+     * @returns {Promise<any>}
+     */
+    async readdir(dir, options) {
+      if (isDenied(String(dir))) {
+        throw Object.assign(new Error(`EACCES: permission denied, scandir '${dir}'`), {
+          code: "EACCES",
+        });
+      }
+      return defaultFs.readdir(dir, options);
+    },
+  };
+}
+
+/**
+ * 造一个「某个路径 lstat 抛 EACCES」的 fs 替身（模拟目录条目可列出、但 stat 不可读）。
+ * @param {(path: string) => boolean} isDenied
+ * @returns {any}
+ */
+function makeUnreadableLstatFs(isDenied) {
+  return {
+    ...defaultFs,
+    /**
+     * @param {string} file
+     * @param {any} [options]
+     * @returns {Promise<any>}
+     */
+    async lstat(file, options) {
+      if (isDenied(String(file))) {
+        throw Object.assign(new Error(`EACCES: permission denied, lstat '${file}'`), {
+          code: "EACCES",
+        });
+      }
+      return defaultFs.lstat(file, options);
+    },
+  };
 }
 
 /**
@@ -236,6 +285,145 @@ test("pruneOrphans: dryRun 只报告不删除", async () => {
     assert.equal(result.executed, false);
     assert.deepEqual(result.removed.sessions, []);
     await readFile(join(plugin, "sessions", "session-dead", "entries.jsonl"));
+  } finally {
+    await rm(dataRoot, { recursive: true, force: true });
+  }
+});
+
+test("pruneOrphans: 扁平宿主布局（sessions/<id>/session.v4…）视为枚举失败、不删", async () => {
+  const dataRoot = await mkdtemp(join(tmpdir(), "srw-orphans-"));
+  try {
+    // 未知布局：会话目录的直接子项是会话文件而不是下一层会话目录。
+    await mkdir(join(dataRoot, "sessions", "session-flat"), { recursive: true });
+    await writeFile(
+      join(dataRoot, "sessions", "session-flat", "session.v4.jsonl.zstd"),
+      Buffer.from("not-really-zstd"),
+    );
+    const plugin = join(dataRoot, "session-rewind");
+    const entries = await touch(plugin, ["sessions", "session-flat", "entries.jsonl"]);
+
+    const report = await findOrphans({ dataRoot });
+    assert.equal(report.enumerationFailed, true);
+    assert.equal(report.incomplete, false);
+    assert.deepEqual(report.sessionIds, []);
+
+    const result = await pruneOrphans({ dataRoot });
+    assert.equal(result.executed, false);
+    assert.equal(result.reason, "enumeration-failed");
+    assert.equal(await exists(entries), true);
+  } finally {
+    await rm(dataRoot, { recursive: true, force: true });
+  }
+});
+
+test("pruneOrphans: workspace 内多一层 --project-- 嵌套视为枚举失败、不删", async () => {
+  const dataRoot = await mkdtemp(join(tmpdir(), "srw-orphans-"));
+  try {
+    // 未知布局：sessions/<workspace>/<projectKey>/<sessionId>/（projectKey 首字符是 `-`）。
+    await mkdir(join(dataRoot, "sessions", REAL_SLUG, "--project-alpha--", "session-nested"), {
+      recursive: true,
+    });
+    const plugin = join(dataRoot, "session-rewind");
+    const entries = await touch(plugin, ["sessions", "session-nested", "entries.jsonl"]);
+    const trash = await touch(plugin, ["trash", "session-nested", "op", "files", "a.txt"]);
+
+    const report = await findOrphans({ dataRoot });
+    assert.equal(report.enumerationFailed, true);
+    assert.deepEqual(report.sessionIds, []);
+
+    const result = await pruneOrphans({ dataRoot });
+    assert.equal(result.executed, false);
+    assert.equal(result.reason, "enumeration-failed");
+    assert.equal(await exists(entries), true);
+    assert.equal(await exists(trash), true);
+  } finally {
+    await rm(dataRoot, { recursive: true, force: true });
+  }
+});
+
+test("pruneOrphans: 部分 workspace 不可读（EACCES）视为 incomplete，不删并留审计计划", async () => {
+  const dataRoot = await mkdtemp(join(tmpdir(), "srw-orphans-"));
+  try {
+    await mkdir(join(dataRoot, "sessions", "--ws-locked--", "session-hidden"), { recursive: true });
+    await mkdir(join(dataRoot, "sessions", REAL_SLUG, "session-alive"), { recursive: true });
+    const plugin = join(dataRoot, "session-rewind");
+    const hiddenEntries = await touch(plugin, ["sessions", "session-hidden", "entries.jsonl"]);
+    await touch(plugin, ["sessions", "session-alive", "entries.jsonl"]);
+    const fs = makeDeniedFs((dir) => dir.endsWith("--ws-locked--"));
+
+    const report = await findOrphans({ dataRoot, fs });
+    assert.equal(report.incomplete, true);
+    assert.equal(report.enumerationFailed, true);
+    assert.equal(report.liveSessionCount, 1);
+    assert.deepEqual(report.sessionIds, []);
+
+    /** @type {any[]} */
+    const plans = [];
+    const result = await pruneOrphans({
+      dataRoot,
+      fs,
+      onPlan: (/** @type {any} */ reportArg) => {
+        plans.push(reportArg);
+      },
+    });
+    assert.equal(plans.length, 1);
+    assert.equal(plans[0].incomplete, true);
+    assert.equal(result.executed, false);
+    assert.equal(result.reason, "enumeration-failed");
+    assert.equal(await exists(hiddenEntries), true);
+  } finally {
+    await rm(dataRoot, { recursive: true, force: true });
+  }
+});
+
+test("pruneOrphans: 某个 workspace 为空不影响清理真实孤儿（不过度保守）", async () => {
+  const dataRoot = await mkdtemp(join(tmpdir(), "srw-orphans-"));
+  try {
+    await mkdir(join(dataRoot, "sessions", "--ws-empty--"), { recursive: true });
+    await mkdir(join(dataRoot, "sessions", REAL_SLUG, "session-alive"), { recursive: true });
+    const plugin = join(dataRoot, "session-rewind");
+    const live = await touch(plugin, ["sessions", "session-alive", "entries.jsonl"]);
+    await touch(plugin, ["sessions", "session-dead", "entries.jsonl"]);
+
+    const report = await findOrphans({ dataRoot });
+    assert.equal(report.enumerationFailed, false);
+    assert.equal(report.incomplete, false);
+    assert.equal(report.liveSessionCount, 1);
+    assert.deepEqual(report.sessionIds, ["session-dead"]);
+
+    const result = await pruneOrphans({ dataRoot });
+    assert.equal(result.executed, true);
+    assert.deepEqual(result.removed.sessions, ["session-dead"]);
+    assert.equal(await exists(live), true);
+    assert.equal(await exists(join(plugin, "sessions", "session-dead", "entries.jsonl")), false);
+  } finally {
+    await rm(dataRoot, { recursive: true, force: true });
+  }
+});
+
+test("findOrphans: 不认识的插件数据条目进 unknownIds（保留并告警）", async () => {
+  const dataRoot = await mkdtemp(join(tmpdir(), "srw-orphans-"));
+  try {
+    await mkdir(join(dataRoot, "sessions", REAL_SLUG, "session-alive"), { recursive: true });
+    const plugin = join(dataRoot, "session-rewind");
+    await touch(plugin, ["sessions", "session-alive", "entries.jsonl"]);
+    const unknown = await touch(plugin, ["sessions", "not a session id", "entries.jsonl"]);
+    const unreadable = await touch(plugin, ["trash", "session-locked", "op", "files", "a.txt"]);
+    const fs = makeUnreadableLstatFs((dir) => dir.endsWith(`${join("trash", "session-locked")}`));
+
+    const report = await findOrphans({ dataRoot, fs });
+    assert.equal(report.enumerationFailed, false);
+    assert.deepEqual(
+      report.unknownIds.map((/** @type {any} */ item) => [item.root, item.id, item.reason]).sort(),
+      [
+        ["sessions", "not a session id", "unsafe-id"],
+        ["trash", "session-locked", "unreadable"],
+      ],
+    );
+    const result = await pruneOrphans({ dataRoot, fs });
+    assert.deepEqual(result.removed, { sessions: [], trash: [], rescues: [] });
+    assert.equal(await exists(unknown), true);
+    assert.equal(await exists(unreadable), true);
   } finally {
     await rm(dataRoot, { recursive: true, force: true });
   }

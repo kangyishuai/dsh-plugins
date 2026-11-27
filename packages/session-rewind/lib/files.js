@@ -1377,14 +1377,15 @@ export function createFileStore(input = {}) {
       /** @type {string | undefined} */
       let note;
       if (beforeHash !== null && !current.exists) {
-        // 目标存在但当前不存在：允许按 before 内容重建（AUD-REW-02），并留下可读原因。
-        if (afterHash !== null && trashed.get(group.path)?.has(afterHash) === true) {
-          note = "missing-because-trashed";
-        } else if (afterHash === null) {
-          note = "missing-because-deleted";
-        } else {
-          note = "missing-because-external";
+        // 目标存在但当前不存在：只有「agent 删除」（afterHash === null）或「上次回溯自己把该
+        // afterHash 移入回收站」才按 before 内容重建（AUD-REW-02）。其余缺失属于**外部删除**，
+        // 按 ADR 0007 决策 5 / 冻结设计 §2.3 整体拒绝（B2），不静默复活。
+        const selfTrashed = afterHash !== null && trashed.get(group.path)?.has(afterHash) === true;
+        if (afterHash !== null && !selfTrashed) {
+          plan.conflicts.push({ path: group.path, reason: CONFLICT_REASONS.missing });
+          continue;
         }
+        note = selfTrashed ? "missing-because-trashed" : "missing-because-deleted";
       }
       plan.actions.push({
         path: group.path,

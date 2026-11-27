@@ -576,6 +576,98 @@ test("planRestore/applyRestore: 重命名（delete + add）回溯后两个名字
   await rm(root, { recursive: true, force: true });
 });
 
+test("planRestore: 外部删除的已改动文件报 missing 冲突、不重建（B2）", async () => {
+  const { root, cwd, store } = await makeStore();
+  await writeFile(path.join(cwd, "victim.txt"), "v1");
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 5,
+    tool: "edit",
+    callId: "c1",
+    path: "victim.txt",
+    beforeContent: "v0",
+    afterContent: "v1",
+  });
+  // agent 改过、随后被**外部**删除：不是 agent 删除（afterHash 仍非空），不得静默复活。
+  await rm(path.join(cwd, "victim.txt"));
+
+  const plan = await store.planRestore({ sessionId: "s", targetSeq: 5, cwd });
+  assert.equal(plan.available, false);
+  assert.deepEqual(plan.restore, []);
+  assert.deepEqual(plan.actions, []);
+  assert.deepEqual(
+    plan.conflicts.map((item) => [item.path, item.reason]),
+    [["victim.txt", CONFLICT_REASONS.missing]],
+  );
+
+  let code = "";
+  try {
+    await store.applyRestore({ sessionId: "s", cwd, plan, auditId: "audit-ext-delete" });
+  } catch (error) {
+    code = /** @type {any} */ (error).code;
+  }
+  assert.equal(code, FILE_ERROR_CODES.conflict);
+  await assert.rejects(readFile(path.join(cwd, "victim.txt"), "utf8"), /ENOENT/);
+  await rm(root, { recursive: true, force: true });
+});
+
+test("planRestore/applyRestore: 上次回溯自己移入回收站的文件仍可重建（B2 self-trashed）", async () => {
+  const { root, cwd, store } = await makeStore();
+  // anchor 5 创建 v1（目标 5 之前不存在），anchor 10 改成 v2。
+  await writeFile(path.join(cwd, "F.txt"), "v1");
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 5,
+    tool: "write",
+    callId: "c1",
+    path: "F.txt",
+    beforeContent: null,
+    afterContent: "v1",
+  });
+  await writeFile(path.join(cwd, "F.txt"), "v2");
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 10,
+    tool: "edit",
+    callId: "c2",
+    path: "F.txt",
+    beforeContent: "v1",
+    afterContent: "v2",
+  });
+
+  // 先回溯到 5：F 被移入回收站（afterHash v2 落入 trash manifest）。
+  const first = await store.planRestore({ sessionId: "s", targetSeq: 5, cwd });
+  assert.deepEqual(
+    first.trash.map((item) => item.path),
+    ["F.txt"],
+  );
+  await store.applyRestore({ sessionId: "s", cwd, plan: first, auditId: "audit-self-1" });
+  await assert.rejects(readFile(path.join(cwd, "F.txt"), "utf8"), /ENOENT/);
+
+  // 再回溯到 7：F 在目标 7 时应存在（anchor 5 已创建），且当前缺失是**上次回溯自己**造成的
+  // -> 必须按 before 内容（v1）重建，而不是 missing 冲突。
+  const second = await store.planRestore({ sessionId: "s", targetSeq: 7, cwd });
+  assert.deepEqual(second.conflicts, []);
+  assert.equal(second.available, true);
+  assert.deepEqual(
+    second.restore.map((item) => [item.path, item.deleted === true, item.note]),
+    [["F.txt", true, "missing-because-trashed"]],
+  );
+  const result = await store.applyRestore({
+    sessionId: "s",
+    cwd,
+    plan: second,
+    auditId: "audit-self-2",
+  });
+  assert.deepEqual(result.restored, ["F.txt"]);
+  assert.deepEqual(result.failed, []);
+  await assertText(path.join(cwd, "F.txt"), "v1");
+  await rm(root, { recursive: true, force: true });
+});
+
 test("planRestore/applyRestore: 先回溯到后一轮，再回溯到更早一轮不被拒绝（AUD-REW-03）", async () => {
   const { root, cwd, store } = await makeStore();
   // turn1（anchor 5）改 A；turn2（anchor 10）新建 B。

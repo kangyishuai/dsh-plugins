@@ -454,6 +454,17 @@ describe("fileModeState / effectiveMode", () => {
       testApi.fileModeState(previewWith({ available: false, tracked: true })).reasonKey,
       "confirm.filesNone",
     );
+    // 只有被跳过的文件（too-large / binary）时不能暗示「这轮没改过文件」。
+    assert.equal(
+      testApi.fileModeState(
+        previewWith({
+          available: false,
+          tracked: true,
+          skipped: [{ path: "big.bin", reason: "too-large" }],
+        }),
+      ).reasonKey,
+      "confirm.filesUnavailable",
+    );
   });
 
   it("effectiveMode only picks both when files are usable", () => {

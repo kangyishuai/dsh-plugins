@@ -208,9 +208,11 @@ export class SessionRewindService extends TypertRemoteService {
   /**
    * 删除已不存在会话的插件数据（entries/trash/rescues）。audit.jsonl 保留。
    *
-   * 安全约定（AUD-REW-01）：
-   * - `pruneOrphans` 枚举不到任何存活会话时视为「枚举失败」并跳过清理；
+   * 安全约定（AUD-REW-01 + 复审 B1）：
+   * - 枚举不到存活会话、未知宿主布局、或任一 workspace 不可读（`incomplete`）时视为枚举失败并
+   *   跳过清理；
    * - 删除前先把 dry-run 计划写审计（`cleanup-orphans-plan`），审计失败则不删；
+   * - 不认识的插件数据条目保留并逐条告警；
    * - 删除结果（含逐条失败）写审计并告警。
    * @returns {Promise<void>}
    */
@@ -230,12 +232,23 @@ export class SessionRewindService extends TypertRemoteService {
             bytes: report.bytes,
             liveSessionCount: report.liveSessionCount,
             enumerationFailed: report.enumerationFailed,
+            incomplete: report.incomplete,
+            unreadableWorkspaces: report.unreadableWorkspaces,
+            unknownIds: report.unknownIds,
           });
         },
       });
+      // 不认识的条目保留是安全行为，但必须告警（AGENTS 硬性约定 1「保留并告警」）。
+      for (const unknown of result.report.unknownIds ?? []) {
+        this.ctx?.logger?.warn?.(
+          `session-rewind: keeping unrecognized orphan candidate ${unknown.root}/${unknown.id} (${unknown.reason})`,
+        );
+      }
       if (result.reason === "enumeration-failed") {
         this.ctx?.logger?.warn?.(
-          "session-rewind: cannot enumerate live sessions (found 0); skipped orphan cleanup",
+          result.report.incomplete
+            ? `session-rewind: cannot enumerate live sessions (${result.report.unreadableWorkspaces} unreadable workspace(s)); skipped orphan cleanup`
+            : "session-rewind: cannot enumerate live sessions (found 0 or unknown layout); skipped orphan cleanup",
         );
         return;
       }
@@ -990,8 +1003,18 @@ export class SessionRewindService extends TypertRemoteService {
     );
     try {
       const orphans = await findOrphans({ dataRoot: this.dataRoot });
+      const unknownCount = Array.isArray(orphans.unknownIds) ? orphans.unknownIds.length : 0;
+      const unknownSuffix = unknownCount === 0 ? "" : `；保留 ${unknownCount} 个未知条目`;
       if (orphans.enumerationFailed) {
-        push("孤儿数据", false, "cannot enumerate live sessions; orphan cleanup is skipped");
+        push(
+          "孤儿数据",
+          false,
+          `${
+            orphans.incomplete
+              ? `有 ${orphans.unreadableWorkspaces} 个 workspace 不可读`
+              : "无法枚举存活会话"
+          }，已跳过孤儿清理${unknownSuffix}`,
+        );
       } else {
         const count =
           orphans.sessionIds.length + orphans.trashIds.length + orphans.rescueIds.length;

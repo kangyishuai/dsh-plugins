@@ -55,7 +55,7 @@ pnpm gate session-rewind --deep --workspace ~/Workspace/dsh-rewind-ui-smoke
 
 按「便宜的先跑」排序，任何一步失败立刻停并给出下一步提示：
 
-1. `pnpm verify`（lint + 类型 + 规范 + 公开边界 + 223 单测）
+1. `pnpm verify`（lint + 类型 + 规范 + 公开边界 + 230 单测）
 2. `pnpm probe:runtime`（宿主包/API/slot/私有 seam，72 项）
 3. `pnpm smoke:session-rewind`（临时 DSH_HOME 的 web 端到端，52 项）
 4. 桌面只读回归（25 项，**永远带 `--require`**：没开调试端口就是失败，不是跳过）
@@ -155,7 +155,7 @@ pnpm smoke:session-rewind
 
 ## 2.5 文件引擎单测（每次提交）
 
-`cd packages/session-rewind && pnpm test` 里包含 58 个文件引擎/追踪单测（临时目录）：
+`cd packages/session-rewind && pnpm test` 里包含 60 个文件引擎/追踪单测（临时目录）：
 
 - 捕获与记录：write create/update、edit、apply_patch add/update/delete/move；
 - 路径安全：cwd 逃逸、符号链接、`.git`/`node_modules`、非普通文件；
@@ -163,7 +163,8 @@ pnpm smoke:session-rewind
 - 恢复计划：多 anchor 同一路径取最早 before、trash 列表、按**目标状态**判定（已满足即 no-op；
   只有当前内容既不是 before 也不是该路径记录过的状态才算 `modified-externally` 冲突）；
 - 删除文件还原：agent 删除的文件回退时按记录重建（父目录 `mkdir -p`）、重命名（delete+add）
-  回退后源名字恢复、目标名字进回收站；
+  回退后源名字恢复、目标名字进回收站；外部删除的已改动文件按设计 §2.3 报 `missing` 冲突、
+  不静默复活；「上次回溯自己移入回收站」的文件可由回收站记录命中后重建；
 - 重复回溯：先回溯到后一轮（新建文件进回收站）再回溯到更早一轮不被拒绝；两次「只还原内容」
   的回溯都成功；上次回溯留下的中间态不被当成外部改动；
 - 执行：救援点失败不写、写后哈希校验、失败回滚、回收站移动、保留/GC/软上限；
@@ -173,7 +174,10 @@ pnpm smoke:session-rewind
   tools/execute + post-execute 的正常/异常路径。
 - 孤儿清理（`test/orphans.test.js`）：用真实宿主 slug 形态（`--Users-someone-Workspace-project--`）
   断言「存活会话的数据不被删」「真正孤儿被删」；枚举不到存活会话时视为枚举失败、一个字节都不删；
-  计划审计失败时不执行删除；不认识的插件数据条目保留。
+  未知宿主布局（扁平 `sessions/<id>/session.v4…`、多一层 `--project--` 嵌套）一律按枚举失败跳过；
+  任一 workspace 不可读（注入 `EACCES`）记为 `incomplete`，不删并留审计计划；某个 workspace 为空
+  不会妨碍清理真实孤儿（不过度保守）；计划审计失败时不执行删除；不认识的插件数据条目进
+  `unknownIds`、保留并告警。
 
 ## 2.6 文件模式端到端（桌面版，已自动化）
 
