@@ -103,6 +103,10 @@ pnpm smoke:session-rewind
 > ego 的 TaskSpace 只有 8 个页面额度：冒烟每次新建页面，失败运行会留下没关的页面，
 > 攒满后所有断言会以 `Page budget reached` 失败。脚本开跑前会先关掉遗留页面，
 > 并在结束时关掉自己开的页面。
+> 2026-11-28 起所有 web 冒烟的 `task.finish()` 都放进 `finally`（断言失败/超时也回收空间）；
+> 万一还是卡在额度上（例如别的会话把环境搞脏了），用 `node scripts/ego-cleanup.mjs` 预览
+> agent 遗留的 TaskSpace、`--apply` 清理（只清 `ownership=agent`，不碰用户 space）。
+> 失败时临时 `DSH_HOME` 会自动保留并打印 `host.log` 尾部（不必再设 `SMOKE_KEEP=1`）。
 > 临时 home 里启动真实宿主 + ego-browser，52 项断言：
 
 | #     | 断言                                                                                                  |

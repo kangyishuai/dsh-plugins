@@ -31,6 +31,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { NOTICE_DISMISS_SOURCE } from "./lib/browser-helpers.mjs";
+import {
+  reclaimTimedOutTaskSpace,
+  reportBrowserFailureHint,
+  reportFailureScene,
+} from "./lib/smoke-failure.mjs";
 
 const exec = promisify(execFile);
 const REPO = resolve(import.meta.dirname, "..");
@@ -85,8 +90,9 @@ function parseUrl(text) {
 function browserScript(url, deep) {
   const prompt = deep ? "/btw reply with exactly OK" : "/btw smoke wiring check";
   const lines = [
-    'const task = await taskSpace("dsh btw smoke");',
-    'const page = task.page("p1");',
+    "const results = [];",
+    "let task = null;",
+    "let page = null;",
     "// cookie 卫生（约定 §6.3）：ego 浏览器与用户共用，宿主每轮用新 token 生成 dsh-auth-<hash>，",
     "// 累积后请求头超过上限会让页面直接 431（ERR_HTTP_RESPONSE_CODE_FAILURE）。",
     "// 只删回环地址上的 dsh-auth-*，绝不动用户的其它 cookie。",
@@ -99,11 +105,14 @@ function browserScript(url, deep) {
     "    return mine.length;",
     "  } catch { return -1; }",
     "};",
-    "const clearedBefore = await clearAuthCookies();",
-    'console.log("cleared auth cookies before: " + clearedBefore);',
-    `await page.goto(${JSON.stringify(url)}, { waitUntil: "domcontentloaded" });`,
+    "// 失败/超时也必须关掉 TaskSpace：漏掉的 Page 会占满页面额度，把后续所有 web 冒烟卡到超时。",
+    "try {",
+    '  task = await taskSpace("dsh btw smoke");',
+    '  page = task.page("p1");',
+    "  const clearedBefore = await clearAuthCookies();",
+    '  console.log("cleared auth cookies before: " + clearedBefore);',
+    `  await page.goto(${JSON.stringify(url)}, { waitUntil: "domcontentloaded" });`,
     "await page.waitForTimeout(2500);",
-    "const results = [];",
     'const record = (name, ok, detail) => results.push({ name, ok, detail: String(detail ?? "").slice(0, 400) });',
     "const bodyLen = () => page.evaluate(() => (document.body ? document.body.innerText.length : 0));",
     "const draftOf = () => page.evaluate(() => (document.querySelector('[data-composer-input]') || {}).innerText || '');",
@@ -528,9 +537,13 @@ function browserScript(url, deep) {
     '  record("deep：聚焦面板时 Esc 关闭", escClosed === true, String(escClosed));',
     "  await page.evaluate(() => { const b = document.querySelector('[data-btw-close]'); if (b) b.click(); });",
     "}",
+    "} catch (error) {",
+    '  results.push({ name: "浏览器脚本异常（未预期）", ok: false, detail: String((error && error.stack) || error).slice(0, 1200) });',
+    "} finally {",
+    "  await clearAuthCookies().catch(() => {});",
+    "  await task?.finish({ keep: [] }).catch(() => {});",
+    "}",
     'console.log("SMOKE_RESULTS:" + JSON.stringify(results));',
-    "await clearAuthCookies();",
-    "await task.finish({ keep: [] });",
   ];
   return lines.join("\n");
 }
@@ -553,6 +566,8 @@ const main = async () => {
   /** @type {import("node:child_process").ChildProcess | undefined} */
   let host;
   let ok = false;
+  /** @type {string} */
+  let stdout = "";
   try {
     const home = join(work, "home");
     await mkdir(home, { recursive: true });
@@ -647,7 +662,6 @@ const main = async () => {
       cwd: workspace,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    let stdout = "";
     host.stdout?.on("data", (chunk) => {
       stdout += String(chunk);
     });
@@ -668,6 +682,12 @@ const main = async () => {
     const child = spawn("ego-browser", ["nodejs"], { stdio: ["pipe", "pipe", "pipe"] });
     let out = "";
     let err = "";
+    let timedOut = false;
+    // 以前这里没有浏览器脚本超时：ego 卡住时冒烟会一直挂着；补上与其它 web 冒烟一致的预算。
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+    }, 300_000);
     child.stdout.on("data", (chunk) => {
       out += String(chunk);
     });
@@ -677,11 +697,16 @@ const main = async () => {
     child.stdin.write(script);
     child.stdin.end();
     await new Promise((resolveDone) => child.on("close", resolveDone));
+    clearTimeout(timer);
+    if (timedOut) await reclaimTimedOutTaskSpace("dsh btw smoke");
     if (process.env.SMOKE_DEBUG === "1") console.log(out, err);
 
     const marker = "SMOKE_RESULTS:";
     const at = (out + err).indexOf(marker);
-    if (at < 0) throw new Error(`浏览器脚本没有返回结果：${(out + err).slice(-600)}`);
+    if (at < 0) {
+      reportBrowserFailureHint();
+      throw new Error(`浏览器脚本没有返回结果：${(out + err).slice(-600)}`);
+    }
     const jsonText = (out + err)
       .slice(at + marker.length)
       .split("\n")[0]
@@ -764,6 +789,9 @@ const main = async () => {
         }
       }
     } else {
+      // §6.4：失败必须留现场——把宿主输出落到 host.log，再把尾部打出来。
+      await writeFile(join(work, "host.log"), stdout).catch(() => {});
+      if (!ok) await reportFailureScene(join(work, "host.log"));
       console.log(`临时 DSH_HOME 已保留（${ok ? "SMOKE_KEEP=1" : "因失败而保留"}）：${work}`);
     }
   }

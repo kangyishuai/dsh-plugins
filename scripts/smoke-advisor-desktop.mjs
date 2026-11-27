@@ -312,13 +312,28 @@ const SESSION_ID = `(() => {
   return el === null ? "" : String(el.getAttribute('data-conversation-session') || '');
 })()`;
 
-/** @param {string} sessionId */
-async function commandTexts(sessionId) {
-  if (sessionId === "") return [];
+/**
+ * 扫当前会话目录，返回命令输出 + **读取诊断**。
+ * 诊断不是装饰：本轮回归里出现过「命令确实执行了（命令平面有卡片）但这里读不到输出」。
+ * 记下扫到哪些日志文件、解析出多少事件、日志尾部是什么，失败时才能分清是「命令没执行」
+ * 还是「日志没 flush / 扫错目录 / 解压失败」。
+ * 文件名按 `session.v*` 前缀匹配，不写死 v4（AGENTS.md 硬性约定 1：会话格式带版本号）。
+ * @param {string} sessionId
+ * @returns {Promise<{ texts: string[], files: string[], events: number, tail: string, error: string }>}
+ */
+async function commandLog(sessionId) {
+  /** @type {{ texts: string[], files: string[], events: number, tail: string, error: string }} */
+  const log = { texts: [], files: [], events: 0, tail: "", error: "" };
+  if (sessionId === "") {
+    log.error = "页面上没有 data-conversation-session（读不到会话 id，无法定位日志）";
+    return log;
+  }
   const home = process.env.DSH_HOME ?? join(process.env.HOME ?? "", ".dsh");
   const roots = join(home, "sessions");
   /** @type {string[]} */
   const files = [];
+  /** @type {boolean} */
+  let sessionDirSeen = false;
   const walk = async (/** @type {string} */ dir, /** @type {number} */ depth) => {
     if (depth > 3) return;
     /** @type {import("node:fs").Dirent[]} */
@@ -329,25 +344,29 @@ async function commandTexts(sessionId) {
       return;
     }
     for (const entry of entries) {
-      if (entry.isDirectory()) {
-        if (entry.name === sessionId) {
-          try {
-            for (const inner of await readdir(join(dir, entry.name))) {
-              if (inner.startsWith("session.v4.jsonl")) files.push(join(dir, entry.name, inner));
-            }
-          } catch {
-            /* 跳过 */
+      if (!entry.isDirectory()) continue;
+      if (entry.name === sessionId) {
+        sessionDirSeen = true;
+        try {
+          for (const inner of await readdir(join(dir, entry.name))) {
+            // `session.v4.jsonl.zstd` / 以后可能的 v5：只按前缀认，不写死版本。
+            if (/^session\.v\d+.jsonl.*$/u.test(inner)) files.push(join(dir, entry.name, inner));
           }
-        } else {
-          await walk(join(dir, entry.name), depth + 1);
+        } catch {
+          /* 跳过 */
         }
+      } else {
+        await walk(join(dir, entry.name), depth + 1);
       }
     }
   };
   await walk(roots, 0);
-  /** @type {string[]} */
-  const texts = [];
+  if (!sessionDirSeen) log.error = `在 ${roots} 下没找到会话目录 ${sessionId}（会话可能还没落盘）`;
+  else if (files.length === 0) log.error = `会话目录 ${sessionId} 里没有 session.v* 日志文件`;
+  /** @type {string} */
+  let raw = "";
   for (const file of files) {
+    log.files.push(file.slice(roots.length + 1));
     let text = "";
     try {
       const buffer = await readFile(file);
@@ -371,6 +390,7 @@ async function commandTexts(sessionId) {
     } catch {
       continue;
     }
+    raw += text;
     for (const line of text.split("\n")) {
       if (line.trim() === "") continue;
       /** @type {any} */
@@ -380,31 +400,54 @@ async function commandTexts(sessionId) {
       } catch {
         continue;
       }
+      log.events += 1;
       if (event?.type !== "command/done") continue;
       const value = event?.data?.text;
-      if (typeof value === "string" && value !== "") texts.push(value);
+      if (typeof value === "string" && value !== "") log.texts.push(value);
     }
   }
-  return texts;
+  const trimmed = raw.trim();
+  log.tail = trimmed.length > 600 ? trimmed.slice(-600) : trimmed;
+  return log;
 }
 
 /**
  * 等会话日志里出现满足 predicate 的新命令输出。
+ * 超时后再读一次（日志是异步 flush 的，常常在超时后一拍才写完）。
  * @param {string} sessionId @param {(text: string) => boolean} predicate @param {number} timeoutMs
  */
 async function waitForCommandText(sessionId, predicate, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
-  /** @type {string} */
-  let last = "";
+  /** @type {Awaited<ReturnType<typeof commandLog>>} */
+  let last = { texts: [], files: [], events: 0, tail: "", error: "" };
   while (Date.now() < deadline) {
-    const texts = await commandTexts(sessionId);
-    for (const text of texts) {
-      if (predicate(text)) return { ok: true, text };
+    last = await commandLog(sessionId);
+    for (const text of last.texts) {
+      if (predicate(text)) return { ok: true, text, log: last };
     }
-    last = texts.length === 0 ? "" : texts[texts.length - 1];
     await sleep(400);
   }
-  return { ok: false, text: last };
+  // 超时重试一次：不降低断言，只给「日志晚到一拍」留窗口。
+  await sleep(800);
+  const retry = await commandLog(sessionId);
+  for (const text of retry.texts) {
+    if (predicate(text)) return { ok: true, text, log: retry };
+  }
+  return {
+    ok: false,
+    text: retry.texts.length === 0 ? "" : retry.texts[retry.texts.length - 1],
+    log: retry,
+  };
+}
+
+/**
+ * 把 commandLog 的诊断压成一行，供失败断言/控制台输出（便于判「命令没执行」还是「日志读不到」）。
+ * @param {string} sessionId
+ * @param {{ files: string[], events: number, tail: string, error: string }} log
+ * @returns {string}
+ */
+function commandLogDiagnostics(sessionId, log) {
+  return `session=${sessionId || "(空)"} files=[${log.files.join(",")}] events=${log.events} error=${log.error || "(无)"} tail=${JSON.stringify(String(log.tail).replace(/\s+/gu, " ").slice(-260))}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1392,10 +1435,20 @@ const main = async () => {
       check(
         "/advisor status 输出「模式：」「顾问：」（会话日志）",
         status.ok,
-        `session=${desktopSessionId} text=${JSON.stringify(String(status.text).replace(/\s+/gu, " ").slice(0, 300))}`,
+        `session=${desktopSessionId} text=${JSON.stringify(String(status.text).replace(/\s+/gu, " ").slice(0, 300))}` +
+          (status.ok
+            ? ""
+            : `；日志读取诊断：${commandLogDiagnostics(desktopSessionId, status.log)}`),
       );
       if (status.ok) {
         console.log(`      status: ${String(status.text).replace(/\s+/gu, " ").slice(0, 240)}`);
+      } else {
+        console.log(
+          `      status 日志读取诊断：${commandLogDiagnostics(desktopSessionId, status.log)}`,
+        );
+        console.log(
+          "      （命令平面有卡片但这里读不到 = 日志没 flush/扫错目录；命令平面也没有 = 命令没执行）",
+        );
       }
       await cdp.screenshot(join(SHOTS, "04-status.png"));
 
@@ -1422,7 +1475,10 @@ const main = async () => {
         doctor.ok,
         `session=${desktopSessionId} text=${JSON.stringify(
           doctorText.replace(/\s+/gu, " ").slice(0, 300),
-        )}`,
+        )}` +
+          (doctor.ok
+            ? ""
+            : `；日志读取诊断：${commandLogDiagnostics(desktopSessionId, doctor.log)}`),
       );
       if (doctor.ok) {
         const lines = doctorText
@@ -1430,6 +1486,13 @@ const main = async () => {
           .map((line) => line.trim())
           .filter((line) => /✅|⚠️|❌/u.test(line));
         console.log(`      doctor: ${lines.slice(0, 6).join(" | ")}`);
+      } else {
+        console.log(
+          `      doctor 日志读取诊断：${commandLogDiagnostics(desktopSessionId, doctor.log)}`,
+        );
+        console.log(
+          "      （命令平面有卡片但这里读不到 = 日志没 flush/扫错目录；命令平面也没有 = 命令没执行）",
+        );
       }
       await cdp.screenshot(join(SHOTS, "05-doctor.png"));
 

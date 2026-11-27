@@ -6,13 +6,13 @@
 //   open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1
 //   # 2) 跑（发版门禁加 --require：连不上端口时失败而不是跳过）
 //   pnpm smoke:artifacts-desktop --require
+//   # 端口可用 --port 或 DSH_CDP_PORT 覆盖（默认 9222；并行验证时可指向隔离实例）
+//   pnpm smoke:artifacts-desktop --port 9333
 //
 // 只读：只展开右侧栏、点开指南、确认 Artifacts 入口与库渲染，不写任何文件、不改设置、不发消息。
 // 前提：这个包**已经装进 desktop profile**（否则指南里不会有 Artifacts 入口，属预期 FAIL 而非脚本故障）。
 // 依赖 `pnpm smoke:artifacts`（web、临时 DSH_HOME）覆盖数据面；这里只保证真实桌面 profile 里插件可用。
 import { parseArgs } from "node:util";
-
-const PORT = Number(process.env.DSH_CDP_PORT ?? 9222);
 
 /** @param {number} port */
 async function connect(port) {
@@ -62,13 +62,20 @@ const record = (name, ok, detail = "") => results.push({ name, ok, detail });
 const sleep = (/** @type {number} */ ms) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
-  const { values } = parseArgs({ options: { require: { type: "boolean", default: false } } });
+  const { values } = parseArgs({
+    options: {
+      port: { type: "string" },
+      require: { type: "boolean", default: false },
+    },
+    allowPositionals: false,
+  });
+  const port = Number(values.port ?? process.env.DSH_CDP_PORT ?? 9222);
   let cdp;
   try {
-    cdp = await connect(PORT);
+    cdp = await connect(port);
   } catch (error) {
     console.log(
-      `SKIP 连不上桌面版调试端口 ${PORT}：${error instanceof Error ? error.message : String(error)}`,
+      `SKIP 连不上桌面版调试端口 ${port}：${error instanceof Error ? error.message : String(error)}`,
     );
     if (values.require) process.exitCode = 1;
     return;

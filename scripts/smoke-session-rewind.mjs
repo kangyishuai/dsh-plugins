@@ -16,6 +16,12 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { gunzipSync, zstdDecompressSync } from "node:zlib";
 import { NOTICE_DISMISS_SOURCE } from "./lib/browser-helpers.mjs";
+import {
+  isFailedRun,
+  reclaimTimedOutTaskSpace,
+  reportBrowserFailureHint,
+  reportFailureScene,
+} from "./lib/smoke-failure.mjs";
 
 const exec = promisify(execFile);
 const REPO = resolve(import.meta.dirname, "..");
@@ -87,7 +93,17 @@ async function waitForBoot(logPath, timeoutMs) {
  */
 function browserScript(url, shots, home) {
   return `(async () => {
-const task = await taskSpace("dsh smoke: session-rewind");
+// 失败/超时也必须关掉 TaskSpace：漏掉的 Page 会占满页面额度，把后续所有 web 冒烟卡到超时。
+const checks = [];
+let task = null;
+let taskFinished = false;
+const finishTask = async () => {
+  if (taskFinished) return;
+  taskFinished = true;
+  await task?.finish({ keep: [] }).catch(() => {});
+};
+try {
+task = await taskSpace("dsh smoke: session-rewind");
 // ego 的 TaskSpace 有页面额度（8）。历史失败运行可能留下没关的页面，
 // 攒满后所有断言都会以 "Page budget reached" 失败 —— 开跑前先清场。
 for (const stale of await task.pages().catch(() => [])) {
@@ -110,7 +126,6 @@ const digestDeps = {
   gunzipSync: gunzipSync,
   decodeZstdFrames: decodeZstdFrames,
 };
-const checks = [];
 const check = (name, ok, detail) => checks.push({ name, ok: !!ok, detail: detail === undefined ? "" : String(detail) });
 const shot = (name) => page.screenshot({ path: SHOTS + "/" + name + ".png" });
 // ego 的浏览器 profile 会跨任务累积每个**临时宿主**的 dsh-auth cookie；请求头超限会返回 HTTP 431。
@@ -398,7 +413,7 @@ for (const rowKey of rows) {
 check("找到可回溯的会话（≥2 条用户消息且出现 ↶ 按钮）", picked !== null, probe);
 if (picked === null) {
   await shot("02-no-candidate");
-  await task.finish({ keep: false }).catch(() => {});
+  await finishTask();
   console.log("SMOKE_RESULT " + JSON.stringify({ checks }));
   return;
 }
@@ -1145,9 +1160,14 @@ await page.evaluate(() => {
 });
 
 await page.close().catch(() => {});
-await task.finish({ keep: false }).catch(() => {});
+await finishTask();
 console.log("SMOKE_STATE " + JSON.stringify({ sessionId: picked.rowKey.replace("session:", ""), userCountBefore: picked.bubbles.length }));
 console.log("SMOKE_RESULT " + JSON.stringify({ checks }));
+} catch (error) {
+console.log("SMOKE_RESULT " + JSON.stringify({ checks, fatal: String((error && error.stack) || error).slice(0, 1200) }));
+} finally {
+await finishTask();
+}
 })();
 `;
 }
@@ -1463,6 +1483,9 @@ const main = async () => {
   const work = await mkdtemp(join(tmpdir(), "dsh-smoke-rewind-"));
   /** @type {import("node:child_process").ChildProcess | undefined} */
   let host;
+  // host 输出累积：失败时要把它落盘当现场（poll 在启动后会被清掉，末尾再写一次）。
+  /** @type {string[]} */
+  const chunks = [];
   try {
     const profileSrc = join(process.env.HOME ?? "", ".dsh", "profiles", "desktop");
     const home = join(work, "home");
@@ -1514,7 +1537,6 @@ const main = async () => {
       stdio: ["ignore", "pipe", "pipe"],
     });
     /** @type {string[]} */
-    const chunks = [];
     host.stdout?.on("data", (/** @type {any} */ c) => chunks.push(String(c)));
     host.stderr?.on("data", (/** @type {any} */ c) => chunks.push(String(c)));
     void writeFile(logPath, "");
@@ -1543,10 +1565,15 @@ const main = async () => {
     await writeFile(browserFile, browserSource);
     await writeFile(join(shotsDir, "browser.mjs"), browserSource);
 
+    // 外部超时标记：ego-browser 被 kill 时浏览器脚本没机会跑 finally，需要 Node 侧兜底回收。
+    let timedOut = false;
     const result = await new Promise((resolvePromise) => {
       const child = spawn("ego-browser", ["nodejs"], { stdio: ["pipe", "pipe", "pipe"] });
       let out = "";
-      const timer = setTimeout(() => child.kill("SIGTERM"), 240_000);
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGTERM");
+      }, 240_000);
       child.stdout.on("data", (c) => {
         out += String(c);
       });
@@ -1559,16 +1586,27 @@ const main = async () => {
       });
       void readFile(browserFile).then((buffer) => child.stdin.end(buffer));
     });
+    if (timedOut) await reclaimTimedOutTaskSpace("dsh smoke: session-rewind");
 
     if (process.env.SMOKE_DEBUG) console.log(String(result).slice(-8000));
     const match = String(result).match(/SMOKE_RESULT (\{.*\})/u);
     if (!match) {
-      fail("浏览器脚本没有返回结果");
+      fail("浏览器脚本没有返回结果（页面/浏览器层没就绪）");
       console.error(String(result).slice(-4000));
+      reportBrowserFailureHint();
       return;
     }
-    /** @type {{ checks: { name: string, ok: boolean, detail: string }[] }} */
+    /** @type {{ checks: { name: string, ok: boolean, detail: string }[], fatal?: string }} */
     const parsed = JSON.parse(match[1]);
+    // fatal 不能只设 exitCode 就继续算 PASS：把它记成一条失败断言，计数行才诚实。
+    if (parsed.fatal) {
+      reportBrowserFailureHint();
+      parsed.checks.push({
+        name: "浏览器脚本异常（未预期）",
+        ok: false,
+        detail: String(parsed.fatal).slice(0, 1200),
+      });
+    }
     let failed = 0;
     for (const item of parsed.checks) {
       console.log(
@@ -1607,7 +1645,21 @@ const main = async () => {
     await sleep(500);
     await cp(join(work, "shots"), SHOTS_OUT, { recursive: true }).catch(() => {});
     console.log(`截图目录：${SHOTS_OUT}`);
-    await rm(work, { recursive: true, force: true });
+    const failedRun = isFailedRun();
+    if (failedRun) {
+      // 启动后 poll 被清掉了，这里补最后一次落盘，host.log 尾部才有后续日志。
+      await writeFile(join(work, "host.log"), chunks.join("")).catch(() => {});
+      // §6.4：失败必须留现场——先打宿主日志尾部，再保留临时 home（host.log/profile 在里面）。
+      await reportFailureScene(join(work, "host.log"));
+    }
+    if (process.env.SMOKE_KEEP === "1" || failedRun) {
+      console.log(
+        `临时 home 已保留${failedRun ? "（因为这次失败，方便排查；删掉即可）" : "（SMOKE_KEEP=1）"}：${work}`,
+      );
+      console.log("      host.log、profile、sessions、shots 都在这个目录里");
+    } else {
+      await rm(work, { recursive: true, force: true });
+    }
   }
 };
 
