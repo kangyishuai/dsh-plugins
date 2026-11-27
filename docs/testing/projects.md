@@ -16,7 +16,7 @@ H=/tmp/dsh-test-projects
 rm -rf $H && mkdir -p $H/profiles
 cp -R ~/.dsh/profiles/desktop $H/profiles/proj
 DSH_HOME=$H dsh plugin --profile proj install
-DSH_HOME=$H dsh plugin --profile proj add /tmp/kangyishuai-dsh-projects-0.0.0.tgz
+DSH_HOME=$H dsh plugin --profile proj add /tmp/kangyishuai-dsh-projects-<版本>.tgz   # pnpm pack 输出名，如 0.10.8
 DSH_HOME=$H dsh --profile proj --port 0 --no-open   # 终端会打印带 token 的 URL
 ```
 
@@ -32,9 +32,9 @@ pnpm smoke:projects-desktop     # 桌面只读回归（需要 --remote-debugging
 pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体检
 ```
 
-门禁结果会落盘到 `build/gates/latest-<plugin>.json`（`build/` 已 gitignore）：含当前 commit、
+门禁结果会落盘到 `build/gates/latest-<plugin>.json`（`build/` 已 gitignore）：含运行时 HEAD 的 commit、
 每步 `status`/断言 `counts`/耗时与失败时的输出尾部。以前结果只活在终端和 commit message 里，
-事后无法机器核对「哪次 gate 真的绿了」；发版前可直接读这个文件核对。`pnpm gate --dry-run`
+事后无法机器核对「哪次 gate 真的绿了」；发版前可直接读这个文件核对。`pnpm gate projects --dry-run`
 也会写一份 `verdict: structure-pass` 的结构自检报告。
 
 `packages/projects/test/` 覆盖：
@@ -62,7 +62,7 @@ pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体�
 | `memory.test.js`    | 记忆写入：幂等、单条与总量上限、时间戳注释、被拒时给出原因                                    |
 | `exec.test.js`      | 子进程封装：参数原样传递、失败返回 code 不抛、cwd 生效、命令不存在也不抛                      |
 
-## 2. web 端到端冒烟（250 项）
+## 2. web 端到端冒烟（270 项）
 
 > 0.10.0 面板改版后：新建走「入口 → 模态（两入口）→ 表单」，列表页新增搜索/排序/收藏，详情页改为
 > 主列 + 右栏（右栏为值行 + 编辑动作），并补了 toast、两列 DOM 顺序、值行无 input 等断言，故 78 → 102。
@@ -178,7 +178,7 @@ pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体�
 > **P0-4 routing 契约**没有 UI 面可断言（走审批执行路径），由 `test/settings.test.js` 锁：字符串 `when`
 > 明确拒绝、对象 `when` 写入后能被 `matchRules()`/`decideRoute()` 真命中、`defaultRules()` 自己满足契约。
 
-> **页签收敛（3 页签，UI 规范 §7.3）+2，故 248 → 250。**
+> **页签收敛（3 页签，UI 规范 §7.3）+2，故 248 → 250。**（0.9.x 历史记录；0.10.0 起为 4 页签 + 可见性开关，§7.3 书面例外，见下方 M2–M6 段）
 > 项目主页的 5 个页签（`threads / memory / library / routines / audit`）收到 3 个
 > （`threads / memory / routines`）：**Library** 变成右栏一行入口
 > （`data-projects-rail-library` + `data-projects-library-open`），点开在**主列**
@@ -233,8 +233,8 @@ pnpm smoke:projects-desktop --require
 插件 client 半已加载（按 `window.__DSH_BOOT__.entries`）、侧栏有「项目」入口、
 面板渲染且无 `data-projects-crash`、状态锚点可解析、摘要不是裸 key、新建控件存在（**不提交**）、
 **详情页两列**（`data-projects-detail-grid` / `-main` / `-rail`，右栏在主列右侧）、
-**6 个状态药丸 + 3 个页签**（`data-projects-pill` × 6、`data-projects-tab` 恰好为
-`threads|memory|routines`）、**Library 只在右栏有入口、审计不在详情页**、
+**6 个状态药丸 + 4 个页签**（`data-projects-pill` × 6、`data-projects-tab` 恰好为
+`threads|library|routines|views`；§7.3 的书面例外，对齐 Claude IA）、**Library 右栏入口仍在、审计不在详情页**、
 右栏三段（指令/记忆/上下文）、详情可返回列表、
 **设置四个分区 + Debug 区里的审计**（`data-projects-settings-nav-item` 恰好
 `general,memory,usage,debug`、`data-projects-settings-debug`、`data-projects-audit-title` /
@@ -401,7 +401,7 @@ gh pr edit 146 --base main && gh pr merge 146 --squash --delete-branch
 ```bash
 # 1) 装进 live profile（打包，不要用 link:）
 cd packages/projects && pnpm pack --pack-destination /tmp
-dsh plugin --profile desktop add /tmp/kangyishuai-dsh-projects-0.1.0.tgz
+dsh plugin --profile desktop add /tmp/kangyishuai-dsh-projects-<版本>.tgz   # 例：0.10.8
 
 # 2) 带调试端口重启桌面版
 open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1
@@ -410,8 +410,8 @@ open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debuggin
 pnpm smoke:projects-desktop --require
 ```
 
-预期：`PASS` 数等于当次执行的断言数（脚本最多 **17 项**；live profile 里一个项目都没有时
-「详情页主列+右栏」那条不跑，记 SKIP，不计 PASS）。在此之前它一直输出
+预期：`PASS` 数等于当次执行的断言数（脚本共 **20 项**：live profile 里有项目时 20 PASS；
+空 profile 时 17 PASS + 3 SKIP，数据依赖，计数行会如实写）。在此之前它一直输出
 `SKIP 插件未装进当前 live profile`。
 
 > **B1 审查 P1-5 修后的口径（未复跑）**：首启引导那条以前会**点掉 CTA**，等于往 live profile 的
@@ -966,7 +966,7 @@ AGENTS.md 受管区块幂等合并、`@` 候选排序）。`pnpm smoke:projects`
 - `pnpm verify`：projects 单测 **710**（含 i18n 三处一致性、`attachThread` 幂等、`pickRepoRoot`/`pickPollRoot`、
   `assessMergePr` 合并门禁、写入口路径校验、saveSoon 失败可见、源码守卫等）。
 - `pnpm smoke:projects`：**270 PASS / 0 SKIP / 0 FAIL**（临时 `DSH_HOME`，ego 浏览器）。
-- `pnpm smoke:projects-desktop --require`：**20 PASS / 0 SKIP**（空 profile 时 17 条，其余按真实数据 SKIP）。
+- `pnpm smoke:projects-desktop --require`：**有项目时 20 PASS / 0 SKIP**；空 profile 时 **17 PASS / 3 SKIP**（数据依赖，`build/gates/latest-projects.json` 会记当次计数）。
 - 新增断言（锚点均在 `lib/client.js`）：
   - 可见性开关写项目记录并回读（`data-projects-views-pane` 与副标题不再出现 `n/a`）；
   - 路由开关默认收起（`data-projects-route-toggle`，≥8×8，位于 composer 内）；

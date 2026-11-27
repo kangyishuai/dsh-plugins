@@ -14,7 +14,7 @@ cd packages/artifacts && pnpm pack --pack-destination /tmp
 # 2) 隔离 home 并安装
 H=/tmp/dsh-test-artifacts
 rm -rf "$H" && mkdir -p "$H"
-DSH_HOME="$H" dsh plugin --profile web add /tmp/kangyishuai-dsh-artifacts-0.2.0.tgz
+DSH_HOME="$H" dsh plugin --profile web add /tmp/kangyishuai-dsh-artifacts-<版本>.tgz   # pnpm pack 输出名，如 0.2.1
 
 # 3) 启动（随机端口、不弹浏览器）
 DSH_HOME="$H" dsh --profile web --port 0 --no-open
@@ -114,7 +114,7 @@ console.log("trash:", JSON.stringify((await lib.trash()).artifacts.length), meta
 5. **刷新恢复**：刷新页面 → 之前打开的页签仍在，显示最新版；若页签被恢复但参数丢失，应回退到"上次打开的工件"，不得出现空白错误态。
 6. **库（0.2 起是列表视图）**：右栏页签的添加入口 → 「Artifacts」→ 列表：每行有缩略图（`naturalWidth=320`）、标题、类型、`vN`、字节、项目 id、更新时间；顶部有 `n 条 · X KiB` 汇总；搜索框按标题过滤，类型按钮按 `html/markdown/json/csv/image` 过滤；点行打开面板，`‹` 返回库。
 7. **多类型预览**：让模型用 `kind: "markdown"` / `"json"` / `"csv"` 各发布一个 → 面板显示 `<pre>` 文本；用 `kind: "image"` + data URL 发布 → 面板显示图片；三者都能在库里列出并显示类型。
-8. **项目过滤视图（需求 9）**：在页面 console 执行 `window.__dshArtifactsOpenTab({ projectId: "<id>" })`（见 §1.3）→ 右栏 `artifact` 页签变成库视图，`data-dsh-artifact-library-scope` 等于项目 id，行只含该项目产物；没有产物时显示「这个项目还没有产物。」。正式入口是 projects 0.13 项目页的「产物」，它用同一组 params 打开。
+8. **项目过滤视图（需求 9）**：在页面 console 执行 `window.__dshArtifactsOpenTab({ projectId: "<id>" })`（见 §1.3）→ 右栏 `artifact` 页签变成库视图，`data-dsh-artifact-library-scope` 等于项目 id，行只含该项目产物；没有产物时显示「这个项目还没有产物。」。正式入口是 projects 0.10.x 项目页的 Library / 「打开产物库」，它用同一组 params 打开。
 9. **路由**：浏览器打开 `http://127.0.0.1:<port>/artifacts/<id>` → 有内容；未登录/无 token 访问应为 401；未知 id 404；`?v=1` 返回第一版；`?download=1` 变成附件下载；图片 URL 返回 `image/png`。
 10. **级联清理**：调用 `artifacts/remove`（先 `dryRun: true`）→ 只移走该项目的产物，别的项目原样；`artifacts-trash/` 里能看到；`artifacts/restore` 能恢复；`artifacts/purge` 之后目录消失。
 11. **降级**：在 `headless` profile 里装同一包 → 能启动、无报错、工具可用（`url` 省略）。
