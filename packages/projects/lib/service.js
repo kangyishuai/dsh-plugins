@@ -76,6 +76,7 @@ import {
   groupRows,
   hydrateThreadView,
   initialView,
+  isThreadBusy,
   mergeRecord,
   pillCounts,
   reduce,
@@ -3985,11 +3986,13 @@ export class ProjectsService extends TypertRemoteService {
    * @returns {boolean}
    */
   threadBusy(thread, states) {
-    const live = states?.get?.(String(thread?.sessionId ?? ""));
-    const pending = Array.isArray(live?.pendingInput) ? live.pendingInput.length : 0;
-    const view = mergeRecord(this.views.get(String(thread?.sessionId ?? "")), thread);
-    const state = deriveState({ ...view, awaitingUser: pending > 0 ? true : view.awaitingUser });
-    return state === "working" || state === "waiting-user" || pending > 0;
+    const sessionId = String(thread?.sessionId ?? "");
+    // 统一走纯函数：必须把宿主 state().running 算进来（真机复验：只看事件视图会漏判）
+    return isThreadBusy({
+      view: this.views.get(sessionId),
+      record: thread,
+      live: states?.get?.(sessionId),
+    });
   }
 
   /**

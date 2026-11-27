@@ -623,3 +623,47 @@ describe("崩溃恢复：未闭合的 turn 判为失败（强杀协议实测）"
     assert.equal(deriveState(completed), "idle");
   });
 });
+
+describe("isThreadBusy：保护 worktree 的忙碌判据", () => {
+  it("宿主 running=true 且视图没有 turn 事实 → 忙", async () => {
+    const { isThreadBusy } = await import("../lib/overview.js");
+    assert.equal(
+      isThreadBusy({ view: { turn: 0, state: "idle" }, record: null, live: { running: true } }),
+      true,
+    );
+  });
+
+  it("pendingInput 非空 → 忙（等你）", async () => {
+    const { isThreadBusy } = await import("../lib/overview.js");
+    assert.equal(
+      isThreadBusy({
+        view: { turn: 2, state: "idle" },
+        record: null,
+        live: { pendingInput: [{ id: "q" }] },
+      }),
+      true,
+    );
+  });
+
+  it("视图/记录是 working → 忙；纯 idle → 不忙", async () => {
+    const { isThreadBusy } = await import("../lib/overview.js");
+    assert.equal(
+      isThreadBusy({ view: { turn: 1, state: "working" }, record: null, live: null }),
+      true,
+    );
+    // 冷启动（还没有 turn 事实）：记录里的 working 是持久事实
+    assert.equal(
+      isThreadBusy({ view: { turn: 0, state: "idle" }, record: { state: "working" }, live: null }),
+      true,
+    );
+    // 有 turn 事实之后：记录里残留的 working 视为过期（否则线程会永远卡「在跑」）
+    assert.equal(
+      isThreadBusy({ view: { turn: 1, state: "idle" }, record: { state: "working" }, live: null }),
+      false,
+    );
+    assert.equal(
+      isThreadBusy({ view: { turn: 1, state: "idle" }, record: null, live: { running: false } }),
+      false,
+    );
+  });
+});

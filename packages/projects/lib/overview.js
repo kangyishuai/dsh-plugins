@@ -601,3 +601,25 @@ export function filterRows(rows, filter) {
   if (filter === "") return list;
   return list.filter((row) => String(row?.view?.state ?? "") === filter);
 }
+
+/**
+ * 这条线程现在是否「在跑 / 等你 / 被宿主标记 running」——用于保护它的 worktree 不被回收/删除。
+ *
+ * 为什么不能只看 `views`/记录：宿主 `state()` 的 `running` 才是一手事实；真实桌面里
+ * `progress` 靠 `resolveLiveRunning` 显示「在跑」，而保护逻辑若只看事件视图会漏判
+ * （真机复验：线程行显示在跑，删项目却成功）。
+ * @param {{ view?: any, record?: any, live?: any }} input
+ * @returns {boolean}
+ */
+export function isThreadBusy(input) {
+  const view = mergeRecord(input?.view, input?.record);
+  const live = input?.live ?? null;
+  if (resolveLiveRunning(view, live?.running)) return true;
+  const pending = Array.isArray(live?.pendingInput) ? live.pendingInput.length : 0;
+  if (pending > 0) return true;
+  const state = deriveState({
+    ...view,
+    awaitingUser: pending > 0 ? true : view.awaitingUser,
+  });
+  return state === "working" || state === "waiting-user";
+}
