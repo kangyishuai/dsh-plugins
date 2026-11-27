@@ -254,7 +254,7 @@ window.__ModuleLoader__.load({
       "views.title": "视图可见性",
       "views.hint": "关掉不需要的视图，右栏就只显示你常用的那几个。",
       "views.savedTitle": "已保存的筛选视图",
-      "views.savedEmpty": "还没有保存的视图。用一个筛选条件 + 名字就能存一个。",
+      "views.savedEmpty": "还没有保存的视图。保存「筛选条件 + 名称」即可创建一个。",
       "views.apply": "套用",
       "views.delete": "删除",
       "views.addHint": "保存的是「状态筛选 + 关键词」，不是结果快照。",
@@ -295,7 +295,7 @@ window.__ModuleLoader__.load({
       "detail.diag.workspaceBound": "工作区已绑定",
       "detail.diag.workspaceUnbound": "工作区未绑定",
       "detail.diag.coordinatorReady": "协调者在线",
-      "detail.diag.coordinatorEmpty": "协调者未建",
+      "detail.diag.coordinatorEmpty": "未创建协调者",
       "detail.diag.pollRunning": "PR 轮询中",
       "detail.diag.pollStopped": "PR 轮询停",
       "detail.diag.details": "详情",
@@ -11933,6 +11933,7 @@ window.__ModuleLoader__.load({
                         },
                         value: days === null ? "" : String(days),
                         "data-projects-auto-resolve-select": "",
+                        "aria-label": text(t, "detail.autoResolve"),
                         onChange: (/** @type {any} */ event) => {
                           const next = String(event.target.value);
                           call(api.ctx, "setAutoResolveDays", {
@@ -13441,7 +13442,7 @@ window.__ModuleLoader__.load({
           { style: styles.railBodyFull },
           "默认模式：" +
             (defaultMode === "schedule" ? "定时任务（计费）" : "本机计时（免费）") +
-            " · 每条可以另选。本机计时由 DSH 进程负责，重启后按盘上到期时间自动恢复。",
+            " · 每条可以另选。本机计时由 DSH 进程负责，重启后按已保存的到期时间自动恢复。",
         ),
         h(
           "div",
