@@ -29,5 +29,8 @@ Claude Projects 复刻对齐（M2–M6）+ 三轮质量审查后的修复：布�
   分隔线 + ↑↓ 导航；错误条可重试；面板/详情加载态；行内操作常显（0.35）而非 hover-only。
 - **性能**：写盘改紧凑 JSON（体积 −30%）+ 250ms 合并写；`liveSessionFacts` 只问本项目线程并
   按会话缓存；后台标签页不轮询（详情页一轮 11 RPC）；diff 目标限 24 条 + 并发 4；缓存有界。
-- **验证**：`pnpm verify` EXIT=0（projects 单测 **651**）；web 端到端冒烟 **270 PASS / 0 SKIP**；
-  桌面只读回归 **20 PASS**（空 profile 17）；WebUI 与桌面在 1440×900 下布局几何一致（≤1px）。
+- **验证**：`pnpm gate:projects` 全绿 —— `pnpm verify` EXIT=0（projects 单测 **688**）、
+  runtime probe **72/72**、web 端到端冒烟 **270 PASS / 0 SKIP**、桌面只读回归 **20 PASS**（空 profile 17）；
+  WebUI 与桌面在 1440×900 下布局几何一致（≤1px）。两轮独立 subagent 审查（功能/性能/安全 + UI/UX）
+  的发现已修：UI 合并补回 CI/批准数/改动量门禁、项目生命周期不再误伤在跑线程、回收站保留期清理真的能清、
+  `getProject` 回读、Library 调用预算、写盘失败可见等。
