@@ -36,29 +36,35 @@ DSH_HOME=$H dsh --profile sdel --port 0 --no-open
 
 真实桌面版验证只需把上面的 `DSH_HOME` 去掉、profile 换成 `desktop`，但**先备份** `~/.dsh/sessions`。
 
+**宿主事实（2026-11-28 实测）**：`workspaceRegistry` 是**异步提供**的——`@deepseek-ai/dsh-workspace` 的
+`WorkspaceRegistry` 在 `protected async [Service.init]()`（storageDomain.open → 恢复待完成 mutation → header 索引 →
+bootstrap → indexLiveSessions）完成后才出现，本机桌面组合实测比 `sessionPersistence` 晚约 1.5 s。
+所以任何宿主能力都必须在**操作前**用 `ctx.get` 重探，不能把 capability 快照固化在插件构造/首次调用时刻
+（否则删除会静默跳过归档闸门与工作区记账，恢复再把它报成「1 处引用未通过」）。
+
 ## 1. 自动化（每次提交）
 
 ```bash
-pnpm verify   # lint + typecheck + 规范检查 + 132 个单测
+pnpm verify   # lint + typecheck + 规范检查 + 136 个单测
 ```
 
 已覆盖：
 
-| 文件                             | 覆盖内容                                                                                                                                                                                                                                                                                                                                                                             |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `test/paths.test.js`             | 数据根优先级、id 校验（路径穿越）、`encodeSegment`/`projectKey` 与宿主编码一致、路径逃逸拒绝                                                                                                                                                                                                                                                                                         |
-| `test/plan.test.js`              | digest 确定性、标题不参与摘要、缺位置产生 blocker、事实漂移检测、字节格式化                                                                                                                                                                                                                                                                                                          |
-| `test/restore.test.js`           | **恢复后校验**（AUD-SD-02）：目录/工作区/置顶逐项判定；置顶写入滞后（第一次读到 false、第二次 true）不算失败；确实没恢复才报 failed                                                                                                                                                                                                                                                  |
-| `test/trash.test.js`             | 移入/列出/恢复/恢复冲突拒绝/彻底删除/陌生目录保留并告警/meta 契约；**跨卷回退的副本校验**（AUD-SD-05：缺条目/大小不符/多出条目都拒绝删源）                                                                                                                                                                                                                                           |
-| `test/journal.test.js`           | intent→done 清理、失败留现场、坏记录不阻断                                                                                                                                                                                                                                                                                                                                           |
-| `test/recovery.test.js`          | **启动对账**（AUD-SD-01）：trash 已移动但引用未摘 → 补完并留审计/回执；trash 未移动 → 回滚归档闸门；目录与条目同时存在 → 拒绝猜测、保留记录；restore 已搬回但条目未删 → 补完引用（含置顶）与条目清理；restore 未发生 → 清记录；purge 未发生/已完成/删一半；两次运行幂等；复活守卫再移一次（AUD-SD-07）；**restore/purge 后守卫放手**（复审 B2，含 1.5s 端到端）                      |
-| `test/audit.test.js`             | 20 并发追加无交错、超长截断、读取顺序                                                                                                                                                                                                                                                                                                                                                |
-| `test/capability.test.js`        | 三档能力判定（api/internal/unknown）                                                                                                                                                                                                                                                                                                                                                 |
-| `test/operations.test.js`        | 完整 trash 流程（归档→停止→摘引用→审计→对账）、digest 漂移拒绝、无目录 blocked 且零副作用、purge、并发双击拒绝；**置顶快照与恢复校验**（AUD-SD-02/06：`meta.pinned` 真落盘、恢复回执带 `refs`/`checks`、引用失败报 partial）、**已移动但收尾失败**（AUD-SD-03：partial 回执 + 审计写明「已移入回收站」）、**plan 阶段拒绝进审计**（AUD-SD-04）                                       |
-| `test/client.test.js`            | client 半的纯逻辑：设计 token（只用宿主真实存在的 `--dsw-*`、徽章底色/前景成对）、确认框影响面只拼成立的事实、80 条分批不超上限、批量部分失败/中途停止、面板加载失败不拖死浮层、内联词典与 `locale/*.json` 键集一致；**设置页不自动跑体检**（AUD-SD-08：挂载只拉轻量数据、体检按需+缓存）、**partial 文案**（AUD-SD-02/03）、**关键 `data-session-delete-*` 锚点齐全**（AUD-XCT-17） |
-| `test/client-wiring.test.js`     | client 半的接线：设置页分节、会话/工作区两个 contextMenus 贡献与 commandId、快捷键默认键的平台布局（Linux 不绑/编辑区放行/终端排除）、无当前会话 blocked、contextMenus 缺失退回旧 slot、键位冲突不拖垮菜单、两个服务都缺失插件照常加载                                                                                                                                               |
-| `test/agent-tool.test.js`        | 两段式 token 状态机；**拒绝走审计钩子**（AUD-SD-04：token-required / blocked / stale-plan / caller-session）                                                                                                                                                                                                                                                                         |
-| `test/restore-usability.test.js` | **恢复即用**（USIM-U3-02/05）：宿主服务晚挂载时删除仍走归档闸门与工作区记账（能力探测不再固化）；不提供接口的引用记 `skipped` 而非失败（不再假报 partial）；失败逐项列出引用名+下一步动作并同步进审计/回执；恢复时自动重试一次（`retried` 标记）；`recheckRestore` 用回执里的 `expected` 快照重放；恢复保真（日志原样回来）                                                          |
+| 文件                             | 覆盖内容                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test/paths.test.js`             | 数据根优先级、id 校验（路径穿越）、`encodeSegment`/`projectKey` 与宿主编码一致、路径逃逸拒绝                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `test/plan.test.js`              | digest 确定性、标题不参与摘要、缺位置产生 blocker、事实漂移检测、字节格式化                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `test/restore.test.js`           | **恢复后校验**（AUD-SD-02）：目录/工作区/置顶逐项判定；置顶写入滞后（第一次读到 false、第二次 true）不算失败；确实没恢复才报 failed                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `test/trash.test.js`             | 移入/列出/恢复/恢复冲突拒绝/彻底删除/陌生目录保留并告警/meta 契约；**跨卷回退的副本校验**（AUD-SD-05：缺条目/大小不符/多出条目都拒绝删源）                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `test/journal.test.js`           | intent→done 清理、失败留现场、坏记录不阻断                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `test/recovery.test.js`          | **启动对账**（AUD-SD-01）：trash 已移动但引用未摘 → 补完并留审计/回执；trash 未移动 → 回滚归档闸门；目录与条目同时存在 → 拒绝猜测、保留记录；restore 已搬回但条目未删 → 补完引用（含置顶）与条目清理；restore 未发生 → 清记录；purge 未发生/已完成/删一半；两次运行幂等；复活守卫再移一次（AUD-SD-07）；**restore/purge 后守卫放手**（复审 B2，含 1.5s 端到端）                                                                                                                                                                                                   |
+| `test/audit.test.js`             | 20 并发追加无交错、超长截断、读取顺序                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `test/capability.test.js`        | 三档能力判定（api/internal/unknown）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `test/operations.test.js`        | 完整 trash 流程（归档→停止→摘引用→审计→对账）、digest 漂移拒绝、无目录 blocked 且零副作用、purge、并发双击拒绝；**置顶快照与恢复校验**（AUD-SD-02/06：`meta.pinned` 真落盘、恢复回执带 `refs`/`checks`、引用失败报 partial）、**已移动但收尾失败**（AUD-SD-03：partial 回执 + 审计写明「已移入回收站」）、**plan 阶段拒绝进审计**（AUD-SD-04）                                                                                                                                                                                                                    |
+| `test/client.test.js`            | client 半的纯逻辑：设计 token（只用宿主真实存在的 `--dsw-*`、徽章底色/前景成对）、确认框影响面只拼成立的事实、80 条分批不超上限、批量部分失败/中途停止、面板加载失败不拖死浮层、内联词典与 `locale/*.json` 键集一致；**设置页不自动跑体检**（AUD-SD-08：挂载只拉轻量数据、体检按需+缓存）、**partial 文案**（AUD-SD-02/03）、**关键 `data-session-delete-*` 锚点齐全**（AUD-XCT-17）                                                                                                                                                                              |
+| `test/client-wiring.test.js`     | client 半的接线：设置页分节、会话/工作区两个 contextMenus 贡献与 commandId、快捷键默认键的平台布局（Linux 不绑/编辑区放行/终端排除）、无当前会话 blocked、contextMenus 缺失退回旧 slot、键位冲突不拖垮菜单、两个服务都缺失插件照常加载                                                                                                                                                                                                                                                                                                                            |
+| `test/agent-tool.test.js`        | 两段式 token 状态机；**拒绝走审计钩子**（AUD-SD-04：token-required / blocked / stale-plan / caller-session）                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `test/restore-usability.test.js` | **恢复即用**（USIM-U3-02/05）：宿主服务晚挂载时删除仍走归档闸门与工作区记账（能力探测不再固化）；不提供接口的引用记 `skipped` 而非失败（不再假报 partial）；失败逐项列出引用名+下一步动作并同步进审计/回执；恢复时自动重试一次（`retried` 标记）；`recheckRestore` 用回执里的 `expected` 快照重放；恢复保真（日志**按 sha256**原样回来）；**复审追加**：旧回执（无 `expected`）拒绝重检并抛 `session-delete/receipt-legacy`（B1）、会话目录已不在时抛 `receipt-stale`（N13）、解除归档失败进 `failures` 且带「手动取消归档」下一步 + 失败一次后自动重试转绿（N6） |
 
 **没覆盖**：React 的真实渲染与布局（两个 client 单测都不渲染组件，只直接驱动纯函数与注册动作）、RPC 线缆、真实宿主内部契约（`detachEntered`/`storageDomain`/`session-stop`）。所以下面两层不能省。
 
@@ -413,15 +419,44 @@ DSH_AGENT_TOOL_PATCH=/tmp/model-overlay.yml ZHINAO_API_KEY=<key> pnpm smoke:agen
 
 验收口径（本批）：
 
-- **包内单测**：**132 pass / 0 fail**（本批之前 123）。
+- **包内单测**：**136 pass / 0 fail**（本批之前 123；复审追加 B1 旧回执、N6 解除归档失败/重试、N13 快照过期、N1 批量不逐条导航 4 条）。
 - **桌面只读回归**：新增 2 条断言（回执可展开 / 回执条目逐项列出引用·校验），数据相关的一条在空回执时 SKIP。
 - **隔离实例手测**（`DSH_HOME=/tmp/dsh-sim-fix-sdel`，dev 包，纯净 home 起跑）：
   1. 删除当前会话 → 自动切到新会话视图，toast「已移入回收站，可在回收站恢复 · 撤销」，无「会话不可用」；
   2. 回收站恢复 → 面板自动关闭、会话自动重开、输入框可用、标题保留、回执 `partial:false, failures:[]`、`storages/workspace.json` 里会话回到原工作区；
   3. 恢复后直接发送成功（不再出现 `session/agent-busy`）；第二轮「恢复→删除→恢复」同样可用。
-     截图（`/tmp/dsh-sim-fix-sdel/shots/`）：`31-after-delete-current.png`、`32-trash-panel.png`、
-     `33-after-restore.png`、`40-cycle2-after-trash.png`、`42-cycle2-after-restore.png`、`43-cycle2-send.png`、
-     `45-receipt-detail.png`、`46-restore-receipt-detail.png`。
+     截图（`/tmp/dsh-sim-fix-sdel/shots/`）：`31-after-delete-current.png`（删当前会话→切走+提示）、
+     `32-trash-panel.png`、`40-cycle2-after-trash.png`、`42-cycle2-after-restore.png`（第二轮恢复→面板关闭+会话重开）、
+     `43-cycle2-send.png`、`46-restore-receipt-detail.png`（恢复回执可展开）、
+     `51-final-after-restore.png`（**重启后的最终构建**：恢复即用 + 工作区归属 + 标题保留）、
+     `52-final-send.png`（恢复后发送 OK4）。
+     - ⚠️ **`33-after-restore.png` 不是成功证据，是本批中途失败样本**：那次装的是加了新面板代码但**页面仍跑旧
+       bundle** 的构建，面板里显示红字 `restoreFailures is not a function`（原始 JS 英文报错）。
+       client 半改完**必须重启桌面版再验收**（宿主按 `rev` 缓存 client bundle，`rev` 不是内容哈希，
+       见 [runtime rc.5 §8.2](../runtime/0.2.2-rc.5.md#82-client-半的-bundle-在宿主进程内按-rev-缓存换文件后刷新页面可能仍跑旧字节)）。
+       后续 `42/46/51/52` 都是重启后重测的，结论以它们为准。
+
+### 第二轮独立复审（2026-11-28）的追加修复
+
+复审报告：`notes/audit/2026-11-28/reviews/session-delete-restore.md`（私有笔记）。判 2 个阻塞 + 若干非阻塞，
+均在本批内修完。
+
+| 编号 | 问题                                                                                                           | 修法                                                                                                                                                                                   | 测试                                                                                                                                     |
+| ---- | -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| B1   | 旧版 restore 回执没有 `expected` 快照，`recheckRestore` 回落空快照 → 假报「全部恢复」                          | 缺 `expected` 直接抛 `session-delete/receipt-legacy`（可读中文，不伪造成功）；UI 的 `retryable` 增加 `receipt.expected` 条件；两处调用改传 `receiptId`，避免同会话多条回执时重检错对象 | `restore-usability.test.js`「旧回执…拒绝重检」（并断言不产生 `restore-recheck` 回执）                                                    |
+| B2   | 验收记录把 `33-after-restore.png`（中途 stale bundle 的 `restoreFailures is not a function` 红字）当成成功证据 | 改引 `42/46/51/52` 并把它单独标为失败样本；补「client 半改完必须重启桌面版再验收」（0.2.2-rc.5 §8.2 的 rev 缓存坑）                                                                    | 文档本身（本段 + §0.5 验收记录）                                                                                                         |
+| N1   | 批量恢复逐条 `openSession`（宿主 `replaceMain` 互相覆盖）+ 面板不自动关                                        | `onRestored(sessionId, { open })`：批量传 `{ open: false }` 只刷新；批量全绿后 `onBatchRestoreDone` 关框 + 汇总 toast + 只刷新一次                                                     | `client.test.js`「batch restore never navigates per item」（断言每条都收到 `{open:false}`）                                              |
+| N2   | 单条恢复成功时 `onRestored` 被调两次                                                                           | 成功路径只走 `onRestoreComplete`；partial 分支才调 `onRestored`（仍清 retired/刷新）                                                                                                   | 代码路径收敛（由桌面手测覆盖）                                                                                                           |
+| N3   | trash 回执展开只有「校验」，看不到 `removed[]`                                                                 | `ReceiptRow` 增加「已清理的引用」组（`receipt.removed` 文案 key，中英同步）                                                                                                            | 桌面只读冒烟「回执条目逐项列出引用/校验结果」（`detailItems` 计数）                                                                      |
+| N4   | 桌面冒烟里 `.replace(/s+/g)` 少一层反斜杠、`firstRow` 未被使用                                                 | 改为 `/\s+/g`（模板字符串里两层）；`firstRow` 进断言 detail                                                                                                                            | 该脚本由 lead 统一跑（此处只改断言）                                                                                                     |
+| N6   | 解除归档失败无测试、文案是宿主原始英文                                                                         | `refs.js` 把 unarchive/pin 失败包成中文 + 下一步（「可在侧栏的归档列表里手动取消归档」「可在会话右键菜单里手动置顶」）；fixture 加 `unarchiveCalls`/`setUnarchiveFailures`             | `restore-usability.test.js`「解除归档失败…自动重试成功后转绿」（断言失败进 failures、文案带下一步、恢复+重试各调一次 unarchive=delta 2） |
+| N7   | 恢复保真只比文件大小                                                                                           | 改比 `sha256`                                                                                                                                                                          | `restore-usability.test.js`「按 sha256 原样回来」                                                                                        |
+| N8   | 能力重探的隐含不变量未写明                                                                                     | `refreshHost` 注释写明「`buildRefs` 条目数与顺序必须稳定，否则改用 `getRefs()`」                                                                                                       | 注释                                                                                                                                     |
+| N13  | 重检可能按很久以前的快照对不可用现场做写操作                                                                   | 重检前校验 `restoredTo` 目录存在，否则抛 `session-delete/receipt-stale`；README 写明「重检会重放删除前快照（挂回工作区/置顶/解除归档）」                                               | `restore-usability.test.js`「正常回执可以重检；目录已不在时拒绝」（N13）                                                                 |
+
+非阻塞且未修的：**N5**（`scheduleRecoveryRetry` 无单测，已写明覆盖范围：只救 trash 对账）、
+**N10**（busy 指引只在 partial 明细里，属宿主侧，文档保证）、**N11**（上一提交把共享 `scripts/` 与插件改动放同一 commit；
+本批已拆开）、**N12**（README 已补降级半句）。
 
 ## 4. 回归节奏
 
@@ -434,6 +469,9 @@ DSH_AGENT_TOOL_PATCH=/tmp/model-overlay.yml ZHINAO_API_KEY=<key> pnpm smoke:agen
 ## 5. 已知未覆盖 / 风险
 
 1. **client 交互只覆盖主链路**：`pnpm smoke:session-delete` 覆盖删除/恢复/彻底删除，但键盘、角标、只读模式仍靠手测。
+   - 本批新增的**接线**（`onRestoreComplete` 自动关框、`reopenSession`/`leaveDeletedSessionView`、批量不逐条导航、`scheduleRecoveryRetry`）仍无 React 级自动化：单测只能锁纯函数与 `runBatch` 的参数转发，面板/导航行为靠桌面只读冒烟 + 手测（复审认可这一现状，见 N5/N6）。
+   - `scheduleRecoveryRetry`（2.5 s 后补跑）**只覆盖 trash 对账**：`restore` 收尾在首轮就 finalize 条目，第二轮会走「恢复此前已完成」捷径，不会重试引用；restore 的引用补做靠设置页 `recheckRestore`。
+   - **busy 属宿主侧**：插件只能给文档级与回执级指引（重启 DSH / 新建会话继续），不 kill 宿主进程；全绿恢复的面板里不显示这条提示（只有 partial 明细里有），因此 README 与这段记录是唯一保证。
 2. **宿主内部契约**：`detachEntered`/`storageDomain`/`session-stop` 在真实宿主上只验证过「删除后刷新不复活」，没验证失败分支。
 3. **Windows**：`EBUSY` 重试、命名信号量路径未测（当前只在 macOS 上验证）。
 4. **多窗口/多 profile 并发**：审计与 journal 的并发写未在真实多窗口下压测。

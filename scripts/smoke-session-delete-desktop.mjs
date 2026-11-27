@@ -486,7 +486,7 @@ const main = async () => {
         rows: rows.length,
         detailItems: box.querySelectorAll("[data-session-delete-receipt-item]").length,
         firstRow: rows.length > 0
-          ? (rows[rows.length - 1].innerText || "").replace(/s+/g, " ").slice(0, 160)
+          ? (rows[rows.length - 1].innerText || "").replace(/\\s+/g, " ").slice(0, 160)
           : null,
       };
     })()`);
@@ -502,7 +502,9 @@ const main = async () => {
       check(
         "回执条目逐项列出引用/校验结果",
         receipts?.status === "ok" && receipts.detailItems > 0,
-        JSON.stringify(receipts ?? null),
+        `rows=${receipts?.rows ?? 0} detailItems=${receipts?.detailItems ?? 0} first=${JSON.stringify(
+          receipts?.firstRow ?? null,
+        )}`,
       );
     }
 
