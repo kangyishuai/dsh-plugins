@@ -548,7 +548,10 @@ ls ~/.dsh/next-step/report-*.md
 2. **再看曝光率**：低于 60% 说明卡大半没被看见——先修位置/时机，别去改提示词。
 3. **然后看漏判率**（被抑制却事后想要的占比）：>20% 就把档位从「平衡」往「积极」调一档。
 4. **最后看按钮有效性**：第 2 条点击率区间上界 <10% → 默认只给 1 条；label 长度分桶看哪种更点得动。
-5. **一次只改一类**（阈值 / 提示词 / 按钮长度），改完 `PROMPT_VERSION + 1`，再等 3 天按版本对比。
+5. **看 schema 失败的拆分**：报告 §3 会把 `schema` 拆成「空输出（`json:empty`）」与「非空格式失败」。
+   空输出多时会出现 `empty-generations` 判读——那是 provider / 输出长度（`maxTokens`）问题，**不是**
+   「解析要放宽」；本机实测同一请求重发只救回 2/81 次空输出，遇到它先查模型/路由与 `maxTokens`。
+6. **一次只改一类**（阈值 / 提示词 / 按钮长度），改完 `PROMPT_VERSION + 1`，再等 3 天按版本对比。
 
 复盘记录写在私有仓库 `notes/next-step/review-YYYYMMDD.md`；公开仓库只留 ADR 增补与 README 的变化说明。
 
@@ -616,6 +619,36 @@ ls ~/.dsh/next-step/report-*.md
 | `no-context` / `ungrounded` 可达且可诊断 | 逻辑与单测覆盖，**真机未触发**（正常回合不产生这两种情况）   | 手改 `next-step.settings.json` 把 `maxTokens` 调到 128 制造坏输出；再看「最近跳过」与 error kind |
 | 桌面回归                                 | 每次发版必跑                                                 | `pnpm smoke:next-step-desktop --require --deep --workspace <临时目录>`                           |
 
+### 7.5 复盘口径：空输出 vs 格式失败（2026-11-28 增补）
+
+0.4.3 上线后 `schema` 错误从 pv3 的 19 涨到 pv4 的 102，复核结论是**统计口径变化**、不是校验变严：
+
+- 0.4.3 把「模型返回空文本」的恢复方式从「换个请求再要一次」（0.4.2 几乎总能拿到文本 → 写出一张
+  「这一轮没有拿到对话内容」的垃圾卡并记为成功）改成「把同一个请求原样重发」——同一请求仍为空 →
+  记成 `schema` 失败。所以同一类空输出从「成功出卡」翻成「schema 错误」。
+- pv4 的 102 条 `schema` = **79 条 `json:empty`（77%）+ 23 条非空格式失败**；81 次空输出里重发只救回
+  **2** 次（若空输出是独立随机、按 31% 估算，重发应救回约 69%）⇒ 空输出是「同一请求确定性为空」。
+  格式类只从 17 涨到 23，`options` 类反而 12→2（提示词/修复调用其实变好了）。
+- **读报表**：`schemaShare` 现在只算**非空格式失败**（>15% 才触发 `schema-failures`），新增
+  `emptyShare`（空输出占 schema 失败的比例）与 `empty-generations` 判读（空输出 ≥5 且占 schema ≥50%）。
+  `schema-failures` 才指向「解析/修复调用」；`empty-generations` 指向 provider / 输出长度（`maxTokens`），
+  不要拿它去放宽校验。
+
+代码与测试（先红后绿）：`lib/report.js` 的 `summarize()` 拆 `errors.byDetail` / `errors.empty` /
+`errors.format`，`verdicts()` 与 `renderMarkdown()` 同步；`test/report.test.js` 新增
+「pv4 形态（78 空 + 24 格式）拆 byDetail」「pv3 形态（2 空 + 17 格式）两条判读都不触发」
+「非空格式失败仍走 schema-failures」「renderMarkdown 归因段」四条。同批小修：
+
+- **F-2 补生成小回归**：被取代的旧生成现在会跑到 20s，用户此时点「补生成」不再拿到 `inflight`——
+  在途的是别的回合或已 superseded 时先取消再生成；只有「本次回合且未被取代」才等。
+  纯判断 `inflightBlocksGenerateNow()` + `test/inflight.test.js` 单测。
+- **F-6 折叠首句**：`firstSentenceOf` 补英文 `.`（后接空白/结尾才切，不吃 `v0.5.0`）；测试见
+  `test/locale-parity.test.js`「英文句号只在后接空白/结尾时切句」。
+- **F-7 测试有效性**：`foldSessionRecords` 的非法卡片 fixture 换成三种「能过 `readCard()`、只有
+  `isCardData` 该拒」的形状（0 条选项 / 同 stance / 3 条选项）；删掉校验后该用例变红（已实测变异）。
+
+单测总数：**223 → 229**（`node --test packages/next-step`，0 fail）。
+
 ## 8. 0.4.4 噪音与可观测性修复（2026-11-28，审计 AUD-NS-01…08）
 
 > 来源：`notes/audit/2026-11-28/nextstep-session-delete.md` §3（P2/P3）。
@@ -636,7 +669,7 @@ ls ~/.dsh/next-step/report-*.md
 | AUD-NS-07 | `error.aborted` 补进 `locale/{zh,en}.json`；新增内联字典 ↔ locale 文件的键集 parity 测试                                                                                                                                                       | `test/locale-parity.test.js`（3 项；修复前缺 `error.aborted` 即红，parity 断言失败）                                     |
 | AUD-NS-08 | README（中英）隐私段补「生成的胶囊文案会原样记录」                                                                                                                                                                                             | 文档改动，无测试                                                                                                         |
 
-单测总数：**194 → 223**（`node --test packages/next-step`，0 fail）。
+单测总数：**194 → 223**（`node --test packages/next-step`，0 fail）；Wave 2 增补（§7.5）后 **229**。
 
 ### 8.2 口径变化（读报表 / 诊断时注意）
 
