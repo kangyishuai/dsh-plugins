@@ -53,7 +53,7 @@ window.__ModuleLoader__.load({
       "settings.autoRetryHint":
         "线程以失败结束时，60 秒后自动再发一句「继续」；累计最多 2 次（不因中间恢复清零）。这不是「用量恢复续跑」。",
       "settings.budgetSave": "保存预算",
-      "settings.budgetSaved": "预算已保存：{budget}",
+      "settings.budgetSavedSummary": "预算已保存：{summary}",
       "settings.budgetUnlimited": "不限",
       "settings.memoryTitle": "记忆与指令",
       "settings.memoryInstructions": "指令 {used}/{limit}「更新于 {updated}」",
@@ -72,7 +72,7 @@ window.__ModuleLoader__.load({
       "settings.usageThreads":
         "线程 {total} 个 · 今日新建 {today} 个 · 在跑 {working} · 等你 {waiting}",
       "settings.usageEmpty": "还没有可统计的用量。",
-      "settings.debugTitle": "Debug access",
+      "settings.debugTitle": "调试访问",
       "settings.debugRows": "项目 {projects} · 活跃 {active} · 已挂上下文 {attached} 个会话",
       "settings.auditTitle": "审计（最近 {count} 条）",
       "settings.ghCheck": "检查 GitHub 连接",
@@ -238,7 +238,7 @@ window.__ModuleLoader__.load({
       "settings.restartHint":
         "丢掉当前协调器会话并重开一个（旧会话保留可追溯）；当前那条回复会丢。",
       "settings.restartDone": "已重开（旧会话 {previous}…）",
-      "settings.realtimeCi": "实时监听 CI/PR（未实现）",
+      "settings.realtimeCi": "实时监听 CI/PR（未实现，暂不可用）",
       "settings.realtimeCiHint":
         "未实现：需要 `gh webhook forward`（gh-webhook 扩展）与仓库管理员权限，并要校验 webhook 签名；当前只有 30–90s 轮询，开关不会启动任何东西。",
       "settings.realtimeCiOn": "未实现（不会建 webhook）",
@@ -604,9 +604,9 @@ window.__ModuleLoader__.load({
       "detail.settingsPane.usage": "用量",
       "detail.settingsPane.debug": "调试",
       "detail.settingsEnvHint":
-        "环境设置（项目目录 / 仓库授权 / 本地文件夹授权 / 清理）已在本分区。",
+        "环境设置（项目目录 / 仓库授权 / 本地文件夹授权 / 清理）已在本分区；下面的按钮直接跳到对应区域。",
       "detail.settingsDebugHint":
-        "更细的调试项（危险动作开关 / 线程权限 / 审计）已在本分区；完整设置的「项目 → 调试」里还有更多。",
+        "更细的调试项（危险动作开关 / 线程权限 / 审计）在本「设置 › 环境」里；完整设置页可能被宿主关闭，不依赖它。",
       "detail.settingsOpenFull": "打开完整设置",
 
       "detail.prCard.merge": "合并 ⏎",
@@ -773,6 +773,123 @@ window.__ModuleLoader__.load({
       "library.railLoading": "打开查看",
       "b3.folderWorktreeHint":
         "merge 在项目目录里跑；push-branch 在线程 worktree 里跑——worktree 继承它所属项目目录的授权。",
+      "panel.trashRow": "{name} · {threads} 个线程 · {size}",
+      "detail.threadId": "线程 {id}",
+      "detail.coordinatorSaved": "协调者默认已保存",
+      "detail.coordinatorSaveFailed": "协调者默认模型保存失败：{reason}",
+      "detail.conclusionLine": "{label}：{text}",
+      "detail.routeBlockedLine": "{head}（{reason}）",
+      "library.unavailableReason": "{label}（{reason}）",
+      "library.filesPartial": "部分目录未列出：预算用尽，已列出 {listed}/{total} 个目录。",
+      "library.filesCountPartial": "{count} 个文件 · 部分目录未列出",
+      "routines.railUnavailable": "宿主 schedule 不可用",
+      "routines.railEmpty": "还没有定时任务",
+      "routines.railCount": "{count} 个定时任务",
+      "routines.railTitle": "定时任务",
+      "routines.railOpen": "打开查看",
+      "routines.railCounts": "{routines} 个定时任务 · {reminders} 条提醒待触发",
+      "routines.billingHint": "每次到点投递都会跑一次模型（会花 token）；手动档不自动跑。",
+      "routines.actionFailed": "{label}失败",
+      "routines.actionDone": "{label}完成",
+      "routines.hostStatus": "宿主状态：{status}",
+      "routines.lastDelivery": "最近投递：{at}",
+      "routines.lastRun": "最近 Run now：{at}",
+      "reminders.title": "提醒（{pending} 条待触发）",
+      "reminders.titleFired": "提醒（{pending} 条待触发 · {fired} 条已响）",
+      "reminders.new": "＋ 新建提醒",
+      "reminders.defaultLabel": "项目默认：",
+      "reminders.defaultLine":
+        "默认模式：{mode} · 每条可以另选。本机计时由 DSH 进程负责，重启后按已保存的到期时间自动恢复。",
+      "reminders.mode.timer": "本机计时（免费）",
+      "reminders.mode.schedule": "定时任务（计费）",
+      "reminders.mode.timerPill": "免费（本机计时）",
+      "reminders.mode.schedulePill": "定时任务（到点跑模型）",
+      "reminders.dialogTitle": "新建提醒",
+      "reminders.close": "关闭",
+      "reminders.note.schedule": "计费：到点会跑一次模型（= 一次模型调用）；DSH 关着也会跑。",
+      "reminders.note.timer":
+        "免费：本机计时，不花模型调用；DSH 关着的时候不会响（重新打开后补一次）。",
+      "reminders.textLabel": "提醒内容",
+      "reminders.textPlaceholder": "例如：看一下构建结果",
+      "reminders.minutesLabel": "多少分钟后（0 = 立即）",
+      "reminders.creating": "正在创建…",
+      "reminders.create": "创建",
+      "reminders.created": "已创建（{mode}）",
+      "reminders.createFailed": "创建失败",
+      "reminders.fired": "已响",
+      "reminders.complete": "提前完成",
+      "reminders.cancel": "取消",
+      "permission.label": "线程权限（只会收窄）",
+      "permission.narrower": "（比宿主默认更窄）",
+      "permission.hostDefault": "（宿主默认）",
+      "permission.unavailable": "宿主没有 permissionPresets，无法收窄",
+      "permission.saved": "已保存",
+      "permission.savedNewSession": "（新会话生效）",
+      "permission.readback": "；回读成功 {ok}/{total}",
+      "permission.pending": "（{count} 条待应用）",
+      "permission.setFailed": "设置失败",
+      "permission.applyToSessions": "应用到现有会话",
+      "permission.applied": "已应用到 {ok}/{total} 个现有会话",
+      "permission.gateNote":
+        "推 / 合并 / 删除永远需要你在面板里批准（插件执行器）；本开关只影响工具调用是否逐次询问，以及命令能否写到项目目录之外，不绕过任何一道闸门。",
+      "permission.sessionsReadback": "现有会话回读：{ok}/{total} 已生效{extra}",
+      "permission.sessionsCurrent": "（current(session)={preset}）",
+      "permission.sessionsHandles": "（句柄未就绪的会标「待应用」）",
+      "permission.notesTitle": "边界说明",
+      "notify.reminderTitle": "提醒",
+      "notify.reminderFallback": "到点了",
+      "memory.chars": "{count} 字符",
+      "artifacts.viewerErrorLine": "{label}：{reason}",
+      "artifacts.viewerLabel": "产物查看器",
+      "detail.modelWithGroup": "{model}（{group}）",
+      "detail.nameSeparator": "、",
+      "detail.collapseSaveFailed": "折叠状态没能保存：下次打开会恢复原状（{reason}）",
+      "settings.budgetEdit": "改预算",
+      "settings.realtimeCiHintDisabled":
+        "未实现：当前只有 30–90s 轮询，这个开关不会启动任何东西（已禁用）。",
+      "settings.more": "更多设置",
+      "settings.moreHint": "预算表单、危险开关、线程权限、协调器与 CI 轮询都在这里。",
+      "settings.dataRootLine": "数据根目录：{root}",
+      "settings.budgetSummary": "预算：{summary}",
+      "settings.budgetShort.maxThreadsPerDay": "日线程 {value}",
+      "settings.budgetShort.maxConcurrent": "并发 {value}",
+      "settings.budgetShort.maxStepsPerThread": "步数 {value}",
+      "settings.budgetShort.dailyTokens": "日 token {value}",
+      "settings.budgetShort.weeklyTokens": "周 token {value}",
+      "settings.budgetLabel.maxThreadsPerDay": "每天最多几个线程",
+      "settings.budgetLabel.maxConcurrent": "同时最多几个线程",
+      "settings.budgetLabel.maxStepsPerThread": "每个线程最多几步",
+      "settings.budgetLabel.dailyTokens": "每天最多多少 token",
+      "settings.budgetLabel.weeklyTokens": "每周最多多少 token",
+      "settings.realtimeCiUnavailable": "暂不可用",
+      "settings.restartConfirmTitle": "重开协调者会话？",
+      "settings.restartConfirmImpact":
+        "会丢掉当前协调者会话并重开一个（旧会话保留可追溯）；当前那条回复会丢。不会额外跑模型。",
+      "settings.restartConfirm": "重开",
+      "detail.coordinatorCreateConfirmTitle": "创建协调者会话？",
+      "detail.coordinatorCreateConfirmImpact":
+        "会创建一个协调者会话，并立刻跑一轮模型（= 一次模型调用，会花 token）；线程结束后由它唤醒并汇报。",
+      "detail.coordinatorRestartConfirmTitle": "重开协调者会话？",
+      "detail.coordinatorRestartConfirmImpact":
+        "会丢掉当前协调者会话（旧会话保留可追溯）；当前那条回复会丢。不会额外跑模型。",
+      "detail.confirmCreate": "创建",
+      "detail.confirmRestart": "重开",
+      "panel.new.invalidDir": "需要绝对路径（以 / 开头）；相对路径不能作为项目目录，未添加。",
+      "panel.new.dirDraftCommitted": "已自动把输入框里的路径加入 Context（{count} 个目录）。",
+      "detail.diag.nextNoDir":
+        "下一步：先绑定项目目录（「详情 › 环境」），线程会跑在那个文件夹里。",
+      "detail.diag.nextNoCoordinator": "下一步：点「建协调者」，线程结束后它会向你汇报。",
+      "detail.diag.nextReady": "就绪：在下面输入框派个任务，回车即可新建线程。",
+      "detail.diag.workspaceHint":
+        "工作区=线程实际运行的文件夹；没绑定就跑在插件数据目录下的 workspaces/<id>。",
+      "detail.diag.coordinatorHint":
+        "协调者=一个长期会话，线程结束后由它汇总汇报；不建就不会自动汇报。",
+      "detail.diag.pollHint": "PR 轮询=每 30–90 秒查一次 PR/CI 状态，不监听 webhook。",
+      "detail.settingsEnvDirect": "直接打开：",
+      "detail.settingsEnvInstructions": "记忆与指令",
+      "detail.settingsEnvLibrary": "产物库",
+      "detail.settingsEnvRoutines": "定时任务与提醒",
+      "detail.settingsEnvNote": "完整设置页可能被宿主关闭；上面的入口不依赖它。",
     };
     var EN = {
       title: "Projects",
@@ -869,7 +986,7 @@ window.__ModuleLoader__.load({
       "settings.restartHint":
         "Drop the current coordinator session and open a new one (the old one is kept for audit); the reply in flight is lost.",
       "settings.restartDone": "Restarted (previous {previous}…)",
-      "settings.realtimeCi": "Realtime CI/PR watch (not implemented)",
+      "settings.realtimeCi": "Realtime CI/PR watch (not implemented, currently unavailable)",
       "settings.realtimeCiHint":
         "Not implemented: it needs `gh webhook forward` (gh-webhook extension), repo admin rights and webhook signature checks; only the 30–90s poll exists, so this switch starts nothing.",
       "settings.realtimeCiOn": "Not implemented (creates no webhook)",
@@ -1233,9 +1350,9 @@ window.__ModuleLoader__.load({
       "detail.settingsPane.usage": "Usage",
       "detail.settingsPane.debug": "Debug access",
       "detail.settingsEnvHint":
-        "Environment settings (project folder / repo grants / local folder access / cleanup) are in this section.",
+        "Environment settings (project folder / repo grants / local folder access / cleanup) are in this section; the buttons below jump straight to them.",
       "detail.settingsDebugHint":
-        "Danger switches / thread permissions / audit are in this section; full settings → Projects → Debug has more.",
+        "Danger switches / thread permissions / audit are in this Settings › Environment pane; the full settings page may be disabled by the host, so do not rely on it.",
       "detail.settingsOpenFull": "Open full settings",
 
       "detail.prCard.merge": "Merge ⏎",
@@ -1372,7 +1489,7 @@ window.__ModuleLoader__.load({
       "settings.autoRetryHint":
         'When a thread ends failed, it re-sends "continue" after 60s; at most 2 tries per thread, never reset. Not the same as resuming after a usage limit.',
       "settings.budgetSave": "Save budget",
-      "settings.budgetSaved": "Budget saved: {budget}",
+      "settings.budgetSavedSummary": "Budget saved: {summary}",
       "settings.budgetUnlimited": "unlimited",
       "settings.memoryTitle": "Memory and instructions",
       "settings.memoryInstructions": "Instructions {used}/{limit} · updated {updated}",
@@ -1562,6 +1679,134 @@ window.__ModuleLoader__.load({
       "library.railLoading": "Open to view",
       "b3.folderWorktreeHint":
         "merge runs in the project folder; push-branch runs in the thread worktree, which inherits the authorization of the project folder it came from.",
+      "panel.trashRow": "{name} · {threads} threads · {size}",
+      "detail.threadId": "Thread {id}",
+      "detail.coordinatorSaved": "Coordinator defaults saved",
+      "detail.coordinatorSaveFailed": "Saving coordinator defaults failed: {reason}",
+      "detail.conclusionLine": "{label}: {text}",
+      "detail.routeBlockedLine": "{head} ({reason})",
+      "library.unavailableReason": "{label} ({reason})",
+      "library.filesPartial":
+        "Some folders were not listed: budget exhausted, listed {listed}/{total} folders.",
+      "library.filesCountPartial": "{count} files · some folders not listed",
+      "routines.railUnavailable": "Host schedule unavailable",
+      "routines.railEmpty": "No routines yet",
+      "routines.railCount": "{count} routines",
+      "routines.railTitle": "Routines",
+      "routines.railOpen": "Open to view",
+      "routines.railCounts": "{routines} routines · {reminders} reminders pending",
+      "routines.billingHint":
+        "Every scheduled delivery runs the model once (costs tokens); manual routines never run on their own.",
+      "routines.actionFailed": "{label} failed",
+      "routines.actionDone": "{label} done",
+      "routines.hostStatus": "Host status: {status}",
+      "routines.lastDelivery": "Last delivery: {at}",
+      "routines.lastRun": "Last Run now: {at}",
+      "reminders.title": "Reminders ({pending} pending)",
+      "reminders.titleFired": "Reminders ({pending} pending · {fired} fired)",
+      "reminders.new": "+ New reminder",
+      "reminders.defaultLabel": "Project default:",
+      "reminders.defaultLine":
+        "Default mode: {mode} · each reminder can override it. Local timers live in the DSH process and resume from the saved due time after a restart.",
+      "reminders.mode.timer": "Local timer (free)",
+      "reminders.mode.schedule": "Scheduled run (billed)",
+      "reminders.mode.timerPill": "Free (local timer)",
+      "reminders.mode.schedulePill": "Scheduled (runs the model when due)",
+      "reminders.dialogTitle": "New reminder",
+      "reminders.close": "Close",
+      "reminders.note.schedule":
+        "Billed: runs the model once when due (= one model call); it still runs while DSH is closed.",
+      "reminders.note.timer":
+        "Free: a local timer with no model call; it does not fire while DSH is closed (it catches up once after reopening).",
+      "reminders.textLabel": "Reminder text",
+      "reminders.textPlaceholder": "e.g. check the build result",
+      "reminders.minutesLabel": "Minutes from now (0 = immediately)",
+      "reminders.creating": "Creating…",
+      "reminders.create": "Create",
+      "reminders.created": "Created ({mode})",
+      "reminders.createFailed": "Create failed",
+      "reminders.fired": "fired",
+      "reminders.complete": "Mark done",
+      "reminders.cancel": "Cancel",
+      "permission.label": "Thread permissions (narrow only)",
+      "permission.narrower": " (narrower than the host default)",
+      "permission.hostDefault": " (host default)",
+      "permission.unavailable":
+        "The host exposes no permissionPresets, so narrowing is unavailable",
+      "permission.saved": "Saved",
+      "permission.savedNewSession": " (applies to new sessions)",
+      "permission.readback": "; read back {ok}/{total}",
+      "permission.pending": " ({count} pending)",
+      "permission.setFailed": "Setting failed",
+      "permission.applyToSessions": "Apply to existing sessions",
+      "permission.applied": "Applied to {ok}/{total} existing sessions",
+      "permission.gateNote":
+        "Push / merge / delete always need your approval in the panel (the plugin executor); this setting only controls whether tool calls ask every time and whether commands may write outside the project folder — it bypasses no gate.",
+      "permission.sessionsReadback": "Existing sessions read back: {ok}/{total} applied{extra}",
+      "permission.sessionsCurrent": " (current(session)={preset})",
+      "permission.sessionsHandles": " (sessions whose handle is not ready show as pending)",
+      "permission.notesTitle": "Boundaries",
+      "notify.reminderTitle": "Reminder",
+      "notify.reminderFallback": "Due now",
+      "memory.chars": "{count} chars",
+      "artifacts.viewerErrorLine": "{label}: {reason}",
+      "artifacts.viewerLabel": "Artifact viewer",
+      "detail.modelWithGroup": "{model} ({group})",
+      "detail.nameSeparator": ", ",
+      "detail.collapseSaveFailed":
+        "Could not save the collapsed state; it will reset next time ({reason})",
+      "settings.budgetEdit": "Edit budget",
+      "settings.realtimeCiHintDisabled":
+        "Not implemented: only 30–90s polling exists today, so this switch would start nothing (disabled).",
+      "settings.more": "More settings",
+      "settings.moreHint":
+        "Budget form, danger switches, thread permissions, coordinator and CI polling live here.",
+      "settings.dataRootLine": "Data root: {root}",
+      "settings.budgetSummary": "Budget: {summary}",
+      "settings.budgetShort.maxThreadsPerDay": "{value} threads/day",
+      "settings.budgetShort.maxConcurrent": "{value} concurrent",
+      "settings.budgetShort.maxStepsPerThread": "{value} steps/thread",
+      "settings.budgetShort.dailyTokens": "{value} tokens/day",
+      "settings.budgetShort.weeklyTokens": "{value} tokens/week",
+      "settings.budgetLabel.maxThreadsPerDay": "Max threads per day",
+      "settings.budgetLabel.maxConcurrent": "Max concurrent threads",
+      "settings.budgetLabel.maxStepsPerThread": "Max steps per thread",
+      "settings.budgetLabel.dailyTokens": "Max tokens per day",
+      "settings.budgetLabel.weeklyTokens": "Max tokens per week",
+      "settings.realtimeCiUnavailable": "currently unavailable",
+      "settings.restartConfirmTitle": "Restart the coordinator session?",
+      "settings.restartConfirmImpact":
+        "Drops the current coordinator session and starts a new one (the old session stays traceable); the in-flight reply is lost. No extra model call.",
+      "settings.restartConfirm": "Restart",
+      "detail.coordinatorCreateConfirmTitle": "Create a coordinator session?",
+      "detail.coordinatorCreateConfirmImpact":
+        "Creates a coordinator session and immediately runs one model turn (= one model call, costs tokens); it wakes up and reports when threads finish.",
+      "detail.coordinatorRestartConfirmTitle": "Restart the coordinator session?",
+      "detail.coordinatorRestartConfirmImpact":
+        "Drops the current coordinator session (the old one stays traceable); the in-flight reply is lost. No extra model call.",
+      "detail.confirmCreate": "Create",
+      "detail.confirmRestart": "Restart",
+      "panel.new.invalidDir":
+        "An absolute path is required (starting with /); relative paths cannot be a project folder, so nothing was added.",
+      "panel.new.dirDraftCommitted":
+        "Added the typed path to Context automatically ({count} folders).",
+      "detail.diag.nextNoDir":
+        "Next: bind a project folder (Details › Environment); threads will run in that folder.",
+      "detail.diag.nextNoCoordinator":
+        "Next: click Create coordinator and it will report back when threads finish.",
+      "detail.diag.nextReady": "Ready: type a task below and press Enter to start a thread.",
+      "detail.diag.workspaceHint":
+        "Workspace = the folder threads actually run in; unbound projects run under the plugin data dir at workspaces/<id>.",
+      "detail.diag.coordinatorHint":
+        "Coordinator = a long-lived session that reports when threads finish; without one nothing reports automatically.",
+      "detail.diag.pollHint":
+        "PR polling = checks PR/CI status every 30–90 seconds; it does not listen to webhooks.",
+      "detail.settingsEnvDirect": "Open directly:",
+      "detail.settingsEnvInstructions": "Memory & instructions",
+      "detail.settingsEnvLibrary": "Library",
+      "detail.settingsEnvRoutines": "Routines & reminders",
+      "detail.settingsEnvNote":
+        "The full settings page may be disabled by the host; the entries above do not depend on it.",
     };
     var PANEL_ID = "projects";
     var SERVICE = "projects";
@@ -1654,6 +1899,73 @@ window.__ModuleLoader__.load({
       return value.replace(/\{(\w+)\}/gu, (match, name) =>
         Object.hasOwn(vars, name) ? String(vars[name]) : match,
       );
+    }
+
+    /**
+     * 浮层 z-index 分档（AUD-projects-ui-18）：以前 40/60/61/70/80/90 散落在各组件里，
+     * 产物查看器(40) 会被 popover(70) 盖住。统一从这里取档，别再写裸数字。
+     * panel < sticky < notice < popover < viewer < drawer < modal < toast。
+     */
+    var Z = {
+      panel: 2,
+      sticky: 3,
+      notice: 60,
+      noticeRaised: 61,
+      popover: 70,
+      viewer: 72,
+      drawer: 75,
+      modal: 80,
+      toast: 90,
+    };
+
+    /**
+     * 目录必须是绝对路径、且不含 `..` 段（与 lib/store.js 的 assertSafeDirs 同口径）。
+     * client 半先拦一道，用户能在表单里看到原因，而不是提交后才被服务端拒绝。
+     * @param {unknown} value
+     */
+    function isSafeDirPath(value) {
+      var path = String(value ?? "").trim();
+      if (path === "") return false;
+      if (!path.startsWith("/")) return false;
+      return path.split("/").includes("..") === false;
+    }
+
+    /**
+     * IME 合成中的 Enter 是「上词」，不是「发送」（AUD-projects-ui-01）。
+     * React 合成事件在部分浏览器/IME 上 `isComposing` 为 undefined，必须再看
+     * nativeEvent、keyCode 229（旧 IME）与 composition 期间的 ref 标记。
+     * @param {any} event
+     * @param {{active?: boolean}|null|undefined} [ime]
+     * @returns {boolean}
+     */
+    function isImeConfirmKey(event, ime) {
+      if (!event) return false;
+      if (event.isComposing === true) return true;
+      if (event.nativeEvent && event.nativeEvent.isComposing === true) return true;
+      if (event.keyCode === 229 || event.which === 229) return true;
+      if (event.key === "Process") return true;
+      if (ime && ime.active === true) return true;
+      return false;
+    }
+
+    /**
+     * composer 键盘意图（纯函数）：composing=true 时一律 noop——包括 slash 菜单的 Enter，
+     * 否则中文用户上词会把半截 `/memory` 当命令执行。
+     * @param {string} key
+     * @param {{composing?: boolean, slashOpen?: boolean, slashCount?: number}} options
+     * @returns {"noop"|"slashClose"|"slashPrev"|"slashNext"|"slashRun"|"send"}
+     */
+    function composerKeyIntent(key, options) {
+      var opts = options || {};
+      if (opts.composing === true) return "noop";
+      if (opts.slashOpen === true) {
+        if (key === "Escape") return "slashClose";
+        if (key === "ArrowDown") return "slashNext";
+        if (key === "ArrowUp") return "slashPrev";
+        if (key === "Enter") return "slashRun";
+      }
+      if (key === "Enter") return "send";
+      return "noop";
     }
 
     var styles = {
@@ -1943,7 +2255,7 @@ window.__ModuleLoader__.load({
       backdrop: {
         position: "fixed",
         inset: 0,
-        zIndex: 80,
+        zIndex: Z.modal,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -1997,7 +2309,7 @@ window.__ModuleLoader__.load({
         position: "absolute",
         top: "calc(100% + 6px)",
         right: 0,
-        zIndex: 70,
+        zIndex: Z.popover,
         minWidth: "200px",
         padding: "4px",
         borderRadius: "10px",
@@ -2009,7 +2321,7 @@ window.__ModuleLoader__.load({
         position: "fixed",
         right: "24px",
         bottom: "24px",
-        zIndex: 90,
+        zIndex: Z.toast,
         display: "flex",
         flexDirection: "column",
         gap: "8px",
@@ -2159,7 +2471,7 @@ window.__ModuleLoader__.load({
         background: T.bg,
         borderLeft: `1px solid ${T.border}`,
         boxShadow: T.shadow,
-        zIndex: 60,
+        zIndex: Z.drawer,
         display: "flex",
         flexDirection: "column",
         gap: "2px",
@@ -2634,6 +2946,48 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 预算摘要的人话文案（AUD-projects-ui-08 / USIM-U1-03）：键名 → 短标签 + 数值，
+     * 空值显示「不限」。设置首屏摘要与「保存预算」回执共用，避免两处口径漂移。
+     * @param {any} t @param {Record<string, any>|null|undefined} budget @param {string[]} keys
+     * @returns {string[]}
+     */
+    function budgetSummaryParts(t, budget, keys) {
+      return keys.map((key) => {
+        var raw = budget ? budget[key] : null;
+        var shown =
+          raw === null || raw === undefined || raw === ""
+            ? text(t, "settings.budgetUnlimited")
+            : String(raw);
+        return text(t, `settings.budgetShort.${key}`, { value: shown });
+      });
+    }
+
+    /**
+     * 一行预算摘要（首屏第 3 行）。
+     * @param {any} t @param {Record<string, any>|null|undefined} budget @param {string[]} keys
+     * @returns {string}
+     */
+    function budgetSummaryLine(t, budget, keys) {
+      return text(t, "settings.budgetSummary", {
+        summary: budgetSummaryParts(t, budget, keys).join(" · "),
+      });
+    }
+
+    /**
+     * Library 文件面的 partial 说明（AUD-projects-ui-06）：service 已经算好
+     * `files.partial`（预算用尽时后续目录一个都不列），client 以前零引用，
+     * 界面显示成完整列表。这里把它翻译成一句人话；未 partial 时返回空串。
+     * @param {any} t @param {any} files @param {number} totalDirs
+     * @returns {string}
+     */
+    function libraryFilesPartialNote(t, files, totalDirs) {
+      if (files?.partial !== true) return "";
+      var listed = Array.isArray(files.dirs) ? files.dirs.length : 0;
+      var total = Number(totalDirs) > 0 ? Number(totalDirs) : listed;
+      return text(t, "library.filesPartial", { listed: listed, total: total });
+    }
+
+    /**
      * 搜索：名称 / 目标说明 / 已绑目录，任一命中即保留。
      * @param {any} projects @param {any} query
      */
@@ -2835,6 +3189,14 @@ window.__ModuleLoader__.load({
      * @param {{t: any, title: string, open: boolean, onClose: () => void, onSave?: any, saveLabel?: string, saveAttrs?: any, children: any, attrs?: any}} props
      */
     function RailEditor(props) {
+      // AUD-projects-ui-05：RailEditor 以前只有局部 Esc（焦点跑出去就收不到），而且没有 Tab 环。
+      useModalLayer({
+        open: props.open === true,
+        selector: "[data-projects-rail-editor-dialog]",
+        onClose: () => {
+          if (typeof props.onClose === "function") props.onClose();
+        },
+      });
       if (!props.open) return null;
       return h(
         "div",
@@ -2857,6 +3219,7 @@ window.__ModuleLoader__.load({
             role: "dialog",
             "aria-modal": "true",
             "aria-label": props.title,
+            "data-projects-rail-editor-dialog": "",
             style: styles.dialog,
           },
           h(
@@ -2894,6 +3257,122 @@ window.__ModuleLoader__.load({
           ),
         ),
       );
+    }
+
+    /**
+     * ARIA tabs 的键盘行为（AUD-projects-ui-10）：roving tabindex 下左右方向键在页签间移动。
+     * @param {string[]} ids @param {string} currentId
+     * @param {(next: string) => void} select @param {string} attribute
+     */
+    function tabListKeyDown(ids, currentId, select, attribute) {
+      return (/** @type {any} */ event) => {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        if (ids.length === 0) return;
+        event.preventDefault();
+        var index = ids.indexOf(currentId);
+        var delta = event.key === "ArrowRight" ? 1 : -1;
+        var nextId = ids[(index + delta + ids.length) % ids.length];
+        select(nextId);
+        setTimeout(() => {
+          var doc = typeof document === "undefined" ? null : document;
+          var node = /** @type {any} */ (
+            doc ? doc.querySelector(`[${attribute}="${nextId}"]`) : null
+          );
+          if (node && typeof node.focus === "function") node.focus();
+        }, 0);
+      };
+    }
+
+    /**
+     * 弹层里的可聚焦元素（DOM 顺序；过滤 disabled 与 tabindex=-1）。
+     * @param {any} root
+     * @returns {any[]}
+     */
+    function modalFocusables(root) {
+      if (!root || typeof root.querySelectorAll !== "function") return [];
+      return Array.prototype.slice
+        .call(
+          root.querySelectorAll(
+            'button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])',
+          ),
+        )
+        .filter((node) => {
+          var element = /** @type {any} */ (node);
+          return element.disabled !== true && element.tabIndex !== -1;
+        });
+    }
+
+    /**
+     * 弹层焦点契约（AUD-projects-ui-04/05/16/19）：打开时把初始焦点移进弹层、
+     * Esc 关闭、Tab 在弹层内循环；关闭后把焦点还给打开前的元素（或指定触发器）。
+     * 用 document 级 capture 监听：焦点即使跑到背景，Esc 仍然有效（原来的
+     * `aria-modal` + 局部 onKeyDown 只在焦点还在子树里时成立）。
+     * 宿主没有公开的 Modal API（settings.section 里也拿不到），所以这层由插件自保证。
+     * @param {{open: boolean, selector: string, onClose?: () => void, restoreSelector?: string}} options
+     */
+    function useModalLayer(options) {
+      var open = options.open === true;
+      var selector = String(options.selector || "");
+      var restoreSelector = String(options.restoreSelector || "");
+      var closeRef = useRef(options.onClose);
+      // 每次渲染都刷新回调，但 effect 只依赖 open/selector：避免父组件重渲染把焦点反复抢走。
+      closeRef.current = options.onClose;
+      var previousRef = useRef(/** @type {any} */ (null));
+      useEffect(() => {
+        if (!open) return undefined;
+        const doc = typeof document === "undefined" ? null : document;
+        if (!doc || selector === "") return undefined;
+        var root = /** @type {any} */ (doc.querySelector(selector));
+        if (!root) return undefined;
+        previousRef.current = doc.activeElement || null;
+        var marked = /** @type {any} */ (root.querySelector("[data-modal-autofocus]"));
+        var initial = marked || modalFocusables(root)[0] || root;
+        if (initial && typeof initial.focus === "function") initial.focus();
+        var onKeyDown = (/** @type {any} */ event) => {
+          if (!event) return;
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            if (typeof closeRef.current === "function") closeRef.current();
+            return;
+          }
+          if (event.key !== "Tab") return;
+          var items = modalFocusables(root);
+          if (items.length === 0) {
+            event.preventDefault();
+            return;
+          }
+          var firstItem = /** @type {any} */ (items[0]);
+          var lastItem = /** @type {any} */ (items[items.length - 1]);
+          var active = doc.activeElement;
+          var inside = false;
+          try {
+            inside = typeof root.contains === "function" && root.contains(active) === true;
+          } catch (_error) {
+            inside = false;
+          }
+          if (!inside) {
+            event.preventDefault();
+            (event.shiftKey ? lastItem : firstItem).focus();
+            return;
+          }
+          if (!event.shiftKey && active === lastItem) {
+            event.preventDefault();
+            firstItem.focus();
+          } else if (event.shiftKey && active === firstItem) {
+            event.preventDefault();
+            lastItem.focus();
+          }
+        };
+        doc.addEventListener("keydown", onKeyDown, true);
+        return () => {
+          doc.removeEventListener("keydown", onKeyDown, true);
+          var restore =
+            restoreSelector !== "" ? /** @type {any} */ (doc.querySelector(restoreSelector)) : null;
+          if (!restore) restore = previousRef.current;
+          if (restore && typeof restore.focus === "function") restore.focus();
+        };
+      }, [open, selector, restoreSelector]);
     }
 
     var menuItemStyle = {
@@ -2965,6 +3444,14 @@ window.__ModuleLoader__.load({
      */
     function FirstRunGuide(props) {
       var t = props.t;
+      // AUD-projects-ui-16：一次性引导也是模态——接管初始焦点、Esc 等同「开始使用」。
+      useModalLayer({
+        open: props.open === true,
+        selector: "[data-projects-firstrun-dialog]",
+        onClose: () => {
+          if (typeof props.onDone === "function") props.onDone();
+        },
+      });
       if (props.open !== true) return null;
       var bullets = [
         text(t, "panel.firstRun.bullet1"),
@@ -3087,6 +3574,11 @@ window.__ModuleLoader__.load({
       var addDir = () => {
         var value = String(form.dirDraft ?? "").trim();
         if (value === "") return;
+        // USIM-U2-09：非法路径以前只写进 chips，创建时又被丢掉；这里当场拒绝并说明原因。
+        if (!isSafeDirPath(value)) {
+          patch({ error: text(t, "panel.new.invalidDir") });
+          return;
+        }
         if (dirs.includes(value)) {
           patch({ dirDraft: "" });
           return;
@@ -3255,7 +3747,7 @@ window.__ModuleLoader__.load({
               h(
                 "span",
                 { style: styles.entryIcon },
-                h("span", { style: { fontSize: "16px", lineHeight: 1 } }, "＋"),
+                h("span", { style: { fontSize: "16px", lineHeight: 1 } }, "+"),
               ),
               h(
                 "span",
@@ -3569,16 +4061,8 @@ window.__ModuleLoader__.load({
       var deleteState = useState({ project: null, impact: null, busy: false, error: "" });
       var rowDelete = deleteState[0];
       var setRowDelete = deleteState[1];
-      // 约定 §7.4.2：破坏性操作主按钮默认聚焦。列表行删除弹窗以前只挂属性、
-      // 没有 focus 逻辑（真机实测打开后 activeElement 还是 BODY），这里补上。
-      useEffect(() => {
-        if (!rowDelete.project) return undefined;
-        const target = /** @type {any} */ (
-          document.querySelector("[data-projects-row-delete-confirm]")
-        );
-        if (target && typeof target.focus === "function") target.focus();
-        return undefined;
-      }, [rowDelete.project?.id]);
+      // 约定 §7.4.2：破坏性操作主按钮默认聚焦（由 useModalLayer 统一接管，
+      // 同时补上 Tab 环与「焦点跑到背景也能收到 Esc」，AUD-projects-ui-05）。
       // 模态焦点陷阱 + Esc：新建项目/编辑详情两个弹窗共用。
       // 以前 Tab 会跑回背景控件、焦点在外时 Esc 收不到——aria-modal 与实际行为不符（UI 复审 P1）。
       useEffect(() => {
@@ -3652,6 +4136,11 @@ window.__ModuleLoader__.load({
           if (trigger && typeof trigger.focus === "function") trigger.focus();
         }, 0);
       };
+      useModalLayer({
+        open: Boolean(rowDelete.project),
+        selector: "[data-projects-row-delete-dialog]",
+        onClose: closeRowDelete,
+      });
       // F63 首启引导：一次性。默认 done=true，避免 RPC 回来之前闪一下引导框。
       // 真正的值来自宿主 storageDomain（projects_ui.firstRunDone，跨重启保留）。
       var firstRunState = useState({
@@ -3844,11 +4333,34 @@ window.__ModuleLoader__.load({
       var submitCreate = useCallback(() => {
         var value = String(createForm.name ?? "").trim();
         if (value === "" || createForm.busy) return;
+        // USIM-U2-09：填了绝对路径但没点「添加目录」时，草稿会被静默丢掉，创建后显示
+        // 「工作区未绑定」。提交前把草稿并进去；非法路径当场报错并留在表单里。
+        var dirs = Array.isArray(createForm.dirs) ? createForm.dirs : [];
+        var draftDir = String(createForm.dirDraft ?? "").trim();
+        if (draftDir !== "") {
+          if (!isSafeDirPath(draftDir)) {
+            setCreateForm((/** @type {any} */ prev) => ({
+              ...prev,
+              error: text(t, "panel.new.invalidDir"),
+            }));
+            return;
+          }
+          if (!dirs.includes(draftDir)) {
+            if (dirs.length >= MAX_CONTEXT_DIRS) {
+              setCreateForm((/** @type {any} */ prev) => ({
+                ...prev,
+                error: text(t, "panel.new.contextLimit", { count: MAX_CONTEXT_DIRS }),
+              }));
+              return;
+            }
+            dirs = [...dirs, draftDir];
+          }
+        }
         setCreateForm((/** @type {any} */ prev) => ({ ...prev, busy: true, error: "" }));
         var input = {
           goal: String(createForm.goal ?? "").trim(),
           // F2：Context 多选（目录 ≤10 / 仓库 / 图标）一次提交，后端 store 再收敛一遍
-          dirs: Array.isArray(createForm.dirs) ? createForm.dirs : [],
+          dirs: dirs,
           repos: Array.isArray(createForm.repos) ? createForm.repos : [],
           icon: String(createForm.icon ?? "").trim(),
         };
@@ -4210,6 +4722,10 @@ window.__ModuleLoader__.load({
             // 窄窗单列：一次只显示「对话」或「线程面板」之一（composer 不再被右栏挤到中部）
             '[data-projects-panel] [data-projects-detail-grid][data-narrow-pane="threads"] [data-projects-detail-main]{display:none!important}',
             '[data-projects-panel] [data-projects-detail-grid][data-narrow-pane="chat"] [data-panel-column]{display:none!important}',
+            "summary[data-projects-disclosure]{list-style:none;cursor:pointer;display:flex;align-items:center;gap:4px;}",
+            "summary[data-projects-disclosure]::-webkit-details-marker{display:none;}",
+            "summary[data-projects-disclosure]::before{content:'▸';flex:none;width:1em;color:currentColor;opacity:.65;}",
+            "details[open]>summary[data-projects-disclosure]::before{content:'▾';}",
           ].join("\n"),
         ),
         h(
@@ -4554,6 +5070,7 @@ window.__ModuleLoader__.load({
                   "aria-modal": "true",
                   "aria-labelledby": "projects-row-delete-title",
                   "aria-describedby": "projects-row-delete-impact",
+                  "data-projects-row-delete-dialog": "",
                   style: { ...styles.dialog, maxWidth: "420px" },
                 },
                 h(
@@ -4768,7 +5285,11 @@ window.__ModuleLoader__.load({
                   textOverflow: "ellipsis",
                 },
               },
-              `${entry.name} · ${entry.threadCount} 个线程 · ${size(entry.sizeBytes)}`,
+              text(t, "panel.trashRow", {
+                name: entry.name,
+                threads: entry.threadCount,
+                size: size(entry.sizeBytes),
+              }),
             ),
             h(
               "div",
@@ -4898,8 +5419,8 @@ window.__ModuleLoader__.load({
           const cells = (/** @type {string} */ row) =>
             row
               .trim()
-              .replace(/^\\|/, "")
-              .replace(/\\|$/u, "")
+              .replace(/^\|/u, "")
+              .replace(/\|$/u, "")
               .split("|")
               .map((c) => c.trim());
           const header = cells(line);
@@ -4947,6 +5468,15 @@ window.__ModuleLoader__.load({
     function ArtifactViewer(props) {
       var t = props.t;
       var item = props.item || {};
+      // AUD-projects-ui-04：产物查看器是 4 个入口共用的全屏遮罩，以前没有 dialog 语义、
+      // 没有 Esc、也不接管焦点（键盘用户打开后 Esc 关不掉、焦点还在背景里）。
+      useModalLayer({
+        open: true,
+        selector: "[data-projects-artifact-dialog]",
+        onClose: () => {
+          if (typeof props.onClose === "function") props.onClose();
+        },
+      });
       var st = useState({ loading: true, error: "", blocks: [], text: "" });
       var view = st[0];
       var setView = st[1];
@@ -4982,7 +5512,7 @@ window.__ModuleLoader__.load({
           style: {
             position: "fixed",
             inset: "0",
-            zIndex: 40,
+            zIndex: Z.viewer,
             background: "rgba(0,0,0,0.45)",
             display: "flex",
             alignItems: "center",
@@ -4997,6 +5527,10 @@ window.__ModuleLoader__.load({
         h(
           "div",
           {
+            role: "dialog",
+            "aria-modal": "true",
+            "aria-labelledby": "projects-artifact-title",
+            "data-projects-artifact-dialog": "",
             style: {
               width: "min(760px, calc(100vw - 64px))",
               maxHeight: "calc(100vh - 96px)",
@@ -5016,7 +5550,10 @@ window.__ModuleLoader__.load({
             { style: { display: "flex", alignItems: "center", gap: "8px" } },
             h(
               "span",
-              { style: { ...styles.name, flex: "1 1 auto", minWidth: 0 } },
+              {
+                id: "projects-artifact-title",
+                style: { ...styles.name, flex: "1 1 auto", minWidth: 0 },
+              },
               String(item.title || item.id || ""),
             ),
             h(
@@ -5024,6 +5561,7 @@ window.__ModuleLoader__.load({
               {
                 type: "button",
                 style: { ...styles.secondaryButton, padding: "1px 8px", fontSize: "11.5px" },
+                "data-modal-autofocus": "",
                 "data-projects-artifact-viewer-close": "",
                 onClick: () => {
                   if (typeof props.onClose === "function") props.onClose();
@@ -5038,7 +5576,10 @@ window.__ModuleLoader__.load({
               ? h(
                   "span",
                   { style: styles.error },
-                  `${text(t, "artifacts.viewerError")}：${view.error}`,
+                  text(t, "artifacts.viewerErrorLine", {
+                    label: text(t, "artifacts.viewerError"),
+                    reason: view.error,
+                  }),
                 )
               : renderArtifactBlocks(view.blocks),
         ),
@@ -5665,8 +6206,12 @@ window.__ModuleLoader__.load({
                 },
                 "data-projects-library-degraded-note": "",
               },
-              text(t, "library.artifactsMissing") +
-                (artifacts.reason ? `（${String(artifacts.reason)}）` : ""),
+              artifacts.reason
+                ? text(t, "library.unavailableReason", {
+                    label: text(t, "library.artifactsMissing"),
+                    reason: String(artifacts.reason),
+                  })
+                : text(t, "library.artifactsMissing"),
             )
           : artifactRows.length === 0
             ? h(
@@ -5693,10 +6238,38 @@ window.__ModuleLoader__.load({
             h("span", { style: styles.name }, text(t, "library.filesTitle")),
             h(
               "span",
-              { style: styles.meta, "data-projects-library-file-count": "" },
-              text(t, "library.filesCount", { count: Number(files.total || 0) }),
+              {
+                style: styles.meta,
+                "data-projects-library-file-count": "",
+                ...(files.partial === true
+                  ? { "data-projects-library-files-partial": "true" }
+                  : {}),
+              },
+              files.partial === true
+                ? text(t, "library.filesCountPartial", { count: Number(files.total || 0) })
+                : text(t, "library.filesCount", { count: Number(files.total || 0) }),
             ),
           ),
+          // AUD-projects-ui-06：service 算好的 files.partial（预算用尽后目录不再列）必须显示出来，
+          // 否则多目录项目会把「少列了几个目录」看成「那些目录没文件」。
+          libraryFilesPartialNote(
+            t,
+            files,
+            Array.isArray(project.dirs) ? project.dirs.length : 0,
+          ) !== ""
+            ? h(
+                "span",
+                {
+                  style: { ...styles.meta, color: T.danger },
+                  "data-projects-library-files-partial-note": "",
+                },
+                libraryFilesPartialNote(
+                  t,
+                  files,
+                  Array.isArray(project.dirs) ? project.dirs.length : 0,
+                ),
+              )
+            : null,
           h(
             "span",
             { style: { ...styles.meta, color: T.faint }, "data-projects-library-search-note": "" },
@@ -5897,11 +6470,14 @@ window.__ModuleLoader__.load({
                 routines: (() => {
                   const view = values[8];
                   if (!view || view.available === false)
-                    return { count: 0, summary: "宿主 schedule 不可用" };
+                    return { count: 0, summary: text(t, "routines.railUnavailable") };
                   const count = Array.isArray(view.routines) ? view.routines.length : 0;
                   return {
                     count,
-                    summary: count === 0 ? "还没有定时任务" : `${count} 个定时任务`,
+                    summary:
+                      count === 0
+                        ? text(t, "routines.railEmpty")
+                        : text(t, "routines.railCount", { count }),
                   };
                 })(),
                 reminders: values[9] || null,
@@ -6118,19 +6694,8 @@ window.__ModuleLoader__.load({
       const deleteState = useState({ confirming: false, busy: false, impact: null });
       const del = deleteState[0];
       const setDel = deleteState[1];
-      // 破坏性确认框要默认聚焦主按钮（ADR 0002 / conventions §7.4.2「回车即执行」）。
-      // 宿主的 useModalLayer 只服务它自己的 Modal 组件；这里的确认框是面板内联的，得自己聚焦。
-      // 主按钮 busy/disabled 时拿不到焦点，回落到第一个可用按钮（即「取消」）。
+      // 破坏性确认框的默认聚焦 / Tab 环 / Esc / 焦点归还统一走 useModalLayer（AUD-projects-ui-05）。
       const deleteConfirmRef = useRef(null);
-      useEffect(() => {
-        if (del.confirming !== true) return;
-        const host = deleteConfirmRef.current;
-        if (!host) return;
-        const target =
-          host.querySelector("[data-modal-autofocus]") ||
-          host.querySelector("button:not([disabled])");
-        if (target && typeof target.focus === "function") target.focus();
-      }, [del.confirming]);
       // 关闭确认框：状态复位 + 焦点还给触发它的按钮（审查：Esc 之前完全没反应）
       const closeDeleteConfirm = useCallback(() => {
         setDel({ confirming: false, busy: false, impact: null });
@@ -6141,19 +6706,11 @@ window.__ModuleLoader__.load({
         );
         if (target && typeof target.focus === "function") target.focus();
       }, [setDel]);
-      useEffect(() => {
-        if (del.confirming !== true) return undefined;
-        const doc = typeof document === "undefined" ? null : document;
-        if (!doc) return undefined;
-        const onKey = (/** @type {any} */ event) => {
-          if (event?.key === "Escape") {
-            event.preventDefault();
-            closeDeleteConfirm();
-          }
-        };
-        doc.addEventListener("keydown", onKey);
-        return () => doc.removeEventListener("keydown", onKey);
-      }, [del.confirming, closeDeleteConfirm]);
+      useModalLayer({
+        open: del.confirming === true,
+        selector: "[data-projects-delete-confirm-panel]",
+        onClose: closeDeleteConfirm,
+      });
       const resolveApproval = useCallback(
         (/** @type {any} */ requestId, /** @type {any} */ status) => {
           call(api.ctx, "resolveApproval", { requestId, status }).then(
@@ -6550,6 +7107,11 @@ window.__ModuleLoader__.load({
       const coordinatorBusyState = useState(false);
       const coordinatorBusy = coordinatorBusyState[0];
       const setCoordinatorBusy = coordinatorBusyState[1];
+      // USIM-U2-19：建协调者会立刻跑一轮模型（花 token）；重开协调者会丢当前回复。
+      // 两个动作都先弹确认，说明成本与影响面，再执行。
+      const coordinatorConfirmState = useState("");
+      const coordinatorConfirm = coordinatorConfirmState[0];
+      const setCoordinatorConfirm = coordinatorConfirmState[1];
       const coordinatorMsgState = useState("");
       const coordinatorMsg = coordinatorMsgState[0];
       const setCoordinatorMsg = coordinatorMsgState[1];
@@ -6680,6 +7242,15 @@ window.__ModuleLoader__.load({
           },
         );
       }, [api, coordinatorBusy, load, project.id, t]);
+      useModalLayer({
+        open: coordinatorConfirm !== "",
+        selector: "[data-projects-coordinator-confirm-dialog]",
+        onClose: () => setCoordinatorConfirm(""),
+        restoreSelector:
+          coordinatorConfirm === "create"
+            ? "[data-projects-coordinator-create]"
+            : "[data-projects-coordinator-restart]",
+      });
 
       const steerThreadNow = useCallback(
         (/** @type {string} */ sessionId) => {
@@ -6887,7 +7458,7 @@ window.__ModuleLoader__.load({
               efforts,
               label:
                 groupLabel !== "" && !modelLabel.toLowerCase().includes(groupLabel.toLowerCase())
-                  ? `${modelLabel}（${groupLabel}）`
+                  ? text(t, "detail.modelWithGroup", { model: modelLabel, group: groupLabel })
                   : modelLabel,
             });
           }
@@ -6942,14 +7513,20 @@ window.__ModuleLoader__.load({
           () => {
             setCoordPillOpen(false);
             setCoordPick(null);
-            setThreadAction({ pending: "", ok: true, message: "协调者默认已保存" });
+            setThreadAction({
+              pending: "",
+              ok: true,
+              message: text(t, "detail.coordinatorSaved"),
+            });
             load();
           },
           (/** @type {any} */ error) =>
             setThreadAction({
               pending: "",
               ok: false,
-              message: `协调者默认模型保存失败：${String(error?.message ?? error).slice(0, 160)}`,
+              message: text(t, "detail.coordinatorSaveFailed", {
+                reason: String(error?.message ?? error).slice(0, 160),
+              }),
             }),
         );
       };
@@ -7145,12 +7722,27 @@ window.__ModuleLoader__.load({
         if (visibleOverride === null) return;
         if (storedVisibleViews.join(",") === visibleOverride.join(",")) setVisibleOverride(null);
       }, [storedVisibleViews.join(","), visibleOverride, setVisibleOverride]);
-      const toggleVisibleView = (/** @type {string} */ id, /** @type {boolean} */ next) => {
+      /** 视图切换的渲染状态挂在面板根节点上（AUD-projects-ui-13：不再污染 document.body，也不跨导航残留）。 */
+      // 静态检查（check-plugins）按字面量确认「冒烟引用的 data-* 锚点在 client 源码里存在」；
+      // 动态 `data-projects-${name}` 必须在这里列出全集，改锚点时两处一起改。
+      const PANEL_TRACE_KEYS = [
+        "data-projects-toggle-hit",
+        "data-projects-view-error",
+        "data-projects-view-stage",
+        "data-projects-view-result",
+      ];
+      const setPanelTrace = (/** @type {string} */ name, /** @type {string} */ value) => {
+        if (!PANEL_TRACE_KEYS.includes(`data-projects-${name}`)) return;
+        const root = /** @type {any} */ (document.querySelector("[data-projects-panel]"));
+        if (!root) return;
         try {
-          document.body.setAttribute("data-projects-toggle-hit", `${id}:${String(next)}`);
-        } catch {
-          /* ignore */
+          root.setAttribute(`data-projects-${name}`, value);
+        } catch (_error) {
+          /* DOM 属性写失败不影响动作本身 */
         }
+      };
+      const toggleVisibleView = (/** @type {string} */ id, /** @type {boolean} */ next) => {
+        setPanelTrace("toggle-hit", `${id}:${String(next)}`);
         const base = visibleList.filter((/** @type {string} */ item) => item !== id);
         const nextList = next ? [...base, id] : base;
         setVisibleOverride(nextList);
@@ -7162,52 +7754,26 @@ window.__ModuleLoader__.load({
             viewsText: nextList.join(","),
           });
         } catch (error) {
-          try {
-            document.body.setAttribute(
-              "data-projects-view-error",
-              `sync: ${String(/** @type {any} */ (error)?.message ?? error).slice(0, 240)}`,
-            );
-          } catch {
-            /* ignore */
-          }
+          setPanelTrace(
+            "view-error",
+            `sync: ${String(/** @type {any} */ (error)?.message ?? error).slice(0, 240)}`,
+          );
           return;
         }
-        try {
-          document.body.setAttribute("data-projects-view-stage", "then-attached");
-        } catch {
-          /* ignore */
-        }
+        setPanelTrace("view-stage", "then-attached");
         pending.then(
           (/** @type {any} */ result) => {
-            try {
-              document.body.setAttribute("data-projects-view-stage", "resolved");
-              document.body.setAttribute(
-                "data-projects-view-result",
-                JSON.stringify(result ?? null).slice(0, 240),
-              );
-            } catch {
-              /* ignore */
-            }
+            setPanelTrace("view-stage", "resolved");
+            setPanelTrace("view-result", JSON.stringify(result ?? null).slice(0, 240));
             // 不清 override：等 load() 回读到与选择一致的盘上值再清。
             // 旧宿主若忽略 visibleViews，UI 仍按选择隐藏（只是刷新后回默认）。
             load();
           },
           (/** @type {any} */ error) => {
-            try {
-              document.body.setAttribute("data-projects-view-stage", "rejected");
-            } catch {
-              /* ignore */
-            }
+            setPanelTrace("view-stage", "rejected");
             setVisibleOverride(null);
-            // 调试/回归用：把失败原因挂在 DOM 上，别静默吞掉（本轮排查就卡在这）
-            try {
-              document.body.setAttribute(
-                "data-projects-view-error",
-                String(error?.message ?? error).slice(0, 300),
-              );
-            } catch {
-              /* ignore */
-            }
+            // 调试/回归用：把失败原因挂在面板锚点上，别静默吞掉（本轮排查就卡在这）
+            setPanelTrace("view-error", String(error?.message ?? error).slice(0, 300));
           },
         );
       };
@@ -7231,18 +7797,16 @@ window.__ModuleLoader__.load({
           if (opener && typeof opener.focus === "function") opener.focus();
         }, 0);
       };
-      useEffect(() => {
-        if (!panelSettingsOpen) return undefined;
-        const onKeyDown = (/** @type {any} */ event) => {
-          if (event.key === "Escape") {
-            event.preventDefault();
-            closePanelSettings();
-          }
-        };
-        document.addEventListener("keydown", onKeyDown);
-        return () => document.removeEventListener("keydown", onKeyDown);
-      }, [panelSettingsOpen]);
+      // AUD-projects-ui-05/19：抽屉以前只有 document 级 Esc（无 Tab 环、打开不聚焦）。
+      useModalLayer({
+        open: panelSettingsOpen,
+        selector: '[data-panel-settings-drawer="open"]',
+        onClose: closePanelSettings,
+        restoreSelector: "[data-panel-settings-open]",
+      });
       const threadInputRef = useRef(null);
+      /** IME 合成标记（AUD-01）：composition 期间的 Enter 一律不算发送。 */
+      const imeStateRef = useRef({ active: false });
       const collapsedInitRef = useRef(false);
       // F28 `Welcome back, {名}.`：宿主账号没有注入到插件 client（settings.section 之外），
       // 只能走 deepseekAccount/getState 这个 Remote 试读；未登录/未挂载时如实退化成
@@ -7288,9 +7852,20 @@ window.__ModuleLoader__.load({
             else delete next[groupId];
             return next;
           });
-          call(api.ctx, "setGroupCollapsed", { group: groupId, collapsed }).catch(() => {});
+          call(api.ctx, "setGroupCollapsed", { group: groupId, collapsed }).catch(
+            (/** @type {any} */ error) => {
+              // AUD-projects-ui-14：写盘失败以前完全静默（刷新后分组又展开）。这里如实提示。
+              setThreadAction({
+                pending: "",
+                ok: false,
+                message: text(t, "detail.collapseSaveFailed", {
+                  reason: String(error?.message ?? error).slice(0, 120),
+                }),
+              });
+            },
+          );
         },
-        [api, setCollapsedGroups],
+        [api, setCollapsedGroups, setThreadAction, t],
       );
       const collapseAllGroups = useCallback(
         (/** @type {boolean} */ collapsed) => {
@@ -7302,7 +7877,15 @@ window.__ModuleLoader__.load({
             call(api.ctx, "setGroupCollapsed", {
               group: String(group.id),
               collapsed,
-            }).catch(() => {});
+            }).catch((/** @type {any} */ error) => {
+              setThreadAction({
+                pending: "",
+                ok: false,
+                message: text(t, "detail.collapseSaveFailed", {
+                  reason: String(error?.message ?? error).slice(0, 120),
+                }),
+              });
+            });
           }
           setCollapsedGroups(next);
         },
@@ -7647,9 +8230,11 @@ window.__ModuleLoader__.load({
             ? rawTitle
             : taskHint !== ""
               ? taskHint
-              : `线程 ${String(row.sessionId)
-                  .replace(/^session-/u, "")
-                  .slice(0, 6)}`;
+              : text(t, "detail.threadId", {
+                  id: String(row.sessionId)
+                    .replace(/^session-/u, "")
+                    .slice(0, 6),
+                });
         // 副标题统一逻辑：kind 语义 → 旧宿主 fallback → working 的「动词 + 秒数」
         const pickVerb = () => {
           const verbs = text(t, "detail.working.verbs").split("|");
@@ -10195,7 +10780,16 @@ window.__ModuleLoader__.load({
                     key: id,
                     type: "button",
                     role: "tab",
+                    id: `projects-narrow-tab-${id}`,
                     "aria-selected": narrowPane === id ? "true" : "false",
+                    "aria-controls": `projects-narrow-panel-${id}`,
+                    tabIndex: narrowPane === id ? 0 : -1,
+                    onKeyDown: tabListKeyDown(
+                      ["chat", "threads"],
+                      narrowPane,
+                      setNarrowPane,
+                      "data-projects-narrow-pane",
+                    ),
                     "data-projects-narrow-pane": id,
                     style: {
                       ...styles.secondaryButton,
@@ -10217,6 +10811,13 @@ window.__ModuleLoader__.load({
             style: narrow ? styles.detailGridNarrow : styles.detailGrid,
             "data-projects-detail-grid": "",
             "data-narrow-pane": narrow ? narrowPane : "",
+            ...(narrow
+              ? {
+                  role: "tabpanel",
+                  id: `projects-narrow-panel-${narrowPane}`,
+                  "aria-labelledby": `projects-narrow-tab-${narrowPane}`,
+                }
+              : {}),
           },
           // —— 左列：项目对话（thread 操作条 / 协调者 / composer / 按规则派活 / 审批）——
           h(
@@ -10242,20 +10843,52 @@ window.__ModuleLoader__.load({
                 style: { display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" },
                 "data-projects-diagnostics": "",
               },
+              // USIM-U1-02：首屏先给人话「下一步」，行话（工作区/协调者/轮询）降到第二行，
+              // 每个术语带 title 说明——能力一个不少，但新用户不用先学生词。
               h(
                 "span",
-                { style: { ...styles.meta, fontSize: "12px" } },
-                [
+                {
+                  style: { ...styles.meta, fontSize: "12px", whiteSpace: "normal" },
+                  "data-projects-diag-human": "",
+                },
+                text(
+                  t,
+                  hasDir === false
+                    ? "detail.diag.nextNoDir"
+                    : data.coordinator?.available === true
+                      ? "detail.diag.nextReady"
+                      : "detail.diag.nextNoCoordinator",
+                ),
+              ),
+              h(
+                "span",
+                {
+                  style: { ...styles.meta, fontSize: "11.5px", color: T.faint },
+                  "data-projects-diag-tech": "",
+                },
+                h(
+                  "span",
+                  { title: text(t, "detail.diag.workspaceHint") },
                   hasDir
                     ? text(t, "detail.diag.workspaceBound")
                     : text(t, "detail.diag.workspaceUnbound"),
+                ),
+                " · ",
+                h(
+                  "span",
+                  { title: text(t, "detail.diag.coordinatorHint") },
                   data.coordinator?.available === true
                     ? text(t, "detail.diag.coordinatorReady")
                     : text(t, "detail.diag.coordinatorEmpty"),
+                ),
+                " · ",
+                h(
+                  "span",
+                  { title: text(t, "detail.diag.pollHint") },
                   data.poll?.running === true
                     ? text(t, "detail.diag.pollRunning")
                     : text(t, "detail.diag.pollStopped"),
-                ].join(" · "),
+                ),
               ),
               h("span", { style: { flex: "1 1 auto" } }),
               h(
@@ -10357,7 +10990,7 @@ window.__ModuleLoader__.load({
                           },
                           "data-projects-coordinator-restart": "",
                           disabled: coordinatorBusy,
-                          onClick: restartCoordinator,
+                          onClick: () => setCoordinatorConfirm("restart"),
                         },
                         text(t, "detail.coordinatorRestart"),
                       )
@@ -10372,7 +11005,7 @@ window.__ModuleLoader__.load({
                           },
                           "data-projects-coordinator-create": "",
                           disabled: coordinatorBusy,
-                          onClick: createCoordinator,
+                          onClick: () => setCoordinatorConfirm("create"),
                         },
                         text(t, "detail.coordinatorCreate"),
                       ),
@@ -10512,9 +11145,10 @@ window.__ModuleLoader__.load({
                   ? h(
                       "div",
                       { style: styles.conclusion, "data-projects-coordinator-report": "" },
-                      `${text(t, "detail.coordinatorConclusion")}：${String(
-                        coordinator.conclusion,
-                      ).slice(0, 400)}`,
+                      text(t, "detail.conclusionLine", {
+                        label: text(t, "detail.coordinatorConclusion"),
+                        text: String(coordinator.conclusion).slice(0, 400),
+                      }),
                     )
                   : null,
                 // M6：结论旁的产物 chip（Claude 的「结论 + 产物」）
@@ -10710,6 +11344,7 @@ window.__ModuleLoader__.load({
                       },
                       title: text(t, "settings.realtimeCiHint"),
                       "data-projects-detail-realtime-ci-row": "",
+                      "aria-disabled": "true",
                     },
                     h("input", {
                       type: "checkbox",
@@ -10955,7 +11590,10 @@ window.__ModuleLoader__.load({
                       action: actionText,
                       level: level || "?",
                     });
-                    return `${head}（${text(t, "detail.routeBlockedHint")}）`;
+                    return text(t, "detail.routeBlockedLine", {
+                      head,
+                      reason: text(t, "detail.routeBlockedHint"),
+                    });
                   })(),
                 )
               : null,
@@ -11173,32 +11811,41 @@ window.__ModuleLoader__.load({
                   if (composerTarget === "coordinator") setCoordinatorDraft(event.target.value);
                   else setDraft(event.target.value);
                 },
+                // AUD-projects-ui-01：中文/日文 IME 用 Enter 上词时不能发送。
+                // React 合成事件的 isComposing 在部分浏览器上缺失，所以三条判据
+                // （isComposing / keyCode 229 / composition 期间的 ref）都走 isImeConfirmKey。
+                onCompositionStart: () => {
+                  imeStateRef.current = { active: true };
+                },
+                onCompositionEnd: () => {
+                  imeStateRef.current = { active: false };
+                },
                 onKeyDown: (/** @type {any} */ event) => {
-                  if (slashOpen) {
-                    if (event.key === "Escape") {
-                      setDraft("");
-                      return;
-                    }
-                    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-                      event.preventDefault();
-                      const total = slashMatches.length;
-                      if (total > 0) {
-                        const delta = event.key === "ArrowDown" ? 1 : -1;
-                        setSlashIndex(
-                          (/** @type {number} */ prev) => (prev + delta + total) % total,
-                        );
-                      }
-                      return;
-                    }
-                    if (event.key === "Enter") {
-                      runSlashCommand(slashMatches[slashIndex] ?? slashMatches[0]);
-                      return;
-                    }
+                  const intent = composerKeyIntent(event.key, {
+                    composing: isImeConfirmKey(event, imeStateRef.current),
+                    slashOpen: slashOpen,
+                    slashCount: slashMatches.length,
+                  });
+                  if (intent === "noop") return;
+                  if (intent === "slashClose") {
+                    setDraft("");
+                    return;
                   }
-                  if (event.key === "Enter") {
-                    if (composerTarget === "coordinator") sendCoordinator();
-                    else createThread();
+                  if (intent === "slashPrev" || intent === "slashNext") {
+                    event.preventDefault();
+                    const total = slashMatches.length;
+                    if (total > 0) {
+                      const delta = intent === "slashNext" ? 1 : -1;
+                      setSlashIndex((/** @type {number} */ prev) => (prev + delta + total) % total);
+                    }
+                    return;
                   }
+                  if (intent === "slashRun") {
+                    runSlashCommand(slashMatches[slashIndex] ?? slashMatches[0]);
+                    return;
+                  }
+                  if (composerTarget === "coordinator") sendCoordinator();
+                  else createThread();
                 },
                 disabled: busy,
               }),
@@ -11510,7 +12157,7 @@ window.__ModuleLoader__.load({
                       : `1px solid ${T.borderSoft}`,
                   position: "sticky",
                   top: 0,
-                  zIndex: 2,
+                  zIndex: Z.panel,
                   // 与面板底色一致：透明时 sticky 滚动内容会从页签后面透出来（叠字）
                   background: colorScheme === "light" ? "#FAFAFB" : T.panel,
                   paddingTop: "2px",
@@ -11523,15 +12170,25 @@ window.__ModuleLoader__.load({
                   (/** @type {any} */ item) =>
                     item.id === "threads" || item.id === "views" || visibleTabs[item.id] !== false,
                 )
-                .map((/** @type {any} */ item) =>
+                .map((/** @type {any} */ item, _itemIndex, /** @type {any[]} */ list) =>
                   h(
                     "button",
                     {
                       type: "button",
                       key: item.id,
                       role: "tab",
+                      id: `projects-tab-${item.id}`,
                       "aria-selected": tab === item.id ? "true" : "false",
+                      "aria-controls": `projects-tabpanel-${item.id}`,
+                      // roving tabindex：只有选中页签在 Tab 顺序里，左右键切页签。
+                      tabIndex: tab === item.id ? 0 : -1,
                       "data-projects-tab": item.id,
+                      onKeyDown: tabListKeyDown(
+                        list.map((/** @type {any} */ entry) => String(entry.id)),
+                        tab,
+                        setTab,
+                        "data-projects-tab",
+                      ),
                       style: {
                         background: tab === item.id ? T.hover : "transparent",
                         border: "none",
@@ -11824,7 +12481,17 @@ window.__ModuleLoader__.load({
                 });
               })(),
             ),
-            body,
+            // AUD-projects-ui-10：页签对应的面板要有 role=tabpanel + aria-labelledby。
+            h(
+              "div",
+              {
+                role: "tabpanel",
+                id: `projects-tabpanel-${tab}`,
+                "aria-labelledby": `projects-tab-${tab}`,
+                "data-projects-tabpanel": tab,
+              },
+              body,
+            ),
           ),
           // —— 右栏：指令 / 记忆 / 上下文 ——
           // 一律「值行 + 右侧小动作」：右栏不常驻 input，点动作才开编辑（Batch C）；
@@ -11899,6 +12566,13 @@ window.__ModuleLoader__.load({
                     key: id,
                     role: "tab",
                     "aria-selected": panelPane === id ? "true" : "false",
+                    tabIndex: panelPane === id ? 0 : -1,
+                    onKeyDown: tabListKeyDown(
+                      ["general", "memory", "environment"],
+                      panelPane,
+                      setPanelPane,
+                      "data-panel-settings-pane",
+                    ),
                     "data-panel-settings-pane": id,
                     style: {
                       background: "transparent",
@@ -11949,6 +12623,68 @@ window.__ModuleLoader__.load({
                     panelPane === "environment"
                       ? "detail.settingsEnvHint"
                       : "detail.settingsDebugHint",
+                  ),
+                  h(
+                    "span",
+                    { style: { color: T.dim, fontSize: "11.5px" } },
+                    text(t, "detail.settingsEnvDirect"),
+                  ),
+                  h(
+                    "div",
+                    { style: { display: "flex", gap: "6px", flexWrap: "wrap" } },
+                    h(
+                      "button",
+                      {
+                        type: "button",
+                        style: {
+                          ...styles.secondaryButton,
+                          fontSize: "11.5px",
+                          padding: "2px 8px",
+                        },
+                        "data-panel-settings-goto": "memory",
+                        onClick: () => setPanelPane("memory"),
+                      },
+                      text(t, "detail.settingsEnvInstructions"),
+                    ),
+                    h(
+                      "button",
+                      {
+                        type: "button",
+                        style: {
+                          ...styles.secondaryButton,
+                          fontSize: "11.5px",
+                          padding: "2px 8px",
+                        },
+                        "data-panel-settings-goto": "library",
+                        onClick: () => {
+                          setTab("library");
+                          setPanelSettingsOpen(false);
+                        },
+                      },
+                      text(t, "detail.settingsEnvLibrary"),
+                    ),
+                    h(
+                      "button",
+                      {
+                        type: "button",
+                        style: {
+                          ...styles.secondaryButton,
+                          fontSize: "11.5px",
+                          padding: "2px 8px",
+                        },
+                        "data-panel-settings-goto": "routines",
+                        onClick: () => {
+                          setTab("routines");
+                          setPanelSettingsOpen(false);
+                        },
+                      },
+                      text(t, "detail.settingsEnvRoutines"),
+                    ),
+                  ),
+                  h(
+                    "span",
+                    { style: { color: T.faint, fontSize: "11px" } },
+                    text(t, "detail.settingsEnvNote"),
                   ),
                   h(
                     "button",
@@ -12077,9 +12813,9 @@ window.__ModuleLoader__.load({
               id: "routines",
               pane: "environment",
               activePane: panelPane,
-              title: "定时任务",
+              title: text(t, "routines.railTitle"),
               collapsible: narrow,
-              summary: data.routines?.summary || "打开查看",
+              summary: data.routines?.summary || text(t, "routines.railOpen"),
               attrs: { "data-projects-rail-routines": "" },
               action: h(
                 "button",
@@ -12089,7 +12825,7 @@ window.__ModuleLoader__.load({
                   "data-projects-rail-routines-open": "",
                   onClick: () => setTab("routines"),
                 },
-                "＋",
+                "+",
               ),
               body: h(
                 "div",
@@ -12097,16 +12833,12 @@ window.__ModuleLoader__.load({
                 h(
                   "div",
                   { style: styles.railBodyFull, "data-projects-rail-routines-count": "" },
-                  String(data.routines?.count ?? 0) +
-                    " 个定时任务 · " +
-                    String(data.reminders?.pendingCount ?? 0) +
-                    " 条提醒待触发",
+                  text(t, "routines.railCounts", {
+                    routines: String(data.routines?.count ?? 0),
+                    reminders: String(data.reminders?.pendingCount ?? 0),
+                  }),
                 ),
-                h(
-                  "div",
-                  { style: styles.railBodyFull },
-                  "每次到点投递都会跑一次模型（会花 token）；手动档不自动跑。",
-                ),
+                h("div", { style: styles.railBodyFull }, text(t, "routines.billingHint")),
                 h(
                   "button",
                   {
@@ -12326,7 +13058,7 @@ window.__ModuleLoader__.load({
                       "data-projects-grant-edit": "",
                       onClick: () => setGrantsEditing(true),
                     },
-                    "＋",
+                    "+",
                   ),
                 }),
                 // 回收站清理：值行 + 预览/确认（两个都是动作，不是输入）
@@ -12429,9 +13161,17 @@ window.__ModuleLoader__.load({
                                     textOverflow: "ellipsis",
                                     whiteSpace: "nowrap",
                                   },
-                                  title: `${entry.name} · ${entry.threadCount} 个线程 · ${formatBytes(entry.sizeBytes)}`,
+                                  title: text(t, "panel.trashRow", {
+                                    name: entry.name,
+                                    threads: entry.threadCount,
+                                    size: formatBytes(entry.sizeBytes),
+                                  }),
                                 },
-                                `${entry.name} · ${entry.threadCount} 个线程 · ${formatBytes(entry.sizeBytes)}`,
+                                text(t, "panel.trashRow", {
+                                  name: entry.name,
+                                  threads: entry.threadCount,
+                                  size: formatBytes(entry.sizeBytes),
+                                }),
                               ),
                               h(
                                 "button",
@@ -12679,6 +13419,78 @@ window.__ModuleLoader__.load({
               : null,
           ),
         }),
+        coordinatorConfirm !== ""
+          ? h(
+              "div",
+              { style: styles.backdrop, "data-projects-coordinator-confirm": "" },
+              h(
+                "div",
+                {
+                  role: "alertdialog",
+                  "aria-modal": "true",
+                  "aria-labelledby": "projects-coordinator-confirm-title",
+                  "aria-describedby": "projects-coordinator-confirm-impact",
+                  "data-projects-coordinator-confirm-dialog": "",
+                  style: { ...styles.dialog, maxWidth: "440px" },
+                },
+                h(
+                  "div",
+                  { style: styles.dialogTitle, id: "projects-coordinator-confirm-title" },
+                  text(
+                    t,
+                    coordinatorConfirm === "create"
+                      ? "detail.coordinatorCreateConfirmTitle"
+                      : "detail.coordinatorRestartConfirmTitle",
+                  ),
+                ),
+                h(
+                  "div",
+                  { style: { color: T.text }, id: "projects-coordinator-confirm-impact" },
+                  text(
+                    t,
+                    coordinatorConfirm === "create"
+                      ? "detail.coordinatorCreateConfirmImpact"
+                      : "detail.coordinatorRestartConfirmImpact",
+                  ),
+                ),
+                h(
+                  "div",
+                  { style: { display: "flex", gap: "8px", justifyContent: "flex-end" } },
+                  h(
+                    "button",
+                    {
+                      type: "button",
+                      style: styles.secondaryButton,
+                      "data-projects-coordinator-confirm-cancel": "",
+                      onClick: () => setCoordinatorConfirm(""),
+                    },
+                    text(t, "detail.cancel"),
+                  ),
+                  h(
+                    "button",
+                    {
+                      type: "button",
+                      style: styles.primaryButton,
+                      "data-projects-coordinator-confirm-go": "",
+                      "data-modal-autofocus": "",
+                      onClick: () => {
+                        var action = coordinatorConfirm;
+                        setCoordinatorConfirm("");
+                        if (action === "create") createCoordinator();
+                        else restartCoordinator();
+                      },
+                    },
+                    text(
+                      t,
+                      coordinatorConfirm === "create"
+                        ? "detail.confirmCreate"
+                        : "detail.confirmRestart",
+                    ),
+                  ),
+                ),
+              ),
+            )
+          : null,
         del.confirming
           ? h(
               // 破坏性确认要挡住整页：内联渲染会把详情顶出视口（审查实测标题 y=-48），
@@ -12693,7 +13505,7 @@ window.__ModuleLoader__.load({
                   alignItems: "center",
                   justifyContent: "center",
                   padding: "20px",
-                  zIndex: 80,
+                  zIndex: Z.modal,
                 },
                 "data-projects-delete-confirm-backdrop": "",
                 onClick: (/** @type {any} */ event) => {
@@ -12745,7 +13557,7 @@ window.__ModuleLoader__.load({
                 h(
                   "details",
                   { style: { ...styles.meta } },
-                  h("summary", null, text(t, "detail.deleteDetails")),
+                  h("summary", { "data-projects-disclosure": "" }, text(t, "detail.deleteDetails")),
                   h(
                     "code",
                     { style: { ...styles.meta, whiteSpace: "pre-wrap" } },
@@ -12997,8 +13809,11 @@ window.__ModuleLoader__.load({
           (/** @type {any} */ result) => {
             setBusy("");
             if (result && result.ok === false)
-              report(String(result.reason || `${label}失败`), false);
-            else report(`${String(label)}完成`, true);
+              report(
+                String(result.reason) || text(t, "routines.actionFailed", { label: String(label) }),
+                false,
+              );
+            else report(text(t, "routines.actionDone", { label: String(label) }), true);
             load();
           },
           (/** @type {any} */ error) => {
@@ -13310,7 +14125,11 @@ window.__ModuleLoader__.load({
                         h(
                           "span",
                           { style: styles.meta },
-                          `宿主状态：${String(routine.hostStatus || routine.status?.status || "unknown")}`,
+                          text(t, "routines.hostStatus", {
+                            status: String(
+                              routine.hostStatus || routine.status?.status || "unknown",
+                            ),
+                          }),
                         ),
                         h(
                           "span",
@@ -13446,9 +14265,11 @@ window.__ModuleLoader__.load({
                     "span",
                     { style: styles.meta, "data-projects-routine-lastdelivery": "" },
                     routine.lastDelivery?.deliveredAt
-                      ? `最近投递：${String(routine.lastDelivery.deliveredAt)}`
+                      ? text(t, "routines.lastDelivery", {
+                          at: String(routine.lastDelivery.deliveredAt),
+                        })
                       : routine.lastRunAt
-                        ? `最近 Run now：${String(routine.lastRunAt)}`
+                        ? text(t, "routines.lastRun", { at: String(routine.lastRunAt) })
                         : text(t, "routines.historyEmpty"),
                   ),
                   h(
@@ -13593,6 +14414,7 @@ window.__ModuleLoader__.load({
     /** @param {any} props */
     function RemindersPanel(props) {
       const api = props.api;
+      const t = props.t;
       const project = props.project;
       const [view, setView] = useState(null);
       const [form, setForm] = useState({
@@ -13645,13 +14467,17 @@ window.__ModuleLoader__.load({
         }).then(
           (/** @type {any} */ result) => {
             if (result && result.ok === false) {
-              patch({ busy: false, ok: false, message: String(result.reason || "创建失败") });
+              patch({
+                busy: false,
+                ok: false,
+                message: String(result.reason) || text(t, "reminders.createFailed"),
+              });
               return;
             }
             patch({
               busy: false,
               ok: true,
-              message: `已创建（${String(result?.mode || "")}）`,
+              message: text(t, "reminders.created", { mode: String(result?.mode || "") }),
             });
             load();
           },
@@ -13671,8 +14497,8 @@ window.__ModuleLoader__.load({
       const fired = list.filter((/** @type {any} */ item) => item.state === "fired");
       const modeNote =
         (form.mode || defaultMode) === "schedule"
-          ? "计费：到点会跑一次模型（= 一次模型调用）；DSH 关着也会跑。"
-          : "免费：本机计时，不花模型调用；DSH 关着的时候不会响（重新打开后补一次）。";
+          ? text(t, "reminders.note.schedule")
+          : text(t, "reminders.note.timer");
       return h(
         "div",
         {
@@ -13697,11 +14523,12 @@ window.__ModuleLoader__.load({
           h(
             "span",
             { style: { ...styles.name, flex: "1 1 auto" } },
-            "提醒（" +
-              String(active.length) +
-              " 条待触发" +
-              (fired.length > 0 ? ` · ${String(fired.length)} 条已响` : "") +
-              "）",
+            fired.length > 0
+              ? text(t, "reminders.titleFired", {
+                  pending: String(active.length),
+                  fired: String(fired.length),
+                })
+              : text(t, "reminders.title", { pending: String(active.length) }),
           ),
           h(
             "button",
@@ -13711,23 +14538,26 @@ window.__ModuleLoader__.load({
               "data-projects-reminder-open": "",
               onClick: openForm,
             },
-            "＋ 新建提醒",
+            text(t, "reminders.new"),
           ),
         ),
         h(
           "div",
           { style: styles.railBodyFull },
-          "默认模式：" +
-            (defaultMode === "schedule" ? "定时任务（计费）" : "本机计时（免费）") +
-            " · 每条可以另选。本机计时由 DSH 进程负责，重启后按已保存的到期时间自动恢复。",
+          text(t, "reminders.defaultLine", {
+            mode:
+              defaultMode === "schedule"
+                ? text(t, "reminders.mode.schedule")
+                : text(t, "reminders.mode.timer"),
+          }),
         ),
         h(
           "div",
           { style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" } },
-          h("span", { style: styles.meta }, "项目默认："),
+          h("span", { style: styles.meta }, text(t, "reminders.defaultLabel")),
           [
-            ["timer", "本机计时（免费）"],
-            ["schedule", "定时任务（计费）"],
+            ["timer", text(t, "reminders.mode.timer")],
+            ["schedule", text(t, "reminders.mode.schedule")],
           ].map((/** @type {any} */ option) =>
             h(
               "button",
@@ -13764,14 +14594,20 @@ window.__ModuleLoader__.load({
                   borderRadius: "10px",
                   padding: "8px 10px",
                 },
-                role: "dialog",
-                "aria-modal": "true",
+                // AUD-projects-ui-12：这是一张内联表单，不是模态：以前声明 aria-modal 会让
+                // 屏读器把背景判为不可用，而背景其实可点。改 role=group + 标题关联。
+                role: "group",
+                "aria-labelledby": "projects-reminder-form-title",
                 "data-projects-reminder-dialog": "open",
               },
               h(
                 "div",
                 { style: { display: "flex", gap: "6px", alignItems: "center" } },
-                h("span", { style: styles.name }, "新建提醒"),
+                h(
+                  "span",
+                  { style: styles.name, id: "projects-reminder-form-title" },
+                  text(t, "reminders.dialogTitle"),
+                ),
                 h("span", { style: { flex: "1 1 auto" } }),
                 h(
                   "button",
@@ -13779,7 +14615,7 @@ window.__ModuleLoader__.load({
                     type: "button",
                     style: styles.iconButton,
                     "data-projects-reminder-close": "",
-                    "aria-label": "关闭",
+                    "aria-label": text(t, "reminders.close"),
                     onClick: () => patch({ open: false }),
                   },
                   "✕",
@@ -13789,8 +14625,8 @@ window.__ModuleLoader__.load({
                 "div",
                 { style: { display: "flex", gap: "6px", flexWrap: "wrap" } },
                 [
-                  ["timer", "免费（本机计时）"],
-                  ["schedule", "定时任务（到点跑模型）"],
+                  ["timer", text(t, "reminders.mode.timerPill")],
+                  ["schedule", text(t, "reminders.mode.schedulePill")],
                 ].map((/** @type {any} */ option) =>
                   h(
                     "button",
@@ -13815,11 +14651,11 @@ window.__ModuleLoader__.load({
               h(
                 "label",
                 { style: styles.fieldLabel },
-                h("span", { style: styles.meta }, "提醒内容"),
+                h("span", { style: styles.meta }, text(t, "reminders.textLabel")),
                 h("input", {
                   style: styles.input,
                   value: form.text,
-                  placeholder: "例如：看一下构建结果",
+                  placeholder: text(t, "reminders.textPlaceholder"),
                   "data-projects-reminder-text": "",
                   "data-modal-autofocus": "",
                   onChange: (/** @type {any} */ event) => patch({ text: event.target.value }),
@@ -13828,7 +14664,7 @@ window.__ModuleLoader__.load({
               h(
                 "label",
                 { style: styles.fieldLabel },
-                h("span", { style: styles.meta }, "多少分钟后（0 = 立即）"),
+                h("span", { style: styles.meta }, text(t, "reminders.minutesLabel")),
                 h("input", {
                   style: styles.input,
                   value: form.minutes,
@@ -13849,7 +14685,7 @@ window.__ModuleLoader__.load({
                     "data-projects-reminder-submit": "",
                     onClick: submit,
                   },
-                  form.busy === true ? "正在创建…" : "创建",
+                  form.busy === true ? text(t, "reminders.creating") : text(t, "reminders.create"),
                 ),
                 form.message !== ""
                   ? h(
@@ -13883,12 +14719,16 @@ window.__ModuleLoader__.load({
                       style: { ...styles.meta, flex: "1 1 auto", minWidth: 0, overflow: "hidden" },
                       title: String(reminder.text || ""),
                     },
-                    String(reminder.text || "") +
-                      " · " +
-                      (reminder.mode === "schedule" ? "定时任务（计费）" : "本机计时（免费）") +
-                      " · " +
-                      String(reminder.remaining?.text || "") +
-                      (reminder.state === "fired" ? " · 已响" : ""),
+                    [
+                      String(reminder.text || ""),
+                      reminder.mode === "schedule"
+                        ? text(t, "reminders.mode.schedule")
+                        : text(t, "reminders.mode.timer"),
+                      String(reminder.remaining?.text || ""),
+                      reminder.state === "fired" ? text(t, "reminders.fired") : "",
+                    ]
+                      .filter((piece) => piece !== "")
+                      .join(" · "),
                   ),
                   reminder.state === "pending"
                     ? h(
@@ -13903,7 +14743,7 @@ window.__ModuleLoader__.load({
                               reminderId: reminder.id,
                             }).then(() => load()),
                         },
-                        "提前完成",
+                        text(t, "reminders.complete"),
                       )
                     : null,
                   reminder.state === "pending"
@@ -13919,7 +14759,7 @@ window.__ModuleLoader__.load({
                               reminderId: reminder.id,
                             }).then(() => load()),
                         },
-                        "取消",
+                        text(t, "reminders.cancel"),
                       )
                     : null,
                 ),
@@ -13933,6 +14773,7 @@ window.__ModuleLoader__.load({
     /** @param {any} props */
     function PermissionNarrowCard(props) {
       const api = props.api;
+      const t = props.t;
       const project = props.project;
       const [view, setView] = useState(null);
       const [busy, setBusy] = useState(false);
@@ -13960,7 +14801,10 @@ window.__ModuleLoader__.load({
           (/** @type {any} */ result) => {
             setBusy(false);
             if (result && result.ok === false) {
-              setMessage({ text: String(result.reason || "设置失败"), ok: false });
+              setMessage({
+                text: String(result.reason) || text(t, "permission.setFailed"),
+                ok: false,
+              });
               return;
             }
             const applied = Array.isArray(result?.applied?.applied) ? result.applied.applied : [];
@@ -13968,14 +14812,11 @@ window.__ModuleLoader__.load({
             const pending = applied.length - okCount;
             setMessage({
               text:
-                "已保存" +
+                text(t, "permission.saved") +
                 (applied.length === 0
-                  ? "（新会话生效）"
-                  : "；回读成功 " +
-                    okCount +
-                    "/" +
-                    applied.length +
-                    (pending > 0 ? `（${pending} 条待应用）` : "")),
+                  ? text(t, "permission.savedNewSession")
+                  : text(t, "permission.readback", { ok: okCount, total: applied.length }) +
+                    (pending > 0 ? text(t, "permission.pending", { count: pending }) : "")),
               ok: pending === 0,
             });
             load();
@@ -14002,7 +14843,7 @@ window.__ModuleLoader__.load({
         h(
           "div",
           { style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" } },
-          h("span", { style: styles.meta }, "线程权限（只会收窄）"),
+          h("span", { style: styles.meta }, text(t, "permission.label")),
           h(
             "select",
             {
@@ -14026,11 +14867,11 @@ window.__ModuleLoader__.load({
                       "data-projects-preset-option": option.name,
                     },
                     String(option.label) +
-                      (option.relation === "narrower" ? "（比宿主默认更窄）" : "") +
-                      (option.isDefault ? "（宿主默认）" : ""),
+                      (option.relation === "narrower" ? text(t, "permission.narrower") : "") +
+                      (option.isDefault ? text(t, "permission.hostDefault") : ""),
                   ),
                 )
-              : h("option", { value: "" }, "宿主没有 permissionPresets，无法收窄"),
+              : h("option", { value: "" }, text(t, "permission.unavailable")),
           ),
           h(
             "button",
@@ -14046,14 +14887,10 @@ window.__ModuleLoader__.load({
                     setBusy(false);
                     const applied = Array.isArray(result?.applied) ? result.applied : [];
                     setMessage({
-                      text:
-                        "已应用到 " +
-                        String(
-                          applied.filter((/** @type {any} */ item) => item.ok === true).length,
-                        ) +
-                        "/" +
-                        String(applied.length) +
-                        " 个现有会话",
+                      text: text(t, "permission.applied", {
+                        ok: applied.filter((/** @type {any} */ item) => item.ok === true).length,
+                        total: applied.length,
+                      }),
                       ok: applied.every((/** @type {any} */ item) => item.ok === true),
                     });
                     load();
@@ -14065,26 +14902,27 @@ window.__ModuleLoader__.load({
                 );
               },
             },
-            "应用到现有会话",
+            text(t, "permission.applyToSessions"),
           ),
         ),
         h(
           "div",
           { style: styles.meta, "data-projects-preset-note": "" },
-          "推 / 合并 / 删除永远需要你在面板里批准（插件执行器）；本开关只影响工具调用是否逐次询问，以及命令能否写到项目目录之外，不绕过任何一道闸门。",
+          text(t, "permission.gateNote"),
         ),
         sessions.length > 0
           ? h(
               "div",
               { style: styles.meta, "data-projects-preset-sessions": String(sessions.length) },
-              "现有会话回读：" +
-                String(sessions.filter((/** @type {any} */ item) => item.ok === true).length) +
-                "/" +
-                String(sessions.length) +
-                " 已生效" +
-                (lastApplied?.currentPreset
-                  ? `（current(session)=${String(lastApplied.currentPreset)}）`
-                  : "（句柄未就绪的会标「待应用」）"),
+              text(t, "permission.sessionsReadback", {
+                ok: sessions.filter((/** @type {any} */ item) => item.ok === true).length,
+                total: sessions.length,
+                extra: lastApplied?.currentPreset
+                  ? text(t, "permission.sessionsCurrent", {
+                      preset: String(lastApplied.currentPreset),
+                    })
+                  : text(t, "permission.sessionsHandles"),
+              }),
             )
           : null,
         message.text !== ""
@@ -14101,7 +14939,11 @@ window.__ModuleLoader__.load({
           ? h(
               "details",
               { style: styles.meta },
-              h("summary", { style: { cursor: "pointer" } }, "边界说明"),
+              h(
+                "summary",
+                { style: { cursor: "pointer" }, "data-projects-disclosure": "" },
+                text(t, "permission.notesTitle"),
+              ),
               (catalog.notes ?? []).map((/** @type {any} */ note, /** @type {any} */ index) =>
                 h("div", { key: index, style: styles.meta }, `· ${String(note)}`),
               ),
@@ -14255,7 +15097,7 @@ window.__ModuleLoader__.load({
                   position: "fixed",
                   right: "16px",
                   bottom: notice ? "92px" : "16px",
-                  zIndex: 61,
+                  zIndex: Z.noticeRaised,
                   maxWidth: "320px",
                   padding: "10px 12px",
                   borderRadius: "8px",
@@ -14267,8 +15109,16 @@ window.__ModuleLoader__.load({
                   cursor: "pointer",
                 },
               },
-              h("div", { style: { fontWeight: 600, marginBottom: "2px" } }, "提醒"),
-              h("div", { style: { color: T.dim } }, String(reminderNotice.text || "到点了")),
+              h(
+                "div",
+                { style: { fontWeight: 600, marginBottom: "2px" } },
+                text(t, "notify.reminderTitle"),
+              ),
+              h(
+                "div",
+                { style: { color: T.dim } },
+                String(reminderNotice.text) || text(t, "notify.reminderFallback"),
+              ),
             )
           : null,
         notice
@@ -14281,7 +15131,7 @@ window.__ModuleLoader__.load({
                   position: "fixed",
                   right: "16px",
                   bottom: "16px",
-                  zIndex: 60,
+                  zIndex: Z.notice,
                   maxWidth: "320px",
                   padding: "10px 12px",
                   borderRadius: "8px",
@@ -14414,7 +15264,7 @@ window.__ModuleLoader__.load({
         },
         h(
           "summary",
-          { style: { cursor: "pointer", color: T.dim } },
+          { style: { cursor: "pointer", color: T.dim }, "data-projects-disclosure": "" },
           text(t, "settings.dangerTitle"),
         ),
         h(
@@ -14602,8 +15452,9 @@ window.__ModuleLoader__.load({
               ...prev,
               busy: "",
               draft: null,
-              message: text(t, "settings.budgetSaved", {
-                budget: JSON.stringify(result?.budget || patch),
+              // AUD-projects-ui-08：保存提示回显人话摘要，不再把原始 JSON 丢给用户。
+              message: text(t, "settings.budgetSavedSummary", {
+                summary: budgetSummaryParts(t, result?.budget || patch, budgetKeys).join(" · "),
               }),
             }));
             reload();
@@ -14632,6 +15483,7 @@ window.__ModuleLoader__.load({
           "data-projects-settings-budget": "",
         },
         h("div", { style: { color: T.dim, fontSize: "12px" } }, text(t, "settings.budget")),
+        h("span", { style: { color: T.faint, fontSize: "11.5px" } }, text(t, "settings.moreHint")),
         h(
           "div",
           { style: { display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "flex-end" } },
@@ -14648,7 +15500,7 @@ window.__ModuleLoader__.load({
                   color: T.faint,
                 },
               },
-              h("span", null, key),
+              h("span", null, text(t, `settings.budgetLabel.${key}`)),
               h("input", {
                 type: "text",
                 inputMode: "numeric",
@@ -14713,107 +15565,125 @@ window.__ModuleLoader__.load({
               b3.content && Array.isArray(b3.content.fragments) ? b3.content.fragments.length : 0,
           }),
         ),
-        // M5：Memory 两层呈现（Claude 的 instructions 计数 + MEMORY.md 更新于 + Memory files）
+        // AUD-projects-ui-03：首屏第 3 行是「最常确认」的规则计数；明细收进折叠。
         h(
-          "div",
-          {
-            style: { display: "flex", flexDirection: "column", gap: "3px" },
-            "data-projects-memory-layers": "",
-          },
+          "span",
+          { style: { color: T.dim, fontSize: "12px" }, "data-projects-memory-instructions": "" },
+          text(t, "settings.memoryInstructions", {
+            used: Number(b3.content?.instructionsChars ?? 0),
+            limit: Number(b3.content?.instructionsLimit ?? 16_000),
+            updated: b3.content?.instructionsUpdatedAt
+              ? formatWhen(t, b3.content.instructionsUpdatedAt)
+              : text(t, "settings.memoryNever"),
+          }),
+        ),
+        h(
+          "details",
+          { style: { marginTop: "6px" }, "data-projects-settings-more": "memory" },
           h(
-            "span",
-            { style: { color: T.dim, fontSize: "12px" }, "data-projects-memory-instructions": "" },
-            text(t, "settings.memoryInstructions", {
-              used: Number(b3.content?.instructionsChars ?? 0),
-              limit: Number(b3.content?.instructionsLimit ?? 16_000),
-              updated: b3.content?.instructionsUpdatedAt
-                ? formatWhen(t, b3.content.instructionsUpdatedAt)
-                : text(t, "settings.memoryNever"),
-            }),
+            "summary",
+            { style: { cursor: "pointer", color: T.dim }, "data-projects-disclosure": "" },
+            text(t, "settings.more"),
           ),
           h(
-            "span",
-            { style: { color: T.dim, fontSize: "12px" }, "data-projects-memory-index-updated": "" },
-            text(t, "settings.memoryIndexUpdated", {
-              updated: b3.content?.memoryUpdatedAt
-                ? formatWhen(t, b3.content.memoryUpdatedAt)
-                : text(t, "settings.memoryNever"),
-            }),
-          ),
-          Array.isArray(b3.content?.memoryFiles) && b3.content.memoryFiles.length > 0
-            ? h(
-                "div",
-                {
-                  style: { display: "flex", flexDirection: "column", gap: "1px" },
-                  "data-projects-memory-files": "",
-                },
-                b3.content.memoryFiles.slice(0, 8).map((/** @type {any} */ file) =>
-                  h(
-                    "span",
-                    {
-                      key: String(file.name),
-                      style: {
-                        display: "flex",
-                        gap: "8px",
-                        fontSize: "11.5px",
-                        color: T.faint,
-                      },
-                      "data-projects-memory-file": String(file.name),
-                    },
-                    h(
-                      "span",
-                      {
-                        style: {
-                          fontFamily: "ui-monospace, monospace",
-                          minWidth: 0,
-                          flex: "1 1 auto",
-                        },
-                      },
-                      String(file.name),
-                    ),
-                    h("span", {}, formatWhen(t, file.updatedAt)),
-                  ),
-                ),
-              )
-            : h(
+            "div",
+            {
+              style: { display: "flex", flexDirection: "column", gap: "6px", marginTop: "6px" },
+            },
+            h(
+              "div",
+              {
+                style: { display: "flex", flexDirection: "column", gap: "3px" },
+                "data-projects-memory-layers": "",
+              },
+              h(
                 "span",
                 {
-                  style: { color: T.faint, fontSize: "11.5px" },
-                  "data-projects-memory-files-empty": "",
+                  style: { color: T.dim, fontSize: "12px" },
+                  "data-projects-memory-index-updated": "",
                 },
-                text(t, "settings.memoryFilesEmpty"),
+                text(t, "settings.memoryIndexUpdated", {
+                  updated: b3.content?.memoryUpdatedAt
+                    ? formatWhen(t, b3.content.memoryUpdatedAt)
+                    : text(t, "settings.memoryNever"),
+                }),
               ),
-        ),
-        h(
-          "button",
-          {
-            type: "button",
-            style: styles.button,
-            "data-projects-template-apply": "",
-            onClick: () => {
-              if (!selectedForB3) return;
-              call(api.ctx, "applyProjectTemplate", { projectId: selectedForB3.id }).then(
-                (/** @type {any} */ result) => {
-                  setB3((/** @type {any} */ prev) => ({
-                    ...prev,
-                    message: text(t, "settings.memoryTemplateDone", {
-                      path: String(result?.agentsPath || ""),
-                    }),
-                  }));
-                  loadB3();
+              Array.isArray(b3.content?.memoryFiles) && b3.content.memoryFiles.length > 0
+                ? h(
+                    "div",
+                    {
+                      style: { display: "flex", flexDirection: "column", gap: "1px" },
+                      "data-projects-memory-files": "",
+                    },
+                    b3.content.memoryFiles.slice(0, 8).map((/** @type {any} */ file) =>
+                      h(
+                        "span",
+                        {
+                          key: String(file.name),
+                          style: {
+                            display: "flex",
+                            gap: "8px",
+                            fontSize: "11.5px",
+                            color: T.faint,
+                          },
+                          "data-projects-memory-file": String(file.name),
+                        },
+                        h(
+                          "span",
+                          {
+                            style: {
+                              fontFamily: "ui-monospace, monospace",
+                              minWidth: 0,
+                              flex: "1 1 auto",
+                            },
+                          },
+                          String(file.name),
+                        ),
+                        h("span", {}, formatWhen(t, file.updatedAt)),
+                      ),
+                    ),
+                  )
+                : h(
+                    "span",
+                    {
+                      style: { color: T.faint, fontSize: "11.5px" },
+                      "data-projects-memory-files-empty": "",
+                    },
+                    text(t, "settings.memoryFilesEmpty"),
+                  ),
+            ),
+            h(
+              "button",
+              {
+                type: "button",
+                style: styles.button,
+                "data-projects-template-apply": "",
+                onClick: () => {
+                  if (!selectedForB3) return;
+                  call(api.ctx, "applyProjectTemplate", { projectId: selectedForB3.id }).then(
+                    (/** @type {any} */ result) => {
+                      setB3((/** @type {any} */ prev) => ({
+                        ...prev,
+                        message: text(t, "settings.memoryTemplateDone", {
+                          path: String(result?.agentsPath || ""),
+                        }),
+                      }));
+                      loadB3();
+                    },
+                    (/** @type {any} */ error) => {
+                      setB3((/** @type {any} */ prev) => ({
+                        ...prev,
+                        message: String(error?.message ? error.message : error).slice(0, 160),
+                      }));
+                    },
+                  );
                 },
-                (/** @type {any} */ error) => {
-                  setB3((/** @type {any} */ prev) => ({
-                    ...prev,
-                    message: String(error?.message ? error.message : error).slice(0, 160),
-                  }));
-                },
-              );
-            },
-          },
-          text(t, "settings.memoryTemplate"),
+              },
+              text(t, "settings.memoryTemplate"),
+            ),
+            b3Message,
+          ),
         ),
-        b3Message,
       );
       var usage = b3.usage;
       var usagePanel = h(
@@ -14844,16 +15714,6 @@ window.__ModuleLoader__.load({
                   fragments: usage.context ? usage.context.fragments : 0,
                 }),
               ),
-              h(
-                "div",
-                { "data-projects-usage-threads": "" },
-                text(t, "settings.usageThreads", {
-                  total: usage.threads ? usage.threads.total : 0,
-                  today: usage.threads ? usage.threads.today : 0,
-                  working: usage.threads ? usage.threads.working : 0,
-                  waiting: usage.threads ? usage.threads.waiting : 0,
-                }),
-              ),
             )
           : h(
               "div",
@@ -14861,9 +15721,39 @@ window.__ModuleLoader__.load({
               text(t, "settings.usageEmpty"),
             ),
         h(
-          "div",
-          { style: { color: T.faint, fontSize: "11.5px" }, "data-projects-usage-money": "none" },
-          text(t, "settings.usageNote"),
+          "details",
+          { style: { marginTop: "4px" }, "data-projects-settings-more": "usage" },
+          h(
+            "summary",
+            { style: { cursor: "pointer", color: T.dim }, "data-projects-disclosure": "" },
+            text(t, "settings.more"),
+          ),
+          h(
+            "div",
+            {
+              style: { display: "flex", flexDirection: "column", gap: "4px", marginTop: "6px" },
+            },
+            usage
+              ? h(
+                  "div",
+                  { style: { color: T.text, fontSize: "12px" }, "data-projects-usage-threads": "" },
+                  text(t, "settings.usageThreads", {
+                    total: usage.threads ? usage.threads.total : 0,
+                    today: usage.threads ? usage.threads.today : 0,
+                    working: usage.threads ? usage.threads.working : 0,
+                    waiting: usage.threads ? usage.threads.waiting : 0,
+                  }),
+                )
+              : null,
+            h(
+              "div",
+              {
+                style: { color: T.faint, fontSize: "11.5px" },
+                "data-projects-usage-money": "none",
+              },
+              text(t, "settings.usageNote"),
+            ),
+          ),
         ),
       );
       var notifyPrefs = selectedForB3?.notifyPrefs || {
@@ -15010,57 +15900,72 @@ window.__ModuleLoader__.load({
               }),
             )
           : null,
-        notifyRow,
         h(
-          "div",
-          { style: { display: "flex", gap: "8px", alignItems: "center" } },
+          "details",
+          { style: { marginTop: "6px" }, "data-projects-settings-more": "debug" },
           h(
-            "button",
-            {
-              type: "button",
-              style: styles.button,
-              "data-projects-gh-check": "",
-              disabled: b3.busy === "gh",
-              onClick: () => {
-                setB3((/** @type {any} */ prev) => ({ ...prev, busy: "gh", message: "" }));
-                call(api.ctx, "githubCheck").then(
-                  (/** @type {any} */ result) => {
-                    setB3((/** @type {any} */ prev) => ({
-                      ...prev,
-                      busy: "",
-                      gh: result,
-                      message: text(
-                        t,
-                        result && result.level === "ok" ? "settings.ghOk" : "settings.ghFail",
-                        {
-                          message: String(result?.message || ""),
-                          hint: String(result?.hint || ""),
-                        },
-                      ),
-                    }));
-                  },
-                  (/** @type {any} */ error) => {
-                    setB3((/** @type {any} */ prev) => ({
-                      ...prev,
-                      busy: "",
-                      message: String(error?.message ? error.message : error).slice(0, 160),
-                    }));
-                  },
-                );
-              },
-            },
-            text(t, b3.busy === "gh" ? "settings.ghChecking" : "settings.ghCheck"),
+            "summary",
+            { style: { cursor: "pointer", color: T.dim }, "data-projects-disclosure": "" },
+            text(t, "settings.more"),
           ),
           h(
-            "span",
+            "div",
             {
-              style: { color: T.faint, fontSize: "11.5px" },
-              "data-projects-gh-result": b3.gh ? String(b3.gh.level || "") : "",
+              style: { display: "flex", flexDirection: "column", gap: "8px", marginTop: "6px" },
             },
-            b3.gh ? String(b3.gh.message || "") : "",
+            notifyRow,
+            h(
+              "div",
+              { style: { display: "flex", gap: "8px", alignItems: "center" } },
+              h(
+                "button",
+                {
+                  type: "button",
+                  style: styles.button,
+                  "data-projects-gh-check": "",
+                  disabled: b3.busy === "gh",
+                  onClick: () => {
+                    setB3((/** @type {any} */ prev) => ({ ...prev, busy: "gh", message: "" }));
+                    call(api.ctx, "githubCheck").then(
+                      (/** @type {any} */ result) => {
+                        setB3((/** @type {any} */ prev) => ({
+                          ...prev,
+                          busy: "",
+                          gh: result,
+                          message: text(
+                            t,
+                            result && result.level === "ok" ? "settings.ghOk" : "settings.ghFail",
+                            {
+                              message: String(result?.message || ""),
+                              hint: String(result?.hint || ""),
+                            },
+                          ),
+                        }));
+                      },
+                      (/** @type {any} */ error) => {
+                        setB3((/** @type {any} */ prev) => ({
+                          ...prev,
+                          busy: "",
+                          message: String(error?.message ? error.message : error).slice(0, 160),
+                        }));
+                      },
+                    );
+                  },
+                },
+                text(t, b3.busy === "gh" ? "settings.ghChecking" : "settings.ghCheck"),
+              ),
+              h(
+                "span",
+                {
+                  style: { color: T.faint, fontSize: "11.5px" },
+                  "data-projects-gh-result": b3.gh ? String(b3.gh.level || "") : "",
+                },
+                b3.gh ? String(b3.gh.message || "") : "",
+              ),
+            ),
+            b3Message,
           ),
         ),
-        b3Message,
         // 审计（原项目详情「审计」页签）：审计/诊断属于设置页，不再占项目页签（§7.3）。
         // 最多列最近 100 条（与 listAudit 的截断一致，新的在前）：设置页不是审计浏览器，
         // 全量留给 listAudit 的调用方（工具/脚本）。
@@ -15115,6 +16020,495 @@ window.__ModuleLoader__.load({
               ),
         ),
       );
+      // —— AUD-projects-ui-03：设置分节首屏 3 行摘要 + 「更多设置」默认收起 ——
+      // 以前 general 首屏常驻 12–15 行（预算表单 + 权限卡 + 重启 + CI + 策略）。
+      // 预算摘要行给一个「改预算」按钮：点开同一个折叠，改一个数不用先找折叠标题。
+      /** @param {Record<string, any>|null|undefined} budget */
+      var budgetSummaryText = (budget) => budgetSummaryLine(t, budget, budgetKeys);
+      var moreRef = useRef(/** @type {any} */ (null));
+      var selectedGeneral =
+        view.projects.find((/** @type {any} */ item) => item.id === view.selectedId) || null;
+      var openMore = () => {
+        if (moreRef.current) moreRef.current.open = true;
+      };
+      var restartPendingState = useState("");
+      var restartPending = restartPendingState[0];
+      var setRestartPending = restartPendingState[1];
+      useModalLayer({
+        open: restartPending !== "",
+        selector: "[data-projects-restart-confirm-dialog]",
+        onClose: () => setRestartPending(""),
+        restoreSelector: `[data-projects-settings-restart="${String(restartPending)}"]`,
+      });
+      var runRestart = (/** @type {string} */ projectId) => {
+        setCi((/** @type {any} */ prev) => ({ ...prev, busy: "restart", message: "" }));
+        call(api.ctx, "restartCoordinator", { projectId: projectId }).then(
+          (/** @type {any} */ result) => {
+            setCi((/** @type {any} */ prev) => ({
+              ...prev,
+              busy: "",
+              message: text(t, "settings.restartDone", {
+                previous: String(result?.previousSessionId ?? "").slice(0, 10),
+              }),
+            }));
+            reload();
+          },
+          (/** @type {any} */ error) =>
+            setCi((/** @type {any} */ prev) => ({
+              ...prev,
+              busy: "",
+              message: String(error?.message ?? error).slice(0, 160),
+            })),
+        );
+      };
+      var summaryRows = h(
+        "div",
+        {
+          style: { display: "flex", flexDirection: "column", gap: "4px" },
+          "data-projects-settings-general": "",
+        },
+        h(
+          "div",
+          { style: styles.summary, "data-projects-settings-summary": "" },
+          describe
+            ? text(t, "settings.summary", { count: describe.projectCount })
+            : text(t, "settings.unavailable"),
+        ),
+        describe
+          ? h(
+              "div",
+              {
+                style: {
+                  color: T.dim,
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                },
+                title: String(describe.dataRoot ?? ""),
+                "data-projects-settings-root": "",
+              },
+              text(t, "settings.dataRootLine", { root: String(describe.dataRoot ?? "") }),
+            )
+          : null,
+        h(
+          "div",
+          { style: { display: "flex", gap: "8px", alignItems: "center", minWidth: 0 } },
+          h(
+            "span",
+            {
+              style: {
+                color: T.dim,
+                minWidth: 0,
+                flex: "1 1 auto",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              },
+              "data-projects-settings-budget-summary": "",
+            },
+            budgetSummaryText(selectedGeneral?.budget ?? null),
+          ),
+          h(
+            "button",
+            {
+              type: "button",
+              style: {
+                ...styles.secondaryButton,
+                padding: "0 8px",
+                fontSize: "11.5px",
+                flex: "none",
+              },
+              "data-projects-settings-budget-edit": "",
+              onClick: openMore,
+            },
+            text(t, "settings.budgetEdit"),
+          ),
+        ),
+        view.error ? h("div", { style: styles.error }, view.error) : null,
+      );
+      var moreBody = h(
+        "div",
+        { style: { display: "flex", flexDirection: "column", gap: "10px", marginTop: "8px" } },
+        h("span", { style: { color: T.faint, fontSize: "11.5px" } }, text(t, "settings.moreHint")),
+        budgetPanel,
+        (() => {
+          var selectedForDanger = view.projects.find(
+            (/** @type {any} */ project) => project.id === view.selectedId,
+          );
+          if (!selectedForDanger) return null;
+          return h(DangerSwitches, {
+            t: t,
+            policy: selectedForDanger.policy,
+            onChange: applyPolicy,
+          });
+        })(),
+        (() => {
+          var selectedForPreset = view.projects.find(
+            (/** @type {any} */ item) => item.id === view.selectedId,
+          );
+          if (!selectedForPreset) return null;
+          return h(
+            "div",
+            { style: { marginTop: "8px" } },
+            h(PermissionNarrowCard, {
+              api: api,
+              t: t,
+              project: selectedForPreset,
+            }),
+          );
+        })(),
+        // —— B2/F45：Restart 行（丢掉当前协调器会话，重开一个）——
+        (() => {
+          var selectedForRestart = view.projects.find(
+            (/** @type {any} */ project) => project.id === view.selectedId,
+          );
+          var projectId = selectedForRestart ? selectedForRestart.id : "";
+          var coordinatorId = String(selectedForRestart?.coordinatorSessionId ?? "");
+          return h(
+            "div",
+            {
+              style: {
+                marginTop: "8px",
+                display: "flex",
+                gap: "8px",
+                alignItems: "center",
+                flexWrap: "wrap",
+              },
+              "data-projects-settings-restart-row": projectId,
+              "data-projects-settings-coordinator": coordinatorId,
+            },
+            h(
+              "button",
+              {
+                type: "button",
+                style: styles.button,
+                "data-projects-settings-restart": projectId,
+                disabled: projectId === "" || ci.busy !== "",
+                // USIM-U1-07：这一下会丢掉当前协调者会话，不能像普通按钮一样直接执行。
+                onClick: () => {
+                  if (projectId === "") return;
+                  setRestartPending(projectId);
+                },
+              },
+              text(t, "settings.restartRow"),
+            ),
+            h(
+              "span",
+              { style: { color: T.dim, fontSize: "12px", minWidth: 0, flex: "1 1 220px" } },
+              text(t, "settings.restartHint"),
+            ),
+          );
+        })(),
+        (() => {
+          var enabled = ci.ui?.realtimeCi === true;
+          var poll = ci.poll || null;
+          return h(
+            "div",
+            {
+              style: { marginTop: "8px", display: "flex", flexDirection: "column", gap: "2px" },
+              "data-projects-realtime-ci-row": "",
+              "data-projects-realtime-ci-state": enabled ? "on" : "off",
+              "data-projects-realtime-ci-persisted": ci.ui?.available === true ? "yes" : "no",
+            },
+            h(
+              "label",
+              { style: { display: "flex", gap: "6px", alignItems: "center" } },
+              h("input", {
+                type: "checkbox",
+                // 未实现：见详情页同一处注释（gh webhook 扩展 + 仓库管理员 + 验签，本轮不做）
+                checked: false,
+                disabled: true,
+                "data-projects-realtime-ci": "",
+                "data-projects-realtime-ci-implemented": "no",
+              }),
+              text(t, "settings.realtimeCi"),
+              h(
+                "span",
+                {
+                  style: { color: T.faint, fontSize: "11.5px" },
+                  "data-projects-realtime-ci-unavailable": "",
+                },
+                text(t, "settings.realtimeCiUnavailable"),
+              ),
+            ),
+            h(
+              "span",
+              { style: { color: T.faint, fontSize: "11.5px", marginLeft: "20px" } },
+              ci.spec?.warning ? String(ci.spec.warning) : text(t, "settings.realtimeCiHint"),
+            ),
+            poll
+              ? h(
+                  "span",
+                  {
+                    style: { color: T.dim, fontSize: "11.5px", marginLeft: "20px" },
+                    "data-projects-poll-state": poll.running ? "running" : "stopped",
+                  },
+                  text(t, "settings.pollState", {
+                    state: poll.running
+                      ? text(t, "settings.pollRunning")
+                      : text(t, "settings.pollStopped"),
+                    at: poll.lastAt ? new Date(poll.lastAt).toLocaleTimeString() : "—",
+                    delay: String(Math.round(Number(poll.nextDelayMs ?? 30000) / 1000)),
+                  }),
+                )
+              : null,
+          );
+        })(),
+        ci.message !== ""
+          ? h(
+              "div",
+              {
+                style: { marginTop: "6px", color: T.dim },
+                "data-projects-settings-b2-result": "",
+              },
+              ci.message,
+            )
+          : null,
+        h(
+          "details",
+          { style: { marginTop: "8px" }, "data-projects-policy": "" },
+          h(
+            "summary",
+            { style: { cursor: "pointer", color: T.dim }, "data-projects-disclosure": "" },
+            text(t, "settings.policyTitle"),
+          ),
+          view.projects.length === 0
+            ? h("div", { style: { color: T.faint } }, text(t, "settings.noProjects"))
+            : h(
+                "div",
+                {
+                  style: {
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "6px",
+                    marginTop: "6px",
+                  },
+                },
+                h(
+                  "select",
+                  {
+                    style: styles.input,
+                    value: view.selectedId,
+                    "data-projects-policy-project": "",
+                    onChange: (/** @type {any} */ event) =>
+                      setView((/** @type {any} */ prev) => ({
+                        ...prev,
+                        selectedId: event.target.value,
+                      })),
+                  },
+                  view.projects.map((/** @type {any} */ project) =>
+                    h("option", { key: project.id, value: project.id }, project.name),
+                  ),
+                ),
+                (() => {
+                  var selected = view.projects.find(
+                    (/** @type {any} */ project) => project.id === view.selectedId,
+                  );
+                  if (!selected) return null;
+                  return h(
+                    "div",
+                    { style: { display: "flex", flexDirection: "column", gap: "6px" } },
+                    h(
+                      "label",
+                      { style: { display: "flex", gap: "8px", alignItems: "center" } },
+                      h(
+                        "span",
+                        { style: { color: T.dim, flex: "none" } },
+                        text(t, "settings.autonomy"),
+                      ),
+                      h(
+                        "select",
+                        {
+                          style: styles.input,
+                          value: selected.policy?.autonomy ?? "L1",
+                          "data-projects-policy-autonomy": "",
+                          onChange: (/** @type {any} */ event) =>
+                            applyPolicy({ autonomy: event.target.value }),
+                        },
+                        ["L0", "L1", "L2", "L3"].map((level) =>
+                          h(
+                            "option",
+                            { key: level, value: level },
+                            `${level} — ${text(t, `settings.level.${level}`)}`,
+                          ),
+                        ),
+                      ),
+                    ),
+                    h("input", {
+                      style: styles.input,
+                      value: selected.policy?.persona ?? "",
+                      placeholder: text(t, "settings.persona"),
+                      "data-projects-policy-persona": "",
+                      // 非受控输入：切换项目时必须重挂载，否则显示的是上一个项目的人格
+                      key: `persona-${selected.id}`,
+                      // 不逐字提交：每敲一个字符就写一次 projects.json，
+                      // 输入长人格时会触发几十次磁盘写。改成失焦/回车时才提交。
+                      defaultValue: selected.policy?.persona ?? "",
+                      onBlur: (/** @type {any} */ event) => {
+                        if (event.target.value !== (selected.policy?.persona ?? "")) {
+                          applyPolicy({ persona: event.target.value });
+                        }
+                      },
+                      onKeyDown: (/** @type {any} */ event) => {
+                        if (event.key === "Enter") event.target.blur();
+                      },
+                    }),
+                    h(
+                      "label",
+                      {
+                        style: {
+                          display: "flex",
+                          gap: "6px",
+                          alignItems: "center",
+                          color: T.dim,
+                        },
+                      },
+                      h("input", {
+                        type: "checkbox",
+                        checked: selected.policy?.routing?.fallback !== false,
+                        "data-projects-policy-fallback": "",
+                        onChange: (/** @type {any} */ event) =>
+                          applyPolicy({
+                            routing: {
+                              ...(selected.policy?.routing ?? {}),
+                              fallback: event.target.checked,
+                            },
+                          }),
+                      }),
+                      text(t, "settings.fallback"),
+                    ),
+                    // AUD-PROJ-05：PR 四档以前没有界面入口（`policy.pr.tier` 在 client 零引用），
+                    // 用户只能在 RPC/手改 JSON 里选，auto-merge 档实际不可达。
+                    h(
+                      "label",
+                      { style: { display: "flex", gap: "8px", alignItems: "center" } },
+                      h(
+                        "span",
+                        { style: { color: T.dim, flex: "none" } },
+                        text(t, "settings.prTier"),
+                      ),
+                      h(
+                        "select",
+                        {
+                          style: styles.input,
+                          value: selected.policy?.pr?.tier ?? "draft",
+                          "data-projects-policy-pr-tier": "",
+                          onChange: (/** @type {any} */ event) =>
+                            applyPolicy({
+                              pr: { ...(selected.policy?.pr ?? {}), tier: event.target.value },
+                            }),
+                        },
+                        PR_TIERS.map((tier) =>
+                          h(
+                            "option",
+                            { key: tier, value: tier },
+                            text(t, `settings.prTier.${tier}`),
+                          ),
+                        ),
+                      ),
+                    ),
+                    // AUD-PROJ-30：preapprove（预授权）白名单以前零 UI 引用，而命中后会
+                    // **直接执行**危险动作（含 delete-project）。这里把开关摆出来，
+                    // 并如实写明「勾上就等于预先委托执行权」。
+                    h(
+                      "details",
+                      { "data-projects-policy-preapprove": "" },
+                      h(
+                        "summary",
+                        {
+                          style: { cursor: "pointer", color: T.dim },
+                          "data-projects-disclosure": "",
+                        },
+                        text(t, "settings.preapproveTitle"),
+                      ),
+                      h(
+                        "div",
+                        {
+                          style: {
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "3px",
+                            marginTop: "4px",
+                          },
+                        },
+                        h(
+                          "div",
+                          { style: { color: T.faint, fontSize: "12px" } },
+                          text(t, "settings.preapproveHint"),
+                        ),
+                        PREAPPROVE_ACTIONS.map((action) => {
+                          const list = Array.isArray(selected.policy?.preapprove)
+                            ? selected.policy.preapprove.map((/** @type {any} */ item) =>
+                                String(item),
+                              )
+                            : [];
+                          return h(
+                            "label",
+                            {
+                              key: action,
+                              style: {
+                                display: "flex",
+                                gap: "6px",
+                                alignItems: "flex-start",
+                                color: T.dim,
+                              },
+                            },
+                            h("input", {
+                              type: "checkbox",
+                              checked: list.includes(action),
+                              "data-projects-preapprove-action": action,
+                              onChange: (/** @type {any} */ event) =>
+                                applyPolicy({
+                                  preapprove: event.target.checked
+                                    ? [...list, action]
+                                    : list.filter((/** @type {any} */ item) => item !== action),
+                                }),
+                            }),
+                            h("span", null, text(t, `settings.preapprove.${action}`)),
+                          );
+                        }),
+                        Array.isArray(selected.policy?.preapprove) &&
+                          selected.policy.preapprove.length > 0
+                          ? h(
+                              "div",
+                              {
+                                style: { color: T.danger, fontSize: "12px" },
+                                "data-projects-preapprove-warning": "",
+                              },
+                              text(t, "settings.preapproveRisk"),
+                            )
+                          : null,
+                      ),
+                    ),
+                  );
+                })(),
+              ),
+        ),
+        h(
+          "div",
+          { style: { color: T.faint }, "data-projects-settings-hint": "" },
+          text(t, "settings.hint"),
+        ),
+      );
+      var generalSection = h(
+        "div",
+        {
+          style: { display: "flex", flexDirection: "column" },
+          "data-projects-settings-general-pane": "",
+        },
+        summaryRows,
+        h(
+          "details",
+          { ref: moreRef, style: { marginTop: "6px" }, "data-projects-settings-more": "general" },
+          h(
+            "summary",
+            { style: { cursor: "pointer", color: T.dim }, "data-projects-disclosure": "" },
+            text(t, "settings.more"),
+          ),
+          moreBody,
+        ),
+      );
       var sectionPanel = h(
         "div",
         {
@@ -15122,7 +16516,7 @@ window.__ModuleLoader__.load({
           "data-projects-settings-panel": section,
         },
         section === "general"
-          ? budgetPanel
+          ? generalSection
           : section === "memory"
             ? memoryPanel
             : section === "usage"
@@ -15162,394 +16556,76 @@ window.__ModuleLoader__.load({
           "data-projects-settings": "",
           "data-projects-settings-section": section,
         },
+        h(
+          "style",
+          { key: "projects-settings-rules" },
+          [
+            "summary[data-projects-disclosure]{list-style:none;cursor:pointer;display:flex;align-items:center;gap:4px;}",
+            "summary[data-projects-disclosure]::-webkit-details-marker{display:none;}",
+            "summary[data-projects-disclosure]::before{content:'▸';flex:none;width:1em;color:currentColor;opacity:.65;}",
+            "details[open]>summary[data-projects-disclosure]::before{content:'▾';}",
+          ].join("\n"),
+        ),
         sectionNav,
         sectionPanel,
-        h(
-          "div",
-          {
-            style: section === "general" ? { display: "contents" } : { display: "none" },
-            "data-projects-settings-general": "",
-          },
-          h(
-            "div",
-            { style: styles.summary, "data-projects-settings-summary": "" },
-            describe
-              ? text(t, "settings.summary", { count: describe.projectCount })
-              : text(t, "settings.unavailable"),
-          ),
-          view.error ? h("div", { style: styles.error }, view.error) : null,
-          describe
-            ? h(
-                "div",
-                { style: { marginTop: "6px", color: T.dim }, "data-projects-settings-root": "" },
-                `${text(t, "settings.dataRoot")}: ${describe.dataRoot}`,
-              )
-            : null,
-          h("div", { style: { marginTop: "6px", color: T.faint } }, text(t, "settings.hint")),
-          (() => {
-            var selectedForDanger = view.projects.find(
-              (/** @type {any} */ project) => project.id === view.selectedId,
-            );
-            if (!selectedForDanger) return null;
-            return h(DangerSwitches, {
-              t: t,
-              policy: selectedForDanger.policy,
-              onChange: applyPolicy,
-            });
-          })(),
-
-          // —— B4/F52：线程权限收窄（默认「继承宿主」；写→回读在卡片里显示）——
-          (() => {
-            var selectedForPreset = view.projects.find(
-              (/** @type {any} */ item) => item.id === view.selectedId,
-            );
-            if (!selectedForPreset) return null;
-            return h(
+        // USIM-U1-07：重开协调者会话的二次确认（会丢掉当前回复）。
+        restartPending !== ""
+          ? h(
               "div",
-              { style: { marginTop: "8px" } },
-              h(PermissionNarrowCard, {
-                api: api,
-                t: t,
-                project: selectedForPreset,
-              }),
-            );
-          })(),
-
-          // —— B2/F45：Restart 行（丢掉当前协调器会话，重开一个）——
-          (() => {
-            var selectedForRestart = view.projects.find(
-              (/** @type {any} */ project) => project.id === view.selectedId,
-            );
-            var projectId = selectedForRestart ? selectedForRestart.id : "";
-            var coordinatorId = String(selectedForRestart?.coordinatorSessionId ?? "");
-            return h(
-              "div",
-              {
-                style: {
-                  marginTop: "8px",
-                  display: "flex",
-                  gap: "8px",
-                  alignItems: "center",
-                  flexWrap: "wrap",
-                },
-                "data-projects-settings-restart-row": projectId,
-                "data-projects-settings-coordinator": coordinatorId,
-              },
+              { style: styles.backdrop, "data-projects-restart-confirm": "" },
               h(
-                "button",
-                {
-                  type: "button",
-                  style: styles.button,
-                  "data-projects-settings-restart": projectId,
-                  disabled: projectId === "" || ci.busy !== "",
-                  onClick: () => {
-                    if (projectId === "") return;
-                    setCi((/** @type {any} */ prev) => ({ ...prev, busy: "restart", message: "" }));
-                    call(api.ctx, "restartCoordinator", { projectId: projectId }).then(
-                      (/** @type {any} */ result) => {
-                        setCi((/** @type {any} */ prev) => ({
-                          ...prev,
-                          busy: "",
-                          message: text(t, "settings.restartDone", {
-                            previous: String(result?.previousSessionId ?? "").slice(0, 10),
-                          }),
-                        }));
-                        reload();
-                      },
-                      (/** @type {any} */ error) =>
-                        setCi((/** @type {any} */ prev) => ({
-                          ...prev,
-                          busy: "",
-                          message: String(error?.message ?? error).slice(0, 160),
-                        })),
-                    );
-                  },
-                },
-                text(t, "settings.restartRow"),
-              ),
-              h(
-                "span",
-                { style: { color: T.dim, fontSize: "12px", minWidth: 0, flex: "1 1 220px" } },
-                text(t, "settings.restartHint"),
-              ),
-            );
-          })(),
-          // —— B2/F21：实验性实时监听开关（默认关）+ 轮询状态回读 ——
-          (() => {
-            var enabled = ci.ui?.realtimeCi === true;
-            var poll = ci.poll || null;
-            return h(
-              "div",
-              {
-                style: { marginTop: "8px", display: "flex", flexDirection: "column", gap: "2px" },
-                "data-projects-realtime-ci-row": "",
-                "data-projects-realtime-ci-state": enabled ? "on" : "off",
-                "data-projects-realtime-ci-persisted": ci.ui?.available === true ? "yes" : "no",
-              },
-              h(
-                "label",
-                { style: { display: "flex", gap: "6px", alignItems: "center" } },
-                h("input", {
-                  type: "checkbox",
-                  // 未实现：见详情页同一处注释（gh webhook 扩展 + 仓库管理员 + 验签，本轮不做）
-                  checked: false,
-                  disabled: true,
-                  "data-projects-realtime-ci": "",
-                  "data-projects-realtime-ci-implemented": "no",
-                }),
-                text(t, "settings.realtimeCi"),
-              ),
-              h(
-                "span",
-                { style: { color: T.faint, fontSize: "11.5px", marginLeft: "20px" } },
-                ci.spec?.warning ? String(ci.spec.warning) : text(t, "settings.realtimeCiHint"),
-              ),
-              poll
-                ? h(
-                    "span",
-                    {
-                      style: { color: T.dim, fontSize: "11.5px", marginLeft: "20px" },
-                      "data-projects-poll-state": poll.running ? "running" : "stopped",
-                    },
-                    text(t, "settings.pollState", {
-                      state: poll.running
-                        ? text(t, "settings.pollRunning")
-                        : text(t, "settings.pollStopped"),
-                      at: poll.lastAt ? new Date(poll.lastAt).toLocaleTimeString() : "—",
-                      delay: String(Math.round(Number(poll.nextDelayMs ?? 30000) / 1000)),
-                    }),
-                  )
-                : null,
-            );
-          })(),
-          ci.message !== ""
-            ? h(
                 "div",
                 {
-                  style: { marginTop: "6px", color: T.dim },
-                  "data-projects-settings-b2-result": "",
+                  role: "alertdialog",
+                  "aria-modal": "true",
+                  "aria-labelledby": "projects-restart-confirm-title",
+                  "aria-describedby": "projects-restart-confirm-impact",
+                  "data-projects-restart-confirm-dialog": "",
+                  style: { ...styles.dialog, maxWidth: "420px" },
                 },
-                ci.message,
-              )
-            : null,
-          h(
-            "details",
-            { style: { marginTop: "8px" }, "data-projects-policy": "" },
-            h(
-              "summary",
-              { style: { cursor: "pointer", color: T.dim } },
-              text(t, "settings.policyTitle"),
-            ),
-            view.projects.length === 0
-              ? h("div", { style: { color: T.faint } }, text(t, "settings.noProjects"))
-              : h(
+                h(
                   "div",
-                  {
-                    style: {
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: "6px",
-                      marginTop: "6px",
-                    },
-                  },
-                  h(
-                    "select",
-                    {
-                      style: styles.input,
-                      value: view.selectedId,
-                      "data-projects-policy-project": "",
-                      onChange: (/** @type {any} */ event) =>
-                        setView((/** @type {any} */ prev) => ({
-                          ...prev,
-                          selectedId: event.target.value,
-                        })),
-                    },
-                    view.projects.map((/** @type {any} */ project) =>
-                      h("option", { key: project.id, value: project.id }, project.name),
-                    ),
-                  ),
-                  (() => {
-                    var selected = view.projects.find(
-                      (/** @type {any} */ project) => project.id === view.selectedId,
-                    );
-                    if (!selected) return null;
-                    return h(
-                      "div",
-                      { style: { display: "flex", flexDirection: "column", gap: "6px" } },
-                      h(
-                        "label",
-                        { style: { display: "flex", gap: "8px", alignItems: "center" } },
-                        h(
-                          "span",
-                          { style: { color: T.dim, flex: "none" } },
-                          text(t, "settings.autonomy"),
-                        ),
-                        h(
-                          "select",
-                          {
-                            style: styles.input,
-                            value: selected.policy?.autonomy ?? "L1",
-                            "data-projects-policy-autonomy": "",
-                            onChange: (/** @type {any} */ event) =>
-                              applyPolicy({ autonomy: event.target.value }),
-                          },
-                          ["L0", "L1", "L2", "L3"].map((level) =>
-                            h(
-                              "option",
-                              { key: level, value: level },
-                              `${level} — ${text(t, `settings.level.${level}`)}`,
-                            ),
-                          ),
-                        ),
-                      ),
-                      h("input", {
-                        style: styles.input,
-                        value: selected.policy?.persona ?? "",
-                        placeholder: text(t, "settings.persona"),
-                        "data-projects-policy-persona": "",
-                        // 非受控输入：切换项目时必须重挂载，否则显示的是上一个项目的人格
-                        key: `persona-${selected.id}`,
-                        // 不逐字提交：每敲一个字符就写一次 projects.json，
-                        // 输入长人格时会触发几十次磁盘写。改成失焦/回车时才提交。
-                        defaultValue: selected.policy?.persona ?? "",
-                        onBlur: (/** @type {any} */ event) => {
-                          if (event.target.value !== (selected.policy?.persona ?? "")) {
-                            applyPolicy({ persona: event.target.value });
-                          }
-                        },
-                        onKeyDown: (/** @type {any} */ event) => {
-                          if (event.key === "Enter") event.target.blur();
-                        },
-                      }),
-                      h(
-                        "label",
-                        {
-                          style: {
-                            display: "flex",
-                            gap: "6px",
-                            alignItems: "center",
-                            color: T.dim,
-                          },
-                        },
-                        h("input", {
-                          type: "checkbox",
-                          checked: selected.policy?.routing?.fallback !== false,
-                          "data-projects-policy-fallback": "",
-                          onChange: (/** @type {any} */ event) =>
-                            applyPolicy({
-                              routing: {
-                                ...(selected.policy?.routing ?? {}),
-                                fallback: event.target.checked,
-                              },
-                            }),
-                        }),
-                        text(t, "settings.fallback"),
-                      ),
-                      // AUD-PROJ-05：PR 四档以前没有界面入口（`policy.pr.tier` 在 client 零引用），
-                      // 用户只能在 RPC/手改 JSON 里选，auto-merge 档实际不可达。
-                      h(
-                        "label",
-                        { style: { display: "flex", gap: "8px", alignItems: "center" } },
-                        h(
-                          "span",
-                          { style: { color: T.dim, flex: "none" } },
-                          text(t, "settings.prTier"),
-                        ),
-                        h(
-                          "select",
-                          {
-                            style: styles.input,
-                            value: selected.policy?.pr?.tier ?? "draft",
-                            "data-projects-policy-pr-tier": "",
-                            onChange: (/** @type {any} */ event) =>
-                              applyPolicy({
-                                pr: { ...(selected.policy?.pr ?? {}), tier: event.target.value },
-                              }),
-                          },
-                          PR_TIERS.map((tier) =>
-                            h(
-                              "option",
-                              { key: tier, value: tier },
-                              text(t, `settings.prTier.${tier}`),
-                            ),
-                          ),
-                        ),
-                      ),
-                      // AUD-PROJ-30：preapprove（预授权）白名单以前零 UI 引用，而命中后会
-                      // **直接执行**危险动作（含 delete-project）。这里把开关摆出来，
-                      // 并如实写明「勾上就等于预先委托执行权」。
-                      h(
-                        "details",
-                        { "data-projects-policy-preapprove": "" },
-                        h(
-                          "summary",
-                          { style: { cursor: "pointer", color: T.dim } },
-                          text(t, "settings.preapproveTitle"),
-                        ),
-                        h(
-                          "div",
-                          {
-                            style: {
-                              display: "flex",
-                              flexDirection: "column",
-                              gap: "3px",
-                              marginTop: "4px",
-                            },
-                          },
-                          h(
-                            "div",
-                            { style: { color: T.faint, fontSize: "12px" } },
-                            text(t, "settings.preapproveHint"),
-                          ),
-                          PREAPPROVE_ACTIONS.map((action) => {
-                            const list = Array.isArray(selected.policy?.preapprove)
-                              ? selected.policy.preapprove.map((/** @type {any} */ item) =>
-                                  String(item),
-                                )
-                              : [];
-                            return h(
-                              "label",
-                              {
-                                key: action,
-                                style: {
-                                  display: "flex",
-                                  gap: "6px",
-                                  alignItems: "flex-start",
-                                  color: T.dim,
-                                },
-                              },
-                              h("input", {
-                                type: "checkbox",
-                                checked: list.includes(action),
-                                "data-projects-preapprove-action": action,
-                                onChange: (/** @type {any} */ event) =>
-                                  applyPolicy({
-                                    preapprove: event.target.checked
-                                      ? [...list, action]
-                                      : list.filter((/** @type {any} */ item) => item !== action),
-                                  }),
-                              }),
-                              h("span", null, text(t, `settings.preapprove.${action}`)),
-                            );
-                          }),
-                          Array.isArray(selected.policy?.preapprove) &&
-                            selected.policy.preapprove.length > 0
-                            ? h(
-                                "div",
-                                {
-                                  style: { color: T.danger, fontSize: "12px" },
-                                  "data-projects-preapprove-warning": "",
-                                },
-                                text(t, "settings.preapproveRisk"),
-                              )
-                            : null,
-                        ),
-                      ),
-                    );
-                  })(),
+                  { style: styles.dialogTitle, id: "projects-restart-confirm-title" },
+                  text(t, "settings.restartConfirmTitle"),
                 ),
-          ),
-        ),
+                h(
+                  "div",
+                  { style: { color: T.text }, id: "projects-restart-confirm-impact" },
+                  text(t, "settings.restartConfirmImpact"),
+                ),
+                h(
+                  "div",
+                  { style: { display: "flex", gap: "8px", justifyContent: "flex-end" } },
+                  h(
+                    "button",
+                    {
+                      type: "button",
+                      style: styles.secondaryButton,
+                      "data-projects-restart-confirm-cancel": "",
+                      onClick: () => setRestartPending(""),
+                    },
+                    text(t, "detail.cancel"),
+                  ),
+                  h(
+                    "button",
+                    {
+                      type: "button",
+                      style: { ...styles.secondaryButton, borderColor: T.danger, color: T.danger },
+                      "data-projects-restart-confirm-go": "",
+                      "data-modal-autofocus": "",
+                      "data-projects-danger": "",
+                      onClick: () => {
+                        var projectId = restartPending;
+                        setRestartPending("");
+                        runRestart(projectId);
+                      },
+                    },
+                    text(t, "settings.restartConfirm"),
+                  ),
+                ),
+              ),
+            )
+          : null,
       );
     }
 
@@ -15942,7 +17018,9 @@ window.__ModuleLoader__.load({
                 ? text(t, "b3.envAllowedEmpty")
                 : text(t, "b3.envAllowed", {
                     count: allowed.length,
-                    names: allowed.map((/** @type {string} */ dir) => baseName(dir)).join("、"),
+                    names: allowed
+                      .map((/** @type {string} */ dir) => baseName(dir))
+                      .join(text(t, "detail.nameSeparator")),
                   });
             })(),
           ),
@@ -16597,7 +17675,7 @@ window.__ModuleLoader__.load({
                 h(
                   "span",
                   { style: { ...styles.meta, color: T.faint } },
-                  `${String(fragment.chars)} 字符`,
+                  text(t, "memory.chars", { count: String(fragment.chars) }),
                 ),
                 h(
                   "button",
@@ -17149,6 +18227,22 @@ window.__ModuleLoader__.load({
           ),
         "projects: settings card",
       );
+    };
+
+    // 单测入口（`node:vm` 执行真实源码后从 exports.__test 取；不参与宿主契约）。
+    // client 半是 classic script、不能 import，纯函数只能这样被测到。
+    exports.__test = {
+      Z_INDEX: Z,
+      budgetSummaryLine,
+      budgetSummaryParts,
+      composerKeyIntent,
+      isImeConfirmKey,
+      isSafeDirPath,
+      libraryFilesPartialNote,
+      modalFocusables,
+      parseArtifactBlocks,
+      tabListKeyDown,
+      useModalLayer,
     };
 
     return module.exports;

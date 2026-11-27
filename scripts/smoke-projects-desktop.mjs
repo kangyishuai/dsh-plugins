@@ -841,10 +841,37 @@ const main = async () => {
             const nav = [...document.querySelectorAll("[data-projects-settings-nav-item]")].map(
               (node) => node.getAttribute("data-projects-settings-nav-item"),
             );
+            // AUD-projects-ui-03/20（只读）：先切到 general 读首屏摘要与「更多设置」折叠态，
+            // 再回 debug 读诊断/策略——两边不能同时渲染，必须分两次点。
+            const generalNav = document.querySelector('[data-projects-settings-nav-item="general"]');
+            if (generalNav) generalNav.click();
+            await wait(900);
+            const generalPane = document.querySelector("[data-projects-settings-general]");
+            const moreNode = document.querySelector("[data-projects-settings-more]");
+            const disclosureNode = document.querySelector("summary[data-projects-disclosure]");
+            const generalSnap = {
+              rows: generalPane ? generalPane.children.length : -1,
+              budgetSummary:
+                document.querySelector("[data-projects-settings-budget-summary]")?.textContent || "",
+              morePresent: Boolean(moreNode),
+              moreClosed: moreNode ? moreNode.open !== true : null,
+              budgetInputs: document.querySelectorAll("[data-projects-budget-input]").length,
+              budgetSaveInMore:
+                moreNode === null
+                  ? null
+                  : moreNode.contains(document.querySelector("[data-projects-budget-save]")),
+              disclosureSummaries: document.querySelectorAll(
+                "summary[data-projects-disclosure]",
+              ).length,
+              disclosureMarker: disclosureNode
+                ? getComputedStyle(disclosureNode, "::before").content
+                : "",
+            };
             const debugNav = document.querySelector('[data-projects-settings-nav-item="debug"]');
             if (debugNav) debugNav.click();
             await wait(1200);
             return {
+              general: generalSnap,
               panel: Boolean(document.querySelector("[data-projects-settings]")),
               sections: document.querySelector("[data-projects-settings]")?.getAttribute("data-projects-settings-section") || "",
               nav,
@@ -878,6 +905,29 @@ const main = async () => {
         settingsSnap?.audit === true && /审计|Audit/u.test(String(settingsSnap.auditTitle)),
         JSON.stringify({ audit: settingsSnap?.audit, title: settingsSnap?.auditTitle }),
       );
+      // AUD-projects-ui-03（只读）：设置分节首屏 ≤3 行摘要 + 「更多设置」默认收起，
+      // 预算表单收进折叠里；改预算仍是一步（摘要行有「改预算」按钮）。
+      check(
+        "设置首屏 ≤3 行摘要 + 「更多设置」默认收起（AUD-03）",
+        Number(settingsSnap?.general?.rows) > 0 &&
+          Number(settingsSnap?.general?.rows) <= 3 &&
+          /预算/u.test(String(settingsSnap?.general?.budgetSummary || "")) &&
+          settingsSnap?.general?.morePresent === true &&
+          settingsSnap?.general?.moreClosed === true &&
+          settingsSnap?.general?.budgetInputs === 5 &&
+          settingsSnap?.general?.budgetSaveInMore === true,
+        JSON.stringify(settingsSnap?.general ?? null),
+      );
+      // AUD-projects-ui-20（只读）：<details> 折叠标题有 ▸/▾ 指示（不是只靠光标变化）。
+      check(
+        "折叠标题有 ▸/▾ 指示（AUD-20）",
+        Number(settingsSnap?.general?.disclosureSummaries) > 0 &&
+          /▸|▾|[\u25b8\u25be]/u.test(String(settingsSnap?.general?.disclosureMarker || "")),
+        JSON.stringify({
+          summaries: settingsSnap?.general?.disclosureSummaries,
+          marker: settingsSnap?.general?.disclosureMarker,
+        }),
+      );
       // AUD-PROJ-05/30（只读）：PR 档位可选四档、预授权有入口（以前完全不可达）。
       check(
         "设置里有 PR 档位（四档）与预授权入口",
@@ -904,11 +954,15 @@ const main = async () => {
       const reason = "找不到设置入口（该 profile/宿主版本没有设置页）";
       skip("设置页出现「项目」分节（四个分区，Debug 可进入）", reason);
       skip("审计在设置 Debug 分区（原项目详情页签外迁；空态也算）", reason);
+      skip("设置首屏 ≤3 行摘要 + 「更多设置」默认收起（AUD-03）", reason);
+      skip("折叠标题有 ▸/▾ 指示（AUD-20）", reason);
       skip("设置里有 PR 档位（四档）与预授权入口", reason);
     } else {
       const reason = `点开设置入口后没有项目分节（${openedSettings}）`;
       skip("设置页出现「项目」分节（四个分区，Debug 可进入）", reason);
       skip("审计在设置 Debug 分区（原项目详情页签外迁；空态也算）", reason);
+      skip("设置首屏 ≤3 行摘要 + 「更多设置」默认收起（AUD-03）", reason);
+      skip("折叠标题有 ▸/▾ 指示（AUD-20）", reason);
       skip("设置里有 PR 档位（四档）与预授权入口", reason);
     }
     await cdp.screenshot(join(SHOTS, "02-projects-settings.png"));
