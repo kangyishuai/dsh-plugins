@@ -197,6 +197,7 @@ window.__ModuleLoader__.load({
           },
           h("input", {
             "data-dsh-artifact-search": "1",
+            "aria-label": "按标题搜索工件",
             type: "search",
             value: query,
             placeholder: "按标题搜索",
@@ -217,6 +218,8 @@ window.__ModuleLoader__.load({
             {
               type: "button",
               "data-dsh-artifact-kind-filter": "all",
+              "aria-pressed": kind === "" ? "true" : "false",
+              "aria-label": "显示全部类型",
               onClick: () => setKind(""),
               style: { ...BUTTON, opacity: kind === "" ? 1 : 0.6 },
             },
@@ -229,6 +232,8 @@ window.__ModuleLoader__.load({
                 key: value,
                 type: "button",
                 "data-dsh-artifact-kind-filter": value,
+                "aria-pressed": kind === value ? "true" : "false",
+                "aria-label": `只看 ${value} 类型`,
                 onClick: () => setKind(kind === value ? "" : value),
                 style: { ...BUTTON, opacity: kind === value ? 1 : 0.6 },
               },
