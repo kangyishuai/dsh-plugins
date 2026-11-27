@@ -14,7 +14,7 @@ import { readPreferences, writePreferences } from "./preferences.js";
 import { listReceipts, writeReceipt } from "./receipts.js";
 import { createRecovery } from "./recovery.js";
 import { buildRefs, removeAllRefs, restoreAllRefs, snapshotAllRefs } from "./refs.js";
-import { restoreSummary, verifyRestored } from "./restore.js";
+import { describeRestoreSummary, restoreSummary, verifyRestored } from "./restore.js";
 import { listEntries, moveIntoTrash, purgeEntry, readEntry, restoreEntry } from "./trash.js";
 import { readWorkspaceState } from "./workspace-state.js";
 
@@ -80,10 +80,65 @@ export function normalizeActivity(raw) {
  * @param {{ ctx: any, dataRoot: string, logger: any }} options
  */
 export function createOperations({ ctx, dataRoot, logger }) {
-  const caps = probeCapabilities(ctx);
-  const audit = createAudit(dataRoot);
-  // dataRoot 只用于读取置顶集合（没有公开读接口）——见 refs.js 的 workspace-pin。
+  /**
+   * 能力探测**不能一次性固化**（USIM-U3-02 的根因）：桌面组合里 `workspaceRegistry`
+   * 与 `agents` 比 `sessionPersistence` 晚挂载，插件启动对账在后者可用时就跑，
+   * 探到的 caps 里 workspace 是 undefined —— 之后每次删除都跳过归档闸门/停止/工作区
+   * 记账，每次恢复都把 `workspace-archive` 报成「unarchiveSession unavailable」。
+   *
+   * 所以 caps 与引用适配器都是**可刷新**的：每次进入操作前重探一次（只是几次属性读取），
+   * 服务集合或门禁结果一变就**原地**重建 refs（原地重建让 createRecovery 早先拿到的
+   * 数组引用也跟着更新，不需要把 refs 传遍每一层）。
+   */
+  let caps = probeCapabilities(ctx);
   const refs = buildRefs(caps, logger, { dataRoot });
+
+  /**
+   * 影响引用适配器行为的探针结果。服务换了身份或门禁结论翻转都要重建适配器。
+   * @param {import("./capability.js").Capabilities} value
+   * @returns {unknown[]}
+   */
+  function hostSignature(value) {
+    return [
+      value.services.persistence,
+      value.services.sessions,
+      value.services.workspace,
+      value.services.storageDomain,
+      value.services.agents,
+      value.checks["workspace.archive"],
+      value.checks["workspace.unarchive"],
+      value.checks["workspace.pin"],
+      value.checks["workspace.unpin"],
+      value.checks["workspace.list"],
+      value.checks["storage.domain"],
+      value.checks["sessions.detach"],
+      value.checks["agents.detach"],
+      value.checks["event.session-stop"],
+    ];
+  }
+
+  /**
+   * 重探宿主能力；有变化就重建引用适配器（原地）。返回最新的 caps。
+   * @returns {import("./capability.js").Capabilities}
+   */
+  function refreshHost() {
+    const next = probeCapabilities(ctx);
+    const before = hostSignature(caps);
+    const after = hostSignature(next);
+    let changed = before.length !== after.length;
+    for (let index = 0; !changed && index < before.length; index += 1) {
+      if (before[index] !== after[index]) changed = true;
+    }
+    caps = next;
+    if (changed) {
+      const rebuilt = buildRefs(caps, logger, { dataRoot });
+      refs.length = 0;
+      refs.push(...rebuilt);
+    }
+    return caps;
+  }
+
+  const audit = createAudit(dataRoot);
   /** 当前进程里正在操作中的会话，防止双击/并发把同一个会话删两遍。 */
   const inFlight = new Set();
   /** 上一次启动对账的结论（内存里一份，磁盘上另有审计）。 @type {any} */
@@ -119,6 +174,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
    * @param {{ all?: unknown[] }} [options] all = 预加载的 persistence.list()（工作区批量复用）
    */
   async function makePlan(sessionIdRaw, options = {}) {
+    refreshHost();
     const sessionId = requireSessionId(sessionIdRaw);
     /** @type {string[]} */
     const notes = [];
@@ -277,6 +333,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
    *   all?: unknown[] }} request all = 预加载的 persistence.list()（工作区批量复用）
    */
   async function trash(sessionIdRaw, request = {}) {
+    refreshHost();
     const operator = request.operator ?? "ui";
     /** @type {Awaited<ReturnType<typeof makePlan>>} */
     let loaded;
@@ -529,10 +586,12 @@ export function createOperations({ ctx, dataRoot, logger }) {
 
   /** @param {number} [limit] */
   async function auditLog(limit = 100) {
+    refreshHost();
     return { path: auditPath(dataRoot), entries: await audit.read(limit) };
   }
 
   async function list() {
+    refreshHost();
     const listed = await listEntries(dataRoot);
     const pending = await listPending(dataRoot);
     return {
@@ -548,10 +607,47 @@ export function createOperations({ ctx, dataRoot, logger }) {
   }
 
   /**
+   * 恢复删除前的引用快照（只含有恢复动作的引用）。
+   * 条目 meta 在最终化时随条目一起删除，所以重检要用回执里留存的那一份。
+   * @param {import("./trash.js").TrashMeta} meta
+   * @returns {{ workspaceIds: string[], pinned: boolean | null }}
+   */
+  function restoredSnapshotOf(meta) {
+    return {
+      workspaceIds: Array.isArray(meta.workspaceIds) ? meta.workspaceIds : [],
+      pinned: typeof meta.pinned === "boolean" ? meta.pinned : null,
+    };
+  }
+
+  /**
+   * 引用恢复 + 自动重试一次（USIM-U3-02）。
+   *
+   * 为什么重试：失败大多是「宿主刚挂上/写入还在路上」这类瞬时状态，重试一次很便宜；
+   * 重试仍然失败的才进回执与界面，并且带上**具体引用名 + 下一步动作**。
+   * @param {import("./refs.js").RefSnapshot} snapshot
+   * @param {string} sessionId
+   */
+  async function restoreRefsWithRetry(snapshot, sessionId) {
+    refreshHost();
+    const first = await restoreAllRefs(refs, sessionId, snapshot);
+    const failed = first.filter((item) => item.status === "failed");
+    if (failed.length === 0) return first;
+    await delayMs(120);
+    refreshHost();
+    const retried = await restoreAllRefs(refs, sessionId, snapshot, {
+      onlyIds: failed.map((item) => item.id),
+      retried: true,
+    });
+    const byId = new Map(retried.map((item) => [item.id, item]));
+    return first.map((item) => byId.get(item.id) ?? item);
+  }
+
+  /**
    * @param {string} entryId
    * @param {{ operator?: string }} [request]
    */
   async function restore(entryId, request = {}) {
+    refreshHost();
     const meta = await readEntry(dataRoot, entryId);
     const operator = request.operator ?? "ui";
     const record = await beginOperation({
@@ -563,10 +659,8 @@ export function createOperations({ ctx, dataRoot, logger }) {
       const restored = await restoreEntry({ dataRoot, entryId });
       // 引用恢复逐项记录：文件回来了只是「会话可用」，归属/置顶回来才算「恢复完整」。
       // 单项失败不再静默 —— 进回执、进 checks、进界面（AUD-SD-02）。
-      const refResults = await restoreAllRefs(refs, meta.sessionId, {
-        workspaceIds: meta.workspaceIds,
-        pinned: meta.pinned,
-      });
+      const snapshot = restoredSnapshotOf(meta);
+      const refResults = await restoreRefsWithRetry(snapshot, meta.sessionId);
       const checks = await verifyRestored({
         refs,
         sessionId: meta.sessionId,
@@ -581,9 +675,10 @@ export function createOperations({ ctx, dataRoot, logger }) {
         sessionId: meta.sessionId,
         entryId,
         operator,
-        detail: summary.partial
-          ? `恢复完成，但引用 ${summary.failedRefs} 处 / 校验 ${summary.failedChecks} 项未通过`
-          : "恢复完成，引用与校验全部通过",
+        title: meta.title ?? null,
+        // 审计要能回答「到底是哪一处没通过」（USIM-U3-05）：计数不够，写清单。
+        detail: describeRestoreSummary(summary),
+        failures: summary.failures,
       });
       const receiptId = await writeReceipt(dataRoot, {
         action: "restore",
@@ -592,20 +687,28 @@ export function createOperations({ ctx, dataRoot, logger }) {
         entryId,
         title: meta.title,
         restoredTo: restored.restoredTo,
+        // 删除时它是否正在宿主里打开：界面据此提示「仍被标记为忙碌」的下一步。
+        wasLive: meta.live === true,
         refs: refResults,
         checks,
         partial: summary.partial,
+        // 重检要用的删除前快照：条目已经没了，回执是唯一副本。
+        expected: snapshot,
+        failures: summary.failures,
       });
       return {
         ok: true,
         sessionId: meta.sessionId,
+        title: meta.title ?? null,
         restoredTo: restored.restoredTo,
+        wasLive: meta.live === true,
         receiptId,
         refs: refResults,
         checks,
         partial: summary.partial,
         failedRefs: summary.failedRefs,
         failedChecks: summary.failedChecks,
+        failures: summary.failures,
       };
     } catch (error) {
       try {
@@ -631,10 +734,87 @@ export function createOperations({ ctx, dataRoot, logger }) {
   }
 
   /**
+   * 重检一次已完成的恢复（USIM-U3-05 的「可操作」出口）：用最近一条 restore 回执里
+   * 留存的 `expected` 快照重放引用恢复与校验。失败项仍然失败就照实返回，不伪造成功。
+   * @param {{ sessionId?: string, receiptId?: string }} [request]
+   */
+  async function recheckRestore(request = {}) {
+    refreshHost();
+    const listed = await listReceipts(dataRoot, 200);
+    const candidates = listed.filter(
+      (item) => item?.action === "restore" || item?.action === "restore-recheck",
+    );
+    /** @type {any} */
+    let target = null;
+    if (typeof request.receiptId === "string" && request.receiptId.length > 0) {
+      target = candidates.find((item) => item.id === request.receiptId) ?? null;
+    } else if (typeof request.sessionId === "string" && request.sessionId.length > 0) {
+      target = candidates.find((item) => item.sessionId === request.sessionId) ?? null;
+    }
+    if (!target) {
+      throw failure(
+        "session-delete/not-found",
+        "没有找到这次恢复的回执，无法重检（回执可能已被清理）。",
+      );
+    }
+    const sessionId = requireSessionId(target.sessionId);
+    const expected =
+      target.expected && typeof target.expected === "object"
+        ? {
+            workspaceIds: Array.isArray(target.expected.workspaceIds)
+              ? target.expected.workspaceIds.map(String)
+              : [],
+            pinned: typeof target.expected.pinned === "boolean" ? target.expected.pinned : null,
+          }
+        : { workspaceIds: [], pinned: null };
+    const refResults = await restoreRefsWithRetry(expected, sessionId);
+    const checks = await verifyRestored({
+      refs,
+      sessionId,
+      restoredTo: String(target.restoredTo ?? ""),
+      meta: expected,
+    });
+    const summary = restoreSummary(refResults, checks);
+    await note({
+      action: "restore-recheck",
+      result: "ok",
+      sessionId,
+      operator: "ui",
+      title: target.title ?? null,
+      detail: describeRestoreSummary(summary),
+      failures: summary.failures,
+    });
+    const receiptId = await writeReceipt(dataRoot, {
+      action: "restore-recheck",
+      at: new Date().toISOString(),
+      sessionId,
+      title: target.title ?? null,
+      restoredTo: target.restoredTo ?? null,
+      refs: refResults,
+      checks,
+      partial: summary.partial,
+      expected,
+      failures: summary.failures,
+    });
+    return {
+      ok: !summary.partial,
+      sessionId,
+      receiptId,
+      refs: refResults,
+      checks,
+      partial: summary.partial,
+      failedRefs: summary.failedRefs,
+      failedChecks: summary.failedChecks,
+      failures: summary.failures,
+    };
+  }
+
+  /**
    * @param {string} entryId
    * @param {{ operator?: string }} [request]
    */
   async function purge(entryId, request = {}) {
+    refreshHost();
     const meta = await readEntry(dataRoot, entryId);
     const record = await beginOperation({
       dataRoot,
@@ -688,6 +868,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
    * @param {{ skipDirCheck?: boolean }} [options]
    */
   async function reconcile(sessionIdRaw, options = {}) {
+    refreshHost();
     const sessionId = requireSessionId(sessionIdRaw);
     /** @type {{ id: string, label: string, status: "ok" | "failed" | "skipped", detail: string }[]} */
     const checks = [];
@@ -728,6 +909,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
    * 全库体检：找出指向已不存在会话的登记条目。只读，不修改任何东西。
    */
   async function scanHealth() {
+    refreshHost();
     if (!caps.checks["persistence.list"]) {
       return {
         ok: false,
@@ -888,6 +1070,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
    * @param {{ classes?: string[], operator?: string }} [request]
    */
   async function cleanHealth(request = {}) {
+    refreshHost();
     const classes = Array.isArray(request.classes)
       ? request.classes
       : ["archived", "pinned", "workspace"];
@@ -973,6 +1156,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
   }
 
   async function health() {
+    refreshHost();
     const pending = await listPending(dataRoot);
     return {
       plugin: pkg.name,
@@ -994,6 +1178,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
    * @param {{ operator?: string }} [options]
    */
   async function recoverPending(options = {}) {
+    refreshHost();
     if (recoveryInFlight) return recoveryInFlight;
     const job = recovery
       .recoverPending({ operator: options.operator ?? "system" })
@@ -1270,11 +1455,14 @@ export function createOperations({ ctx, dataRoot, logger }) {
 
   /** @param {number} [limit] */
   async function receipts(limit = 50) {
+    refreshHost();
     return { entries: await listReceipts(dataRoot, limit) };
   }
 
   return {
-    caps,
+    get caps() {
+      return refreshHost();
+    },
     // 启动对账与复活守卫的实现（暴露出来是为了单测能直接驱动它，不是公开契约）。
     recovery,
     recoverPending,
@@ -1289,6 +1477,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
     trash,
     list,
     restore,
+    recheckRestore,
     purge,
     reconcile,
     auditLog,

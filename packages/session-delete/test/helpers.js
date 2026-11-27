@@ -12,8 +12,11 @@ export const SESSION_ID = "session-abc";
 
 /**
  * 造一个「像宿主」的最小替身。
+ *
+ * `lateWorkspace` 复现 USIM-U3-02 的宿主侧现场：桌面组合里 workspaceRegistry
+ * 比插件启动对账晚挂载，所以第一次能力探测看到的是 undefined。
  * @param {{ live?: boolean, createDir?: boolean, children?: { id: string, title: string | null }[], gate?: () => Promise<void>,
- *   failAttach?: boolean, failPin?: boolean }} [options]
+ *   failAttach?: boolean, failAttachTimes?: number, failPin?: boolean, lateWorkspace?: boolean }} [options]
  */
 export async function fixture(options = {}) {
   const {
@@ -22,7 +25,9 @@ export async function fixture(options = {}) {
     children = [],
     gate,
     failAttach = false,
+    failAttachTimes = 0,
     failPin = false,
+    lateWorkspace = false,
   } = options;
   const dataRoot = await mkdtemp(join(tmpdir(), "dsh-sdel-ops-"));
   const sessionId = SESSION_ID;
@@ -40,7 +45,13 @@ export async function fixture(options = {}) {
     flushed: 0,
     stopped: 0,
     detached: 0,
+    /** 归档闸门被调用过几次（删完会 unarchive 清闸门，所以不能用布尔判断「跑过」）。 */
+    archiveCalls: 0,
+    /** 还差几次 attach 才该失败（failAttachTimes 用完就成功）。 */
+    attachFailuresLeft: 0,
+    attachRefused: failAttach,
   };
+  if (failAttachTimes > 0) state.attachFailuresLeft = failAttachTimes;
 
   /**
    * 让假宿主的 pin 写入 `storages/workspace.json`（文件不存在时静默跳过）。
@@ -77,12 +88,17 @@ export async function fixture(options = {}) {
           state.detached += 1;
         },
         attachSession: async (/** @type {string} */ id) => {
-          if (failAttach) throw new Error("attachSession refused");
+          if (state.attachFailuresLeft > 0) {
+            state.attachFailuresLeft -= 1;
+            throw new Error("attachSession refused");
+          }
+          if (state.attachRefused) throw new Error("attachSession refused");
           state.sessionIds.add(id);
         },
       },
     ],
     archiveSession: async () => {
+      state.archiveCalls += 1;
       // 测试并发时不靠「谁先跑完」猜时序：给一个显式挂起点，
       // 让第一个操作确定地停在 in-flight 状态里（之前这条断言在负载高时会假失败）。
       if (typeof gate === "function") await gate();
@@ -136,7 +152,12 @@ export async function fixture(options = {}) {
   };
 
   /** @type {Record<string, any>} */
-  const services = { sessionPersistence: persistence, sessions, workspaceRegistry: workspace };
+  const services = {
+    sessionPersistence: persistence,
+    sessions,
+    storageDomain: undefined,
+    workspaceRegistry: lateWorkspace ? undefined : workspace,
+  };
   const ctx = {
     logger: { info() {}, warn() {}, error() {} },
     get: (/** @type {string} */ name) => services[name],
@@ -155,7 +176,25 @@ export async function fixture(options = {}) {
   }
 
   const ops = createOperations({ ctx, dataRoot, logger: ctx.logger });
-  return { dataRoot, sessionId, sessionDir, childDirs, state, ops, ctx };
+  return {
+    dataRoot,
+    sessionId,
+    sessionDir,
+    childDirs,
+    state,
+    ops,
+    ctx,
+    services,
+    /** 让「晚挂载」的宿主服务出现在 ctx.get 里（模拟工作区插件挂上）。 */
+    enableHostServices() {
+      services.workspaceRegistry = workspace;
+    },
+    /** 运行中切换 attach 是否被拒绝（测「重试后成功」与「重检」）。 */
+    setAttachRefused(/** @type {boolean} */ value) {
+      state.attachRefused = value === true;
+      state.attachFailuresLeft = 0;
+    },
+  };
 }
 
 /**

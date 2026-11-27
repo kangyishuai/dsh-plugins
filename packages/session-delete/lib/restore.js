@@ -49,7 +49,7 @@ export async function verifyRestored({ refs, sessionId, restoredTo, meta }) {
       id: "workspace-slot",
       label: "工作区记账",
       status: "skipped",
-      detail: "当前宿主无法读取工作区记账",
+      detail: "当前宿主无法读取工作区记账；可在会话右键菜单「归属到项目…」里手动挂回",
     });
   } else {
     try {
@@ -60,7 +60,10 @@ export async function verifyRestored({ refs, sessionId, restoredTo, meta }) {
         id: "workspace-slot",
         label: "工作区记账",
         status: missing.length === 0 ? "ok" : "failed",
-        detail: missing.length === 0 ? "已挂回原工作区" : `未挂回：${missing.join("、")}`,
+        detail:
+          missing.length === 0
+            ? "已挂回原工作区"
+            : `未挂回：${missing.join("、")}；可在会话右键菜单「归属到项目…」里手动挂回`,
       });
     } catch (error) {
       checks.push({
@@ -127,17 +130,58 @@ export async function verifyRestored({ refs, sessionId, restoredTo, meta }) {
 }
 
 /**
+ * @typedef {object} RestoreSummary
+ * @property {number} refs
+ * @property {number} failedRefs
+ * @property {number} failedChecks
+ * @property {boolean} partial
+ * @property {{ id: string, label: string, detail: string }[]} failures 逐项失败清单（回执、审计、界面共用）
+ */
+
+/**
  * 一次恢复里「有没有没做到的」：引用失败或校验失败都算不完整。
- * @param {{ status: string }[]} refResults
+ * 失败清单带名字与 detail —— 「1 处引用未通过」这种计数对用户没有信息量（USIM-U3-05）。
+ * @param {{ id?: string, label?: string, status: string, detail?: string }[]} refResults
  * @param {RestoreCheck[]} checks
+ * @returns {RestoreSummary}
  */
 export function restoreSummary(refResults, checks) {
   const failedRefs = refResults.filter((item) => item.status === "failed");
   const failedChecks = checks.filter((item) => item.status === "failed");
+  /** @type {{ id: string, label: string, detail: string }[]} */
+  const failures = [];
+  for (const item of failedRefs) {
+    failures.push({
+      id: String(item.id ?? ""),
+      label: String(item.label ?? item.id ?? ""),
+      detail: String(item.detail ?? "恢复未成功，没有留下原因"),
+    });
+  }
+  for (const item of failedChecks) {
+    failures.push({
+      id: item.id,
+      label: item.label,
+      detail: item.detail,
+    });
+  }
   return {
     refs: refResults.length,
     failedRefs: failedRefs.length,
     failedChecks: failedChecks.length,
     partial: failedRefs.length > 0 || failedChecks.length > 0,
+    failures,
   };
+}
+
+/**
+ * 给审计/日志用的一句话：全过就说全过，没过就**逐项列出名字与原因**。
+ * @param {RestoreSummary} summary
+ * @returns {string}
+ */
+export function describeRestoreSummary(summary) {
+  if (!summary.partial) {
+    return summary.refs > 0 ? `恢复完成，${summary.refs} 处引用与校验全部通过` : "恢复完成";
+  }
+  const parts = summary.failures.map((item) => `${item.label}（${item.detail}）`);
+  return `恢复完成，但 ${summary.failedRefs} 处引用 / ${summary.failedChecks} 项校验未通过：${parts.join("；")}`;
 }

@@ -11,7 +11,7 @@ import { directorySize, locateSession } from "./locate.js";
 import { requireSessionId } from "./paths.js";
 import { writeReceipt } from "./receipts.js";
 import { removeAllRefs, restoreAllRefs } from "./refs.js";
-import { verifyRestored } from "./restore.js";
+import { describeRestoreSummary, restoreSummary, verifyRestored } from "./restore.js";
 import {
   entryDataDir,
   entryDir,
@@ -235,10 +235,11 @@ export function createRecovery({ dataRoot, refs, logger, audit, reconcile }) {
       };
     }
     // 数据已搬回、条目目录还在 = 移动完成，只差引用恢复与条目清理。
-    const restoredRefs = await restoreAllRefs(refs, sessionId, {
-      workspaceIds: meta.workspaceIds,
-      pinned: meta.pinned,
-    });
+    const snapshot = {
+      workspaceIds: Array.isArray(meta.workspaceIds) ? meta.workspaceIds : [],
+      pinned: typeof meta.pinned === "boolean" ? meta.pinned : null,
+    };
+    const restoredRefs = await restoreAllRefs(refs, sessionId, snapshot);
     const checks = await verifyRestored({
       refs,
       sessionId,
@@ -246,8 +247,7 @@ export function createRecovery({ dataRoot, refs, logger, audit, reconcile }) {
       meta,
     });
     await finalizeRestoreEntry({ dataRoot, entryId, meta, restoredTo: meta.originPath });
-    const failedRefs = restoredRefs.filter((item) => item.status === "failed");
-    const failedChecks = checks.filter((item) => item.status === "failed");
+    const summary = restoreSummary(restoredRefs, checks);
     await writeReceipt(dataRoot, {
       action: "restore",
       at: new Date().toISOString(),
@@ -258,16 +258,18 @@ export function createRecovery({ dataRoot, refs, logger, audit, reconcile }) {
       recovered: true,
       refs: restoredRefs,
       checks,
-      partial: failedRefs.length > 0,
+      partial: summary.partial,
+      // 重检（recheckRestore）要用回执里这份快照；条目已随恢复清理。
+      expected: snapshot,
+      failures: summary.failures,
     });
-    const clean = failedRefs.length === 0 && failedChecks.length === 0;
     return {
-      outcome: clean ? "completed" : "unresolved",
+      outcome: summary.partial ? "unresolved" : "completed",
       sessionId,
       entryId,
-      detail: clean
-        ? "已补完 restore 收尾（引用已还原、回收站条目已清理）"
-        : `会话已搬回，但 ${failedRefs.length} 处引用 / ${failedChecks.length} 项校验失败，需人工核对`,
+      detail: summary.partial
+        ? `会话已搬回，但 ${describeRestoreSummary(summary)}，需人工核对`
+        : "已补完 restore 收尾（引用已还原、回收站条目已清理）",
     };
   }
 

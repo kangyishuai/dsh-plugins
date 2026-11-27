@@ -469,6 +469,43 @@ const main = async () => {
         settings.text.includes("操作回执"),
       (settings?.text ?? "").slice(0, 200),
     );
+    // ---------- D1b. 操作回执可展开、逐项列出引用/校验（只读：USIM-U3-05） ----------
+    // 用户被 toast 指向「操作回执」，就必须真的能在那里查到是哪一处没通过。
+    const receipts = await cdp.evaluate(`(() => {
+      const root = document.querySelector("[data-session-delete-settings]");
+      if (!root) return { status: "no-root" };
+      const box = root.querySelector("[data-session-delete-receipts]");
+      if (!box) return { status: "no-receipts-row" };
+      const toggle = box.querySelector('[data-session-delete-disclosure="receipts"]');
+      if (!toggle) return { status: "no-toggle" };
+      if (toggle.getAttribute("aria-expanded") !== "true") toggle.click();
+      const rows = [...box.querySelectorAll("[data-session-delete-receipt]")];
+      return {
+        status: "ok",
+        expanded: toggle.getAttribute("aria-expanded") === "true",
+        rows: rows.length,
+        detailItems: box.querySelectorAll("[data-session-delete-receipt-item]").length,
+        firstRow: rows.length > 0
+          ? (rows[rows.length - 1].innerText || "").replace(/s+/g, " ").slice(0, 160)
+          : null,
+      };
+    })()`);
+    check(
+      "操作回执可以展开（data-session-delete-disclosure=receipts）",
+      receipts?.status === "ok" && receipts.expanded === true,
+      JSON.stringify(receipts ?? null),
+    );
+    // 条目数量依赖真实历史：空回执时记 SKIP，不算失败。
+    if (receipts?.status === "ok" && receipts.rows === 0) {
+      skip("回执条目逐项列出引用/校验结果", "回执为空（没有历史操作），没有条目可测");
+    } else {
+      check(
+        "回执条目逐项列出引用/校验结果",
+        receipts?.status === "ok" && receipts.detailItems > 0,
+        JSON.stringify(receipts ?? null),
+      );
+    }
+
     await cdp.screenshot(join(SHOTS, "03-settings.png"));
 
     // ---------- D2. 改键入口（只读：设置 → 通用 → 快捷键，确认命令进了 catalog） ----------
