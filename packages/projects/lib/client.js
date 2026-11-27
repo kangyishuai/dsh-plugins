@@ -9010,7 +9010,10 @@ window.__ModuleLoader__.load({
       })();
 
       const body = (() => {
-        if (data.loading) return h("p", { style: styles.empty }, text(t, "detail.loading"));
+        // 只有"从未加载过"才显示整页 loading：否则每次静默刷新都会把内容（含诊断行）整块换掉，
+        // 页面高度跟着跳（审查实测 30px 抖动）
+        if (data.loading && !data.progress)
+          return h("p", { style: styles.empty }, text(t, "detail.loading"));
         if (data.error !== "")
           return h(
             "div",

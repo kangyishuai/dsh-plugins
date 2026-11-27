@@ -215,3 +215,25 @@ describe("审查 P2（第五批）：删除项目的事务顺序", () => {
     assert.match(region, /renameSync\(`\$\{trashDir\}\/content`, preview\.contentDir\)/u);
   });
 });
+
+describe("最终自查补漏", () => {
+  it("openPr 数提交也用线程 worktree（多目录不再误报 no-commits）", () => {
+    const start = serviceSource.indexOf("async openPr(");
+    assert.ok(start >= 0);
+    const region = serviceSource.slice(start, start + 1500);
+    assert.match(region, /pickRepoRoot\(/u);
+    assert.doesNotMatch(region, /project\.dirs\[0\]/u);
+  });
+
+  it("归档清理结果写审计（不再无声删分支）", () => {
+    const region = methodRegion(serviceSource, "archiveProject");
+    assert.match(region, /project\/archive-cleanup-failed/u);
+    assert.match(region, /project\/archived/u);
+    assert.match(region, /cleanup \?\? null/u);
+  });
+
+  it("详情页只在从未加载时显示整页 loading（静默刷新不换掉内容）", () => {
+    const raw = readFileSync(join(here, "..", "lib", "client.js"), "utf8");
+    assert.match(raw, /if \(data\.loading && !data\.progress\)/u);
+  });
+});

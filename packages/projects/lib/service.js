@@ -2293,13 +2293,29 @@ export class ProjectsService extends TypertRemoteService {
     for (const thread of store.listThreads(id)) {
       this.detachSession(thread.sessionId);
     }
-    // 归档时顺手清理已合并、无未推送提交的分支（规格 §7.7.5 三判据；失败只记录不阻断归档）
+    // 归档时顺手清理已合并、无未推送提交的分支（规格 §7.7.5 三判据；失败只记录不阻断归档）。
+    // 在跑/等你的线程已在 cleanupBranches 里被跳过（thread-busy）；清理结果写审计，别无声无息。
+    /** @type {any} */
+    let cleanup = null;
     try {
-      await this.cleanupBranches(id, { dryRun: false, confirm: true });
-    } catch {
-      /* 分支清理失败不该让归档失败 */
+      cleanup = await this.cleanupBranches(id, { dryRun: false, confirm: true });
+    } catch (error) {
+      store.appendAudit({
+        action: "project/archive-cleanup-failed",
+        projectId: id,
+        reason: String(/** @type {any} */ (error)?.message ?? error).slice(0, 160),
+      });
     }
-    return project;
+    store.appendAudit({
+      action: "project/archived",
+      projectId: id,
+      cleaned: Array.isArray(cleanup?.deleted) ? cleanup.deleted.length : 0,
+      skipped: Array.isArray(cleanup?.candidates)
+        ? cleanup.candidates.filter((/** @type {any} */ item) => item.ok !== true).length
+        : 0,
+    });
+    store.save();
+    return { ...project, cleanup: cleanup ?? null };
   }
 
   /**
@@ -3506,8 +3522,9 @@ export class ProjectsService extends TypertRemoteService {
 
     const tier = String(options?.tier ?? "off");
 
-    // 线程上没有 commits 字段：直接数（base..branch），否则任何线程都会被判成"没有提交"
-    const repoRoot = Array.isArray(project.dirs) && project.dirs.length > 0 ? project.dirs[0] : "";
+    // 线程上没有 commits 字段：直接数（base..branch），否则任何线程都会被判成"没有提交"。
+    // 多目录项目要用线程 worktree（与 prOverview/mergePr 同一口径，审查实测 dirs[0] 会误报 no-commits）
+    const repoRoot = pickRepoRoot({ worktree: thread.worktree, dirs: project.dirs });
     let commits = Number(thread.commits ?? 0);
     if (repoRoot !== "" && typeof thread.branch === "string" && thread.branch !== "") {
       const base = String(options?.base ?? "HEAD");
