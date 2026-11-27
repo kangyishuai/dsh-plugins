@@ -625,16 +625,16 @@ ls ~/.dsh/next-step/report-*.md
 
 ### 8.1 逐条修法与测试
 
-| issue     | 修法（一句话）                                                                                                                                                                      | 先红后绿证据（测试）                                                                                                     |
-| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| AUD-NS-01 | `turn/start` 不再 abort 在途生成，只标记 superseded；生成跑完以 `shown:false` 落库（不丢 token、不进对话流）                                                                        | `test/inflight.test.js`「supersede 只打标记、绝不 abort」；`test/service-logic.test.js`「superseded 一律写 shown:false」 |
-| AUD-NS-02 | 更早轮次、未决策的卡默认折叠成一行（「更早的一轮 · 摘要首句」）；`maxCardsPerSession` 默认 120 → 60 + 设置 v3 迁移                                                                  | `test/client-card-collapse.test.js`（3 项，含「旧卡只有摘要首句、无提问/胶囊/✕」）；`test/settings.test.js` v2→v3 迁移   |
-| AUD-NS-03 | `byIndex` 分母 = 该位置被**展示**的次数（原来只在点击时 bump，`second-option-useless` 结构上不可达）                                                                                | `test/report.test.js`「byIndex 的分母是该位置被展示的次数」+「真实事件形态下 second-option-useless 可命中」              |
-| AUD-NS-04 | `closeFollowup` 接线：`turn/end` 结算更早回合、TTL 15 分钟结算、会话级上限 32 挤出（同一个幂等入口）；**会话切走在宿主里没有事件，只能靠 TTL 兜底**                                 | `test/followup.test.js`（7 项：consume / close 幂等 / TTL / 上限挤出 / 空 label 不登记 / 常量）                          |
-| AUD-NS-05 | completed 过滤下移到便宜闸之后：非 completed 的回合也落 `gate:"turn-error"` 事件（仍不调模型）；**缺 `reason` / `kind` 非字符串统一归一化成 `unknown`，同样只落遥测、绝不放行生成** | `test/service-logic.test.js`「非 completed 的回合也要进流程」+「endKindOf」+「接线组合：只有 completed 会放行生成」      |
-| AUD-NS-06 | 把 `inflight` / `pendingFollowup` / `scanSession` 的可纯化部分抽成 `inflight.js` / `followup.js` / `session-records.js` 等纯模块并补测                                              | 上述三个测试文件 + `test/service-logic.test.js`（`foldSessionRecords` 三张表口径、坏记录降级）                           |
-| AUD-NS-07 | `error.aborted` 补进 `locale/{zh,en}.json`；新增内联字典 ↔ locale 文件的键集 parity 测试                                                                                            | `test/locale-parity.test.js`（3 项；修复前缺 `error.aborted` 即红，parity 断言失败）                                     |
-| AUD-NS-08 | README（中英）隐私段补「生成的胶囊文案会原样记录」                                                                                                                                  | 文档改动，无测试                                                                                                         |
+| issue     | 修法（一句话）                                                                                                                                                                                                                                 | 先红后绿证据（测试）                                                                                                     |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| AUD-NS-01 | `turn/start` 不再 abort 在途生成，只标记 superseded；生成跑完以 `shown:false` 落库（**不是省钱**：跑完比中止多付输出 token；收益 = 近完成调用不再被丢弃 + `superseded` 可观测；候选不进对话流、不占 `maxCardsPerSession`、不进曝光、不可揭示） | `test/inflight.test.js`「supersede 只打标记、绝不 abort」；`test/service-logic.test.js`「superseded 一律写 shown:false」 |
+| AUD-NS-02 | 更早轮次、未决策的卡默认折叠成一行（「更早的一轮 · 摘要首句」）；`maxCardsPerSession` 默认 120 → 60 + 设置 v3 迁移                                                                                                                             | `test/client-card-collapse.test.js`（3 项，含「旧卡只有摘要首句、无提问/胶囊/✕」）；`test/settings.test.js` v2→v3 迁移   |
+| AUD-NS-03 | `byIndex` 分母 = 该位置被**展示**的次数（原来只在点击时 bump，`second-option-useless` 结构上不可达）                                                                                                                                           | `test/report.test.js`「byIndex 的分母是该位置被展示的次数」+「真实事件形态下 second-option-useless 可命中」              |
+| AUD-NS-04 | `closeFollowup` 接线：`turn/end` 结算更早回合、TTL 15 分钟结算、会话级上限 32 挤出（同一个幂等入口）；**会话切走在宿主里没有事件，只能靠 TTL 兜底**                                                                                            | `test/followup.test.js`（7 项：consume / close 幂等 / TTL / 上限挤出 / 空 label 不登记 / 常量）                          |
+| AUD-NS-05 | completed 过滤下移到便宜闸之后：非 completed 的回合也落 `gate:"turn-error"` 事件（仍不调模型）；**缺 `reason` / `kind` 非字符串统一归一化成 `unknown`，同样只落遥测、绝不放行生成**                                                            | `test/service-logic.test.js`「非 completed 的回合也要进流程」+「endKindOf」+「接线组合：只有 completed 会放行生成」      |
+| AUD-NS-06 | 把 `inflight` / `pendingFollowup` / `scanSession` 的可纯化部分抽成 `inflight.js` / `followup.js` / `session-records.js` 等纯模块并补测                                                                                                         | 上述三个测试文件 + `test/service-logic.test.js`（`foldSessionRecords` 三张表口径、坏记录降级）                           |
+| AUD-NS-07 | `error.aborted` 补进 `locale/{zh,en}.json`；新增内联字典 ↔ locale 文件的键集 parity 测试                                                                                                                                                       | `test/locale-parity.test.js`（3 项；修复前缺 `error.aborted` 即红，parity 断言失败）                                     |
+| AUD-NS-08 | README（中英）隐私段补「生成的胶囊文案会原样记录」                                                                                                                                                                                             | 文档改动，无测试                                                                                                         |
 
 单测总数：**194 → 223**（`node --test packages/next-step`，0 fail）。
 
@@ -644,7 +644,12 @@ ls ~/.dsh/next-step/report-*.md
    与「选项数」「label 长度」两张表的口径一致；`second-option-useless` 因此第一次可能真的出现。
 2. **`gate:"superseded"` 是新的闸门值**：生成跑完时这一轮已经翻过去了。它计入 `counters.superseded` 与
    `counters.hidden`，**不计**入 `failed` / `aborted` / `skipped`。报表「闸门分布」与诊断「最近跳过」都能看到。
-   预期效应：`cand.latencyMs` 与 `shown` 的分母不变，但 `error.kind=cancelled` 会明显下降。
+   **成本方向是增加**：abort 只结算已生成部分，跑完要付全额输出 token —— 这是「不丢近完成调用 + 可诊断」的
+   代价，不是省钱；候选本身**不占 `maxCardsPerSession`**（只统计 `shown:true`）、**不喂 ghost**、**不进曝光**
+   （不渲染、不上报 impression）、**不可揭示**（`generateNow` 只对最近一个正常结束的回合生效）。
+   预期效应：`error.kind=cancelled` 会明显下降；`cand.latencyMs` 与 `shown` 的分母不变，但 **`turns` 会变大**
+   （非 completed 回合现在也写 turn 事件）→ 报表「出卡率」`shown/turns` 跨版本**不再可比**（判读不用这个数，
+   只是显示）。
 3. **`gate:"turn-error"` 现在真的会出现**（含 `reason.kind` 缺失的回合——归一化成 `unknown`）。它只影响遥测与诊断，不放行生成；若这个值异常多，先查宿主是否改了 `turn/end` 的形状。
 4. **`followup` 事件第一次有 `typed:false` 的来源**：15 分钟没再说话、下一轮已结束、或会话级上限挤出。
    它会抬高「忽略」的分母解释力，但注意它最多晚 15 分钟——不要拿「今天的 followup 条数」当实时指标。
@@ -657,7 +662,8 @@ ls ~/.dsh/next-step/report-*.md
 - `structureCheck` 区分两种只读形态：**折叠行**（只允许摘要首句，禁止提问 / 胶囊 / ✕）与
   **决策回显**（sent / dismissed，摘要 + 提问 + ✓ 回显）；`state="readonly"` 却未折叠直接判红。
 - 新增数据相关分支断言／SKIP：「旧卡默认折叠成一行（只读态：摘要首句 ≤60 字、无提问/胶囊/✕）」。
-  `structureCheck` 在初始会话 / 目标会话 / 刷新后各调一次，所以项数从 22 变为 **25**（数据分支无折叠卡时记 SKIP）。
+  `structureCheck` 在初始会话 / 目标会话 / 刷新后各调一次，所以项数**上限 25**（22 + 3）；当前会话没有可交互卡时
+  「目标会话」「刷新后」两段不执行 → **23 项**。SKIP 数随数据分支变化，判据是 0 FAIL。
 - 仍然**默认只读不点 ✕**：折叠态没有 ✕，写路径（点胶囊 / 点 ✕）只在 `--deep` 下执行。
 
 ### 8.4 本轮未验证 / 需要发版门禁覆盖的点
