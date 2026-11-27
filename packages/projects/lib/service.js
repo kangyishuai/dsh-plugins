@@ -3874,14 +3874,27 @@ export class ProjectsService extends TypertRemoteService {
     /** @type {any[]} */
     const out = [];
     for (const project of store.listProjects()) {
-      if (project.state !== "active") continue;
+      // 暂停项目里仍可能有在跑/等你的线程：通知器不能整段跳过（审查实测）
+      if (project.state === "archived") continue;
+      const threads = store.listThreads(project.id);
+      const ids = threads
+        .map((/** @type {any} */ thread) => String(thread.sessionId ?? ""))
+        .filter(Boolean);
+      // 与 progress 用同一个权威源：宿主 pendingInput 决定「等你」，只有事件推导会漏报
+      const live = await this.liveSessionFacts(false, ids);
       /** @type {any[]} */
       const rows = [];
-      for (const thread of store.listThreads(project.id)) {
+      for (const thread of threads) {
         const sessionId = String(thread?.sessionId ?? "");
         if (sessionId === "") continue;
+        const liveState = live.states.get(sessionId);
+        const pending = Array.isArray(liveState?.pendingInput) ? liveState.pendingInput.length : 0;
         const view = mergeRecord(this.views.get(sessionId), thread);
-        rows.push({ sessionId, state: deriveState(view) });
+        const state = deriveState({
+          ...view,
+          awaitingUser: pending > 0 ? true : view.awaitingUser,
+        });
+        rows.push({ sessionId, state });
       }
       out.push({ projectId: project.id, notifyPrefs: project.notifyPrefs ?? {}, rows });
     }
@@ -4937,8 +4950,12 @@ export class ProjectsService extends TypertRemoteService {
       sessionId: String(sessionId ?? ""),
       dirs: fileDirs,
       total: 0,
+      partial: false,
     };
     /** 一个目录可能要换几个会话作用域才列得出内容（worktree 线程 vs 项目目录线程）。 */
+    // 审查实测：空目录 × 10 目录 × 200 线程 × 3 路径能打出 6000 次串行 RPC（6.9s）。
+    // 收敛为「首选会话 + 1 个兜底 + 2 个 path」，并给整次 libraryView 一个总预算。
+    const budget = { left: 8, exhausted: false };
     const listDirWithFallback = async (/** @type {string} */ dir) => {
       const candidates = [];
       const preferred = sessionForProjectDir(threads, dir, String(sessionId ?? ""));
@@ -4946,17 +4963,25 @@ export class ProjectsService extends TypertRemoteService {
       for (const thread of threads) {
         const candidate = String(thread?.sessionId ?? "");
         if (candidate !== "" && !candidates.includes(candidate)) candidates.push(candidate);
+        if (candidates.length >= 2) break;
       }
       const coordinator =
         typeof project.coordinatorSessionId === "string" ? project.coordinatorSessionId : "";
-      if (coordinator !== "" && !candidates.includes(coordinator)) candidates.push(coordinator);
+      if (candidates.length < 2 && coordinator !== "" && !candidates.includes(coordinator)) {
+        candidates.push(coordinator);
+      }
       /** @type {any} */
       let fallbackResult = null;
       // 宿主 `list` 的 path 是「workspace 内路径」：实测空串会返回空列表，
       // 用 "." 表示根才列得出直接子项；绝对路径作为最后兜底（同为 root 时应被接受）。
-      const pathCandidates = [".", "", dir];
+      const pathCandidates = [".", dir];
       for (const listPath of pathCandidates) {
         for (const candidate of candidates) {
+          if (budget.left <= 0) {
+            budget.exhausted = true;
+            break;
+          }
+          budget.left -= 1;
           try {
             // 宿主 Remote 的签名是 (scope, path, signal)：漏传 signal 会在实现里
             // `signal.throwIfAborted()` 直接抛，表现为「列不出任何文件」而不是报错。
@@ -5005,10 +5030,15 @@ export class ProjectsService extends TypertRemoteService {
     else {
       files.available = true;
       for (const dir of dirs) {
+        if (budget.left <= 0) {
+          budget.exhausted = true;
+          break;
+        }
         const listed = await listDirWithFallback(dir);
         files.dirs.push(listed);
         files.total += listed.entries.length;
       }
+      files.partial = budget.exhausted === true;
     }
 
     // —— 产物面 ——

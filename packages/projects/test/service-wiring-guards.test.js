@@ -101,3 +101,27 @@ describe("生命周期保护：在跑/等你的线程不许被回收/归档清�
     assert.match(region, /\?\? id/u);
   });
 });
+
+describe("审查 P1 回归防线", () => {
+  it("libraryView 有总调用预算与 partial 标记（空目录不再打爆宿主）", () => {
+    const start = serviceSource.indexOf("async libraryView(");
+    assert.ok(start >= 0);
+    const region = serviceSource.slice(start, start + 9000);
+    assert.match(region, /budget\.left <= 0/u);
+    assert.match(region, /partial: false/u);
+    assert.match(region, /const pathCandidates = \["\.", dir\]/u);
+  });
+
+  it("threadStates 与 progress 共用 liveSessionFacts / pendingInput", () => {
+    const region = methodRegion(serviceSource, "threadStates");
+    assert.match(region, /liveSessionFacts\(/u);
+    assert.match(region, /pendingInput/u);
+    assert.doesNotMatch(region, /state !== "active"/u);
+  });
+
+  it("无目录项目的线程 cwd 走 workspaces 专用目录", () => {
+    const threadSource = readFileSync(join(here, "..", "lib", "thread.js"), "utf8");
+    assert.match(threadSource, /workspaces\/\$\{/u);
+    assert.doesNotMatch(threadSource, /: \[dataRoot\];/u);
+  });
+});

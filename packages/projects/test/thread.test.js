@@ -137,6 +137,23 @@ describe("createIsolatedThread", () => {
     assert.equal(sessions.requests[0].cwd, repo);
   });
 
+  it("无目录项目：线程 cwd 在专用工作区，而不是插件数据根（审查 P1）", async () => {
+    const rootDir = join(root, "data-nodir");
+    const store = new ProjectStore({ root: rootDir }).load();
+    const project = store.createProject("nodir");
+    const sessions = fakeSessions();
+    const thread = await createIsolatedThread({
+      store,
+      dataRoot: rootDir,
+      projectId: project.id,
+      deps: { runGit, createSession: sessions.createSession },
+    });
+    const cwd = String(sessions.requests[0].cwd);
+    assert.notEqual(cwd, rootDir, "不能把插件数据根当工作区");
+    assert.equal(cwd, join(rootDir, "workspaces", project.id));
+    assert.equal(thread.warning, "not-a-git-repository");
+  });
+
   it("未知项目 / 已归档项目直接拒绝", async () => {
     const store = new ProjectStore({ root: join(root, "data") }).load();
     const sessions = fakeSessions();

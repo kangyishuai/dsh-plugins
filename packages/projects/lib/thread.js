@@ -2,6 +2,8 @@
 // 建「隔离线程」：先建 worktree，再建会话（cwd 建后不可变，顺序不能反），最后落归属记录。
 // 依赖通过 deps 注入，所以能用真实 git + 假 sessionController 做集成测试。
 
+import { mkdirSync } from "node:fs";
+
 import {
   branchName,
   parseMergedBranches,
@@ -51,10 +53,21 @@ export async function createIsolatedThread(input) {
   // F35 多目录：dirs[] 全部生效。线程按顺序找**第一个可用**的 git 仓库建 worktree；
   // 都不是 git 仓库时退回第一个目录（共享目录，界面会如实标「未隔离」）。
   // 不在这里逐个 dir 都建 worktree：一个线程只有一个 cwd（宿主 create 的 cwd 出生即固定）。
+  // 无目录项目：绝不能把**插件数据根**当线程 cwd（projects.json/其它项目都在那儿）。
+  // 给每条项目一个专用工作区目录，agent 只能在这里折腾。
+  let fallbackDir = "";
+  if (!Array.isArray(project.dirs) || project.dirs.length === 0) {
+    fallbackDir = `${String(dataRoot).replace(/\/+$/u, "")}/workspaces/${String(projectId).replace(/[^A-Za-z0-9_-]/gu, "")}`;
+    try {
+      mkdirSync(fallbackDir, { recursive: true });
+    } catch {
+      fallbackDir = dataRoot;
+    }
+  }
   const candidates =
     Array.isArray(project.dirs) && project.dirs.length > 0
       ? project.dirs.filter((/** @type {unknown} */ dir) => typeof dir === "string" && dir !== "")
-      : [dataRoot];
+      : [fallbackDir || dataRoot];
   const index = store.listThreads(projectId).length + 1;
 
   /** 依次尝试：只有「是 git 仓库 + worktree add 成功」才隔离。 */
