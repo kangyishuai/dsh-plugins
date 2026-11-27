@@ -101,6 +101,14 @@ describe("F21 PR/CI 轮询（纯函数）", () => {
     });
     assert.equal(shouldPollProject({ prTier: "off", threads: [{ prNumber: 12 }] }).poll, false);
     assert.equal(shouldPollProject({ prTier: "draft", threads: [{ prNumber: 12 }] }).poll, true);
+    // 已合并的 PR 不再轮询（mergedAt 是"唯一确定已合并"的时点，服务端状态不总可靠）
+    assert.deepEqual(
+      shouldPollProject({
+        prTier: "draft",
+        threads: [{ prNumber: 12, mergedAt: "2026-11-27T00:00:00.000Z" }],
+      }),
+      { poll: false, reason: "no-open-pr", openPrs: 0 },
+    );
   });
 
   it("statusCheckRollup 归约成四态（没有 checks 是 none，不编 pending）", () => {
@@ -109,7 +117,10 @@ describe("F21 PR/CI 轮询（纯函数）", () => {
     assert.equal(rollupState([{ conclusion: "SUCCESS" }]), "passing");
     assert.equal(rollupState([{ conclusion: "FAILURE" }]), "failing");
     assert.equal(rollupState([{ status: "IN_PROGRESS" }]), "pending");
-    assert.equal(rollupState([{ conclusion: "SUCCESS" }, { state: "PENDING" }]), "failing");
+    // PENDING/EXPECTED 是「还在算」，不是失败（与 executor.checkCiGreen 同口径）
+    assert.equal(rollupState([{ conclusion: "SUCCESS" }, { state: "PENDING" }]), "pending");
+    assert.equal(rollupState([{ state: "EXPECTED" }]), "pending");
+    assert.equal(rollupState([{ state: "FAILURE" }]), "failing");
   });
 
   it("解析 gh pr list 输出；坏 JSON 明确失败而不是空列表冒充成功", () => {

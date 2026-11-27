@@ -70,7 +70,7 @@ export function assertSafeDirs(dirs) {
  */
 export function isSafeRecordKey(id) {
   const value = String(id ?? "");
-  if (value === "" || value.length > 120) return false;
+  if (value === "" || value === "." || value === ".." || value.length > 120) return false;
   if (value.includes("/") || value.includes("\\")) return false;
   for (const ch of value) {
     const code = ch.codePointAt(0) ?? 0;

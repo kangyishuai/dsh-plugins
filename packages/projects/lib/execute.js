@@ -5,10 +5,12 @@
 // 为什么值得抽：执行分支最容易出的是「某条分支忘了 return，悄悄掉到最后那个 deferred」——
 // 纯函数单测抓不到，只有真机或这一层能抓（0.3.x 就踩过一次）。
 
+import { pickRepoRoot } from "./autopr.js";
 import {
   allowedMergeMethodsFromRepo,
+  assessMergePr,
   checkExecutable,
-  checkMergeReadiness,
+  checkSafePushRef,
   parseRepoFromRemote,
   planCommand,
   recoveryEvidence,
@@ -205,16 +207,18 @@ export async function executeApprovalCore(deps, requestId) {
     return { executed: false, reason: folder.reason }; // 闸门在占位之前，无需释放
   }
 
+  // 合并门槛在 policy.merge（policy.danger 只有布尔开关）。diff 阈值由 merge 分支用
+  // assessMergePr 对照**真实 PR 字段**校验；这里不再读不存在的 policy.danger.merge，
+  // 也不信任模型可控的 args.impact。
+  const mergeLimits = {
+    maxDiffFiles: Number(project.policy?.merge?.maxDiffFiles ?? 20),
+    maxDiffLines: Number(project.policy?.merge?.maxDiffLines ?? 600),
+  };
   const verdict = checkExecutable({
     approval,
     danger: project.policy?.danger ?? {},
-    limits: project.policy?.danger?.merge
-      ? {
-          maxDiffFiles: Number(project.policy.danger.merge?.maxDiffFiles ?? 20),
-          maxDiffLines: Number(project.policy.danger.merge?.maxDiffLines ?? 600),
-        }
-      : undefined,
-    impact: approval.args?.impact ?? {},
+    limits: approval.action === "merge" ? mergeLimits : undefined,
+    impact: approval.action === "merge" ? {} : (approval.args?.impact ?? {}),
   });
   if (!verdict.ok) {
     store.appendAudit({
@@ -287,7 +291,16 @@ export async function executeApprovalCore(deps, requestId) {
   let mergeRepoDir = "";
   if (approval.action === "merge") {
     const project = store.getProject(approval.projectId);
-    const repoDir = Array.isArray(project?.dirs) ? String(project.dirs[0] ?? "") : "";
+    const prNumber = Number(approval.args?.prNumber);
+    const mergeThread = store
+      .listThreads(approval.projectId)
+      .find((/** @type {any} */ item) => Number(item?.prNumber) === prNumber);
+    // 多目录项目（[repoA, repoB]）里 PR 属于哪个仓库，唯一可靠来源是线程 worktree；
+    // 以前用 dirs[0] 会把 repoB 的 PR 合到 repoA 的同号 PR 上（不可逆）。
+    const repoDir = pickRepoRoot({
+      worktree: typeof mergeThread?.worktree === "string" ? mergeThread.worktree : "",
+      dirs: project?.dirs,
+    });
     mergeRepoDir = repoDir;
     const remote =
       repoDir === ""
@@ -372,7 +385,9 @@ export async function executeApprovalCore(deps, requestId) {
     if (force) {
       // 强推硬前提（规格 §7.5 行 1）：自建且被记录、远端没被别人动过、非保护分支、旧 SHA 已知
       const pushProject = store.getProject(approval.projectId);
-      const pushRepoDir = String(pushProject?.dirs?.[0] ?? "");
+      // 保护分支/远端检查必须和实际 push 用同一个仓库：worktree 在 repoB 时，
+      // 以前查的是 dirs[0]（repoA）的保护配置。
+      const pushRepoDir = worktree === "" ? String(pushProject?.dirs?.[0] ?? "") : worktree;
       const pushRemote =
         pushRepoDir === ""
           ? { code: 1, stdout: "", stderr: "" }
@@ -469,24 +484,58 @@ export async function executeApprovalCore(deps, requestId) {
 
   // merge 走 gh：需要真实远端与 PR 号，留给后续步骤（这里只回报计划）
   if (approval.action === "delete-project") {
-    const result = deleteProject(approval.projectId);
-    const evidence = recoveryEvidence(approval.action, approval.args ?? {}, result);
-    store.appendAudit({
-      action: "approval/executed",
-      projectId: approval.projectId,
-      requestId,
-      dangerAction: approval.action,
-      evidence,
-    });
-    store.save();
-    return settle({ executed: true, evidence });
+    try {
+      // deleteProject 是 async（可能要；有在跑线程会抛 busy）——漏 await 会把 Promise 当结果，
+      // 失败被报成「已执行」并留下未捕获拒绝，同时 executedAt 已落盘导致永远不能再试。
+      const result = await deleteProject(approval.projectId);
+      const evidence = recoveryEvidence(approval.action, approval.args ?? {}, result);
+      store.appendAudit({
+        action: "approval/executed",
+        projectId: approval.projectId,
+        requestId,
+        dangerAction: approval.action,
+        evidence,
+      });
+      store.save();
+      return settle({ executed: true, evidence });
+    } catch (error) {
+      const reason = String(error instanceof Error ? error.message : error).slice(0, 200);
+      store.appendAudit({
+        action: "approval/execution-failed",
+        projectId: approval.projectId,
+        requestId,
+        dangerAction: approval.action,
+        reason: reason || "delete-project-failed",
+      });
+      store.save();
+      return settle({ executed: false, reason: reason || "delete-project-failed" });
+    }
   }
 
   // 直推保护/默认分支（规格 §7.5 行 2）：per-repo 首次授予 + 服务端允许 + 审计/事后通知
   if (approval.action === "push-protected-branch") {
-    const branch = String(approval.args?.branch ?? "");
+    const checkedBranch = checkSafePushRef(approval.args?.branch);
+    if (!checkedBranch.ok) {
+      store.appendAudit({
+        action: "approval/execution-refused",
+        projectId: approval.projectId,
+        requestId,
+        dangerAction: approval.action,
+        reason: checkedBranch.reason,
+      });
+      store.save();
+      return settle({ executed: false, reason: checkedBranch.reason });
+    }
+    const branch = checkedBranch.branch;
     const grProject = store.getProject(approval.projectId);
-    const grDir = String(grProject?.dirs?.[0] ?? "");
+    // 与 push 用同一个仓库：优先该线程的 worktree（多目录项目不能只看 dirs[0]）
+    const grThread = store
+      .listThreads(approval.projectId)
+      .find((/** @type {any} */ item) => String(item?.branch ?? "") === branch);
+    const grDir = pickRepoRoot({
+      worktree: typeof grThread?.worktree === "string" ? grThread.worktree : "",
+      dirs: grProject?.dirs,
+    });
     const grRemote =
       grDir === ""
         ? { code: 1, stdout: "", stderr: "" }
@@ -612,7 +661,7 @@ export async function executeApprovalCore(deps, requestId) {
         "--repo",
         repo,
         "--json",
-        "isDraft,mergeable,state,statusCheckRollup,reviews",
+        "isDraft,mergeable,state,statusCheckRollup,reviews,additions,deletions,changedFiles",
       ],
       mergeRepoDir || undefined,
     );
@@ -647,12 +696,15 @@ export async function executeApprovalCore(deps, requestId) {
       }
     }
     const allowedMethods = allowedMergeMethodsFromRepo(repoJson);
+    // 与 UI 合并按钮共用 assessMergePr：CI / 批准数 / draft / 合并方式 / 改动量**同一套**判据。
+    // 以前审批路径只查 checkMergeReadiness，模型在 args.impact 里不填就完全跳过改动量阈值。
     const readiness = (/** @type {any} */ pr) =>
-      checkMergeReadiness({
+      assessMergePr({
         pr,
-        reviews: pr?.reviews ?? [],
         allowedMethods,
         minApprovals: Number(project?.policy?.merge?.minApprovals ?? 1),
+        maxDiffFiles: mergeLimits.maxDiffFiles,
+        maxDiffLines: mergeLimits.maxDiffLines,
       });
 
     // GitHub 刚建 PR 时 mergeable 可能是 UNKNOWN（服务端还在算）：有界重试几次。
@@ -669,7 +721,7 @@ export async function executeApprovalCore(deps, requestId) {
           "--repo",
           repo,
           "--json",
-          "isDraft,mergeable,state,statusCheckRollup,reviews",
+          "isDraft,mergeable,state,statusCheckRollup,reviews,additions,deletions,changedFiles",
         ],
         mergeRepoDir || undefined,
       );

@@ -79,5 +79,8 @@ describe("写入口上限与路径校验", () => {
     assert.equal(isSafeRecordKey("a\nb"), false);
     assert.equal(isSafeRecordKey("x".repeat(121)), false);
     assert.equal(isSafeRecordKey(""), false);
+    // `join(dataRoot, ".")` 就是数据根本身：这类 key 会绕过"记录只能落在自己目录下"的前提
+    assert.equal(isSafeRecordKey("."), false);
+    assert.equal(isSafeRecordKey(".."), false);
   });
 });

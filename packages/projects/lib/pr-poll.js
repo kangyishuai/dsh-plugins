@@ -33,13 +33,17 @@ export function nextPollDelay(input) {
 
 /**
  * 这个项目要不要轮询：先看有没有开放 PR 的线程，再看自动修复档位是否开着。
- * @param {{ prTier?: string, threads?: Array<{ prNumber?: number|null }> }|null|undefined} input
+ * @param {{ prTier?: string, threads?: Array<{ prNumber?: number|null, mergedAt?: string|null }> }|null|undefined} input
  * @returns {{ poll: boolean, reason: string, openPrs: number }}
  */
 export function shouldPollProject(input) {
   const threads = Array.isArray(input?.threads) ? input.threads : [];
+  // 已合并的 PR 不再轮询：mergedAt 一旦写在线程上，gh 子进程继续跑就是纯噪音
   const openPrs = threads.filter(
-    (thread) => Number.isInteger(Number(thread?.prNumber)) && Number(thread?.prNumber) > 0,
+    (thread) =>
+      Number.isInteger(Number(thread?.prNumber)) &&
+      Number(thread?.prNumber) > 0 &&
+      String(thread?.mergedAt ?? "") === "",
   ).length;
   const tier = String(input?.prTier ?? "off");
   if (openPrs === 0) return { poll: false, reason: "no-open-pr", openPrs: 0 };
@@ -61,7 +65,9 @@ export function rollupState(rollup) {
     const state = String(item?.state ?? "").toUpperCase();
     if (["FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED"].includes(conclusion))
       return "failing";
-    if (["FAILURE", "ERROR", "PENDING", "EXPECTED"].includes(state)) return "failing";
+    // PENDING/EXPECTED 是「还在算」，不是失败：和 executor.checkCiGreen 的口径保持一致
+    if (["FAILURE", "ERROR"].includes(state)) return "failing";
+    if (["PENDING", "EXPECTED"].includes(state)) return "pending";
     if (["SUCCESS", "NEUTRAL", "SKIPPED", "SUCCESS"].includes(state)) return "passing";
     if (conclusion === "SUCCESS" || conclusion === "NEUTRAL" || conclusion === "SKIPPED")
       return "passing";

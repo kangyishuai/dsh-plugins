@@ -104,6 +104,28 @@ export function checkExecutable(input) {
 }
 
 /**
+ * 直推保护分支时的分支名校验（纵深防御：coordinator 提供的 args 是模型可控的）。
+ * 允许普通分支名（含 `dsh/...` 与 `main`），拒绝会被 git 当成选项/refspec 的形态：
+ * 前导 `-`、`:`（`src:dst` refspec）、`..`、`*`、`?`、`[`、`@{`、反斜杠、空白。
+ * @param {unknown} value
+ * @returns {{ ok: true, branch: string } | { ok: false, reason: string }}
+ */
+export function checkSafePushRef(value) {
+  const branch = typeof value === "string" ? value.trim() : "";
+  if (branch === "") return { ok: false, reason: "branch-required" };
+  if (branch.length > 255) return { ok: false, reason: "branch-too-long" };
+  if (/^[-\s]/u.test(branch)) return { ok: false, reason: "branch-leading-dash" };
+  if (/[\s:\\*?[\]~^]/u.test(branch)) return { ok: false, reason: "branch-illegal-char" };
+  if (branch.includes("..") || branch.includes("@{")) {
+    return { ok: false, reason: "branch-illegal-range" };
+  }
+  if (branch.startsWith("refs/") && !branch.startsWith("refs/heads/")) {
+    return { ok: false, reason: "branch-not-head-ref" };
+  }
+  return { ok: true, branch };
+}
+
+/**
  * 生成执行命令（argv 数组，**不做 shell 插值**）。
  * 拒绝任何越界参数：分支名/PR 号必须是我们自己记录过的。
  * @param {string} action
@@ -132,10 +154,11 @@ export function planCommand(action, args) {
   }
 
   if (action === "push-protected-branch") {
-    const branch = String(args?.branch ?? "").trim();
-    if (!nonEmpty(branch)) return { error: "branch-required" };
-    // 直推保护/默认分支：不带 -u（可能不是我们的分支），也**绝不**带 --force
-    return { argv: ["git", "push", "origin", branch] };
+    // 直推保护/默认分支：不带 -u（可能不是我们的分支），也**绝不**带 --force。
+    // 分支名必须过 refname 校验：模型可以在 args 里塞 `--force` 或 `src:dst` refspec。
+    const checked = checkSafePushRef(args?.branch);
+    if (!checked.ok) return { error: checked.reason };
+    return { argv: ["git", "push", "origin", checked.branch] };
   }
 
   if (action === "change-settings") {

@@ -11,6 +11,7 @@ import {
   checkMergePreflight,
   checkMergeReadiness,
   checkPreapproval,
+  checkSafePushRef,
   countApprovedReviews,
   DANGER_ACTIONS,
   DEFAULT_MERGE_LIMITS,
@@ -133,6 +134,36 @@ describe("checkExecutable", () => {
   });
 });
 
+describe("checkSafePushRef（直推保护分支的 refname 校验）", () => {
+  it("拒绝 --force / refspec / 范围表达式等会被 git 当参数的形态", () => {
+    assert.deepEqual(checkSafePushRef("--force"), { ok: false, reason: "branch-leading-dash" });
+    assert.deepEqual(checkSafePushRef("main:refs/heads/hacked"), {
+      ok: false,
+      reason: "branch-illegal-char",
+    });
+    assert.deepEqual(checkSafePushRef("main..main"), {
+      ok: false,
+      reason: "branch-illegal-range",
+    });
+    assert.deepEqual(checkSafePushRef("refs/tags/v1"), {
+      ok: false,
+      reason: "branch-not-head-ref",
+    });
+    assert.deepEqual(checkSafePushRef(""), { ok: false, reason: "branch-required" });
+  });
+  it("允许普通分支名（含我们自己的与 main），并 trim", () => {
+    assert.deepEqual(checkSafePushRef("main"), { ok: true, branch: "main" });
+    assert.deepEqual(checkSafePushRef(" dsh/payments-1 "), {
+      ok: true,
+      branch: "dsh/payments-1",
+    });
+    assert.deepEqual(checkSafePushRef("refs/heads/release"), {
+      ok: true,
+      branch: "refs/heads/release",
+    });
+  });
+});
+
 describe("planCommand", () => {
   it("只推我们自己的分支", () => {
     assert.deepEqual(planCommand("push-branch", { branch: "dsh/payments-1" }), {
@@ -143,6 +174,16 @@ describe("planCommand", () => {
       error: "branch-not-ours",
     });
     assert.deepEqual(planCommand("push-branch", {}), { error: "branch-required" });
+    // 直推保护分支同样不能把 `--force`/refspec 当分支名传进 argv
+    assert.deepEqual(planCommand("push-protected-branch", { branch: "--force" }), {
+      error: "branch-leading-dash",
+    });
+    assert.deepEqual(planCommand("push-protected-branch", { branch: "main:refs/heads/x" }), {
+      error: "branch-illegal-char",
+    });
+    assert.deepEqual(planCommand("push-protected-branch", { branch: "main" }), {
+      argv: ["git", "push", "origin", "main"],
+    });
   });
 
   it("merge 必须给正整数 PR 号 + 目标仓库，且不带 --admin/--force", () => {

@@ -1124,6 +1124,20 @@ export class ProjectsService extends TypertRemoteService {
         const written = store.setThreadState(sessionId, "archived");
         if (written.changed) store.save();
       }
+      // 在跑/等你的会话不回收 worktree：宿主归档 ≠ 停 agent，删 cwd 会打断任务。
+      // 上一轮 busy 保护只覆盖 cleanup/reclaim/deleteProject，漏了这条归档钩子（审查指出）。
+      const live = await this.liveSessionFacts(true, [sessionId]);
+      const record = store.state?.threads?.[sessionId] ?? { sessionId };
+      if (this.threadBusy(record, live.states)) {
+        store.appendAudit({
+          action: "worktree/reclaim-skipped",
+          projectId: null,
+          sessionId,
+          reason: "thread-busy",
+        });
+        store.save();
+        return;
+      }
       const result = await reclaimThreadWorktree({
         store,
         sessionId,
@@ -1533,10 +1547,15 @@ export class ProjectsService extends TypertRemoteService {
     // 一键建项目模板（规格 §7.7.6）：只在显式要求时动作，失败不阻断建项目
     if (input?.template === true) {
       try {
-        const dir = Array.isArray(project.dirs) && project.dirs.length > 0 ? project.dirs[0] : "";
-        const agentsPath = dir === "" ? "AGENTS.md" : `${dir.replace(/\/+$/u, "")}/AGENTS.md`;
-        const instructionsPath =
-          dir === "" ? "instructions.md" : `${dir.replace(/\/+$/u, "")}/instructions.md`;
+        // 无目录时写到插件数据根的项目内容目录（与 applyProjectTemplate 一致），
+        // 以前写相对路径 = 进程 CWD（DSH 安装目录），是"死但错"的 Remote 分支。
+        const dir =
+          Array.isArray(project.dirs) && project.dirs.length > 0
+            ? project.dirs[0]
+            : `${this.dataRoot}/${project.id}`;
+        if (dir !== "") mkdirSync(dir, { recursive: true });
+        const agentsPath = `${dir.replace(/\/+$/u, "")}/AGENTS.md`;
+        const instructionsPath = `${dir.replace(/\/+$/u, "")}/instructions.md`;
         const plan = planTemplate({
           dir,
           exists: {
@@ -1915,9 +1934,42 @@ export class ProjectsService extends TypertRemoteService {
       store.save();
       return { ok: false, reason: view.reason };
     }
-    // 草稿 PR 直接 merge 会被 GitHub 拒（真机踩过：GraphQL "still a draft"），先 pr ready，
-    // 再重新读一次做完整门禁（CI / 批准数 / mergeable / 改动量阈值）
+    // 合并方式：仓库 API 的 allow_squash_merge（拿不到就当未知，拒绝而不是猜）
+    const remote = await runGit(["remote", "get-url", "origin"], repoRoot);
+    const repo = remote.code === 0 ? parseRepoFromRemote(String(remote.stdout ?? "").trim()) : "";
+    let allowedMethods = null;
+    if (repo !== "") {
+      const repoInfo = await runGh(["api", `repos/${repo}`], repoRoot);
+      if (repoInfo.code === 0) {
+        try {
+          allowedMethods = allowedMergeMethodsFromRepo(JSON.parse(String(repoInfo.stdout ?? "")));
+        } catch {
+          allowedMethods = null;
+        }
+      }
+    }
+    // 草稿 PR 直接 merge 会被 GitHub 拒（真机踩过："still a draft"），要先 pr ready。
+    // 但 ready 是**对外可见的副作用**（草稿转正）——不能先 ready 再发现 CI/批准数/改动量不过。
+    // 顺序：先用"假设已非草稿"的副本把其余门禁全部判一遍，都过了才 ready，然后重读再全判一次。
     if (view.pr?.isDraft === true) {
+      const preDraft = assessMergePr({
+        pr: { ...view.pr, isDraft: false },
+        allowedMethods,
+        minApprovals: Number(project.policy?.merge?.minApprovals ?? 1),
+        maxDiffFiles: Number(project.policy?.merge?.maxDiffFiles ?? 20),
+        maxDiffLines: Number(project.policy?.merge?.maxDiffLines ?? 600),
+      });
+      if (!preDraft.ok) {
+        store.appendAudit({
+          action: "pr/merge-refused",
+          projectId: project.id,
+          sessionId,
+          prNumber,
+          reason: preDraft.reason,
+        });
+        store.save();
+        return { ok: false, reason: preDraft.reason };
+      }
       const ready = await runGh(["pr", "ready", String(prNumber)], repoRoot);
       if (ready.code !== 0) {
         store.appendAudit({
@@ -1932,20 +1984,6 @@ export class ProjectsService extends TypertRemoteService {
       }
       view = await readPr();
       if (!view.ok) return { ok: false, reason: view.reason };
-    }
-    // 合并方式：仓库 API 的 allow_squash_merge（拿不到就当未知，拒绝而不是猜）
-    const remote = await runGit(["remote", "get-url", "origin"], repoRoot);
-    const repo = remote.code === 0 ? parseRepoFromRemote(String(remote.stdout ?? "").trim()) : "";
-    let allowedMethods = null;
-    if (repo !== "") {
-      const repoInfo = await runGh(["api", `repos/${repo}`], repoRoot);
-      if (repoInfo.code === 0) {
-        try {
-          allowedMethods = allowedMergeMethodsFromRepo(JSON.parse(String(repoInfo.stdout ?? "")));
-        } catch {
-          allowedMethods = null;
-        }
-      }
     }
     let verdict = assessMergePr({
       pr: view.pr,
@@ -2317,29 +2355,17 @@ export class ProjectsService extends TypertRemoteService {
     for (const thread of store.listThreads(id)) {
       this.detachSession(thread.sessionId);
     }
-    // 归档时顺手清理已合并、无未推送提交的分支（规格 §7.7.5 三判据；失败只记录不阻断归档）。
-    // 在跑/等你的线程已在 cleanupBranches 里被跳过（thread-busy）；清理结果写审计，别无声无息。
-    /** @type {any} */
-    let cleanup = null;
-    try {
-      cleanup = await this.cleanupBranches(id, { dryRun: false, confirm: true });
-    } catch (error) {
-      store.appendAudit({
-        action: "project/archive-cleanup-failed",
-        projectId: id,
-        reason: String(/** @type {any} */ (error)?.message ?? error).slice(0, 160),
-      });
-    }
+    // 归档是**可恢复的元数据操作**：不再顺手跑 cleanupBranches。
+    // 审查实测：那条路径会先删 worktree、再判「已合并/未推送」，而 git 的「干净」不包含
+    // .gitignore 里的文件（.env、模型缓存…）——归档一下就把它们永久删了，取消归档也找不回。
+    // 分支/worktree 的清理留给显式动作（cleanupBranches，默认 worktree 只报告不删）。
     store.appendAudit({
       action: "project/archived",
       projectId: id,
-      cleaned: Array.isArray(cleanup?.deleted) ? cleanup.deleted.length : 0,
-      skipped: Array.isArray(cleanup?.candidates)
-        ? cleanup.candidates.filter((/** @type {any} */ item) => item.ok !== true).length
-        : 0,
+      cleanup: "skipped-non-destructive",
     });
     store.save();
-    return { ...project, cleanup: cleanup ?? null };
+    return { ...project, cleanup: null };
   }
 
   /**
@@ -2361,6 +2387,14 @@ export class ProjectsService extends TypertRemoteService {
       }
     } catch {
       hasContentDir = false;
+    }
+    // 无目录项目的会话 cwd 在 dataRoot/workspaces/<id>：也是插件资产，随删除一起进回收站
+    const workspaceDir = `${this.dataRoot}/workspaces/${id}`;
+    let hasWorkspaceDir = false;
+    try {
+      hasWorkspaceDir = existsSync(workspaceDir);
+    } catch {
+      hasWorkspaceDir = false;
     }
     // worktree 不会随删除消失：把它们列进影响面，别让用户以为点了删除就清空了磁盘
     const worktrees = threads
@@ -2386,6 +2420,8 @@ export class ProjectsService extends TypertRemoteService {
         state: thread.state,
       })),
       contentDir,
+      workspaceDir,
+      hasWorkspaceDir,
     };
   }
 
@@ -2436,17 +2472,30 @@ export class ProjectsService extends TypertRemoteService {
       )}\n`;
     writeFileSync(`${trashDir}/manifest.json`, manifest(false), { mode: 0o600 });
     const hasContent = preview.impact.hasContentDir && existsSync(preview.contentDir);
-    if (hasContent) {
+    const hasWorkspace = preview.hasWorkspaceDir === true;
+    const moveInto = (
+      /** @type {string} */ from,
+      /** @type {string} */ to,
+      /** @type {string} */ label,
+    ) => {
+      if (!existsSync(from)) return false;
       try {
-        renameSync(preview.contentDir, `${trashDir}/content`);
+        renameSync(from, to);
+        return true;
       } catch (error) {
         // 搬不动：清掉刚建的回收站目录，项目记录与内容都保持原样
         rmSync(trashDir, { recursive: true, force: true });
         throw new Error(
-          `projects: content move failed (${String(/** @type {any} */ (error)?.message ?? error)})`,
+          `projects: ${label} move failed (${String(/** @type {any} */ (error)?.message ?? error)})`,
         );
       }
-    }
+    };
+    const movedContent = hasContent
+      ? moveInto(preview.contentDir, `${trashDir}/content`, "content")
+      : false;
+    const movedWorkspace = hasWorkspace
+      ? moveInto(preview.workspaceDir, `${trashDir}/workspace`, "workspace")
+      : false;
     writeFileSync(`${trashDir}/manifest.json`, manifest(true), { mode: 0o600 });
     /** @type {any} */
     let removed;
@@ -2455,8 +2504,11 @@ export class ProjectsService extends TypertRemoteService {
     } catch (error) {
       // 删记录失败：把内容搬回去、删掉回收站残留，保持"项目还在、内容也在"
       try {
-        if (hasContent && existsSync(`${trashDir}/content`)) {
+        if (movedContent && existsSync(`${trashDir}/content`)) {
           renameSync(`${trashDir}/content`, preview.contentDir);
+        }
+        if (movedWorkspace && existsSync(`${trashDir}/workspace`)) {
+          renameSync(`${trashDir}/workspace`, preview.workspaceDir);
         }
         rmSync(trashDir, { recursive: true, force: true });
       } catch {
@@ -2464,7 +2516,6 @@ export class ProjectsService extends TypertRemoteService {
       }
       throw error;
     }
-    for (const thread of removed.threads) this.detachSession(thread.sessionId);
     for (const thread of removed.threads) this.detachSession(thread.sessionId);
     store.appendAudit({ action: "project/deleted", projectId: id, reason: "trash", trashDir });
     store.save();
@@ -2553,7 +2604,12 @@ export class ProjectsService extends TypertRemoteService {
   deleteTrashEntry(options) {
     const input = options ?? {};
     const entryId = String(input.entryId ?? "");
-    if (!/^[A-Za-z0-9_.-]+$/u.test(entryId) || entryId.includes("..")) {
+    if (
+      !/^[A-Za-z0-9_.-]+$/u.test(entryId) ||
+      entryId === "." ||
+      entryId === ".." ||
+      entryId.includes("..")
+    ) {
       throw new Error("projects: invalid trash entry");
     }
     const dir = join(this.dataRoot, TRASH_DIR, entryId);
@@ -2644,9 +2700,10 @@ export class ProjectsService extends TypertRemoteService {
 
   /**
    * 分支生命周期清理（规格 §7.7.5）。三条判据全部满足才删，且只用 `git branch -d`。
-   * 默认 dry-run；真删需 `confirm: true`。
+   * 默认 dry-run；真删需 `confirm: true`。worktree 默认**只报告不删**：
+   * 需要调用方显式 `removeWorktrees: true`，且确认里面没有任何（含 ignored）文件。
    * @param {string} projectId
-   * @param {{ dryRun?: boolean, confirm?: boolean }} [options]
+   * @param {{ dryRun?: boolean, confirm?: boolean, removeWorktrees?: boolean }} [options]
    */
   async cleanupBranches(projectId, options) {
     const store = this.requireStore();
@@ -2684,27 +2741,6 @@ export class ProjectsService extends TypertRemoteService {
         candidates.push({ branch, ok: false, reason: "current-branch" });
         continue;
       }
-      // 分支若还被某个 worktree 占用，`git branch -d` 会被拒。
-      // 只有在 worktree **干净**（无未提交改动）时才移除它——未提交内容绝不丢。
-      const worktree = typeof thread.worktree === "string" ? thread.worktree : "";
-      if (worktree !== "") {
-        const status = await runGit(["status", "--porcelain"], worktree);
-        const clean = status.code === 0 && String(status.stdout ?? "").trim() === "";
-        if (!clean) {
-          candidates.push({ branch, ok: false, reason: "worktree-dirty" });
-          continue;
-        }
-        if (!dryRun) {
-          const removed = await runGit(["worktree", "remove", worktree], repoRoot);
-          if (removed.code !== 0) {
-            candidates.push({ branch, ok: false, reason: "worktree-remove-failed" });
-            continue;
-          }
-          store.setThreadWorktree(thread.sessionId, { worktree: null });
-          store.save();
-        }
-      }
-
       // ② 合并结果：记录里有 mergedAt，或远端确实已合并到 HEAD
       let merged = typeof thread.mergedAt === "string" && thread.mergedAt !== "";
       if (!merged) {
@@ -2726,6 +2762,34 @@ export class ProjectsService extends TypertRemoteService {
         unpushedCommits:
           unpushed.code === 0 ? Number(String(unpushed.stdout).trim() || "0") : Number.NaN,
       });
+      const worktree = typeof thread.worktree === "string" ? thread.worktree : "";
+      if (!verdict.ok) {
+        candidates.push({ branch, ok: false, reason: verdict.reason });
+        continue;
+      }
+      // ④ worktree 默认**保留**：git 的 status 干净不代表没有 ignored 文件（.env / 模型缓存），
+      // 删掉是不可逆的。只有调用方显式 removeWorktrees:true 且确认没有 ignored 文件才删。
+      if (worktree !== "") {
+        if (options?.removeWorktrees !== true) {
+          candidates.push({ branch, ok: false, reason: "worktree-kept" });
+          continue;
+        }
+        const status = await runGit(["status", "--porcelain", "--ignored"], worktree);
+        const dirty = status.code !== 0 || String(status.stdout ?? "").trim() !== "";
+        if (dirty) {
+          candidates.push({ branch, ok: false, reason: "worktree-not-empty" });
+          continue;
+        }
+        if (!dryRun) {
+          const removed = await runGit(["worktree", "remove", worktree], repoRoot);
+          if (removed.code !== 0) {
+            candidates.push({ branch, ok: false, reason: "worktree-remove-failed" });
+            continue;
+          }
+          store.setThreadWorktree(thread.sessionId, { worktree: null });
+          store.save();
+        }
+      }
       candidates.push({ branch, ok: verdict.ok, reason: verdict.reason });
     }
 
@@ -3949,6 +4013,11 @@ export class ProjectsService extends TypertRemoteService {
    */
   async threadStates() {
     const store = this.requireStore();
+    const archivedIds = new Set(
+      Array.isArray(this.workspaceRegistry?.archivedSessionIds)
+        ? this.workspaceRegistry.archivedSessionIds.map(String)
+        : [],
+    );
     /** @type {any[]} */
     const out = [];
     for (const project of store.listProjects()) {
@@ -3966,12 +4035,20 @@ export class ProjectsService extends TypertRemoteService {
         const sessionId = String(thread?.sessionId ?? "");
         if (sessionId === "") continue;
         const liveState = live.states.get(sessionId);
-        const pending = Array.isArray(liveState?.pendingInput) ? liveState.pendingInput.length : 0;
+        const pendingInput = Array.isArray(liveState?.pendingInput)
+          ? liveState.pendingInput.map(String)
+          : [];
         const view = mergeRecord(this.views.get(sessionId), thread);
-        const state = deriveState({
-          ...view,
-          awaitingUser: pending > 0 ? true : view.awaitingUser,
-        });
+        const hostArchived = archivedIds.has(sessionId);
+        const running =
+          resolveLiveRunning(view, liveState?.running) ||
+          (liveState === undefined && view.state === "working");
+        // 与 buildThreadRow 同一口径：通知器不能对"宿主已归档/正在跑"给出另一个状态
+        const record =
+          !hostArchived && thread.state === "archived" ? { ...thread, state: "idle" } : thread;
+        const state = hostArchived
+          ? "archived"
+          : settleState({ view, record, running, pendingInput });
         rows.push({ sessionId, state });
       }
       out.push({ projectId: project.id, notifyPrefs: project.notifyPrefs ?? {}, rows });

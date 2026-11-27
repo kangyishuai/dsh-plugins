@@ -205,14 +205,19 @@ describe("审查 P2（第五批）：删除项目的事务顺序", () => {
   it("manifest 先写、内容搬完再删记录；失败路径有回滚", () => {
     const start = serviceSource.indexOf("  async deleteProject(");
     assert.ok(start >= 0);
-    const region = serviceSource.slice(start, start + 6000);
+    const region = serviceSource.slice(start, start + 7000);
     const manifestAt = region.indexOf("manifest(false)");
-    const moveAt = region.indexOf("renameSync(preview.contentDir");
+    const moveAt = region.indexOf("moveInto(preview.contentDir");
     const removeAt = region.indexOf("store.removeProject(id)");
     assert.ok(manifestAt > 0 && moveAt > manifestAt, "manifest 必须在搬内容之前");
     assert.ok(removeAt > moveAt, "删记录必须在内容搬完之后");
-    assert.match(region, /rmSync\(trashDir/u); // 两条失败路径都清理回收站残留
+    assert.match(region, /rmSync\(trashDir/u); // 失败路径清理回收站残留
     assert.match(region, /renameSync\(`\$\{trashDir\}\/content`, preview\.contentDir\)/u);
+    // 无目录项目的 workspaces 目录同样是插件资产：进回收站、失败时一起回滚
+    assert.match(region, /moveInto\(preview\.workspaceDir/u);
+    assert.match(region, /renameSync\(`\$\{trashDir\}\/workspace`, preview\.workspaceDir\)/u);
+    // 事务里 detachSession 只跑一次（以前复制粘贴成两遍）
+    assert.equal(region.split("this.detachSession(thread.sessionId)").length - 1, 1);
   });
 });
 
@@ -225,11 +230,12 @@ describe("最终自查补漏", () => {
     assert.doesNotMatch(region, /project\.dirs\[0\]/u);
   });
 
-  it("归档清理结果写审计（不再无声删分支）", () => {
+  it("归档只做元数据操作：不删 worktree/分支（删除不可逆，可恢复语义要成立）", () => {
     const region = methodRegion(serviceSource, "archiveProject");
-    assert.match(region, /project\/archive-cleanup-failed/u);
+    assert.doesNotMatch(region, /cleanupBranches\(/u);
     assert.match(region, /project\/archived/u);
-    assert.match(region, /cleanup \?\? null/u);
+    assert.match(region, /skipped-non-destructive/u);
+    assert.match(region, /cleanup: null/u);
   });
 
   it("详情页只在从未加载时显示整页 loading（静默刷新不换掉内容）", () => {
@@ -252,5 +258,69 @@ describe("剩余审查项", () => {
     const region = serviceSource.slice(start, start + 4000);
     assert.match(region, /const artifactRefs = store\.listArtifactRefs\(projectId\)/u);
     assert.doesNotMatch(region, /row\.artifacts = store\s*\n?\s*\.listArtifactRefs/u);
+  });
+});
+
+describe("第二轮独立复审修复（P0/P1）", () => {
+  const executeSource = readFileSync(join(here, "..", "lib", "execute.js"), "utf8");
+
+  it("审批合并与 UI 用同一个仓库解析（线程 worktree 优先）与同一套 assessMergePr", () => {
+    assert.match(executeSource, /pickRepoRoot\(/u);
+    const mergeStart = executeSource.indexOf('if (approval.action === "merge") {');
+    const mergeRegion = executeSource.slice(mergeStart, mergeStart + 2500);
+    assert.match(mergeRegion, /pickRepoRoot\(/u, "合并仓库必须从线程 worktree 解析");
+    assert.doesNotMatch(mergeRegion, /project\.dirs\[0\]/u);
+    // 合并执行分支（不是上面解析仓库那一小段）必须共用 assessMergePr
+    const execStart = executeSource.indexOf("// merge：走 gh pr merge");
+    assert.ok(execStart >= 0);
+    const execRegion = executeSource.slice(execStart, execStart + 4200);
+    assert.match(execRegion, /assessMergePr\(/u, "审批路径必须共用改动量/CI/批准判据");
+    assert.match(execRegion, /additions,deletions,changedFiles/u);
+    // 不再读不存在的 policy.danger.merge（注释里提到是可以的，读法不行）
+    assert.doesNotMatch(executeSource, /policy\?\.danger\?\.merge|policy\.danger\?\.merge/u);
+  });
+
+  it("delete-project 审批 await 真实结果，失败不能报 executed", () => {
+    const start = executeSource.indexOf('approval.action === "delete-project"');
+    assert.ok(start >= 0);
+    const region = executeSource.slice(start, start + 1600);
+    assert.match(region, /= await deleteProject\(/u);
+    assert.match(region, /executed: false/u);
+  });
+
+  it("直推保护分支在执行前也做 refname 校验（不只 planCommand）", () => {
+    const start = executeSource.indexOf('approval.action === "push-protected-branch"');
+    assert.ok(start >= 0);
+    const region = executeSource.slice(start, start + 1200);
+    assert.match(region, /checkSafePushRef\(/u);
+    assert.doesNotMatch(region, /dirs\?\.\[0\]/u);
+  });
+
+  it("归档钩子（宿主 session-archived）也查 threadBusy，不删在跑会话的 worktree", () => {
+    const region = methodRegion(serviceSource, "onSessionArchived");
+    assert.match(region, /liveSessionFacts\(/u);
+    assert.match(region, /this\.threadBusy\(/u);
+    assert.match(region, /worktree\/reclaim-skipped/u);
+  });
+
+  it("threadStates 与 buildThreadRow 同口径（宿主 archived/running/pending）", () => {
+    const region = methodRegion(serviceSource, "threadStates");
+    assert.match(region, /archivedIds/u);
+    assert.match(region, /resolveLiveRunning\(/u);
+    assert.match(region, /settleState\(/u);
+  });
+
+  it("回收站条目拒绝 '.'（join 后就是回收站根）", () => {
+    const start = serviceSource.indexOf("  deleteTrashEntry(");
+    assert.ok(start >= 0);
+    const region = serviceSource.slice(start, start + 900);
+    assert.match(region, /entryId === "\."/u);
+  });
+
+  it("mergePr 先判全部门禁再 pr ready（草稿转正不再是失败前的副作用）", () => {
+    const region = methodRegion(serviceSource, "mergePr");
+    const preAt = region.indexOf("preDraft = assessMergePr(");
+    const readyAt = region.indexOf('"pr", "ready"');
+    assert.ok(preAt > 0 && readyAt > preAt, "必须先用非草稿副本预判其余门禁");
   });
 });
