@@ -1,6 +1,7 @@
 {
   "nextStep": {
     "card.aria": "Next-step suggestion",
+    "card.expired": "Earlier turn",
     "summary.expand": "Show more",
     "summary.collapse": "Show less",
     "pill.aria": "Send: {label}",
@@ -12,6 +13,7 @@
     "error.missing": "That suggestion is no longer available",
     "error.disabled": "The plugin is disabled",
     "error.failed": "Something went wrong. Try again.",
+    "error.aborted": "Generation timed out or was cancelled. Try again.",
     "error.send": "Could not fill the composer",
     "settings.title": "Next-step suggestions",
     "settings.desc": "Judges whether a turn is worth continuing; when it is, adds a status summary, a question and 1–2 concrete next steps (one extra model call).",

@@ -9,20 +9,29 @@ import { isCardTier } from "./scheme.js";
 /** 设置文件名（位于数据根下，与 dsh-input-prediction 的落盘方式一致）。 */
 export const SETTINGS_FILE = "next-step.settings.json";
 
-/** 当前设置结构版本：v2 起有 schemaVersion / cardThreshold / telemetry。 */
-export const SETTINGS_SCHEMA_VERSION = 2;
+/** 当前设置结构版本：v2 起有 schemaVersion / cardThreshold / telemetry；v3 调低预算默认值。 */
+export const SETTINGS_SCHEMA_VERSION = 3;
 
 /** v1 时代的 `maxCardsPerSession` 默认值（迁移时只动这个值，见 migrateSettings）。 */
 export const LEGACY_MAX_CARDS = 30;
 
-/** 默认设置：卡片开、幽灵关、出卡档位 balanced、每会话最多 120 张卡、采集开。 */
+/** v2 时代的 `maxCardsPerSession` 默认值（v3 起默认 60；等于 120 的旧文件跟着迁移）。 */
+export const LEGACY_MAX_CARDS_V2 = 120;
+
+/**
+ * 默认设置：卡片开、幽灵关、出卡档位 balanced、每会话最多 60 张卡、采集开。
+ *
+ * 预算默认值为什么是 60（AUD-NS-02）：真实 14 天数据里单会话峰值 80 张、≥20 张的 23 个会话
+ * 占了全部卡片的 82%，而 120 这个上限从来没有被碰到（budget 闸 0 命中）——旋钮没人调，
+ * 默认值就决定了实际体验。60 只裁掉最长会话的尾部，配合「旧卡折叠成一行」一起收噪音。
+ */
 export const DEFAULT_SETTINGS = Object.freeze({
   schemaVersion: SETTINGS_SCHEMA_VERSION,
   enabled: true,
   card: true,
   ghost: false,
   cardThreshold: "could",
-  maxCardsPerSession: 120,
+  maxCardsPerSession: 60,
   pauseUntil: 0,
   timeoutMs: 20000,
   maxTokens: 500,
@@ -94,12 +103,14 @@ export function normalizeSettings(raw) {
 }
 
 /**
- * v1 → v2 迁移（纯函数，便于单测）。
+ * 旧版设置 → 当前版本（纯函数，便于单测）。
  *
- * 只做两件事，且都不覆盖用户的显式选择：
- * 1. 文件没有 `schemaVersion` 时补上版本号（一次性写回，之后不再判断）；
- * 2. `maxCardsPerSession` **恰好等于 v1 默认值 30** 时抬到新的默认 120。
- *    显式写过 `schemaVersion: 2` 的文件即使值是 30 也不动——那说明是用户自己设的。
+ * 原则：**只迁移「恰好等于旧默认值」的字段**，用户显式设过的值一律不动。
+ * 1. 文件没有 `schemaVersion`（v1）：一次性补上版本号并写回；
+ *    `maxCardsPerSession` 恰好是 v1 默认 30 时换成当前默认值。
+ * 2. `schemaVersion: 2`（v2 时代）：`maxCardsPerSession` 恰好是 v2 默认 120 时换成当前默认值
+ *    （60，见 DEFAULT_SETTINGS 的注释）；其它值（含用户显式设的 120 之外的值）不动。
+ * 3. 已是当前版本：只做规整，不迁移。
  * @param {unknown} raw 文件内容
  * @returns {{ settings: typeof DEFAULT_SETTINGS, migrated: boolean }}
  */
@@ -111,7 +122,14 @@ export function migrateSettings(raw) {
   }
   /** @type {any} */
   const patched = { ...input };
-  if (patched.maxCardsPerSession === LEGACY_MAX_CARDS) {
+  const from =
+    Number.isSafeInteger(input.schemaVersion) && /** @type {number} */ (input.schemaVersion) >= 1
+      ? /** @type {number} */ (input.schemaVersion)
+      : 1;
+  if (from < 2 && patched.maxCardsPerSession === LEGACY_MAX_CARDS) {
+    patched.maxCardsPerSession = DEFAULT_SETTINGS.maxCardsPerSession;
+  }
+  if (from === 2 && patched.maxCardsPerSession === LEGACY_MAX_CARDS_V2) {
     patched.maxCardsPerSession = DEFAULT_SETTINGS.maxCardsPerSession;
   }
   return { settings: normalizeSettings(patched), migrated: true };

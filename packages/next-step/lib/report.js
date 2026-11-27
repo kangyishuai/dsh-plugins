@@ -230,14 +230,19 @@ export function summarize(events) {
       bump(byTier, String(turn.tier ?? "unknown"), isClicked);
       bump(byOptionCount, String(Array.isArray(cand.opts) ? cand.opts.length : 0), isClicked);
       bump(byPromptVersion, String(turn.pv ?? 0), isClicked);
-      if (action !== undefined && action.kind === "clicked" && Number.isInteger(action.index)) {
-        bump(byIndex, String(action.index), isClicked);
-      }
       const opts = Array.isArray(cand.opts) ? cand.opts : [];
-      const clickIndex = action !== undefined && Number.isInteger(action.index) ? action.index : -1;
+      const clickIndex =
+        action !== undefined && action.kind === "clicked" && Number.isInteger(action.index)
+          ? action.index
+          : -1;
       for (let index = 0; index < opts.length; index += 1) {
+        const hit = clickIndex === index;
+        // 分母 = 该位置被**展示**的次数，点击率才是 clicked/n。
+        // 早先只在点击时 bump（n 恒等于点击次数），于是 `second-option-useless` 要求的 n>=20
+        // 结构上永远达不到——真实数据里第二粒 0/72 点击，结论永远报不出来（AUD-NS-03）。
+        bump(byIndex, String(index), hit);
         const labelLen = Number(opts[index]?.len ?? 0);
-        bump(byLabelBucket, labelBucketOf(labelLen), isClicked && clickIndex === index);
+        bump(byLabelBucket, labelBucketOf(labelLen), hit);
       }
     } else {
       suppressed += 1;

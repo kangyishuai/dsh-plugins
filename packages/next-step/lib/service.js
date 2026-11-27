@@ -30,10 +30,8 @@ import { buildIdentity } from "./build-info.js";
 import {
   CARD_RECORD,
   DECISION_RECORD,
-  isCardData,
   isCardDataV2,
   REVEAL_RECORD,
-  readCard,
   resolveVisibility,
 } from "./card-data.js";
 import {
@@ -48,13 +46,14 @@ import {
   sidOf,
   turnEvent,
 } from "./events.js";
+import { createFollowupTracker } from "./followup.js";
 import { cheapSkipReason } from "./gates.js";
+import { createInflightRegistry } from "./inflight.js";
 import { nextStepProjection } from "./projection.js";
 import {
   buildMessages,
   buildRepairMessage,
   buildSystemPrompt,
-  concreteTokens,
   groundableText,
   hasContext,
   identityTokens,
@@ -67,8 +66,11 @@ import {
 } from "./prompt.js";
 import { shouldSkipForQueue } from "./queue-gate.js";
 import { parseEvents, renderMarkdown, summarize, verdicts, writeReport } from "./report.js";
-import { PROMPT_VERSION, SCHEME, shouldShow } from "./scheme.js";
+import { PROMPT_VERSION, SCHEME } from "./scheme.js";
+import { foldSessionRecords } from "./session-records.js";
 import { DEFAULT_SETTINGS, loadSettingsWithMeta, saveSettings } from "./settings.js";
+import { endKindOf, turnEndDisposition } from "./turn-dispatch.js";
+import { planCardWrite } from "./write-plan.js";
 
 /**
  * 与 session-rewind 相同的原因：运行时不支持装饰器语法时，用命令式方式登记 Remote 方法。
@@ -171,32 +173,15 @@ function queuedCountOf(ctx, sessionId) {
 
 /**
  * 读会话日志里的卡片、决策与揭示记录（全量，用于预算与去重；渲染走投影，不读这里）。
- * 卡片一律经 `readCard` 归一化（旧记录补 value/shown/tier/promptVersion 默认值）。
+ * 折叠逻辑本身在 `session-records.js`（纯函数、有单测），这里只把宿主 session 适配成事件数组。
  * @param {any} session
  * @returns {{ cards: Map<number, any>, decisions: Map<number, any>, reveals: Map<number, true> }}
  */
 function scanSession(session) {
-  /** @type {Map<number, any>} */
-  const cards = new Map();
-  /** @type {Map<number, any>} */
-  const decisions = new Map();
-  /** @type {Map<number, true>} */
-  const reveals = new Map();
   let events = [];
   if (typeof session?.snapshotEvents === "function") events = session.snapshotEvents();
   else if (Array.isArray(session?.log)) events = session.log;
-  for (const event of Array.isArray(events) ? events : []) {
-    const record = pluginRecordOf(event);
-    if (record === undefined) continue;
-    if (record.type === CARD_RECORD && isCardData(record.data)) {
-      if (!cards.has(record.data.turn)) cards.set(record.data.turn, readCard(record.data));
-    } else if (record.type === DECISION_RECORD && Number.isSafeInteger(record.data?.turn)) {
-      if (!decisions.has(record.data.turn)) decisions.set(record.data.turn, record.data);
-    } else if (record.type === REVEAL_RECORD && Number.isSafeInteger(record.data?.turn)) {
-      reveals.set(record.data.turn, true);
-    }
-  }
-  return { cards, decisions, reveals };
+  return foldSessionRecords(Array.isArray(events) ? events : [], pluginRecordOf);
 }
 
 /**
@@ -307,7 +292,7 @@ export class NextStepService extends TypertRemoteService {
     this.dataRoot = resolveDataRoot(this.config);
     /**
      * @type {{
-     *   generated: number, hidden: number, failed: number, aborted: number,
+     *   generated: number, hidden: number, superseded: number, failed: number, aborted: number,
      *   skipped: number, acted: number, dismissed: number, revealed: number, impressions: number,
      * }}
      */
@@ -315,6 +300,9 @@ export class NextStepService extends TypertRemoteService {
       generated: 0,
       // 生成成功但被档位抑制（没有显示）的回合数
       hidden: 0,
+      // 生成跑完时这一轮已经翻过去了（用户在途时发了下一条）：候选以 shown:false 落库。
+      // 单独计数是为了让「不丢 token」这条改动的效果可观测（旧的 aborted/cancelled 会明显下降）。
+      superseded: 0,
       failed: 0,
       // 生成被中止（超时/取消）。单独计数：中止既不写会话日志、原来也不计数，
       // 导致「卡片没出来」在诊断里完全无痕（见 abort-reason.js 的说明）。
@@ -333,8 +321,11 @@ export class NextStepService extends TypertRemoteService {
      * @type {{ kind: string, reason: string, at: number } | null}
      */
     this.lastSkip = null;
-    /** 每会话在途生成（abort 用）。 @type {Map<string, AbortController>} */
-    this.inflight = new Map();
+    /**
+     * 每会话在途生成的登记簿（纯逻辑，见 inflight.js）：
+     * `turn/start` 只标记 superseded、不 abort，让已花的 token 变成 `shown:false` 候选。
+     */
+    this.inflight = createInflightRegistry();
     /** 设置缓存（1s TTL），使「改文件即生效」成立又不必每次读盘。 */
     this.settingsCache = { at: 0, value: /** @type {any} */ (null) };
     /** 事件日志（惰性创建：需要知道包版本）。**缓存 promise**，避免并发创建写两条 meta。 @type {any} */
@@ -343,12 +334,37 @@ export class NextStepService extends TypertRemoteService {
     this.eventLogPromise = null;
     /** 首次写入前确保 meta 已经落盘的 promise。 @type {Promise<unknown> | null} */
     this.metaReady = null;
-    /** 待追踪的卡片（下一次用户消息到来时写 followup）。 @type {Map<string, { turn: number, labels: string[], at: number }>} */
-    this.pendingFollowup = new Map();
+    /**
+     * 待追踪的卡片（下一次用户消息到来时写 followup）；三条收尾路径 + 会话级上限见 followup.js。
+     * 有卡在场的会话最多 32 个、单条最多留 15 分钟，到期按「用户没再说话」结算。
+     */
+    this.followups = createFollowupTracker({ now: () => Date.now() });
     /** 已记录的曝光（sid:turn），宿主侧去重。 @type {Set<string>} */
     this.impressionsSeen = new Set();
     this.installProjection();
     this.installListener();
+    this.installFollowupSweep();
+  }
+
+  /**
+   * TTL 扫描：会话切走在宿主里没有事件可听，所以「用户看完就走了」只能靠定时兜底结算。
+   * 用 unref 的 interval，不拖住宿主/测试进程退出（与 dsh-projects 的计时器同一做法）。
+   * @returns {void}
+   */
+  installFollowupSweep() {
+    // 必须用 `this.ctx.effect(...)` 的**方法调用**形式：cordis 的 effect 内部依赖 `this`，
+    // 先解构出函数再调用会丢掉上下文（installProjection 里也是同样的写法）。
+    if (this.ctx === null || typeof this.ctx?.effect !== "function") return;
+    try {
+      this.ctx.effect(() => {
+        const timer = setInterval(() => this.flushExpiredFollowups(), 60_000);
+        if (typeof timer?.unref === "function") timer.unref();
+        return () => clearInterval(timer);
+      }, "next-step: followup ttl");
+    } catch (error) {
+      // 降级：没有定时器时 TTL 只在下一次会话事件时惰性结算。
+      this.warn("cannot install followup sweep", error);
+    }
   }
 
   /** 注册会话投影（失败只降级：卡片仍落库，只是界面读不到）。 */
@@ -388,12 +404,15 @@ export class NextStepService extends TypertRemoteService {
    */
   handleSessionEvent(session, event) {
     if (typeof session?.id !== "string") return;
-    // 新一轮一旦开始，上一轮的生成就没有意义了（省一次请求、也避免把过期卡写进日志）。
+    // 新一轮开始了：**不再 abort** 在途生成，只把它标记成 superseded。
+    // 旧行为是立刻取消 → 14 天里 322 次「被下一轮取消」，已花的 token 全丢（AUD-NS-01）。
+    // 现在生成跑完后以 `shown:false` 落库：不进对话流、不重复出卡，但候选留下了。
     if (event?.type === "turn/start") {
-      // 只中止上一轮的在途生成。**不要**在这里收尾 followup：宿主的顺序是
-      // `turn/start` 先于 `user/message`（冒烟实测），在此清掉 pending 就永远记不到
-      // 「用户自己打了下一条」——而那正是最重要的隐式负反馈。
-      this.abortInflight(session.id);
+      // 过期 followup 顺手惰性结算一次（没有定时器时的兜底；幂等，不会重复写）。
+      this.flushExpiredFollowups();
+      this.inflight.supersede(session.id);
+      // **不要**在这里收尾 followup：宿主的顺序是 `turn/start` 先于 `user/message`（冒烟实测），
+      // 在此清掉 pending 就永远记不到「用户自己打了下一条」——而那正是最重要的隐式负反馈。
       return;
     }
     if (event?.type === "user/message") {
@@ -401,12 +420,20 @@ export class NextStepService extends TypertRemoteService {
       return;
     }
     if (event?.type !== "turn/end") return;
-    if (event?.data?.reason?.kind !== "completed") return;
-    const turn = event?.data?.turn;
-    if (!Number.isSafeInteger(turn)) return;
-    if (isSubagentSession(session)) return;
+    // 上一张卡的 pending 到这个回合结束都还没等到用户消息 → 结算成 typed:false
+    // （真实续写走的是同一回合里的 user/message，早已被 consume 掉）。
+    this.flushFollowupsBefore(session.id, event?.data?.turn);
+    // AUD-NS-05：completed 的过滤下移到便宜闸之后。非 completed 的回合也进流程，
+    // 命中 `turn-error` 并落一条 turn 事件（不调模型），闸门分布才可观测。
+    const disposition = turnEndDisposition({
+      subagent: isSubagentSession(session),
+      turn: event?.data?.turn,
+      reasonKind: event?.data?.reason?.kind,
+    });
+    if (!disposition.consider) return;
     // 不阻塞事件分发：生成是异步的，失败静默。
-    void this.maybeGenerate(session, turn, event);
+    // endKind 用归一化后的值（缺失/非字符串 → "unknown" → 命中 turn-error，绝不生成卡）。
+    void this.maybeGenerate(session, disposition.turn, event, disposition.endKind);
   }
 
   /**
@@ -417,31 +444,54 @@ export class NextStepService extends TypertRemoteService {
    * @param {any} event
    */
   handleUserMessage(session, event) {
-    const pending = this.pendingFollowup.get(session.id);
-    if (pending === undefined) return;
+    if (!this.followups.has(session.id)) return;
     const kind = event?.data?.source?.kind;
     if (kind !== undefined && kind !== "user") return;
     const text = textOf(/** @type {any} */ (event?.data)) || "";
-    const tokens = concreteTokens(text);
-    let overlap = 0;
-    for (const label of pending.labels) {
-      let shared = 0;
-      for (const token of concreteTokens(label)) if (tokens.has(token)) shared += 1;
-      if (shared > overlap) overlap = shared;
-    }
-    const delayMs = Math.max(0, Date.now() - pending.at);
-    this.pendingFollowup.delete(session.id);
+    const settlement = this.followups.consume(session.id, { text, at: Date.now() });
+    this.writeFollowup(settlement);
+  }
+
+  /**
+   * 写一条 followup 事件（收尾路径共用；settlement 为 undefined 时什么都不做）。
+   * @param {import("./followup.js").FollowupSettlement | undefined} settlement
+   * @returns {void}
+   */
+  writeFollowup(settlement) {
+    if (settlement === undefined) return;
     void this.writeEvent(
       followupEvent({
-        at: Date.now(),
-        sid: sidOf(session.id),
-        turn: pending.turn,
-        typed: text.trim() !== "",
-        delayMs,
-        textChars: text.trim().length,
-        overlap,
+        at: settlement.at,
+        sid: sidOf(settlement.sessionId),
+        turn: settlement.turn,
+        typed: settlement.typed,
+        delayMs: settlement.delayMs,
+        textChars: settlement.textChars,
+        overlap: settlement.overlap,
       }),
     );
+  }
+
+  /**
+   * 把某个会话里「更早回合」的 pending 结算成 typed:false（下一轮已经结束、用户没接话）。
+   * @param {string} sessionId
+   * @param {unknown} turn 当前回合号
+   * @returns {void}
+   */
+  flushFollowupsBefore(sessionId, turn) {
+    const pending = this.followups.get(sessionId);
+    if (pending === undefined) return;
+    if (!Number.isSafeInteger(turn)) return;
+    if (pending.turn >= /** @type {number} */ (turn)) return;
+    this.closeFollowup(sessionId, { typed: false });
+  }
+
+  /**
+   * TTL 扫描：到期还没等到用户消息的 pending 结算成 typed:false。
+   * @returns {void}
+   */
+  flushExpiredFollowups() {
+    for (const settlement of this.followups.expire(Date.now())) this.writeFollowup(settlement);
   }
 
   /**
@@ -452,39 +502,26 @@ export class NextStepService extends TypertRemoteService {
    * @param {number} at
    */
   rememberPending(sessionId, turn, options, at) {
-    /** @type {string[]} */
-    const labels = [];
-    for (const option of Array.isArray(options) ? options : []) {
-      if (typeof option?.label === "string" && option.label !== "") labels.push(option.label);
-    }
-    if (labels.length === 0) return;
-    this.pendingFollowup.set(sessionId, {
+    const labels = (Array.isArray(options) ? options : []).map(
+      (/** @type {any} */ option) => option?.label,
+    );
+    const { evicted } = this.followups.remember(sessionId, {
       turn,
       labels,
       at: Number.isFinite(at) && at > 0 ? at : Date.now(),
     });
+    // 会话级上限挤出的旧条目也按「用户没再说话」结算，不丢负反馈。
+    for (const settlement of evicted) this.writeFollowup(settlement);
   }
 
   /**
-   * 收尾一条待追踪的 followup（没有用户消息就到了下一轮，或会话被切走）。
+   * 收尾一条待追踪的 followup（下一轮已结束 / TTL 到期 / 会话级上限挤出都走这个幂等入口）。
+   * 会话切走在宿主里没有可听的事件，只能靠 TTL 兜底（见 README「已知限制」）。
    * @param {string} sessionId
    * @param {{ typed: boolean }} input
    */
   closeFollowup(sessionId, input) {
-    const pending = this.pendingFollowup.get(sessionId);
-    if (pending === undefined) return;
-    this.pendingFollowup.delete(sessionId);
-    void this.writeEvent(
-      followupEvent({
-        at: Date.now(),
-        sid: sidOf(sessionId),
-        turn: pending.turn,
-        typed: input.typed,
-        delayMs: Math.max(0, Date.now() - pending.at),
-        textChars: 0,
-        overlap: 0,
-      }),
-    );
+    this.writeFollowup(this.followups.close(sessionId, { typed: input.typed, at: Date.now() }));
   }
 
   /**
@@ -493,9 +530,10 @@ export class NextStepService extends TypertRemoteService {
    * @param {any} session
    * @param {number} turn
    * @param {any} event
+   * @param {string} [endKindOverride] 已归一化的结束原因（缺省时从 event 里取并归一化）
    * @returns {Promise<void>}
    */
-  async maybeGenerate(session, turn, event) {
+  async maybeGenerate(session, turn, event, endKindOverride) {
     const settings = await this.currentSettings();
     // 关闭 = 不发请求，也不留事件（没有请求就没有可复盘的东西）
     if (!settings.enabled || !settings.card) return;
@@ -513,7 +551,12 @@ export class NextStepService extends TypertRemoteService {
       cardsForTurn: cards.has(turn),
       shownCardsInSession: shownCountOf(cards),
       maxCards: settings.maxCardsPerSession,
-      endKind: event?.data?.reason?.kind,
+      // 归一化后的回合结束原因（见 turn-dispatch.endKindOf）：
+      // 缺失/非字符串一律是 "unknown"，必然命中 turn-error 而不是漏过闸去调模型。
+      endKind:
+        typeof endKindOverride === "string" && endKindOverride !== ""
+          ? endKindOverride
+          : endKindOf(event?.data?.reason?.kind),
       answerChars: stats.answerChars,
       toolCalls: stats.toolCalls,
       contextChars: context.transcript.length,
@@ -565,9 +608,10 @@ export class NextStepService extends TypertRemoteService {
       this.markSkip("no-context", "no conversation content to base a card on");
       return { ok: false, reason: "no-context" };
     }
+    // 同一会话又要起一次新生成：旧的那次已经没有任何价值，取消掉（登记簿负责 abort + 注销）。
     if (this.inflight.has(sessionId)) this.abortInflight(sessionId);
     const controller = new AbortController();
-    this.inflight.set(sessionId, controller);
+    this.inflight.begin(sessionId, turn, controller);
     const timer = setTimeout(
       () => controller.abort(new Error(TIMEOUT_MESSAGE)),
       settings.timeoutMs,
@@ -583,8 +627,10 @@ export class NextStepService extends TypertRemoteService {
         );
         return { ok: false, reason: "aborted" };
       }
-      // 同一会话又起了新的一次生成：这次被后来者取代，算取消而不是超时。
-      if (this.inflight.get(sessionId) !== controller) {
+      // 同一会话又起了新的一次生成（登记簿已被替换、自己也被 abort）：算取消而不是超时。
+      // 注意：`turn/start` 走的是 supersede（不 abort），不会命中这里——那种情况要继续往下走，
+      // 把已经算出来的候选以 `shown:false` 落库（AUD-NS-01）。
+      if (!this.inflight.isCurrent(sessionId, controller)) {
         this.markAbort(undefined, settings.timeoutMs);
         await this.writeErrorEvent(sid, turn, "cancelled");
         return { ok: false, reason: "aborted" };
@@ -603,8 +649,17 @@ export class NextStepService extends TypertRemoteService {
         return { ok: false, reason: "schema" };
       }
       const value = result.suggestion.value;
-      // 用户明确要卡（补生成）时不看档位；自动路径按档位冻结 shown。
-      const shown = options.force === true ? true : shouldShow(value, settings.cardThreshold);
+      // 三个输入共同决定 shown（见 write-plan.js）：
+      // - 用户明确要卡（补生成）时不看档位；
+      // - 自动路径按档位冻结；
+      // - 这一轮已经被更新的回合取代时一律 shown:false（候选落库、不进对话流、不重复出卡）。
+      const plan = planCardWrite({
+        value,
+        tier: settings.cardThreshold,
+        force: options.force === true,
+        superseded: this.inflight.isSuperseded(sessionId, controller),
+      });
+      const shown = plan.shown;
       /** @type {any} */
       const card = {
         turn,
@@ -635,6 +690,10 @@ export class NextStepService extends TypertRemoteService {
         this.rememberPending(sessionId, turn, card.options, card.createdAt);
       } else {
         this.counters.hidden += 1;
+        if (plan.gate === "superseded") {
+          this.counters.superseded += 1;
+          this.markSuperseded();
+        }
       }
       this.lastError = "";
       await this.writeEvent(
@@ -644,7 +703,7 @@ export class NextStepService extends TypertRemoteService {
           turn,
           tier: settings.cardThreshold,
           feat,
-          gate: "ok",
+          gate: plan.gate,
           cand: {
             value,
             shown,
@@ -693,7 +752,7 @@ export class NextStepService extends TypertRemoteService {
       return { ok: false, reason: "failed" };
     } finally {
       clearTimeout(timer);
-      if (this.inflight.get(sessionId) === controller) this.inflight.delete(sessionId);
+      this.inflight.finish(sessionId, controller);
     }
   }
 
@@ -1036,19 +1095,24 @@ export class NextStepService extends TypertRemoteService {
   }
 
   /**
-   * 中止该会话在途的生成（用户已经做了选择，或又结束了一轮）。
+   * 取消该会话在途的生成（用户已经点了胶囊，或同一会话又要起一次新生成）。
+   * 注意 `turn/start` **不**走这里：那条路径只 `supersede()`，让生成跑完变成 `shown:false` 候选。
    * @param {string} sessionId
    */
   abortInflight(sessionId) {
-    const controller = this.inflight.get(sessionId);
-    if (controller !== undefined) {
-      this.inflight.delete(sessionId);
-      try {
-        controller.abort(new Error("superseded"));
-      } catch (_error) {
-        /* 已 abort */
-      }
-    }
+    this.inflight.cancel(sessionId, new Error("superseded"));
+  }
+
+  /**
+   * 记录一次「生成跑完时这一轮已经翻过去了」：候选以 shown:false 落库，不算失败。
+   * 不碰 skipped / aborted / failed 三个计数（它既不是跳过也不是失败）。
+   */
+  markSuperseded() {
+    this.lastSkip = {
+      kind: "superseded",
+      reason: "the user moved on before the card was ready; kept as a hidden candidate",
+      at: Date.now(),
+    };
   }
 
   /**
@@ -1338,6 +1402,8 @@ export class NextStepService extends TypertRemoteService {
         stats: {
           ...this.counters,
           inflight: this.inflight.size,
+          // 待追踪卡片数（会话级上限 32）：排障时能看出「有卡在等用户下一步」。
+          followupPending: this.followups.size,
           lastError: this.lastError,
           lastSkip: this.lastSkip,
           dataRoot: this.dataRoot,
