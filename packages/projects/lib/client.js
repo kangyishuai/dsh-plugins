@@ -4422,7 +4422,6 @@ window.__ModuleLoader__.load({
                       type: "button",
                       style: styles.secondaryButton,
                       "data-projects-row-delete-cancel": "",
-                      "data-modal-autofocus": "",
                       onClick: () =>
                         setRowDelete({ project: null, impact: null, busy: false, error: "" }),
                     },
@@ -4438,6 +4437,8 @@ window.__ModuleLoader__.load({
                         color: T.danger,
                       },
                       "data-projects-row-delete-confirm": "",
+                      // 约定 §7.4.2：破坏性操作主按钮默认聚焦、回车即执行（与详情页弹窗统一）
+                      "data-modal-autofocus": "",
                       "data-projects-danger": "",
                       disabled: rowDelete.busy,
                       onClick: confirmRowDelete,

@@ -324,3 +324,16 @@ describe("第二轮独立复审修复（P0/P1）", () => {
     assert.ok(preAt > 0 && readyAt > preAt, "必须先用非草稿副本预判其余门禁");
   });
 });
+
+describe("删除确认框默认焦点统一（约定 §7.4.2：主按钮回车即执行）", () => {
+  const clientSource = readFileSync(join(here, "..", "lib", "client.js"), "utf8");
+  it("列表行删除弹窗：焦点在「确认删除」，取消按钮不再抢默认焦点", () => {
+    const cancelStart = clientSource.indexOf('"data-projects-row-delete-cancel": ""');
+    assert.ok(cancelStart >= 0);
+    const cancelRegion = clientSource.slice(Math.max(0, cancelStart - 260), cancelStart + 260);
+    assert.doesNotMatch(cancelRegion, /data-modal-autofocus/u);
+    const confirmStart = clientSource.indexOf('"data-projects-row-delete-confirm": ""');
+    const confirmRegion = clientSource.slice(confirmStart, confirmStart + 320);
+    assert.match(confirmRegion, /data-modal-autofocus/u);
+  });
+});
