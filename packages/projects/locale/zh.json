@@ -241,16 +241,16 @@
     "panel.unread": "{count} 条未读",
     "panel.waiting": "{count} 个在等你",
     "panel.working": "{count} 个在跑",
-    "detail.state.resolved": "待你确认",
+    "detail.state.resolved": "待复核",
     "detail.state.archived": "已归档",
     "detail.pill.waiting-user": "等你",
     "detail.pill.failed": "失败",
     "detail.pill.working": "在跑",
-    "detail.pill.resolved": "待你确认",
+    "detail.pill.resolved": "待复核",
     "detail.pill.idle": "空闲",
     "detail.group.waiting-user": "等你",
     "detail.group.working": "在跑",
-    "detail.group.resolved": "待你确认",
+    "detail.group.resolved": "待复核",
     "detail.group.idle": "空闲",
     "detail.group.archived": "已归档",
     "detail.coordinator": "协调者",
@@ -497,7 +497,7 @@
     "b3.folderWorktreeHint": "merge 在项目目录里跑；push-branch 在线程 worktree 里跑——worktree 继承它所属项目目录的授权。",
     "library.openPanelUnavailable": "打开失败：宿主未提供右栏面板服务（sidebarRight）。",
     "detail.addView": "新增视图",
-    "detail.addViewHint": "把当前筛选条件保存成视图",
+    "detail.addViewHint": "管理视图（可见性 + 已保存的筛选）",
     "detail.settingsOpen": "项目设置",
     "detail.settingsTitle": "项目设置",
     "detail.settingsClose": "关闭设置",
@@ -682,6 +682,8 @@
     "detail.threadTask": "任务：{task}",
     "detail.threadRemovedWithWorktree": "已移除追踪（worktree 仍在磁盘：{path}）",
     "detail.threadPromptFailed": "线程已建，但首条任务没送达：{reason}",
-    "detail.sparkEmpty": "近 7 天无活动"
+    "detail.sparkEmpty": "近 7 天无活动",
+    "detail.threadInputLabel": "给这个线程一个任务",
+    "detail.coordinatorInputLabel": "对协调者说一句话"
   }
 }

@@ -193,6 +193,8 @@ window.__ModuleLoader__.load({
       "detail.tasksNone": "还没有任务清单（模型写 todo 后出现）",
       "detail.tasksCount": "{done}/{total}",
       "detail.steer": "插话",
+      "detail.threadInputLabel": "给这个线程一个任务",
+      "detail.coordinatorInputLabel": "对协调者说一句话",
       "detail.steerPlaceholder": "给这个线程插一句话",
       "detail.steered": "已插话（线程在跑，立即生效）",
       "detail.steeredQueued": "已插话（线程没在跑，宿主会排队）",
@@ -609,7 +611,7 @@ window.__ModuleLoader__.load({
       "detail.settingsOpen": "项目设置",
       "detail.settingsTitle": "项目设置",
       "detail.settingsClose": "关闭设置",
-      "detail.addViewHint": "把当前筛选条件保存成视图",
+      "detail.addViewHint": "管理视图（可见性 + 已保存的筛选）",
       "detail.viewNamePlaceholder": "视图名（例如「在跑」）",
       "detail.viewSave": "保存",
       "detail.viewCancel": "取消",
@@ -677,16 +679,16 @@ window.__ModuleLoader__.load({
       "panel.unread": "{count} 条未读",
       "panel.waiting": "{count} 个在等你",
       "panel.working": "{count} 个在跑",
-      "detail.state.resolved": "待你确认",
+      "detail.state.resolved": "待复核",
       "detail.state.archived": "已归档",
       "detail.pill.waiting-user": "等你",
       "detail.pill.failed": "失败",
       "detail.pill.working": "在跑",
-      "detail.pill.resolved": "待你确认",
+      "detail.pill.resolved": "待复核",
       "detail.pill.idle": "空闲",
       "detail.group.waiting-user": "等你",
       "detail.group.working": "在跑",
-      "detail.group.resolved": "待你确认",
+      "detail.group.resolved": "待复核",
       "detail.group.idle": "空闲",
       "detail.group.archived": "已归档",
       "library.title": "产物库",
@@ -782,6 +784,8 @@ window.__ModuleLoader__.load({
       "detail.tasksNone": "No task list yet (appears once the model writes todos)",
       "detail.tasksCount": "{done}/{total}",
       "detail.steer": "Steer",
+      "detail.threadInputLabel": "Give this thread a task",
+      "detail.coordinatorInputLabel": "Say something to the coordinator",
       "detail.steerPlaceholder": "Send a line to this thread",
       "detail.steered": "Steered (thread running, applied immediately)",
       "detail.steeredQueued": "Steered (thread idle, the host will queue it)",
@@ -1199,7 +1203,7 @@ window.__ModuleLoader__.load({
       "detail.settingsOpen": "Project settings",
       "detail.settingsTitle": "Project settings",
       "detail.settingsClose": "Close settings",
-      "detail.addViewHint": "Save the current filter as a view",
+      "detail.addViewHint": "Manage views (visibility + saved filters)",
       "detail.viewNamePlaceholder": "View name (e.g. Working)",
       "detail.viewSave": "Save",
       "detail.viewCancel": "Cancel",
@@ -3302,6 +3306,7 @@ window.__ModuleLoader__.load({
                   style: styles.input,
                   value: String(form.repoDraft ?? ""),
                   placeholder: text(t, "panel.new.repoPlaceholder"),
+                  "aria-label": text(t, "detail.reposLabel"),
                   "data-projects-new-repo": "",
                   onChange: (/** @type {any} */ event) => patch({ repoDraft: event.target.value }),
                   onKeyDown: (/** @type {any} */ event) => {
@@ -3992,6 +3997,8 @@ window.__ModuleLoader__.load({
           { key: "projects-ui-rules" },
           [
             "[data-projects-panel] button:disabled{opacity:.45;cursor:not-allowed}",
+            "[data-projects-panel] [data-projects-threads],[data-projects-panel] [data-projects-threads] *{box-sizing:border-box}",
+            "[data-projects-panel] [data-projects-threads]{overflow-x:clip}",
             '[data-projects-panel] [role="button"]:focus-visible,[data-projects-panel] button:focus-visible{outline:2px solid var(--dsw-alias-label-primary-bluish,#2f6fed);outline-offset:2px}',
           ].join("\n"),
         ),
@@ -10748,6 +10755,10 @@ window.__ModuleLoader__.load({
                     ? "detail.coordinatorPlaceholder"
                     : "detail.threadPlaceholder",
                 ),
+                "aria-label":
+                  composerTarget === "coordinator"
+                    ? text(t, "detail.coordinatorInputLabel")
+                    : text(t, "detail.threadInputLabel"),
                 "data-projects-thread-input": "",
                 "data-projects-coordinator-input": "",
                 "data-projects-composer-target-value": composerTarget,
@@ -10803,8 +10814,8 @@ window.__ModuleLoader__.load({
                   {
                     type: "button",
                     style: {
-                      width: "26px",
-                      height: "26px",
+                      width: "30px",
+                      height: "30px",
                       borderRadius: "999px",
                       border: "none",
                       background: busy || coordinatorBusy ? T.hover : T.brand,
@@ -10898,8 +10909,8 @@ window.__ModuleLoader__.load({
                 {
                   type: "button",
                   style: {
-                    width: "22px",
-                    height: "22px",
+                    width: "26px",
+                    height: "26px",
                     borderRadius: "999px",
                     border: `1px solid ${T.borderSoft}`,
                     background: "transparent",
@@ -11182,20 +11193,19 @@ window.__ModuleLoader__.load({
                 },
                 glyph("gear", 14),
               ),
-              // Claude 的面板 header 右侧有「+ Add view」；这里先做占位（禁用 + 说明）
+              // Claude 的「+ Add view」在本实现里落到「视图」页签（可见性 + 已保存视图）
               h(
                 "button",
                 {
                   type: "button",
                   style: {
-                    background: "transparent",
-                    border: "none",
-                    color: T.faint,
-                    fontSize: "12px",
-                    padding: "4px 6px",
-                    cursor: "default",
+                    ...styles.iconButton,
+                    width: "26px",
+                    height: "26px",
+                    color: T.dim,
                   },
                   "data-panel-add-view": "",
+                  "aria-label": text(t, "detail.addViewHint"),
                   title: text(t, "detail.addViewHint"),
                   onClick: () => setTab("views"),
                 },
@@ -12127,6 +12137,7 @@ window.__ModuleLoader__.load({
               style: styles.input,
               value: dirDraft,
               placeholder: text(t, "detail.dirPlaceholder"),
+              "aria-label": text(t, "detail.dirLabel"),
               "data-projects-dir-input": "",
               onChange: (/** @type {any} */ event) => setDirDraft(event.target.value),
               onKeyDown: (/** @type {any} */ event) => {

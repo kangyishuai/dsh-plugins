@@ -497,7 +497,7 @@
     "b3.folderWorktreeHint": "merge runs in the project folder; push-branch runs in the thread worktree, which inherits the authorization of the project folder it came from.",
     "library.openPanelUnavailable": "Could not open: the host did not provide the right-side panel service (sidebarRight).",
     "detail.addView": "Add view",
-    "detail.addViewHint": "Save the current filter as a view",
+    "detail.addViewHint": "Manage views (visibility + saved filters)",
     "detail.settingsOpen": "Project settings",
     "detail.settingsTitle": "Project settings",
     "detail.settingsClose": "Close settings",
@@ -682,6 +682,8 @@
     "detail.threadTask": "Task: {task}",
     "detail.threadRemovedWithWorktree": "Tracking removed (worktree still on disk: {path})",
     "detail.threadPromptFailed": "Thread created, but the first task was not delivered: {reason}",
-    "detail.sparkEmpty": "No activity in the last 7 days"
+    "detail.sparkEmpty": "No activity in the last 7 days",
+    "detail.threadInputLabel": "Give this thread a task",
+    "detail.coordinatorInputLabel": "Say something to the coordinator"
   }
 }
