@@ -962,6 +962,7 @@ try {
         welcome: (document.querySelector("[data-projects-welcome-title]")?.textContent || "").trim(),
         status: (document.querySelector("[data-projects-welcome-status]")?.textContent || "").trim(),
         spark: document.querySelectorAll("[data-projects-spark-bar]").length,
+        sparkEmpty: Boolean(document.querySelector("[data-projects-spark-empty]")),
       };
     });
     if (overview?.state && overview.state !== "working" && overview.state !== "idle") break;
@@ -1004,11 +1005,16 @@ try {
     JSON.stringify({ subtitle: overview?.subtitle, text: overview?.subtitleText }),
   );
   add(
-    "Welcome 头 + 状态句 + 7 日迷你图",
+    "Welcome 头 + 状态句 + 7 日迷你图（零数据时显示「无活动」而不是 7 根点线）",
     /(Welcome back|欢迎回来)/u.test(overview?.welcome || "") &&
       (overview?.status || "") !== "" &&
-      overview?.spark === 7,
-    JSON.stringify({ welcome: overview?.welcome, status: overview?.status, spark: overview?.spark }),
+      (overview?.spark === 7 || overview?.sparkEmpty === true),
+    JSON.stringify({
+      welcome: overview?.welcome,
+      status: overview?.status,
+      spark: overview?.spark,
+      sparkEmpty: overview?.sparkEmpty,
+    }),
   );
 
   // —— B2：协调者区（F9/F10/F11/F13）+ 展开面板（U5/U6/U7/F17/F19/F24/F12/F20）+ F21 轮询 ——
@@ -2154,8 +2160,9 @@ try {
   const headAlign = await page.evaluate(() => {
     const head = document.querySelector("[data-projects-detail-head-main]");
     const main = document.querySelector("[data-projects-detail-main]");
-    const pin = document.querySelector("[data-projects-pin]");
-    const menu = document.querySelector("[data-projects-row-menu]");
+    const headMain = document.querySelector("[data-projects-detail-head-main]");
+    const pin = headMain?.querySelector("[data-projects-pin]");
+    const menu = headMain?.querySelector("[data-projects-row-menu]");
     const right = (node) => (node ? node.getBoundingClientRect().right : Number.NaN);
     const width = (node) => (node ? node.getBoundingClientRect().width : Number.NaN);
     return {
