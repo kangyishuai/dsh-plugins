@@ -8598,7 +8598,7 @@ window.__ModuleLoader__.load({
                 paddingTop: "2px",
                 // 给行尾 ⋯ 留位：右侧元信息不能压在菜单按钮下面
                 paddingRight: "26px",
-                maxWidth: "45%",
+                flex: "0 0 auto",
               },
               "data-projects-thread-meta": row.sessionId,
             },
@@ -8611,19 +8611,21 @@ window.__ModuleLoader__.load({
                   ...styles.secondaryButton,
                   padding: "1px 8px",
                   fontSize: "11px",
-                  opacity: threadHover === row.sessionId ? 1 : 0.35,
+                  opacity: threadHover === row.sessionId ? 1 : 0.6,
                   transition: "opacity 120ms ease",
                 },
                 "data-projects-thread-expand": row.sessionId,
+                "aria-label":
+                  expandedThread === row.sessionId
+                    ? text(t, "detail.threadCollapse")
+                    : text(t, "detail.threadExpand"),
                 "data-projects-thread-expanded":
                   expandedThread === row.sessionId ? "true" : "false",
                 "aria-expanded": expandedThread === row.sessionId ? "true" : "false",
                 onClick: () =>
                   setExpandedThread(expandedThread === row.sessionId ? "" : String(row.sessionId)),
               },
-              expandedThread === row.sessionId
-                ? text(t, "detail.threadCollapse")
-                : text(t, "detail.threadExpand"),
+              expandedThread === row.sessionId ? "⌃" : "⌄",
             ),
             h(
               "span",
@@ -11035,7 +11037,14 @@ window.__ModuleLoader__.load({
                 {
                   "data-composer-mic": "",
                   title: text(t, "detail.composerMic"),
-                  style: { display: "inline-flex", color: T.faint },
+                  style: {
+                    display: "inline-flex",
+                    color: T.faint,
+                    width: "24px",
+                    height: "24px",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  },
                 },
                 glyph("mic", 14),
               ),
@@ -11051,6 +11060,7 @@ window.__ModuleLoader__.load({
                       ...styles.secondaryButton,
                       padding: "1px 8px",
                       fontSize: "11.5px",
+                      minHeight: "24px",
                       display: "inline-flex",
                       alignItems: "center",
                       gap: "4px",
@@ -11290,6 +11300,11 @@ window.__ModuleLoader__.load({
                     color: T.dim,
                     fontSize: "14px",
                     padding: "2px 6px",
+                    minWidth: "26px",
+                    minHeight: "26px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
                     cursor: "pointer",
                   },
                   "data-panel-settings-open": "",
@@ -11570,7 +11585,7 @@ window.__ModuleLoader__.load({
                 role: "tablist",
                 "data-panel-settings-nav": "",
               },
-              ...["general", "memory", "environment", "usage", "debug"].map((id) =>
+              ...["general", "memory", "environment"].map((id) =>
                 h(
                   "button",
                   {
@@ -11609,7 +11624,7 @@ window.__ModuleLoader__.load({
               memoryPane,
             ),
             // 环境/调试的分区内容还在宿主设置里（后续批次搬进来）
-            panelPane === "debug"
+            panelPane === "environment"
               ? h(
                   "div",
                   {
@@ -11724,7 +11739,7 @@ window.__ModuleLoader__.load({
             h(RailSection, {
               t: t,
               id: "library",
-              pane: "usage",
+              pane: "environment",
               activePane: panelPane,
               title: text(t, "library.title"),
               collapsible: narrow,
@@ -11754,7 +11769,7 @@ window.__ModuleLoader__.load({
             h(RailSection, {
               t: t,
               id: "routines",
-              pane: "usage",
+              pane: "environment",
               activePane: panelPane,
               title: "定时任务",
               collapsible: narrow,
@@ -12189,7 +12204,7 @@ window.__ModuleLoader__.load({
                 ),
                 // 危险动作开关：本来就是「一行 + 展开」，保留 details 语义
                 h(DangerSwitches, {
-                  pane: "debug",
+                  pane: "environment",
                   activePane: panelPane,
                   t: t,
                   policy: project.policy,
