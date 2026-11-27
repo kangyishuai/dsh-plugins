@@ -1602,7 +1602,8 @@ export function createActions(options) {
      * 丢弃项目：整个目录移进 dataRoot/trash（可恢复）。
      * ADR 0002：默认进回收站、必须显式 confirm、支持 dry-run 且给出影响面、写数据根审计。
      * @param {string} projectId
-     * @param {{ confirm?: boolean, dryRun?: boolean }} [options]
+     * @param {{ confirm?: boolean, dryRun?: boolean, actor?: unknown,
+     *   sessionId?: unknown }} [options]
      * @returns {Promise<Record<string, any>>}
      */
     async dropProject(projectId, options = {}) {

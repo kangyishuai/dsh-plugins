@@ -200,7 +200,7 @@ test("危险操作审计区分来源：agent 带会话 id、user 显式标记、
   const lastAudit = (/** @type {string} */ action) => {
     const rows = store.readAuditRoot().filter((row) => row.action === action);
     assert.ok(rows.length > 0, `缺少审计 ${action}`);
-    return rows.at(-1);
+    return /** @type {Record<string, any>} */ (rows[rows.length - 1]);
   };
 
   // 工具路径：模型发起（actor=agent）+ 会话 id。
