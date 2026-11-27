@@ -1,5 +1,15 @@
 # @kangyishuai/dsh-projects
 
+## 0.10.6
+
+### Patch Changes
+
+- [#336](https://github.com/kangyishuai/dsh-plugins/pull/336) [`68ebbe7`](https://github.com/kangyishuai/dsh-plugins/commit/68ebbe731eaaf3c81954a987f28b9a666e8f5716) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 删除确认框默认焦点统一（按定案 A，遵守 `docs/plugin-conventions.md` §7.4.2）：
+  
+  - 列表行 `⋯ → 删除` 弹窗此前默认聚焦「取消」，与详情页删除弹窗（聚焦「确认删除」）不一致；
+    现在两处都聚焦「确认删除」，打开后回车即执行，取消需 Tab/点击。
+  - 补源码守卫测试，防止两处再次分叉。
+
 ## 0.10.5
 
 ### Patch Changes
