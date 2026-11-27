@@ -2046,11 +2046,23 @@ export class ProjectsService extends TypertRemoteService {
         return { ok: false, reason: "schedule-unavailable" };
       }
       try {
-        await schedule.edit(
+        const edited = await schedule.edit(
           action === "delete"
             ? { id: nextScheduleId, action: "delete" }
             : { id: nextScheduleId, action: "update", patch: planned.hostPatch },
         );
+        // 宿主可能用 {ok:false} 而不是抛错来拒绝；以前会当成功继续改本地记录 → 本地/宿主漂移
+        if (edited && typeof edited === "object" && edited.ok === false) {
+          store.appendAudit({
+            action: "routine/update-failed",
+            projectId: project.id,
+            routineId,
+            reason: `${action}-rejected`,
+            detail: String(edited.reason ?? "").slice(0, 160),
+          });
+          store.save();
+          return { ok: false, reason: "schedule-rejected" };
+        }
       } catch (error) {
         store.appendAudit({
           action: "routine/update-failed",
@@ -2084,6 +2096,17 @@ export class ProjectsService extends TypertRemoteService {
           timing: planned.hostPatch.timing,
           target: { kind: "new", create: { cwd } },
         });
+        if (created && typeof created === "object" && created.ok === false) {
+          store.appendAudit({
+            action: "routine/update-failed",
+            projectId: project.id,
+            routineId,
+            reason: "create-rejected",
+            detail: String(created.reason ?? "").slice(0, 160),
+          });
+          store.save();
+          return { ok: false, reason: "schedule-rejected" };
+        }
         nextScheduleId = String(created?.id ?? "");
       } catch (error) {
         store.appendAudit({
@@ -4009,6 +4032,8 @@ export class ProjectsService extends TypertRemoteService {
     // 否则行摘要里 `diff n/a` 恒真，用户永远看不到「这一线程改了什么」。
     const diffs = await this.diffSummaries(threads);
     const autoRetryEnabled = store.getProject(projectId)?.policy?.autoRetry === true;
+    // 产物引用只取一次：以前每行都 listArtifactRefs（内部 map 克隆），200 行 × 200 产物纯浪费
+    const artifactRefs = store.listArtifactRefs(projectId);
     let dirty = false;
     const rows = threads.map((/** @type {any} */ thread) => {
       const row = this.buildThreadRow(
@@ -4022,8 +4047,7 @@ export class ProjectsService extends TypertRemoteService {
       // 于是产物卡永远不渲染（真机走查发现）。按 source.sessionId 归属，最多 5 条。
       try {
         const sid = String(thread.sessionId ?? "");
-        row.artifacts = store
-          .listArtifactRefs(projectId)
+        row.artifacts = artifactRefs
           .filter((/** @type {any} */ ref) => String(ref?.source?.sessionId ?? "") === sid)
           .slice(0, 5)
           .map((/** @type {any} */ ref) => ({

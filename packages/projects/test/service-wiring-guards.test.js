@@ -237,3 +237,20 @@ describe("最终自查补漏", () => {
     assert.match(raw, /if \(data\.loading && !data\.progress\)/u);
   });
 });
+
+describe("剩余审查项", () => {
+  it("routine 更新：宿主 {ok:false} 也按失败处理（不写本地）", () => {
+    const region = methodRegion(serviceSource, "updateRoutine");
+    assert.match(region, /edited\.ok === false/u);
+    assert.match(region, /created\.ok === false/u);
+    assert.match(region, /schedule-rejected/u);
+  });
+
+  it("progress 的产物列表只取一次（不再每行克隆）", () => {
+    const start = serviceSource.indexOf("const autoRetryEnabled = store.getProject(projectId)");
+    assert.ok(start >= 0);
+    const region = serviceSource.slice(start, start + 4000);
+    assert.match(region, /const artifactRefs = store\.listArtifactRefs\(projectId\)/u);
+    assert.doesNotMatch(region, /row\.artifacts = store\s*\n?\s*\.listArtifactRefs/u);
+  });
+});
