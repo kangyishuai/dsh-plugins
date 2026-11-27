@@ -2,14 +2,14 @@
 // @ts-check
 // 用法：pnpm gate:all [选项]
 //
-// 一条命令跑完六个发布插件的门禁（`pnpm gate <plugin>` 的批量版）：
+// 一条命令跑完八个发布插件的门禁（`pnpm gate <plugin>` 的批量版）：
 //
 //   1. pnpm verify            只跑一次（不再每个插件各跑一遍）
 //   2. pnpm probe:runtime     只跑一次
 //   3. 逐插件 web 冒烟         pnpm smoke:<plugin>（临时 DSH_HOME）
 //   4. 逐插件桌面只读回归      pnpm smoke:<plugin>-desktop --require
 //
-// 为什么需要它：手工连跑六条 `pnpm gate` 时，每一步桌面回归前都要先把可见会话切到
+// 为什么需要它：手工连跑八条 `pnpm gate` 时，每一步桌面回归前都要先把可见会话切到
 // **空闲会话**（advisor / next-step 的脚本在可见会话正跑回合时按设计拒绝交互，直接判红），
 // 跑完还要切回——六次手工切换最容易漏一次。本脚本把这件事自动化：
 //
@@ -17,7 +17,7 @@
 //                           全部结束后切回开始时的会话。**强烈建议在 agent 会话里跑时带上**。
 //
 // 其他选项：
-//   --plugins a,b           只跑指定插件（默认六个发布插件）
+//   --plugins a,b           只跑指定插件（默认八个发布插件）
 //   --skip-verify           跳过 verify（刚跑过时用；结束时大声提示门禁不完整）
 //   --skip-desktop          跳过桌面端（只跑 verify/probe/web；同样提示不完整）
 //   --port 9222             桌面版 CDP 端口（默认 9222 / DSH_CDP_PORT）
@@ -38,12 +38,18 @@ import { desktopGateVerdict, gateVerdict, parseCounts } from "./gate.mjs";
 import { isMain } from "./lib/repo.mjs";
 
 const REPO = resolve(import.meta.dirname, "..");
-/** 默认只跑六个「已完成」插件；artifacts/projects 开发完成后再加进来。 */
+/**
+ * 默认跑全部八个已发布插件（AUD-XCT-04：旧清单漏了 artifacts / projects，
+ * 与 AGENTS.md「八个发布插件」不符；两插件的 web/桌面脚本早已存在，`pnpm check` 也在拦）。
+ * 顺序按目录名字母序，便于和 `packages/` 对照。
+ */
 export const RELEASE_PLUGINS = [
   "advisor",
+  "artifacts",
   "btw",
   "casefile",
   "next-step",
+  "projects",
   "session-delete",
   "session-rewind",
 ];
@@ -522,7 +528,7 @@ const main = async () => {
     return;
   }
   console.log(
-    `\nPASS 六/全部插件门禁全绿（${results.length} 个插件，${seconds}s${repeat > 1 ? `，桌面每步跑 ${repeat} 次` : ""}）`,
+    `\nPASS 全部插件门禁全绿（${results.length}/${RELEASE_PLUGINS.length} 个发布插件，${seconds}s${repeat > 1 ? `，桌面每步跑 ${repeat} 次` : ""}）`,
   );
 };
 

@@ -8,7 +8,12 @@
 //   · 重名标题要加 `-1` / `-2` 后缀。
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { anchorSetOf, headingSlug, linkErrors } from "../check-docs.mjs";
+import {
+  anchorSetOf,
+  headingSlug,
+  linkErrors,
+  runtimeVersionCoverageErrors,
+} from "../check-docs.mjs";
 
 test("headingSlug：GitHub 的删除与「不折叠连字符」规则", () => {
   assert.equal(headingSlug("Compatibility"), "compatibility");
@@ -74,6 +79,46 @@ test("linkErrors：行内代码与围栏代码块里的 `[]()` 不当链接", ()
   assert.equal(linkCount, 1, "只应把真正的那条算作链接");
   // #real 在 README.md 里不存在 → 应报错
   assert.deepEqual(errors, ["README.md：锚点 #real 在本文件里不存在"]);
+});
+
+test("runtimeVersionCoverageErrors：兼容表里没勘察过的版本要报错（AUD-XCT-11 第 6 条）", () => {
+  const docs = new Map([
+    ["packages/foo/README.md", "| 0.2.2-rc.5 | verified |\n| 0.2.2-rc.9 | 没勘察过 |"],
+    ["packages/bar/README.zh-CN.md", "已验证：0.2.1-rc.5 与 0.2.2-rc.5；另见 0.2.2-rc.5。"],
+  ]);
+  const runtimeVersions = new Set(["0.2.1-rc.5", "0.2.2-rc.5"]);
+  const { versionCount, errors } = runtimeVersionCoverageErrors(docs, runtimeVersions);
+  assert.equal(versionCount, 5, "版本号按出现次数计数（同一版本多写几次也算多引用）");
+  assert.deepEqual(errors, [
+    "packages/foo/README.md：写到 DSH 0.2.2-rc.9，但 docs/runtime/ 没有该版本的勘察记录",
+  ]);
+});
+
+test("runtimeVersionCoverageErrors：仓库真实插件 README 零错误（回归哨兵）", async () => {
+  const { readdir, readFile } = await import("node:fs/promises");
+  const { join, resolve } = await import("node:path");
+  const REPO = resolve(import.meta.dirname, "..", "..");
+  const runtimeVersions = new Set(
+    (await readdir(join(REPO, "docs/runtime")))
+      .filter((name) => /^\d+\.\d+\.\d+-rc\.\d+\.md$/u.test(name))
+      .map((name) => name.replace(/\.md$/u, "")),
+  );
+  /** @type {Map<string, string>} */
+  const docs = new Map();
+  for (const plugin of (await readdir(join(REPO, "packages"), { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)) {
+    for (const file of ["README.md", "README.zh-CN.md"]) {
+      const rel = `packages/${plugin}/${file}`;
+      try {
+        docs.set(rel, await readFile(join(REPO, rel), "utf8"));
+      } catch {
+        /* 没有这份 README 就跳过 */
+      }
+    }
+  }
+  const { errors } = runtimeVersionCoverageErrors(docs, runtimeVersions);
+  assert.deepEqual(errors, [], "README 里写到的版本都应能在 docs/runtime/ 找到记录");
 });
 
 test("linkErrors：仓库真实文档零错误（回归哨兵）", async () => {

@@ -324,8 +324,17 @@ console.log("SMOKE_RESULT " + JSON.stringify({ checks }) + " END");
 }
 
 const main = async () => {
-  if (!(await hasCommand("dsh"))) return console.log("SKIP 未找到 dsh");
-  if (!(await hasCommand("ego-browser"))) return console.log("SKIP 未找到 ego-browser");
+  // 早退也必须打印计数行（pnpm check 的静态规则会拦；见 docs/plugin-conventions.md §6.1）。
+  if (!(await hasCommand("dsh"))) {
+    console.log("SKIP 未找到 dsh");
+    console.log("0 PASS / 1 SKIP / 0 FAIL");
+    return;
+  }
+  if (!(await hasCommand("ego-browser"))) {
+    console.log("SKIP 未找到 ego-browser");
+    console.log("0 PASS / 1 SKIP / 0 FAIL");
+    return;
+  }
 
   const work = await mkdtemp(join(tmpdir(), "dsh-smoke-index-"));
   const realHome = process.env.HOME ?? "";

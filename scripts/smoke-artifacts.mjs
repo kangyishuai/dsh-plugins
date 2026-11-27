@@ -86,6 +86,9 @@ async function main() {
   for (const cmd of ["dsh", "ego-browser"]) if (!(await hasCommand(cmd))) missing.push(cmd);
   if (missing.length > 0) {
     console.log(`SKIP 缺少依赖：${missing.join("、")}`);
+    // 早退也必须打印计数行：gate <plugin> 与 gate:all 都按它判「跑过但零断言」的假绿
+    // （docs/plugin-conventions.md §6.1 / AUD-XCT-05）。缺环境时这里是 0 PASS / 1 SKIP。
+    console.log("0 PASS / 1 SKIP / 0 FAIL");
     if (values.require) process.exitCode = 1;
     return;
   }

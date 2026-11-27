@@ -1,14 +1,38 @@
 #!/usr/bin/env node
-import { existsSync } from "node:fs";
 // @ts-check
-// 用法：pnpm probe:runtime [--asar <path>] [--json]
+// 用法：pnpm probe:runtime [--asar <path>] [--surface <node_modules 目录>] [--json]
 //
-// DSH 升级前/后的体检：直接解析 app.asar 的目录索引，核对本仓库插件依赖的
-// 宿主包、API 与 slot 是否还在。不启动宿主、不改任何文件。
-import { open } from "node:fs/promises";
+// DSH 升级前/后的体检：直接解析 app.asar 的目录索引（或 npm 装出来的宿主 surface 目录），
+// 核对本仓库插件依赖的宿主包、API、服务、私有 seam 与 slot 是否还在。
+// 不启动宿主、不改任何文件。
+//
+// 两种宿主面：
+//   --asar <path>       macOS 桌面版的 app.asar（默认路径，本机开发用）。
+//   --surface <dir>     npm 装出来的 node_modules（CI 用；`node scripts/prepare-dsh-surface.mjs`
+//                       会按 `AGENTS.md` 的目标运行时版本从 npm 装一份）。传目录本身或其父目录
+//                       （自动找 `<dir>/node_modules/@deepseek-ai`）。
+// 显式给了路径但不存在 → exit 2（CI 里必须红，不能把「没装」当「通过」）。
+// 既没 --asar/--surface、默认 asar 也不存在 → 打印 SKIP 并 exit 0（只适用于本地开发机）。
+import { existsSync } from "node:fs";
+import { open, readdir, readFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
+import { isMain } from "./lib/repo.mjs";
+
 const DEFAULT_ASAR = "/Applications/DeepSeek Harness.app/Contents/Resources/app.asar";
+
+/**
+ * 宿主面（asar 或 npm 目录）统一抽象：虚拟路径都是 `/dsh/node_modules/...`。
+ * asar 条目带 offset；目录条目带绝对 path。
+ * @typedef {{ offset?: number, path?: string, size: number }} SurfaceEntry
+ * @typedef {object} Surface
+ * @property {"asar" | "npm"} kind
+ * @property {string} path
+ * @property {Map<string, SurfaceEntry>} files
+ * @property {(path: string) => Promise<Buffer | undefined>} read
+ * @property {() => Promise<void>} close
+ */
 
 /** 视为必需（缺失即 FAIL）的宿主包。 */
 const REQUIRED_PACKAGES = [
@@ -86,7 +110,7 @@ const API_CHECKS = [
   {
     file: "@deepseek-ai/dsh-client-ui-renderer/lib/client.js",
     name: "client slots 服务（SlotRegistry）",
-    pattern: /super\(\s*ctx,\s*[`"']slots[`"']\)/u,
+    pattern: /super\(\s*ctx,\s*[`"']slots[`"']/u,
   },
   {
     file: "@deepseek-ai/dsh-client-ui-commands/lib/client.js",
@@ -374,24 +398,217 @@ const SEAM_CHECKS_ADVISOR = [
   },
 ];
 
-/** slot 名字通过扫描 client 包确认（客户端 bundle 里以字符串出现）。 */
-const SLOT_CHECKS = [
-  { slot: "sidebar.workspaces.session.menu.item", purpose: "会话「…」菜单" },
-  { slot: "sidebar.footer.action", purpose: "侧栏页脚回收站入口" },
-  { slot: "shell.overlay", purpose: "确认框 / 面板 / toast" },
-  { slot: "conversation.chat.node", purpose: "消息行（↶ 按钮注入）" },
-  { slot: "conversation.session.header.actions", purpose: "会话头部（回溯面板入口）" },
-  { slot: "conversation.input.dock", purpose: "输入框 dock（命令面板）" },
-  { slot: "conversation.composer", purpose: "composer 插槽" },
-  { slot: "conversation.chat.turnTail", purpose: "答后卡片（决策卡）" },
-  { slot: "conversation.input.overlay", purpose: "输入框幽灵提示" },
+/**
+ * 宿主服务：**注册点**（`provide("<名字>"` 或服务类构造）还在不在。
+ *
+ * AUD-XCT-01（2026-11-28）：旧清单只覆盖 session-rewind / session-delete / next-step /
+ * advisor 四个插件，btw / artifacts / casefile / projects 的宿主面一条都没有——升级时
+ * 谁把 `subagents`、`webServer`、`sessionController` 改掉，探针仍然全绿。这里按四个插件的
+ * 实际 `ctx.inject([...])` / `ctx.get(...)` 用法补上，`breaks` 写清「没了哪个功能会坏」。
+ */
+const HOST_SERVICE_CHECKS = [
+  {
+    file: "@deepseek-ai/dsh-agent/lib/index.js",
+    service: "agents",
+    breaks: "btw 旁问 fork 子代理、projects 线程/协调者起子代理",
+  },
+  {
+    file: "@deepseek-ai/dsh-subagent/lib/index.js",
+    service: "subagents",
+    breaks: "btw 旁问的 fork 子代理（承载 /btw 的核心执行面）",
+  },
+  {
+    file: "@deepseek-ai/dsh-token-meter/lib/index.js",
+    service: "tokenMeter",
+    breaks: "btw 旁问的 token / 缓存命中计量（成本提示与账本）",
+  },
+  {
+    file: "@deepseek-ai/dsh-commands/lib/index.js",
+    service: "commands",
+    breaks: "btw `/btw`、advisor `/advisor`、session-rewind `/rewind` 斜杠命令注册",
+  },
+  {
+    file: "@deepseek-ai/dsh-session/lib/index.js",
+    service: "sessions",
+    breaks: "btw 读当前会话上下文、session-delete 判断会话是否 live",
+  },
+  {
+    file: "@deepseek-ai/dsh-workspace/lib/index.js",
+    service: "workspaceRegistry",
+    breaks: "btw 的会话归属、projects 工作区/线程绑定与归档、session-delete 归档",
+  },
+  {
+    file: "@deepseek-ai/dsh-api-session-controller/lib/index.js",
+    service: "sessionController",
+    breaks: "casefile 读会话/工具上下文、projects 线程与会话控制",
+  },
+  {
+    file: "@deepseek-ai/dsh-host-webserver/lib/index.js",
+    service: "webServer",
+    breaks: "artifacts 的 `/artifacts/<id>` 预览路由（面板与下载全部 404）",
+  },
+  {
+    file: "@deepseek-ai/dsh-api-workspace-files/lib/index.js",
+    service: "workspaceFiles",
+    breaks: "projects Library 在 artifacts 缺失时退回工作区文件列表",
+  },
+  {
+    file: "@deepseek-ai/dsh-user-approval/lib/index.js",
+    service: "approval",
+    breaks: "projects 危险动作（push / PR / merge）的人工审批闸",
+  },
+  {
+    file: "@deepseek-ai/dsh-permission-presets/lib/index.js",
+    service: "permissionPresets",
+    breaks: "projects 的权限档位选择与自动收窄",
+  },
+  {
+    file: "@deepseek-ai/dsh-sandbox-policy/lib/index.js",
+    service: "sandboxPolicy",
+    breaks: "projects 的沙箱策略（线程执行的边界）",
+  },
+  {
+    file: "@deepseek-ai/dsh-schedule/lib/index.js",
+    service: "schedule",
+    breaks: "projects 的提醒 / 定时任务",
+  },
+  {
+    file: "@deepseek-ai/dsh-system-prompt/lib/index.js",
+    service: "systemPrompt",
+    breaks: "projects 把项目常设规则与 MEMORY.md 注入每次请求",
+  },
+  {
+    file: "@deepseek-ai/dsh-storage-domain/lib/index.js",
+    service: "storageDomain",
+    breaks: "btw / projects 的偏好跨重启持久化（firstRunDone、折叠状态等）",
+  },
+  {
+    file: "@deepseek-ai/dsh-subprocess/lib/index.js",
+    service: "subprocess",
+    breaks: "projects 的 `git` / `gh` 子进程（worktree、push、PR 全走它）",
+  },
 ];
 
 /**
- * 读取 asar 的头部索引与按路径读文件的能力。
- * @param {string} asarPath
+ * client 半的宿主服务（浏览器侧服务，由官方 client 包 `provide` / 服务类注册）。
+ * 与 HOST_SERVICE_CHECKS 一样：检查注册点是否还在。
  */
-async function openAsar(asarPath) {
+const CLIENT_SERVICE_CHECKS = [
+  {
+    file: "@deepseek-ai/dsh-client-ui-sidebar-right/lib/client.js",
+    service: "sidebarRight",
+    pattern: /provide\(\s*[`"']sidebarRight[`"']/u,
+    breaks: "btw / artifacts / projects 打开与关闭右栏页签（openTab / closeIn）",
+  },
+  {
+    file: "@deepseek-ai/dsh-client-ui-sidebar-right/lib/client.js",
+    service: "sidebarRightTabs",
+    pattern: /provide\(\s*[`"']sidebarRightTabs[`"']/u,
+    breaks: "btw / artifacts 在右栏注册自己的页签（`ctx.sidebarRightTabs.register`）",
+  },
+  {
+    file: "@deepseek-ai/dsh-client-ui-input-trigger/lib/client.js",
+    service: "inputTriggers",
+    pattern: /super\(\s*ctx\s*,\s*[`"']inputTriggers[`"']/u,
+    breaks: "projects 输入框 `@` 提及源（缺服务时该功能明示不可用）",
+  },
+  {
+    file: "@deepseek-ai/dsh-client-ui-context-menu/lib/client.js",
+    service: "contextMenus",
+    pattern: /provide\(\s*[`"']contextMenus[`"']/u,
+    breaks: "projects / session-delete 的右键菜单贡献（含键位显示）",
+  },
+  {
+    file: "@deepseek-ai/dsh-client-locale/lib/client.js",
+    service: "locale",
+    pattern: /provide\(\s*[`"']locale[`"']/u,
+    breaks: "所有插件的 client 文案绑定（缺了只剩 fallback 英文）",
+  },
+  {
+    file: "@deepseek-ai/dsh-client-connection/lib/client.browser.js",
+    service: "connection",
+    pattern: /provide\(\s*[`"']connection[`"']/u,
+    breaks: "所有插件的 client→host RPC（面板、设置、命令全部打不通）",
+  },
+];
+
+/**
+ * slot 名字通过扫描 client 包确认（客户端 bundle 里以字符串出现）。
+ *
+ * 清单 = 8 个插件**实际** `slots.inject` / `slots.register` 的槽位（2026-11-28 按代码复核，
+ * 见 AUD-XCT-01）。rc.2 起 bundle 用反引号，所以扫描同时认 `"`、`'`、`` ` `` 三种引号；
+ * `main` 这种过短的字符串额外要求 `name:` 前缀，避免命中普通字符串。
+ * 已删掉两个没有任何插件注入的槽（`conversation.input.dock` / `conversation.composer`）。
+ */
+const SLOT_CHECKS = [
+  {
+    slot: "settings.section",
+    purpose:
+      "设置分节（session-delete / session-rewind / advisor / next-step / projects / btw / casefile）",
+  },
+  { slot: "shell.overlay", purpose: "确认框 / 面板 / toast（六插件共用）" },
+  {
+    slot: "sidebar.workspaces.session.menu.item",
+    purpose: "会话「…」菜单项（session-delete / projects）",
+  },
+  { slot: "sidebar.footer.action", purpose: "侧栏页脚回收站入口（session-delete）" },
+  { slot: "sidebar.right.pane.tab", purpose: "右栏面板页签（btw / artifacts）" },
+  { slot: "sidebar.panellist", purpose: "侧栏面板入口（casefile / projects）" },
+  {
+    slot: "main",
+    purpose: "主面板插槽（casefile / projects 的 keyed 面板）",
+    pattern: /name\s*:\s*[`"']main[`"']/u,
+  },
+  { slot: "tool.call.toolview", purpose: "工具调用视图（artifacts 摘要行）" },
+  { slot: "conversation.session.header.actions", purpose: "会话头部（回溯面板入口）" },
+  { slot: "conversation.input.overlay", purpose: "输入框幽灵提示（next-step）" },
+  { slot: "conversation.input.left", purpose: "输入框左侧按钮（btw 开关）" },
+  { slot: "conversation.chat.turnTail", purpose: "答后卡片（advisor / next-step）" },
+  { slot: "conversation.chat.node", purpose: "消息行（↶ 按钮注入）" },
+  { slot: "contextMenu.icon", purpose: "菜单图标（session-delete 的回收站图标，缺了菜单仍可用）" },
+];
+
+/** bundle 里字符串的三种引号（rc.2 起用反引号，更早用双引号）。 */
+const QUOTES = ["`", '"', "'"];
+
+/**
+ * 服务注册点判断。宿主有两种写法：
+ *   - Cordis Service 子类构造：`super(ctx, "<名字>")`（大多数宿主服务）；
+ *   - 动态注册：`ctx.provide("<名字>", ...)`（如 storageDomain、client 半的 contextMenus）。
+ * 两种都认，字符串字面量三种引号都认。
+ * @param {string} text
+ * @param {string} service
+ * @returns {boolean}
+ */
+function providesService(text, service) {
+  return QUOTES.some(
+    (quote) =>
+      new RegExp(`super\\(\\s*(?:this\\.)?ctx\\s*,\\s*${quote}${service}${quote}`, "u").test(
+        text,
+      ) || new RegExp(`provide\\(\\s*${quote}${service}${quote}`, "u").test(text),
+  );
+}
+
+/**
+ * 字符串在源码里以三种引号之一出现的判断。
+ * @param {string} text
+ * @param {string} value
+ * @returns {boolean}
+ */
+function hasQuotedString(text, value) {
+  return (
+    text.includes(`"${value}"`) || text.includes(`'${value}'`) || text.includes(`\`${value}\``)
+  );
+}
+
+/**
+ * 读取 asar 的头部索引与按路径读文件的能力。
+ * 虚拟路径统一成 `/dsh/node_modules/...`（与桌面版 app.asar 里一致），
+ * 这样所有检查项不用关心宿主面是 asar 还是 npm 目录。
+ * @param {string} asarPath
+ * @returns {Promise<Surface>}
+ */
+export async function openAsarSurface(asarPath) {
   const handle = await open(asarPath, "r");
   const head = Buffer.alloc(16);
   await handle.read(head, 0, 16, 0);
@@ -406,17 +623,19 @@ async function openAsar(asarPath) {
   /** @type {Map<string, { offset: number, size: number }>} */
   const files = new Map();
   /** @param {any} node @param {string} prefix */
-  const walk = (node, prefix) => {
+  const walkIndex = (node, prefix) => {
     for (const [name, value] of Object.entries(node.files ?? {})) {
       const path = `${prefix}/${name}`;
-      if (value && typeof value === "object" && "files" in value) walk(value, path);
+      if (value && typeof value === "object" && "files" in value) walkIndex(value, path);
       else if (value && typeof value === "object" && "size" in value && "offset" in value) {
         files.set(path, { offset: Number(value.offset), size: Number(value.size) });
       }
     }
   };
-  walk(index, "");
+  walkIndex(index, "");
   return {
+    kind: "asar",
+    path: asarPath,
     files,
     /** @param {string} path */
     async read(path) {
@@ -433,23 +652,103 @@ async function openAsar(asarPath) {
 }
 
 /**
+ * 解析 `--surface` 指向的目录：既接受 node_modules 本身，也接受它的父目录
+ * （`<prefix>` 里有 `node_modules/@deepseek-ai`）。
+ * @param {string} dir
+ * @returns {string}
+ */
+function resolveSurfaceRoot(dir) {
+  const direct = join(dir, "@deepseek-ai");
+  if (existsSync(direct)) return dir;
+  const nested = join(dir, "node_modules");
+  if (existsSync(join(nested, "@deepseek-ai"))) return nested;
+  return dir;
+}
+
+/**
+ * 打开 npm 装出来的宿主 surface 目录（虚拟路径同样映射到 `/dsh/node_modules/...`）。
+ * 只枚举 `@deepseek-ai/` 下的文件：探针检查的全部对象都在这里，跳过平台二进制可省一大截。
+ * @param {string} dir
+ * @returns {Promise<Surface>}
+ */
+export async function openDirectorySurface(dir) {
+  const root = resolveSurfaceRoot(dir);
+  /** @type {Map<string, { path: string, size: number }>} */
+  const files = new Map();
+  /**
+   * @param {string} absDir
+   * @param {string} rel
+   */
+  const walkDir = async (absDir, rel) => {
+    let entries;
+    try {
+      entries = await readdir(absDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const abs = join(absDir, entry.name);
+      const childRel = rel === "" ? entry.name : `${rel}/${entry.name}`;
+      if (entry.isDirectory()) await walkDir(abs, childRel);
+      else if (entry.isFile()) files.set(`/dsh/node_modules/${childRel}`, { path: abs, size: 0 });
+    }
+  };
+  await walkDir(join(root, "@deepseek-ai"), "@deepseek-ai");
+  return {
+    kind: "npm",
+    path: root,
+    files,
+    /** @param {string} path */
+    async read(path) {
+      const entry = files.get(path);
+      if (!entry) return undefined;
+      try {
+        return await readFile(entry.path);
+      } catch {
+        return undefined;
+      }
+    },
+    async close() {},
+  };
+}
+
+/**
+ * 宿主版本：桌面版取 `/dsh/package.json`（desktop-runtime），npm surface 退到
+ * `@deepseek-ai/dsh` 的 package.json——两者都该是本轮目标运行时版本。
+ * @param {Surface} surface
+ * @returns {Promise<string>}
+ */
+export async function readGuestVersion(surface) {
+  for (const path of ["/dsh/package.json", "/dsh/node_modules/@deepseek-ai/dsh/package.json"]) {
+    const buffer = await surface.read(path);
+    if (!buffer) continue;
+    try {
+      const version = JSON.parse(buffer.toString("utf8")).version;
+      if (typeof version === "string" && version !== "") return version;
+    } catch {
+      /* 解析失败继续试下一个 */
+    }
+  }
+  return "?";
+}
+
+/**
  * 跑一组「私有 seam」检查，按功能影响分组报告。
  *
  * 定位目标文件有两种写法：
  *   - `file`：相对 `/dsh/node_modules/` 的固定路径（`lib/client.js`、`lib/index.js` 这类）。
  *   - `filePattern`：对 asar 全路径做正则，扫到哪个算哪个。**文件名带内容哈希的产物必须用它**
- *     ——例如 web-frontend 的 `dist/assets/index-<hash>.js`、`index-<hash>.css`，每个版本的
- *     哈希都不同（rc.2 是 `index-ghOpC9uV.js`，rc.3 是 `index-Ciz7DZxv.js`）。写死会让探针
+ *     ——例如 web-frontend 的 `dist/assets/index-<hash>.js`，每个版本的哈希都不同。写死会让探针
  *     在每次升级都误报 FAIL（规则 1：不写死 DSH 内部实现，扫描 + 匹配已知模式）。
  *
- * @param {Awaited<ReturnType<typeof openAsar>>} asar
+ * @param {Surface} surface
  * @param {(kind: "PASS"|"FAIL"|"WARN", name: string, detail: string) => void} push
  * @param {{ file?: string, filePattern?: RegExp, name: string, pattern: RegExp, breaks: string }[]} checks
  */
-async function runSeamChecks(asar, push, checks) {
+async function runSeamChecks(surface, push, checks) {
   for (const check of checks) {
     const paths = check.filePattern
-      ? [...asar.files.keys()].filter((path) => check.filePattern?.test(path))
+      ? [...surface.files.keys()].filter((path) => check.filePattern?.test(path))
       : [`/dsh/node_modules/${check.file}`];
     if (paths.length === 0) {
       const label = check.file ?? String(check.filePattern);
@@ -458,7 +757,7 @@ async function runSeamChecks(asar, push, checks) {
     }
     let matched = false;
     for (const path of paths) {
-      const buffer = await asar.read(path);
+      const buffer = await surface.read(path);
       if (buffer && check.pattern.test(buffer.toString("utf8"))) {
         matched = true;
         break;
@@ -472,28 +771,34 @@ async function runSeamChecks(asar, push, checks) {
   }
 }
 
-const main = async () => {
-  const { values } = parseArgs({
-    options: {
-      asar: { type: "string" },
-      json: { type: "boolean", default: false },
-    },
-    allowPositionals: false,
-  });
-  const asarPath = values.asar ?? process.env.DSH_ASAR ?? DEFAULT_ASAR;
-  if (!existsSync(asarPath)) {
-    const explicit = Boolean(values.asar ?? process.env.DSH_ASAR);
-    if (explicit) {
-      console.error(`找不到 app.asar：${asarPath}`);
-      console.error("用 --asar <path> 或 DSH_ASAR=<path> 指定。");
-      process.exitCode = 2;
-      return;
-    }
-    console.log(`SKIP 没找到默认的 DSH 安装（${asarPath}）；这通常意味着不在装了 DSH 的机器上`);
+/**
+ * 跑一条「宿主服务还在提供吗」检查：文件存在 + 有 `provide("<名字>"`（或等价注册）。
+ * @param {Surface} surface
+ * @param {(kind: "PASS"|"FAIL"|"WARN", name: string, detail: string) => void} push
+ * @param {{ file: string, service: string, pattern?: RegExp, breaks: string }} check
+ */
+async function runServiceCheck(surface, push, check) {
+  const path = `/dsh/node_modules/${check.file}`;
+  const buffer = await surface.read(path);
+  if (!buffer) {
+    push("FAIL", `service ${check.service}`, `文件不存在：${check.file}｜影响：${check.breaks}`);
     return;
   }
+  const text = buffer.toString("utf8");
+  const ok = check.pattern ? check.pattern.test(text) : providesService(text, check.service);
+  push(
+    ok ? "PASS" : "FAIL",
+    `service ${check.service}`,
+    ok ? check.file : `源码里没有找到服务注册点（${check.file}）｜影响：${check.breaks}`,
+  );
+}
 
-  const asar = await openAsar(asarPath);
+/**
+ * 跑完整清单，返回结果数组（导出给单测用，不依赖 process/CLI）。
+ * @param {Surface} surface
+ * @returns {Promise<{ version: string, results: { kind: "PASS"|"FAIL"|"WARN", name: string, detail: string }[] }>}
+ */
+export async function runProbe(surface) {
   /** @type {{ kind: "PASS" | "FAIL" | "WARN", name: string, detail: string }[]} */
   const results = [];
   const push = (
@@ -503,28 +808,20 @@ const main = async () => {
   ) => results.push({ kind, name, detail });
 
   // 1) 宿主版本
-  const dshPkg = await asar.read("/dsh/package.json");
-  let version = "?";
-  if (dshPkg) {
-    try {
-      version = JSON.parse(dshPkg.toString("utf8")).version ?? "?";
-    } catch {
-      version = "?";
-    }
-  }
+  const version = await readGuestVersion(surface);
   push(version === "?" ? "WARN" : "PASS", "读取宿主版本", version);
 
   // 2) 必需宿主包
   for (const pkg of REQUIRED_PACKAGES) {
     const path = `/dsh/node_modules/@deepseek-ai/${pkg}/package.json`;
-    const found = asar.files.has(path);
-    push(found ? "PASS" : "FAIL", `宿主包 ${pkg}`, found ? "" : "app.asar 里不存在");
+    const found = surface.files.has(path);
+    push(found ? "PASS" : "FAIL", `宿主包 ${pkg}`, found ? "" : "宿主面里不存在");
   }
 
   // 3) API 面
   for (const check of API_CHECKS) {
     const path = `/dsh/node_modules/${check.file}`;
-    const buffer = await asar.read(path);
+    const buffer = await surface.read(path);
     if (!buffer) {
       push(check.optional ? "WARN" : "FAIL", check.name, `文件不存在：${path}`);
       continue;
@@ -539,34 +836,34 @@ const main = async () => {
   }
 
   // 3.5) 私有 seam（按功能影响分组报告）
-  await runSeamChecks(asar, push, SEAM_CHECKS);
+  await runSeamChecks(surface, push, SEAM_CHECKS);
   // 3.6) session-delete 的私有 seam
-  await runSeamChecks(asar, push, SEAM_CHECKS_SESSION_DELETE);
+  await runSeamChecks(surface, push, SEAM_CHECKS_SESSION_DELETE);
   // 3.7) next-step 的私有 seam
-  await runSeamChecks(asar, push, SEAM_CHECKS_NEXT_STEP);
+  await runSeamChecks(surface, push, SEAM_CHECKS_NEXT_STEP);
   // 3.8) advisor 的私有 seam
-  await runSeamChecks(asar, push, SEAM_CHECKS_ADVISOR);
+  await runSeamChecks(surface, push, SEAM_CHECKS_ADVISOR);
+  // 3.9) 宿主服务注册点（btw / artifacts / casefile / projects 的宿主面）
+  for (const check of HOST_SERVICE_CHECKS) await runServiceCheck(surface, push, check);
+  // 3.10) client 半的宿主服务
+  for (const check of CLIENT_SERVICE_CHECKS) await runServiceCheck(surface, push, check);
 
-  // 4) slot：扫描所有 client 包的 lib/*.js
-  const clientFiles = [...asar.files.keys()].filter((path) =>
+  // 4) slot：扫描所有 client 包的 lib/*.js（含 client.browser.js 这类文件名）
+  const clientFiles = [...surface.files.keys()].filter((path) =>
     /^\/dsh\/node_modules\/@deepseek-ai\/dsh-client-[^/]+\/lib\/[^/]+\.js$/u.test(path),
   );
-  /** @type {Map<string, string>} */
-  const slotOwner = new Map();
-  for (const path of clientFiles) {
-    const known = SLOT_CHECKS.filter((check) => !slotOwner.has(check.slot));
-    if (known.length === 0) break;
-    const buffer = await asar.read(path);
-    if (!buffer) continue;
-    const text = buffer.toString("utf8");
-    for (const check of known) {
-      if (text.includes(`"${check.slot}"`) || text.includes(`'${check.slot}'`)) {
-        slotOwner.set(check.slot, path.replace("/dsh/node_modules/@deepseek-ai/", ""));
+  for (const check of SLOT_CHECKS) {
+    let owner;
+    for (const path of clientFiles) {
+      const buffer = await surface.read(path);
+      if (!buffer) continue;
+      const text = buffer.toString("utf8");
+      const hit = check.pattern ? check.pattern.test(text) : hasQuotedString(text, check.slot);
+      if (hit) {
+        owner = path.replace("/dsh/node_modules/@deepseek-ai/", "");
+        break;
       }
     }
-  }
-  for (const check of SLOT_CHECKS) {
-    const owner = slotOwner.get(check.slot);
     push(
       owner ? "PASS" : "FAIL",
       `slot ${check.slot}（${check.purpose}）`,
@@ -574,45 +871,96 @@ const main = async () => {
     );
   }
 
-  await asar.close();
+  return { version, results };
+}
 
-  if (values.json) {
-    console.log(JSON.stringify({ asar: asarPath, version, results }, null, 2));
+const main = async () => {
+  const { values } = parseArgs({
+    options: {
+      asar: { type: "string" },
+      surface: { type: "string" },
+      json: { type: "boolean", default: false },
+    },
+    allowPositionals: false,
+  });
+  const explicit = values.asar ?? values.surface ?? process.env.DSH_ASAR;
+  const asarPath = values.asar ?? process.env.DSH_ASAR ?? DEFAULT_ASAR;
+  /** @type {Surface | undefined} */
+  let surface;
+  if (values.surface !== undefined) {
+    const dir = resolve(values.surface);
+    if (!existsSync(dir)) {
+      console.error(`找不到 --surface 目录：${dir}`);
+      console.error(
+        "用 `node scripts/prepare-dsh-surface.mjs --output <dir>` 按目标版本从 npm 装一份宿主面。",
+      );
+      process.exitCode = 2;
+      return;
+    }
+    surface = await openDirectorySurface(dir);
+  } else if (existsSync(asarPath)) {
+    surface = await openAsarSurface(asarPath);
   } else {
-    console.log("DSH runtime probe");
-    console.log(`asar:    ${asarPath}`);
-    console.log(`version: ${version}`);
-    console.log("");
-    for (const item of results) {
-      const tag = item.kind === "PASS" ? "PASS" : item.kind === "WARN" ? "WARN" : "FAIL";
-      console.log(`${tag}  ${item.name}${item.detail ? ` :: ${item.detail}` : ""}`);
+    if (explicit !== undefined) {
+      console.error(`找不到 app.asar：${asarPath}`);
+      console.error("用 --asar <path>、--surface <node_modules 目录> 或 DSH_ASAR=<path> 指定。");
+      process.exitCode = 2;
+      return;
     }
-    const failed = results.filter((item) => item.kind === "FAIL").length;
-    const warned = results.filter((item) => item.kind === "WARN").length;
-    if (failed > 0) {
-      console.log("");
-      console.log("升级影响（按功能）：");
-      for (const item of results) {
-        if (item.kind !== "FAIL") continue;
-        console.log(`  - ${item.name}`);
-      }
-      console.log("  上面每一项都对应本仓库插件的一条依赖；FAIL 不等于插件立刻崩，");
-      console.log("  多数会走「能力探测 → 降级」，但对应功能会静默消失，请读 README 的兼容性表。");
-    }
-    console.log("");
+    console.log(`SKIP 没找到默认的 DSH 安装（${asarPath}）；这通常意味着不在装了 DSH 的机器上`);
     console.log(
-      "合计 " +
-        results.length +
-        " 项：" +
-        (results.length - failed - warned) +
-        " PASS, " +
-        warned +
-        " WARN, " +
-        failed +
-        " FAIL",
+      "     CI 里请先 `node scripts/prepare-dsh-surface.mjs` 并用 --surface 显式指向它。",
     );
+    return;
   }
-  process.exitCode = results.some((item) => item.kind === "FAIL") ? 1 : 0;
+
+  if (surface === undefined) {
+    console.error("FAIL 没有可用的宿主面（既没有 --asar 也没有 --surface）");
+    process.exitCode = 2;
+    return;
+  }
+  try {
+    const { version, results } = await runProbe(surface);
+    if (values.json) {
+      console.log(
+        JSON.stringify(
+          { surface: { kind: surface.kind, path: surface.path }, version, results },
+          null,
+          2,
+        ),
+      );
+    } else {
+      console.log("DSH runtime probe");
+      console.log(`surface: ${surface.path}（${surface.kind}）`);
+      console.log(`version: ${version}`);
+      console.log("");
+      for (const item of results) {
+        const tag = item.kind === "PASS" ? "PASS" : item.kind === "WARN" ? "WARN" : "FAIL";
+        console.log(`${tag}  ${item.name}${item.detail ? ` :: ${item.detail}` : ""}`);
+      }
+      const failed = results.filter((item) => item.kind === "FAIL").length;
+      const warned = results.filter((item) => item.kind === "WARN").length;
+      if (failed > 0) {
+        console.log("");
+        console.log("升级影响（按功能）：");
+        for (const item of results) {
+          if (item.kind !== "FAIL") continue;
+          console.log(`  - ${item.name}`);
+        }
+        console.log("  上面每一项都对应本仓库插件的一条依赖；FAIL 不等于插件立刻崩，");
+        console.log(
+          "  多数会走「能力探测 → 降级」，但对应功能会静默消失，请读 README 的兼容性表。",
+        );
+      }
+      console.log("");
+      console.log(
+        `合计 ${results.length} 项：${results.length - failed - warned} PASS, ${warned} WARN, ${failed} FAIL`,
+      );
+    }
+    process.exitCode = results.some((item) => item.kind === "FAIL") ? 1 : 0;
+  } finally {
+    await surface.close();
+  }
 };
 
-await main();
+if (isMain(import.meta.url)) await main();

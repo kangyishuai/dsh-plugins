@@ -536,8 +536,18 @@ function browserScript(url, deep) {
 }
 
 const main = async () => {
-  if (!(await hasCommand("dsh"))) return console.log("SKIP 未找到 dsh");
-  if (!(await hasCommand("ego-browser"))) return console.log("SKIP 未找到 ego-browser");
+  // 早退也必须打印计数行：gate <plugin> 与 gate:all 都按它判「跑过但零断言」的假绿
+  // （docs/plugin-conventions.md §6.1 / AUD-XCT-05）。缺环境时这里是 0 PASS / 1 SKIP。
+  if (!(await hasCommand("dsh"))) {
+    console.log("SKIP 未找到 dsh");
+    console.log("0 PASS / 1 SKIP / 0 FAIL");
+    return;
+  }
+  if (!(await hasCommand("ego-browser"))) {
+    console.log("SKIP 未找到 ego-browser");
+    console.log("0 PASS / 1 SKIP / 0 FAIL");
+    return;
+  }
 
   const work = await mkdtemp(join(tmpdir(), "dsh-btw-smoke-"));
   /** @type {import("node:child_process").ChildProcess | undefined} */

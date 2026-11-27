@@ -5038,8 +5038,18 @@ console.log("SMOKE_RESULT " + JSON.stringify(result));
 const PROJECT_NAME_TOKEN = `smoke-${Date.now().toString(36)}`;
 
 const main = async () => {
-  if (!(await hasCommand("dsh"))) return console.log("SKIP 未找到 dsh");
-  if (!(await hasCommand("ego-browser"))) return console.log("SKIP 未找到 ego-browser");
+  // 早退也必须打印计数行：gate <plugin> 与 gate:all 都按它判「跑过但零断言」的假绿
+  // （docs/plugin-conventions.md §6.1 / AUD-XCT-05）。缺环境时这里是 0 PASS / 1 SKIP。
+  if (!(await hasCommand("dsh"))) {
+    console.log("SKIP 未找到 dsh");
+    console.log("0 PASS / 1 SKIP / 0 FAIL");
+    return;
+  }
+  if (!(await hasCommand("ego-browser"))) {
+    console.log("SKIP 未找到 ego-browser");
+    console.log("0 PASS / 1 SKIP / 0 FAIL");
+    return;
+  }
 
   await rm(SHOTS_OUT, { recursive: true, force: true }).catch(() => {});
   const work = await mkdtemp(join(tmpdir(), "dsh-smoke-projects-"));

@@ -5,7 +5,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { desktopGateVerdict, gateVerdict, isVacuousPass, parseCounts } from "../gate.mjs";
+import {
+  countedStageVerdict,
+  desktopGateVerdict,
+  gateVerdict,
+  isVacuousPass,
+  parseCounts,
+} from "../gate.mjs";
 
 test("parseCounts：解析标准收尾行", () => {
   assert.deepEqual(parseCounts("7 PASS / 3 SKIP / 0 FAIL（默认，未发起模型调用）"), {
@@ -69,6 +75,23 @@ test("gateVerdict：web 与桌面共用同一套判定（2026-11-20 起 web 也�
   assert.equal(gateVerdict({ pass: 15, skip: 3, fail: 0 }), "ok");
   assert.equal(gateVerdict(parseCounts("33 PASS / 0 SKIP / 0 FAIL")), "ok");
   assert.equal(gateVerdict, desktopGateVerdict, "别名必须指向同一个实现");
+});
+
+test("countedStageVerdict：web 冒烟与桌面回归都要过计数判定（2026-11-28 补的洞）", () => {
+  // 旧实现只对 desktop 阶段调 desktopGateVerdict()；web 阶段只看退出码，
+  // 于是「缺 dsh / ego-browser 时打印 SKIP 就 return」被显示成 ✓。
+  assert.equal(countedStageVerdict("smoke:btw", { pass: 0, skip: 1, fail: 0 }), "vacuous");
+  assert.equal(countedStageVerdict("smoke:btw", undefined), "missing-counts");
+  assert.equal(countedStageVerdict("smoke:session-delete-desktop", undefined), "missing-counts");
+  assert.equal(
+    countedStageVerdict("smoke:session-delete-desktop", { pass: 16, skip: 2, fail: 0 }),
+    "ok",
+  );
+  assert.equal(countedStageVerdict("smoke:artifacts", { pass: 10, skip: 0, fail: 0 }), "ok");
+  // verify / probe:runtime 没有计数行，不能因此判失败。
+  assert.equal(countedStageVerdict("verify", undefined), "ok");
+  assert.equal(countedStageVerdict("probe:runtime", undefined), "ok");
+  assert.equal(countedStageVerdict(undefined, undefined), "ok");
 });
 
 test("isVacuousPass：全 SKIP 判为假绿，跑过断言不算", () => {
