@@ -3854,7 +3854,18 @@ window.__ModuleLoader__.load({
           clearTimeout(timer);
           doc.removeEventListener("keydown", onKey, true);
         };
-      }, [overlayOpen, state.mode, state.drawer?.open, state.drawer?.tab]);
+        // 确认框打开时 preview 先是 loading，主按钮此时 disabled、「取消」拿 autofocus；
+        // preview 到达/执行开始后 autofocus 会移回主按钮——必须重跑聚焦逻辑，
+        // 否则焦点会永远停在「取消」上（真机 U3-01 复验抓到的 §7.4.2 偏差）。
+      }, [
+        overlayOpen,
+        state.mode,
+        state.drawer?.open,
+        state.drawer?.tab,
+        state.previewLoading,
+        state.executing,
+        state.loading,
+      ]);
 
       let dialog = state.mode ? h(RewindDialog, { state: state, api: api, t: props.t }) : null;
       let drawer = h(RewindDrawer, { state: state, api: api, t: props.t });
