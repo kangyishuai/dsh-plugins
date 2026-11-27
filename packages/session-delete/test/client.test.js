@@ -711,6 +711,38 @@ describe("partial result messaging", () => {
     });
   });
 
+  it("batch restore never navigates per item (N1): onRestored gets { open: false }", async () => {
+    const { runBatch } = client.__test;
+    /** @type {{ sessionId: string, info: any }[]} */
+    const opened = [];
+    /** @type {any} */
+    const call = async (/** @type {string} */ _method, /** @type {any} */ request) => ({
+      ok: true,
+      results: request.entryIds.map((/** @type {string} */ entryId) => ({
+        entryId,
+        ok: true,
+        sessionId: `s-${entryId}`,
+      })),
+    });
+    await runBatch({
+      ids: ["a", "b", "c"],
+      kind: "restore",
+      call,
+      chunkSize: 2,
+      onRestored: (/** @type {any} */ sessionId, /** @type {any} */ info) => {
+        opened.push({ sessionId: sessionId, info: info });
+      },
+    });
+    assert.equal(opened.length, 3, "每条成功恢复仍要通知，便于清 retired");
+    for (const item of opened) {
+      assert.deepEqual(
+        item.info,
+        { open: false },
+        "批量恢复不逐条导航，避免多次 replaceMain 互相覆盖",
+      );
+    }
+  });
+
   it("runBatch counts partial restores so the batch line can report them", async () => {
     const { runBatch } = client.__test;
     /** @type {any} */

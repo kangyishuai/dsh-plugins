@@ -11,7 +11,8 @@
 // 于是删除跳过归档闸门/停止/工作区记账，恢复再把 unarchiveSession 缺失报成「失败」。
 // 这组用例把「晚挂载」「逐项报错」「自动重试一次」「重检」「标题保真」钉住。
 import assert from "node:assert";
-import { rm, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fixture, seedWorkspaceFile } from "./helpers.js";
@@ -141,14 +142,116 @@ test("recheckRestore 用回执里的快照重放引用恢复：从失败恢复�
   await cleanup(dataRoot);
 });
 
-test("恢复保真：会话文件内容与目录原样回来（标题来自日志，不靠缓存）", async () => {
+test("恢复保真：会话日志按 sha256 原样回来（标题来自日志，不靠缓存）", async () => {
   const { ops, sessionId, sessionDir, dataRoot } = await fixture();
-  const before = await stat(join(sessionDir, "session.v4.jsonl.zstd"));
+  const logPath = join(sessionDir, "session.v4.jsonl.zstd");
+  const digestOf = async (/** @type {string} */ path) =>
+    createHash("sha256")
+      .update(await readFile(path))
+      .digest("hex");
+  const before = await digestOf(logPath);
   const plan = await ops.plan(sessionId);
   const trashed = await ops.trash(sessionId, { digest: plan.digest });
   const restored = await ops.restore(trashed.entryId);
-  const after = await stat(join(sessionDir, "session.v4.jsonl.zstd"));
   assert.equal(restored.restoredTo, sessionDir);
-  assert.equal(after.size, before.size, "日志必须原样回来（标题/正文都在这份日志里）");
+  // N7（复审）：只比字节大小会被「等长损坏」骗过，必须比内容摘要。
+  assert.equal(await digestOf(logPath), before, "日志必须逐字节原样回来");
+  await cleanup(dataRoot);
+});
+
+test("解除归档失败：进 failures 且文案带下一步；自动重试一次成功后转绿（N6）", async () => {
+  // 注意：trash 自己也会 unarchive（清归档闸门），所以失败库存必须在 trash 之后再设置。
+  const failing = await fixture();
+  await seedWorkspaceFile(failing.dataRoot, { workspaces: { ws1: [failing.sessionId] } });
+  const planA = await failing.ops.plan(failing.sessionId);
+  const trashedA = await failing.ops.trash(failing.sessionId, { digest: planA.digest });
+  // 恢复阶段 + 自动重试 = 两次 unarchive 都失败 → 如实报失败。
+  // （trash 自己也会 unarchive 一次清闸门，所以基线要在 trash 之后取。）
+  const unarchiveBeforeRestore = failing.state.unarchiveCalls;
+  failing.setUnarchiveFailures(2);
+  const restoredA = await failing.ops.restore(trashedA.entryId);
+  assert.equal(restoredA.partial, true);
+  const archiveFailure = restoredA.failures.find(
+    (/** @type {any} */ item) => item.id === "workspace-archive",
+  );
+  assert.ok(archiveFailure, JSON.stringify(restoredA.failures));
+  assert.match(String(archiveFailure.detail), /归档/u);
+  assert.match(String(archiveFailure.detail), /手动取消归档|归档列表/u, "要给出下一步动作");
+  assert.equal(
+    failing.state.unarchiveCalls - unarchiveBeforeRestore,
+    2,
+    "恢复 + 自动重试应各调一次 unarchive",
+  );
+
+  // 只失败一次 → 自动重试就成功，恢复算全绿（不再假报 partial）。
+  const retried = await fixture();
+  await seedWorkspaceFile(retried.dataRoot, { workspaces: { ws1: [retried.sessionId] } });
+  const planB = await retried.ops.plan(retried.sessionId);
+  const trashedB = await retried.ops.trash(retried.sessionId, { digest: planB.digest });
+  retried.setUnarchiveFailures(1);
+  const restoredB = await retried.ops.restore(trashedB.entryId);
+  assert.equal(restoredB.partial, false, JSON.stringify(restoredB.failures));
+  const archive = restoredB.refs.find((/** @type {any} */ item) => item.id === "workspace-archive");
+  assert.equal(archive?.status, "ok");
+  assert.equal(archive?.retried, true, "重试成功要标 retried，回执才可解释");
+  assert.equal(retried.state.archiveCalls, 1);
+
+  await cleanup(failing.dataRoot);
+  await cleanup(retried.dataRoot);
+});
+
+test("旧回执（没有 expected 快照）拒绝重检，不假装「全部恢复」（B1）", async () => {
+  const { ops, sessionId, dataRoot } = await fixture({ failAttach: true });
+  await seedWorkspaceFile(dataRoot, { workspaces: { ws1: [sessionId] } });
+  const plan = await ops.plan(sessionId);
+  const trashed = await ops.trash(sessionId, { digest: plan.digest });
+  const restored = await ops.restore(trashed.entryId);
+  assert.equal(restored.partial, true);
+
+  // 模拟旧版本写下的回执：有失败项，但没有 expected 快照。
+  const dir = join(dataRoot, "session-trash", "receipts");
+  const names = (await readdir(dir)).filter((item) => item.endsWith(".json"));
+  /** @type {{ file: string, receipt: any } | null} */
+  let restoreFile = null;
+  for (const name of names) {
+    const candidate = JSON.parse(await readFile(join(dir, name), "utf8"));
+    if (candidate.action === "restore") restoreFile = { file: join(dir, name), receipt: candidate };
+  }
+  assert.ok(restoreFile, "恢复必须写回执");
+  delete restoreFile.receipt.expected;
+  await writeFile(restoreFile.file, JSON.stringify(restoreFile.receipt, null, 2), "utf8");
+
+  await assert.rejects(
+    ops.recheckRestore({ sessionId }),
+    (error) => /** @type {any} */ (error).code === "session-delete/receipt-legacy",
+  );
+  // 旧回执不产生「重检通过」的假回执：receipts 里仍然只有原来那两条。
+  const receipts = (await ops.receipts(20)).entries;
+  assert.equal(
+    receipts.filter((/** @type {any} */ item) => item.action === "restore-recheck").length,
+    0,
+  );
+  await cleanup(dataRoot);
+});
+
+test("正常回执（带 expected）可以重检；会话目录已不在时拒绝按旧快照重放（N13）", async () => {
+  const { ops, sessionId, state, setAttachRefused, dataRoot } = await fixture({
+    failAttach: true,
+  });
+  await seedWorkspaceFile(dataRoot, { workspaces: { ws1: [sessionId] } });
+  const plan = await ops.plan(sessionId);
+  const trashed = await ops.trash(sessionId, { digest: plan.digest });
+  await ops.restore(trashed.entryId);
+  setAttachRefused(false);
+  const ok = await ops.recheckRestore({ sessionId });
+  assert.equal(ok.ok, true, JSON.stringify(ok.failures));
+  assert.equal(state.sessionIds.has(sessionId), true);
+
+  // 会话目录被移走（例如又被删除）之后再点重检：拒绝，而不是对已不存在的会话写状态。
+  await rm(join(dataRoot, "sessions"), { recursive: true, force: true });
+  await assert.rejects(
+    ops.recheckRestore({ sessionId }),
+    (error) => /** @type {any} */ (error).code === "session-delete/receipt-stale",
+  );
   await cleanup(dataRoot);
 });

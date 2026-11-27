@@ -93,6 +93,7 @@ window.__ModuleLoader__.load({
       "panel.readOnly": "只读模式：当前 DSH 版本缺少依赖接口，删除功能已禁用。",
       "panel.close": "关闭",
       "receipt.refs": "引用",
+      "receipt.removed": "已清理的引用",
       "receipt.checks": "校验",
       "receipt.summary.ok": "全部通过",
       "receipt.summary.partial": "{n} 处未通过",
@@ -120,6 +121,7 @@ window.__ModuleLoader__.load({
       "toast.undoFailed": "撤销失败：{message}",
       "toast.trashedCurrent": "已移入回收站，可在回收站恢复",
       "toast.restored": "会话已恢复，正在重新打开",
+      "toast.restoredMany": "已恢复 {n} 个会话，正在刷新列表",
       "settings.nav": "会话回收站",
       "settings.group.delete": "删除偏好",
       "settings.cascade.title": "记住「同时删除子会话」",
@@ -201,6 +203,7 @@ window.__ModuleLoader__.load({
         "Read-only: this DSH version is missing required APIs; deletion is disabled.",
       "panel.close": "Close",
       "receipt.refs": "References",
+      "receipt.removed": "References cleaned",
       "receipt.checks": "Checks",
       "receipt.summary.ok": "all passed",
       "receipt.summary.partial": "{n} did not pass",
@@ -230,6 +233,7 @@ window.__ModuleLoader__.load({
       "toast.undoFailed": "Undo failed: {message}",
       "toast.trashedCurrent": "Moved to the trash — restore it from there",
       "toast.restored": "Session restored — reopening it",
+      "toast.restoredMany": "Restored {n} session(s); refreshing the list",
       "settings.nav": "Session trash",
       "settings.group.delete": "Deletion preferences",
       "settings.cascade.title": 'Remember "also delete child sessions"',
@@ -1291,16 +1295,18 @@ window.__ModuleLoader__.load({
             setBusyId(null);
             refresh();
             props.bump?.();
-            props.onRestored?.(result?.sessionId || sessionId);
             var failures = restoreFailures(result);
             if (failures.length === 0) {
               // 恢复成功的终点就是「回到会话里」：先关框再重开（USIM-U2-17）。
+              // 成功路径只走 onRestoreComplete 一处（N2：以前这里还会再调一次
+              // onRestored，导致 refreshRows + openSession 各跑两遍）。
               setError(null);
               setRestoreDetail(null);
               props.onRestoreComplete?.(result);
               return;
             }
-            // 引用/校验没全过时把话说清楚，而不是一律「恢复成功」（AUD-SD-02）。
+            // 没全过：仍要把 retired 清掉并刷新列表，再把话说清楚（AUD-SD-02）。
+            props.onRestored?.(result?.sessionId || sessionId, { open: false });
             setError(restoreNotice(result, props.t));
             setRestoreDetail({
               sessionId: result?.sessionId || sessionId,
@@ -1321,7 +1327,13 @@ window.__ModuleLoader__.load({
         if (!restoreDetail || retrying) return;
         setRetrying(true);
         props
-          .call("recheckRestore", { sessionId: restoreDetail.sessionId })
+          .call("recheckRestore", {
+            receiptId:
+              typeof restoreDetail.result?.receiptId === "string"
+                ? restoreDetail.result.receiptId
+                : undefined,
+            sessionId: restoreDetail.sessionId,
+          })
           .then((/** @type {any} */ result) => {
             setRetrying(false);
             props.bump?.();
@@ -1381,7 +1393,8 @@ window.__ModuleLoader__.load({
             setBatch(state);
           },
           shouldStop: () => batchControl.current.stop === true,
-          onRestored: (/** @type {any} */ sessionId) => props.onRestored?.(sessionId),
+          onRestored: (/** @type {any} */ sessionId, /** @type {any} */ info) =>
+            props.onRestored?.(sessionId, info),
         }).then((/** @type {any} */ summary) => {
           setSelected((/** @type {any} */ current) => {
             /** @type {Record<string, boolean>} */
@@ -1397,6 +1410,10 @@ window.__ModuleLoader__.load({
           refresh();
           props.bump?.();
           if (kind === "purge") props.onPurged?.(undefined);
+          // 批量恢复全绿时同样「完成即关框」（U2-17 的批量版）；有失败就留在面板里看清单。
+          if (kind === "restore" && summary.failures.length === 0) {
+            props.onBatchRestoreDone?.(summary);
+          }
         });
       };
 
@@ -1759,10 +1776,14 @@ window.__ModuleLoader__.load({
       var checks = Array.isArray(receipt.checks) ? receipt.checks : [];
       var failures = restoreFailures(receipt);
       var action = String(receipt.action || "");
+      // B1（复审）：没有 `expected` 快照的旧回执不能重检——服务端也会拒绝，
+      // 这里先不给按钮，别让用户点出一个假的「重检通过」。
+      var hasSnapshot = receipt.expected !== null && typeof receipt.expected === "object";
       var retryable =
         failures.length > 0 &&
         (action === "restore" || action === "restore-recheck") &&
         typeof receipt.sessionId === "string" &&
+        hasSnapshot &&
         typeof props.call === "function";
 
       /** @type {any[]} */
@@ -1796,6 +1817,10 @@ window.__ModuleLoader__.load({
         });
       };
       pushGroup(props.t("receipt.refs"), refs, "refs");
+      // trash 回执的引用清单在 `removed` 里（N3）：两者都渲染，文案才对得上
+      // README 的「show every reference and check」。
+      var removed = Array.isArray(receipt.removed) ? receipt.removed : [];
+      pushGroup(props.t("receipt.removed"), removed, "removed");
       pushGroup(props.t("receipt.checks"), checks, "checks");
 
       var summaryText = `${formatTime(receipt.at)} · ${action} · ${String(receipt.title || receipt.sessionId || "")}`;
@@ -1842,7 +1867,10 @@ window.__ModuleLoader__.load({
                     if (retrying) return;
                     setRetrying(true);
                     props
-                      .call("recheckRestore", { sessionId: receipt.sessionId })
+                      .call("recheckRestore", {
+                        receiptId: typeof receipt.id === "string" ? receipt.id : undefined,
+                        sessionId: receipt.sessionId,
+                      })
                       .then((/** @type {any} */ result) => {
                         setRetrying(false);
                         var left = restoreFailures(result);
@@ -2469,7 +2497,7 @@ window.__ModuleLoader__.load({
      * 「部分失败被汇总、成功的也不再算失败」。
      * @param {{ ids: string[], kind: "purge" | "restore", call: (method: string, request?: any) => Promise<any>,
      *   chunkSize?: number, onProgress?: (state: any) => void, shouldStop?: () => boolean,
-     *   onRestored?: (sessionId: string) => void }} options
+     *   onRestored?: (sessionId: string, options?: { open?: boolean }) => void }} options
      * @returns {Promise<{ kind: string, total: number, done: number, ok: number, failures: any[],
      *   partials: number, stopped: boolean }>}
      */
@@ -2512,7 +2540,11 @@ window.__ModuleLoader__.load({
             else {
               // 条目回来了但引用没全回来：单独计数，批量行里要说出来（AUD-SD-02）。
               if (item.partial === true) partials += 1;
-              if (kind === "restore" && item.sessionId) options.onRestored?.(item.sessionId);
+              // N1：批量恢复不逐条导航——宿主 replaceMain 会互相 supersede，
+              // 最终停在任意一条还会闪；批量结束后统一交给 onBatchRestoreDone。
+              if (kind === "restore" && item.sessionId) {
+                options.onRestored?.(item.sessionId, { open: false });
+              }
             }
           }
         } catch (reason) {
@@ -2560,6 +2592,7 @@ window.__ModuleLoader__.load({
             onPurged: props.onPurged,
             onRestored: props.onRestored,
             onRestoreComplete: props.onRestoreComplete,
+            onBatchRestoreDone: props.onBatchRestoreDone,
             tickStore: props.tickStore,
             bump: props.bump,
           }),
@@ -2938,11 +2971,17 @@ window.__ModuleLoader__.load({
       const onPurged = (/** @type {any} */ sessionId) => {
         void refreshRows(sessionId || undefined);
       };
-      const onRestored = (/** @type {any} */ sessionId) => {
+      /**
+       * 恢复后的列表收尾。
+       * @param {any} sessionId
+       * @param {{ open?: boolean }} [options] open=false 用于批量恢复：只刷新，不逐条导航（N1）
+       */
+      const onRestored = (sessionId, options = {}) => {
         if (sessionId) retired.delete(sessionId);
         // 恢复是「把会话还给我」：列表刷新之外还必须重建主视图绑定，
         // 否则当前视图停在「会话不可用」上（USIM-U3-02 ②）。
         void refreshRows(undefined).then(() => {
+          if (options.open === false) return;
           reopenSession(typeof sessionId === "string" ? sessionId : "");
         });
       };
@@ -2951,7 +2990,16 @@ window.__ModuleLoader__.load({
       const onRestoreComplete = (/** @type {any} */ result) => {
         panelStore.set(false);
         toastStore.set({ text: translate("toast.restored") });
-        onRestored(result?.sessionId);
+        onRestored(result?.sessionId, { open: true });
+      };
+
+      /** 批量恢复全绿的收尾：关框 + 汇总 toast，只刷新一次、不逐条导航（N1）。 */
+      const onBatchRestoreDone = (/** @type {any} */ summary) => {
+        panelStore.set(false);
+        var ok = summary && typeof summary.ok === "number" ? summary.ok : 0;
+        toastStore.set({ text: translate("toast.restoredMany", { n: ok }) });
+        void refreshRows(undefined);
+        tickStore.set(tickStore.getSnapshot() + 1);
       };
 
       /**
@@ -3251,6 +3299,7 @@ window.__ModuleLoader__.load({
                     onPurged: onPurged,
                     onRestored: onRestored,
                     onRestoreComplete: onRestoreComplete,
+                    onBatchRestoreDone: onBatchRestoreDone,
                     tickStore: tickStore,
                     bump: () => tickStore.set(tickStore.getSnapshot() + 1),
                   }),

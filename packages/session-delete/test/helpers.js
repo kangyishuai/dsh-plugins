@@ -16,7 +16,8 @@ export const SESSION_ID = "session-abc";
  * `lateWorkspace` 复现 USIM-U3-02 的宿主侧现场：桌面组合里 workspaceRegistry
  * 比插件启动对账晚挂载，所以第一次能力探测看到的是 undefined。
  * @param {{ live?: boolean, createDir?: boolean, children?: { id: string, title: string | null }[], gate?: () => Promise<void>,
- *   failAttach?: boolean, failAttachTimes?: number, failPin?: boolean, lateWorkspace?: boolean }} [options]
+ *   failAttach?: boolean, failAttachTimes?: number, failPin?: boolean, unarchiveFailuresLeft?: number,
+ *   lateWorkspace?: boolean }} [options]
  */
 export async function fixture(options = {}) {
   const {
@@ -27,6 +28,7 @@ export async function fixture(options = {}) {
     failAttach = false,
     failAttachTimes = 0,
     failPin = false,
+    unarchiveFailuresLeft = 0,
     lateWorkspace = false,
   } = options;
   const dataRoot = await mkdtemp(join(tmpdir(), "dsh-sdel-ops-"));
@@ -47,11 +49,15 @@ export async function fixture(options = {}) {
     detached: 0,
     /** 归档闸门被调用过几次（删完会 unarchive 清闸门，所以不能用布尔判断「跑过」）。 */
     archiveCalls: 0,
+    /** 解除归档被调用过几次；还有几次失败库存（N6 的失败/重试用例）。 */
+    unarchiveCalls: 0,
+    unarchiveFailuresLeft: 0,
     /** 还差几次 attach 才该失败（failAttachTimes 用完就成功）。 */
     attachFailuresLeft: 0,
     attachRefused: failAttach,
   };
   if (failAttachTimes > 0) state.attachFailuresLeft = failAttachTimes;
+  if (unarchiveFailuresLeft > 0) state.unarchiveFailuresLeft = unarchiveFailuresLeft;
 
   /**
    * 让假宿主的 pin 写入 `storages/workspace.json`（文件不存在时静默跳过）。
@@ -108,6 +114,11 @@ export async function fixture(options = {}) {
       await writePinnedFlag(false);
     },
     unarchiveSession: async () => {
+      state.unarchiveCalls += 1;
+      if (state.unarchiveFailuresLeft > 0) {
+        state.unarchiveFailuresLeft -= 1;
+        throw new Error("unarchiveSession refused");
+      }
       state.archived = false;
     },
     pinSession: async () => {
@@ -188,6 +199,10 @@ export async function fixture(options = {}) {
     /** 让「晚挂载」的宿主服务出现在 ctx.get 里（模拟工作区插件挂上）。 */
     enableHostServices() {
       services.workspaceRegistry = workspace;
+    },
+    /** 运行中设置「解除归档还要失败几次」（0 = 立即成功；N6 失败/重试用例）。 */
+    setUnarchiveFailures(/** @type {number} */ count) {
+      state.unarchiveFailuresLeft = Math.max(0, Number(count) || 0);
     },
     /** 运行中切换 attach 是否被拒绝（测「重试后成功」与「重检」）。 */
     setAttachRefused(/** @type {boolean} */ value) {

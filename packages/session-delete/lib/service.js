@@ -116,6 +116,11 @@ export class SessionDeleteService extends TypertRemoteService {
    * 启动对账补跑一轮（USIM-U3-02 的宿主侧根因）：
    * 桌面组合里 `workspaceRegistry` / `agents` 比 `sessionPersistence` 晚挂载，
    * 首轮对账探不到它们，可能漏掉归档闸门与工作区收尾。对账本身幂等，补跑没有副作用。
+   *
+   * 覆盖范围（复审 N5）：补跑只能救 **trash 现场**——「已移动但引用未摘」的记录会以
+   * state=failed 留在 journal 里，第二轮会重跑；而 restore 收尾在首轮就已经 finalize
+   * 条目，第二轮只会走「恢复此前已完成」的捷径。restore 的引用补做靠设置页
+   * `recheckRestore`（回执里的 expected 快照），不是这里。
    */
   scheduleRecoveryRetry() {
     if (this.recoveryRetried) return;

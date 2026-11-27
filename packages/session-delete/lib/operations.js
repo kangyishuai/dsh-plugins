@@ -89,6 +89,9 @@ export function createOperations({ ctx, dataRoot, logger }) {
    * 所以 caps 与引用适配器都是**可刷新**的：每次进入操作前重探一次（只是几次属性读取），
    * 服务集合或门禁结果一变就**原地**重建 refs（原地重建让 createRecovery 早先拿到的
    * 数组引用也跟着更新，不需要把 refs 传遍每一层）。
+   *
+   * 原地重建的前提：`buildRefs()` 的条目**数量与顺序必须稳定**（同一次宿主组合下）。
+   * 若以后新增按能力条件增删引用的适配器，就不能再用 length=0/push，要改成 getRefs()。
    */
   let caps = probeCapabilities(ctx);
   const refs = buildRefs(caps, logger, { dataRoot });
@@ -758,15 +761,37 @@ export function createOperations({ ctx, dataRoot, logger }) {
       );
     }
     const sessionId = requireSessionId(target.sessionId);
-    const expected =
-      target.expected && typeof target.expected === "object"
-        ? {
-            workspaceIds: Array.isArray(target.expected.workspaceIds)
-              ? target.expected.workspaceIds.map(String)
-              : [],
-            pinned: typeof target.expected.pinned === "boolean" ? target.expected.pinned : null,
-          }
-        : { workspaceIds: [], pinned: null };
+    // B1（复审）：旧版本写的 restore 回执没有 `expected` 快照。用空快照重放会让
+    // `workspace-slot` 以「原本不在任何工作区」返回 ok、校验也只给 skipped，
+    // 于是「重检通过」变成假绿（正是本批要消灭的「不伪造成功」）。宁可拒绝：
+    // 没有依据就不假装重检成功，让用户按回执里的提示手动处理。
+    if (!target.expected || typeof target.expected !== "object") {
+      throw failure(
+        "session-delete/receipt-legacy",
+        "这条回执是旧版本写的，没有留存恢复前的引用快照，不能自动重检；" +
+          "请按回执里的提示手动把会话挂回工作区（会话右键菜单「归属到项目…」）。",
+      );
+    }
+    // N13（复审）：快照可能是很久以前留下的。会话目录已经不在时，重放
+    // attachSession/pinSession/unarchiveSession 只会对一个不可用的现场做写操作。
+    const restoredTo = typeof target.restoredTo === "string" ? target.restoredTo : "";
+    const dirOk = await stat(restoredTo)
+      .then((value) => value.isDirectory())
+      .catch(() => false);
+    if (!dirOk) {
+      throw failure(
+        "session-delete/receipt-stale",
+        `回执里记录的会话目录已不存在（${restoredTo || "未知路径"}），` +
+          "会话可能又被删除/移动过；请重新确认回收站状态，不要按旧快照重检。",
+      );
+    }
+    /** @type {{ workspaceIds: string[], pinned: boolean | null }} */
+    const expected = {
+      workspaceIds: Array.isArray(target.expected.workspaceIds)
+        ? target.expected.workspaceIds.map(String)
+        : [],
+      pinned: typeof target.expected.pinned === "boolean" ? target.expected.pinned : null,
+    };
     const refResults = await restoreRefsWithRetry(expected, sessionId);
     const checks = await verifyRestored({
       refs,

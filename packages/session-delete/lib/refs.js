@@ -60,11 +60,23 @@ export function buildRefs(caps, logger, options = {}) {
     // USIM-U3-02 修：宿主不提供该接口时**不能抛异常**。删除阶段同样是 unknown 档、
     // 根本没归档过，恢复阶段再报「失败」只会让用户看到一条假的「1 处引用未通过」。
     // 返回 skipped 才是事实：这一处没动过，也没有需要撤的。
+
+    // USIM-U3-02 / N6：解除归档失败意味着「会话回来了但仍可能被归档集合挡住」
+    // ——它同时是删除时的 agent/pre-step 闸门，所以必须给出下一步而不是原始英文。
     restore: async (sessionId) => {
       if (typeof workspace?.unarchiveSession !== "function") {
         return { status: "skipped", detail: "当前宿主不提供 unarchiveSession，未做处理" };
       }
-      await workspace.unarchiveSession(sessionId);
+      try {
+        await workspace.unarchiveSession(sessionId);
+      } catch (error) {
+        return {
+          status: "failed",
+          detail:
+            `归档标记未能解除（${error instanceof Error ? error.message : error}）；` +
+            "会话可能仍在归档状态，可在侧栏的归档列表里手动取消归档",
+        };
+      }
       return { status: "ok" };
     },
   });
@@ -90,7 +102,16 @@ export function buildRefs(caps, logger, options = {}) {
       if (typeof workspace?.pinSession !== "function") {
         return { status: "skipped", detail: "当前宿主不提供 pinSession，未做处理" };
       }
-      await workspace.pinSession(sessionId);
+      try {
+        await workspace.pinSession(sessionId);
+      } catch (error) {
+        return {
+          status: "failed",
+          detail:
+            `置顶没有恢复（${error instanceof Error ? error.message : error}）；` +
+            "可在会话右键菜单里手动置顶",
+        };
+      }
       return { status: "ok" };
     },
   });
