@@ -5329,8 +5329,9 @@ export class ProjectsService extends TypertRemoteService {
   /**
    * 写项目级**协调者**默认模型 / effort（与线程默认独立）。
    * @param {string} projectId @param {string} [provider] @param {string} [model] @param {string} [reasoningEffort]
+   * @param {string} [source] 写入口标识（"settings" | "composer"），只用于审计区分
    */
-  setCoordinatorDefaults(projectId, provider, model, reasoningEffort) {
+  setCoordinatorDefaults(projectId, provider, model, reasoningEffort, source) {
     const store = this.requireStore();
     if (!store.getProject(projectId)) throw new Error(`projects: unknown project ${projectId}`);
     const result = store.setCoordinatorDefaults(projectId, {
@@ -5338,7 +5339,13 @@ export class ProjectsService extends TypertRemoteService {
       model: String(model ?? ""),
       reasoningEffort: String(reasoningEffort ?? ""),
     });
-    store.appendAudit({ action: "coordinator/defaults", projectId, defaults: result.defaults });
+    // source 让审计能区分「设置里的默认模型」与「composer 药丸」两处写入口（同一条 RPC）
+    store.appendAudit({
+      action: "coordinator/defaults",
+      projectId,
+      defaults: result.defaults,
+      source: String(source ?? ""),
+    });
     store.save();
     const readback = store.getProject(projectId);
     return {

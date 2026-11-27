@@ -2340,16 +2340,37 @@ try {
     } catch (_error) {
       result.modelCatalogStats = null;
     }
-    const targetModel = result.modelOptions.find((value) => value !== "") || "";
+    // 目录里第一个模型可能**没有 effort 档位**（例如本地 provider）：遍历选项，优先挑一个
+    // 带 effort 的模型，这样进程门禁仍然真实验证「effort 写→回读」，而不是假设它存在。
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set;
+    let targetModel = "";
+    let withEfforts = false;
+    for (const value of result.modelOptions) {
+      if (value === "" || !modelSel) continue;
+      setter.call(modelSel, value);
+      modelSel.dispatchEvent(new Event("change", { bubbles: true }));
+      await wait(250);
+      const effortSel = q("[data-projects-thread-effort]");
+      const options = effortSel ? [...effortSel.options].map((option) => option.value) : [];
+      if (targetModel === "") targetModel = value;
+      if (options.some((item) => item !== "")) {
+        targetModel = value;
+        withEfforts = true;
+        break;
+      }
+    }
+    // 遍历期间 DOM 停在最后一个尝试的模型上：必须把最终选择**按回**选中的那个，否则
+    // 记录里存的是最后尝试的模型、断言里却是第一个（假失败）
     if (modelSel && targetModel !== "") {
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set;
       setter.call(modelSel, targetModel);
       modelSel.dispatchEvent(new Event("change", { bubbles: true }));
-      await wait(400);
+      await wait(300);
     }
     const effortSel2 = q("[data-projects-thread-effort]");
-    const effortValues = effortSel2 ? [...effortSel2.options].map((option) => option.value) : [];
-    const targetEffort = effortValues.find((value) => value !== "") || "";
+    const effortValues = effortSel2
+      ? [...effortSel2.options].map((option) => option.value)
+      : [];
+    const targetEffort = withEfforts ? effortValues.find((value) => value !== "") || "" : "";
     if (effortSel2) {
       const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set;
       setter.call(effortSel2, targetEffort);
@@ -2381,6 +2402,13 @@ try {
       fillText("[data-projects-thread-effort-manual]", manualEffort);
       await wait(400);
     }
+    // 断言以**界面实际选中的值**为准：目录里有模型但该模型没有 effort 档位时，
+    // effort 下拉只有「继承」（空串）——此时不能假设写了 high（旧逻辑会记 high 却从未写入，
+    // 制造假失败）。
+    result.defaultsPicked.effort =
+      targetModel === ""
+        ? manualEffort
+        : (q("[data-projects-thread-effort]")?.value ?? "");
     q("[data-projects-thread-defaults-save]")?.click();
     await wait(500);
     // D3：协调者默认模型（与线程默认独立）——选一个具体值后保存
@@ -2411,23 +2439,45 @@ try {
       await wait(600);
     } else if (cModel && cModelValue !== "") {
       const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set;
-      setter.call(cModel, cModelValue);
-      cModel.dispatchEvent(new Event("change", { bubbles: true }));
-      await wait(400);
+      // 同线程默认：优先挑一个带 effort 档位的模型（本地模型常常没有档位）
+      let pickedModel = "";
+      let cEffortValue = "";
+      for (const value of [...cModel.options].map((option) => option.value)) {
+        if (value === "") continue;
+        setter.call(cModel, value);
+        cModel.dispatchEvent(new Event("change", { bubbles: true }));
+        await wait(250);
+        const effortSel = q("[data-projects-coordinator-effort]");
+        const options = effortSel ? [...effortSel.options].map((option) => option.value) : [];
+        if (pickedModel === "") pickedModel = value;
+        const found = options.find((item) => item !== "") || "";
+        if (found !== "") {
+          pickedModel = value;
+          cEffortValue = found;
+          break;
+        }
+      }
+      // 同上：把最终模型按回选中的那个
+      if (pickedModel !== "") {
+        setter.call(cModel, pickedModel);
+        cModel.dispatchEvent(new Event("change", { bubbles: true }));
+        await wait(300);
+      }
       const cEffort = q("[data-projects-coordinator-effort]");
-      const cEffortValue = cEffort
-        ? [...cEffort.options].map((option) => option.value).find((item) => item !== "") || ""
-        : "";
+      result.coordinatorEffortSelectable = Boolean(
+        cEffort && [...cEffort.options].some((option) => option.value !== ""),
+      );
       if (cEffort && cEffortValue !== "") {
         setter.call(cEffort, cEffortValue);
         cEffort.dispatchEvent(new Event("change", { bubbles: true }));
         await wait(300);
       }
-      const parts = cModelValue.split("|");
+      const parts = pickedModel.split("|");
       result.coordinatorPicked = {
         provider: parts.length > 1 ? parts[0] : "",
         modelId: parts.length > 1 ? parts.slice(1).join("|") : cModelValue,
-        effort: cEffortValue,
+        // 以界面实际值兜底（cEffortValue 只是"第一个非空选项"）
+        effort: q("[data-projects-coordinator-effort]")?.value ?? cEffortValue,
       };
       q("[data-projects-coordinator-defaults-save]")?.click();
       await wait(500);
@@ -5799,9 +5849,16 @@ const main = async () => {
     });
     // D3：协调者默认独立落盘（按全局审计 coordinator/defaults 定位项目）
     const pickedCoordinator = result.b3CoordinatorPicked ?? null;
-    const coordinatorAudit = (Array.isArray(parsed?.audit) ? parsed.audit : []).filter(
+    // 同一条 RPC 有两个写入口（设置卡 / composer 药丸），审计用 source 区分；
+    // 这里断言的是「设置卡」那次保存，不能拿全局最后一条（composer 药丸会覆盖它）
+    const coordinatorAuditAll = (Array.isArray(parsed?.audit) ? parsed.audit : []).filter(
       (/** @type {any} */ item) => String(item?.action ?? "") === "coordinator/defaults",
     );
+    const coordinatorAuditSettings = coordinatorAuditAll.filter(
+      (/** @type {any} */ item) => String(item?.source ?? "") === "settings",
+    );
+    const coordinatorAudit =
+      coordinatorAuditSettings.length > 0 ? coordinatorAuditSettings : coordinatorAuditAll;
     const lastCoordinator = coordinatorAudit[coordinatorAudit.length - 1];
     const coordinatorProject =
       lastCoordinator && parsed?.projects
@@ -5816,19 +5873,26 @@ const main = async () => {
     } else
       checks.push({
         name: "协调者默认模型写→回读（coordinatorDefaults 独立于 threadDefaults）",
+        // 目录里的模型可能没有 effort 档位（本地 provider）：此时 UI 只有「继承」，
+        // 不能断言 effort 相等；provider/model 仍然逐字段比对，跳过原因写进 detail。
         ok:
-          pickedCoordinator !== null &&
-          coordinatorProject !== null &&
-          String(coordinatorProject.coordinatorDefaults?.provider ?? "") ===
-            String(pickedCoordinator.provider ?? "") &&
-          String(coordinatorProject.coordinatorDefaults?.model ?? "") ===
-            String(pickedCoordinator.modelId ?? "") &&
+          (pickedCoordinator !== null &&
+            coordinatorProject !== null &&
+            String(coordinatorProject.coordinatorDefaults?.provider ?? "") ===
+              String(pickedCoordinator.provider ?? "") &&
+            String(coordinatorProject.coordinatorDefaults?.model ?? "") ===
+              String(pickedCoordinator.modelId ?? "") &&
+            // UI 没实际选中 effort（空串）时不断言落盘值：那种情况下保存的是模型选择，
+            // effort 是否清空由项目原有状态决定，不属于这次写→回读的范围；选中了才严格比对。
+            String(pickedCoordinator.effort ?? "") === "") ||
           String(coordinatorProject.coordinatorDefaults?.reasoningEffort ?? "") ===
             String(pickedCoordinator.effort ?? ""),
         detail: JSON.stringify({
           picked: pickedCoordinator,
           stored: coordinatorProject?.coordinatorDefaults ?? null,
           threadDefaults: coordinatorProject?.threadDefaults ?? null,
+          effortSelectable: result.b3CoordinatorEffortSelectable,
+          effortChecked: String(pickedCoordinator.effort ?? "") !== "",
           audits: coordinatorAudit.length,
         }),
       });

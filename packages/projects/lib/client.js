@@ -6670,6 +6670,7 @@ window.__ModuleLoader__.load({
           provider: String(coordPicked.provider ?? ""),
           model: String(coordPicked.model ?? ""),
           reasoningEffort: String(coordPicked.effort ?? ""),
+          source: "composer",
         }).then(
           () => {
             setCoordPillOpen(false);
@@ -15109,6 +15110,7 @@ window.__ModuleLoader__.load({
           provider: provider,
           model: modelId,
           reasoningEffort: String(coordinatorPicked.effort || ""),
+          source: "settings",
         }).then((/** @type {any} */ result) => {
           var readback = result?.defaults || {};
           setView((/** @type {any} */ prev) => ({
