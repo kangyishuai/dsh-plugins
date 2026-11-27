@@ -25,10 +25,11 @@ export function trashDirFor(input) {
 /**
  * 汇总「删除这个项目会影响什么」。数字全部由调用方给，函数只负责表述与兜底。
  * ADR 0002 要求：数量 · 体积 · 是否在跑 · 能否恢复，四件都要能说清。
- * @param {{threads: {state?: string}[], contentBytes: number, hasContentDir: boolean, name: string}} input
+ * @param {{threads: {state?: string}[], contentBytes: number, hasContentDir: boolean, name: string, worktrees?: any[]}} input
  * @returns {{
  *   threadCount: number,
  *   liveThreadCount: number,
+ *   worktreeCount: number,
  *   contentBytes: number,
  *   hasContentDir: boolean,
  *   restorable: true,
@@ -42,15 +43,18 @@ export function impactOf(input) {
     ? Math.max(0, Number(input.contentBytes))
     : 0;
   const hasContentDir = input?.hasContentDir === true;
+  const worktrees = Array.isArray(input?.worktrees) ? input.worktrees : [];
   const parts = [
     `${threads.length} 个线程（${live} 个在跑）`,
     hasContentDir ? `项目内容 ${formatBytes(contentBytes)}` : "无项目内容文件",
+    worktrees.length > 0 ? `${worktrees.length} 个 worktree 留在磁盘（删除不会清理）` : "",
     "会话日志不受影响",
     "可恢复：删除只移入回收站",
   ];
   return {
     threadCount: threads.length,
     liveThreadCount: live,
+    worktreeCount: worktrees.length,
     contentBytes,
     hasContentDir,
     restorable: true,
@@ -68,4 +72,17 @@ export function formatBytes(bytes) {
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
   if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
   return `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+/**
+ * 从回收站目录名里取项目 id（目录名形如 `<projectId>-<ISO 时间戳>`）。
+ * projectId 是 `prj_xxx`，本身不含 “-”；时间戳里才有。
+ * @param {string} name
+ * @returns {string}
+ */
+export function trashProjectIdOf(name) {
+  const raw = String(name ?? "").trim();
+  if (raw === "") return "";
+  const [id] = raw.split("-");
+  return String(id ?? "").replace(/[^A-Za-z0-9_-]/gu, "");
 }

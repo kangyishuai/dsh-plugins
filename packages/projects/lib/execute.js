@@ -637,9 +637,16 @@ export async function executeApprovalCore(deps, requestId) {
     // 规格 §7.5 行 3 的 ⑥：仓库允许的合并方式（不允许 squash 就拒绝，不改方式）
     const repoInfo = await runGh(["api", `repos/${repo}`], mergeRepoDir || undefined);
     // REST 给的是三个布尔（allow_squash_merge…），没有 allowed_merge_methods 字段——真实仓库验证时踩到
-    const allowedMethods = allowedMergeMethodsFromRepo(
-      repoInfo.code === 0 ? JSON.parse(repoInfo.stdout) : null,
-    );
+    // 唯一没保护的一处命令输出解析：一次空响应就会抛异常逃逸，审批永久卡在 claimed
+    let repoJson = null;
+    if (repoInfo.code === 0) {
+      try {
+        repoJson = JSON.parse(String(repoInfo.stdout ?? ""));
+      } catch {
+        repoJson = null;
+      }
+    }
+    const allowedMethods = allowedMergeMethodsFromRepo(repoJson);
     const readiness = (/** @type {any} */ pr) =>
       checkMergeReadiness({
         pr,

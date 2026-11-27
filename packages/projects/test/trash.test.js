@@ -109,3 +109,29 @@ describe("ProjectStore.removeProject", () => {
     assert.equal(store.projectOfSession("session-x")?.id, b.id);
   });
 });
+
+describe("回收站：worktree 影响面与目录名解析", () => {
+  it("有 worktree 时影响面必须写明它们会留在磁盘", async () => {
+    const { impactOf } = await import("../lib/trash.js");
+    const impact = impactOf({
+      threads: [{ state: "idle" }, { state: "working" }],
+      contentBytes: 0,
+      hasContentDir: false,
+      name: "p",
+      worktrees: [{ sessionId: "s1", branch: "dsh/p-1", worktree: "/tmp/wt-1" }],
+    });
+    assert.equal(impact.worktreeCount, 1);
+    assert.match(impact.summary, /1 个 worktree 留在磁盘/u);
+    assert.match(impact.summary, /2 个线程（1 个在跑）/u);
+  });
+
+  it("trashProjectIdOf 从 `<projectId>-<时间戳>` 里只取 id（时间戳的 - 不能混进来）", async () => {
+    const { trashProjectIdOf } = await import("../lib/trash.js");
+    assert.equal(
+      trashProjectIdOf("prj_mwxokjhl1xurtiic-2026-11-27T09-00-00-000Z"),
+      "prj_mwxokjhl1xurtiic",
+    );
+    assert.equal(trashProjectIdOf(""), "");
+    assert.equal(trashProjectIdOf("../evil-2026"), "evil", "路径字符必须被剥掉，不能留 ../");
+  });
+});

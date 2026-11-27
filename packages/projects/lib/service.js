@@ -145,7 +145,7 @@ import {
 } from "./template.js";
 import { createIsolatedThread, reclaimThreadWorktree, reconcileWorktrees } from "./thread.js";
 import { REQUESTABLE_ACTIONS } from "./tools.js";
-import { impactOf, TRASH_DIR, trashDirFor } from "./trash.js";
+import { impactOf, TRASH_DIR, trashDirFor, trashProjectIdOf } from "./trash.js";
 import { buildEnvelope, createInjectionGuard, decideWake, pendingWakes } from "./wake.js";
 import { planDeleteBranch, shouldDeleteBranchV2 } from "./worktree.js";
 import {
@@ -1442,9 +1442,14 @@ export class ProjectsService extends TypertRemoteService {
     });
   }
 
-  /** @param {string} id */
-  getProject(id) {
-    return this.requireStore().getProject(id) ?? null;
+  /**
+   * 网关按**参数名**绑定实参：客户端历史调用传 `{ projectId }`，冒烟/旧代码传 `{ id }`。
+   * 两个名字都接（只认 `id` 会让客户端「写后回读」恒为 null）。
+   * @param {string} [id] @param {string} [projectId]
+   */
+  getProject(id, projectId) {
+    const target = String(projectId ?? id ?? "");
+    return this.requireStore().getProject(target) ?? null;
   }
 
   /** @param {string} projectId */
@@ -2299,10 +2304,25 @@ export class ProjectsService extends TypertRemoteService {
     } catch {
       hasContentDir = false;
     }
+    // worktree 不会随删除消失：把它们列进影响面，别让用户以为点了删除就清空了磁盘
+    const worktrees = threads
+      .filter((/** @type {any} */ thread) => String(thread?.worktree ?? "") !== "")
+      .map((/** @type {any} */ thread) => ({
+        sessionId: String(thread.sessionId ?? ""),
+        branch: String(thread.branch ?? ""),
+        worktree: String(thread.worktree),
+      }));
     return {
       projectId: id,
       name: project.name,
-      impact: impactOf({ threads, contentBytes, hasContentDir, name: project.name }),
+      impact: impactOf({
+        threads,
+        contentBytes,
+        hasContentDir,
+        name: project.name,
+        worktrees,
+      }),
+      worktrees,
       threads: threads.map((/** @type {any} */ thread) => ({
         sessionId: thread.sessionId,
         state: thread.state,
@@ -2316,9 +2336,25 @@ export class ProjectsService extends TypertRemoteService {
    * 调用方应先跑 previewDeleteProject 把影响面展示给用户。
    * @param {string} id
    */
-  deleteProject(id) {
+  async deleteProject(id) {
     const store = this.requireStore();
     const preview = this.previewDeleteProject(id);
+    // 在跑的线程：删掉记录后 agent 的结果无法回写，用户会以为任务还在跑（审查实测）
+    const previewThreads = store.listThreads(id);
+    const live = await this.liveSessionFacts(
+      false,
+      previewThreads
+        .map((/** @type {any} */ thread) => String(thread.sessionId ?? ""))
+        .filter(Boolean),
+    );
+    const busy = previewThreads.filter((/** @type {any} */ thread) =>
+      this.threadBusy(thread, live.states),
+    );
+    if (busy.length > 0) {
+      throw new Error(
+        `projects: project has ${busy.length} running/waiting thread(s); stop them before deleting`,
+      );
+    }
     const trashDir = trashDirFor({ dataRoot: this.dataRoot, projectId: id });
     mkdirSync(trashDir, { recursive: true, mode: 0o700 });
     const removed = store.removeProject(id);
@@ -2346,6 +2382,7 @@ export class ProjectsService extends TypertRemoteService {
           deletedAt: new Date().toISOString(),
           project: removed.project,
           threads: removed.threads,
+          worktrees: preview.worktrees,
           contentDir: preview.contentDir,
           moved: preview.impact.hasContentDir,
           summary: preview.impact.summary,
@@ -2545,10 +2582,18 @@ export class ProjectsService extends TypertRemoteService {
     /** @type {any[]} */
     const candidates = [];
     const threads = store.listThreads(projectId);
-
+    const live = await this.liveSessionFacts(
+      false,
+      threads.map((/** @type {any} */ thread) => String(thread.sessionId ?? "")).filter(Boolean),
+    );
     for (const thread of threads) {
       const branch = typeof thread.branch === "string" ? thread.branch : "";
       if (branch === "") continue;
+      // 在跑/等你的线程：worktree 就是它的工作目录，删了会打断 agent（审查实测）
+      if (this.threadBusy(thread, live.states)) {
+        candidates.push({ branch, ok: false, reason: "thread-busy" });
+        continue;
+      }
       // ① 必须是我们的分支且与记录一致
       const ours = branch.startsWith("dsh/") && branch === thread.branch;
       if (!ours) {
@@ -2648,25 +2693,30 @@ export class ProjectsService extends TypertRemoteService {
 
     /** @type {any[]} */
     const entries = [];
-    const projects = input.projectId
-      ? [store.getProject(String(input.projectId))].filter(Boolean)
-      : store.listProjects();
-    for (const project of projects) {
-      const dir = this.trashRoot();
-      if (!dir) continue;
+    const onlyProjectId = input.projectId ? String(input.projectId) : "";
+    const dir = this.trashRoot();
+    if (dir) {
+      /** @type {string[]} */
       let names = [];
       try {
         names = readdirSync(dir, { withFileTypes: true })
-          .filter((entry) => entry.isDirectory() && entry.name.startsWith(`${project.id}-`))
+          .filter((entry) => entry.isDirectory())
           .map((entry) => entry.name);
       } catch {
-        continue;
+        names = [];
       }
       for (const name of names) {
+        // 目录名是 `<projectId>-<ISO 时间戳>`；projectId 不含 "-"（prj_xxx）
+        const projectId = trashProjectIdOf(name);
+        if (onlyProjectId !== "" && projectId !== onlyProjectId) continue;
         const full = join(dir, name);
-        entries.push({ name, path: full, bytes: this.sizeOf(full) });
+        entries.push({ name, projectId, path: full, bytes: this.sizeOf(full) });
       }
     }
+    // 开关语义：按项目过滤时看该项目的开关；全局清理时"任一项目打开"即可（旧口径）
+    const projects = onlyProjectId
+      ? [store.getProject(onlyProjectId)].filter(Boolean)
+      : store.listProjects();
 
     const retentionDays = Number.isFinite(input.retentionDays)
       ? Number(input.retentionDays)
@@ -3839,6 +3889,20 @@ export class ProjectsService extends TypertRemoteService {
   }
 
   /**
+   * 这条线程现在是否"在跑/等你"（要保护工作目录与分支，不许回收/归档清理）。
+   * @param {any} thread
+   * @param {Map<string, any>} states liveSessionFacts 的 states
+   * @returns {boolean}
+   */
+  threadBusy(thread, states) {
+    const live = states?.get?.(String(thread?.sessionId ?? ""));
+    const pending = Array.isArray(live?.pendingInput) ? live.pendingInput.length : 0;
+    const view = mergeRecord(this.views.get(String(thread?.sessionId ?? "")), thread);
+    const state = deriveState({ ...view, awaitingUser: pending > 0 ? true : view.awaitingUser });
+    return state === "working" || state === "waiting-user" || pending > 0;
+  }
+
+  /**
    * 同一项目并发 progress 合并：全局 notifier（每 5s）和详情页（每 5s）会同时打进来，
    * 不合并就会 2× 计算、2× spawn git。
    * @param {string} [projectId]
@@ -4127,7 +4191,15 @@ export class ProjectsService extends TypertRemoteService {
    */
   async reclaimThread(sessionId) {
     const store = this.requireStore();
-    const result = await reclaimThreadWorktree({ store, sessionId, deps: { runGit } });
+    const id = String(sessionId ?? "");
+    const thread = store.state?.threads?.[id];
+    if (thread) {
+      const live = await this.liveSessionFacts(false, [id]);
+      if (this.threadBusy(thread, live.states)) {
+        return { reclaimed: false, reason: "thread-busy" };
+      }
+    }
+    const result = await reclaimThreadWorktree({ store, sessionId: id, deps: { runGit } });
     store.save();
     return result;
   }

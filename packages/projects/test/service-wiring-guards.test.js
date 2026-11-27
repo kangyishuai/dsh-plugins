@@ -66,3 +66,38 @@ describe("客户端轮询：后台标签页不轮询", () => {
     assert.match(region, /hidden === true/u);
   });
 });
+
+describe("生命周期保护：在跑/等你的线程不许被回收/归档清理/删项目", () => {
+  it("reclaimThread 先查 threadBusy；cleanupBranches 跳过 thread-busy", () => {
+    const reclaim = methodRegion(serviceSource, "reclaimThread");
+    assert.match(reclaim, /threadBusy\(/u);
+    assert.match(reclaim, /thread-busy/u);
+    const cleanupStart = serviceSource.indexOf("async cleanupBranches(");
+    assert.ok(cleanupStart >= 0);
+    const cleanup = serviceSource.slice(cleanupStart, cleanupStart + 6000);
+    assert.match(cleanup, /thread-busy/u);
+  });
+
+  it("deleteProject 是 async、会拒绝在跑的线程，并把 worktree 写进影响面", () => {
+    const del = methodRegion(serviceSource, "deleteProject");
+    assert.match(del, /threadBusy\(/u);
+    assert.match(del, /running\/waiting thread/u);
+    assert.match(del, /worktrees: preview\.worktrees/u);
+  });
+
+  it("purgeTrash 枚举整个 trash 根（不是按现存项目过滤）", () => {
+    const start = serviceSource.indexOf("  purgeTrash(");
+    assert.ok(start >= 0);
+    const region = serviceSource.slice(start, start + 5000);
+    assert.match(region, /trashProjectIdOf\(/u);
+    assert.doesNotMatch(region, /names\.startsWith/u);
+  });
+
+  it("getProject 同时接受 id 与 projectId 两个实参名", () => {
+    const start = serviceSource.indexOf("  getProject(");
+    assert.ok(start >= 0);
+    const region = serviceSource.slice(start, start + 400);
+    assert.match(region, /projectId/u);
+    assert.match(region, /\?\? id/u);
+  });
+});
