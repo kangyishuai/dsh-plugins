@@ -3814,6 +3814,15 @@ window.__ModuleLoader__.load({
             "data-projects-row": project.id,
             "data-project-id": project.id,
             "data-pinned": pinned ? "true" : "false",
+            // 列表行是主入口：纯键盘用户必须能进详情（审查 P1：以前只有收藏/⋯ 可聚焦）
+            role: "button",
+            tabIndex: 0,
+            "aria-label": project.name,
+            onKeyDown: (/** @type {any} */ event) => {
+              if (event?.key !== "Enter" && event?.key !== " ") return;
+              event.preventDefault();
+              setSelectedId(project.id);
+            },
             "data-projects-state": project.state,
             "data-row-state": archived ? "archived" : "active",
             "data-projects-row-waiting": String(waiting),
@@ -5850,6 +5859,29 @@ window.__ModuleLoader__.load({
           host.querySelector("button:not([disabled])");
         if (target && typeof target.focus === "function") target.focus();
       }, [del.confirming]);
+      // 关闭确认框：状态复位 + 焦点还给触发它的按钮（审查：Esc 之前完全没反应）
+      const closeDeleteConfirm = useCallback(() => {
+        setDel({ confirming: false, busy: false, impact: null });
+        const doc = typeof document === "undefined" ? null : document;
+        const target = /** @type {any} */ (
+          doc?.querySelector("[data-projects-delete]") ??
+            doc?.querySelector("[data-projects-row-menu]")
+        );
+        if (target && typeof target.focus === "function") target.focus();
+      }, [setDel]);
+      useEffect(() => {
+        if (del.confirming !== true) return undefined;
+        const doc = typeof document === "undefined" ? null : document;
+        if (!doc) return undefined;
+        const onKey = (/** @type {any} */ event) => {
+          if (event?.key === "Escape") {
+            event.preventDefault();
+            closeDeleteConfirm();
+          }
+        };
+        doc.addEventListener("keydown", onKey);
+        return () => doc.removeEventListener("keydown", onKey);
+      }, [del.confirming, closeDeleteConfirm]);
       const resolveApproval = useCallback(
         (/** @type {any} */ requestId, /** @type {any} */ status) => {
           call(api.ctx, "resolveApproval", { requestId, status }).then(
@@ -12120,60 +12152,92 @@ window.__ModuleLoader__.load({
         }),
         del.confirming
           ? h(
+              // 破坏性确认要挡住整页：内联渲染会把详情顶出视口（审查实测标题 y=-48），
+              // 而且背景仍可点。改成 fixed 覆盖层 + aria-modal；Esc/点遮罩 = 取消。
               "div",
               {
-                role: "alertdialog",
-                "aria-label": text(t, "detail.delete"),
-                ref: deleteConfirmRef,
                 style: {
-                  border: `1px solid ${T.danger}`,
-                  borderRadius: "10px",
-                  padding: "10px",
+                  position: "fixed",
+                  inset: 0,
+                  background: "rgba(0, 0, 0, 0.38)",
                   display: "flex",
-                  flexDirection: "column",
-                  gap: "8px",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: "20px",
+                  zIndex: 80,
                 },
-                "data-projects-delete-confirm-panel": "",
+                "data-projects-delete-confirm-backdrop": "",
+                onClick: (/** @type {any} */ event) => {
+                  if (event?.target === event?.currentTarget) closeDeleteConfirm();
+                },
+                onKeyDown: (/** @type {any} */ event) => {
+                  if (event?.key === "Escape") {
+                    event.preventDefault();
+                    closeDeleteConfirm();
+                  }
+                },
               },
               h(
                 "div",
-                { style: { color: T.text }, "data-projects-delete-impact": "" },
-                del.impact?.impact?.summary ?? "",
-              ),
-              h(
-                "details",
-                { style: { ...styles.meta } },
-                h("summary", null, text(t, "detail.deleteDetails")),
-                h(
-                  "code",
-                  { style: { ...styles.meta, whiteSpace: "pre-wrap" } },
-                  String(del.impact?.contentDir ?? ""),
-                ),
-              ),
-              h(
-                "div",
-                { style: { display: "flex", gap: "8px", justifyContent: "flex-end" } },
-                h(
-                  "button",
-                  {
-                    type: "button",
-                    style: styles.secondaryButton,
-                    "data-projects-delete-cancel": "",
-                    onClick: () => setDel({ confirming: false, busy: false, impact: null }),
+                {
+                  role: "alertdialog",
+                  "aria-modal": "true",
+                  "aria-label": text(t, "detail.delete"),
+                  ref: deleteConfirmRef,
+                  style: {
+                    border: `1px solid ${T.danger}`,
+                    borderRadius: "12px",
+                    padding: "16px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "10px",
+                    background: T.panel,
+                    width: "100%",
+                    maxWidth: "420px",
+                    boxShadow: "0 18px 48px rgba(0, 0, 0, 0.35)",
                   },
-                  text(t, "detail.deleteCancel"),
+                  "data-projects-delete-confirm-panel": "",
+                },
+                h(
+                  "div",
+                  { style: { color: T.text }, "data-projects-delete-impact": "" },
+                  del.impact?.impact?.summary ?? "",
                 ),
                 h(
-                  "button",
-                  {
-                    type: "button",
-                    style: { ...styles.secondaryButton, borderColor: T.danger, color: T.danger },
-                    "data-projects-delete-confirm": "",
-                    "data-modal-autofocus": "",
-                    onClick: confirmDelete,
-                    disabled: del.busy,
-                  },
-                  del.busy ? text(t, "detail.deleting") : text(t, "detail.deleteConfirm"),
+                  "details",
+                  { style: { ...styles.meta } },
+                  h("summary", null, text(t, "detail.deleteDetails")),
+                  h(
+                    "code",
+                    { style: { ...styles.meta, whiteSpace: "pre-wrap" } },
+                    String(del.impact?.contentDir ?? ""),
+                  ),
+                ),
+                h(
+                  "div",
+                  { style: { display: "flex", gap: "8px", justifyContent: "flex-end" } },
+                  h(
+                    "button",
+                    {
+                      type: "button",
+                      style: styles.secondaryButton,
+                      "data-projects-delete-cancel": "",
+                      onClick: () => closeDeleteConfirm(),
+                    },
+                    text(t, "detail.deleteCancel"),
+                  ),
+                  h(
+                    "button",
+                    {
+                      type: "button",
+                      style: { ...styles.secondaryButton, borderColor: T.danger, color: T.danger },
+                      "data-projects-delete-confirm": "",
+                      "data-modal-autofocus": "",
+                      onClick: confirmDelete,
+                      disabled: del.busy,
+                    },
+                    del.busy ? text(t, "detail.deleting") : text(t, "detail.deleteConfirm"),
+                  ),
                 ),
               ),
             )
