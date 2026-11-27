@@ -193,6 +193,54 @@ test("dropProject：confirm 后移入 trash，列表里不再出现", async () =
   );
 });
 
+test("危险操作审计区分来源：agent 带会话 id、user 显式标记、未传记 unknown（复审 A2）", async () => {
+  const { actions, store } = makeActions();
+  const drop = (/** @type {string} */ id, /** @type {Record<string, any>} */ options) =>
+    actions.dropProject(id, { confirm: true, ...options });
+  const lastAudit = (/** @type {string} */ action) => {
+    const rows = store.readAuditRoot().filter((row) => row.action === action);
+    assert.ok(rows.length > 0, `缺少审计 ${action}`);
+    return rows.at(-1);
+  };
+
+  // 工具路径：模型发起（actor=agent）+ 会话 id。
+  const agentProject = await actions.openProject({ title: "Agent Drop" });
+  await drop(agentProject.id, { actor: "agent", sessionId: "s1" });
+  const agentRow = lastAudit("project/drop");
+  assert.equal(agentRow.actor, "agent", "工具发起的 drop 不能再记成 user");
+  assert.equal(agentRow.sessionId, "s1");
+
+  // UI 路径：Remote 层显式传 user。
+  const userProject = await actions.openProject({ title: "User Drop" });
+  await drop(userProject.id, { actor: "user" });
+  assert.equal(lastAudit("project/drop").actor, "user");
+  assert.equal(lastAudit("project/drop").sessionId, null);
+
+  // 直接调用的脚本/测试没传来源：如实记 unknown，不冒充 user。
+  const unknownProject = await actions.openProject({ title: "Unknown Drop" });
+  await drop(unknownProject.id, {});
+  assert.equal(lastAudit("project/drop").actor, "unknown", "无法区分时不能猜成 user");
+
+  // restore / purge / restore-failed 也走同一口径。
+  const trashed = store.scanTrash().entries[0];
+  assert.ok(trashed, "回收站里应有刚 drop 的条目");
+  await actions.restoreTrash(trashed.name, { actor: "user" });
+  assert.equal(lastAudit("project/restore").actor, "user");
+  await assert.rejects(() =>
+    actions.restoreTrash("missing-entry", { actor: "agent", sessionId: "s2" }),
+  );
+  const failedRow = lastAudit("project/restore-failed");
+  assert.equal(failedRow.actor, "agent");
+  assert.equal(failedRow.sessionId, "s2");
+
+  const purgeTarget = await actions.openProject({ title: "Purge Target" });
+  await drop(purgeTarget.id, { actor: "agent", sessionId: "s3" });
+  await actions.purgeTrash({ confirm: true, actor: "agent", sessionId: "s3" });
+  const purgeRow = lastAudit("trash/purge");
+  assert.equal(purgeRow.actor, "agent");
+  assert.equal(purgeRow.sessionId, "s3");
+});
+
 test("awaitLogin 会通过 onWaitChange 上报等待态，并在结束时清空", async () => {
   /** @type {any[]} */
   const states = [];

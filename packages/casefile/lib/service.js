@@ -351,7 +351,7 @@ export class CasefileService extends TypertRemoteService {
       archiveProject: (projectId, options) => this.actions.archiveProject(projectId, options),
       dropProject: (projectId, options) => this.actions.dropProject(projectId, options),
       listTrash: () => this.actions.listTrash(),
-      restoreTrash: (name) => this.actions.restoreTrash(name),
+      restoreTrash: (name, options) => this.actions.restoreTrash(name, options),
       purgeTrash: (options) => this.actions.purgeTrash(options),
       runCycle: (projectId, input) => this.actions.runCycle(projectId, input),
       isBuilderSession: (sessionId) =>
@@ -632,7 +632,8 @@ export class CasefileService extends TypertRemoteService {
    */
   async dropProject(projectId, options) {
     try {
-      return await this.actions.dropProject(projectId, options ?? {});
+      // UI 通道（Remote）显式标 actor=user：工具通道在 tools.js 里标 agent（复审 A2）。
+      return await this.actions.dropProject(projectId, { ...(options ?? {}), actor: "user" });
     } catch (error) {
       fail(error);
     }
@@ -657,7 +658,7 @@ export class CasefileService extends TypertRemoteService {
    */
   async restoreTrashEntry(name) {
     try {
-      return await this.actions.restoreTrash(name);
+      return await this.actions.restoreTrash(name, { actor: "user" });
     } catch (error) {
       fail(error);
     }
@@ -670,7 +671,7 @@ export class CasefileService extends TypertRemoteService {
    */
   async purgeTrash(options) {
     try {
-      return await this.actions.purgeTrash(options ?? {});
+      return await this.actions.purgeTrash({ ...(options ?? {}), actor: "user" });
     } catch (error) {
       fail(error);
     }

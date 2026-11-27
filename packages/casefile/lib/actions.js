@@ -65,6 +65,23 @@ export class CasefileActionError extends Error {
 }
 
 /**
+ * 危险操作审计里的「谁发起的」（复审 A2 / docs N8）。
+ *
+ * `case_project` 工具由模型发起、回收站 UI 走 Remote，两条路最终都进同一个 action；以前全部
+ * 硬编码 `actor: "user"`，事后无法回答「这次 drop 是我点的，还是模型自己决定的」。现在两个入口
+ * 各自显式传 `actor`（工具 → `agent`，UI → `user`），没传就记 `unknown`——宁可如实标不确定，
+ * 也不猜成用户。工具路径还能带上会话 id 作为来源证据。
+ * @param {{ actor?: unknown, sessionId?: unknown } | null | undefined} [options]
+ * @returns {{ actor: "user" | "agent" | "unknown", sessionId: string | null }}
+ */
+export function auditOriginOf(options) {
+  const actor = options?.actor === "agent" || options?.actor === "user" ? options.actor : "unknown";
+  const raw = options?.sessionId;
+  const sessionId = typeof raw === "string" && raw.trim() !== "" ? raw.trim().slice(0, 200) : null;
+  return { actor, sessionId };
+}
+
+/**
  * 造一组动作。
  * @param {{
  *   store: import("./core/store.js").CaseStore,
@@ -1613,10 +1630,12 @@ export function createActions(options) {
         );
       }
       const result = store.dropProject(project.id);
+      const origin = auditOriginOf(options);
       store.auditRoot({
-        actor: "user",
+        actor: origin.actor,
         action: "project/drop",
         target: project.id,
+        sessionId: origin.sessionId,
         detail: {
           trashedTo: result.trashedTo,
           bytes: impact.bytes,
@@ -1643,9 +1662,11 @@ export function createActions(options) {
     /**
      * 从回收站恢复一个项目。
      * @param {string} name
+     * @param {{ actor?: unknown, sessionId?: unknown }} [options] 来源（复审 A2）
      * @returns {Promise<Record<string, any>>}
      */
-    async restoreTrash(name) {
+    async restoreTrash(name, options = {}) {
+      const origin = auditOriginOf(options);
       /** @type {{ project: Record<string, any>, restoredTo: string }} */
       let result;
       try {
@@ -1655,9 +1676,10 @@ export function createActions(options) {
         // 审计本身写不进去（只读/写满的数据根）时只告警：不能把 not-found 顶成 EACCES（N3）。
         try {
           store.auditRoot({
-            actor: "user",
+            actor: origin.actor,
             action: "project/restore-failed",
             target: String(name ?? ""),
+            sessionId: origin.sessionId,
             detail: {
               code: String(/** @type {any} */ (error)?.code ?? "unknown"),
               message: String(/** @type {any} */ (error)?.message ?? error).slice(0, 300),
@@ -1669,9 +1691,10 @@ export function createActions(options) {
         throw error;
       }
       store.auditRoot({
-        actor: "user",
+        actor: origin.actor,
         action: "project/restore",
         target: String(name ?? ""),
+        sessionId: origin.sessionId,
         detail: { projectId: result.project.id, restoredTo: result.restoredTo },
       });
       return {
@@ -1683,7 +1706,8 @@ export function createActions(options) {
 
     /**
      * 清空回收站（显式硬删）：必须 confirm；dry-run 只给影响面；来历不明的条目保留。
-     * @param {{ names?: string[], confirm?: boolean, dryRun?: boolean }} [options]
+     * @param {{ names?: string[], confirm?: boolean, dryRun?: boolean,
+     *   actor?: unknown, sessionId?: unknown }} [options]
      * @returns {Promise<Record<string, any>>}
      */
     async purgeTrash(options = {}) {
@@ -1712,10 +1736,12 @@ export function createActions(options) {
         );
       }
       const result = store.purgeTrash(names ?? undefined);
+      const origin = auditOriginOf(options);
       store.auditRoot({
-        actor: "user",
+        actor: origin.actor,
         action: "trash/purge",
         target: result.names.join(","),
+        sessionId: origin.sessionId,
         detail: { purged: result.purged, bytes: result.bytes, skipped: result.skipped },
       });
       return {

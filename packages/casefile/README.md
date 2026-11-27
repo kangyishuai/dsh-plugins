@@ -142,14 +142,23 @@ Everything lives under the plugin's data root (default `<DSH_HOME>/casefile`, ov
 
 ```
 casefile/
-└── projects/<project-id>/
-    ├── project.json          # version + target + authTier + scope + REA version
-    ├── evidence.jsonl        # append-only; same id later wins
-    ├── claims.jsonl
-    ├── features.jsonl
-    ├── unknowns.jsonl
-    ├── audit.jsonl           # who did what, append-only
-    └── spec/<timestamp>/     # exported spec.json + brief.md
+├── projects/<project-id>/
+│   ├── project.json          # version + target + authTier + scope + REA version
+│   ├── evidence.jsonl        # append-only; same id later wins
+│   ├── claims.jsonl
+│   ├── features.jsonl
+│   ├── unknowns.jsonl
+│   ├── audit.jsonl           # who did what, append-only
+│   ├── artifacts/            # archived artifacts (size-capped)
+│   ├── checks/               # verification runs
+│   ├── spec/<timestamp>/     # exported spec.json + brief.md
+│   ├── reports/              # exported reports
+│   └── bundles/              # exported agent-environment bundles
+├── trash/                    # dropped projects, restorable
+├── audit.jsonl               # data-root audit (drop / restore / purge)
+├── last-opened.json          # last opened project (UI convenience)
+├── session-pointers.json     # session → project pointers
+└── builder-sessions.jsonl    # builder sessions (read-only guard)
 ```
 
 Rules: JSON files carry a `version`; a file written by a newer casefile is reported as read-only instead of silently rewritten. Corrupt JSON is renamed `.broken` and kept. Records are append-only, so a project directory can be reviewed and diffed.
@@ -194,7 +203,7 @@ Uninstalling the plugin does **not** delete anything: the host only removes the 
 
 - `projects/<id>/` — project records plus `artifacts/`, `spec/`, `reports/`, `bundles/` and `checks/`;
 - `trash/` — projects moved there by `case_project drop` (still restorable if you reinstall);
-- `audit.jsonl`, `last-opened.json`, `session-pointers.json` — the data-root audit trail and session pointers.
+- `audit.jsonl`, `last-opened.json`, `session-pointers.json`, `builder-sessions.jsonl` — the data-root audit trail, the last-opened pointer, the session → project pointers and the builder-session records used by the read-only guard.
 
 Nothing is uploaded, and nothing is cleaned up on uninstall — deliberately, so a reinstall keeps your evidence. To delete the data manually (only after you have exported what you need):
 

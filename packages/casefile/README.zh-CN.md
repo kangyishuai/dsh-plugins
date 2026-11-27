@@ -143,14 +143,23 @@ casefile 自己不去抓任何内容。每条证据带一份 **`producer`** 记�
 
 ```
 casefile/
-└── projects/<project-id>/
-    ├── project.json          # version + 目标 + 授权档 + 范围 + REA 版本
-    ├── evidence.jsonl        # append-only；同 id 后者胜
-    ├── claims.jsonl
-    ├── features.jsonl
-    ├── unknowns.jsonl
-    ├── audit.jsonl           # 谁做了什么，append-only
-    └── spec/<时间戳>/        # 导出的 spec.json + brief.md
+├── projects/<project-id>/
+│   ├── project.json          # version + 目标 + 授权档 + 范围 + REA 版本
+│   ├── evidence.jsonl        # append-only；同 id 后者胜
+│   ├── claims.jsonl
+│   ├── features.jsonl
+│   ├── unknowns.jsonl
+│   ├── audit.jsonl           # 谁做了什么，append-only
+│   ├── artifacts/            # 归档产物（有体积上限）
+│   ├── checks/               # 验收运行记录
+│   ├── spec/<时间戳>/        # 导出的 spec.json + brief.md
+│   ├── reports/              # 导出的报告
+│   └── bundles/              # 导出的 agent 环境包
+├── trash/                    # 被 drop 的项目，可恢复
+├── audit.jsonl               # 数据根审计（drop / restore / purge）
+├── last-opened.json          # 最近打开的项目（UI 便利）
+├── session-pointers.json     # 会话 → 项目指针
+└── builder-sessions.jsonl    # builder 会话（只读 guard 用）
 ```
 
 规则：JSON 文件带 `version`；被更新版 casefile 写过的文件会报「只读」而不是被静默改写。坏 JSON 改名 `.broken` 保留。记录 append-only，项目目录可以 review、可以 diff。
@@ -195,7 +204,7 @@ casefile/
 
 - `projects/<id>/` —— 项目记录，以及 `artifacts/`、`spec/`、`reports/`、`bundles/`、`checks/`；
 - `trash/` —— 被 `case_project drop` 移进回收站的项目（重装后仍可恢复）；
-- `audit.jsonl`、`last-opened.json`、`session-pointers.json` —— 数据根审计与会话指针。
+- `audit.jsonl`、`last-opened.json`、`session-pointers.json`、`builder-sessions.jsonl` —— 数据根审计、最近打开指针、会话 → 项目指针，以及只读 guard 用的 builder 会话记录。
 
 数据不上传，卸载时也不清理——这是有意的，重装后证据还在。要手工删除（先确认已经导出需要的东西）：
 
