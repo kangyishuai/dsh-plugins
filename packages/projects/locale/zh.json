@@ -595,6 +595,7 @@
     "library.colUpdated": "更新",
     "detail.prCard.copy": "复制链接",
     "detail.prPendingApproval": "已排入合并审批：PR #{number} 等你在审批队列里确认（插件不会自己合并）。",
+    "detail.prNotReady": "当前不满足继续 PR 流程的条件：{reason}（不是失败，等条件变化后再试）。",
     "detail.prCard.continueHint": "重跑一次 PR 流程：已开 PR 时不会重复开；auto-merge 档在 CI 通过时会排入合并审批（不会直接合并）。",
     "detail.prCard.continue": "继续 PR 流程",
     "detail.prCard.copied": "PR 链接已复制",

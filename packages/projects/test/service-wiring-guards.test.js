@@ -1,7 +1,7 @@
 // @ts-check
 // 源码守卫：这几处是"静默做错事"的高风险接线，纯函数单测覆盖不到，但用文本断言能防回归。
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -645,5 +645,36 @@ describe("复审 nit：可预授权动作清单不能漂移", () => {
       [...executorActions].sort(),
       "预授权 UI 与执行器白名单必须同源（增删动作时两边一起改）",
     );
+  });
+});
+
+describe("第 2 轮复审（N1/N5/N11）：契约与文案", () => {
+  it("N1：runRoutineNow 任何宿主 code 都不算成功（含 schedule_execution_pending）", () => {
+    const region = methodRegion(serviceSource, "runRoutineNow");
+    assert.match(region, /ranOutcome\.code !== ""/u, "任何 code 都不是任务条目");
+    assert.match(region, /run-failed/u, "没投递就不能写 run-now 成功历史");
+  });
+
+  it("N5：继续 PR 流程在「不满足条件」时给中性文案，不报开 PR 失败", () => {
+    assert.match(clientSource, /detail\.prNotReady/u);
+    const anchor = clientSource.indexOf('"data-projects-thread-pr-continue"');
+    assert.ok(anchor >= 0);
+    // 判定包含 none/give-up/wait-ci/update 四种决策
+    const region = clientSource.slice(
+      clientSource.indexOf("const notReady ="),
+      clientSource.indexOf("const notReady =") + 400,
+    );
+    assert.match(region, /"none"/u);
+    assert.match(region, /"give-up"/u);
+    assert.match(region, /"wait-ci"/u);
+    assert.match(region, /"update"/u);
+  });
+
+  it("N11：patch.status 守卫扫全部 lib/*.js（不是只看两个文件）", () => {
+    const libDir = join(here, "..", "lib");
+    const offenders = readdirSync(libDir)
+      .filter((file) => file.endsWith(".js"))
+      .filter((file) => /patch:\s*\{\s*status:/u.test(readFileSync(join(libDir, file), "utf8")));
+    assert.deepEqual(offenders, [], "任何 lib 文件都不许向宿主发 patch.status");
   });
 });

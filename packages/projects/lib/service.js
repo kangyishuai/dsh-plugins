@@ -6792,7 +6792,10 @@ export class ProjectsService extends TypertRemoteService {
         // 宿主 `run` 的失败形状是 `{code:'schedule_not_found'|'schedule_execution_pending'}`
         // （不抛错），以前会把「没投递」当成功写进历史。
         const ranOutcome = classifyHostScheduleResult(ran);
-        if (ranOutcome.kind !== "task" && ranOutcome.kind !== "unknown") {
+        // N1：宿主 `run` 的**任何 `code`** 都不是任务条目——`schedule_execution_pending`
+        // 表示这次请求被 admission 挡住（同一条任务另一次执行占着），以前会被当成功写
+        // lastRunAt/历史（假成功）。只有 kind==="task" 且无 code 才算真的投递了。
+        if (ranOutcome.kind !== "task" || ranOutcome.code !== "") {
           store.patchRoutine(projectId, routineId, {
             history: appendRoutineHistory(routine, {
               at,

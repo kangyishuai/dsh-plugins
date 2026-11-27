@@ -595,6 +595,7 @@
     "library.colUpdated": "Updated",
     "detail.prCard.copy": "Copy link",
     "detail.prPendingApproval": "Queued for merge approval: PR #{number} waits for you in the approval queue (the plugin never merges by itself).",
+    "detail.prNotReady": "The PR flow does not advance right now: {reason} (not a failure; retry when conditions change).",
     "detail.prCard.continueHint": "Re-run the PR pipeline: it never opens a second PR; in the auto-merge tier a passing-CI PR is queued as a merge approval (never merged directly).",
     "detail.prCard.continue": "Continue PR flow",
     "detail.prCard.copied": "PR link copied",

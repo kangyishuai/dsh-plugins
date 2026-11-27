@@ -294,3 +294,63 @@ describe("宿主 SchedulePatch 契约（复审 F1）", () => {
     assert.equal(classifyHostScheduleResult({ ok: false }).kind, "unknown");
   });
 });
+
+describe("复审 N3：已耗尽的一次性任务不能被「恢复」当成失败", () => {
+  it("isTerminalScheduleError 认宿主的 not_future（code / details.code / message 三种形态）", async () => {
+    const { isTerminalScheduleError } = await import("../lib/schedules.js");
+    const error = Object.assign(new Error("The scheduled time must be strictly in the future."), {
+      code: "not_future",
+    });
+    assert.equal(isTerminalScheduleError(error), true);
+    assert.equal(isTerminalScheduleError({ details: { code: "not_future" } }), true);
+    assert.equal(isTerminalScheduleError(new Error("x: not_future")), true);
+    assert.equal(isTerminalScheduleError(new Error("boom")), false);
+    assert.equal(isTerminalScheduleError(null), false);
+  });
+
+  it("resume 时宿主报 not_future → 跳过且不写 failure（项目照常恢复）", async () => {
+    /** @type {any[]} */
+    const audits = [];
+    /** @type {any[]} */
+    const edits = [];
+    const schedule = {
+      edits,
+      async edit(/** @type {any} */ request) {
+        edits.push(request);
+        throw Object.assign(new Error("The scheduled time must be strictly in the future."), {
+          code: "not_future",
+        });
+      },
+    };
+    const result = await reconcileHostSchedules({
+      project: project(),
+      action: "resume",
+      schedule,
+      onAudit: (/** @type {any} */ entry) => audits.push(entry),
+    });
+    assert.equal(result.ok, true, "不能因为「恢复不了已结束的任务」让项目恢复失败");
+    assert.equal(result.failures.length, 0);
+    assert.equal(result.handled.length, 2);
+    assert.ok(result.handled.every((item) => item.terminal === true));
+    assert.deepEqual(
+      audits.map((entry) => entry.action),
+      ["routine/terminal", "reminder/terminal"],
+      "审计写 terminal 而不是 reconcile-failed",
+    );
+  });
+
+  it("pause 路径不套用终止态豁免（暂停失败必须如实报 failure）", async () => {
+    const schedule = {
+      async edit() {
+        throw Object.assign(new Error("not_future"), { code: "not_future" });
+      },
+    };
+    const result = await reconcileHostSchedules({
+      project: project(),
+      action: "pause",
+      schedule,
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.failures.length, 2);
+  });
+});

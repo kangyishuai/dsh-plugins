@@ -222,6 +222,7 @@ window.__ModuleLoader__.load({
       "detail.prFailed": "开 PR 失败：{reason}",
       "detail.prPendingApproval":
         "已排入合并审批：PR #{number} 等你在审批队列里确认（插件不会自己合并）。",
+      "detail.prNotReady": "当前不满足继续 PR 流程的条件：{reason}（不是失败，等条件变化后再试）。",
       "detail.prBranch": "分支 {branch}",
       "detail.prCi": "CI {state}",
       "detail.noBranch": "还没有分支（线程还没产出提交）",
@@ -850,6 +851,8 @@ window.__ModuleLoader__.load({
       "detail.prFailed": "Create PR failed: {reason}",
       "detail.prPendingApproval":
         "Queued for merge approval: PR #{number} waits for you in the approval queue (the plugin never merges by itself).",
+      "detail.prNotReady":
+        "The PR flow does not advance right now: {reason} (not a failure; retry when conditions change).",
       "detail.prBranch": "Branch {branch}",
       "detail.prCi": "CI {state}",
       "detail.noBranch": "No branch yet (no commits from this thread)",
@@ -6773,6 +6776,10 @@ window.__ModuleLoader__.load({
               // 复审 F4：auto-merge 档跑到 CI 通过时，这里返回的是「已排入合并审批」，
               // 不是失败——如实给一个正向回执，别让用户以为出错了。
               const awaitingApproval = reason === "merge/awaiting-approval";
+              // 复审 N5：`wait-ci` / `give-up` / `none(tier=off)` / `update(pr-exists)` 都是
+              // 「当前不满足继续条件」，不是故障——中性文案，别再报「开 PR 失败」。
+              const decisionAction = String(result?.decision?.action ?? "");
+              const notReady = ["none", "give-up", "wait-ci", "update"].includes(decisionAction);
               setThreadAction({
                 pending: "",
                 ok: opened || awaitingApproval,
@@ -6782,7 +6789,9 @@ window.__ModuleLoader__.load({
                     ? text(t, "detail.prPendingApproval", {
                         number: Number(result?.prNumber ?? 0),
                       })
-                    : text(t, "detail.prFailed", { reason }),
+                    : notReady
+                      ? text(t, "detail.prNotReady", { reason })
+                      : text(t, "detail.prFailed", { reason }),
               });
               load(true);
             },

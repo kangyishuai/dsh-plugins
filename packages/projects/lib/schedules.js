@@ -28,6 +28,25 @@ export function hostActivePatch(op) {
 }
 
 /**
+ * 这个宿主错误是不是**终止态**（复审 N3）。
+ *
+ * 对「规则已耗尽的一次性任务」发 `active:true` 恢复，宿主会抛
+ * `ScheduleInputError('not_future', "The scheduled time must be strictly in the future.")`
+ * （`src/update.ts` 的重算路径）——它没有未来发生时点，不可能再投递。
+ * 这不是失败，是「已终结」：恢复对账应跳过并如实标注，不写 failure 审计。
+ * @param {any} error
+ * @returns {boolean}
+ */
+export function isTerminalScheduleError(error) {
+  const code = String(error?.code ?? "");
+  if (code === "not_future") return true;
+  const details = String(error?.details?.code ?? "");
+  if (details === "not_future") return true;
+  const message = String(error?.message ?? error ?? "");
+  return /not_future|strictly in the future/u.test(message);
+}
+
+/**
  * 分类宿主 `schedule.edit()` 的返回（shipped contract）。
  *
  * 契约（`ScheduleEditResult`）：成功 → 任务条目（含 `id`/`status`）；删除成功 →
@@ -177,7 +196,8 @@ export async function reconcileHostSchedules(input) {
             });
       const outcome = classifyHostScheduleResult(result);
       if (outcome.kind === "conflict") {
-        // 宿主条目在别处被改过：不能假装暂停/删除成功（审计如实记 refused）
+        // 理论分支：本插件从不发 `expectedUpdatedAt`，所以当前不会真的收到 conflict；
+        // 保留判定是为了「将来加了乐观锁」时不会静默当成功（复审 N2）。
         failures.push({ ...entry, reason: "schedule_conflict" });
         input?.onAudit?.({
           action: `${entry.kind}/reconcile-failed`,
@@ -205,6 +225,12 @@ export async function reconcileHostSchedules(input) {
       });
       input?.onAudit?.({ action: `${entry.kind}/reconciled`, ...entry, op: planned });
     } catch (error) {
+      // N3：已耗尽的一次性任务无法恢复（宿主 not_future）→ 「已终结」，跳过且不记 failure。
+      if (planned === "resume" && isTerminalScheduleError(error)) {
+        handled.push({ ...entry, op: planned, terminal: true });
+        input?.onAudit?.({ action: `${entry.kind}/terminal`, ...entry, op: planned });
+        continue;
+      }
       const reason = String(/** @type {any} */ (error)?.message ?? error).slice(0, 160);
       failures.push({ ...entry, reason });
       input?.onAudit?.({ action: `${entry.kind}/reconcile-failed`, ...entry, op: planned, reason });
