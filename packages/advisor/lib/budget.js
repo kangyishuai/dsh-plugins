@@ -40,7 +40,9 @@ export function normalizePool(raw, today) {
  * @param {{ calls: number, costUsd: number }} pool
  * @param {{ workspaceMaxCallsPerDay: number, workspaceMaxCostPerDay: number, currency?: string, usdToCny?: number }} settings
  * @param {number} [estimatedCostUsd] 本次预计花费，用于「这笔会顶到就拒绝」
- * @returns {{ ok: true } | { ok: false, code: "workspace_calls"|"workspace_budget", used: number, limit: number }}
+ * @returns {{ ok: true }
+ *   | { ok: false, code: "workspace_calls", used: number, limit: number }
+ *   | { ok: false, code: "workspace_budget", used: number, limit: number, estimatedCostUsd: number }}
  */
 export function checkPool(pool, settings, estimatedCostUsd = 0) {
   const maxCalls = Number(settings?.workspaceMaxCallsPerDay ?? 0) || 0;
@@ -53,7 +55,14 @@ export function checkPool(pool, settings, estimatedCostUsd = 0) {
     settings?.usdToCny,
   );
   if (maxCostUsd > 0 && pool.costUsd + estimatedCostUsd >= maxCostUsd) {
-    return { ok: false, code: "workspace_budget", used: pool.costUsd, limit: maxCostUsd };
+    // 与日预算一致：带上预估额，调用方才能区分「已用完」与「本次会超」（复审 F4）。
+    return {
+      ok: false,
+      code: "workspace_budget",
+      used: pool.costUsd,
+      limit: maxCostUsd,
+      estimatedCostUsd,
+    };
   }
   return { ok: true };
 }

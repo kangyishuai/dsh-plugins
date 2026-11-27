@@ -160,7 +160,7 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-advisor-*.tgz
 - **每日预算在发送前检查，并且把本次的预估花费算进去。** 已记花费 + 预估达到 `maxCostPerDay` 时直接拒绝（`budget_exhausted`），不发请求；工作区预算池用同样的 `>=` 边界、同样的预检。预估值会有偏差（按约 3 字符/token、输出按 `maxTokens` 的一半估算），所以单次实际花费仍可能略微越过上限——账本记真实用量，下一次调用就会被拦。
 - **顾问路由在外部时，会话内容会离开本机。** 渲染后的会话文本（含工具调用与结果，受 `privacyScope` 和 `maxInputChars` 限制）会发到该路由指向的 baseURL。如果那是另一家厂商，你的对话就离开了这台机器；只有指向本地网关的路由才留在本机。除此之外插件什么都不发：没有遥测，没有统计，除了徵询本身不访问网络。
 - **`privacyScope` 决定发多少。** `summary`（默认）：每个文本块最多 2,000 字符，工具参数最多 300，工具结果最多 700。`off`：只发用户与助手的文本（最多 1,200 字符），完全不发工具往来。`full`：文本最多 4,000，工具参数最多 1,200，工具结果最多 3,500。渲染完再按 `maxInputChars`（默认 60,000）封顶：保留前 30% 和结尾，中间替换成省略标记。
-- **脱敏是尽力而为。** `redact: true`（默认）会在**截断之前**清掉常见的密钥形态字符串、`Authorization` 头、裸 `Bearer <token>`、JWT、`KEY=` / `token:` / `apiKey:` 形式的赋值（键名不区分大小写）、URL 里内嵌的凭据，以及 PEM 私钥块。它是启发式过滤，**不是密钥扫描器**：一定会漏，也无法保证密钥绝不外发；更不能替代「这个仓库是否允许发给那家 provider」这个判断。
+- **脱敏是尽力而为。** `redact: true`（默认）会在**截断之前**清掉常见的密钥形态字符串、`Authorization` 头、裸 `Bearer <token>`、JWT、`KEY=` / `token:` / `apiKey:` 形式的赋值（键名不区分大小写）、URL 里内嵌的凭据，以及 PEM 私钥块。它是启发式过滤，**不是密钥扫描器**：一定会漏，也无法保证密钥绝不外发；更不能替代「这个仓库是否允许发给那家 provider」这个判断。键名按不区分大小写的子串匹配，所以 `keywords: …`、`monkey: …` 这类普通文本偶尔也会被一起遮掉——这是有意的取舍（宁可多遮）；规则没有再收窄，因为那会把 `apiKey:` 也漏掉。
 - **发送预览会写入会话记录。** `tracePrompt: "preview"`（默认）会把本次实际发送文本的首尾各 2,000 字符（脱敏、按 `maxInputChars` 截断后）写进会话插件记录，展开顾问线后可查看；`off` 只记元数据。若同时关闭 `redact`，预览就是原文片段。
 - **先开 `shadow`。** 它回答的是「它本来会说什么、本来要花多少」，但不把模型输出塞回你的会话。看几天账本，再切到 `advisory`。
 
@@ -213,7 +213,7 @@ pnpm smoke:agent-tool              # 仓库级真实模型工具冒烟（需要�
 ```
 
 - `pnpm verify` 是发版门禁，提 PR 之前必须通过。
-- 目前有 **194 项单测**（`node --test`），包含以前一块测试都没有的钱/预算层：usage/advice/decisions 的原子追加、工作区池的串行读-改-写、跨重启的本地日口径、会话/小时计数器恢复、硬超时语义、决策 outcome 覆盖率，以及 locale 字典键集一致性。
+- 目前有 **200 项单测**（`node --test`），包含以前一块测试都没有的钱/预算层：usage/advice/decisions 的原子追加、工作区池的串行读-改-写、跨重启的本地日口径、会话/小时计数器恢复、硬超时语义、决策 outcome 覆盖率，以及 locale 字典键集一致性。
 - `pnpm smoke:advisor` 在一次性 `DSH_HOME` 里起真实宿主（只放一个临时工作区、不需要凭据），装包后验证：client 半加载、`/` 菜单出现 `advisor`、设置卡渲染、`/advisor doctor`/`preview`/`confirm`/`report all` 都有输出，并断言**没有生成账本文件**（即没有花钱）。命令输出读会话日志，因为宿主的命令卡片在 DOM 里是折叠的。
 - `pnpm smoke:advisor-desktop` 是桌面版（Electron）只读回归；插件有 client 半，所以这是硬性要求。它通过 CDP 连上正在运行的应用、确认 client 半真的加载，**不会**触发需要付费的徵询。发版门禁里加 `--require`，这样连不上调试端口会失败而不是静默跳过。它要求应用用 `open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1` 启动。
 - `pnpm smoke:agent-tool` 在一次性 DSH 目录里用真实模型驱动一个已注册工具。需要模型凭据；没有凭据时以 SKIP 退出——SKIP 不等于通过。

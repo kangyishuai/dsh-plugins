@@ -454,25 +454,33 @@ export class AdvisorService extends TypertRemoteService {
       priceCacheWritePerMTok: price.cacheWrite,
     });
 
+    /** 预算金额按设置币种显示；内部账本始终是 USD。 @param {number} usd @param {number} digits */
+    const money = (usd, digits) =>
+      formatMoney(fromUsd(usd, settings.currency, settings.usdToCny), settings.currency, digits);
+
     const budget = checkBudget({ settings, counters, now, estimatedCostUsd: estimatedCost });
     if (!budget.ok) {
       this.counters.skipped += 1;
-      /** @type {Record<string, string>} */
-      const reasons = {
-        turn_limit: `本回合已达上限（${budget.used}/${budget.limit}）`,
-        session_limit: `本会话已达上限（${budget.used}/${budget.limit}）`,
-        hour_limit: `本小时已达上限（${budget.used}/${budget.limit}）`,
-        day_budget: `今日预算已用完（${formatMoney(
-          fromUsd(budget.used, settings.currency, settings.usdToCny),
-          settings.currency,
-          4,
-        )}/${formatMoney(
-          fromUsd(budget.limit, settings.currency, settings.usdToCny),
-          settings.currency,
-          2,
-        )}）`,
-      };
-      const reason = reasons[budget.code] ?? "预算不足";
+      // 拒绝可能来自「已花完」也可能是「这一笔会顶到」：后者报 used < limit，不能再说
+      // 「今日预算已用完」（复审 F4 —— 否则用户看到 $0.01/$0.10 会以为账本错了）。
+      /** @type {string} */
+      let reason;
+      if (budget.code === "day_budget") {
+        // 分开写是为了拿到 only-on-day_budget 的 estimatedCostUsd（钱花完了 vs 这一笔会顶到）。
+        reason =
+          budget.used >= budget.limit
+            ? `今日预算已用完（${money(budget.used, 4)}/${money(budget.limit, 2)}）`
+            : `本次调用预计超出今日预算（已花 ${money(budget.used, 4)} / 上限 ${money(
+                budget.limit,
+                2,
+              )} / 预计 ${money(budget.estimatedCostUsd, 4)}），已取消发送`;
+      } else if (budget.code === "turn_limit") {
+        reason = `本回合已达上限（${budget.used}/${budget.limit}）`;
+      } else if (budget.code === "session_limit") {
+        reason = `本会话已达上限（${budget.used}/${budget.limit}）`;
+      } else {
+        reason = `本小时已达上限（${budget.used}/${budget.limit}）`;
+      }
       if (sessionId !== "") this.lastSkip.set(sessionId, reason);
       return {
         status: "skipped",
@@ -493,15 +501,15 @@ export class AdvisorService extends TypertRemoteService {
       const reason =
         poolCheck.code === "workspace_calls"
           ? `工作区今日调用已达上限（${poolCheck.used}/${poolCheck.limit}）`
-          : `工作区今日预算已用完（${formatMoney(
-              fromUsd(poolCheck.used, settings.currency, settings.usdToCny),
-              settings.currency,
-              4,
-            )}/${formatMoney(
-              fromUsd(poolCheck.limit, settings.currency, settings.usdToCny),
-              settings.currency,
-              2,
-            )}）`;
+          : poolCheck.used >= poolCheck.limit
+            ? `工作区今日预算已用完（${money(poolCheck.used, 4)}/${money(poolCheck.limit, 2)}）`
+            : `本次调用预计超出工作区今日预算（已花 ${money(
+                poolCheck.used,
+                4,
+              )} / 上限 ${money(poolCheck.limit, 2)} / 预计 ${money(
+                poolCheck.estimatedCostUsd,
+                4,
+              )}），已取消发送`;
       if (sessionId !== "") this.lastSkip.set(sessionId, reason);
       this.counters.skipped += 1;
       return {

@@ -231,3 +231,20 @@ test("日预算边界：已花达到上限就拒绝（>=），并支持本次预
     true,
   );
 });
+
+test("日预算因「预估会超」被拒时，返回值带上预估额（复审 F4：文案要能区分两种情况）", () => {
+  const settings = normalizeSettings({
+    maxCallsPerTurn: 0,
+    maxCallsPerSession: 0,
+    maxCallsPerHour: 0,
+    maxCostPerDay: 1,
+  });
+  const now = Date.now();
+  const counters = { turnCalls: 0, sessionCalls: 0, hourStamps: [], dayCostUsd: 0.2 };
+  const result = checkBudget({ settings, counters, now, estimatedCostUsd: 0.9 });
+  assert.equal(result.ok, false);
+  assert.equal(/** @type {any} */ (result).code, "day_budget");
+  assert.equal(/** @type {any} */ (result).used, 0.2);
+  assert.equal(/** @type {any} */ (result).limit, 1);
+  assert.equal(/** @type {any} */ (result).estimatedCostUsd, 0.9);
+});

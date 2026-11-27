@@ -106,3 +106,19 @@ test("正常文本里的普通冒号/等号不被误伤", () => {
   assert.deepEqual(redact(text).hits, []);
   assert.equal(redact(text).text, text);
 });
+
+test("已知取舍：含 key/token 等词的普通文本键名也会被遮（复审 F5）", () => {
+  // `i` 标志让键名子串匹配不区分大小写，`keywords: implementation details` 这类正常文本
+  // 也会命中 `kv-assignment`。这是「宁可多遮」的有意取舍，不是回归；钉住它避免以后误收窄
+  // 规则、把审计点名要遮的 `apiKey:` 弄丢。
+  const keywords = redact("keywords: implementation details");
+  assert.equal(keywords.text, "keywords: ***REDACTED*** details");
+  assert.equal(keywords.hits.includes("kv-assignment"), true);
+
+  const monkey = redact("monkey: banana peel");
+  assert.equal(monkey.hits.includes("kv-assignment"), true);
+
+  // 同一份规则仍然必须遮住审计要求的驼峰键名。
+  const apiKey = redact("apiKey: abcdefghij");
+  assert.equal(apiKey.text.includes("abcdefghij"), false);
+});

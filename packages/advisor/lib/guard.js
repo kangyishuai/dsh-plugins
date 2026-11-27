@@ -84,8 +84,13 @@ export function immuneActive(input) {
 /**
  * 四级预算检查。返回**第一个**不满足的条件（顺序固定，便于测试与文案稳定）。
  * 每个字段为 0 都表示「不限制」。
+ *
+ * 日预算的拒绝有两种成因：已花达到上限，或「已花 + 本次预估」会达到上限。返回里带上
+ * `estimatedCostUsd`，调用方才能给出不误导的文案（复审 F4）。
  * @param {BudgetInput} input
- * @returns {{ ok: true } | { ok: false, code: "turn_limit"|"session_limit"|"hour_limit"|"day_budget", limit: number, used: number }}
+ * @returns {{ ok: true }
+ *   | { ok: false, code: "turn_limit"|"session_limit"|"hour_limit", limit: number, used: number }
+ *   | { ok: false, code: "day_budget", limit: number, used: number, estimatedCostUsd: number }}
  */
 export function checkBudget(input) {
   const { settings, counters, now, estimatedCostUsd = 0 } = input;
@@ -123,6 +128,8 @@ export function checkBudget(input) {
       code: "day_budget",
       limit: maxCostUsd,
       used: counters.dayCostUsd,
+      // 拒绝可能只是「这一笔会顶到」，账上未必已花完 —— 带上预估供文案区分（复审 F4）。
+      estimatedCostUsd,
     };
   }
   return { ok: true };

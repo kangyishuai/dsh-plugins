@@ -113,10 +113,10 @@ export function buildDecision(input) {
 }
 
 /**
- * 判定上一回合建议的下场。只看**下一条用户消息**：
+ * 判定上一回合建议的下场。**本函数只处理「下一条真人用户消息」这一种反应**：
  * 建议里出现过的可追踪信号（路径、反引号命令、证据 ref）命中就算 accepted，
- * 用户发了别的内容算 user-typed-other，一直没有新消息算 no-action。
- * `"no-action"` 由回合跟踪器在「下个回合没有任何真人反应」时回填（见 createDecisionTracker）。
+ * 用户发了别的内容算 user-typed-other。`"no-action"` 不由本函数产出——
+ * 它由回合跟踪器在「下个回合结束时仍没有任何真人反应」时回填（见 createDecisionTracker）。
  * @param {{ adviceText?: string, signals?: string[] }} advice
  * @param {string} nextUserText 下一回合用户输入
  * @returns {"accepted"|"user-typed-other"}
@@ -323,11 +323,17 @@ export function createDecisionLog(options) {
  * 这样它可以脱离宿主包单独测试（service.js 依赖 @deepseek-ai/*，在单测环境里导入不了）。
  *
  * outcome 的三条路径（审计 AUD-ADV-07 / 09）：
- *   - accepted：后续**助手消息**或**工具调用参数**里出现建议信号（模型照做了），
- *     或下一条**真人**用户消息复述了信号；
+ *   - accepted：后续**助手消息**或**工具调用参数**里出现建议信号，或下一条**真人**用户消息
+ *     复述了信号。这是**启发式、无置信度区分**：路径 / 反引号命令 / 证据 ref 一视同仁，
+ *     模型顺手复述同一条命令也可能被算成 accepted；若 `tools/execute` 的 `data` 含工具
+ *     结果全文，读到的内容也可能被当成命中（`event.data` 形状待真机核实，复审 F6）。
  *   - user-typed-other：下一条真人用户消息没有命中任何信号；
- *   - no-action：下个回合结束都没有任何真人反应（目标自动继续、会话结束等）。
+ *   - no-action：下个回合结束时仍没有任何真人反应（目标自动继续等）。**会话结束时不会
+ *     flush**：没有后续回合的 pending 会一直保持未回填，覆盖率里体现为 pending。
  * 宿主注入的 `user/message`（time-context / goal / runtime-context）不是用户反应，直接忽略。
+ * post-answer / shadow 的建议在 `turn/end` 之后异步产生，`noteAdvice` 晚于该回合的
+ * `finishTurn` → 记到**下一回合**的决策行、pending 也在下一回合才设置（复审 F7，既有错位，
+ * 本批只记录不改；见 docs/testing/advisor.md）。
  * @param {{ log: ReturnType<typeof createDecisionLog>, now?: () => number }} options
  */
 export function createDecisionTracker(options) {

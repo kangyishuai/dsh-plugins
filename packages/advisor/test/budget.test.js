@@ -130,3 +130,14 @@ describe("createBudgetPool", () => {
     assert.equal((await readFile(join(home, "advisor", "budget.json"), "utf8")).length > 0, true);
   });
 });
+
+describe("checkPool：预设费用被拒时带回预估额（复审 F4）", () => {
+  it("金额闸因「已花 + 预计」被拒时，返回值带上 estimatedCostUsd", () => {
+    const result = checkPool({ calls: 0, costUsd: 0.2 }, settings, 0.9);
+    assert.equal(result.ok, false);
+    assert.equal(codeOf(result), "workspace_budget");
+    assert.equal(/** @type {any} */ (result).used, 0.2);
+    assert.equal(/** @type {any} */ (result).limit, 1);
+    assert.equal(/** @type {any} */ (result).estimatedCostUsd, 0.9);
+  });
+});

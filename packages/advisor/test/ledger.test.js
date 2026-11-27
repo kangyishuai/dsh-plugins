@@ -116,25 +116,26 @@ describe("usage 账本：启动恢复（AUD-ADV-04 / 05）", () => {
     );
   }
 
-  it("优先用行里的 day 字段判断「今天」，不再切 UTC 的 at（本地 0–8 点会错一天）", async () => {
+  it("优先用行里的 day 字段判断「今天」，不再切 UTC 的 at（时区无关的硬回归）", async () => {
     const home = await tempDir("advisor-ledger");
-    // at 是 UTC 的「昨天」，但这一行确实记在本地今天：旧实现会算成非今日而漏计。
+    // `at` 用**远古固定日期**：旧实现把 at 的 UTC 日期切片当「今天」，
+    // 在任何时区、任何运行日都算不出今天 → 这条用例在 UTC CI 上也必红（复审 F2）。
     await seed(home, [
-      entry({ at: "2026-11-27T18:06:00.000Z", day: dayKey(), costUsd: 0.5, sessionId: "s1" }),
+      entry({ at: "2020-01-01T00:00:00.000Z", day: dayKey(), costUsd: 0.5, sessionId: "s1" }),
     ]);
     const ledger = createLedger({ home });
     await ledger.ready();
     assert.equal(ledger.counters("s1").dayCostUsd, 0.5);
   });
 
-  it("没有 day 的旧行回落到「at 的本地日期」", async () => {
+  it("没有 day 的旧行落到别的日期时不计入今天（迁移不污染当日预算）", async () => {
     const home = await tempDir("advisor-ledger");
-    const at = new Date(Date.now() - 60_000).toISOString();
-    const expected = dayKey(new Date(at)) === dayKey() ? 0.25 : 0;
-    await seed(home, [entry({ at, costUsd: 0.25, sessionId: "s1" })]);
+    // 旧行没有 day：按 at 的**本地日期**折算。固定用远古日期 → 任何时区都不可能是今天。
+    await seed(home, [entry({ at: "2020-01-01T00:00:00.000Z", costUsd: 0.25, sessionId: "s1" })]);
     const ledger = createLedger({ home });
     await ledger.ready();
-    assert.equal(ledger.counters("s1").dayCostUsd, expected);
+    // 本地/UTC 的折算口径由纯函数测试（day.test.js）钉住，这里只守「旧行不会污染今天」。
+    assert.equal(ledger.counters("s1").dayCostUsd, 0);
   });
 
   it("恢复会话调用数与最近一小时时间戳（重启不再清零）", async () => {
