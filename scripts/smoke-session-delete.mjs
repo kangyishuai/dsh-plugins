@@ -10,6 +10,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { NOTICE_DISMISS_SOURCE } from "./lib/browser-helpers.mjs";
+import {
+  isFailedRun,
+  reclaimTimedOutTaskSpace,
+  reportBrowserFailureHint,
+  reportFailureScene,
+} from "./lib/smoke-failure.mjs";
 
 const exec = promisify(execFile);
 const REPO = resolve(import.meta.dirname, "..");
@@ -85,7 +91,20 @@ async function waitForBoot(logPath, timeoutMs) {
  */
 function browserScript(url, shots, home, demo = false) {
   return `
-const task = await taskSpace("dsh smoke: session-delete");
+// 失败/超时也必须关掉 TaskSpace：漏掉的 Page 会占满页面额度，把后续所有 web 冒烟卡到超时。
+// 主体放进 try，finish 放 finally；错误输出仍然带结果行，Node 侧按 fatal 判失败。
+const checks = [];
+let fatal = "";
+let task = null;
+let taskFinished = false;
+const finishTask = async () => {
+  if (taskFinished) return;
+  taskFinished = true;
+  await task?.finish({ keep: [] }).catch(() => {});
+};
+const check = (name, ok, detail) => checks.push({ name, ok: !!ok, detail: detail === undefined ? "" : String(detail) });
+try {
+task = await taskSpace("dsh smoke: session-delete");
 const page = task.page("p1");
 // cookie 卫生：宿主每个临时实例用新 token，而 cookie 名里带 token（dsh-auth-<hash>），
 // 于是每轮冒烟都会新增一条、而不是覆盖旧的。攒够了请求头超过宿主上限，页面直接 431
@@ -111,8 +130,6 @@ const clearOwnCookies = async () => {
 console.log("启动前清理自有 cookie：" + (await clearOwnCookies()));
 const SHOTS = ${JSON.stringify(shots)};
 const HOME_DIR = ${JSON.stringify(home)};
-const checks = [];
-const check = (name, ok, detail) => checks.push({ name, ok: !!ok, detail: detail === undefined ? "" : String(detail) });
 const softCheck = (name, ok, detail) => checks.push({ name, ok: true, soft: !ok, detail: (ok ? "" : "WARN ") + (detail === undefined ? "" : String(detail)) });
 const DEMO = ${JSON.stringify(demo)};
 // 演示模式：第一次截图时记下真实的工作区名 / 会话标题，之后每次截图前把它们和 UUID 换成演示数据。
@@ -259,7 +276,7 @@ const openConfirm = () => page.evaluate(async () => {
   window.__sdsClickMenuItem("删除会话");
   await new Promise((r) => setTimeout(r, 2200));
   const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent || "").includes("移入回收站"));
-  return dlg ? (dlg.textContent || "").replace(/s+/g, " ") : "missing";
+  return dlg ? (dlg.textContent || "").replace(/\\s+/g, " ") : "missing";
 });
 const clickDialogButton = (text) => page.evaluate(async (label) => {
   const btn = [...document.querySelectorAll('[role="dialog"] button')].find((b) => (b.textContent || "").trim() === label);
@@ -836,8 +853,12 @@ check("有子会话的确认框出现级联勾选框", cascadeDetail.startsWith(
 await shot("10-cascade-checkbox");
 
 console.log("收尾清理自有 cookie：" + (await clearOwnCookies()));
-await task.finish({ keep: false }).catch(() => {});
-console.log("SMOKE_RESULT " + JSON.stringify({ checks }));
+} catch (error) {
+fatal = String((error && error.stack) || error).slice(0, 1200);
+} finally {
+await finishTask();
+}
+console.log("SMOKE_RESULT " + JSON.stringify({ checks, fatal }));
 `;
 }
 
@@ -859,6 +880,9 @@ const main = async () => {
   const work = await mkdtemp(join(tmpdir(), "dsh-smoke-"));
   /** @type {import("node:child_process").ChildProcess | undefined} */
   let host;
+  // host 输出累积：失败时要把它落盘当现场（poll 在启动后会被清掉，末尾再写一次）。
+  /** @type {string[]} */
+  const chunks = [];
   try {
     const home = join(work, "home");
     const profile = join(home, "profiles", "sdel");
@@ -926,7 +950,6 @@ const main = async () => {
       stdio: ["ignore", "pipe", "pipe"],
     });
     /** @type {string[]} */
-    const chunks = [];
     host.stdout?.on("data", (/** @type {any} */ c) => chunks.push(String(c)));
     host.stderr?.on("data", (/** @type {any} */ c) => chunks.push(String(c)));
     void writeFile(logPath, "");
@@ -956,10 +979,15 @@ const main = async () => {
     await writeFile(browserFile, browserSource);
     await writeFile(join(shotsDir, "browser.mjs"), browserSource);
 
+    // 外部超时标记：ego-browser 被 kill 时浏览器脚本没机会跑 finally，需要 Node 侧兜底回收。
+    let timedOut = false;
     const result = await new Promise((resolvePromise) => {
       const child = spawn("ego-browser", ["nodejs"], { stdio: ["pipe", "pipe", "pipe"] });
       let out = "";
-      const timer = setTimeout(() => child.kill("SIGTERM"), 180_000);
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGTERM");
+      }, 180_000);
       child.stdout.on("data", (c) => {
         out += String(c);
       });
@@ -972,17 +1000,27 @@ const main = async () => {
       });
       void readFile(browserFile).then((buffer) => child.stdin.end(buffer));
     });
+    if (timedOut) await reclaimTimedOutTaskSpace("dsh smoke: session-delete");
 
     if (process.env.SMOKE_DEBUG) console.log(String(result).slice(-5000));
     const match = String(result).match(/SMOKE_RESULT (\{.*\})/u);
     if (!match) {
-      fail("浏览器脚本没有返回结果");
+      fail("浏览器脚本没有返回结果（页面/浏览器层没就绪）");
       console.error(String(result).slice(-4000));
+      reportBrowserFailureHint();
       return;
     }
-    /** @type {{ checks: { name: string, ok: boolean, detail: string }[] }} */
-    /** @type {{ checks: { name: string, ok: boolean, detail: string }[] }} */
+    /** @type {{ checks: { name: string, ok: boolean, detail: string }[], fatal?: string }} */
     const parsed = JSON.parse(match[1]);
+    // fatal 不能只设 exitCode 就继续算 PASS：把它记成一条失败断言，计数行才诚实。
+    if (parsed.fatal) {
+      reportBrowserFailureHint();
+      parsed.checks.push({
+        name: "浏览器脚本异常（未预期）",
+        ok: false,
+        detail: String(parsed.fatal).slice(0, 1200),
+      });
+    }
     // ③ 记忆级联是「宿主侧持久化」，所以要绕过页面直接核对文件：
     // 页面里勾过开关，退出后文件必须还在（localStorage 会因为 Web 端口变化而丢）。
     const prefsFile = join(home, "session-trash", "preferences.json");
@@ -1038,7 +1076,21 @@ const main = async () => {
     // 把截图留在固定路径，失败时也能看现场
     await cp(join(work, "shots"), SHOTS_OUT, { recursive: true }).catch(() => {});
     console.log(`截图目录：${SHOTS_OUT}`);
-    await rm(work, { recursive: true, force: true });
+    const failedRun = isFailedRun();
+    if (failedRun) {
+      // 启动后 poll 被清掉了，这里补最后一次落盘，host.log 尾部才有后续日志。
+      await writeFile(join(work, "host.log"), chunks.join("")).catch(() => {});
+      // §6.4：失败必须留现场——先打宿主日志尾部，再保留临时 home（host.log/profile 在里面）。
+      await reportFailureScene(join(work, "host.log"));
+    }
+    if (process.env.SMOKE_KEEP === "1" || failedRun) {
+      console.log(
+        `临时 home 已保留${failedRun ? "（因为这次失败，方便排查；删掉即可）" : "（SMOKE_KEEP=1）"}：${work}`,
+      );
+      console.log("      host.log、profile、session-trash、shots 都在这个目录里");
+    } else {
+      await rm(work, { recursive: true, force: true });
+    }
   }
 };
 

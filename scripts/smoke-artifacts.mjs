@@ -24,6 +24,11 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import {
+  reclaimTimedOutTaskSpace,
+  reportBrowserFailureHint,
+  reportFailureScene,
+} from "./lib/smoke-failure.mjs";
 
 const REPO = resolve(import.meta.dirname, "..");
 const PKG_DIR = join(REPO, "packages", "artifacts");
@@ -161,10 +166,15 @@ async function main() {
     });
     const scriptPath = join(work, "browser.mjs");
     await writeFile(scriptPath, script);
+    // 外部超时标记：ego-browser 被 kill 时浏览器脚本没机会跑 finally，需要 Node 侧兜底回收。
+    let timedOut = false;
     const out = await new Promise((resolvePromise) => {
       const child = spawn("ego-browser", ["nodejs"], { stdio: ["pipe", "pipe", "pipe"] });
       let text = "";
-      const timer = setTimeout(() => child.kill("SIGTERM"), 240_000);
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGTERM");
+      }, 240_000);
       child.stdout.on("data", (chunk) => {
         text += String(chunk);
       });
@@ -177,10 +187,24 @@ async function main() {
       });
       void readFile(scriptPath).then((buffer) => child.stdin.end(buffer));
     });
+    if (timedOut) await reclaimTimedOutTaskSpace(space);
     if (process.env.SMOKE_DEBUG) console.log(String(out).slice(-6000));
     const match = String(out).match(/SMOKE_RESULT (\{.*\})/u);
-    if (!match) throw new Error(`浏览器脚本没有返回结果：\n${String(out).slice(-2500)}`);
-    const checks = JSON.parse(match[1]).checks;
+    if (!match) {
+      reportBrowserFailureHint();
+      throw new Error(`浏览器脚本没有返回结果：\n${String(out).slice(-2500)}`);
+    }
+    const parsedBrowser = JSON.parse(match[1]);
+    const checks = parsedBrowser.checks ?? [];
+    // fatal 不能只 throw 一句：把它记成一条失败断言，输出里保留现场原因。
+    if (parsedBrowser.fatal) {
+      reportBrowserFailureHint();
+      checks.push({
+        name: "浏览器脚本异常（未预期）",
+        ok: false,
+        detail: String(parsedBrowser.fatal).slice(0, 1200),
+      });
+    }
     // 追加一版，供路由断言检查内容随版本变化
     await store.append(seeded.id, { html: "<h1>smoke v2</h1>" });
     await store.append(seeded.id, { html: "<h1>smoke v3</h1>" });
@@ -245,8 +269,13 @@ async function main() {
     process.exitCode = 1;
   } finally {
     if (host) host.kill("SIGTERM");
-    if (process.env.SMOKE_KEEP === "1" || !ok) console.log(`# 临时目录保留：${work}`);
-    else await rm(work, { recursive: true, force: true });
+    // §6.4：失败自动留现场（不止 SMOKE_KEEP=1），并把宿主日志尾部打出来。
+    if (!ok) await reportFailureScene(logPath);
+    if (process.env.SMOKE_KEEP === "1" || !ok) {
+      console.log(`# 临时目录${ok ? "保留（SMOKE_KEEP=1）" : "因失败而保留"}：${work}`);
+    } else {
+      await rm(work, { recursive: true, force: true });
+    }
   }
 }
 
@@ -263,10 +292,19 @@ function makeBrowserScript({
   imageArtifact,
 }) {
   return `(async () => {
+// 失败/超时也必须关掉 TaskSpace：漏掉的 Page 会占满页面额度，把后续所有 web 冒烟卡到超时。
 const checks = [];
+let task = null;
+let taskFinished = false;
+const finishTask = async () => {
+  if (taskFinished) return;
+  taskFinished = true;
+  await task?.finish({ keep: [] }).catch(() => {});
+};
+try {
 const check = (name, good, detail) => checks.push({ name, ok: Boolean(good), detail: detail === undefined ? "" : String(detail) });
 const URL_ = ${JSON.stringify(url)};
-const task = await taskSpace(${JSON.stringify(space)});
+task = await taskSpace(${JSON.stringify(space)});
 const page = await task.newPage();
 await page.goto(URL_, { timeout: 120000 });
 await page.waitForTimeout(2500);
@@ -443,6 +481,11 @@ check(
   JSON.stringify({ markdownVisible, markdownText, imageState }),
 );
 console.log("SMOKE_RESULT " + JSON.stringify({ checks }));
+} catch (error) {
+console.log("SMOKE_RESULT " + JSON.stringify({ checks, fatal: String((error && error.stack) || error).slice(0, 1200) }));
+} finally {
+await finishTask();
+}
 })();`;
 }
 

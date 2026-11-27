@@ -20,6 +20,12 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { zstdDecompressSync } from "node:zlib";
 import { NOTICE_DISMISS_SOURCE } from "./lib/browser-helpers.mjs";
+import {
+  isFailedRun,
+  reclaimTimedOutTaskSpace,
+  reportBrowserFailureHint,
+  reportFailureScene,
+} from "./lib/smoke-failure.mjs";
 
 const exec = promisify(execFile);
 const REPO = resolve(import.meta.dirname, "..");
@@ -92,10 +98,20 @@ async function waitForBoot(logPath, timeoutMs) {
  */
 function browserScript(url, shots) {
   return `(async () => {
-const task = await taskSpace("dsh smoke: advisor");
+// 失败/超时也必须关掉 TaskSpace：漏掉的 Page 会占满页面额度，把后续所有 web 冒烟卡到超时。
+// 主体放进 try，finish 放 finally；错误输出仍然带结果行，Node 侧按 fatal 判失败。
+const checks = [];
+let task = null;
+let taskFinished = false;
+const finishTask = async () => {
+  if (taskFinished) return;
+  taskFinished = true;
+  await task?.finish({ keep: [] }).catch(() => {});
+};
+try {
+task = await taskSpace("dsh smoke: advisor");
 const page = task.page("p1");
 const SHOTS = ${JSON.stringify(shots)};
-const checks = [];
 const check = (name, ok, detail) => checks.push({ name, ok: !!ok, detail: detail === undefined ? "" : String(detail) });
 const skip = (name, reason) => checks.push({ name, ok: true, skip: true, detail: reason });
 const shot = (name) => page.screenshot({ path: SHOTS + "/" + name + ".png" }).catch(() => {});
@@ -359,12 +375,22 @@ if (settingsState !== "ok") {
 }
 
 console.log("SMOKE_RESULT " + JSON.stringify({ checks }));
-})().catch((error) => { console.log("SMOKE_RESULT " + JSON.stringify({ checks: [], fatal: String(error) })); });`;
+} catch (error) {
+console.log("SMOKE_RESULT " + JSON.stringify({ checks, fatal: String((error && error.stack) || error).slice(0, 1200) }));
+} finally {
+await finishTask();
+}
+})();`;
 }
 
 /**
- * 从临时 DSH_HOME 里读最新的会话日志，抽出 `command/done` 的文本。
+ * 从临时 DSH_HOME 里读会话日志，抽出 `command/done` 的文本，并带回**读取诊断**。
+ *
+ * 为什么带诊断：本轮回归出现过「命令确实执行了（页面里有卡片）但这里读出来是空」。
+ * 记下扫到的日志文件、事件数、日志尾部，失败时才能分清「命令没执行」还是「日志没 flush /
+ * 扫错目录 / 解压失败」。文件名按 `session.v*` 前缀匹配，不写死 v4（AGENTS.md 硬性约定 1）。
  * @param {string} home
+ * @returns {Promise<{ outputs: string[], files: string[], events: number, tail: string }>}
  */
 async function readCommandOutputs(home) {
   const root = join(home, "sessions");
@@ -381,13 +407,19 @@ async function readCommandOutputs(home) {
     for (const entry of entries) {
       const path = join(dir, entry.name);
       if (entry.isDirectory()) await walk(path, depth + 1);
-      else if (entry.name.startsWith("session.v4.jsonl")) files.push(path);
+      else if (/^session\.v\d+\.jsonl.*$/u.test(entry.name)) files.push(path);
     }
   };
   await walk(root, 0);
   /** @type {string[]} */
   const outputs = [];
+  /** @type {string[]} */
+  const scanned = [];
+  let events = 0;
+  /** @type {string} */
+  let raw = "";
   for (const file of files) {
+    scanned.push(file.slice(root.length + 1));
     let text = "";
     try {
       const buffer = await readFile(file);
@@ -412,6 +444,7 @@ async function readCommandOutputs(home) {
     } catch {
       continue;
     }
+    raw += text;
     for (const line of text.split("\n")) {
       if (line.trim() === "") continue;
       /** @type {any} */
@@ -421,12 +454,30 @@ async function readCommandOutputs(home) {
       } catch {
         continue;
       }
+      events += 1;
       if (event?.type !== "command/done") continue;
       const value = event?.data?.text;
       if (typeof value === "string" && value !== "") outputs.push(value);
     }
   }
-  return outputs;
+  const trimmed = raw.trim();
+  return {
+    outputs,
+    files: scanned,
+    events,
+    tail: trimmed.length > 600 ? trimmed.slice(-600) : trimmed,
+  };
+}
+
+/**
+ * 一行日志读取诊断：files/events/tail，便于判「命令没执行」还是「日志读不到」。
+ * @param {{ files: string[], events: number, tail: string }} log
+ * @returns {string}
+ */
+function commandLogDiagnostics(log) {
+  return `files=[${log.files.join(",")}] events=${log.events} tail=${JSON.stringify(
+    String(log.tail).replace(/\s+/gu, " ").slice(-260),
+  )}`;
 }
 
 const main = async () => {
@@ -558,10 +609,15 @@ const main = async () => {
       );
     await writeFile(browserFile, source);
 
+    // 外部超时标记：ego-browser 被 kill 时浏览器脚本没机会跑 finally，需要 Node 侧兜底回收。
+    let timedOut = false;
     const raw = await new Promise((resolvePromise) => {
       const child = spawn("ego-browser", ["nodejs"], { stdio: ["pipe", "pipe", "pipe"] });
       let out = "";
-      const timer = setTimeout(() => child.kill("SIGTERM"), 300_000);
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGTERM");
+      }, 300_000);
       child.stdout.on("data", (c) => {
         out += String(c);
       });
@@ -574,41 +630,59 @@ const main = async () => {
       });
       void readFile(browserFile).then((buffer) => child.stdin.end(buffer));
     });
+    if (timedOut) await reclaimTimedOutTaskSpace("dsh smoke: advisor");
     if (process.env.SMOKE_DEBUG) console.log(String(raw).slice(-12000));
 
     const match = String(raw).match(/SMOKE_RESULT (\{.*\})/u);
     if (!match) {
-      fail("浏览器脚本没有返回结果");
+      fail("浏览器脚本没有返回结果（页面/浏览器层没就绪）");
       console.error(String(raw).slice(-4000));
+      reportBrowserFailureHint();
       return;
     }
     const result = JSON.parse(match[1]);
-    if (result.fatal) fail(`浏览器脚本异常：${result.fatal}`);
     /** @type {{ name: string, ok: boolean, detail: string, skip?: boolean }[]} */
     const checks = result.checks ?? [];
+    // fatal 不能只设 exitCode 就继续算 PASS：把它记成一条失败断言，计数行才诚实。
+    if (result.fatal) {
+      reportBrowserFailureHint();
+      checks.push({
+        name: "浏览器脚本异常（未预期）",
+        ok: false,
+        detail: String(result.fatal).slice(0, 1200),
+      });
+    }
 
     // Node 侧断言：命令输出（以会话日志为准）与「什么都没花」
-    const outputs = await readCommandOutputs(home);
-    const joined = outputs.join("\n");
+    const log = await readCommandOutputs(home);
+    const joined = log.outputs.join("\n");
+    /** 读取为空时的可诊断明细：命令执行了但日志读不到，是本轮回归出现过的形态。 */
+    const logDetail = joined === "" ? `；日志读取诊断：${commandLogDiagnostics(log)}` : "";
+    if (joined === "") {
+      console.log(`日志读取诊断（命令输出为空）：${commandLogDiagnostics(log)}`);
+      console.log(
+        "      （页面里有命令卡片但这里读不到 = 日志没 flush / 扫错目录；页面也没有 = 命令没执行）",
+      );
+    }
     checks.push({
       name: "/advisor doctor 有结论（日志）",
       ok: /(✅|⚠️|❌)/u.test(joined),
-      detail: joined.slice(0, 200),
+      detail: joined.slice(0, 200) + logDetail,
     });
     checks.push({
       name: "/advisor preview 有预览（日志）",
       ok: /目标[:：]|将发送/u.test(joined),
-      detail: "",
+      detail: logDetail,
     });
     checks.push({
       name: "/advisor confirm 有回执（日志）",
       ok: /已允许|还没选顾问模型/u.test(joined),
-      detail: "",
+      detail: logDetail,
     });
     checks.push({
       name: "/advisor report all 有输出（日志）",
       ok: /顾问报告|还没有任何建议记录/u.test(joined),
-      detail: "",
+      detail: logDetail,
     });
     const ledger = await readIfExists(join(home, "advisor", "usage.jsonl"));
     const advice = await readIfExists(join(home, "advisor", "advice.jsonl"));
@@ -662,9 +736,16 @@ const main = async () => {
     host?.kill("SIGTERM");
     hostLog?.end();
     await sleep(500);
-    const keep = process.env.SMOKE_KEEP === "1";
-    if (keep) console.log(`SMOKE_KEEP=1：保留临时目录 ${work}（host.log 在里面）`);
-    else await rm(work, { recursive: true, force: true }).catch(() => {});
+    const failedRun = isFailedRun();
+    if (process.env.SMOKE_KEEP === "1" || failedRun) {
+      // §6.4：失败必须留现场——先打宿主日志尾部，再报保留路径。
+      if (failedRun) await reportFailureScene(join(work, "host.log"));
+      console.log(
+        `临时目录已保留${failedRun ? "（因为这次失败，方便排查；删掉即可）" : "（SMOKE_KEEP=1）"}：${work}（host.log 在里面）`,
+      );
+    } else {
+      await rm(work, { recursive: true, force: true }).catch(() => {});
+    }
   }
 };
 

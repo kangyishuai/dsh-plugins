@@ -34,6 +34,12 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { buildIndex, collectPackages, fetchPackument } from "./build-index.mjs";
 import { REPO_ROOT } from "./lib/repo.mjs";
+import {
+  isFailedRun,
+  reclaimTimedOutTaskSpace,
+  reportBrowserFailureHint,
+  reportFailureScene,
+} from "./lib/smoke-failure.mjs";
 
 const exec = promisify(execFile);
 const PROFILE = "idx";
@@ -100,14 +106,23 @@ async function waitForBoot(logPath, timeoutMs) {
  */
 function browserScript(url, shots, goodIndexUrl, brokenIndexUrl, expected) {
   return `(async () => {
-const task = await taskSpace("dsh smoke: plugin index");
+// 失败/超时也必须关掉 TaskSpace：漏掉的 Page 会占满页面额度，把后续所有 web 冒烟卡到超时。
+const checks = [];
+let task = null;
+let taskFinished = false;
+const finishTask = async () => {
+  if (taskFinished) return;
+  taskFinished = true;
+  await task?.finish({ keep: [] }).catch(() => {});
+};
+try {
+task = await taskSpace("dsh smoke: plugin index");
 const page = task.page("p1");
 const SHOTS = ${JSON.stringify(shots)};
 const GOOD = ${JSON.stringify(goodIndexUrl)};
 const BROKEN = ${JSON.stringify(brokenIndexUrl)};
 // 标题与默认版本从**当前索引文档**派生（线上源会随时间前进，写死版本号会让发版后误报）。
 const EXPECTED = ${JSON.stringify(expected)};
-const checks = [];
 const check = (name, ok, detail) => checks.push({ name, ok: !!ok, detail: detail === undefined ? "" : String(detail) });
 const skip = (name, reason) => checks.push({ name, ok: true, skip: true, detail: reason });
 const shot = (name) => page.screenshot({ path: SHOTS + "/" + name + ".png" }).catch(() => {});
@@ -320,7 +335,12 @@ check("详情正文来自 README（出现 session 相关文字）", /session/iu.
 await shot("06-detail");
 
 console.log("SMOKE_RESULT " + JSON.stringify({ checks }) + " END");
-})().catch((error) => { console.log("SMOKE_RESULT " + JSON.stringify({ fatal: String(error && error.stack || error) }) + " END"); });`;
+} catch (error) {
+console.log("SMOKE_RESULT " + JSON.stringify({ checks, fatal: String((error && error.stack) || error).slice(0, 1200) }) + " END");
+} finally {
+await finishTask();
+}
+})();`;
 }
 
 const main = async () => {
@@ -585,10 +605,15 @@ const main = async () => {
         expected,
       ),
     );
+    // 外部超时标记：ego-browser 被 kill 时浏览器脚本没机会跑 finally，需要 Node 侧兜底回收。
+    let timedOut = false;
     const raw = await new Promise((/** @type {(value: string) => void} */ done) => {
       const child = spawn("ego-browser", ["nodejs"], { stdio: ["pipe", "pipe", "pipe"] });
       let out = "";
-      const timer = setTimeout(() => child.kill("SIGTERM"), 420_000);
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGTERM");
+      }, 420_000);
       child.stdout.on("data", (chunk) => (out += String(chunk)));
       child.stderr.on("data", (chunk) => (out += String(chunk)));
       child.on("close", () => {
@@ -597,18 +622,28 @@ const main = async () => {
       });
       void readFile(browserFile).then((buffer) => child.stdin.end(buffer));
     });
+    if (timedOut) await reclaimTimedOutTaskSpace("dsh smoke: plugin index");
     if (process.env.SMOKE_DEBUG) console.log(String(raw).slice(-12000));
 
     const match = String(raw).match(/SMOKE_RESULT (\{.*?\}) END/u);
     if (!match) {
       fail("浏览器脚本没有返回结果");
       console.error(String(raw).slice(-4000));
+      reportBrowserFailureHint();
       return;
     }
     const result = JSON.parse(match[1]);
-    if (result.fatal) fail(`浏览器脚本异常：${result.fatal}`);
     /** @type {{ name: string, ok: boolean, detail: string, skip?: boolean }[]} */
     const checks = result.checks ?? [];
+    // fatal 不能只设 exitCode 就继续算 PASS：把它记成一条失败断言，计数行才诚实。
+    if (result.fatal) {
+      reportBrowserFailureHint();
+      checks.push({
+        name: "浏览器脚本异常（未预期）",
+        ok: false,
+        detail: String(result.fatal).slice(0, 1200),
+      });
+    }
     for (const check of checks) {
       if (check.skip) console.log(`SKIP ${check.name}${check.detail ? ` :: ${check.detail}` : ""}`);
       else if (check.ok)
@@ -635,9 +670,17 @@ const main = async () => {
       server ? server.close(done) : done(),
     );
     await sleep(500);
-    const keep = process.env.SMOKE_KEEP === "1";
-    if (keep) console.log(`SMOKE_KEEP=1：保留临时目录 ${work}（host.log、index.json 在里面）`);
-    else await rm(work, { recursive: true, force: true }).catch(() => {});
+    const keep = process.env.SMOKE_KEEP === "1" || isFailedRun();
+    if (keep) {
+      // §6.4：失败必须留现场——先把宿主日志尾部打出来，再报保留路径（host.log 在临时目录里）。
+      if (isFailedRun()) await reportFailureScene(join(work, "host.log"));
+      console.log(
+        `临时目录已保留${isFailedRun() ? "（因为这次失败，方便排查；删掉即可）" : "（SMOKE_KEEP=1）"}：${work}`,
+      );
+      console.log("      host.log、index.json、shots 都在这个目录里");
+    } else {
+      await rm(work, { recursive: true, force: true }).catch(() => {});
+    }
   }
 };
 

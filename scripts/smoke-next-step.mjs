@@ -39,6 +39,11 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { gunzipSync, zstdDecompressSync } from "node:zlib";
 import { NOTICE_DISMISS_SOURCE } from "./lib/browser-helpers.mjs";
+import {
+  reclaimTimedOutTaskSpace,
+  reportBrowserFailureHint,
+  reportFailureScene,
+} from "./lib/smoke-failure.mjs";
 
 const exec = promisify(execFile);
 const REPO = resolve(import.meta.dirname, "..");
@@ -117,7 +122,17 @@ async function waitForBoot(logPath, timeoutMs) {
  */
 function browserScript(url, shots, home, canModel) {
   return `(async () => {
-const task = await taskSpace("dsh smoke: next-step");
+// 失败/超时也必须关掉 TaskSpace：漏掉的 Page 会占满页面额度，把后续所有 web 冒烟卡到超时。
+const checks = [];
+let task = null;
+let taskFinished = false;
+const finishTask = async () => {
+  if (taskFinished) return;
+  taskFinished = true;
+  await task?.finish({ keep: [] }).catch(() => {});
+};
+try {
+task = await taskSpace("dsh smoke: next-step");
 const page = task.page("p1");
 const SHOTS = ${JSON.stringify(shots)};
 const HOME = ${JSON.stringify(home)};
@@ -135,7 +150,6 @@ try {
 } catch (_error) {
   /* 写不进去就让后面的幽灵断言红，不要静默通过 */
 }
-const checks = [];
 const check = (name, ok, detail) => checks.push({ name, ok: !!ok, detail: detail === undefined ? "" : String(detail) });
 // SKIP 不是通过：单独标记，最后打印时用 SKIP 前缀和原因，不计入失败。
 const skip = (name, reason) => checks.push({ name, ok: true, skip: true, detail: reason });
@@ -372,7 +386,7 @@ if (!CAN_MODEL) {
   skip("关闭开关后不再出现新卡", reason);
   await shot("02-skip-no-credentials");
   console.log("SKIP 卡片相关 6 项断言：" + reason);
-  await task.finish({ keep: false }).catch(() => {});
+  await finishTask();
   console.log("SMOKE_STATE " + JSON.stringify({ sessionId: sessionId, canModel: false }));
   console.log("SMOKE_RESULT " + JSON.stringify({ checks }));
   return;
@@ -482,7 +496,7 @@ if (card === null) {
     ok: retryErrorText !== "",
     detail: retryErrorText === "" ? "失败区没有渲染出原因文案" : retryErrorText,
   });
-  await task.finish({ keep: false }).catch(() => {});
+  await finishTask();
   console.log(
     "SMOKE_STATE " +
       JSON.stringify({ sessionId: sessionId, canModel: true, cards: 0, retryError: retryErrorText }),
@@ -1266,7 +1280,7 @@ for (let i = 0; i < 2; i += 1) {
 }
 await shot("09-settings-closed");
 
-await task.finish({ keep: false }).catch(() => {});
+await finishTask();
 console.log("SMOKE_STATE " + JSON.stringify({
   sessionId: sessionId,
   canModel: true,
@@ -1280,6 +1294,11 @@ console.log("SMOKE_STATE " + JSON.stringify({
   userRows: actualUserCount,
 }));
 console.log("SMOKE_RESULT " + JSON.stringify({ checks }));
+} catch (error) {
+console.log("SMOKE_RESULT " + JSON.stringify({ checks, fatal: String((error && error.stack) || error).slice(0, 1200) }));
+} finally {
+await finishTask();
+}
 })();
 `;
 }
@@ -1824,11 +1843,16 @@ const main = async () => {
     await writeFile(browserFile, browserSource);
     await writeFile(join(shotsDir, "browser.mjs"), browserSource);
 
+    // 外部超时标记：ego-browser 被 kill 时浏览器脚本没机会跑 finally，需要 Node 侧兜底回收。
+    let timedOut = false;
     const result = await new Promise((resolvePromise) => {
       const child = spawn("ego-browser", ["nodejs"], { stdio: ["pipe", "pipe", "pipe"] });
       let out = "";
       // 三轮模型调用 + 卡片生成，给足余量；超时直接 SIGTERM 并由下面的解析判失败。
-      const timer = setTimeout(() => child.kill("SIGTERM"), 600_000);
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGTERM");
+      }, 600_000);
       child.stdout.on("data", (c) => {
         out += String(c);
       });
@@ -1841,16 +1865,28 @@ const main = async () => {
       });
       void readFile(browserFile).then((buffer) => child.stdin.end(buffer));
     });
+    if (timedOut) await reclaimTimedOutTaskSpace("dsh smoke: next-step");
 
     if (process.env.SMOKE_DEBUG) console.log(String(result).slice(-12000));
     const match = String(result).match(/SMOKE_RESULT (\{.*\})/u);
     if (!match) {
-      fail("浏览器脚本没有返回结果");
+      fail("浏览器脚本没有返回结果（页面/浏览器层没就绪）");
       console.error(String(result).slice(-5000));
+      reportBrowserFailureHint();
       return;
     }
-    /** @type {{ checks: { name: string, ok: boolean, detail: string, skip?: boolean }[] }} */
     const parsed = JSON.parse(match[1]);
+    /** @type {{ name: string, ok: boolean, detail: string, skip?: boolean }[]} */
+    const browserChecks = parsed.checks ?? [];
+    // fatal 不能只设 exitCode 就继续算 PASS：把它记成一条失败断言，计数行才诚实。
+    if (parsed.fatal) {
+      reportBrowserFailureHint();
+      browserChecks.push({
+        name: "浏览器脚本异常（未预期）",
+        ok: false,
+        detail: String(parsed.fatal).slice(0, 1200),
+      });
+    }
     const stateMatch = String(result).match(/SMOKE_STATE (\{.*\})/u);
     /** @type {any} */
     const state = stateMatch ? JSON.parse(stateMatch[1]) : {};
@@ -1863,13 +1899,13 @@ const main = async () => {
 
     let failed = 0;
     let skipped = 0;
-    for (const item of [...parsed.checks, ...logChecks]) {
+    for (const item of [...browserChecks, ...logChecks]) {
       const tag = item.skip === true ? "SKIP " : item.ok ? "PASS " : "FAIL ";
       console.log(tag + item.name + (item.skip === true || !item.ok ? ` :: ${item.detail}` : ""));
       if (item.skip === true) skipped += 1;
       else if (!item.ok) failed += 1;
     }
-    const total = parsed.checks.length + logChecks.length;
+    const total = browserChecks.length + logChecks.length;
     // 门禁靠这一行判定「跑过但零断言」的假绿（见 docs/plugin-conventions.md §6.1）。
     console.log(`${total - skipped - failed} PASS / ${skipped} SKIP / ${failed} FAIL`);
     console.log(`截图目录：${SHOTS_OUT}`);
@@ -1901,6 +1937,7 @@ const main = async () => {
     // process.exitCode 初始值是 undefined（不是 0）：直接 !== 0 会把成功也判成失败，
     // 每次跑完都留着临时目录并打印「因为断言失败」（冒烟实测踩到）。
     const failedRun = process.exitCode !== undefined && process.exitCode !== 0;
+    if (failedRun) await reportFailureScene(join(work, "host.log"));
     if (process.env.SMOKE_KEEP === "1" || failedRun) {
       console.log(`临时目录已保留：${work}`);
       if (process.env.SMOKE_KEEP !== "1") {

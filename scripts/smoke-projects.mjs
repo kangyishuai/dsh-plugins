@@ -17,7 +17,6 @@ import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-
 // Node 侧直接复用插件的读路径做「冷启动」验证：同一份 projects.json，
 // 经过 ProjectStore.load() + deriveThreadState() 还能读出 failed（P0-2 的端到端证据）。
 import {
@@ -27,6 +26,12 @@ import {
   THREAD_STATES,
 } from "../packages/projects/lib/overview.js";
 import { ProjectStore } from "../packages/projects/lib/store.js";
+import {
+  isFailedRun,
+  reclaimTimedOutTaskSpace,
+  reportBrowserFailureHint,
+  reportFailureScene,
+} from "./lib/smoke-failure.mjs";
 
 const exec = promisify(execFile);
 const REPO = resolve(import.meta.dirname, "..");
@@ -57,7 +62,9 @@ function infraFail(message, detail) {
   } catch {
     /* ignore */
   }
-  process.exit(1);
+  // 不在这里 process.exit：exit 会跳过 finally，临时 home / host.log 全被删掉，失败就没现场了。
+  // 抛给 main 的 catch，让 finally 走「失败保留现场」路径（docs/plugin-conventions.md §6.4）。
+  throw new Error(`INFRA ${message}`);
 }
 
 /** 宿主端口必须真的可连（比「日志里打印了地址」更硬）。 */
@@ -243,8 +250,10 @@ const waitUntil = async (fn, timeout = 12000, step = 200) => {
     await new Promise((resolve) => setTimeout(resolve, step));
   }
 };
+// 失败/超时也必须关掉 TaskSpace：漏掉的 Page 会占满页面额度，把后续所有 web 冒烟卡到超时。
+let task = null;
 try {
-  const task = await taskSpace("smoke projects ${PROJECT_NAME_TOKEN}");
+  task = await taskSpace("smoke projects ${PROJECT_NAME_TOKEN}");
   const page = task.page("p1");
   // 带 token 的入口会 303 到 /（用 cookie 认证）。某些 Chromium 版本会把这次 303 当成
   // 「无效导航响应」直接报 ERR_HTTP_RESPONSE_CODE_FAILURE。这里容错：失败就改导航到
@@ -3738,7 +3747,9 @@ try {
   );
   add(
     "未绑目录时说明线程跑在项目专用工作区（workspaces/<id>，不再是数据根本身）",
-    /workspaces\\/<id>/u.test(noDirHint) && /绑定/u.test(noDirHint) && !/跑在插件的数据目录里/u.test(noDirHint),
+    /workspaces\\/<id>/u.test(noDirHint) &&
+      /绑定/u.test(noDirHint) &&
+      !/跑在插件的数据目录里/u.test(noDirHint),
     noDirHint.slice(0, 90),
   );
 
@@ -5025,9 +5036,10 @@ try {
   result.pinnedProject = name;
   result.projectName = name;
   result.workspaceDir = SMOKE_WORKSPACE_DIR;
-  await task.finish({ keep: [] });
 } catch (error) {
-  result.fatal = String(error && error.message ? error.message : error).slice(0, 800);
+  result.fatal = String((error && error.stack) || error).slice(0, 800);
+} finally {
+  await task?.finish({ keep: [] }).catch(() => {});
 }
 result.settingsSeen = b3SettingsSeen;
 console.log("SMOKE_RESULT " + JSON.stringify(result));
@@ -5036,6 +5048,8 @@ console.log("SMOKE_RESULT " + JSON.stringify(result));
 
 /** 供浏览器脚本生成唯一任务空间名（避免复用上次的空间）。 */
 const PROJECT_NAME_TOKEN = `smoke-${Date.now().toString(36)}`;
+// 与 browserScript 里的 taskSpace(...) 名字保持一致：超时兜底按这个名字回收空间。
+const SPACE_NAME = `smoke projects ${PROJECT_NAME_TOKEN}`;
 
 const main = async () => {
   // 早退也必须打印计数行：gate <plugin> 与 gate:all 都按它判「跑过但零断言」的假绿
@@ -5218,12 +5232,17 @@ const main = async () => {
     );
     await writeFile(browserFile, source);
 
+    // 外部超时标记：ego-browser 被 kill 时浏览器脚本没机会跑 finally，需要 Node 侧兜底回收。
+    let timedOut = false;
     const raw = await new Promise((resolvePromise) => {
       const child = spawn("ego-browser", ["nodejs"], { stdio: ["pipe", "pipe", "pipe"] });
       let out = "";
       // 420s 在 238 条断言时已经贴边；B6 又加了几段轮询，超时只会伪装成 INFRA（没有断言失败信息）。
       // 调宽到 600s：只是「浏览器脚本预算」，不放宽任何断言。
-      const timer = setTimeout(() => child.kill("SIGTERM"), 600_000);
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGTERM");
+      }, 600_000);
       child.stdout.on("data", (c) => {
         out += String(c);
       });
@@ -5236,21 +5255,30 @@ const main = async () => {
       });
       void readFile(browserFile).then((buffer) => child.stdin.end(buffer));
     });
+    if (timedOut) await reclaimTimedOutTaskSpace(SPACE_NAME);
     if (process.env.SMOKE_DEBUG) console.log(String(raw).slice(-8000));
 
     const match = String(raw).match(/SMOKE_RESULT (\{.*\})/u);
     if (!match) {
       // 页面/浏览器层没跑起来（崩溃、超时、CDP 断连）属于基础设施问题：
       // 以前报「代码坏了」混进 FAIL 计数，复盘时会误判。这里 INFRA fail-fast。
+      reportBrowserFailureHint();
       infraFail("浏览器脚本没有返回结果（页面/浏览器层没就绪）", String(raw).slice(-4000));
     }
     const result = JSON.parse(match[1]);
-    if (result.fatal) fail(`浏览器脚本异常：${result.fatal}`);
-
     /** @type {{ name: string, ok: boolean, detail: string }[]} */
     const checks = result.checks ?? [];
     /** @type {{ name: string, detail: string }[]} */
     const skips = result.skips ?? [];
+    // fatal 不能只设 exitCode 就继续算 PASS：把它记成一条失败断言，计数行才诚实。
+    if (result.fatal) {
+      reportBrowserFailureHint();
+      checks.push({
+        name: "浏览器脚本异常（未预期）",
+        ok: false,
+        detail: String(result.fatal).slice(0, 1200),
+      });
+    }
 
     // Node 侧：宿主真的落盘了，且没有残留临时文件
     const storePath = join(home, "projects", "projects.json");
@@ -6341,8 +6369,14 @@ const main = async () => {
     host?.kill("SIGTERM");
     hostLog?.end();
     await sleep(500);
-    if (process.env.SMOKE_KEEP) {
-      console.log(`保留临时 home：${work}`);
+    const failedRun = isFailedRun();
+    // §6.4：失败必须留现场——先把宿主日志尾部打出来，再报保留路径。
+    if (failedRun) await reportFailureScene(join(work, "host.log"));
+    if (process.env.SMOKE_KEEP || failedRun) {
+      console.log(
+        `临时 home 已保留${failedRun ? "（因为这次失败，方便排查；删掉即可）" : "（SMOKE_KEEP）"}：${work}`,
+      );
+      console.log("      host.log、profile、projects.json、shots 都在这个目录里");
     } else {
       await rm(work, { recursive: true, force: true }).catch(() => {});
     }
