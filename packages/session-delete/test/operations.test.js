@@ -299,13 +299,23 @@ test("trashWorkspace 对不存在的工作区明确报错", async () => {
 // AUD-SD-02：恢复不能「一律报成功」。置顶状态要真的被保存与还原，引用恢复与校验
 // 结果要进回执、进界面，失败必须说出来。
 // ---------------------------------------------------------------------------
-test("trash 保存置顶状态，restore 还原置顶与工作区并回执带 refs/checks", async () => {
+test("trash 在「归档清 pin」之前取置顶快照，restore 后仍置顶（B1）", async () => {
   const { ops, sessionId, state, dataRoot } = await fixture();
   await seedWorkspaceFile(dataRoot, { pinned: [sessionId], workspaces: { ws1: [sessionId] } });
   const plan = await ops.plan(sessionId);
   const trashed = await ops.trash(sessionId, { digest: plan.digest });
   const meta = await readEntry(dataRoot, trashed.entryId);
   assert.equal(meta.pinned, true, "AUD-SD-06：置顶状态必须写进 meta（此前恒为 null）");
+  // 假宿主在 archiveSession 里模拟宿主真实行为「归档同一次写清 pin」。它必须真的清掉，
+  // 否则「快照取在归档之后」这个顺序 bug 在单测里永远是绿的（复审 B1）。
+  const fileAfterTrash = JSON.parse(
+    await readFile(join(dataRoot, "storages", "workspace.json"), "utf8"),
+  );
+  assert.equal(
+    fileAfterTrash.global.pinnedSessionIds.includes(sessionId),
+    false,
+    "归档必须把 pin 从 workspace.json 清掉（否则这条用例测不出顺序 bug）",
+  );
   assert.equal(state.pinned, false, "删除时置顶标记要被摘掉");
   const trashReceipt = (await ops.receipts(5)).entries.find((entry) => entry.action === "trash");
   assert.ok(trashReceipt);
@@ -331,6 +341,11 @@ test("trash 保存置顶状态，restore 还原置顶与工作区并回执带 re
   assert.ok(Array.isArray(restoreReceipt.refs), "恢复回执要逐项记录引用结果");
   assert.ok(Array.isArray(restoreReceipt.checks), "恢复回执要带恢复后的校验结果");
   assert.equal(restoreReceipt.partial, false);
+  // 置顶真的写回宿主存储（不是只在内存里打了个勾）。
+  const fileAfterRestore = JSON.parse(
+    await readFile(join(dataRoot, "storages", "workspace.json"), "utf8"),
+  );
+  assert.equal(fileAfterRestore.global.pinnedSessionIds.includes(sessionId), true);
   await rm(dataRoot, { recursive: true, force: true });
 });
 

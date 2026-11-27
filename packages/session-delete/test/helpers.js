@@ -1,7 +1,7 @@
 // @ts-check
 // 测试夹具：造一个「像宿主」的最小替身 + 临时数据根。
 // 被 operations.test.js / recovery.test.js 共用（不是 *.test.js，node --test 不会单独跑它）。
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createOperations } from "../lib/operations.js";
@@ -42,6 +42,31 @@ export async function fixture(options = {}) {
     detached: 0,
   };
 
+  /**
+   * 让假宿主的 pin 写入 `storages/workspace.json`（文件不存在时静默跳过）。
+   * 宿主行为见 docs/runtime/0.2.1-rc.5 §6：**归档会在同一次写里清掉 pin**，
+   * 所以假宿主也必须照做，否则「置顶快照取在归档之前」这类顺序 bug 会被单测放绿。
+   * @param {boolean} pinned
+   */
+  async function writePinnedFlag(pinned) {
+    const file = join(dataRoot, "storages", "workspace.json");
+    let parsed;
+    try {
+      parsed = JSON.parse(await readFile(file, "utf8"));
+    } catch {
+      return; // 没有 storages/workspace.json 就没什么可写（读侧会按「未知」降级）
+    }
+    const global = parsed.global ?? {};
+    /** @type {string[]} */
+    const current = Array.isArray(global.pinnedSessionIds)
+      ? global.pinnedSessionIds.map(String)
+      : [];
+    const without = current.filter((/** @type {string} */ id) => id !== sessionId);
+    global.pinnedSessionIds = pinned ? [...new Set([...without, sessionId])] : without;
+    parsed.global = global;
+    await writeFile(file, JSON.stringify(parsed, null, 2), "utf8");
+  }
+
   const workspace = {
     list: () => [
       {
@@ -62,6 +87,9 @@ export async function fixture(options = {}) {
       // 让第一个操作确定地停在 in-flight 状态里（之前这条断言在负载高时会假失败）。
       if (typeof gate === "function") await gate();
       state.archived = true;
+      // 宿主真实行为：归档同一次写里清 pin（docs/runtime 0.2.1-rc.5 §6）。
+      state.pinned = false;
+      await writePinnedFlag(false);
     },
     unarchiveSession: async () => {
       state.archived = false;
@@ -69,9 +97,11 @@ export async function fixture(options = {}) {
     pinSession: async () => {
       if (failPin) throw new Error("pinSession refused");
       state.pinned = true;
+      await writePinnedFlag(true);
     },
     unpinSession: async () => {
       state.pinned = false;
+      await writePinnedFlag(false);
     },
   };
 

@@ -253,13 +253,15 @@ export function createOperations({ ctx, dataRoot, logger }) {
    * 只查一次、不循环：活句柄若持续写盘，由「未完成的操作」与体检暴露，而不是互相对抗。
    * @param {import("./plan.js").Plan} plan
    * @param {string} originalPath
+   * @param {string} entryId 本次生成的回收站条目；它被 restore/purge 后守卫必须放手（B2）。
    */
-  function scheduleReviveCheck(plan, originalPath) {
+  function scheduleReviveCheck(plan, originalPath, entryId) {
     const timer = setTimeout(async () => {
       try {
         await recovery.reviveGuard({
           sessionId: plan.sessionId,
           originalPath,
+          entryId,
           meta: { title: plan.title, cwd: plan.cwd },
         });
       } catch (error) {
@@ -351,22 +353,24 @@ export function createOperations({ ctx, dataRoot, logger }) {
     /** @type {{ id: string, label: string, status: string, detail?: string }[]} */
     let removed = [];
     try {
-      // 1. 先归档：归档集合就是 provider 的 agent/pre-step 闸门。
+      // 1. 先记录引用状态，供恢复时还原 —— **必须早于归档**：
+      //    宿主归档会在同一次写里清掉 pin（docs/runtime/0.2.1-rc.5 §6），
+      //    归档后再读 storages/workspace.json 只能读到「未置顶」。
+      const snapshots = await snapshotAllRefs(refs, plan.sessionId, logger);
+      const pinned = snapshots["workspace-pin"]?.pinned;
+
+      // 2. 归档：归档集合就是 provider 的 agent/pre-step 闸门。
       if (caps.checks["workspace.archive"]) {
         await caps.services.workspace.archiveSession(plan.sessionId, { stopActivity: true });
       }
-      // 2. 官方停止通道（跑着的轮次、子代理、后台任务、提醒）。
+      // 3. 官方停止通道（跑着的轮次、子代理、后台任务、提醒）。
       if (caps.checks["event.session-stop"]) {
         await ctx.parallel("workspace/session-stop", { sessionId: plan.sessionId });
       }
-      // 3. 落盘并等写入稳定。
+      // 4. 落盘并等写入稳定。
       const live = caps.services.sessions?.get?.(plan.sessionId);
       if (live && caps.checks["sessions.flush"]) await caps.services.sessions.flush(live);
       await delayMs(SETTLE_MS);
-
-      // 4. 记录引用状态，供恢复时还原（含置顶状态：没有公开读接口，读 workspace.json）。
-      const snapshots = await snapshotAllRefs(refs, plan.sessionId, logger);
-      const pinned = snapshots["workspace-pin"]?.pinned;
 
       // 5. 移入回收站（原子 rename）。
       const movedResult = await moveIntoTrash({
@@ -395,7 +399,8 @@ export function createOperations({ ctx, dataRoot, logger }) {
       removed = await removeAllRefs(refs, plan.sessionId, snapshots);
 
       // 7. 复活复查 + 对账回执。
-      scheduleReviveCheck(plan, location.path);
+      //    把本次 entryId 交给守卫：它被 restore/purge 之后就不该再移（B2）。
+      scheduleReviveCheck(plan, location.path, entryId);
       const checks = await reconcile(plan.sessionId, { skipDirCheck: true });
       await finishOperation({ dataRoot, id: record.id, state: "done" });
       await note({

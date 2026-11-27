@@ -387,14 +387,36 @@ export function createRecovery({ dataRoot, refs, logger, audit, reconcile }) {
   /**
    * 复活守卫（AUD-SD-07）：目录被迟到的写入重建后，**真的**再移一次。
    * 只跑一次（由调用方在删除后 1.5s 触发），不会和活句柄形成循环。
+   *
+   * B2：删除后 1.5s 内用户可能已经 restore / purge 掉这条条目——此时原目录存在是
+   * **用户操作的结果**，守卫不许再移一次（否则会把用户的恢复静默撤回）。所以先看条目：
+   * 条目不存在（restore/purge 过）或条目的 data 已经被搬回原处，都直接放手。
    * @param {object} options
    * @param {string} options.sessionId
    * @param {string} options.originalPath
+   * @param {string} [options.entryId] 本次 trash 生成的条目。
    * @param {{ title?: string | null, cwd?: string | null }} [options.meta]
-   * @returns {Promise<{ revived: boolean, entryId: string | null, removed?: any[], error?: string }>}
+   * @returns {Promise<{ revived: boolean, entryId: string | null, skipped?: boolean,
+   *   removed?: any[], error?: string }>}
    */
-  async function reviveGuard({ sessionId, originalPath, meta }) {
+  async function reviveGuard({ sessionId, originalPath, entryId, meta }) {
     requireSessionId(sessionId);
+    if (typeof entryId === "string" && entryId.length > 0) {
+      const entry = await readEntry(dataRoot, entryId).catch(() => null);
+      if (!entry) {
+        logger.info(
+          `session-delete: revive guard skipped for ${sessionId}: entry ${entryId} was restored or purged`,
+        );
+        return { revived: false, entryId: null, skipped: true };
+      }
+      // 跨进程 restore 的窗口：条目还在、data 已经搬回原处。也不许再移。
+      if (!(await isDirectory(entryDataDir(dataRoot, entryId)))) {
+        logger.info(
+          `session-delete: revive guard skipped for ${sessionId}: entry ${entryId} no longer holds data`,
+        );
+        return { revived: false, entryId: null, skipped: true };
+      }
+    }
     if (!(await isDirectory(originalPath))) return { revived: false, entryId: null };
     const bytes = await directorySize(originalPath).catch(() => 0);
     let moved;

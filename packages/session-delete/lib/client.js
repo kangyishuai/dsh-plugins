@@ -284,7 +284,7 @@ window.__ModuleLoader__.load({
           "aria-label": props.ariaLabel,
           "data-modal-autofocus": props.modalAutofocus ? "" : undefined,
           // 稳定的动作锚点：冒烟/桌面回归按它定位，不再依赖 CSS class 或文案。
-          "data-sdel-action": props.action,
+          "data-session-delete-action": props.action,
           onClick: props.onClick,
           className: `dsh-sdel-btn${variant}${quiet}${props.tight ? " dsh-sdel-btn--tight" : ""}`,
           style: {
@@ -360,7 +360,7 @@ window.__ModuleLoader__.load({
         "div",
         {
           className: "dsh-sdel-setting-row",
-          "data-sdel-setting-row": props.anchor,
+          "data-session-delete-setting-row": props.anchor,
         },
         h(
           "div",
@@ -388,7 +388,7 @@ window.__ModuleLoader__.load({
           {
             type: "button",
             className: "dsh-sdel-disclosure",
-            "data-sdel-disclosure": props.anchor,
+            "data-session-delete-disclosure": props.anchor,
             "aria-expanded": open ? "true" : "false",
             onClick: () => setOpen(!open),
           },
@@ -726,7 +726,7 @@ window.__ModuleLoader__.load({
           "aria-label": label,
           onClick: () => props.openPanel(),
           className: "dsh-sdel-footer",
-          "data-sdel-footer": "",
+          "data-session-delete-footer": "",
           style: {
             display: "flex",
             alignItems: "center",
@@ -745,8 +745,8 @@ window.__ModuleLoader__.load({
           ? h(
               "span",
               {
-                "data-sdel-count": "",
-                "data-sdel-count-value": String(count),
+                "data-session-delete-count": "",
+                "data-session-delete-count-value": String(count),
                 style: {
                   marginLeft: props.wide ? "auto" : 0,
                   minWidth: "16px",
@@ -878,12 +878,20 @@ window.__ModuleLoader__.load({
               // 已移入回收站但收尾失败（AUD-SD-03）：磁盘事实变了，别让用户以为「删除失败」
               // 再点一次（重试只会得到 not-found）。关框、按事实提示、照常刷新列表。
               props.requestStore.set(null);
+              const partialEntryId = reason?.details?.entryId ?? null;
               props.onTrashed?.({
                 sessionId: request.sessionId,
-                entryId: reason?.details?.entryId ?? null,
+                entryId: partialEntryId,
                 title: request.title || null,
               });
-              props.toastStore?.set({ text: trashFailureText(reason, props.t), error: true });
+              // 错误 toast 也带上 entryId：partial 的「已进回收站」仍然给撤销入口，
+              // 否则用户只剩面板一条路（复审 F12）。
+              props.toastStore?.set({
+                entryId: partialEntryId,
+                title: request.title || null,
+                text: trashFailureText(reason, props.t),
+                error: true,
+              });
               return;
             }
             setError(trashFailureText(reason, props.t));
@@ -915,13 +923,13 @@ window.__ModuleLoader__.load({
               request.title,
             )
           : null,
-        h("div", { style: { color: T.dim }, "data-sdel-impact": "" }, impact),
+        h("div", { style: { color: T.dim }, "data-session-delete-impact": "" }, impact),
         !isWorkspace && removes.length > 0
           ? h(
               "div",
               {
                 style: { color: T.faint, fontSize: "12px", marginTop: "2px" },
-                "data-sdel-refs": "",
+                "data-session-delete-refs": "",
               },
               props.t("confirm.refs", { n: removes.length }),
             )
@@ -958,13 +966,17 @@ window.__ModuleLoader__.load({
               {
                 style: { color: T.danger, marginTop: "10px" },
                 role: "alert",
-                "data-sdel-blocked": "",
+                "data-session-delete-blocked": "",
               },
               props.t("confirm.blocked", { reason: plan.blockers[0].message }),
             )
           : null,
         error
-          ? h("div", { style: { color: T.danger, marginTop: "8px" }, "data-sdel-error": "" }, error)
+          ? h(
+              "div",
+              { style: { color: T.danger, marginTop: "8px" }, "data-session-delete-error": "" },
+              error,
+            )
           : null,
         plan
           ? h(
@@ -1211,7 +1223,7 @@ window.__ModuleLoader__.load({
 
       var toolbar = h(
         "div",
-        { className: "dsh-sdel-toolbar", "data-sdel-toolbar": "" },
+        { className: "dsh-sdel-toolbar", "data-session-delete-toolbar": "" },
         h(Check, {
           checked: allSelected,
           disabled: batchRunning || entries.length === 0,
@@ -1255,7 +1267,7 @@ window.__ModuleLoader__.load({
       var batchLine = batch
         ? h(
             "div",
-            { className: "dsh-sdel-batch", "data-sdel-batch": "" },
+            { className: "dsh-sdel-batch", "data-session-delete-batch": "" },
             h(
               "span",
               { role: "status" },
@@ -1269,14 +1281,14 @@ window.__ModuleLoader__.load({
             batch.failures.length > 0
               ? h(
                   "span",
-                  { style: { color: T.danger }, "data-sdel-batch-failed": "" },
+                  { style: { color: T.danger }, "data-session-delete-batch-failed": "" },
                   props.t("batch.failed", { n: batch.failures.length }),
                 )
               : null,
             batch.partials > 0
               ? h(
                   "span",
-                  { style: { color: T.danger }, "data-sdel-batch-partial": "" },
+                  { style: { color: T.danger }, "data-session-delete-batch-partial": "" },
                   props.t("batch.partial", { n: batch.partials }),
                 )
               : null,
@@ -1299,7 +1311,7 @@ window.__ModuleLoader__.load({
         confirmPurge === "__batch__"
           ? h(
               "div",
-              { className: "dsh-sdel-confirm", "data-sdel-confirm-row": "" },
+              { className: "dsh-sdel-confirm", "data-session-delete-confirm-row": "" },
               h("span", null, props.t("trash.purgeManyConfirm", { n: selectedIds.length })),
               h(
                 Btn,
@@ -1329,8 +1341,8 @@ window.__ModuleLoader__.load({
             {
               key: entry.entryId,
               className: "dsh-sdel-row",
-              "data-sdel-row": String(entry.entryId),
-              "data-sdel-row-session": String(entry.sessionId ?? ""),
+              "data-session-delete-row": String(entry.entryId),
+              "data-session-delete-row-session": String(entry.sessionId ?? ""),
             },
             h(Check, {
               checked: Boolean(selected[entry.entryId]),
@@ -1349,13 +1361,13 @@ window.__ModuleLoader__.load({
                 {
                   className: "dsh-sdel-row-title dsh-sdel-truncate",
                   title: entry.title || entry.sessionId,
-                  "data-sdel-row-title": "",
+                  "data-session-delete-row-title": "",
                 },
                 entry.title || entry.sessionId,
               ),
               h(
                 "span",
-                { className: "dsh-sdel-row-meta", "data-sdel-row-meta": "" },
+                { className: "dsh-sdel-row-meta", "data-session-delete-row-meta": "" },
                 `${props.t("panel.size", { size: formatBytes(entry.bytes) })} · ${props.t("panel.trashedAt", { time: formatTime(entry.trashedAt) })}`,
               ),
             ),
@@ -1364,7 +1376,7 @@ window.__ModuleLoader__.load({
                   "span",
                   {
                     className: "dsh-sdel-row-actions dsh-sdel-row-actions--open",
-                    "data-sdel-row-actions": "confirm",
+                    "data-session-delete-row-actions": "confirm",
                   },
                   h(
                     Btn,
@@ -1388,7 +1400,7 @@ window.__ModuleLoader__.load({
                 )
               : h(
                   "span",
-                  { className: "dsh-sdel-row-actions", "data-sdel-row-actions": "" },
+                  { className: "dsh-sdel-row-actions", "data-session-delete-row-actions": "" },
                   h(
                     Btn,
                     {
@@ -1421,37 +1433,40 @@ window.__ModuleLoader__.load({
         readOnly
           ? h(
               "div",
-              { style: { color: T.danger, marginBottom: "10px" }, "data-sdel-readonly": "" },
+              {
+                style: { color: T.danger, marginBottom: "10px" },
+                "data-session-delete-readonly": "",
+              },
               props.t("panel.readOnly"),
             )
           : null,
         error
           ? h(
               "div",
-              { style: { color: T.danger, marginBottom: "10px" }, "data-sdel-error": "" },
+              { style: { color: T.danger, marginBottom: "10px" }, "data-session-delete-error": "" },
               error,
             )
           : null,
         entries.length === 0
           ? h(
               "div",
-              { "data-sdel-panel": "", "data-sdel-empty": "" },
+              { "data-session-delete-panel": "", "data-session-delete-empty": "" },
               h("div", { style: { color: T.dim, padding: "12px 0" } }, props.t("panel.empty")),
             )
           : h(
               "div",
-              { className: "dsh-sdel-panel", "data-sdel-panel": "" },
+              { className: "dsh-sdel-panel", "data-session-delete-panel": "" },
               toolbar,
               confirmLine,
               batchLine,
-              h("div", { className: "dsh-sdel-list", "data-sdel-list": "" }, rows),
+              h("div", { className: "dsh-sdel-list", "data-session-delete-list": "" }, rows),
             ),
         (data?.unknown?.length ?? 0) > 0
           ? h(
               "div",
               {
                 style: { color: T.faint, fontSize: "12px", marginTop: "8px" },
-                "data-sdel-unknown": "",
+                "data-session-delete-unknown": "",
               },
               props.t("panel.unknown", { n: data.unknown.length }),
             )
@@ -1461,7 +1476,7 @@ window.__ModuleLoader__.load({
               "div",
               {
                 style: { color: T.faint, fontSize: "12px", marginTop: "4px" },
-                "data-sdel-pending": "",
+                "data-session-delete-pending": "",
               },
               props.t("panel.pending", { n: data.pending.length }),
             )
@@ -1620,10 +1635,10 @@ window.__ModuleLoader__.load({
 
       return h(
         "div",
-        { className: "dsh-sdel-settings", "data-sdel-settings": "" },
+        { className: "dsh-sdel-settings", "data-session-delete-settings": "" },
         h(
           "div",
-          { className: "dsh-sdel-group", "data-sdel-group": "delete" },
+          { className: "dsh-sdel-group", "data-session-delete-group": "delete" },
           props.t("settings.group.delete"),
         ),
         h(SettingRow, {
@@ -1656,7 +1671,7 @@ window.__ModuleLoader__.load({
         }),
         h(
           "div",
-          { className: "dsh-sdel-group", "data-sdel-group": "trash" },
+          { className: "dsh-sdel-group", "data-session-delete-group": "trash" },
           props.t("settings.group.trash"),
         ),
         h(SettingRow, {
@@ -1681,14 +1696,14 @@ window.__ModuleLoader__.load({
         }),
         h(
           "div",
-          { className: "dsh-sdel-group", "data-sdel-group": "maintenance" },
+          { className: "dsh-sdel-group", "data-session-delete-group": "maintenance" },
           props.t("settings.group.maintenance"),
         ),
         h(
           "div",
           {
-            "data-sdel-health": "",
-            "data-sdel-health-state": healthError
+            "data-session-delete-health": "",
+            "data-session-delete-health-state": healthError
               ? "error"
               : scanning
                 ? "scanning"
@@ -1770,7 +1785,7 @@ window.__ModuleLoader__.load({
           "div",
           {
             className: "dsh-sdel-setting-row dsh-sdel-setting-row--stack",
-            "data-sdel-receipts": "",
+            "data-session-delete-receipts": "",
           },
           h(
             Disclosure,
@@ -1794,7 +1809,7 @@ window.__ModuleLoader__.load({
           "div",
           {
             className: "dsh-sdel-setting-row dsh-sdel-setting-row--stack",
-            "data-sdel-audit": "",
+            "data-session-delete-audit": "",
           },
           h(Disclosure, {
             anchor: "audit",
@@ -1820,7 +1835,7 @@ window.__ModuleLoader__.load({
               "div",
               {
                 style: { color: T.dim, fontSize: "12px", paddingTop: "8px" },
-                "data-sdel-message": "",
+                "data-session-delete-message": "",
               },
               message,
             )
@@ -1866,7 +1881,7 @@ window.__ModuleLoader__.load({
       return h(
         "div",
         {
-          "data-sdel-toast": isError ? "error" : "ok",
+          "data-session-delete-toast": isError ? "error" : "ok",
           role: isError ? "alert" : "status",
           style: {
             position: "fixed",
@@ -1889,7 +1904,7 @@ window.__ModuleLoader__.load({
             transition: "opacity .18s ease, transform .18s ease",
           },
         },
-        h("span", { "data-sdel-toast-text": "" }, text ? text : props.t("confirm.done")),
+        h("span", { "data-session-delete-toast-text": "" }, text ? text : props.t("confirm.done")),
         isError
           ? h(
               Btn,

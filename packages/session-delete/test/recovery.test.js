@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import { mkdir, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
+import { setTimeout as delayMs } from "node:timers/promises";
 import { beginOperation, listPending } from "../lib/journal.js";
 import { trashRoot } from "../lib/paths.js";
 import { entryDataDir, entryDir, moveIntoTrash, readEntry } from "../lib/trash.js";
@@ -299,5 +300,77 @@ test("启动对账：purge 删到一半（条目残缺）→ 不销账，保留�
   assert.equal((await ops.list()).pending.length, 1, "残缺条目要留给人工确认");
   const audit = await ops.auditLog(20);
   assert.equal(audit.entries.find((entry) => entry.action === "recover")?.result, "refused");
+  await rm(dataRoot, { recursive: true, force: true });
+});
+
+// ---------------------------------------------------------------------------
+// B2（复审阻塞项）：复活守卫不许把「1.5s 内刚恢复的会话」再移入回收站。
+// 复审在 /tmp 用真实 trash/restore 路径复现：restore 返回 ok 后 2s 目录消失、
+// 回收站多一条、审计写「已再次移入回收站」。下面三条锁住修复。
+// ---------------------------------------------------------------------------
+test("复活守卫：本次条目已被 restore → 不再移动（B2）", async () => {
+  const { ops, dataRoot, sessionId, sessionDir } = await fixture();
+  const plan = await ops.plan(sessionId);
+  const trashed = await ops.trash(sessionId, { digest: plan.digest });
+  const restored = await ops.restore(trashed.entryId);
+  assert.equal(restored.ok, true);
+
+  const guarded = await ops.recovery.reviveGuard({
+    sessionId,
+    originalPath: sessionDir,
+    entryId: trashed.entryId,
+    meta: { title: "hello", cwd: "/w" },
+  });
+  assert.equal(guarded.revived, false, "条目已被 restore，守卫必须放手");
+  assert.equal(guarded.skipped, true);
+  assert.ok((await stat(join(sessionDir, "session.v4.jsonl.zstd"))).isFile());
+  assert.equal((await ops.list()).entries.length, 0, "不许为已恢复的会话新增回收站条目");
+  const guardAudit = (await ops.auditLog(50)).entries.filter((entry) =>
+    /复活守卫/u.test(String(entry.detail)),
+  );
+  assert.deepEqual(guardAudit, []);
+  await rm(dataRoot, { recursive: true, force: true });
+});
+
+test("复活守卫：本次条目已被 purge → 不再移动", async () => {
+  const { ops, dataRoot, sessionId, sessionDir } = await fixture();
+  const plan = await ops.plan(sessionId);
+  const trashed = await ops.trash(sessionId, { digest: plan.digest });
+  await ops.purge(trashed.entryId);
+  // 迟到的活句柄把目录重建回来（purge 之后）。
+  await mkdir(sessionDir, { recursive: true });
+  await writeFile(join(sessionDir, "session.v4.jsonl.zstd"), "late-write");
+
+  const guarded = await ops.recovery.reviveGuard({
+    sessionId,
+    originalPath: sessionDir,
+    entryId: trashed.entryId,
+    meta: { title: "hello", cwd: "/w" },
+  });
+  assert.equal(guarded.revived, false);
+  assert.equal(guarded.skipped, true);
+  assert.equal((await ops.list()).entries.length, 0);
+  await rm(dataRoot, { recursive: true, force: true });
+});
+
+test("端到端：trash → 立即 restore → 等过 1.5s 复活窗口，会话仍在原处（B2）", async () => {
+  const { ops, dataRoot, sessionId, sessionDir } = await fixture();
+  const plan = await ops.plan(sessionId);
+  const trashed = await ops.trash(sessionId, { digest: plan.digest });
+  const restored = await ops.restore(trashed.entryId);
+  assert.equal(restored.ok, true);
+  assert.ok((await stat(join(sessionDir, "session.v4.jsonl.zstd"))).isFile());
+
+  // 守卫的定时器在 trash 后 1500ms 触发；restore 已完成，此时它必须确认条目已不在。
+  await delayMs(2000);
+  assert.ok(
+    (await stat(join(sessionDir, "session.v4.jsonl.zstd"))).isFile(),
+    "用户的恢复不许被守卫静默撤回",
+  );
+  assert.equal((await ops.list()).entries.length, 0, "回收站里不该出现同一会话的新条目");
+  const guardAudit = (await ops.auditLog(50)).entries.filter((entry) =>
+    /复活守卫/u.test(String(entry.detail)),
+  );
+  assert.deepEqual(guardAudit, [], "守卫既然没移，就不该写「已再次移入」审计");
   await rm(dataRoot, { recursive: true, force: true });
 });
