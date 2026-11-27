@@ -34,6 +34,22 @@
  */
 
 /**
+ * 手动补生成（`generateNow`）遇到在途生成时的判断（F-2）。
+ *
+ * 0.4.3 之前 `turn/start` 会 abort 在途生成，所以点「补生成」时 `inflight` 必为空；现在被取代的
+ * 旧回合会继续跑到 20s，按钮出现后用户点它会撞上 `inflight` 守卫，变成「正在生成，请稍候」却
+ * 什么都不发生。处置规则：**只有「本次要的回合、且没被取代」才值得等**；其余一律取消后继续——
+ * 别的回合不是用户要的那张卡；已被取代的那笔注定写成 `shown:false`，留着只会挡住补生成。
+ * @param {{ turn: number, superseded: boolean } | undefined} entry 在途登记项
+ * @param {number} turn 本次补生成要的回合
+ * @returns {boolean} true = 继续报 `inflight`（等它跑完）
+ */
+export function inflightBlocksGenerateNow(entry, turn) {
+  if (entry === undefined || entry === null) return false;
+  return entry.turn === turn && entry.superseded !== true;
+}
+
+/**
  * 建一个空登记簿。
  * @returns {InflightRegistry}
  */

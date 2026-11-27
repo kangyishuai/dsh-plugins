@@ -61,6 +61,79 @@ function turnEvent(input = {}) {
   };
 }
 
+/**
+ * 造一条 schema 类 error 事件（detail 用 service 实际写入的形状：
+ * `model output did not match the card schema (json:empty)`）。
+ * @param {string} problem `json:empty` / `options:...` 等
+ * @param {{ turn?: number, pv?: number, kind?: string, detail?: string }} [input]
+ * @returns {any}
+ */
+function schemaErrorEvent(problem, input = {}) {
+  return {
+    v: 1,
+    scheme: "v0.4",
+    pv: input.pv ?? 4,
+    pkg: "0.4.3",
+    t: "error",
+    at: 5000 + (input.turn ?? 1),
+    sid: "abcd1234",
+    turn: input.turn ?? 1,
+    kind: input.kind ?? "schema",
+    detail: input.detail ?? `model output did not match the card schema (${problem})`,
+  };
+}
+
+/**
+ * 造一份「按 pv 形态」的事件集：正常出卡回合 + 若干 schema 失败。
+ * 数值取审计的 pv3/pv4 形态（pv4 = 79 空 + 23 格式，这里取 78 + 24 便于边界断言）。
+ * @param {{ pv?: number, okTurns?: number, empties?: number, formats?: string[] }} [input]
+ * @returns {any[]}
+ */
+function shapeEvents({ pv = 4, okTurns = 120, empties = 0, formats = [] } = {}) {
+  /** @type {any[]} */
+  const events = [];
+  for (let turn = 1; turn <= okTurns; turn += 1) events.push(turnEvent({ turn, pv }));
+  let turn = okTurns;
+  for (let index = 0; index < empties; index += 1) {
+    turn += 1;
+    events.push(schemaErrorEvent("json:empty", { turn, pv }));
+  }
+  for (const problem of formats) {
+    turn += 1;
+    events.push(schemaErrorEvent(problem, { turn, pv }));
+  }
+  return events;
+}
+
+/** pv4（0.4.3 行为）形态：78 条空输出 + 24 条非空格式失败。 */
+function pv4ShapeEvents() {
+  return shapeEvents({
+    pv: 4,
+    okTurns: 120,
+    empties: 78,
+    formats: [
+      ...Array.from({ length: 20 }, () => "json:no-object"),
+      ...Array.from({ length: 2 }, () => "json:unparsable"),
+      "options:dropped-option:0:label-length:22",
+      "options:none",
+    ],
+  });
+}
+
+/** pv3（0.4.0–0.4.2 行为）形态：2 条空输出 + 17 条非空格式失败。 */
+function pv3ShapeEvents() {
+  return shapeEvents({
+    pv: 3,
+    okTurns: 120,
+    empties: 2,
+    formats: [
+      ...Array.from({ length: 3 }, () => "json:no-object"),
+      ...Array.from({ length: 2 }, () => "json:unparsable"),
+      ...Array.from({ length: 12 }, () => "options:dropped-option:0:label-length:22"),
+    ],
+  });
+}
+
 test("parseEvents：坏行跳过并计数，非对象/缺 t 也算坏行", () => {
   const text = [
     JSON.stringify({ t: "turn", sid: "a", turn: 1 }),
@@ -113,6 +186,9 @@ test("summarize：空输入不抛错，比例为 null", () => {
   assert.equal(metrics.shown, 0);
   assert.equal(metrics.rates.ctr, null);
   assert.equal(metrics.insufficient, true);
+  // 没有 schema 失败时，空输出占比没有分母（用 null，而不是 0 假装看过数据）
+  assert.equal(metrics.emptyShare, null);
+  assert.deepEqual(metrics.errors.byDetail, {});
 });
 
 test("summarize：忽略 = 出过的卡 − 点击 − 关闭（左连接，不依赖显式 ignored 事件）", () => {
@@ -213,6 +289,82 @@ test("summarize：闸门与失败计数；schemaShare 用「ok 回合 + 失败�
   assert.equal(metrics.errors.total, 2);
   assert.equal(metrics.errors.byKind.schema, 1);
   assert.equal(metrics.schemaShare, 1 / 3);
+});
+
+test("summarize：pv4 形态（78 空 + 24 格式）拆 byDetail，空输出不冒充格式失败", () => {
+  // 审计结论：0.4.3 的 102 条 schema 里 79 条是「模型返回空文本」，不是格式变严。
+  // 报表必须把这两类分开，否则「schema 错误 5.5×」会被误读成「解析要放宽」。
+  const metrics = summarize(pv4ShapeEvents());
+  assert.equal(metrics.insufficient, false, "120 个出卡回合要够判读门槛");
+  assert.equal(metrics.errors.total, 102);
+  assert.equal(metrics.errors.byKind.schema, 102);
+  assert.deepEqual(metrics.errors.byDetail, {
+    "json:empty": 78,
+    "json:no-object": 20,
+    "json:unparsable": 2,
+    options: 2,
+  });
+  assert.equal(metrics.errors.schema, 102);
+  assert.equal(metrics.errors.empty, 78);
+  assert.equal(metrics.errors.format, 24, "非空格式失败 = schema 失败 − 空输出");
+  // 分子只算非空格式失败；分母仍是「正常出卡回合 + 全部失败结局」
+  assert.equal(metrics.schemaShare, 24 / 222);
+  // 空输出占 schema 失败的比例（不是占全部生成结局）
+  assert.equal(metrics.emptyShare, 78 / 102);
+
+  const codes = verdicts(metrics).map((item) => item.code);
+  assert.ok(codes.includes("empty-generations"), `实际判读=${JSON.stringify(codes)}`);
+  assert.equal(
+    codes.includes("schema-failures"),
+    false,
+    "空输出占比高 ≠ 解析需要放宽（那正是本口径要防的误读）",
+  );
+});
+
+test("summarize：pv3 形态（2 空 + 17 格式）两条判读都不触发（空输出是 0.4.3 才集中的新口径）", () => {
+  const metrics = summarize(pv3ShapeEvents());
+  assert.equal(metrics.errors.total, 19);
+  assert.deepEqual(metrics.errors.byDetail, {
+    "json:empty": 2,
+    "json:no-object": 3,
+    "json:unparsable": 2,
+    options: 12,
+  });
+  assert.equal(metrics.emptyShare, 2 / 19);
+  assert.equal(metrics.schemaShare, 17 / 139);
+
+  const codes = verdicts(metrics).map((item) => item.code);
+  assert.equal(codes.includes("schema-failures"), false);
+  assert.equal(codes.includes("empty-generations"), false);
+});
+
+test("verdicts：非空格式失败仍走 schema-failures；空输出占比低时不报 empty-generations", () => {
+  // 格式失败 54 / (100 正常 + 60 失败结局) = 33.75% → 该报「解析/修复调用」；
+  // 空输出只有 6/60 = 10% → 不该抢戏报成「模型空输出」。
+  const metrics = summarize(
+    shapeEvents({
+      pv: 4,
+      okTurns: 100,
+      empties: 6,
+      formats: Array.from({ length: 54 }, () => "json:no-object"),
+    }),
+  );
+  assert.equal(metrics.schemaShare, 54 / 160);
+  assert.equal(metrics.emptyShare, 6 / 60);
+  const list = verdicts(metrics);
+  const codes = list.map((item) => item.code);
+  assert.ok(codes.includes("schema-failures"));
+  const schemaVerdict = list.find((item) => item.code === "schema-failures");
+  assert.match(schemaVerdict === undefined ? "" : schemaVerdict.text, /非空格式失败/u);
+  assert.equal(codes.includes("empty-generations"), false);
+});
+
+test("renderMarkdown：归因段印出「空输出 vs 非空格式失败」拆分与 empty-generations", () => {
+  const metrics = summarize(pv4ShapeEvents());
+  const markdown = renderMarkdown(metrics, verdicts(metrics));
+  assert.match(markdown, /空输出/u);
+  assert.match(markdown, /非空格式失败/u);
+  assert.match(markdown, /empty-generations/u);
 });
 
 test("summarize：分组统计（判定/档位/第几条/选项数/label 长度/提示词版本）", () => {
@@ -319,8 +471,9 @@ function healthyMetrics(overrides = {}) {
     byTier: {},
     byPromptVersion: {},
     gates: { ok: MIN_TURNS },
-    errors: { total: 0, byKind: {} },
+    errors: { total: 0, byKind: {}, byDetail: {}, schema: 0, empty: 0, format: 0 },
     schemaShare: 0,
+    emptyShare: null,
     insufficient: false,
   };
   return { ...base, ...overrides, rates: { ...base.rates, ...(overrides.rates ?? {}) } };

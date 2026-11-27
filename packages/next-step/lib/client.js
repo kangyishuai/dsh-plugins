@@ -492,9 +492,21 @@ window.__ModuleLoader__.load({
           : FOLDED_SUMMARY_CHARS;
       let source = typeof text === "string" ? text.replace(/\s+/gu, " ").trim() : "";
       if (source === "") return "";
-      // 句末标点：中英文句号 / 问号 / 叹号 / 分号。整段没有标点时就是整段。
-      let match = /^[^。！？!?；;]{1,80}[。！？!?；;]?/u.exec(source);
-      let sentence = match === null ? source : match[0];
+      // 句末标点：中文句号 / 问号 / 叹号 / 分号，以及英文 ! ? ; 总是切句；
+      // 英文 `.` 只在**后接空白或整段结尾**时切（避免把 v0.5.0 / 42.5 这类小数点当成句号）。
+      let cut = source.length;
+      for (let index = 0; index < source.length; index += 1) {
+        const char = source[index];
+        if ("。！？；!?;".includes(char)) {
+          cut = index + 1;
+          break;
+        }
+        if (char === "." && (index === source.length - 1 || /\s/u.test(source[index + 1]))) {
+          cut = index + 1;
+          break;
+        }
+      }
+      let sentence = source.slice(0, cut);
       if (sentence === "") sentence = source;
       if (sentence.length > limit) sentence = `${sentence.slice(0, limit - 1)}…`;
       return sentence;

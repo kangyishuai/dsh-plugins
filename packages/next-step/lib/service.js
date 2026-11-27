@@ -48,7 +48,7 @@ import {
 } from "./events.js";
 import { createFollowupTracker } from "./followup.js";
 import { cheapSkipReason } from "./gates.js";
-import { createInflightRegistry } from "./inflight.js";
+import { createInflightRegistry, inflightBlocksGenerateNow } from "./inflight.js";
 import { nextStepProjection } from "./projection.js";
 import {
   buildMessages,
@@ -1263,7 +1263,13 @@ export class NextStepService extends TypertRemoteService {
       if (shownCountOf(cards) >= settings.maxCardsPerSession) {
         return { ok: false, reason: "budget" };
       }
-      if (this.inflight.has(sessionId)) return { ok: false, reason: "inflight" };
+      // F-2：被取代的旧回合会跑到 20s，用户这时点「补生成」不该被 inflight 挡住。
+      // 只有「本次要的回合、且未被取代」才值得等；其余（别的回合 / superseded）取消后继续。
+      const pending = this.inflight.get(sessionId);
+      if (pending !== undefined) {
+        if (inflightBlocksGenerateNow(pending, turn)) return { ok: false, reason: "inflight" };
+        this.abortInflight(sessionId);
+      }
       const result = await this.writeCardFor(session, settings, {
         turn,
         seq: latest.seq,
