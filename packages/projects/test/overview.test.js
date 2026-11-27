@@ -683,6 +683,13 @@ describe("isThreadBusy：保护 worktree 的忙碌判据", () => {
     const merged = mergeRecord(view, { state: "waiting-user" });
     assert.equal(merged.awaitingUser, false);
     assert.equal(deriveState(merged), "failed");
+    // 中途（turn/start 已发生、turn/end 尚未发生）：仍采信记录里的 waiting-user
+    const midTurn = mergeRecord(
+      { ...initialView(), turn: 1, state: "working" },
+      { state: "waiting-user" },
+    );
+    assert.equal(midTurn.awaitingUser, true);
+    assert.equal(deriveState(midTurn), "waiting-user");
     // 冷启动（还没有任何 turn 事实）仍读回 waiting-user
     const cold = mergeRecord({ ...initialView(), turn: 0 }, { state: "waiting-user" });
     assert.equal(cold.awaitingUser, true);

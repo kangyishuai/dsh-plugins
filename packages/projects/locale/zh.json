@@ -691,6 +691,8 @@
     "library.openedHint": "已请求在右栏打开「产物」页签；当前布局不显示右栏时，请切回会话查看。",
     "detail.sparkLabel": "近 7 天 token：{tokens}（峰值 {peak}）",
     "detail.tab.routines": "定时任务",
-    "detail.tabsLabel": "项目视图"
+    "detail.tabsLabel": "项目视图",
+    "detail.settingsTabsLabel": "设置分区",
+    "routines.openRail": "打开定时任务 / 提醒"
   }
 }

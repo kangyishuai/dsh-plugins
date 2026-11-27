@@ -691,6 +691,8 @@
     "library.openedHint": "Requested the Artifacts tab in the right sidebar; if your layout hides it, switch back to a session to see it.",
     "detail.sparkLabel": "Tokens in the last 7 days: {tokens} (peak {peak})",
     "detail.tab.routines": "Routines",
-    "detail.tabsLabel": "Project views"
+    "detail.tabsLabel": "Project views",
+    "detail.settingsTabsLabel": "Settings sections",
+    "routines.openRail": "Open Routines / reminders"
   }
 }
