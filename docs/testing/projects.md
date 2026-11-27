@@ -1018,3 +1018,18 @@ AGENTS.md 受管区块幂等合并、`@` 候选排序）。`pnpm smoke:projects`
 失败线程在 60 秒后会自动补一句「继续」，累计最多 2 次；可在 `settings` 分节关闭。
 验证它需要先弄出一个失败回合（例如让线程在模型不可用时结束），确认 60 秒后线程重新进入 working，
 且 `projects.json` 里 `autoRetryCount` 递增。**语义是"重发继续"**，不是用量恢复续跑。
+
+### 关于 host 半单测覆盖率的说明
+
+`lib/service.js` / `lib/client.js` 目前没有"真实 service 实例"的单测，原因是**仓库策略**：
+`@deepseek-ai/dsh-typert-protocol` 由宿主提供，仓库不允许把它加进 `dependencies`（硬性约定 2/3），
+而 `service.js` 顶层 `import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol"`
+在仓库内无法解析；Node 的 `mock.module` 也需要先能解析到该包。
+
+因此宿主半的回归防线是两层：
+1. 纯逻辑抽到 `lib/*.js`（`store`/`overview`/`executor`/`autopr`/`thread`/`trash` 等）并用真实数据单测；
+2. 高风险接线用**源码守卫**（`test/service-wiring-guards.test.js`）：读 `lib/service.js` / `lib/client.js`
+   截出方法区间，断言关键调用存在（`pickRepoRoot`、`threadBusy`、`saveSoon`、`hidden` 门控、
+   manifest 顺序、`ok===false` 处理等）。
+
+这是有意识的取舍，不是"忘了写测试"；真正的 service 实例测试需要宿主测试脚手架，留待仓库策略允许时再补。
