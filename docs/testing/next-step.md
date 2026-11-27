@@ -190,12 +190,14 @@ pnpm verify                          # 仓库门禁（含单测、规范、文�
 | 主题             | 要证明的事                                                                                                                                                                                                                                                                                                                                                                                       |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 输出校验         | 严格 JSON 解析；**1–2 条** option、两条时 `stance` 必须不同、`label` **2–20 字**且必须含具体对象（泛化按钮被丢弃）、`nextPrompt` ≤150 字且与推荐项共享具体对象（否则退化成该按钮文案）、`value` 必须是三档之一（旧字段 `needed` 兼容映射）、**超长展示文本截断**、**单条不合格只丢这一条**；只有「结构不可用 / 三档缺失 / 一条可用建议都不剩」才 `problem=json\|value\|options` 并交给修复调用。 |
-| 触发门           | 只认 `turn/end` 且 `reason.kind === "completed"`；`enabled` / `card` 关上、暂停、**出过的卡**数到 `maxCardsPerSession` 都不生成；短答闸是「**本轮回答总字数 <80 且本轮无工具调用**」；同一 turn 已有 card 或 decision 不重复。三档 × 档位的 `shouldShow` 有 9 格真值表。                                                                                                                         |
+| 触发门           | 只有 `reason.kind === "completed"` 的回合会**生成**；非 completed 的回合也会进一次便宜闸并落 `gate:"turn-error"` 事件（AUD-NS-05，仍不调模型）；`enabled` / `card` 关上、暂停、**出过的卡**数到 `maxCardsPerSession` 都不生成；短答闸是「**本轮回答总字数 <80 且本轮无工具调用**」；同一 turn 已有 card 或 decision 不重复。三档 × 档位的 `shouldShow` 有 9 格真值表。                           |
 | 子代理与会话状态 | `origin === "subagent"` 或 `delegationDepth > 0` 的会话跳过；会话不 live 时跳过。                                                                                                                                                                                                                                                                                                                |
 | 投影折叠         | card + decision + reveal 记录折叠成 `{ cards, decisions, reveals }`；`turn` 是 key；旧记录（无 `value`/`shown`）读成 `shown:true / value:"must"`；`resolveVisibility` 覆盖「显示 × 揭示 × 决策 × 是否最新轮」全组合。                                                                                                                                                                            |
 | RPC              | `act` 返回 `stale` / `missing` / `disabled` / `error` 的优先级；`act` 只写 decision 并回按钮文本，**不发送**；`generateNow` 只对「最近一个已完成回合」生效（`no-turn` / `stale` / `exists` / `inflight` / `budget` / `disabled`），`force` 时忽略 `needed=false`；`dismiss`、`settings`、`updateSettings`、`diagnostics`（含 `lastSkip` / `skippedByModel`）形状。                               |
-| 设置 v2          | `cardThreshold` 只认三值（非法回落 `could`）、`telemetry` 只认布尔、预算默认 120；**v1 → v2 迁移只抬「等于旧默认 30」的值**，显式 `schemaVersion:2` 的 30 不动；读取不凭空建文件。                                                                                                                                                                                                               |
+| 设置 v3          | `cardThreshold` 只认三值（非法回落 `could`）、`telemetry` 只认布尔、预算默认 **60**；迁移只改「恰好等于旧默认值」的字段：v1 的 30 → 60、v2 的 120 → 60，显式 `schemaVersion:2/3` 的 30 / 45 / 120（非旧默认值）不动；读取不凭空建文件。                                                                                                                                                          |
 | 客户端纯函数     | 只对最后一轮渲染可交互卡；有 decision 即只读并回显被点那一粒（`decision.index` → `label`）；ghost 显示条件（ghost 开、草稿空、无附件/`@`/`/`、`phase === "plain"`、空闲）；草稿非空时胶囊禁用；`⌘↵` 只在「输入干净 + 空闲 + 卡片可交互」时接管；关闭总开关时依赖设置项不渲染。                                                                                                                   |
+| 旧卡折叠         | `test/client-card-collapse.test.js`：`state="readonly"` 的卡必须折叠成一行（`data-next-step-collapsed`，只有摘要首句、无提问/胶囊/✕，完整摘要在 `title`）；可交互卡与已决策卡不折叠；`firstSentenceOf` 的截断/压空白/上限。                                                                                                                                                                      |
+| i18n 键集 parity | `test/locale-parity.test.js`：`client.js` 内联 zh/en 字典与 `locale/{zh,en}.json` 键集一一对应；`error.aborted` 这类漏键会直接红（AUD-NS-07）。                                                                                                                                                                                                                                                  |
 | 卡片 ⌘↵ 登记时序 | `test/client-card-shortcut.test.js`（迷你 hooks 运行时驱动**真实 client 源码**）：尾部先挂载、卡片晚到后 `⌘↵` 仍须被接管（一粒 / 两粒胶囊都覆盖）；草稿非空 / 未揭示 / 已决策一律透传。回归哨兵：卡片是投影晚到的，登记 effect 漏了可见性就永远登记不上（点击正常、快捷键静默失效）。**别按胶囊数量归因**：0.4.0 上晚到的**一粒**卡片同样不接管。                                                |
 
 **没覆盖**：真实宿主槽位、真实 Electron 渲染进程、真实的 `setDraft` → `submit` 时序。所以下面两层不能省。
@@ -510,7 +512,7 @@ v0.4 把「这一轮为什么没出卡」变成可查的数据，所以测试要
 | 首屏只有 3 行（2 开关 + 档位三选一），其余折叠                        | 设置页按 §7.2 收敛，且**档位不是隐藏开关**                                                      |
 | 「更多设置」展开后 4 开关 + 预算 + 暂停 + 诊断 + 回顾                 | 渐进披露没有把功能藏丢                                                                          |
 | 档位切「严格」→ 文件 `cardThreshold=must`；切回「平衡」→ `could`      | UI ↔ RPC ↔ 磁盘闭环                                                                             |
-| 设置文件带 `schemaVersion=2`、预算 120                                | v2 契约与迁移结果                                                                               |
+| 设置文件带 `schemaVersion=3`、预算 60                                 | v3 契约与迁移结果（AUD-NS-02：默认 120 → 60）                                                   |
 | `events.jsonl` 存在且第一条是 `meta`（`scheme` + `tier`）             | 采集起算点先于一切事件                                                                          |
 | 每个合格回合都有 `turn` 行（`gate` / `sid` / `feat` 齐全）            | **没出卡的回合也留痕**（这是复盘的地基）                                                        |
 | 出过的卡带 `cand.value` / `cand.shown` / `latencyMs` / `model`        | 三档判定与耗时可用于分组                                                                        |
@@ -528,7 +530,8 @@ v0.4 把「这一轮为什么没出卡」变成可查的数据，所以测试要
 3. **曝光两态**：把窗口滚到卡片下方（离开视口）等 5 s → 该轮 `impression.visibleMs = 0`；
    滚回来 → 另一轮的 `impression.visibleMs > 0`。
 4. 手改设置 `cardThreshold: "x"` → 页面回落「平衡」、不报错；改 `maxCardsPerSession: 30` 且删
-   `schemaVersion` → 读成 120；写回 `schemaVersion: 2` 后 30 保持不变。
+   `schemaVersion`（v1）→ 读成 60；写 `schemaVersion: 2` + `maxCardsPerSession: 120` → 读成 60（v2 旧默认）；
+   写 `schemaVersion: 2` + `maxCardsPerSession: 45` → 保持不变。
 5. 关掉「本地采集与复盘数据」→ 新回合不再写事件，但卡片与决策记录照旧。
 6. 报告保留策略：连续生成 21 份 → 目录里只剩 20 份，最早的那份被删（只在 `next-step/` 内）。
 
@@ -612,3 +615,62 @@ ls ~/.dsh/next-step/report-*.md
 | 修复请求带对话                           | 已验证（`cand.parse:"repaired"` 的卡片指向该轮内容，§7.2.1） | 找一条 `repaired` 记录，逐字核对摘要里的对象出现在该回合对话里                                   |
 | `no-context` / `ungrounded` 可达且可诊断 | 逻辑与单测覆盖，**真机未触发**（正常回合不产生这两种情况）   | 手改 `next-step.settings.json` 把 `maxTokens` 调到 128 制造坏输出；再看「最近跳过」与 error kind |
 | 桌面回归                                 | 每次发版必跑                                                 | `pnpm smoke:next-step-desktop --require --deep --workspace <临时目录>`                           |
+
+## 8. 0.4.4 噪音与可观测性修复（2026-11-28，审计 AUD-NS-01…08）
+
+> 来源：`notes/audit/2026-11-28/nextstep-session-delete.md` §3（P2/P3）。
+> 原则：能复现旧行为的先写失败测试再修（NS-03 / NS-07 / 设置迁移都是先红后绿）；新抽出的纯模块由
+> 「变异检查」反向证明——删掉旧卡折叠分支、让 `supersede` 直接 abort，对应断言立刻变红（已实测）。
+> client 半的交互改动由桌面只读回归兜底（**本轮未运行**，归发版门禁）。
+
+### 8.1 逐条修法与测试
+
+| issue     | 修法（一句话）                                                                                                                                                                                                                                 | 先红后绿证据（测试）                                                                                                     |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| AUD-NS-01 | `turn/start` 不再 abort 在途生成，只标记 superseded；生成跑完以 `shown:false` 落库（**不是省钱**：跑完比中止多付输出 token；收益 = 近完成调用不再被丢弃 + `superseded` 可观测；候选不进对话流、不占 `maxCardsPerSession`、不进曝光、不可揭示） | `test/inflight.test.js`「supersede 只打标记、绝不 abort」；`test/service-logic.test.js`「superseded 一律写 shown:false」 |
+| AUD-NS-02 | 更早轮次、未决策的卡默认折叠成一行（「更早的一轮 · 摘要首句」）；`maxCardsPerSession` 默认 120 → 60 + 设置 v3 迁移                                                                                                                             | `test/client-card-collapse.test.js`（3 项，含「旧卡只有摘要首句、无提问/胶囊/✕」）；`test/settings.test.js` v2→v3 迁移   |
+| AUD-NS-03 | `byIndex` 分母 = 该位置被**展示**的次数（原来只在点击时 bump，`second-option-useless` 结构上不可达）                                                                                                                                           | `test/report.test.js`「byIndex 的分母是该位置被展示的次数」+「真实事件形态下 second-option-useless 可命中」              |
+| AUD-NS-04 | `closeFollowup` 接线：`turn/end` 结算更早回合、TTL 15 分钟结算、会话级上限 32 挤出（同一个幂等入口）；**会话切走在宿主里没有事件，只能靠 TTL 兜底**                                                                                            | `test/followup.test.js`（7 项：consume / close 幂等 / TTL / 上限挤出 / 空 label 不登记 / 常量）                          |
+| AUD-NS-05 | completed 过滤下移到便宜闸之后：非 completed 的回合也落 `gate:"turn-error"` 事件（仍不调模型）；**缺 `reason` / `kind` 非字符串统一归一化成 `unknown`，同样只落遥测、绝不放行生成**                                                            | `test/service-logic.test.js`「非 completed 的回合也要进流程」+「endKindOf」+「接线组合：只有 completed 会放行生成」      |
+| AUD-NS-06 | 把 `inflight` / `pendingFollowup` / `scanSession` 的可纯化部分抽成 `inflight.js` / `followup.js` / `session-records.js` 等纯模块并补测                                                                                                         | 上述三个测试文件 + `test/service-logic.test.js`（`foldSessionRecords` 三张表口径、坏记录降级）                           |
+| AUD-NS-07 | `error.aborted` 补进 `locale/{zh,en}.json`；新增内联字典 ↔ locale 文件的键集 parity 测试                                                                                                                                                       | `test/locale-parity.test.js`（3 项；修复前缺 `error.aborted` 即红，parity 断言失败）                                     |
+| AUD-NS-08 | README（中英）隐私段补「生成的胶囊文案会原样记录」                                                                                                                                                                                             | 文档改动，无测试                                                                                                         |
+
+单测总数：**194 → 223**（`node --test packages/next-step`，0 fail）。
+
+### 8.2 口径变化（读报表 / 诊断时注意）
+
+1. **`byIndex` 的 `n` 现在等于该位置被展示的次数**（不再是点击次数）。报表「第几条」的点击率 = `clicked / n`，
+   与「选项数」「label 长度」两张表的口径一致；`second-option-useless` 因此第一次可能真的出现。
+2. **`gate:"superseded"` 是新的闸门值**：生成跑完时这一轮已经翻过去了。它计入 `counters.superseded` 与
+   `counters.hidden`，**不计**入 `failed` / `aborted` / `skipped`。报表「闸门分布」与诊断「最近跳过」都能看到。
+   **成本方向是增加**：abort 只结算已生成部分，跑完要付全额输出 token —— 这是「不丢近完成调用 + 可诊断」的
+   代价，不是省钱；候选本身**不占 `maxCardsPerSession`**（只统计 `shown:true`）、**不喂 ghost**、**不进曝光**
+   （不渲染、不上报 impression）、**不可揭示**（`generateNow` 只对最近一个正常结束的回合生效）。
+   预期效应：`error.kind=cancelled` 会明显下降；`cand.latencyMs` 与 `shown` 的分母不变，但 **`turns` 会变大**
+   （非 completed 回合现在也写 turn 事件）→ 报表「出卡率」`shown/turns` 跨版本**不再可比**（判读不用这个数，
+   只是显示）。
+3. **`gate:"turn-error"` 现在真的会出现**（含 `reason.kind` 缺失的回合——归一化成 `unknown`）。它只影响遥测与诊断，不放行生成；若这个值异常多，先查宿主是否改了 `turn/end` 的形状。
+4. **`followup` 事件第一次有 `typed:false` 的来源**：15 分钟没再说话、下一轮已结束、或会话级上限挤出。
+   它会抬高「忽略」的分母解释力，但注意它最多晚 15 分钟——不要拿「今天的 followup 条数」当实时指标。
+5. **`maxCardsPerSession` 默认 60**（旧文件里**恰好 120** 的值自动迁移；v1 的 30 也迁移）。
+   报表里 `gates.budget` 从「永远 0」变成可能在长会话末段出现，属预期。
+
+### 8.3 桌面只读回归新增断言（`scripts/smoke-next-step-desktop.mjs`，**未运行**）
+
+- `cardsNow` 增加 `collapsed` / `hasQuestion` 两个只读字段（`data-next-step-collapsed` / 查询提问节点）。
+- `structureCheck` 区分两种只读形态：**折叠行**（只允许摘要首句，禁止提问 / 胶囊 / ✕）与
+  **决策回显**（sent / dismissed，摘要 + 提问 + ✓ 回显）；`state="readonly"` 却未折叠直接判红。
+- 新增数据相关分支断言／SKIP：「旧卡默认折叠成一行（只读态：摘要首句 ≤60 字、无提问/胶囊/✕）」。
+  `structureCheck` 在初始会话 / 目标会话 / 刷新后各调一次，所以项数**上限 25**（22 + 3）；当前会话没有可交互卡时
+  「目标会话」「刷新后」两段不执行 → **23 项**。SKIP 数随数据分支变化，判据是 0 FAIL。
+- 仍然**默认只读不点 ✕**：折叠态没有 ✕，写路径（点胶囊 / 点 ✕）只在 `--deep` 下执行。
+
+### 8.4 本轮未验证 / 需要发版门禁覆盖的点
+
+| 项                                                          | 现状                                   | 怎么验                                                                    |
+| ----------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------- |
+| NS-01 的**集成行为**（真的在生成中发下一条消息 → 候选落库） | 纯逻辑已测；真实时序未跑               | web 冒烟或手工：回答后 2s 内发下一条，检查会话日志多一条 `shown:false` 卡 |
+| 桌面只读回归（折叠断言、折叠态无 ✕）                        | **未运行**（本轮不操作 live DSH）      | `pnpm smoke:next-step-desktop --require`，预期 25 项、SKIP 均为数据分支   |
+| 会话切走时立即结算 followup                                 | 宿主没有该事件，靠 TTL 15 分钟兜底     | 已知限制，已写进两份 README；不要据此判缺陷                               |
+| ADR 0013 的预算默认值（120）与本次 60                       | ADR 属于 repo 级文档，不在本批改动范围 | 由 lead 在 repo 批次统一（ADR 增补或勘误）                                |

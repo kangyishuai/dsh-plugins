@@ -9,6 +9,7 @@ import { after, test } from "node:test";
 import {
   DEFAULT_SETTINGS,
   LEGACY_MAX_CARDS,
+  LEGACY_MAX_CARDS_V2,
   loadSettings,
   loadSettingsWithMeta,
   migrateSettings,
@@ -71,14 +72,16 @@ test("normalizeSettings({}) 返回默认值", () => {
   );
 });
 
-test("默认值本身：卡片开、幽灵关、预算 30 张", () => {
+test("默认值本身：卡片开、幽灵关、预算 60 张", () => {
   assert.equal(DEFAULT_SETTINGS.enabled, true, "期望 enabled=true");
   assert.equal(DEFAULT_SETTINGS.card, true, "期望 card=true");
   assert.equal(DEFAULT_SETTINGS.ghost, false, "期望 ghost=false（幽灵提示默认关）");
+  // AUD-NS-02：真实数据里单会话峰值 80 张、≥20 张的 23 个会话占 82%，120 这个上限从来没被碰到
+  // （14 天 budget 闸 0 命中）。默认值降到 60，只裁掉长会话的尾部，与真实使用量匹配。
   assert.equal(
     DEFAULT_SETTINGS.maxCardsPerSession,
-    120,
-    "期望 maxCardsPerSession=120（v0.4 放宽）",
+    60,
+    "期望 maxCardsPerSession=60（与真实使用量匹配）",
   );
   assert.equal(DEFAULT_SETTINGS.pauseUntil, 0, "期望 pauseUntil=0（未暂停）");
 });
@@ -483,12 +486,13 @@ test("并发写不会交错出半个 JSON（rename 原子性）", async () => {
 // v0.4：档位 / 采集开关 / v1 → v2 迁移
 // ---------------------------------------------------------------------------
 
-test("v2 默认值：档位平衡、采集开、schemaVersion=2、预算 120", () => {
+test("默认值：档位平衡、采集开、schemaVersion 与常量一致、预算 60", () => {
   const settings = normalizeSettings({});
   assert.equal(settings.cardThreshold, "could", "默认档位应为平衡（could）");
   assert.equal(settings.telemetry, true, "采集默认开");
   assert.equal(settings.schemaVersion, SETTINGS_SCHEMA_VERSION);
-  assert.equal(settings.maxCardsPerSession, 120);
+  assert.equal(SETTINGS_SCHEMA_VERSION, 3, "设置结构升到 v3（预算默认值迁移）");
+  assert.equal(settings.maxCardsPerSession, 60);
 });
 
 test("cardThreshold 只接受三个枚举值，非法值回落默认档位", () => {
@@ -515,7 +519,7 @@ test("telemetry 只接受布尔值（字符串 true 不算开）", () => {
   assert.equal(normalizeSettings({ telemetry: 0 }).telemetry, true);
 });
 
-test("migrateSettings：v1 文件（无 schemaVersion）里的旧默认 30 → 120", () => {
+test("migrateSettings：v1 文件（无 schemaVersion）里的旧默认 30 → 60", () => {
   const { settings, migrated } = migrateSettings({
     enabled: true,
     card: true,
@@ -523,7 +527,7 @@ test("migrateSettings：v1 文件（无 schemaVersion）里的旧默认 30 → 1
     maxCardsPerSession: LEGACY_MAX_CARDS,
   });
   assert.equal(migrated, true, "缺 schemaVersion 应标记为需要写回");
-  assert.equal(settings.maxCardsPerSession, 120, "旧默认值应被抬到 120");
+  assert.equal(settings.maxCardsPerSession, 60, "旧默认值应被换成当前默认值");
   assert.equal(settings.schemaVersion, SETTINGS_SCHEMA_VERSION);
   assert.equal(settings.cardThreshold, "could", "新字段补默认值");
 });
@@ -534,20 +538,37 @@ test("migrateSettings：v1 文件里用户自己设的其它数字不动", () =>
   assert.equal(settings.timeoutMs, 15000);
 });
 
-test("migrateSettings：显式 schemaVersion=2 的文件里 30 就是用户的选择，不抬", () => {
+test("migrateSettings：v2 文件里恰好是 v2 旧默认 120 → 60", () => {
   const { settings, migrated } = migrateSettings({
     schemaVersion: 2,
-    maxCardsPerSession: LEGACY_MAX_CARDS,
+    maxCardsPerSession: LEGACY_MAX_CARDS_V2,
   });
-  assert.equal(migrated, false, "已是 v2，不需要写回");
-  assert.equal(settings.maxCardsPerSession, 30, "v2 文件里的 30 必须保留");
+  assert.equal(migrated, true, "v2 → v3 需要写回一次");
+  assert.equal(settings.maxCardsPerSession, 60, "等于 v2 旧默认（120）时跟着新默认走");
+  assert.equal(settings.schemaVersion, SETTINGS_SCHEMA_VERSION);
+});
+
+test("migrateSettings：v2 文件里用户自己设的数字（30 / 45）不动", () => {
+  const thirty = migrateSettings({ schemaVersion: 2, maxCardsPerSession: 30 });
+  assert.equal(thirty.settings.maxCardsPerSession, 30, "v2 文件里的 30 必须保留");
+  const fortyFive = migrateSettings({ schemaVersion: 2, maxCardsPerSession: 45 });
+  assert.equal(fortyFive.settings.maxCardsPerSession, 45);
+});
+
+test("migrateSettings：已是 v3 的文件里 120 是用户显式选择，不再迁移", () => {
+  const { settings, migrated } = migrateSettings({
+    schemaVersion: SETTINGS_SCHEMA_VERSION,
+    maxCardsPerSession: 120,
+  });
+  assert.equal(migrated, false);
+  assert.equal(settings.maxCardsPerSession, 120);
 });
 
 test("migrateSettings：非法输入不抛错，返回默认值", () => {
   for (const raw of [null, undefined, 42, "text", []]) {
     const { settings } = migrateSettings(raw);
     assert.equal(settings.cardThreshold, "could");
-    assert.equal(settings.maxCardsPerSession, 120);
+    assert.equal(settings.maxCardsPerSession, 60);
   }
 });
 
@@ -562,7 +583,7 @@ test("loadSettingsWithMeta：磁盘上是 v1 文件时标记 migrated，且读�
   const meta = await loadSettingsWithMeta({ home });
   assert.equal(meta.migrated, true);
   assert.equal(meta.exists, true);
-  assert.equal(meta.settings.maxCardsPerSession, 120);
+  assert.equal(meta.settings.maxCardsPerSession, 60);
   assert.equal(meta.settings.cardThreshold, "could");
 });
 
@@ -577,7 +598,7 @@ test("loadSettingsWithMeta：文件不存在时不标记迁移（不凭空造文
   assert.deepEqual(files, [], "读取不应创建任何文件");
 });
 
-test("saveSettings 写出的文件带 schemaVersion=2（下一次读取不再迁移）", async () => {
+test("saveSettings 写出的文件带当前 schemaVersion（下一次读取不再迁移）", async () => {
   const home = await mkdtemp(join(tmpdir(), "ns-settings-schema-"));
   tempDirs.push(home);
   await saveSettings({ home, patch: { cardThreshold: "must" } });

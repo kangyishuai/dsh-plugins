@@ -231,10 +231,46 @@ test("summarize：分组统计（判定/档位/第几条/选项数/label 长度/
   assert.equal(metrics.byTier.any.n, 1);
   assert.equal(metrics.byIndex["0"].clicked, 1);
   assert.equal(metrics.byIndex["1"].clicked, 1);
+  // 分母 = 该位置被**展示**的次数（三张卡各 2 粒 → 两个位置各 3 次），不是点击次数。
+  assert.equal(metrics.byIndex["0"].n, 3);
+  assert.equal(metrics.byIndex["1"].n, 3);
   assert.equal(metrics.byOptionCount["2"].n, 3);
   assert.equal(metrics.byPromptVersion["4"].n, 1);
   // label 长度桶按"每张卡的每条 option"铺开
   assert.equal(metrics.byLabelBucket["13–16"].n, 3, "15 字的 label 出现 3 次");
+});
+
+test("summarize：byIndex 的分母是该位置被展示的次数（AUD-NS-03）", () => {
+  // 10 张卡各 2 粒，只有第 0 粒被点过 3 次。修复前 byIndex 只在点击时 bump，
+  // 于是第二粒的 n 恒等于它的点击次数（这里是 0）——`second-option-useless` 的 n>=20 永远达不到。
+  const events = [];
+  for (let turn = 1; turn <= 10; turn += 1) events.push(turnEvent({ turn }));
+  for (const turn of [1, 2, 3]) {
+    events.push({ v: 1, t: "action", at: 2, sid: "abcd1234", turn, kind: "clicked", index: 0 });
+  }
+  const metrics = summarize(events);
+  assert.equal(metrics.byIndex["0"].n, 10, "第 0 粒被展示 10 次");
+  assert.equal(metrics.byIndex["1"].n, 10, "第 1 粒同样被展示 10 次（不是 0）");
+  assert.equal(metrics.byIndex["0"].clicked, 3);
+  assert.equal(metrics.byIndex["1"].clicked, 0);
+  // 点击率的分母 = 展示次数
+  assert.equal(metrics.byIndex["0"].ctr, 0.3);
+  assert.equal(metrics.byIndex["1"].ctr, 0);
+});
+
+test("verdicts：真实事件形态下 second-option-useless 可命中（AUD-NS-03）", () => {
+  // 80 张卡 × 2 粒（够 MIN_TURNS=80 / MIN_SHOWN=25），只点第 0 粒。
+  // 修复前第二粒的 n=0，判读结构上不可达；修复后 n=80、0 次点击，区间上界 <10% → 必须命中。
+  const events = [];
+  for (let turn = 1; turn <= MIN_TURNS; turn += 1) events.push(turnEvent({ turn }));
+  for (let turn = 1; turn <= 10; turn += 1) {
+    events.push({ v: 1, t: "action", at: 2, sid: "abcd1234", turn, kind: "clicked", index: 0 });
+  }
+  const metrics = summarize(events);
+  assert.equal(metrics.insufficient, false, "样本必须够，否则判读一律不输出");
+  assert.equal(metrics.byIndex["1"].n, MIN_TURNS);
+  const codes = verdicts(metrics).map((item) => item.code);
+  assert.ok(codes.includes("second-option-useless"), `实际判读=${JSON.stringify(codes)}`);
 });
 
 test("verdicts：样本不足时一条判读都不给", () => {

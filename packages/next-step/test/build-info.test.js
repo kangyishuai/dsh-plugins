@@ -1,7 +1,7 @@
 // @ts-check
 // 构建身份的单元测试：node --test（只依赖 Node 内置模块，不需要宿主包）。
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
@@ -52,8 +52,21 @@ test("packagePath 指向包根（存在 package.json）", async () => {
 
 test("README / LICENSE 不参与哈希（改文档不该改变构建身份）", async () => {
   const identity = await computeBuildIdentity();
-  // HASHED_ENTRIES 只有 4 项，总文件数应远小于包内全部文件（这里用 packagePath 下 README 存在来反证）
   const readme = await readFile(join(identity.packagePath, "README.md"), "utf8");
   assert.ok(readme.length > 0);
-  assert.ok(identity.buildFiles < 20, `buildFiles=${String(identity.buildFiles)}`);
+  // 参与哈希的只有 HASHED_ENTRIES = lib/ + locale/ + package.json + cordis.patch.yml。
+  // 断言**精确**等于这个集合（而不是写死一个上限：加一个 lib 文件就会让上限失效，曾经因此误红）。
+  const countFiles = async (/** @type {string} */ dir) => {
+    const entries = await readdir(join(identity.packagePath, dir), {
+      recursive: true,
+      withFileTypes: true,
+    });
+    return entries.filter((entry) => entry.isFile()).length;
+  };
+  const expected = (await countFiles("lib")) + (await countFiles("locale")) + 2;
+  assert.equal(
+    identity.buildFiles,
+    expected,
+    `buildFiles 只应覆盖 lib/ + locale/ + package.json + cordis.patch.yml（期望 ${expected}）`,
+  );
 });

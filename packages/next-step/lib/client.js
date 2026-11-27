@@ -40,6 +40,7 @@ window.__ModuleLoader__.load({
      */
     let zh = {
       "card.aria": "下一步建议",
+      "card.expired": "更早的一轮",
       "summary.expand": "展开",
       "summary.collapse": "收起",
       "pill.aria": "发送：{label}",
@@ -116,6 +117,7 @@ window.__ModuleLoader__.load({
      */
     let en = {
       "card.aria": "Next-step suggestion",
+      "card.expired": "Earlier turn",
       "summary.expand": "Show more",
       "summary.collapse": "Show less",
       "pill.aria": "Send: {label}",
@@ -244,6 +246,11 @@ window.__ModuleLoader__.load({
 .ns_sentMark{flex:none;color:var(--dsw-alias-state-success-secondary,#4fb477);font-size:12px;line-height:16px;}
 .ns_sent{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-caption,#81858c);}
 .ns_error{margin:12px 0 0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary,#f25a5a);}
+/* 旧卡（更早轮次、未决策）默认折叠成一行：标签 + 摘要首句。完整摘要留在 title 与会话日志里。 */
+.ns_cardFolded{margin:6px 8px 2px;padding:7px 12px 8px;border-color:var(--dsw-alias-border-l2,#242424);background:transparent;cursor:default;}
+.ns_folded{margin:0;display:flex;align-items:baseline;gap:8px;min-width:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8a8a8a);}
+.ns_foldedTag{flex:none;padding:0 6px;border-radius:8px;background:var(--dsw-alias-bg-layer-3,#2e2e2e);color:var(--dsw-alias-label-caption,#81858c);font-size:11px;line-height:16px;}
+.ns_foldedText{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
 .ns_retry{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:6px 8px 2px 8px;}
 .ns_retryBtn{display:inline-flex;align-items:center;gap:6px;min-height:24px;padding:2px 10px;border:1px dashed var(--dsw-alias-border-l3,#3a3a3a);border-radius:12px;background:transparent;color:var(--dsw-alias-label-tertiary,#8a8a8a);font-family:inherit;font-size:12px;line-height:18px;cursor:pointer;}
 .ns_retryBtn:hover:not(:disabled){color:var(--dsw-alias-label-secondary,#a4a4a4);border-color:var(--dsw-alias-border-l4,#4a4a4a);}
@@ -464,6 +471,33 @@ window.__ModuleLoader__.load({
      */
     function ghostKeyOf(turn, text) {
       return `${String(turn)}\u0000${text}`;
+    }
+
+    /** 旧卡折叠行的首句上限（字符数）。 */
+    let FOLDED_SUMMARY_CHARS = 60;
+
+    /**
+     * 旧卡折叠成一行时显示的「摘要首句」。
+     *
+     * 背景（AUD-NS-02）：旧卡默认折叠成一行。摘要 p50 184 字，直接铺在长会话里就是噪音；
+     * 首句通常就是那一轮的可核查结论，完整摘要留在 `title`（悬停可看）与会话日志里。
+     * @param {unknown} text
+     * @param {number} [max] 折叠行允许的最大字符数
+     * @returns {string}
+     */
+    function firstSentenceOf(text, max) {
+      let limit =
+        typeof max === "number" && Number.isFinite(max) && max >= 8
+          ? Math.floor(max)
+          : FOLDED_SUMMARY_CHARS;
+      let source = typeof text === "string" ? text.replace(/\s+/gu, " ").trim() : "";
+      if (source === "") return "";
+      // 句末标点：中英文句号 / 问号 / 叹号 / 分号。整段没有标点时就是整段。
+      let match = /^[^。！？!?；;]{1,80}[。！？!?；;]?/u.exec(source);
+      let sentence = match === null ? source : match[0];
+      if (sentence === "") sentence = source;
+      if (sentence.length > limit) sentence = `${sentence.slice(0, limit - 1)}…`;
+      return sentence;
     }
 
     /**
@@ -1017,6 +1051,39 @@ window.__ModuleLoader__.load({
                 { className: "ns_retryError", role: "alert", "data-next-step-retry-error": "" },
                 t(retryErrorKey),
               ),
+        );
+      }
+
+      // AUD-NS-02：更早轮次、没被决策过的卡默认折叠成一行（摘要首句）。
+      // 真实数据里 82% 的卡没有任何决策、单会话最多 80 张，旧卡全铺开就是「只能靠关掉功能来止损」。
+      // 折叠行不提供点击改写：完整摘要仍在会话日志里，悬停（title）也能看到全文。
+      if (status === "readonly") {
+        let folded = firstSentenceOf(summary);
+        return h(
+          "section",
+          {
+            ref: cardRef,
+            className: "ns_card ns_cardFolded",
+            "data-next-step-card": "",
+            "data-next-step-turn": String(turnNumber),
+            "data-next-step-state": status,
+            "data-next-step-collapsed": "true",
+            "data-ns-expanded": "false",
+            "aria-label": t("card.aria"),
+            title: summary === "" ? undefined : summary,
+          },
+          h(
+            "p",
+            { className: "ns_folded" },
+            h(
+              "span",
+              { className: "ns_foldedTag", "data-next-step-expired": "", "aria-hidden": "true" },
+              t("card.expired"),
+            ),
+            // data-next-step-summary 给桌面只读回归取文本用（与可交互卡同一个锚点）；
+            // 只放摘要首句，完整摘要在 title 与会话日志里。
+            h("span", { className: "ns_foldedText", "data-next-step-summary": "" }, folded),
+          ),
         );
       }
 
@@ -2146,6 +2213,18 @@ window.__ModuleLoader__.load({
       } catch (_error) {
         /* shortcuts 缺失：幽灵提示只显示、不响应键盘 */
       }
+    };
+
+    /**
+     * 单测出口（`node --test` 用；与 `packages/session-delete` 同一做法）。
+     * 不是对外契约——线上只认 `inject` / `apply`，这里只放纯逻辑与文案字典，
+     * 让「内联字典 ↔ locale/*.json 键集一致」这类漂移能被单测拦住（AUD-NS-07）。
+     */
+    exports.__test = {
+      zh: zh,
+      en: en,
+      firstSentenceOf: firstSentenceOf,
+      FOLDED_SUMMARY_CHARS: FOLDED_SUMMARY_CHARS,
     };
 
     return module.exports;
