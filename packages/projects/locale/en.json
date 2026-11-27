@@ -688,6 +688,7 @@
     "detail.groupCollapse": "Collapse group",
     "detail.groupExpand": "Expand group",
     "detail.threadIsolationHint": "No project folder bound: the thread runs in the plugin data folder ({reason}).",
-    "library.openedHint": "Requested the Artifacts tab in the right sidebar; if your layout hides it, switch back to a session to see it."
+    "library.openedHint": "Requested the Artifacts tab in the right sidebar; if your layout hides it, switch back to a session to see it.",
+    "detail.sparkLabel": "Tokens in the last 7 days: {tokens} (peak {peak})"
   }
 }

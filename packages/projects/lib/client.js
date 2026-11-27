@@ -135,8 +135,8 @@ window.__ModuleLoader__.load({
       "b3.modelSaved": "线程默认模型已保存",
       "b3.modelUnavailable": "宿主没有暴露模型目录",
       "b3.modelManual": "provider|model（手填）",
-      "b3.effortManual": "effort（手填）",
-      "b3.modelManualToggle": "手填模型 / effort",
+      "b3.effortManual": "推理强度（手填）",
+      "b3.modelManualToggle": "手填模型 / 推理强度",
       "b3.modelManualHint": "目录不可用时手填；保存写的就是这两个值。",
       "b3.sessionsTitle": "从会话开线程",
       "b3.sessionsLoad": "列出最近会话",
@@ -202,7 +202,7 @@ window.__ModuleLoader__.load({
       "detail.modelNone": "这个部署没暴露模型目录",
       "detail.modelSave": "应用",
       "detail.modelSaved": "已切到 {model}",
-      "detail.modelSavedEffort": "已切到 {model} / effort {effort}",
+      "detail.modelSavedEffort": "已切到 {model} / 推理强度 {effort}",
       "detail.effort": "推理强度",
       "detail.effortInherit": "继承默认",
       "detail.modelSelection": "宿主回读：{selection}",
@@ -288,7 +288,7 @@ window.__ModuleLoader__.load({
       "detail.rowSub.archived": "已归档",
       "detail.state.waiting-user": "待你处理",
       "detail.state.failed": "失败",
-      "detail.state.working": "进行中",
+      "detail.state.working": "在跑",
       "detail.state.done": "已完成",
       "detail.state.idle": "空闲",
       "detail.diag.workspaceBound": "工作区已绑定",
@@ -525,7 +525,7 @@ window.__ModuleLoader__.load({
       "detail.memoryIndexHint": "MEMORY.md 索引里有内容，会话会读到。",
       "detail.memoryEmptyHint": "还没有记忆；会话里说「记住…」就会写进来。",
       "detail.moreActions": "更多操作",
-      "detail.autoResolve": "自动 resolve",
+      "detail.autoResolve": "自动解决",
       "detail.autoResolveOff": "关",
       "detail.autoResolveDays": "{days} 天无活动",
       "detail.projectState": "项目状态",
@@ -642,6 +642,7 @@ window.__ModuleLoader__.load({
       "detail.settingsHint": "插件设置入口在宿主「设置 → 插件 → 项目」里。",
       "detail.sparkEmpty": "近 7 天无活动",
       "detail.sparkCaption": "近 7 天",
+      "detail.sparkLabel": "近 7 天 token：{tokens}（峰值 {peak}）",
       "detail.sparkHint": "最近 7 天的 token 用量",
       "detail.steps": "{done}/{total}",
       "detail.tasksPopover": "任务 · {done}/{total}",
@@ -1239,6 +1240,7 @@ window.__ModuleLoader__.load({
       "detail.settingsHint": "Plugin settings live under Settings → Plugins → Projects.",
       "detail.sparkEmpty": "No activity in the last 7 days",
       "detail.sparkCaption": "last 7 days",
+      "detail.sparkLabel": "Tokens in the last 7 days: {tokens} (peak {peak})",
       "detail.sparkHint": "Tokens used in the last 7 days",
       "detail.steps": "{done}/{total}",
       "detail.tasksPopover": "Tasks · {done}/{total}",
@@ -3927,7 +3929,11 @@ window.__ModuleLoader__.load({
             { style: styles.rowMain },
             h(
               "span",
-              { style: styles.name, "data-projects-row-name": project.id },
+              {
+                style: styles.name,
+                "data-projects-row-name": project.id,
+                title: String(project.id),
+              },
               project.icon
                 ? h(
                     "span",
@@ -3936,14 +3942,6 @@ window.__ModuleLoader__.load({
                   )
                 : null,
               project.name,
-              h(
-                "span",
-                {
-                  style: { ...styles.meta, marginLeft: "6px" },
-                  "data-projects-row-id": project.id,
-                },
-                `#${String(project.id).slice(-6)}`,
-              ),
             ),
             project.goal
               ? h(
@@ -4206,22 +4204,7 @@ window.__ModuleLoader__.load({
                   { style: styles.empty, "data-projects-empty": "" },
                   h("span", { style: styles.emptyTitle }, text(t, "panel.empty")),
                   h("span", { style: styles.emptyHint }, text(t, "panel.emptyHint")),
-                  h(
-                    "button",
-                    {
-                      type: "button",
-                      style: { ...styles.primaryButton, marginTop: "10px" },
-                      "data-projects-new": "",
-                      onClick: () =>
-                        setCreateForm((/** @type {any} */ prev) => ({
-                          ...prev,
-                          open: true,
-                          mode: "",
-                          error: "",
-                        })),
-                    },
-                    text(t, "panel.create"),
-                  ),
+                  // CTA 只在头部保留一个：空态再放一个同名按钮会出现两个完全相同的 Tab 停靠点
                 )
               : visible.length === 0 && query !== ""
                 ? h(
@@ -4395,17 +4378,23 @@ window.__ModuleLoader__.load({
                 {
                   role: "alertdialog",
                   "aria-modal": "true",
-                  "aria-label": text(t, "panel.rowDelete"),
+                  "aria-labelledby": "projects-row-delete-title",
+                  "aria-describedby": "projects-row-delete-impact",
                   style: { ...styles.dialog, maxWidth: "420px" },
                 },
                 h(
                   "div",
                   { style: styles.dialogHead },
-                  h("span", { style: styles.dialogTitle }, text(t, "panel.rowDeleteTitle")),
+                  h(
+                    "span",
+                    { id: "projects-row-delete-title", style: styles.dialogTitle },
+                    text(t, "panel.rowDeleteTitle"),
+                  ),
                 ),
                 h(
                   "span",
                   {
+                    id: "projects-row-delete-impact",
                     style: { color: rowDelete.error !== "" ? T.danger : T.text, fontSize: "13px" },
                     "data-projects-row-delete-impact": "",
                     ...(rowDelete.error !== "" ? { "data-projects-row-delete-error": "" } : {}),
@@ -7030,6 +7019,25 @@ window.__ModuleLoader__.load({
       const panelSettingsState = useState(false);
       const panelSettingsOpen = panelSettingsState[0];
       const setPanelSettingsOpen = panelSettingsState[1];
+      // Esc 关闭 + 焦点归还触发按钮（评审：抽屉没有 dialog 语义、Esc 无效、焦点不归还）
+      const closePanelSettings = () => {
+        setPanelSettingsOpen(false);
+        setTimeout(() => {
+          const opener = /** @type {any} */ (document.querySelector("[data-panel-settings-open]"));
+          if (opener && typeof opener.focus === "function") opener.focus();
+        }, 0);
+      };
+      useEffect(() => {
+        if (!panelSettingsOpen) return undefined;
+        const onKeyDown = (/** @type {any} */ event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            closePanelSettings();
+          }
+        };
+        document.addEventListener("keydown", onKeyDown);
+        return () => document.removeEventListener("keydown", onKeyDown);
+      }, [panelSettingsOpen]);
       const threadInputRef = useRef(null);
       const collapsedInitRef = useRef(false);
       // F28 `Welcome back, {名}.`：宿主账号没有注入到插件 client（settings.section 之外），
@@ -11360,15 +11368,31 @@ window.__ModuleLoader__.load({
                         style: { display: "flex", flexDirection: "column", gap: "2px" },
                         "data-projects-spark": "",
                         title: text(t, "detail.sparkHint"),
+                        ...(peak > 0
+                          ? {
+                              role: "img",
+                              "aria-label": text(t, "detail.sparkLabel", {
+                                tokens: usageDays.reduce(
+                                  (/** @type {number} */ sum, /** @type {any} */ item) =>
+                                    sum + (Number(item.tokens) || 0),
+                                  0,
+                                ),
+                                peak,
+                              }),
+                            }
+                          : {}),
                       },
-                      h(
-                        "span",
-                        {
-                          style: { ...styles.meta, fontSize: "10.5px" },
-                          "data-projects-spark-caption": "",
-                        },
-                        text(t, "detail.sparkCaption"),
-                      ),
+                      // 有数据才显示 caption：空态已经有「近 7 天无活动」，两行并排会重复
+                      peak > 0
+                        ? h(
+                            "span",
+                            {
+                              style: { ...styles.meta, fontSize: "10.5px" },
+                              "data-projects-spark-caption": "",
+                            },
+                            text(t, "detail.sparkCaption"),
+                          )
+                        : null,
                       peak > 0
                         ? h(
                             "div",
@@ -11383,7 +11407,9 @@ window.__ModuleLoader__.load({
                                     peak > 0
                                       ? `${Math.max(3, Math.round(((Number(item.tokens) || 0) / peak) * 22))}px`
                                       : "3px",
-                                  background: Number(item.tokens) > 0 ? T.accentText : T.border,
+                                  // 零值柱用 accentText + 低透明度：T.border 在深色下只有 ~1.5:1，基本看不见
+                                  background: T.accentText,
+                                  opacity: Number(item.tokens) > 0 ? 1 : 0.35,
                                 },
                               }),
                             ),
@@ -11491,6 +11517,14 @@ window.__ModuleLoader__.load({
                 ? styles.settingsDrawer
                 : { ...styles.rail, display: "none" },
               "data-panel-settings-drawer": panelSettingsOpen ? "open" : "closed",
+              ...(panelSettingsOpen
+                ? {
+                    role: "dialog",
+                    "aria-modal": "true",
+                    "aria-label": text(t, "detail.settingsTitle"),
+                    tabIndex: -1,
+                  }
+                : {}),
               "data-projects-config": "",
               "data-projects-rail": "",
             },
@@ -11516,7 +11550,7 @@ window.__ModuleLoader__.load({
                   style: { ...styles.iconButton, flex: "none" },
                   "data-panel-settings-close": "",
                   "aria-label": text(t, "detail.settingsClose"),
-                  onClick: () => setPanelSettingsOpen(false),
+                  onClick: closePanelSettings,
                 },
                 "✕",
               ),
@@ -12018,7 +12052,13 @@ window.__ModuleLoader__.load({
                 // 回收站（可恢复）：值行 + 条目列表（列表本来就是行）
                 h(
                   "div",
-                  { style: { display: "flex", flexDirection: "column", gap: "4px" } },
+                  {
+                    style: {
+                      display: panelPane === "general" || panelPane === "" ? "flex" : "none",
+                      flexDirection: "column",
+                      gap: "4px",
+                    },
+                  },
                   h(RailRow, {
                     label: text(t, "detail.trashLabel"),
                     value:
@@ -12349,7 +12389,8 @@ window.__ModuleLoader__.load({
                 {
                   role: "alertdialog",
                   "aria-modal": "true",
-                  "aria-label": text(t, "detail.delete"),
+                  "aria-labelledby": "projects-delete-title",
+                  "aria-describedby": "projects-delete-impact",
                   ref: deleteConfirmRef,
                   style: {
                     border: `1px solid ${T.danger}`,
@@ -12367,7 +12408,16 @@ window.__ModuleLoader__.load({
                 },
                 h(
                   "div",
-                  { style: { color: T.text }, "data-projects-delete-impact": "" },
+                  { id: "projects-delete-title", style: styles.dialogTitle },
+                  text(t, "detail.delete"),
+                ),
+                h(
+                  "div",
+                  {
+                    id: "projects-delete-impact",
+                    style: { color: T.text },
+                    "data-projects-delete-impact": "",
+                  },
                   del.impact?.impact?.summary ?? "",
                 ),
                 h(
@@ -15647,7 +15697,11 @@ window.__ModuleLoader__.load({
                 color: T.dim,
               },
             },
-            h("span", null, text(t, "b3.coordinatorModel")),
+            h(
+              "span",
+              { style: { whiteSpace: "nowrap", flex: "0 0 auto" } },
+              text(t, "b3.coordinatorModel"),
+            ),
             h(
               "select",
               {
@@ -15784,7 +15838,7 @@ window.__ModuleLoader__.load({
                 color: T.dim,
               },
             },
-            h("span", null, text(t, "b3.model")),
+            h("span", { style: { whiteSpace: "nowrap", flex: "0 0 auto" } }, text(t, "b3.model")),
             h(
               "select",
               {
