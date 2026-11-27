@@ -173,6 +173,34 @@ export function toMessageSource(envelope) {
 }
 
 /**
+ * 跳过唤醒的审计**去重窗口**（审计 AUD-HIST-06）。
+ *
+ * 背景：`wake/skipped` 曾经每个 `turn/end` 写一条（理由是 `no-coordinator`），
+ * 历史数据里 154 条全是同一句话，把审计历史挤满、也让统计看起来像"有活动"。
+ * 跳过唤醒本身没有信息增量——同一项目 + 同一理由在窗口内只留一条就够排查。
+ */
+export const WAKE_SKIP_AUDIT_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * 这次「跳过唤醒」要不要写审计（纯函数，便于单测）。
+ *
+ * 规则：第一次写；之后同 key 在冷却窗口内静默；窗口过了再写一条（保留周期性证据）。
+ * 时钟回拨（`now < lastAt`）时**写**——宁可多一条，也不要因为系统时间被调过就永远静默。
+ * @param {{ lastAt?: number|null, now?: number, cooldownMs?: number }} input
+ * @returns {boolean}
+ */
+export function shouldRecordWakeSkip(input) {
+  const now = Number.isFinite(input?.now) ? Number(input.now) : Date.now();
+  const last = Number(input?.lastAt);
+  const cooldown = Number.isFinite(input?.cooldownMs)
+    ? Math.max(0, Number(input?.cooldownMs))
+    : WAKE_SKIP_AUDIT_COOLDOWN_MS;
+  if (!Number.isFinite(last) || last <= 0) return true;
+  if (now < last) return true;
+  return now - last >= cooldown;
+}
+
+/**
  * 决定这次线程活动要不要给协调器发信封。三条分支都有明确理由，纯函数便于单测：
  *  - `skip-turn`：这一轮之前已经通知过（水位），最常见的正常重复；
  *  - `skip-dedupe`：两个 turn/end 并发到达，水位还没写回，靠同步 guard 挡第二个；

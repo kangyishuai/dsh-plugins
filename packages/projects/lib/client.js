@@ -173,6 +173,8 @@ window.__ModuleLoader__.load({
       "notify.completed": "{count} 个线程完成了",
       "detail.coordinator": "协调者",
       "detail.coordinatorEmpty": "还没有对话。线程跑完后它会在这里向你汇报。",
+      "detail.coordinatorNoWake":
+        "未配置协调者：线程结束不会唤醒任何会话（没有后台模型调用，也没有自动汇报/汇总）。",
       "detail.coordinatorPlaceholder": "跟协调者说一句话，例如「帮我看下 CI 为什么红」",
       "detail.coordinatorSend": "发送",
       "detail.coordinatorSending": "发送中…",
@@ -792,6 +794,8 @@ window.__ModuleLoader__.load({
         "Project metadata and content files stay local; no remote repository is written.",
       "detail.coordinator": "Coordinator",
       "detail.coordinatorEmpty": "No conversation yet. It reports here after a thread finishes.",
+      "detail.coordinatorNoWake":
+        "No coordinator configured: thread endings wake nothing (no background model calls, no automatic summaries).",
       "detail.coordinatorPlaceholder": 'Say one line to the coordinator, e.g. "why is CI red?"',
       "detail.coordinatorSend": "Send",
       "detail.coordinatorSending": "Sending…",
@@ -10325,6 +10329,18 @@ window.__ModuleLoader__.load({
                         text(t, "detail.coordinatorCreate"),
                       ),
                 ),
+                // AUD-HIST-06：明确告诉用户「没配协调者 = 线程结束不会唤醒任何人」，
+                // 否则用户会以为自动汇报坏了（真实数据里 154 条 no-coordinator 都来自这种项目）。
+                available
+                  ? null
+                  : h(
+                      "div",
+                      {
+                        style: { ...styles.meta, color: T.faint },
+                        "data-projects-coordinator-wake-hint": "",
+                      },
+                      text(t, "detail.coordinatorNoWake"),
+                    ),
                 compaction
                   ? h(
                       "div",

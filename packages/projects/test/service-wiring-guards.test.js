@@ -517,3 +517,38 @@ describe("2026-11-28 审计：接线守卫（第二批）", () => {
     assert.match(region, /unsafe project id/u);
   });
 });
+
+describe("AUD-HIST-06：无协调者时不再每轮写 wake/skipped", () => {
+  it("maybeWakeCoordinator 的 no-coordinator 分支走限频审计，不再直接 appendAudit+save", () => {
+    const region = methodRegion(serviceSource, "maybeWakeCoordinator");
+    assert.match(region, /noteWakeSkip\(project\.id, "no-coordinator"/u);
+    assert.doesNotMatch(
+      region,
+      /reason: "no-coordinator"/u,
+      "无协调者分支不能再直接写一条无上限的审计",
+    );
+    // 步数预算的跳过同样限频
+    assert.match(region, /noteWakeSkip\(project\.id, stepVerdict\.reason/u);
+    // 没有协调者时**不要构造信封**（省上下文渲染）
+    const early = region.indexOf('noteWakeSkip(project.id, "no-coordinator"');
+    const envelope = region.indexOf("buildEnvelope({");
+    assert.ok(early >= 0 && envelope > early, "无协调者必须早于信封构造就返回");
+  });
+
+  it("noteWakeSkip 用纯函数判定 + 内存水位，且写盘一次", () => {
+    const region = methodRegion(serviceSource, "noteWakeSkip");
+    assert.match(region, /shouldRecordWakeSkip\(/u);
+    assert.match(region, /wakeSkipAudit/u);
+    assert.match(region, /limited: true/u);
+    assert.match(serviceSource, /this\.wakeSkipAudit = new Map\(\)/u);
+  });
+
+  it("项目详情：没有协调者时显示「唤醒不会执行」提示（AUD-HIST-06 ②）", () => {
+    assert.match(
+      clientSource,
+      /"data-projects-coordinator-wake-hint"/u,
+      "coordinator 卡空态必须有提示锚点",
+    );
+    assert.match(clientSource, /detail\.coordinatorNoWake/u);
+  });
+});

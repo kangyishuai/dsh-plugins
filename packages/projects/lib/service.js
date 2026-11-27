@@ -149,7 +149,13 @@ import {
 import { createIsolatedThread, reclaimThreadWorktree, reconcileWorktrees } from "./thread.js";
 import { REQUESTABLE_ACTIONS } from "./tools.js";
 import { impactOf, TRASH_DIR, trashDirFor, trashProjectIdOf } from "./trash.js";
-import { buildEnvelope, createInjectionGuard, decideWake, pendingWakes } from "./wake.js";
+import {
+  buildEnvelope,
+  createInjectionGuard,
+  decideWake,
+  pendingWakes,
+  shouldRecordWakeSkip,
+} from "./wake.js";
 import { planDeleteBranch, shouldDeleteBranchV2 } from "./worktree.js";
 import {
   createPrCore,
@@ -323,6 +329,13 @@ export class ProjectsService extends TypertRemoteService {
      * @type {{ shouldInject: (wakeId: string) => boolean, reset: () => void, size: () => number }}
      */
     this.wakeGuard = createInjectionGuard();
+    /**
+     * AUD-HIST-06：跳过唤醒的审计水位（`projectId:reason` → 上次写审计的时间戳）。
+     * `wake/skipped` 以前每个 `turn/end` 一条（真实数据 154 条全是 `no-coordinator`），
+     * 既挤占审计历史又让统计看起来像"有活动"。同 key 在冷却窗口内只写一条。
+     * @type {Map<string, number>}
+     */
+    this.wakeSkipAudit = new Map();
     /** 协调器会话的 agent（用于后续工具约束/提示）。 @type {Map<string, any>} */
     this.coordinatorAgents = new Map();
     /** 协调器工具注册的清理函数。 @type {Map<string, (() => void)[]>} */
@@ -3490,8 +3503,38 @@ export class ProjectsService extends TypertRemoteService {
   }
 
   /**
+   * AUD-HIST-06：记一条「跳过唤醒」审计，**按项目 + 理由限频**（冷却窗口见
+   * `WAKE_SKIP_AUDIT_COOLDOWN_MS`）。返回是否真的写了。
+   * @param {string} projectId
+   * @param {string} reason
+   * @param {Record<string, any>} [extra]
+   * @returns {boolean}
+   */
+  noteWakeSkip(projectId, reason, extra) {
+    const store = this.requireStore();
+    const key = `${projectId}:${reason}`;
+    const now = Date.now();
+    const record = shouldRecordWakeSkip({ lastAt: this.wakeSkipAudit.get(key), now });
+    if (!record) return false;
+    this.wakeSkipAudit.set(key, now);
+    if (this.wakeSkipAudit.size > 1000) this.wakeSkipAudit.clear(); // 长跑不无限增长
+    store.appendAudit({
+      action: "wake/skipped",
+      projectId,
+      reason,
+      limited: true,
+      ...(extra ?? {}),
+    });
+    store.save();
+    return true;
+  }
+
+  /**
    * 线程一轮结束时唤醒协调器（同一轮只唤醒一次）。
    * 失败只记日志，不影响线程本身。
+   *
+   * AUD-HIST-06：没有协调者的项目**不做任何唤醒工作**，也不每次写审计——
+   * 以前每个 `turn/end` 都写一条 `wake/skipped:no-coordinator` 并全量落盘（166KB 重写）。
    * @param {string} sessionId
    * @param {any} view
    */
@@ -3503,13 +3546,9 @@ export class ProjectsService extends TypertRemoteService {
       if (!project) return;
       const coordinatorSessionId = project.coordinatorSessionId;
       if (typeof coordinatorSessionId !== "string" || coordinatorSessionId === "") {
-        store.appendAudit({
-          action: "wake/skipped",
-          projectId: project.id,
-          sessionId,
-          reason: "no-coordinator",
-        });
-        store.save(); // 不落盘的话，重启后「为什么没反应」就查不到了
+        // 没有协调者 → 没有可投递对象，连信封都不构造（省掉上下文渲染）。
+        // 审计限频：第一次留一条可排查，之后同项目 6 小时内静默（AUD-HIST-06）。
+        this.noteWakeSkip(project.id, "no-coordinator", { sessionId });
         return;
       }
       const thread = store
@@ -3522,15 +3561,12 @@ export class ProjectsService extends TypertRemoteService {
         steps: (this.stats.get(sessionId) ?? initialStats()).steps,
       });
       if (!stepVerdict.ok) {
-        store.appendAudit({
-          action: "wake/skipped",
-          projectId: project.id,
+        // 同一项目连续多轮超步数时不该每轮写一条（AUD-HIST-06 同款限频）。
+        this.noteWakeSkip(project.id, stepVerdict.reason, {
           sessionId,
-          reason: stepVerdict.reason,
           steps: stepVerdict.steps,
           limit: stepVerdict.limit,
         });
-        store.save();
         return;
       }
 

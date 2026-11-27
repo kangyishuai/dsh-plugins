@@ -268,6 +268,7 @@
     "detail.group.archived": "已归档",
     "detail.coordinator": "协调者",
     "detail.coordinatorEmpty": "还没有对话。线程跑完后它会在这里向你汇报。",
+    "detail.coordinatorNoWake": "未配置协调者：线程结束不会唤醒任何会话（没有后台模型调用，也没有自动汇报/汇总）。",
     "detail.coordinatorPlaceholder": "跟协调者说一句话，例如「帮我看下 CI 为什么红」",
     "detail.coordinatorSend": "发送",
     "detail.coordinatorSending": "发送中…",
