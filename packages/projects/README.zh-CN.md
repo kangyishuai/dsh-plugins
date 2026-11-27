@@ -10,12 +10,11 @@
 > 因此项目规则、记忆索引**与人格**改为**随 wake 信封**送达——每轮一封信，同时带着线程结果。
 > 细节见 `docs/runtime/0.2.2-rc.3.md` §11.24–§11.26。
 
-> **状态：M4 已完成，仍是 1.0 之前。** 项目、上下文注入、隔离的并行线程、可选协调器，以及带闸门的审批/执行层均已实现，
-> 有 502 项单测、196 项 web 端到端冒烟覆盖；桌面只读回归更新到 17 项（首启引导那条改成只断言不点击，
-> 不再往 live profile 的 `firstRunDone` 写东西），
-> 但本阶段**没有重启桌面版复跑**（只跑了 `pnpm verify` 与临时 DSH_HOME 的 web 冒烟）。
-> 远端写入（推分支 / 开 PR / 合并）已接线，并用本地 bare 远端 + 桩 `gh` 完成端到端验证；
-> 真实 GitHub 上的效果还需发版后确认一次。**项目共享**已推迟（[ADR 0018](../../docs/adr/0018-projects-defer-liveshare-sharing.md)）。
+> **状态：M2–M6 已落地（0.10.x，仍是 1.0 之前）。** 项目、上下文注入、隔离的并行线程、可选协调器、带闸门的审批/执行层，
+> 以及 Claude Projects UI 对齐（含两轮审查修复）均已实现，并有 **710 项单测**、**270 项 web 端到端冒烟**、
+> **桌面只读回归（17–20 项，随 profile 数据浮动）**覆盖，且已在真实桌面版复跑。
+> 远端写入（推分支 / 开 PR / 合并）除本地 bare 远端 + 桩 `gh` 外，也已在**真实 GitHub 仓库**上验证。
+> 逐版本数字见下方兼容表。**项目共享**已推迟（[ADR 0018](../../docs/adr/0018-projects-defer-liveshare-sharing.md)）。
 
 ## 做什么
 
@@ -31,7 +30,6 @@ DSH 按工作目录给会话分组，且模型看不到项目级记忆。本插�
 - **Library 与产物卡（B5）** —— 项目页「Library」页签合并两块数据。**文件面**走宿主 `workspaceFiles`（scope `{sessionId, workspaceRoot}`，每个项目目录一次 `list`；没有目录或没有会话时如实说明原因）；面板写明**搜索只匹配文件名 / 路径、不搜正文**——这是宿主的边界。**产物面**按 Remote 契约读 `artifacts` 0.2（先 `ctx.get("artifacts")`，再 `version().contract === "artifacts/2"`，最后 `list({ projectId })`）；因为产物 meta 不保证带 `projectId`，插件在项目记录里**自存 `projectId ↔ artifactId` 映射**（`artifactRefs[]`：id / 标题 / 类型 / 版本 / 字节 / 时间 / 来源会话与工具调用；项目线程里 `recordArtifact` 写入，冷启动可回读）。计量给条数与字节，provenance 说清「来自哪条会话的哪次调用」。artifacts 未装、没有 `version()` 或契约不符时，Library 明写**「产物库需要 dsh-artifacts 0.2」**并且只列文件面——**绝不显示「这个项目没有产物」**。展开的线程行内嵌产物缩略卡（标题 / 类型 / 版本 / 相对时间 / provenance）；「打开产物库」按钮走宿主右栏 `sidebarRight.openTab("artifact", { params: { projectId } })`，服务缺失时按钮禁用并说明原因。B3 复审修复随这批一起落地：线程默认 effort **白名单删掉**（本部署的 `max` / `xhigh` / `off` 现在都能存住，只保留 40 字符上限）、`locale/{zh,en}.json` 补齐 **44 个缺失的 runtime 键**（实时 CI 文案改成「未实现」，不再承诺会建 webhook）、冒烟开局加 **INFRA 自检**（宿主端口 / 插件激活 / `projects.json` 落盘 / 浏览器结果）失败即 fail-fast 而不混进断言计数、`once` 凭据改到**所有闸通过且占位成功之后**才消费（没落地会回滚），文件夹闸按**命令实际运行的目录**求 mode（线程 worktree 继承其项目目录的授权），`listMemoryFragments` 先校验项目存在再碰文件系统。
 - **Claude UI 对齐（M2–M6）** —— 主列改为**单 composer**（新线程/协调者目标切换、圆形 ↵ 发送、控件行在卡片外）并贴底；右栏四视图 + **视图可见性开关**（写项目记录，刷新后仍生效）；行状态副标题（working 动词+秒数、`✓✓✓ 使用 X`、失败/等你/结果摘要，结果摘要只写真实观测值）、步进圆环与任务弹层、产物 chips（含封面）与 diff chip、行尾时长 `now/Nm/Nh/Nd`；协调者结论上浮 + 消息折叠块 + 结论旁产物 chips，协调者默认模型独立于线程默认；**Routines 可编辑**（频率↔手动会真正建/删宿主定时，避免「改手动仍投递」；43 处硬编码中文抽成 i18n）；**PR 流程**含三段式卡、复制链接、**合并**（有 PR 号 + 二次确认 + 危险开关三重门禁，草稿自动 `pr ready`）与统一在线程 worktree 执行；**失败自动重试**是语义明确的替代版本（失败后 60s 重发「继续」，累计最多 2 次，不冒充「用量恢复续跑」）；深浅双主题分层与浅色对比度补强，WebUI 与桌面在 1440×900 下布局几何一致。
 - **四个页签，对齐 Claude Projects（界面规范 §7.3 的例外）** —— 面板现在是 `线程 / Library / Routines / 视图`，对齐 Claude「Projects」的 IA（D1/D2 决策，来自 4 条视频调研）。「视图」页签里是可见性复选 + 已保存的筛选视图；记忆迁到 **项目设置 › 记忆**（`data-projects-memory-pane`）。§7.3 默认仍是 ≤3，这个第 4 个页签是对齐宿主产品固定 IA 的**书面例外**。
-- **页签 5 → 3（界面规范 §7.3「页签最多 3 个」）** —— 项目主页只剩 `线程 / 记忆 / Routines`。**Library** 改成右栏一行入口：`data-projects-library-open` 点开后把同一份 `LibraryView` 渲染在**主列**（`data-projects-library-main` 包裹，旧的 `data-projects-library*` 锚点全部保留），主列顶部 `data-projects-library-back`（或再次点同一右栏行）回到线程列表。**审计**移到设置分节的 **Debug** 区（`data-projects-settings-audit`，列表仍用 `data-projects-audit` / `data-projects-audit-empty`，新的在前，最多 100 条 = `listAudit` 的截断），项目详情不再轮询审计。桌面只读回归新增 **`--create`**（默认关，默认仍严格只读）：用 UI 建一个 `smoke-desktop-<ts>` 临时项目 → 断言两列详情页（`data-projects-detail-grid/main/rail`）、6 个药丸、3 个页签 → 用同一套 UI 删除并彻底删除 → 断言盘上 `projects.json` 里没有它；不带 `--create` 时，profile 里有项目就真断言，没有就如实 SKIP 并写明原因。
 - **结构性三项（B4）** —— **Routines** 把六档频率（手动 / 每小时 / 每天 / 工作日 / 每周 / 每月）映射到宿主 `schedule`：每小时与三档日历用 `cron`，每天用宿主 `daily`，时间一律补成宿主硬要求的 `HH:mm:ss`（`09:30` 会被 `ScheduleInputError` 拒）。支持创建 / 列表 / 启停（宿主 `paused|active` **加**本地 `enabled` 副本）/ 删除（先删宿主条目，宿主拒绝就不动本地，避免留下继续花 token 的孤儿）/ **Run now** / **History**（宿主投递记录与本地 Run now 记录按时间倒序合并）。UI 在创建处强制写明成本：**每次投递 = 一次模型调用**、新建会话两次投递至少隔 60 秒、手动档不自动跑。**权限开关是「收窄」不是「自动放行」**：本部署 `catalog().defaultPreset` 已是 `danger-full-access` + `approval: never`，所以下拉第一项是「继承宿主默认」，其余选项**全部来自 `catalog()`**（名字不写死），逐项 `resolve()` 后把 `{sandbox, approval}` 翻成人话（只读 / 工作区可写 / 全权限 / 自定义）并标出「比宿主默认更窄」。选择以名字存进项目记录，在**线程或协调器会话创建后**用 `permissionPresets.set(session, name)` 应用；拿不到会话句柄就如实标 `pending`（不假装生效），没有匹配档时用 `session.append('approval/policy' | 'sandbox/mode')` 兜底并标「自定义」。每次应用都做写→回读（`current(session)`；兜底路径读 `approval.overrideOf` / `sandboxPolicy.overrideOf`），面板同时明示「推 / 合并 / 删除永远需要你批准」。**提醒**每条可选两种模式：`timer`（默认，免费）本机计时 + 到期时间落盘，每次启动按盘上记录重建（关机期间到点的在启动时补触发一次并写回 `fired` + 未读，重启不会重复响），到点弹 `shell.overlay` toast；`schedule`（计费）转宿主 `schedule` 并写明「到点跑一次模型、DSH 关着也会跑」。项目默认模式（`reminderDefault`，默认 `timer`）可被单条覆盖；支持取消、提前完成与过期清理（终态超 7 天清掉，pending 永不动）。
 - **把桩接通（B2）** —— 项目页有协调者区（一个长期会话：可建、可发一句话、可重开；**不是**宿主 composer），协调者汇报做结论上浮 + thread chip，上下文策略里 `compaction` 一律判空兜底，wake 信封新增「最近线程」「记忆索引」两段；线程内 Tasks 清单（来自宿主 `todo/write` 快照，`✓`/`◌` + n/m，没清单时显示 `none` 而不是 0/0）、线程内 steering（`prompt({mode:'steer'})`）、每线程模型 / effort（`session/selectModel`，下拉取 `modelCatalog`，改完回读 `modelSelection`）、Create PR 条 + PR 徽章（带 CI 状态点）、可展开的线程面板（起始卡、分支/参数 chip）；线程**不可跨项目移动**（`attachThread` 对「已属于别的项目」直接拒绝，只允许挂空槽或先 detach 再挂）；PR/CI 默认轮询（只对有开放 PR 的项目，30–90s 退避，应用关掉即停；档位读 `policy.pr.tier`，可按项目 opt-out），设置与详情页各有一个「实验性实时监听」开关——**disabled 且明确标注未实现**（真做需要 gh-webhook 扩展、仓库管理员权限与验签；当前只有轮询），另有一个「修一轮 CI」手动入口把失败线程喂给有界 auto-fix 循环。
 - **Overview / 项目主页（B1）** —— 六态（`等你 > 失败 > 在跑 > 待审 > 空闲`，另有 `归档`）由宿主 `state().pendingInput/running`、持久 `turn/end` 失败原因与插件自存的 `resolvedAt` 共同结算；分组头带计数、药丸条五类过滤（`~Nm` 只在能从已观测步进节奏估计时显示）、行副标题取最近一条 `tool/call` 的可读摘要、步进环取 `todo/write` 快照（没有 todo 就显示「—」，绝不用 0/0）、手动 resolve/重开与未读标记、`Welcome back` 头 + 7 日 token 迷你图、一次性首启引导（`firstRunDone` 存宿主 `storageDomain`）、项目切换器，以及 Context 多目录（每项目 ≤10）。
@@ -44,7 +42,7 @@ DSH 按工作目录给会话分组，且模型看不到项目级记忆。本插�
 - **收尾（B6）** —— Overview 能跨重启重建：每个项目线程保留一段有上限（80 条）的**最小可回放事件**（轮起止、失败 attempt、副标题摘要、todo 快照、交互开关；正文与工具参数一律不落盘），service 启动时用 `replay()` 重建视图，所以重启后失败/等你不会又变回空闲（人工 `resolvedAt` 晚于最后一次活动才算数；resolve 之后又有新活动则旧 resolve 过期，不会「点完已解决又自己弹回失败」）。**自动 resolve（F29）**：项目字段 `autoResolveDays`（null = 关，默认）启动时查一次、之后每日一次，把**无活动 ≥ N 天**的线程标为 resolved，写审计 `thread/auto-resolved`（带 `days`/`idleDays`）并同步内存视图；已 resolved / 归档 / 没有时间事实的线程一律不动，刚好 N 天算命中、差 1ms 不算。下拉在项目详情右栏（关 / 3 / 7 / 14 / 30 天）——宿主可能禁用设置页，所以这里必须能真写；`setAutoResolveDays` 返回回读值并写 `project/auto-resolve`，`checkAutoResolve` 可手动跑同一套检查。线程行摘要现在显示真实的 `diff N 文件 +N/-M`（`git diff --numstat <baseSha>`，**含未提交改动**、5s 缓存、git 答不了才 `n/a`），并给 `data-projects-thread-diff` 精确锚点；「改本插件配置」审批路径的 routing 规则改用匹配器**同一份对象契约**校验（`{textMatches,textMaxChars,isQuestion,threadState}`），真实规则终于写得进也命中得了。
 - **策略可编辑** —— 自治级别、人格、模型兜底开关都在设置里改（设置首屏仍保持三行）。
 - **可选远端写入** —— 推线程分支、开 PR（四档，默认 `off`）、合并，都要危险开关 + 人工批准；
-  已用本地 bare 远端 + 桩 `gh` 完成端到端验证，真实 GitHub 上的效果还需发版后确认一次。
+  已用本地 bare 远端 + 桩 `gh` 完成端到端验证，并在**真实 GitHub 仓库**上验证（开 PR、CI 门禁、合并拒绝/放行均按设计）。
 - **项目共享** —— 推迟，见 [ADR 0018](../../docs/adr/0018-projects-defer-liveshare-sharing.md)：
   DSH 0.2.2-rc.3 虽带 `dsh-experimental-liveshare`，但未启用、也没有稳定宿主接口，基于它实现等于猜测。
 
