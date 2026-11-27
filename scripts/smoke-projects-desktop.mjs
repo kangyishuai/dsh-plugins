@@ -20,7 +20,9 @@
 //   无渲染崩溃 / 摘要已本地化 / 新建控件存在（不提交）/
 //   详情页两列栅格 + 6 个状态药丸 + 3 个页签（§7.3）+ Library 右栏入口 + 审计不在详情页 /
 //   设置四个分区 + 审计在 Debug 分区 + PR 档位/预授权入口（设置页被禁用时如实 SKIP）/
-//   审批卡片影响面（每行都有 data-projects-approval-impact）/ Esc 关闭后界面仍可用 / 截图落盘。
+//   审批卡片影响面（每行都有 data-projects-approval-impact）/
+//   无协调者时的「唤醒不会执行」提示（data-projects-coordinator-wake-hint）/
+//   Esc 关闭后界面仍可用 / 截图落盘。
 //   `--create` 另有：建临时项目 / 删除进回收站 / 彻底删除 / 盘上 projects.json 校验。
 // 未装进 live profile 时默认 SKIP（门禁加 --require 则失败）。
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -391,6 +393,10 @@ const main = async () => {
           // 只读断言：没有待审批时是 0/0；有的话每一行都要有影响面节点。
           approvalRows: document.querySelectorAll("[data-projects-approval-row]").length,
           approvalImpacts: document.querySelectorAll("[data-projects-approval-impact]").length,
+          // AUD-HIST-06：没配协调者时，卡片必须说明「线程结束不会唤醒任何会话」。
+          coordinatorState:
+            document.querySelector("[data-projects-coordinator]")?.getAttribute("data-projects-coordinator") || "",
+          coordinatorWakeHint: Boolean(document.querySelector("[data-projects-coordinator-wake-hint]")),
           approvalImpactText: (() => {
             const node = document.querySelector("[data-projects-approval-impact]");
             return node ? String(node.innerText || "").slice(0, 120) : "";
@@ -553,6 +559,18 @@ const main = async () => {
         snap.libraryOpen === true && snap.auditInDetail === false,
         JSON.stringify({ libraryOpen: snap.libraryOpen, auditInDetail: snap.auditInDetail }),
       );
+      // AUD-HIST-06（只读）：协调者卡的空态与「唤醒不会执行」提示必须一致
+      // （empty ↔ 有提示；ready ↔ 无提示）。没有协调者卡时跳过该断言。
+      if (snap.coordinatorState === "empty" || snap.coordinatorState === "ready") {
+        check(
+          "没有协调者时，卡片明确说明线程结束不会唤醒任何会话",
+          (snap.coordinatorState === "empty") === snap.coordinatorWakeHint,
+          JSON.stringify({
+            coordinator: snap.coordinatorState,
+            wakeHint: snap.coordinatorWakeHint,
+          }),
+        );
+      }
       // AUD-PROJ-07（只读）：审批行必须带「影响面」；没有待审批时两边都是 0。
       check(
         "审批卡片显示影响面（每行都有 data-projects-approval-impact；无审批时 0=0）",
