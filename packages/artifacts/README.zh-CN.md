@@ -6,7 +6,7 @@
 
 非官方 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 插件，与 DeepSeek 官方无关。
 
-> **当前状态：机制已验证，接口已扩展，桌面复验待做。** 预览与版本这些行为在临时 `DSH_HOME` 的真实 `dsh --profile web` 上实测过；新增的库能力（项目归属、多类型、过滤、级联清理、跨插件契约）目前只有单元测试覆盖，桌面冒烟还没跑。验证范围见兼容性表。
+> **当前状态：机制已验证，库能力已在 web + 桌面验证。** 预览与版本这些行为在临时 `DSH_HOME` 的真实 `dsh --profile web` 上实测过；库能力（项目归属、多类型、过滤、级联清理、跨插件契约）由单测、`pnpm smoke:artifacts`（web，10 条断言）与桌面只读回归（4 条断言，`pnpm gate artifacts`）共同覆盖。验证范围见兼容性表。
 
 ## 它做什么
 
