@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
-import { executeApprovalCore } from "../lib/execute.js";
+import { actionDirectory, executeApprovalCore } from "../lib/execute.js";
 import { ProjectStore } from "../lib/store.js";
 
 /** @type {string} */
@@ -499,5 +499,28 @@ describe("复审 P0/P1：审批合并的仓库解析与改动量门槛", () => {
     assert.equal(result.executed, false, JSON.stringify(result));
     assert.match(String(result.reason), /running\/waiting/u);
     assert.ok(!approvalOf(store, requestId).executedAt);
+  });
+});
+
+describe("复审 P2：merge 的文件夹授权闸按线程实际目录判", () => {
+  it("多目录 + worktree 在 repoB 时，merge 解析为 worktree 继承的 repoB 而不是 dirs[0]", () => {
+    const repoA = join(root, "gate-a");
+    const repoB = join(root, "gate-b");
+    const worktree = join(root, ".dsh-worktrees", "gate-b", "thread-1");
+    const resolved = actionDirectory({ dirs: [repoA, repoB] }, "merge", { worktree, dir: repoB });
+    assert.equal(resolved.dir, repoB);
+    assert.equal(resolved.cwd, worktree);
+    assert.equal(resolved.inherited, true);
+  });
+
+  it("worktree 已回收时 merge 用线程 dir（不是 dirs[0]）", () => {
+    const repoA = join(root, "gate-a");
+    const repoB = join(root, "gate-b");
+    const resolved = actionDirectory({ dirs: [repoA, repoB] }, "merge", {
+      worktree: "",
+      dir: repoB,
+    });
+    assert.equal(resolved.dir, repoB);
+    assert.equal(resolved.cwd, repoB);
   });
 });

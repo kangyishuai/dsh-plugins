@@ -337,3 +337,63 @@ describe("删除确认框默认焦点统一（约定 §7.4.2：主按钮回车�
     assert.match(confirmRegion, /data-modal-autofocus/u);
   });
 });
+
+describe("第 3 轮复审 P0/P1 守卫", () => {
+  const threadSource = readFileSync(join(here, "..", "lib", "thread.js"), "utf8");
+  const executeSourceForGate = readFileSync(join(here, "..", "lib", "execute.js"), "utf8");
+
+  it("reclaim worktree 前用 --ignored 判非空（.env/缓存不随目录删除）", () => {
+    const start = threadSource.indexOf("export async function reclaimThreadWorktree");
+    const region = threadSource.slice(start, start + 1800);
+    assert.match(region, /"status",\s*"--porcelain",\s*"--ignored"/u);
+  });
+
+  it("deleteProject 的 manifest 记录 workspaceDir，回滚先搬回再清回收站", () => {
+    const region = methodRegion(serviceSource, "deleteProject");
+    assert.match(region, /workspaceDir: preview\.workspaceDir/u);
+    assert.match(region, /rollbackMoves/u);
+    assert.match(region, /movedMoves/u);
+  });
+
+  it("restoreTrash 把 workspace 搬回去（不是只恢复 content）", () => {
+    const start = serviceSource.indexOf("  restoreTrash(");
+    assert.ok(start >= 0);
+    const region = serviceSource.slice(start, start + 4200);
+    assert.match(region, /restoreDir\("workspace"/u);
+    assert.match(region, /workspaces/u);
+  });
+
+  it("cleanupBranches 删 worktree 需要 confirm 并写 worktree/removed 审计", () => {
+    const start = serviceSource.indexOf("  async cleanupBranches(");
+    assert.ok(start >= 0);
+    const region = serviceSource.slice(start, start + 8000);
+    assert.match(region, /const willDelete = dryRun === false && options\?\.confirm === true/u);
+    assert.match(region, /action: "worktree\/removed"/u);
+    assert.doesNotMatch(
+      region,
+      /if \(!dryRun\) \{\s*const removed = await runGit\(\["worktree", "remove"/u,
+    );
+  });
+
+  it("threadBusy 显式接收 sessionId（store 原始记录没有该字段）", () => {
+    const start = serviceSource.indexOf("  threadBusy(thread, states, sessionId)");
+    assert.ok(start >= 0);
+    assert.match(
+      serviceSource.slice(start, start + 300),
+      /String\(sessionId \?\? thread\?\.sessionId/u,
+    );
+    const archived = methodRegion(serviceSource, "onSessionArchived");
+    const busyAt = archived.indexOf("this.threadBusy(record, live.states, sessionId)");
+    const archivedAt = archived.indexOf('setThreadState(sessionId, "archived")');
+    assert.ok(busyAt > 0 && archivedAt > busyAt, "busy 判定必须在改成 archived 之前");
+  });
+
+  it("actionDirectory 对 merge 也按 worktree/dir 解析（deny 不被 dirs[0] 绕过）", () => {
+    assert.match(executeSourceForGate, /String\(action\) === "merge"/u);
+    const gateStart = executeSourceForGate.indexOf("const gateThread = gateThreads.find");
+    assert.ok(gateStart >= 0);
+    const region = executeSourceForGate.slice(gateStart, gateStart + 1200);
+    assert.match(region, /approval\.action === "merge"/u);
+    assert.match(region, /pickRepoRoot\(/u);
+  });
+});

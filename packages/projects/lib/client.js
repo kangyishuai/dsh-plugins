@@ -250,6 +250,7 @@ window.__ModuleLoader__.load({
       "detail.tab.memory": "记忆",
       "detail.tab.library": "库",
       "detail.tab.views": "视图",
+      "detail.tabsLabel": "项目视图",
       "detail.tab.routines": "定时任务",
       "views.title": "视图可见性",
       "views.hint": "关掉不需要的视图，右栏就只显示你常用的那几个。",
@@ -850,6 +851,7 @@ window.__ModuleLoader__.load({
       "detail.tab.memory": "Memory",
       "detail.tab.library": "Library",
       "detail.tab.views": "Views",
+      "detail.tabsLabel": "Project views",
       "detail.tab.routines": "Routines",
       "views.title": "Visible views",
       "views.hint": "Hide the views you don't need; the panel shows only the ones you use.",
@@ -3117,7 +3119,10 @@ window.__ModuleLoader__.load({
               if (!dialog) return;
               const focusables = [
                 ...dialog.querySelectorAll("button, input, select, textarea, [tabindex]"),
-              ].filter((node) => node.disabled !== true && node.tabIndex !== -1);
+              ].filter((node) => {
+                const element = /** @type {any} */ (node);
+                return element.disabled !== true && element.tabIndex !== -1;
+              });
               if (focusables.length === 0) return;
               const firstEl = focusables[0];
               const lastEl = focusables[focusables.length - 1];
@@ -3513,6 +3518,79 @@ window.__ModuleLoader__.load({
         if (target && typeof target.focus === "function") target.focus();
         return undefined;
       }, [rowDelete.project?.id]);
+      // 模态焦点陷阱 + Esc：新建项目/编辑详情两个弹窗共用。
+      // 以前 Tab 会跑回背景控件、焦点在外时 Esc 收不到——aria-modal 与实际行为不符（UI 复审 P1）。
+      useEffect(() => {
+        const modalOpen = createForm.open === true;
+        const editOpen = Boolean(editForm.project);
+        if (!modalOpen && !editOpen) return undefined;
+        const selector = modalOpen
+          ? "[data-projects-new-dialog]"
+          : "[data-projects-edit-details] [role=dialog]";
+        const close = () => {
+          if (modalOpen) {
+            setCreateForm((/** @type {any} */ prev) => ({ ...prev, open: false, mode: "" }));
+            return;
+          }
+          setEditForm({ project: null, name: "", goal: "", busy: false, error: "" });
+        };
+        const focusables = () =>
+          [
+            ...document.querySelectorAll(
+              `${selector} button, ${selector} input, ${selector} select, ${selector} textarea`,
+            ),
+          ].filter((node) => {
+            const element = /** @type {any} */ (node);
+            return element.disabled !== true && element.tabIndex !== -1;
+          });
+        const onKeyDown = (/** @type {any} */ event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            close();
+            return;
+          }
+          if (event.key !== "Tab") return;
+          const dialog = /** @type {any} */ (document.querySelector(selector));
+          if (!dialog) return;
+          const items = focusables();
+          if (items.length === 0) return;
+          const first = /** @type {any} */ (items[0]);
+          const last = /** @type {any} */ (items[items.length - 1]);
+          if (!dialog.contains(document.activeElement)) {
+            event.preventDefault();
+            first.focus();
+            return;
+          }
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+          }
+        };
+        document.addEventListener("keydown", onKeyDown, true);
+        if (editOpen) {
+          setTimeout(() => {
+            const input = /** @type {any} */ (document.querySelector("[data-projects-edit-name]"));
+            if (input && typeof input.focus === "function") input.focus();
+          }, 0);
+        }
+        return () => document.removeEventListener("keydown", onKeyDown, true);
+      }, [createForm.open, editForm.project?.id]);
+      // 关闭时把焦点还给触发行菜单（审查：Esc/取消后 activeElement 落到 BODY）
+      const closeRowDelete = () => {
+        const projectId = String(rowDelete.project?.id ?? "");
+        setRowDelete({ project: null, impact: null, busy: false, error: "" });
+        if (projectId === "") return;
+        setTimeout(() => {
+          const trigger = /** @type {any} */ (
+            document.querySelector(`[data-projects-row-menu="${projectId}"]`)
+          );
+          if (trigger && typeof trigger.focus === "function") trigger.focus();
+        }, 0);
+      };
       // F63 首启引导：一次性。默认 done=true，避免 RPC 回来之前闪一下引导框。
       // 真正的值来自宿主 storageDomain（projects_ui.firstRunDone，跨重启保留）。
       var firstRunState = useState({
@@ -4390,12 +4468,7 @@ window.__ModuleLoader__.load({
                 onKeyDownCapture: (/** @type {any} */ event) => {
                   if (event.key === "Escape") {
                     event.preventDefault();
-                    setRowDelete({
-                      project: null,
-                      impact: null,
-                      busy: false,
-                      error: "",
-                    });
+                    closeRowDelete();
                   }
                 },
               },
@@ -4446,8 +4519,7 @@ window.__ModuleLoader__.load({
                       type: "button",
                       style: styles.secondaryButton,
                       "data-projects-row-delete-cancel": "",
-                      onClick: () =>
-                        setRowDelete({ project: null, impact: null, busy: false, error: "" }),
+                      onClick: closeRowDelete,
                     },
                     text(t, "detail.deleteCancel"),
                   ),
@@ -9882,11 +9954,9 @@ window.__ModuleLoader__.load({
                 "aria-label": text(t, "detail.settings"),
                 title: text(t, "detail.settings"),
                 onClick: () => {
-                  const opened =
-                    typeof api.openSettings === "function" ? api.openSettings() : false;
-                  if (opened !== true && typeof props.onToast === "function") {
-                    props.onToast(text(t, "detail.settingsHint"));
-                  }
+                  // 这个 ⚙ 的 aria-label 就是「项目设置」：打开本项目的设置抽屉。
+                  // 以前只调宿主设置页（可能被禁用），失败时给一句 toast，入口与行为不符。
+                  setPanelSettingsOpen(true);
                 },
               },
               "⚙",
@@ -11241,6 +11311,7 @@ window.__ModuleLoader__.load({
                   paddingTop: "2px",
                 },
                 role: "tablist",
+                "aria-label": text(t, "detail.tabsLabel"),
               },
               tabs
                 .filter(

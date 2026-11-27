@@ -138,7 +138,9 @@ export async function reclaimThreadWorktree(input) {
   if (typeof worktree !== "string" || worktree === "")
     return { reclaimed: false, reason: "no-worktree" };
 
-  const status = await safeGit(deps.runGit, ["status", "--porcelain"], worktree);
+  // `--ignored` 必须带上：git 的「干净」不包含 .gitignore 里的文件，而 .env / 模型缓存
+  // 恰恰常被 ignore。只查 --porcelain 会把这些文件随 worktree 一起永久删掉（复审实测 P0）。
+  const status = await safeGit(deps.runGit, ["status", "--porcelain", "--ignored"], worktree);
   // 「未推送」要按**是否已在某个远端**判断，而不是「相对 base 有没有新提交」：
   // 后者在合并之后仍然 > 0（base 不会因为合并而前移），于是合并过的线程 worktree
   // 永远回收不掉——这是 0.4.0 之前一直存在的缺陷（B5 只能绕开它）。
