@@ -1136,6 +1136,15 @@ AGENTS.md 受管区块幂等合并、`@` 候选排序）。`pnpm smoke:projects`
 | AUD-PROJ-27 | 线程序号取「已用分支/线程序号最大值 + 1」（记录 + 仓库里现存 `dsh/` 分支），删线程后不复用旧分支名                                                                                                                                                                | `thread.test.js`（`nextThreadIndex` + 真 git 不复用）+ `worktree.test.js`                                                                                                            |
 | AUD-HIST-06 | 无协调者的项目不再每轮写 `wake/skipped`：无协调者分支**早于信封构造**返回，审计改为「同项目+同理由 6 小时一条」（`shouldRecordWakeSkip` 纯函数 + 内存水位 `wakeSkipAudit`，步数预算跳过同款限频）；项目详情协调者卡空态新增 `data-projects-coordinator-wake-hint` | `wake.test.js`（冷却判定：首次/窗口内静默/到点再写/时钟回拨也写/窗口可覆盖）、service 守卫（分支走限频、早于 `buildEnvelope`、无直接 `appendAudit`）、桌面只读断言（empty ↔ 有提示） |
 
+### 20.2b UI/UX 批次（2026-11-28 用户模拟 + 审计）
+
+- 覆盖：IME 回车守卫、硬编码中文进 locale（+ parity 测试）、设置首屏 3 行+更多设置折叠、弹层 dialog/Esc/焦点陷阱、
+  `files.partial` 展示、预算语义标签、详情页术语人话化、「未实现」开关禁用、协调者创建/重开确认与成本提示、
+  「使用已有文件夹」路径校验。
+- 测试：`packages/projects/test/client-ui.test.js`、`client-i18n-guard.test.js`（vm 驱动真实 client.js）；
+  桌面只读断言同步新增（未运行，待门禁真跑）。
+- defer：产物查看器独立冒烟、追踪属性命名空间、z-index 统一、`<details>` 指示符等 P3。
+
 ### 20.3 defer（本轮不修，及理由）
 
 | 编号                 | 理由                                                                                                                                                                          |

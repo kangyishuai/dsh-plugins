@@ -1353,10 +1353,11 @@ try {
       toggles,
       tabsAfterHide,
       tabsAfterLibraryHidden,
-      toggleHit: document.body.getAttribute("data-projects-toggle-hit"),
-      viewError: document.body.getAttribute("data-projects-view-error"),
-      viewStage: document.body.getAttribute("data-projects-view-stage"),
-      viewResult: document.body.getAttribute("data-projects-view-result"),
+      // AUD-projects-ui-13：追踪属性挂在 [data-projects-panel] 上（不再污染 document.body）。
+      toggleHit: document.querySelector("[data-projects-panel]")?.getAttribute("data-projects-toggle-hit"),
+      viewError: document.querySelector("[data-projects-panel]")?.getAttribute("data-projects-view-error"),
+      viewStage: document.querySelector("[data-projects-panel]")?.getAttribute("data-projects-view-stage"),
+      viewResult: document.querySelector("[data-projects-panel]")?.getAttribute("data-projects-view-result"),
     };
   });
   add(
@@ -3144,6 +3145,11 @@ try {
         ) || "",
       artifactCards: all("[data-projects-artifact-card]").length,
       threadCards: all("[data-projects-thread-artifacts]").length,
+      // AUD-projects-ui-06：partial 标记 + 原因文案（完整列表时两者都为空）
+      filesPartial: q("[data-projects-library-file-count]")?.getAttribute(
+        "data-projects-library-files-partial",
+      ) || "",
+      filesPartialNote: q("[data-projects-library-files-partial-note]")?.textContent || "",
     };
     // 文件名搜索：输入 seed → 点搜索 → 等结果
     const input = q("[data-projects-library-search]");
@@ -3196,12 +3202,73 @@ try {
     JSON.stringify({ cards: b5.artifactCards, threadCards: b5.threadCards }),
   );
   add(
+    "AUD-06 文件面 partial 状态接线正确（完整列表不带 partial 标记；partial 时必须带原因）",
+    b5.filesPartial === "" && b5.filesPartialNote === "",
+    JSON.stringify({ partial: b5.filesPartial, note: b5.filesPartialNote }),
+  );
+  add(
     "F55 授权卡写明 cwd 语义（push-branch 在 worktree 里跑、继承项目目录授权；B3 复审 P2）",
     b5.folderHint.includes("worktree") &&
       b5.folderHint.includes("继承") &&
       b5.folderHint.includes("push-branch"),
     b5.folderHint,
   );
+  // AUD-projects-ui-04 / 15：产物查看器（4 个入口共用）。
+  // 冒烟环境通常没装 dsh-artifacts → 没有产物卡，按 SKIP 如实记录，不假装覆盖过。
+  {
+    const viewerReady = await page.evaluate(() => {
+      const card = document.querySelector("[data-projects-artifact-card]");
+      if (!card) return "no-artifact-card";
+      card.click();
+      return "clicked";
+    });
+    if (viewerReady === "clicked") {
+      const viewer = await page.evaluate(async () => {
+        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        for (let i = 0; i < 20; i += 1) {
+          if (document.querySelector("[data-projects-artifact-dialog]")) break;
+          await wait(100);
+        }
+        const dialog = document.querySelector("[data-projects-artifact-dialog]");
+        const close = document.querySelector("[data-projects-artifact-viewer-close]");
+        const before = document.activeElement;
+        const body = document.querySelector("[data-projects-artifact-body]");
+        return {
+          dialog: Boolean(dialog),
+          role: dialog?.getAttribute("role") || "",
+          modal: dialog?.getAttribute("aria-modal") || "",
+          labelledby: dialog?.getAttribute("aria-labelledby") || "",
+          titleId: document.getElementById("projects-artifact-title")?.textContent || "",
+          autofocus: close?.getAttribute("data-modal-autofocus") === "",
+          focusInside: Boolean(dialog && close && document.activeElement === close),
+          bodyBlocks: body ? body.children.length : 0,
+          beforeTag: before ? before.tagName : "",
+        };
+      });
+      add(
+        "AUD-04 产物查看器有 dialog 语义、初始焦点在关闭按钮、正文块已渲染",
+        viewer.dialog === true &&
+          viewer.role === "dialog" &&
+          viewer.modal === "true" &&
+          viewer.labelledby === "projects-artifact-title" &&
+          viewer.titleId !== "" &&
+          viewer.autofocus === true &&
+          viewer.focusInside === true &&
+          viewer.bodyBlocks > 0,
+        JSON.stringify(viewer),
+      );
+      const closed = await page.evaluate(async () => {
+        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        await wait(400);
+        return !document.querySelector("[data-projects-artifact-viewer]");
+      });
+      add("AUD-04 产物查看器按 Esc 能关闭", closed === true, String(closed));
+    } else {
+      skipAdd("AUD-04 产物查看器 dialog 语义 + Esc 关闭", "当前环境没有产物卡（dsh-artifacts 未装）");
+    }
+  }
+
   // 截图：Library 降级态（文件面带文件名搜索 + 产物库缺依赖的明示）
   {
     const shot = await page.cdp("Page.captureScreenshot", { format: "png" });
