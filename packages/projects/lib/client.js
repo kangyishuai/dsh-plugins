@@ -1983,6 +1983,8 @@ window.__ModuleLoader__.load({
         background: T.bg,
         color: T.text,
         fontSize: "13px",
+        // 原生 <select> 的展开菜单由系统绘制：声明 color-scheme 让深色主题下不再弹白色菜单
+        colorScheme: "light dark",
       },
       button: {
         padding: "6px 12px",
