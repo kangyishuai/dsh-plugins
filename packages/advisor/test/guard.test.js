@@ -194,3 +194,40 @@ test("severityRank 单调", () => {
   assert.equal(severityRank("nit") < severityRank("concern"), true);
   assert.equal(severityRank("concern") < severityRank("blocker"), true);
 });
+
+test("日预算边界：已花达到上限就拒绝（>=），并支持本次预估（AUD-ADV-11 / 12）", () => {
+  const settings = normalizeSettings({
+    maxCallsPerTurn: 0,
+    maxCallsPerSession: 0,
+    maxCallsPerHour: 0,
+    maxCostPerDay: 1,
+  });
+  const now = Date.now();
+  /** @param {number} dayCostUsd */
+  const counters = (dayCostUsd) => ({
+    turnCalls: 0,
+    sessionCalls: 0,
+    hourStamps: [],
+    dayCostUsd,
+  });
+
+  assert.equal(checkBudget({ settings, counters: counters(0.99), now }).ok, true);
+  // 恰好等于上限：语义是「已达上限」，要拒（与工作区池的 >= 口径一致）。
+  const atLimit = checkBudget({ settings, counters: counters(1), now });
+  assert.equal(atLimit.ok, false);
+  assert.equal(/** @type {any} */ (atLimit).code, "day_budget");
+
+  // 预估花费把这一笔算进去：已花 0.8 + 预计 0.2 = 1 → 拒绝；预计 0.1 → 放行。
+  const wouldCross = checkBudget({
+    settings,
+    counters: counters(0.8),
+    now,
+    estimatedCostUsd: 0.2,
+  });
+  assert.equal(wouldCross.ok, false);
+  assert.equal(/** @type {any} */ (wouldCross).code, "day_budget");
+  assert.equal(
+    checkBudget({ settings, counters: counters(0.8), now, estimatedCostUsd: 0.1 }).ok,
+    true,
+  );
+});

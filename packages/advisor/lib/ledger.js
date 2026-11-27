@@ -3,8 +3,13 @@
 // 所以顾问花了多少 token 必须由我们自己记账。这里同时是四级预算的计数器来源。
 //
 // 落盘：`<dataRoot>/advisor/usage.jsonl`，一次徵询一行；文件只追加，超过上限时滚动重命名。
-import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+// 追加走 `appendJsonLine`（O_APPEND + 进程内单写队列），不再「读全文 + 覆盖」——
+// 后者既不是原子写，并发回合结束时还会互相覆盖丢行（审计 AUD-ADV-01）。
+import { mkdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
+
+import { dayKey, dayOfEntry } from "./day.js";
+import { appendJsonLine } from "./fs-atomic.js";
 
 /** 账本目录名（位于数据根下）。 */
 export const LEDGER_DIR = "advisor";
@@ -18,6 +23,7 @@ export const LEDGER_MAX_BYTES = 2 * 1024 * 1024;
 /**
  * @typedef {object} LedgerEntry
  * @property {string} at ISO 时间
+ * @property {string} [day] 本地日键 YYYY-MM-DD（写入时补；旧数据没有，读取时从 at 折算）
  * @property {string} sessionId
  * @property {"tool"|"shadow"|"manual"|"post-answer"} trigger
  * @property {string} provider
@@ -45,15 +51,13 @@ export const LEDGER_MAX_BYTES = 2 * 1024 * 1024;
  */
 
 /**
- * 本地日键，用于「每日预算」跨重启续算。
- * @param {Date} [date]
- * @returns {string}
+ * 一条新账本行补上本地日键；已有 `day` 的记录原样返回。
+ * @param {LedgerEntry} entry
+ * @returns {LedgerEntry}
  */
-export function dayKey(date = new Date()) {
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  return `${year}-${month}-${day}`;
+function withDay(entry) {
+  const day = dayOfEntry(entry) || dayKey();
+  return day === entry.day ? entry : { ...entry, day };
 }
 
 /**
@@ -64,7 +68,6 @@ export function dayKey(date = new Date()) {
  *   noteCall: (sessionId: string, input: { turn: number, costUsd: number, at: number }) => void,
  *   resetTurn: (sessionId: string, turn: number) => void,
  *   totals: () => { calls: number, inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, costUsd: number, byTrigger: Record<string, number> },
- *   recent: (limit?: number) => LedgerEntry[],
  *   ready: () => Promise<void>,
  *   recordAdvice: (entry: any) => Promise<void>,
  *   adviceTotals: () => Promise<{ total: number, bySeverity: Record<string, number>, byModel: Record<string, number>, byDay: Record<string, number>, byConfidence: Record<string, number> }>,
@@ -77,8 +80,6 @@ export function createLedger(options) {
   const path = join(dir, LEDGER_FILE);
   /** @type {Map<string, SessionCounters>} */
   const countersBySession = new Map();
-  /** @type {LedgerEntry[]} */
-  const recent = [];
   /** @type {{ calls: number, inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, costUsd: number, byTrigger: Record<string, number> }} */
   const totals = {
     calls: 0,
@@ -90,60 +91,6 @@ export function createLedger(options) {
     byTrigger: {},
   };
   let loaded = false;
-
-  /** 读历史账本，恢复「今日花费」与累计数（只读尾部 2MB，避免大文件拖慢启动）。 */
-  const ensureLoaded = async () => {
-    if (loaded) return;
-    loaded = true;
-    try {
-      const info = await stat(path);
-      const start = Math.max(0, info.size - LEDGER_MAX_BYTES);
-      const text = await readFile(path, "utf8");
-      const tail = start > 0 ? text.slice(text.lastIndexOf("\n", start) + 1) : text;
-      const today = dayKey();
-      for (const line of tail.split("\n")) {
-        if (line.trim() === "") continue;
-        /** @type {any} */
-        let entry;
-        try {
-          entry = JSON.parse(line);
-        } catch {
-          continue;
-        }
-        const cost = Number(entry.costUsd ?? 0) || 0;
-        const inputTokens = Number(entry.inputTokens ?? 0) || 0;
-        const outputTokens = Number(entry.outputTokens ?? 0) || 0;
-        const cacheReadTokens = Number(entry.cacheReadTokens ?? 0) || 0;
-        const cacheWriteTokens = Number(entry.cacheWriteTokens ?? 0) || 0;
-        totals.calls += 1;
-        totals.inputTokens += inputTokens;
-        totals.outputTokens += outputTokens;
-        totals.cacheReadTokens += cacheReadTokens;
-        totals.cacheWriteTokens += cacheWriteTokens;
-        totals.costUsd += cost;
-        const trigger = typeof entry.trigger === "string" ? entry.trigger : "tool";
-        totals.byTrigger[trigger] = (totals.byTrigger[trigger] ?? 0) + 1;
-        if (recent.length < 50) recent.push(entry);
-        const sessionId = typeof entry.sessionId === "string" ? entry.sessionId : "";
-        if (sessionId === "") continue;
-        const day = typeof entry.at === "string" ? entry.at.slice(0, 10) : "";
-        if (day !== today) continue;
-        const counters = countersBySession.get(sessionId) ?? {
-          turn: 0,
-          turnCalls: 0,
-          sessionCalls: 0,
-          hourStamps: [],
-          dayCostUsd: 0,
-          dayKey: today,
-        };
-        counters.dayCostUsd += cost;
-        countersBySession.set(sessionId, counters);
-      }
-    } catch (error) {
-      const code = /** @type {any} */ (error)?.code;
-      if (code !== "ENOENT") options.logger?.warn?.(`[advisor] 读取账本失败：${String(error)}`);
-    }
-  };
 
   /**
    * 取某会话的计数器（惰性初始化；跨日自动清零当日花费）。
@@ -174,6 +121,67 @@ export function createLedger(options) {
     return current;
   };
 
+  /**
+   * 读历史账本，恢复累计数、**会话级调用数**、**最近一小时时间戳**与今日花费
+   * （只读尾部 2MB，避免大文件拖慢启动；更早的历史不参与这几级计数器）。
+   * 回合内计数（turnCalls）不恢复：它的生命周期就是一个回合，重启即新的回合。
+   */
+  const ensureLoaded = async () => {
+    if (loaded) return;
+    loaded = true;
+    try {
+      const info = await stat(path);
+      const start = Math.max(0, info.size - LEDGER_MAX_BYTES);
+      const text = await readFile(path, "utf8");
+      const tail = start > 0 ? text.slice(text.lastIndexOf("\n", start) + 1) : text;
+      const today = dayKey();
+      const hourAgo = Date.now() - 60 * 60 * 1000;
+      for (const line of tail.split("\n")) {
+        if (line.trim() === "") continue;
+        /** @type {any} */
+        let entry;
+        try {
+          entry = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        const cost = Number(entry.costUsd ?? 0) || 0;
+        const inputTokens = Number(entry.inputTokens ?? 0) || 0;
+        const outputTokens = Number(entry.outputTokens ?? 0) || 0;
+        const cacheReadTokens = Number(entry.cacheReadTokens ?? 0) || 0;
+        const cacheWriteTokens = Number(entry.cacheWriteTokens ?? 0) || 0;
+        totals.calls += 1;
+        totals.inputTokens += inputTokens;
+        totals.outputTokens += outputTokens;
+        totals.cacheReadTokens += cacheReadTokens;
+        totals.cacheWriteTokens += cacheWriteTokens;
+        totals.costUsd += cost;
+        const trigger = typeof entry.trigger === "string" ? entry.trigger : "tool";
+        totals.byTrigger[trigger] = (totals.byTrigger[trigger] ?? 0) + 1;
+        const sessionId = typeof entry.sessionId === "string" ? entry.sessionId : "";
+        if (sessionId === "") continue;
+        const current = countersBySession.get(sessionId) ?? {
+          turn: 0,
+          turnCalls: 0,
+          sessionCalls: 0,
+          hourStamps: [],
+          dayCostUsd: 0,
+          dayKey: today,
+        };
+        current.sessionCalls += 1;
+        const at = Date.parse(typeof entry.at === "string" ? entry.at : "");
+        if (Number.isFinite(at) && at > hourAgo) current.hourStamps.push(at);
+        // 日键优先用行里的 day（本地日），旧行回落到 at 的本地日期（审计 AUD-ADV-04）。
+        if (dayOfEntry(entry) === today) current.dayCostUsd += cost;
+        current.dayKey = today;
+        countersBySession.set(sessionId, current);
+      }
+    } catch (error) {
+      const code = /** @type {any} */ (error)?.code;
+      if (code !== "ENOENT") options.logger?.warn?.(`[advisor] 读取账本失败：${String(error)}`);
+    }
+  };
+
   const advicePath = join(dir, ADVICE_FILE);
 
   return {
@@ -186,8 +194,6 @@ export function createLedger(options) {
      * @returns {Promise<void>}
      */
     async record(entry) {
-      recent.unshift(entry);
-      if (recent.length > 50) recent.pop();
       totals.calls += 1;
       totals.inputTokens += entry.inputTokens;
       totals.outputTokens += entry.outputTokens;
@@ -197,17 +203,10 @@ export function createLedger(options) {
       totals.byTrigger[entry.trigger] = (totals.byTrigger[entry.trigger] ?? 0) + 1;
 
       try {
-        await mkdir(dir, { recursive: true });
-        const info = await stat(path).catch(() => undefined);
-        if (info && info.size > LEDGER_MAX_BYTES) {
-          await rename(path, `${path}.1`).catch(() => undefined);
-        }
-        const line = `${JSON.stringify(entry)}\n`;
-        const existing =
-          info && info.size <= LEDGER_MAX_BYTES ? await readFile(path, "utf8").catch(() => "") : "";
-        const next = `${existing}${line}`;
-        // 一次性重写而不是 append：保证写入原子性（账本比吞吐重要）。
-        await writeFile(path, next, "utf8");
+        await appendJsonLine(path, withDay(entry), {
+          rotateBytes: LEDGER_MAX_BYTES,
+          rotateTo: `${path}.1`,
+        });
       } catch (error) {
         options.logger?.warn?.(`[advisor] 写账本失败：${String(error)}`);
       }
@@ -253,15 +252,6 @@ export function createLedger(options) {
     },
 
     /**
-     * 最近若干条（新→旧）。
-     * @param {number} [limit]
-     * @returns {LedgerEntry[]}
-     */
-    recent(limit = 10) {
-      return recent.slice(0, Math.max(0, limit));
-    },
-
-    /**
      * 追加一条建议到跨会话账本（失败只告警，不影响徵询）。
      * @param {any} entry
      * @returns {Promise<void>}
@@ -269,9 +259,7 @@ export function createLedger(options) {
     async recordAdvice(entry) {
       try {
         await mkdir(dir, { recursive: true });
-        const line = `${JSON.stringify(entry)}\n`;
-        const existing = await readFile(advicePath, "utf8").catch(() => "");
-        await writeFile(advicePath, `${existing}${line}`, "utf8");
+        await appendJsonLine(advicePath, withDay(entry));
       } catch (error) {
         options.logger?.warn?.(`[advisor] 写建议账本失败：${String(error)}`);
       }
@@ -304,7 +292,7 @@ export function createLedger(options) {
           total += 1;
           const severity = String(entry?.severity ?? "nit");
           const model = String(entry?.model ?? "unknown");
-          const day = typeof entry?.at === "string" ? entry.at.slice(0, 10) : "unknown";
+          const day = dayOfEntry(entry) || "unknown";
           const confidence = String(entry?.confidence ?? "low");
           bySeverity[severity] = (bySeverity[severity] ?? 0) + 1;
           byModel[model] = (byModel[model] ?? 0) + 1;

@@ -169,3 +169,79 @@ describe("决策日志接线", () => {
     assert.equal(records[0].outcome, "user-typed-other");
   });
 });
+
+describe("outcome 回填：accepted / user-typed-other / no-action 三条路径都可达（AUD-ADV-07 / 09）", () => {
+  /**
+   * 造一个「第 1 回合徵询过」的现场，返回跟踪器与决策日志目录。
+   * @param {string} prefix
+   */
+  async function consulted(prefix) {
+    const home = await tempDir(prefix);
+    const service = makeService(home);
+    deliver(service, { type: "turn/start", data: { turn: 1 } });
+    deliver(service, assistantMessage("改动完成。", 1));
+    service.tracker.noteAdvice("s1", {
+      adviceId: "adv_test",
+      severity: "concern",
+      trigger: "tool",
+      costUsd: 0.01,
+      adviceText: "建议改 `src/importer/csv.ts` 的 BOM 处理。",
+      evidence: [{ ref: "call_1" }],
+    });
+    deliver(service, { type: "turn/end", data: { turn: 1, reason: { kind: "completed" } } });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return { home, service };
+  }
+
+  it("下一回合的助手消息里出现建议信号 → accepted（不再只有用户复述才认）", async () => {
+    const { home, service } = await consulted("advisor-wiring");
+    deliver(service, { type: "turn/start", data: { turn: 2 } });
+    deliver(service, assistantMessage("好，我改 src/importer/csv.ts 的 BOM 解析。"));
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const records = await readDecisions(join(home, "advisor", "decisions.jsonl"));
+    assert.equal(records[0].outcome, "accepted");
+    assert.equal(records[0].outcomeWhy, "assistant-message");
+  });
+
+  it("下一回合的工具参数里有建议信号 → accepted", async () => {
+    const { home, service } = await consulted("advisor-wiring");
+    deliver(service, { type: "turn/start", data: { turn: 2 } });
+    deliver(service, {
+      type: "tools/execute",
+      data: { tool: "edit", args: { path: "src/importer/csv.ts" } },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const records = await readDecisions(join(home, "advisor", "decisions.jsonl"));
+    assert.equal(records[0].outcome, "accepted");
+    assert.equal(records[0].outcomeWhy, "tool-call");
+  });
+
+  it("宿主注入的 user/message（source.kind=goal）不算用户反应，不误判 accepted/other", async () => {
+    const { home, service } = await consulted("advisor-wiring");
+    deliver(service, { type: "turn/start", data: { turn: 2 } });
+    deliver(service, {
+      type: "user/message",
+      data: {
+        message: {
+          role: "user",
+          source: { kind: "goal" },
+          content: [{ type: "text", text: "自动继续：把 src/importer/csv.ts 也处理掉" }],
+        },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const records = await readDecisions(join(home, "advisor", "decisions.jsonl"));
+    assert.equal(records[0].outcome, null, "注入消息不该回填 outcome");
+  });
+
+  it("下一回合没有真人消息就结束时，回填 no-action（该分支不再不可达）", async () => {
+    const { home, service } = await consulted("advisor-wiring");
+    deliver(service, { type: "turn/start", data: { turn: 2 } });
+    deliver(service, assistantMessage("继续做别的。"));
+    deliver(service, { type: "turn/end", data: { turn: 2, reason: { kind: "completed" } } });
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const records = await readDecisions(join(home, "advisor", "decisions.jsonl"));
+    assert.equal(records[0].outcome, "no-action");
+    assert.equal(records[0].outcomeWhy, "no-follow-up");
+  });
+});

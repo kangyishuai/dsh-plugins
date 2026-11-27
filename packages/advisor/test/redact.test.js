@@ -69,3 +69,40 @@ test("redactDeep 有节点预算，超大对象不会无限递归", () => {
   const result = redactDeep(deep, 10);
   assert.equal(JSON.stringify(result.value).includes("truncated"), true);
 });
+
+test("小写 / camelCase 键名的赋值形态也要遮（AUD-ADV-13）", () => {
+  const cases = [
+    "api_key=abcdefghij",
+    "token: abcdefghij",
+    "apiKey: abcdefghij",
+    "password=abcdefghij",
+    "client_secret=abcdefghij",
+    "private_key=abcdefghij",
+  ];
+  for (const input of cases) {
+    const result = redact(`配置里写着 ${input} 这行`);
+    assert.equal(result.text.includes("abcdefghij"), false, `应当被脱敏：${input}`);
+    assert.equal(result.hits.includes("kv-assignment"), true, `命中规则：${input}`);
+  }
+});
+
+test("JWT 与裸 Bearer token 也被遮（AUD-ADV-13）", () => {
+  // 运行时拼接：仓库里不留形似真实凭据的字面量。
+  const jwt = ["eyJhbGciOiJIUzI1NiJ9", "eyJzdWIiOiIxMjM0NTY3ODkwIn0", "c2lnbmF0dXJlLWJ5dGVz"].join(
+    ".",
+  );
+  const bearer = ["Bearer", "abcdefghijklmnopqrstuvwx"].join(" ");
+  const jwtResult = redact(`请求头里带了 ${jwt} 这个值`);
+  assert.equal(jwtResult.text.includes("c2lnbmF0dXJl"), false);
+  assert.equal(jwtResult.hits.includes("jwt"), true);
+
+  const bearerResult = redact(`用 ${bearer} 调接口`);
+  assert.equal(bearerResult.text.includes("abcdefghijklmnopqrstuvwx"), false);
+  assert.equal(bearerResult.hits.includes("bearer-token"), true);
+});
+
+test("正常文本里的普通冒号/等号不被误伤", () => {
+  const text = "结论：把 retry 的 backoff 改成指数退避；key 用 map，value 用数组。";
+  assert.deepEqual(redact(text).hits, []);
+  assert.equal(redact(text).text, text);
+});

@@ -114,8 +114,10 @@ export function checkBudget(input) {
     }
   }
   // 设置里的限额按 settings.currency 填写；比较前先换算成 USD。
+  // 边界口径与工作区池一致：**已达上限就拒绝**（`>=`），`estimatedCostUsd` 让「这一笔会顶到」
+  // 在发送前就被拦下（审计 AUD-ADV-11 / 12）。
   const maxCostUsd = toUsd(settings.maxCostPerDay, settings.currency, settings.usdToCny);
-  if (maxCostUsd > 0 && counters.dayCostUsd + estimatedCostUsd > maxCostUsd) {
+  if (maxCostUsd > 0 && counters.dayCostUsd + estimatedCostUsd >= maxCostUsd) {
     return {
       ok: false,
       code: "day_budget",

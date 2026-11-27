@@ -115,6 +115,10 @@ function serviceOf(ctx, name) {
 
 /**
  * 子代理会话判定（shadow 只在顶层会话跑，避免多份顾问调用叠加）。
+ *
+ * 同一个判据也决定**决策日志的口径**（审计 AUD-ADV-08）：子代理回合不写 decisions.jsonl，
+ * 所以 `pnpm advisor:review` 的徵询率/采纳率是「主会话」口径，不能用来推断 fork/spawn
+ * 子代理里的徵询行为。README 的决策日志一节写明了这一点。
  * @param {any} session
  * @returns {boolean}
  */
@@ -428,7 +432,29 @@ export class AdvisorService extends TypertRemoteService {
     const turn = this.turnOf.get(sessionId) ?? 0;
     const now = Date.now();
     const counters = this.ledger.counters(sessionId, now);
-    const budget = checkBudget({ settings, counters, now });
+
+    // 上下文：包含工具调用与结果（这是与「只发文本」的关键区别）。
+    const messages = typeof session?.deriveMessages === "function" ? session.deriveMessages() : [];
+    const transcript = buildTranscript(messages, {
+      scope: settings.privacyScope,
+      redactSecrets: settings.redact,
+      maxChars: settings.maxInputChars,
+    });
+    if (transcript.text.trim() === "") return skip("会话里还没有可发送的内容", "empty_transcript");
+
+    // 有效单价（用户声明 > 内置表 > 不算钱）与本次**预计**花费：日预算与工作区池都用它做
+    // 「这笔会不会顶到」的预判，而不是等超了才拦（审计 AUD-ADV-11）。
+    const price = effectivePrice(settings, resolved.route.model);
+    const estimatedCost = estimateCostUsd({
+      inputTokens: Math.ceil(transcript.text.length / 3),
+      outputTokens: settings.maxTokens / 2,
+      priceInputPerMTok: price.input,
+      priceOutputPerMTok: price.output,
+      priceCacheReadPerMTok: price.cacheRead,
+      priceCacheWritePerMTok: price.cacheWrite,
+    });
+
+    const budget = checkBudget({ settings, counters, now, estimatedCostUsd: estimatedCost });
     if (!budget.ok) {
       this.counters.skipped += 1;
       /** @type {Record<string, string>} */
@@ -460,10 +486,9 @@ export class AdvisorService extends TypertRemoteService {
       };
     }
 
-    // 工作区级共享预算池（跨会话累计，按本地日滚动）与有效单价（用户声明 > 内置表 > 不算钱）。
-    const price = effectivePrice(settings, resolved.route.model);
+    // 工作区级共享预算池（跨会话累计，按本地日滚动；写入串行，见 budget.js）。
     const pool = await this.pool.read();
-    const poolCheck = checkPool(pool, settings);
+    const poolCheck = checkPool(pool, settings, estimatedCost);
     if (!poolCheck.ok) {
       const reason =
         poolCheck.code === "workspace_calls"
@@ -491,15 +516,6 @@ export class AdvisorService extends TypertRemoteService {
       };
     }
 
-    // 上下文：包含工具调用与结果（这是与「只发文本」的关键区别）。
-    const messages = typeof session?.deriveMessages === "function" ? session.deriveMessages() : [];
-    const transcript = buildTranscript(messages, {
-      scope: settings.privacyScope,
-      redactSecrets: settings.redact,
-      maxChars: settings.maxInputChars,
-    });
-    if (transcript.text.trim() === "") return skip("会话里还没有可发送的内容", "empty_transcript");
-
     // 只存首尾预览；tracePrompt=off 时连预览都不落盘（requestChars 仍记）。
     const trace = settings.tracePrompt === "preview" ? buildTracePreview(transcript.text) : null;
 
@@ -511,15 +527,6 @@ export class AdvisorService extends TypertRemoteService {
         : typeof AbortSignal.any === "function"
           ? AbortSignal.any([input.signal, controller.signal])
           : controller.signal;
-
-    const estimatedCost = estimateCostUsd({
-      inputTokens: Math.ceil(transcript.text.length / 3),
-      outputTokens: settings.maxTokens / 2,
-      priceInputPerMTok: price.input,
-      priceOutputPerMTok: price.output,
-      priceCacheReadPerMTok: price.cacheRead,
-      priceCacheWritePerMTok: price.cacheWrite,
-    });
 
     const started = Date.now();
     let call;
@@ -637,14 +644,16 @@ export class AdvisorService extends TypertRemoteService {
     let usage = call.usage;
 
     // 记一次调用（调用数与最终成本）：两阶段取证的额外 usage 合并后再记，避免只记第一轮。
-    const charge = () => {
+    // 预算池的 add 是读-改-写，必须 await：并发会话各自 fire-and-forget 会互相覆盖丢更新
+    // （审计 AUD-ADV-02）。
+    const charge = async () => {
       this.ledger.noteCall(sessionId, { turn, costUsd, at: Date.now() });
-      void this.pool.add({ calls: 1, costUsd });
+      await this.pool.add({ calls: 1, costUsd });
       this.counters.calls += 1;
     };
 
     if (!parsed.ok) {
-      charge();
+      await charge();
       const result = { ...baseResult, status: "unavailable", code: `advice_${parsed.reason}` };
       this.counters.failures += 1;
       this.lastResult = result;
@@ -707,7 +716,7 @@ export class AdvisorService extends TypertRemoteService {
     costUsd = costOf(usage);
     usageLine = usageLineOf(usage, costUsd, call.ms);
     baseResult.usage = usageLine;
-    charge();
+    await charge();
 
     const hollow = advice.verdict === "reviewed" && isHollowAdvice(advice.advice);
 
@@ -826,6 +835,8 @@ export class AdvisorService extends TypertRemoteService {
         trigger,
         costUsd,
         adviceText: result.advice,
+        // 证据 ref 也是可追踪信号：模型回头读了同一处，就算「照着建议做了」。
+        evidence: result.evidence,
       });
     }
 
@@ -890,7 +901,6 @@ export class AdvisorService extends TypertRemoteService {
       this.lastDeliveryTurn.set(sessionId, turn);
     }
     if (trigger === "shadow") this.counters.shadow += 1;
-    void estimatedCost;
     return result;
   }
 
@@ -1257,7 +1267,11 @@ export class AdvisorService extends TypertRemoteService {
     const totals = this.ledger.totals();
     return [
       "顾问报告（本会话）",
+      // 采纳率必须带分母：大部分建议没有可追踪信号，只说「采纳 0」会被读成「从没被采纳」。
       `投递 ${summary.total} 条 · 采纳 ${summary.adopted} · 未判定 ${summary.unknown}`,
+      `可追踪 ${summary.traceable}/${summary.total} 条（${
+        summary.traceableRate === null ? "—" : `${Math.round(summary.traceableRate * 100)}%`
+      }）—— 采纳率只在这部分建议上有意义`,
       `证据锚点：校验 ${summary.anchorsChecked} 条 / 对上 ${summary.anchorsVerified} 条`,
       `累计 token：${totals.inputTokens} in / ${totals.outputTokens} out（${totals.calls} 次调用，含其他会话）`,
       "最近：",
