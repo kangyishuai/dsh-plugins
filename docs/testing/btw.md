@@ -1071,7 +1071,7 @@ document body because the docked composer contains them**"，而浮层原本就�
 
 ## 2026-11-28 审计修复批次（historyLimit / guard 作用域 / 并发写 / bounded）
 
-分支 `fix/btw-settings-guard`（本批只改 `packages/btw/**` + `scripts/smoke-btw.mjs` + changeset）。
+分支 `fix/btw-settings-guard`（**代码**只改 `packages/btw/**` + `scripts/smoke-btw.mjs`；文档同步 `docs/testing/btw.md`，另有 changeset）。
 
 **行为变化**：
 
@@ -1084,18 +1084,18 @@ document body because the docked composer contains them**"，而浮层原本就�
 - bounded：仅在真正命中阈值（显式开启 + 父会话 ≥400K tokens）时才读父会话事件（AUD-BTW-07）；
   digest 为空退回 full fork 时写一条 warn，不再静默（复审 BLK-1）。
 - `observeUsage` 用量表与追问队列按最近使用加界（64），旁问结束后删子会话条目。
-- 设置分节 `settings.section` 的 `order` 94 → 95（与 projects 94 / casefile 96 错开）。
+- 设置分节 `settings.section` 的 `order` 94 → 95（当前 advisor 92 / next-step 93 / projects 93 / casefile 94 / btw 95；94→95 避开的是 casefile 的 94）。
 
 **验证**：
 
-| 检查                          | 结果                                                                                                                                                                                                                                                                                             |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `node --test`（包内）         | **100 pass / 0 fail**（新增 `test/subagent.test.js` 13 项；另加 historyLimit 边界/死设置、并发写、bounded 事件配比、client 分节等 12 项）                                                                                                                                                        |
-| `pnpm verify`（worktree 根）  | 通过（EXIT=0：biome / tsc / check-plugins / index-meta / check:docs / check:public / 全部单测）                                                                                                                                                                                                  |
-| `pnpm smoke:btw`（web，默认） | 新增 **5 条浏览器断言 + 1 条磁盘断言**：设置 →「旁问」分节、保留条数 1–200 边界、语义提示、保存按钮可用、保存后回填 7，以及 `<临时 DSH_HOME>/btw/settings.json` 的 `historyLimit=7`。设置对话框被门禁挡住时记 SKIP。**计数待实跑后回填**（门禁只看 `pass>0` 且无 FAIL，不再是 15 PASS / 3 SKIP） |
-| `pnpm smoke:btw --deep`       | 同上新增断言；**计数待实跑后回填**（不再是 30 PASS / 1 SKIP）。                                                                                                                                                                                                                                  |
-| 桌面回归                      | 本批未改桌面交互（只改了设置分节的 order 与提示文案），仍需重启桌面版后复跑 `pnpm smoke:btw-desktop --require`。                                                                                                                                                                                 |
-| 待 live 验证                  | ①旁问运行期间另一会话执行 `read` 不应被拒；②旁问子代理若尝试工具应被拒；③设置页把保留条数改小后面板只显示 N 条。                                                                                                                                                                                 |
+| 检查                          | 结果                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `node --test`（包内）         | **100 pass / 0 fail**（新增 `test/subagent.test.js` 13 项；另加 historyLimit 边界/死设置、并发写、bounded 事件配比、client 分节等 12 项）                                                                                                                                                                                                                                                                                   |
+| `pnpm verify`（worktree 根）  | 通过（EXIT=0：biome / tsc / check-plugins / index-meta / check:docs / check:public / 全部单测）                                                                                                                                                                                                                                                                                                                             |
+| `pnpm smoke:btw`（web，默认） | 新增 **6 条浏览器断言 + 1 条磁盘断言**：设置 →「旁问」分节、保留条数 1–200 边界、语义提示、保存按钮可用、「已保存」回执（轮询 ≤3s，证明 RPC round-trip）、保存后回填 7，以及 `<临时 DSH_HOME>/btw/settings.json` 的 `historyLimit=7`。设置对话框被门禁挡住时整段记 1 条 SKIP。**计数待实跑后回填**：设置可打开时约 **21 PASS / 3 SKIP / 0 FAIL**，被门禁挡住时 **15 PASS / 4 SKIP / 0 FAIL**（门禁只看 `pass>0` 且无 FAIL） |
+| `pnpm smoke:btw --deep`       | 同上新增断言；**计数待实跑后回填**：设置可打开时约 **36 PASS / 1 SKIP / 0 FAIL**，被门禁挡住时 **30 PASS / 2 SKIP / 0 FAIL**（不再是 30 PASS / 1 SKIP）。                                                                                                                                                                                                                                                                   |
+| 桌面回归                      | 本批未改桌面交互（只改了设置分节的 order 与提示文案），仍需重启桌面版后复跑 `pnpm smoke:btw-desktop --require`。                                                                                                                                                                                                                                                                                                            |
+| 待 live 验证                  | ①旁问运行期间另一会话执行 `read` 不应被拒；②旁问子代理若尝试工具应被拒；③设置页把保留条数改小后面板只显示 N 条。                                                                                                                                                                                                                                                                                                            |
 
 **bounded 的一处实现回退（复审 BLK-1）**：0.6.3 的实现（以及本批第一版）用「尾部事件窗口 80」取事件，
 在真实事件配比下凑不满 12 条消息（长会话实测 digest 消息数 p50=5、0% 凑满；5.1% 的会话尾窗里 0 条
