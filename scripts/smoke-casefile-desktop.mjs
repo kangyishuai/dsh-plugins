@@ -77,8 +77,11 @@ async function connect(port) {
 
 let passed = 0;
 let failed = 0;
+let skipped = 0;
 /** @type {string[]} */
 const failures = [];
+/** @type {string[]} */
+const skips = [];
 
 /**
  * @param {string} name
@@ -94,6 +97,17 @@ function check(name, ok, detail = "") {
   failed += 1;
   failures.push(name);
   console.error(`FAIL ${name}${detail ? ` — ${detail}` : ""}`);
+}
+
+/**
+ * 数据分支未满足时的跳过：**不计 PASS**（复审 A6：空 profile 上把跳过记成通过是假绿）。
+ * @param {string} name
+ * @param {string} [detail]
+ */
+function skip(name, detail = "") {
+  skipped += 1;
+  skips.push(name);
+  console.log(`SKIP ${name}${detail ? ` — ${detail}` : ""}`);
 }
 
 /**
@@ -295,7 +309,7 @@ async function main() {
         `text=${String(emptyText).slice(0, 80)} advanced=${emptyAdvanced}`,
       );
     } else {
-      check("空态是人话引导（含「第一步」），工具名收在高级折叠", true, "有项目，空态不可见");
+      skip("空态是人话引导（含「第一步」），工具名收在高级折叠", "有项目，空态不可见");
     }
 
     // 4b) 回收站入口（只读：点开、看到空/条目、返回；不点恢复/清空）
@@ -328,6 +342,16 @@ async function main() {
         "详情页有默认收起的「危险操作」区（drop 的用户入口）",
         opened === true && danger === true,
       );
+      // 复审 A4：`<details>` 折叠时子节点仍在 DOM 里，上面那条只证明「存在」；默认收起要单独断言。
+      const dangerOpen = await page.evaluate(`(() => {
+        const el = document.querySelector("[data-casefile-danger]");
+        return el ? el.open === true : null;
+      })()`);
+      check(
+        "「危险操作」默认收起（details.open === false）",
+        dangerOpen === false,
+        `open=${String(dangerOpen)}`,
+      );
       const dropHit = await clickTextScoped(page, "移入回收站…", "[data-casefile-danger]");
       const preview = await waitFor(page, "[data-casefile-drop-preview]", 4000);
       check("drop 入口先展示影响面（dry-run，不执行）", dropHit === true && preview === true);
@@ -342,10 +366,13 @@ async function main() {
       await clickTextScoped(page, "返回列表", "[data-casefile-page]");
       await sleep(300);
     } else {
-      check("详情页有默认收起的「危险操作」区（drop 的用户入口）", true, "无项目，跳过");
-      check("drop 入口先展示影响面（dry-run，不执行）", true, "无项目，跳过");
-      check("影响面文案说明可恢复", true, "无项目，跳过");
-      check("危险操作影响面可以取消（只读）", true, "无项目，跳过");
+      // 复审 A6：空 profile 上这 4 条以前记 PASS（「无项目，跳过」），等于没验也全绿——
+      // 改成 SKIP 并单独计数，收尾行能看出数据分支没覆盖。
+      skip("详情页有默认收起的「危险操作」区（drop 的用户入口）", "无项目，数据分支未覆盖");
+      skip("「危险操作」默认收起（details.open === false）", "无项目，数据分支未覆盖");
+      skip("drop 入口先展示影响面（dry-run，不执行）", "无项目，数据分支未覆盖");
+      skip("影响面文案说明可恢复", "无项目，数据分支未覆盖");
+      skip("危险操作影响面可以取消（只读）", "无项目，数据分支未覆盖");
     }
 
     // 5) 设置分节：账号菜单 → 设置 → 在设置面板内点「案卷」
@@ -421,9 +448,12 @@ async function main() {
     } catch {
       /* ignore */
     }
-    console.log(`\n结果：${passed} PASS / ${failed} FAIL`);
+    console.log(`\n结果：${passed} PASS / ${skipped} SKIP / ${failed} FAIL`);
     // 门禁靠这一行判定「跑过但一条断言都没执行」（见 docs/plugin-conventions.md §6.1）。
-    console.log(`${passed} PASS / 0 SKIP / ${failed} FAIL`);
+    console.log(`${passed} PASS / ${skipped} SKIP / ${failed} FAIL`);
+    if (skips.length > 0) {
+      console.log(`（SKIP 是数据分支未满足，未计 PASS：${skips.join(" / ")}）`);
+    }
     if (failed > 0) {
       console.error(`截图目录：${SHOTS}`);
       process.exitCode = 1;
