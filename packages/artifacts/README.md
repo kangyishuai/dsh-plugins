@@ -78,6 +78,11 @@ Do not treat an artifact URL as an access-control boundary: the route authentica
 | 0.2.0  | 0.2.2-rc.5      | `pnpm smoke:artifacts` 10/10 (web, temporary `DSH_HOME`); `pnpm gate artifacts` green — desktop read-only regression **4 PASS**                                                          |
 | 0.2.1  | 0.2.2-rc.5      | a11y-only patch: `pnpm smoke:artifacts` **11/11** (web, includes search/label + filter `aria-pressed` assertions); `pnpm gate artifacts` green — desktop read-only regression **4 PASS** |
 
+## Uninstall
+
+- Uninstalling the plugin removes code only. Artifacts live under `<DSH_HOME>/artifacts/` and the removal trash under `<DSH_HOME>/artifacts-trash/`; both are left in place.
+- Delete them manually if you no longer need the artifacts; nothing else references them.
+
 ## License
 
 MIT

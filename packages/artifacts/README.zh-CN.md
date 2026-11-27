@@ -78,6 +78,11 @@ dsh plugin --profile desktop add @kangyishuai/dsh-artifacts
 | 0.2.0 | 0.2.2-rc.5   | `pnpm smoke:artifacts` 10/10（web，临时 `DSH_HOME`）；`pnpm gate artifacts` 全绿——桌面只读回归 **4 PASS**                                           |
 | 0.2.1 | 0.2.2-rc.5   | 仅 a11y 补丁：`pnpm smoke:artifacts` **11/11**（web，含搜索 label 与筛选 `aria-pressed` 断言）；`pnpm gate artifacts` 全绿——桌面只读回归 **4 PASS** |
 
+## 卸载后残留
+
+- 卸载插件只移除代码；产物留在 `<DSH_HOME>/artifacts/`，删除的工件留在 `<DSH_HOME>/artifacts-trash/`，都会被保留。
+- 不再需要时手动删除即可；其它插件不会引用这些文件。
+
 ## 许可证
 
 MIT
