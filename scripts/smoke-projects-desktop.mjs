@@ -582,22 +582,32 @@ const main = async () => {
       // AUD-PROJ-07（只读）：有审批行就必须每行都有**非空**影响面文本。
       // 复审 F6d：之前写成 `rows === impacts`，live profile 没有待审批时恒 0=0，
       // 等于把「未覆盖」伪装成 PASS——现在没有数据就如实 SKIP。
-      if (snap.approvalRows > 0) {
+      // 复审 N4：有审批行但某行**投影不出白名单字段**（例如 coordinator 用 args=null 申请
+      // change-settings）时，那一行本来就没有影响面可展示——不能因此判 FAIL。
+      // 判据改成「每个渲染出来的影响面节点都必须非空，且数量不超过行数」。
+      if (snap.approvalRows > 0 && snap.approvalImpacts > 0) {
         check(
-          "审批卡片显示影响面（每一行都有非空 data-projects-approval-impact，含对象标识）",
-          snap.approvalRowsWithText === snap.approvalRows &&
+          "审批卡片显示影响面（每个影响面节点都非空、不超过行数，含对象标识）",
+          snap.approvalRowsWithText === snap.approvalImpacts &&
+            snap.approvalImpacts <= snap.approvalRows &&
             /(PR|repo|branch|session|project|keys|retentionDays)=/u.test(
               String(snap.approvalImpactText),
             ),
           JSON.stringify({
             rows: snap.approvalRows,
+            impacts: snap.approvalImpacts,
             withText: snap.approvalRowsWithText,
             sample: snap.approvalImpactText,
           }),
         );
+      } else if (snap.approvalRows > 0) {
+        skip(
+          "审批卡片显示影响面（每个影响面节点都非空、不超过行数，含对象标识）",
+          "有审批行但都投影不出白名单字段（args=null 之类），本 profile 无可展示影响面；投影逻辑由 approval-view 单测覆盖",
+        );
       } else {
         skip(
-          "审批卡片显示影响面（每一行都有非空 data-projects-approval-impact，含对象标识）",
+          "审批卡片显示影响面（每个影响面节点都非空、不超过行数，含对象标识）",
           "该 profile 没有待审批/待执行申请（只读回归不造数据；影响面的渲染与投影由 approval-view 单测覆盖）",
         );
       }
