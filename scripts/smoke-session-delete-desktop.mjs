@@ -490,15 +490,21 @@ const main = async () => {
           : null,
       };
     })()`);
-    check(
-      "操作回执可以展开（data-session-delete-disclosure=receipts）",
-      receipts?.status === "ok" && receipts.expanded === true,
-      JSON.stringify(receipts ?? null),
-    );
-    // 条目数量依赖真实历史：空回执时记 SKIP，不算失败。
+    // 回执条数与展开态都依赖真实历史：全新 home 没有做过任何删除/恢复时，
+    // 回执区没有条目、disclosure 点开也没有内容（expanded 仍为 false）。
+    // 这是**数据分支未满足**，以前记 FAIL（伪红）；按 rows===0 记 SKIP，不算失败。
     if (receipts?.status === "ok" && receipts.rows === 0) {
+      skip(
+        "操作回执可以展开（data-session-delete-disclosure=receipts）",
+        "回执为空（全新 home 没有历史操作）：展开态无内容可展示",
+      );
       skip("回执条目逐项列出引用/校验结果", "回执为空（没有历史操作），没有条目可测");
     } else {
+      check(
+        "操作回执可以展开（data-session-delete-disclosure=receipts）",
+        receipts?.status === "ok" && receipts.expanded === true,
+        JSON.stringify(receipts ?? null),
+      );
       check(
         "回执条目逐项列出引用/校验结果",
         receipts?.status === "ok" && receipts.detailItems > 0,

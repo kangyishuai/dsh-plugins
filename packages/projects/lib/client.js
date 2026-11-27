@@ -3826,6 +3826,8 @@ window.__ModuleLoader__.load({
                 "data-modal-autofocus": "",
                 onChange: (/** @type {any} */ event) => patch({ name: event.target.value }),
                 onKeyDown: (/** @type {any} */ event) => {
+                  // IME 组字中的 Enter 是「上词」，不是提交（复审 A4：其余提交输入框也要守卫）。
+                  if (isImeConfirmKey(event)) return;
                   if (event.key === "Enter") submit();
                 },
               }),
@@ -3884,6 +3886,7 @@ window.__ModuleLoader__.load({
                   "data-projects-new-dir": "",
                   onChange: (/** @type {any} */ event) => patch({ dirDraft: event.target.value }),
                   onKeyDown: (/** @type {any} */ event) => {
+                    if (isImeConfirmKey(event)) return; // 复审 A4：IME 上词不提交
                     if (event.key === "Enter") {
                       event.preventDefault();
                       addDir();
@@ -3913,6 +3916,7 @@ window.__ModuleLoader__.load({
                   "data-projects-new-repo": "",
                   onChange: (/** @type {any} */ event) => patch({ repoDraft: event.target.value }),
                   onKeyDown: (/** @type {any} */ event) => {
+                    if (isImeConfirmKey(event)) return; // 复审 A4：IME 上词不提交
                     if (event.key === "Enter") {
                       event.preventDefault();
                       addRepo();
@@ -6291,6 +6295,7 @@ window.__ModuleLoader__.load({
                 }));
               },
               onKeyDown: (/** @type {any} */ event) => {
+                if (isImeConfirmKey(event)) return; // 复审 A4：IME 上词不触发搜索
                 if (event.key === "Enter") runSearch();
               },
             }),
@@ -7003,7 +7008,14 @@ window.__ModuleLoader__.load({
               invalid: true,
             });
             if (typeof props.onToast === "function") {
-              props.onToast(text(t, "detail.dirLimit", { count: MAX_CONTEXT_DIRS }));
+              // 文案带两个占位符（`{count}` + `{used}`）：只传 count 会让 toast 渲染出裸
+              // `已加 {used} 个`（复审 A3）。
+              props.onToast(
+                text(t, "detail.dirLimit", {
+                  count: MAX_CONTEXT_DIRS,
+                  used: Array.isArray(dirPending) ? dirPending.length : 0,
+                }),
+              );
             }
             return;
           }
@@ -8881,6 +8893,8 @@ window.__ModuleLoader__.load({
                       disabled: busyAction !== "",
                       onChange: (/** @type {any} */ event) => setSteerDraft(event.target.value),
                       onKeyDown: (/** @type {any} */ event) => {
+                        // 复审 A4：这里发出去的是一条消息（真的跑模型回合），IME 上词绝不能触发。
+                        if (isImeConfirmKey(event)) return;
                         if (event.key === "Enter") steerThreadNow(String(row.sessionId));
                       },
                     }),
@@ -9885,6 +9899,7 @@ window.__ModuleLoader__.load({
               onChange: (/** @type {any} */ event) =>
                 setMem((/** @type {any} */ prev) => ({ ...prev, append: event.target.value })),
               onKeyDown: (/** @type {any} */ event) => {
+                if (isImeConfirmKey(event)) return; // 复审 A4：IME 上词不追加
                 if (event.key === "Enter") appendMemoryLine();
               },
             }),
@@ -11544,6 +11559,8 @@ window.__ModuleLoader__.load({
                 "data-projects-route-input": "",
                 onChange: (/** @type {any} */ event) => setRouteText(event.target.value),
                 onKeyDown: (/** @type {any} */ event) => {
+                  // 复审 A4：派单会真的起协调者回合，IME 上词绝不能触发。
+                  if (isImeConfirmKey(event)) return;
                   if (event.key === "Enter") dispatchRoute();
                 },
                 disabled: routeBusy,
@@ -13343,6 +13360,7 @@ window.__ModuleLoader__.load({
               "data-projects-dir-input": "",
               onChange: (/** @type {any} */ event) => setDirDraft(event.target.value),
               onKeyDown: (/** @type {any} */ event) => {
+                if (isImeConfirmKey(event)) return; // 复审 A4：IME 上词不提交
                 if (event.key === "Enter") submitDir();
               },
             }),

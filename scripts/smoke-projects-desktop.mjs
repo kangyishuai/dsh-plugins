@@ -854,6 +854,7 @@ const main = async () => {
               budgetSummary:
                 document.querySelector("[data-projects-settings-budget-summary]")?.textContent || "",
               morePresent: Boolean(moreNode),
+              // 先读折叠态（默认收起），再点开读折叠区里的控件——顺序反了会把默认收起误判成展开。
               moreClosed: moreNode ? moreNode.open !== true : null,
               budgetInputs: document.querySelectorAll("[data-projects-budget-input]").length,
               budgetSaveInMore:
@@ -867,18 +868,16 @@ const main = async () => {
                 ? getComputedStyle(disclosureNode, "::before").content
                 : "",
             };
-            const debugNav = document.querySelector('[data-projects-settings-nav-item="debug"]');
-            if (debugNav) debugNav.click();
-            await wait(1200);
-            return {
-              general: generalSnap,
-              panel: Boolean(document.querySelector("[data-projects-settings]")),
-              sections: document.querySelector("[data-projects-settings]")?.getAttribute("data-projects-settings-section") || "",
-              nav,
-              debugPanel: Boolean(document.querySelector("[data-projects-settings-debug]")),
-              auditTitle: document.querySelector("[data-projects-audit-title]")?.textContent || "",
-              audit: Boolean(document.querySelector("[data-projects-audit], [data-projects-audit-empty]")),
-              // AUD-PROJ-05/30：PR 四档与预授权必须有界面入口（以前 client 零引用）。
+            // AUD-03 把危险开关/策略收进「更多设置」折叠；PR 四档与预授权入口也在里面，
+            // 所以必须先展开再读（否则在 debug 分区里查这两组锚点只会拿到空值 = 假红）。
+            const generalMore = document.querySelector('[data-projects-settings-more="general"]');
+            if (generalMore && generalMore.open !== true) {
+              const summary = generalMore.querySelector("summary");
+              if (summary) summary.click();
+              await wait(700);
+            }
+            const policySnap = {
+              // AUD-PROJ-05/30：PR 四档与预授权必须在界面入口里（以前 client 零引用）。
               prTier: document.querySelector("[data-projects-policy-pr-tier]")?.value || "",
               prTierOptions: [...document.querySelectorAll("[data-projects-policy-pr-tier] option")].map(
                 (node) => node.getAttribute("value"),
@@ -887,6 +886,19 @@ const main = async () => {
               preapproveActions: [...document.querySelectorAll("[data-projects-preapprove-action]")].map(
                 (node) => node.getAttribute("data-projects-preapprove-action"),
               ),
+            };
+            const debugNav = document.querySelector('[data-projects-settings-nav-item="debug"]');
+            if (debugNav) debugNav.click();
+            await wait(1200);
+            return {
+              general: generalSnap,
+              policy: policySnap,
+              panel: Boolean(document.querySelector("[data-projects-settings]")),
+              sections: document.querySelector("[data-projects-settings]")?.getAttribute("data-projects-settings-section") || "",
+              nav,
+              debugPanel: Boolean(document.querySelector("[data-projects-settings-debug]")),
+              auditTitle: document.querySelector("[data-projects-audit-title]")?.textContent || "",
+              audit: Boolean(document.querySelector("[data-projects-audit], [data-projects-audit-empty]")),
             };
           })()`)
         : null;
@@ -931,23 +943,23 @@ const main = async () => {
       // AUD-PROJ-05/30（只读）：PR 档位可选四档、预授权有入口（以前完全不可达）。
       check(
         "设置里有 PR 档位（四档）与预授权入口",
-        settingsSnap?.prTier !== "" &&
+        settingsSnap?.policy?.prTier !== "" &&
           ["off", "draft", "ready", "auto-merge"].every((tier) =>
-            (settingsSnap?.prTierOptions ?? []).includes(tier),
+            (settingsSnap?.policy?.prTierOptions ?? []).includes(tier),
           ) &&
-          settingsSnap?.preapprovePanel === true &&
+          settingsSnap?.policy?.preapprovePanel === true &&
           [
             "push-branch",
             "delete-thread",
             "delete-project",
             "purge-trash",
             "change-settings",
-          ].every((action) => (settingsSnap?.preapproveActions ?? []).includes(action)),
+          ].every((action) => (settingsSnap?.policy?.preapproveActions ?? []).includes(action)),
         JSON.stringify({
-          prTier: settingsSnap?.prTier,
-          options: settingsSnap?.prTierOptions,
-          preapprovePanel: settingsSnap?.preapprovePanel,
-          preapproveActions: settingsSnap?.preapproveActions,
+          prTier: settingsSnap?.policy?.prTier ?? null,
+          options: settingsSnap?.policy?.prTierOptions ?? null,
+          preapprovePanel: settingsSnap?.policy?.preapprovePanel ?? null,
+          preapproveActions: settingsSnap?.policy?.preapproveActions ?? null,
         }),
       );
     } else if (openedSettings === "no-button") {

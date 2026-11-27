@@ -268,8 +268,8 @@ test("回收站动作分派到 trash / restore / purge，并透传 dryRun 与 co
   const calls = [];
   const handlers = {
     listTrash: async () => [{ name: "entry", projectId: "p" }],
-    restoreTrash: async (/** @type {string} */ name) => {
-      calls.push(["restore", name]);
+    restoreTrash: async (/** @type {string} */ name, /** @type {any} */ options) => {
+      calls.push(["restore", name, options]);
       return { project: { id: "p" } };
     },
     purgeTrash: async (/** @type {any} */ options) => {
@@ -288,17 +288,26 @@ test("回收站动作分派到 trash / restore / purge，并透传 dryRun 与 co
   assert.equal(listed.ok, true);
   assert.equal(listed.trash.length, 1);
 
-  const restored = await project.execute({ action: "restore", trashName: "entry" }, {});
+  // 复审 A2：工具路径由模型发起，审计来源必须是 agent + 会话 id（不是 user）。
+  const exec = { agent: { id: "s1" } };
+  const restored = await project.execute({ action: "restore", trashName: "entry" }, exec);
   assert.equal(restored.ok, true);
-  assert.deepEqual(calls.at(-1), ["restore", "entry"]);
+  assert.deepEqual(
+    calls.at(-1),
+    ["restore", "entry", { actor: "agent", sessionId: "s1" }],
+    "restore 要把 agent 来源传给 action",
+  );
 
-  const preview = await project.execute({ action: "purge", dryRun: true }, {});
+  const preview = await project.execute({ action: "purge", dryRun: true }, exec);
   assert.equal(preview.ok, true);
   assert.equal(calls.at(-1)?.[1]?.dryRun, true);
+  assert.equal(calls.at(-1)?.[1]?.actor, "agent", "purge 审计来源是 agent");
 
-  const dropped = await project.execute({ action: "drop", projectId: "p", dryRun: true }, {});
+  const dropped = await project.execute({ action: "drop", projectId: "p", dryRun: true }, exec);
   assert.equal(dropped.ok, true);
   assert.equal(calls.at(-1)?.[2]?.dryRun, true, "drop 也要透传 dryRun");
+  assert.equal(calls.at(-1)?.[2]?.actor, "agent", "drop 审计来源是 agent");
+  assert.equal(calls.at(-1)?.[2]?.sessionId, "s1", "drop 审计带上会话 id");
 });
 
 test("report 的 redact 默认 true 并透传给 exportReport；open 区分新建/已有项目", async () => {

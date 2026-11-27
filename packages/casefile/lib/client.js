@@ -15,6 +15,7 @@ window.__ModuleLoader__.load({
     var useEffect = React.useEffect;
     var useState = React.useState;
     var useCallback = React.useCallback;
+    var useRef = React.useRef;
 
     var NS = "casefile";
     var PANEL_ID = "casefile";
@@ -967,6 +968,28 @@ window.__ModuleLoader__.load({
       var dropBusyState = useState(false);
       var dropBusy = dropBusyState[0];
       var setDropBusy = dropBusyState[1];
+      // 危险操作的焦点契约（复审 A3 / plugin-conventions §7.4.2）：
+      // - 展开「危险操作」时焦点进主按钮（入口本身只做 dry-run，不破坏数据）；
+      // - 预览卡出现时焦点移到「取消」（安全项）——以前入口按钮被替换掉，焦点直接掉到 body；
+      // - 取消收起后焦点还回入口，键盘/屏读用户不用从页面开头重新 Tab。
+      var dropEntryRef = useRef(null);
+      var dropCancelRef = useRef(null);
+      var dropHadPreviewRef = useRef(false);
+      useEffect(() => {
+        if (dropPreview) {
+          dropHadPreviewRef.current = true;
+          if (dropCancelRef.current && typeof dropCancelRef.current.focus === "function") {
+            dropCancelRef.current.focus();
+          }
+          return;
+        }
+        if (dropHadPreviewRef.current) {
+          dropHadPreviewRef.current = false;
+          if (dropEntryRef.current && typeof dropEntryRef.current.focus === "function") {
+            dropEntryRef.current.focus();
+          }
+        }
+      }, [dropPreview]);
 
       var titleInvalid = (titleTouched || submitAttempted) && title.trim() === "";
 
@@ -1569,7 +1592,17 @@ window.__ModuleLoader__.load({
             content,
             h(
               "details",
-              { className: "cf-danger", "data-casefile-danger": "1" },
+              {
+                className: "cf-danger",
+                "data-casefile-danger": "1",
+                onToggle: (/** @type {any} */ event) => {
+                  // 展开时把焦点送到主按钮（§7.4.2）；收起不抢焦点。
+                  if (event?.currentTarget?.open !== true) return;
+                  if (typeof dropEntryRef.current?.focus === "function") {
+                    dropEntryRef.current.focus();
+                  }
+                },
+              },
               h("summary", null, text(t, "danger.title")),
               h(
                 "p",
@@ -1582,6 +1615,9 @@ window.__ModuleLoader__.load({
                     {
                       className: "cf-card",
                       "data-casefile-drop-preview": "1",
+                      // 影响面是安全信息：出现即播报（以前没有任何 live region，屏读用户听不到）。
+                      role: "alert",
+                      "aria-live": "polite",
                       style: { marginTop: 8 },
                     },
                     h(
@@ -1611,6 +1647,7 @@ window.__ModuleLoader__.load({
                         {
                           className: "cf-btn",
                           "data-casefile-drop-cancel": "1",
+                          ref: dropCancelRef,
                           disabled: dropBusy,
                           onClick: () => {
                             setDropPreview(null);
@@ -1628,6 +1665,7 @@ window.__ModuleLoader__.load({
                       {
                         className: "cf-btn",
                         "data-casefile-drop": "1",
+                        ref: dropEntryRef,
                         disabled: dropBusy,
                         onClick: previewDrop,
                       },

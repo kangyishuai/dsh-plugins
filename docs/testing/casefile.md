@@ -216,3 +216,15 @@ await page.evaluate(`(() => { ... })()`);
 | USIM-U3-11 | README 缺卸载残留说明                                         | 双语 README 新增「卸载后残留 / Uninstall」：数据根、`projects/`、`trash/`、审计与指针文件、手工 `rm -rf` 清理与先导出 spec/report 的提醒                                                                                                            |
 
 **验证**：`node --test`（包内）**277 pass / 0 fail**（263 → 277，新增 14 条 client UX）。桌面只读脚本由 19 项增至 **30 项**（新增空态/表单校验/REA 信息态/危险操作 dry-run 断言；**本轮未跑桌面**，需发版门禁在真实桌面版上重跑后回填 PASS 记录）。web 冒烟未跑（接口契约未变；`case_project` 只在 description 上收紧）。
+
+## 复审 follow-up（2026-11-28 `batch-ui-1` A1–A4/A6）
+
+`notes/audit/2026-11-28/reviews/batch-ui-1.md` 的非阻塞项（本轮修完，不改接口契约）：
+
+- **A1 卸载清单漏文件**：双语 README 的「卸载后残留 / Uninstall」补上 `builder-sessions.jsonl`，并把「数据布局」树补成与卸载清单一致（根级的 `audit.jsonl` / `last-opened.json` / `session-pointers.json` / `builder-sessions.jsonl` / `trash/`，以及项目目录下的 `artifacts/`、`checks/`、`spec/`、`reports/`、`bundles/`）。
+- **A2 审计 actor 口径**（原 N8）：新增 `auditOriginOf()`，危险操作（drop / restore / purge / restore-failed）不再硬编码 `actor:"user"`——`case_project` 工具路径显式传 `actor:"agent"` + `sessionId`（来源证据），回收站 UI 走 Remote 时显式传 `actor:"user"`，直接调 action 的脚本没传就记 `unknown`（不猜）。审计行新增顶层 `sessionId` 字段。
+- **A3 危险操作焦点/播报**：展开「危险操作」时焦点进主按钮（§7.4.2 默认焦点）；dry-run 影响面出现时焦点移到「取消」（安全项，以前入口按钮被替换后焦点掉到 `document.body`），预览卡加 `role="alert"` + `aria-live="polite"`；取消收起后焦点还回入口按钮。vm 测试用真实 `client.js` + ref 桩驱动，断言三条焦点路径与 live region。
+- **A4 默认收起无断言**：桌面只读脚本新增 `details.open === false` 断言（以前只 `waitFor` 元素存在，折叠时子节点也在 DOM 里，等于没验）。
+- **A6 无项目时假绿**：桌面脚本把空 profile 上 4 条危险操作断言从「记 PASS」改成 **SKIP 并计数**（收尾行变成 `N PASS / M SKIP / 0 FAIL`，并打印 SKIP 原因）；同一类问题的「有项目时空态不可见」也一并改 SKIP。
+
+**验证（2026-11-28，本 worktree）**：`node --test`（包内）**279 pass / 0 fail**（277 → 279：A2 审计口径 1 条 + A3 焦点/播报 1 条；tools 回收站用例扩了 agent 来源断言）。桌面脚本改动**未在 live 桌面重跑**（需发版门禁），断言本身是只读的（dry-run 预览 + 取消），SKIP 计入计数。

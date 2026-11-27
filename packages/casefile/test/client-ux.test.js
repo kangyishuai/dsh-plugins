@@ -99,8 +99,21 @@ function createReactShim() {
     store.effects.push({ index, fn, deps });
   }
 
+  /**
+   * 近似 React.useRef：同一个组件实例跨渲染保持同一个 `{ current }`（effect 里跨渲染记状态要靠它）。
+   * @param {any} [initial]
+   */
+  function useRef(initial) {
+    const store = current;
+    const index = store.index++;
+    if (!(index in store.refs)) {
+      store.refs[index] = { current: initial === undefined ? null : initial };
+    }
+    return store.refs[index];
+  }
+
   return {
-    React: { createElement, useState, useCallback, useEffect },
+    React: { createElement, useState, useCallback, useEffect, useRef },
     /** @param {any} store */
     setCurrent(store) {
       current = store;
@@ -152,7 +165,7 @@ function createRenderSession(Component, props, shim) {
   /** @type {Map<string, any>} */
   const stores = new Map();
   /** @type {any} */
-  const session = { dirty: false, tree: null, pending: [] };
+  const session = { dirty: false, tree: null, pending: [], focusCalls: [] };
 
   /** @param {string} path @param {any} type */
   function storeFor(path, type) {
@@ -163,6 +176,7 @@ function createRenderSession(Component, props, shim) {
         type,
         index: 0,
         states: [],
+        refs: [],
         callbacks: [],
         effects: [],
         lastDeps: [],
@@ -208,13 +222,39 @@ function createRenderSession(Component, props, shim) {
         children: [renderNode(output, `${path}.out`)],
       };
     }
-    return {
+    const host = {
       kind: "host",
       type: node.type,
       props: node.props || {},
       children: (node.children || []).map((/** @type {any} */ child, /** @type {number} */ index) =>
         renderNode(child, `${path}.${index}`),
       ),
+    };
+    wireTestRef(host);
+    return host;
+  }
+
+  /**
+   * 近似 React 的 ref 语义：host 节点渲染后把 `ref.current` 指到一个只记录 focus 的桩，
+   * 这样「展开危险操作聚焦主按钮 / 预览出现聚焦取消 / 取消后焦点归还」这类 a11y 行为
+   * 可以在单测里断言（复审 A3），而不是只读源码字符串。
+   * @param {RNode} host
+   */
+  function wireTestRef(host) {
+    const ref = host.props?.ref;
+    if (typeof ref !== "object" || ref === null || !Object.hasOwn(ref, "current")) return;
+    const anchor = Object.keys(host.props).find(
+      (key) =>
+        key.startsWith("data-casefile-") &&
+        host.props[key] !== undefined &&
+        host.props[key] !== null,
+    );
+    ref.current = {
+      focus() {
+        session.focusCalls.push(
+          anchor ? `${anchor}=${String(host.props[anchor])}` : String(host.type),
+        );
+      },
     };
   }
 
@@ -942,6 +982,57 @@ test("USIM-U3-07 影响面预览可以取消，且不会真的 drop", async () =
     ).length,
     0,
     "取消后影响面预览要收起",
+  );
+});
+
+test("A3：危险操作有默认焦点，预览出现时聚焦「取消」并带 role=alert，取消后焦点归还入口", async () => {
+  const client = loadClient();
+  const rpc = makeRpc({
+    listProjects: () => [PROJECT],
+    overview: () => null,
+    projectDetail: () => DETAIL,
+    listTrash: () => [],
+    dropProject: () => ({
+      dryRun: true,
+      projectId: "demo-app",
+      files: 12,
+      bytes: 2048,
+      recoverable: true,
+    }),
+  });
+  client.setRpc(rpc);
+  const view = client.mount("main");
+  await pump(view);
+  findData(view.session.tree, "data-casefile-project-row", "demo-app").props.onClick();
+  await pump(view);
+
+  // 展开「危险操作」→ 焦点进主按钮（§7.4.2 的默认焦点）。
+  const danger = findData(view.session.tree, "data-casefile-danger");
+  danger.props.onToggle({ currentTarget: { open: true } });
+  assert.ok(
+    view.session.focusCalls.includes("data-casefile-drop=1"),
+    `展开危险操作必须聚焦主按钮：${JSON.stringify(view.session.focusCalls)}`,
+  );
+
+  // dry-run 后入口按钮被预览卡替换：焦点必须落到「取消」（安全项），不能掉到 body。
+  view.session.focusCalls.length = 0;
+  findData(view.session.tree, "data-casefile-drop").props.onClick();
+  await pump(view);
+  const preview = findData(view.session.tree, "data-casefile-drop-preview");
+  assert.equal(preview.props.role, "alert", "影响面预览要能被屏读播报（role=alert）");
+  assert.equal(preview.props["aria-live"], "polite");
+  assert.ok(
+    view.session.focusCalls.includes("data-casefile-drop-cancel=1"),
+    `预览出现后焦点必须在「取消」上：${JSON.stringify(view.session.focusCalls)}`,
+  );
+
+  // 取消收起预览 → 焦点还回入口按钮，键盘用户不用从页面开头重新 Tab。
+  view.session.focusCalls.length = 0;
+  findData(view.session.tree, "data-casefile-drop-cancel").props.onClick();
+  await pump(view);
+  assert.ok(
+    view.session.focusCalls.includes("data-casefile-drop=1"),
+    `取消后焦点要还回入口：${JSON.stringify(view.session.focusCalls)}`,
   );
 });
 

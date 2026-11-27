@@ -125,6 +125,20 @@ export function buildToolDefinitions(handlers, projectOf) {
   };
 
   /**
+   * 危险操作（drop / restore / purge）的审计来源：工具路径由模型发起，记 `agent` 并把会话 id
+   * 作为来源证据（复审 A2）。UI 路径走 Remote，在 service.js 里显式记 `user`。
+   * @param {any} exec
+   * @returns {{ actor: "agent", sessionId: string | null }}
+   */
+  const auditOrigin = (exec) => {
+    const id = exec?.agent?.id;
+    return {
+      actor: "agent",
+      sessionId: typeof id === "string" && id.trim() !== "" ? id.trim() : null,
+    };
+  };
+
+  /**
    * @param {any} args
    * @param {any} exec
    * @returns {string}
@@ -340,6 +354,7 @@ export function buildToolDefinitions(handlers, projectOf) {
               const dropped = await handlers.dropProject(projectId(args, exec), {
                 confirm: args.confirm,
                 dryRun: args.dryRun,
+                ...auditOrigin(exec),
               });
               return {
                 ...dropped,
@@ -360,7 +375,7 @@ export function buildToolDefinitions(handlers, projectOf) {
                   code: "invalid-input",
                 });
               }
-              const restored = await handlers.restoreTrash(name);
+              const restored = await handlers.restoreTrash(name, auditOrigin(exec));
               return {
                 ...restored,
                 summary: `已恢复项目 ${restored.project.id}`,
@@ -371,6 +386,7 @@ export function buildToolDefinitions(handlers, projectOf) {
                 names: args.names,
                 confirm: args.confirm,
                 dryRun: args.dryRun,
+                ...auditOrigin(exec),
               });
               return purged;
             }

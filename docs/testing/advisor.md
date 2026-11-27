@@ -118,7 +118,7 @@ web 冒烟与桌面回归（由 lead 统一跑）；本批没有改 client 行�
 | USIM-U2-15 | 斜杠菜单命令描述改为中英双语：host 半自己读 `locale/<lang>.json` 的 `host` 段，按 `config.language` 或 `LANG`/`LC_ALL` 选语言，读不到回落英文（宿主没有 locale 服务，见 runtime §8.1）                                                                                                              | `messages.test.js`（加载/摊平/选语言/中英描述）、`locale-parity.test.js`（`host` 段不进 client 键集）                                                                  |
 | USIM-U1-11 | advisor 工具的 skip 结果不再把「已关闭 / 未配置 / shadow」这类内部开关状态交给主模型：`exposeSkip` 在 tool 触发时换成中性 code + 「不要把顾问状态写进给用户的回复」；`lastSkip` 仍留真实原因供状态/诊断使用                                                                                         | `tool-result.test.js`（4 项）                                                                                                                                          |
 
-验证口径：`node --test`（包内）= **232 pass / 0 fail**（203 → 232，新增 5 个测试文件里的 29 项），
+验证口径：`node --test`（包内）= **232 pass / 0 fail**（203 → 232，新增 5 个测试文件里的 29 项；复审 follow-up 再 +1 条 `renderToolOutput` + `exposeSkip` 组合断言，现为 **233**），
 `pnpm verify` EXIT=0。按批次约定**没有**跑 web 冒烟与桌面回归（由 lead 统一跑）：
 
 - web 冒烟新增 1 项 Node 侧断言：「`/advisor` 命令回执第一行是原始命令行（日志）」；
@@ -131,7 +131,7 @@ web 冒烟与桌面回归（由 lead 统一跑）；本批没有改 client 行�
 ')` 时才在**卡片第二层**折叠里给 `<pre>`；
 - `conversation.chat.commandview` 是 `command` 渲染器的 keyed 子 slot（`entryKey: command.name`），插件可整卡替换；
 - `command/executed` 只在**本浏览器本地提交成功**时由 `dsh-client-ui-commands` 广播（`notifyExecuted`），别的客户端/历史命令不会触发；
-- 工具结果给模型的是 `value`（JSON），`output.render` 只给界面（`dsh-tools` 的 `createSuccessResult`）——所以 U1-11 的泄漏源是 skip 结果里的 `code`/`reason`。
+- 工具结果的 `value` 是 **execution-local**、不进持久化事件；模型读到的是 `output.render(args, value)` 渲染出的 `content`（`dsh-tools` 用这份 content 构造并持久化 `tool/result`，界面工具卡与模型上下文共用同一份）——所以 U1-11 的泄漏源不是 value 本身，而是 skip 结果里的 `code`/`reason` 被 `renderToolOutput` 渲染成了模型可见文本。
 
 ## 0.6.1 在 0.2.2-rc.3 上的复核记录（2026-11-14，DSH 0.2.2-rc.3）
 
@@ -434,6 +434,10 @@ open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debuggin
 # 2) 跑（--require：连不上端口时失败而不是跳过）
 pnpm smoke:advisor-desktop --require
 # 端口不同时：DSH_CDP_PORT=9333 pnpm smoke:advisor-desktop --require
+# 被测实例用的是自定义 DSH_HOME（临时 home / 非默认 profile）时必须显式传：
+# 脚本要扫 <DSH_HOME>/sessions/*/<sessionId>/session.v*.jsonl.zstd 读命令回执，
+# 不传就默认 ~/.dsh，会读错 home 导致「命令类断言读不到日志」假红。
+DSH_HOME=/path/to/that/dsh-home pnpm smoke:advisor-desktop --require
 # 连真实征询记录一起看（opt-in；只读，脚本不发起征询）：
 pnpm smoke:advisor-desktop --require --advice
 ```

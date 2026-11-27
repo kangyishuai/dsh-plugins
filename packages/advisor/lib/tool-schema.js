@@ -111,7 +111,9 @@ export function unsupportedSchemaKeywords(schema, path = "$") {
 }
 
 /**
- * 工具卡渲染：把结果值转成文本块（**只给界面看**，模型拿到的是 JSON 值本身）。
+ * 工具结果渲染：把结果值转成文本块。宿主用这份 `content` 构造 `tool/result` 消息并持久化，
+ * 所以**模型读到的就是这里的文本**（`value` 是 execution-local，不进持久化事件）；
+ * UI 工具卡与模型上下文共用同一份 content，改这里等于同时改模型可见文本。
  * @param {unknown} _args
  * @param {any} value
  * @returns {any[]}
