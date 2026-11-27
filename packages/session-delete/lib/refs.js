@@ -3,6 +3,7 @@
 // tier 决定它在 plan 里被标成「可自动处理」还是「未知，仅报告」。
 import { join } from "node:path";
 import { trashRoot } from "./paths.js";
+import { readPinnedFlag } from "./workspace-state.js";
 
 /**
  * @typedef {"api" | "internal" | "unknown"} RefTier
@@ -11,13 +12,19 @@ import { trashRoot } from "./paths.js";
  * @property {string[]} [workspaceIds]
  * @property {boolean | null} [pinned]
  *
+ * restore 的返回值让适配器能区分「本来就不用恢复」和「恢复失败」；
+ * 返回 undefined 视作成功（向后兼容）。
+ * @typedef {object} RefRestoreResult
+ * @property {"ok" | "skipped" | "failed"} [status]
+ * @property {string} [detail]
+ *
  * @typedef {object} RefAdapter
  * @property {string} id
  * @property {string} label
  * @property {RefTier} tier
  * @property {(sessionId: string) => Promise<RefSnapshot>} [snapshot]
  * @property {(sessionId: string, snapshot: RefSnapshot) => Promise<void>} [remove]
- * @property {(sessionId: string, snapshot: RefSnapshot) => Promise<void>} [restore]
+ * @property {(sessionId: string, snapshot: RefSnapshot) => Promise<void | RefRestoreResult>} [restore]
  * @property {(sessionId: string) => Promise<{ id: string, label: string, status: "ok" | "failed" | "skipped", detail: string }>} [inspect]
  */
 
@@ -27,11 +34,13 @@ import { trashRoot } from "./paths.js";
  *
  * @param {import("./capability.js").Capabilities} caps
  * @param {any} logger
+ * @param {{ dataRoot?: string }} [options] dataRoot 用于读取置顶集合（没有公开读接口）。
  * @returns {RefAdapter[]}
  */
-export function buildRefs(caps, logger) {
+export function buildRefs(caps, logger, options = {}) {
   const { workspace, storageDomain, sessions, agents } = caps.services;
   const check = caps.checks;
+  const dataRoot = options.dataRoot ?? null;
 
   /** @type {RefAdapter[]} */
   const refs = [];
@@ -45,20 +54,40 @@ export function buildRefs(caps, logger) {
         throw new Error("unarchiveSession unavailable");
       await workspace.unarchiveSession(sessionId);
     },
+    // 删除的第 1 步会 archive 会话（当作 agent/pre-step 闸门），恢复时把它解开。
+    // 归档标记本身不会被还原（ADR：恢复的期望是「会话回到列表」，见 AUD-SD-11 的取舍）。
+    restore: async (sessionId) => {
+      if (typeof workspace?.unarchiveSession !== "function") {
+        throw new Error("unarchiveSession unavailable");
+      }
+      await workspace.unarchiveSession(sessionId);
+      return { status: "ok" };
+    },
   });
 
   refs.push({
     id: "workspace-pin",
     label: "置顶标记",
     tier: check["workspace.unpin"] ? "api" : "unknown",
+    // 置顶集合没有公开读接口：读 storages/workspace.json（只读兜底）。
+    // 读不到时返回 null = 状态未知，绝不能当成「未置顶」。
+    snapshot: async (sessionId) => {
+      if (typeof dataRoot !== "string") return { pinned: null };
+      const pinned = await readPinnedFlag(dataRoot, sessionId).catch(() => null);
+      return { pinned };
+    },
     remove: async (sessionId) => {
       if (typeof workspace?.unpinSession !== "function")
         throw new Error("unpinSession unavailable");
       await workspace.unpinSession(sessionId);
     },
     restore: async (sessionId, snapshot) => {
-      if (!snapshot?.pinned) return;
-      if (typeof workspace?.pinSession === "function") await workspace.pinSession(sessionId);
+      if (snapshot?.pinned !== true) return { status: "skipped", detail: "原本未置顶" };
+      if (typeof workspace?.pinSession !== "function") {
+        throw new Error("pinSession unavailable");
+      }
+      await workspace.pinSession(sessionId);
+      return { status: "ok" };
     },
   });
 
@@ -85,12 +114,33 @@ export function buildRefs(caps, logger) {
       }
     },
     restore: async (sessionId, snapshot) => {
+      /** @type {string[]} */
+      const missing = [];
+      /** @type {string[]} */
+      const failed = [];
       for (const workspaceId of snapshot?.workspaceIds ?? []) {
         const item = (workspace?.list?.() ?? []).find(
           (/** @type {any} */ w) => String(w.id) === workspaceId,
         );
-        if (item && typeof item.attachSession === "function") await item.attachSession(sessionId);
+        if (!item) {
+          missing.push(workspaceId);
+          continue;
+        }
+        if (typeof item.attachSession !== "function") {
+          failed.push(workspaceId);
+          continue;
+        }
+        try {
+          await item.attachSession(sessionId);
+        } catch (error) {
+          failed.push(`${workspaceId}（${error instanceof Error ? error.message : error}）`);
+        }
       }
+      if (failed.length > 0) throw new Error(`挂回工作区失败：${failed.join("、")}`);
+      if (missing.length > 0) {
+        return { status: "skipped", detail: `原工作区已不存在：${missing.join("、")}` };
+      }
+      return { status: "ok" };
     },
     inspect: async (sessionId) => {
       if (typeof workspace?.list !== "function") {
@@ -171,6 +221,106 @@ export function buildRefs(caps, logger) {
   });
 
   return refs;
+}
+
+/**
+ * 记录所有引用的删除前状态（供恢复时还原）。失败的适配器只告警并跳过——
+ * 恢复阶段会把「缺快照」如实记成 skipped，而不是假装还原成功。
+ * @param {RefAdapter[]} refs
+ * @param {string} sessionId
+ * @param {any} logger
+ * @returns {Promise<Record<string, RefSnapshot>>}
+ */
+export async function snapshotAllRefs(refs, sessionId, logger) {
+  /** @type {Record<string, RefSnapshot>} */
+  const snapshots = {};
+  for (const ref of refs) {
+    if (typeof ref.snapshot !== "function") continue;
+    try {
+      snapshots[ref.id] = await ref.snapshot(sessionId);
+    } catch (error) {
+      logger.warn(
+        `session-delete: snapshot ${ref.id} failed: ${error instanceof Error ? error.message : error}`,
+      );
+    }
+  }
+  return snapshots;
+}
+
+/**
+ * 摘掉所有还指向该会话的引用。幂等：恢复/补做会重复调用它。
+ * @param {RefAdapter[]} refs
+ * @param {string} sessionId
+ * @param {Record<string, RefSnapshot>} snapshots
+ * @returns {Promise<{ id: string, label: string, status: "ok" | "failed" | "skipped", detail?: string }[]>}
+ */
+export async function removeAllRefs(refs, sessionId, snapshots = {}) {
+  /** @type {{ id: string, label: string, status: "ok" | "failed" | "skipped", detail?: string }[]} */
+  const removed = [];
+  for (const ref of refs) {
+    if (typeof ref.remove !== "function" || ref.tier === "unknown") {
+      removed.push({
+        id: ref.id,
+        label: ref.label,
+        status: "skipped",
+        detail: "当前宿主不提供该接口",
+      });
+      continue;
+    }
+    try {
+      await ref.remove(sessionId, snapshots[ref.id] ?? {});
+      removed.push({ id: ref.id, label: ref.label, status: "ok" });
+    } catch (error) {
+      removed.push({
+        id: ref.id,
+        label: ref.label,
+        status: "failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return removed;
+}
+
+/**
+ * 把引用恢复到删除前的状态；逐项记录结果，失败不中断其余项（会话文件已经回来了，
+ * 不能因为一个引用失败把恢复整体判死）。
+ * @param {RefAdapter[]} refs
+ * @param {string} sessionId
+ * @param {RefSnapshot} snapshot
+ * @returns {Promise<{ id: string, label: string, status: "ok" | "failed" | "skipped", detail?: string }[]>}
+ */
+export async function restoreAllRefs(refs, sessionId, snapshot) {
+  /** @type {{ id: string, label: string, status: "ok" | "failed" | "skipped", detail?: string }[]} */
+  const results = [];
+  for (const ref of refs) {
+    if (typeof ref.restore !== "function") {
+      results.push({
+        id: ref.id,
+        label: ref.label,
+        status: "skipped",
+        detail: "该引用没有恢复动作",
+      });
+      continue;
+    }
+    try {
+      const outcome = await ref.restore(sessionId, snapshot);
+      results.push({
+        id: ref.id,
+        label: ref.label,
+        status: outcome?.status ?? "ok",
+        detail: outcome?.detail,
+      });
+    } catch (error) {
+      results.push({
+        id: ref.id,
+        label: ref.label,
+        status: "failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return results;
 }
 
 /**

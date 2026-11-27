@@ -58,7 +58,55 @@ export class SessionDeleteService extends TypertRemoteService {
     this._ops = null;
     /** @type {boolean} */
     this.agentToolRegistered = false;
+    /** 启动对账只跑一次（宿主服务重建时 ctx.inject 可能重复触发）。 */
+    this.recoveryRequested = false;
     this.installAgentTool();
+    this.installStartupRecovery();
+  }
+
+  /**
+   * 启动对账（AUD-SD-01）：扫 journal 里昨天中断的操作，按落盘事实补做或回滚。
+   *
+   * 必须等宿主服务挂载后再建操作层——ops 是惰性创建的，过早创建会把能力探测结果
+   * 固化在「服务还没挂上」那一刻。恢复本身幂等，重复触发没有副作用。
+   */
+  installStartupRecovery() {
+    const run = () => {
+      if (this.recoveryRequested) return;
+      this.recoveryRequested = true;
+      void this.ops
+        .recoverPending({ operator: "system" })
+        .then((/** @type {any} */ summary) => {
+          if (summary.examined > 0) {
+            this.ctx.logger?.info?.(
+              `session-delete: startup recovery examined ${summary.examined} record(s) ` +
+                `(${summary.completed} completed, ${summary.rolledBack} rolled back, ` +
+                `${summary.unresolved} unresolved, ${summary.failed} failed)`,
+            );
+          }
+        })
+        .catch((/** @type {any} */ error) => {
+          this.recoveryRequested = false;
+          this.ctx.logger?.warn?.(
+            "session-delete: startup recovery failed: " +
+              (error instanceof Error ? error.message : String(error)),
+          );
+        });
+    };
+    try {
+      if (typeof this.ctx?.inject === "function") {
+        this.ctx.inject(["sessionPersistence"], run);
+        return;
+      }
+      // 没有 ctx.inject 的老宿主：等宿主把服务挂上再跑（ops 的能力探测也才准）。
+      const timer = setTimeout(run, 2000);
+      /** @type {any} */ (timer).unref?.();
+    } catch (error) {
+      this.ctx?.logger?.warn?.(
+        "session-delete: cannot schedule startup recovery: " +
+          (error instanceof Error ? error.message : String(error)),
+      );
+    }
   }
 
   /**
@@ -120,6 +168,8 @@ export class SessionDeleteService extends TypertRemoteService {
           trash: (/** @type {string} */ sessionId, /** @type {any} */ request) =>
             this.ops.trash(sessionId, request),
         },
+        // AUD-SD-04：模型工具的拒绝（token / stale-plan / caller-session）也写审计。
+        onRefusal: (/** @type {any} */ event) => this.ops.recordRefusal(event),
       });
       tools.register(
         defineTool({

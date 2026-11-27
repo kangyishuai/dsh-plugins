@@ -464,3 +464,245 @@ describe("panel loader", () => {
     assert.equal(sinks.readOnly, true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// AUD-SD-08：设置页打开 ≠ 全库体检
+//
+// ADR 0004 §7 的纪律是「除健康检查外不做全库扫描」，而体检本身是**用户动作**。
+// 以前 SettingsSection 一挂载就 printhealthScan()（persistence.list + 逐目录 readdir +
+// 逐条目 stat），会话上千后就是「打开设置卡一下」。这条单测锁住：挂载只拉轻量数据，
+// 体检必须由按钮触发，结果缓存供下次打开复用。
+// ---------------------------------------------------------------------------
+describe("settings loader", () => {
+  /** @param {string[]} calls */
+  const makeCall = (calls) => async (/** @type {string} */ method) => {
+    calls.push(method);
+    if (method === "list") return { entries: [], trashRoot: "/tmp/trash", pending: [] };
+    if (method === "receipts") return { entries: [{ action: "trash" }] };
+    if (method === "audit") return { entries: [{ action: "trash", result: "ok" }] };
+    if (method === "healthScan") {
+      return { ok: true, findings: [], inventory: { stored: 1, trash: 0, pending: 0 } };
+    }
+    throw new Error(`unexpected call ${method}`);
+  };
+
+  it("mounting the settings section must not run a full-library health scan", async () => {
+    const { createSettingsLoader } = client.__test;
+    /** @type {string[]} */
+    const calls = [];
+    /** @type {any} */
+    const sinks = { info: undefined, receipts: undefined, audit: undefined, health: "unset" };
+    const loader = createSettingsLoader(makeCall(calls), {
+      setInfo: (/** @type {any} */ value) => {
+        sinks.info = value;
+      },
+      setReceipts: (/** @type {any} */ value) => {
+        sinks.receipts = value;
+      },
+      setAudit: (/** @type {any} */ value) => {
+        sinks.audit = value;
+      },
+      setHealth: (/** @type {any} */ value) => {
+        sinks.health = value;
+      },
+      setHealthError: () => {},
+      setMessage: () => {},
+    });
+    await loader.load();
+    assert.deepEqual(calls.slice().sort(), ["audit", "list", "receipts"]);
+    assert.equal(calls.includes("healthScan"), false, "挂载时不许跑体检");
+    assert.equal(sinks.health, null, "没有缓存时显示「尚未体检」，而不是假装正在扫描");
+    assert.ok(sinks.info);
+    assert.ok(sinks.audit);
+  });
+
+  it("health scan is user-triggered and reused by the next mount", async () => {
+    const { createSettingsLoader, createSettingsCache } = client.__test;
+    /** @type {string[]} */
+    const calls = [];
+    const cache = createSettingsCache();
+    /** @type {any} */
+    const first = {};
+    const loader = createSettingsLoader(
+      makeCall(calls),
+      {
+        setHealth: (/** @type {any} */ value) => {
+          first.health = value;
+        },
+        setHealthError: (/** @type {any} */ value) => {
+          first.healthError = value;
+        },
+        setMessage: () => {},
+        setInfo: () => {},
+        setReceipts: () => {},
+        setAudit: () => {},
+      },
+      cache,
+    );
+    await loader.load();
+    assert.equal(first.health, null);
+    const summary = await loader.scanHealth();
+    assert.ok(calls.includes("healthScan"));
+    assert.equal(summary.ok, true);
+    assert.equal(first.health, summary);
+
+    // 再打开一次设置页：直接显示缓存，不再扫全库。
+    /** @type {string[]} */
+    const secondCalls = [];
+    /** @type {any} */
+    const second = {};
+    const secondLoader = createSettingsLoader(
+      makeCall(secondCalls),
+      {
+        setHealth: (/** @type {any} */ value) => {
+          second.health = value;
+        },
+        setHealthError: () => {},
+        setMessage: () => {},
+        setInfo: () => {},
+        setReceipts: () => {},
+        setAudit: () => {},
+      },
+      cache,
+    );
+    await secondLoader.load();
+    assert.equal(secondCalls.includes("healthScan"), false);
+    assert.equal(second.health, summary, "缓存的体检结论要复用");
+
+    // 清理之后缓存必须失效（数字已经变了）。
+    loader.invalidate();
+    await loader.load();
+    assert.equal(first.health, null);
+  });
+
+  it("a failed scan reports the reason instead of throwing into the settings page", async () => {
+    const { createSettingsLoader, createSettingsCache } = client.__test;
+    /** @type {any} */
+    const sinks = {};
+    const loader = createSettingsLoader(
+      async (/** @type {string} */ method) => {
+        if (method === "healthScan") throw new Error("persistence unavailable");
+        return { entries: [] };
+      },
+      {
+        setHealth: () => {},
+        setHealthError: (/** @type {any} */ value) => {
+          sinks.error = value;
+        },
+        setMessage: () => {},
+        setInfo: () => {},
+        setReceipts: () => {},
+        setAudit: () => {},
+      },
+      createSettingsCache(),
+    );
+    const value = await loader.scanHealth();
+    assert.equal(value, null, "扫描失败要 resolve(null)，不能把 rejection 抛进 React");
+    assert.match(String(sinks.error), /persistence unavailable/u);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AUD-SD-02/03/09：部分成功与失败必须在界面上说出来
+// ---------------------------------------------------------------------------
+describe("partial result messaging", () => {
+  /** @type {Record<string, string>} */
+  const dict = client.__test.zh;
+  /** @param {string} key @param {Record<string, unknown>} [values] */
+  const t = (key, values) => {
+    const template = dict[key] ?? key;
+    return template.replace(
+      /\{(\w+)\}/g,
+      (/** @type {string} */ _whole, /** @type {string} */ name) => String(values?.[name] ?? ""),
+    );
+  };
+
+  it("distinguishes 'session already in trash, cleanup incomplete' from a plain failure", () => {
+    const { trashFailureText } = client.__test;
+    const partial = Object.assign(new Error("收尾失败"), {
+      code: "session-delete/partial",
+      details: { partial: true, entryId: "entry-1" },
+    });
+    const text = trashFailureText(partial, t);
+    assert.match(text, /已移入回收站/u, text);
+    assert.match(text, /entry-1|可在回收站恢复|收尾/u, text);
+    // 普通失败仍然是原来那句「删除失败」。
+    assert.equal(trashFailureText(new Error("boom"), t), "boom");
+  });
+
+  it("reports partial restore instead of claiming full success", () => {
+    const { restoreNotice } = client.__test;
+    assert.equal(restoreNotice({ ok: true, partial: false, refs: [] }, t), null);
+    const notice = restoreNotice(
+      {
+        ok: true,
+        partial: true,
+        refs: [
+          { id: "workspace-pin", status: "failed" },
+          { id: "workspace-slot", status: "ok" },
+        ],
+        checks: [{ id: "workspace-slot", status: "failed" }],
+      },
+      t,
+    );
+    assert.match(String(notice), /2 处/u, String(notice));
+    assert.match(String(notice), /回执/u, String(notice));
+  });
+
+  it("runBatch counts partial restores so the batch line can report them", async () => {
+    const { runBatch } = client.__test;
+    /** @type {any} */
+    const call = async (/** @type {string} */ _method, /** @type {any} */ request) => ({
+      ok: true,
+      results: request.entryIds.map((/** @type {string} */ entryId) => ({
+        entryId,
+        ok: true,
+        sessionId: `s-${entryId}`,
+        partial: entryId === "b",
+      })),
+    });
+    const summary = await runBatch({
+      ids: ["a", "b", "c"],
+      kind: "restore",
+      call,
+      chunkSize: 20,
+    });
+    assert.equal(summary.ok, 3);
+    assert.equal(summary.partials, 1, "批量恢复也要能说出「其中 1 条引用没还原」");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AUD-XCT-17：关键节点要有稳定的 data-* 锚点（§7.8），回归不再依赖 CSS class。
+// 这里是对源码的静态校验：client 半不渲染 React，只能锁「锚点确实写了」。
+// ---------------------------------------------------------------------------
+describe("stable data-* anchors", () => {
+  it("declares the anchors the web/desktop smokes rely on", () => {
+    const source = fs.readFileSync(clientPath, "utf8");
+    const anchors = [
+      "data-sdel-footer",
+      "data-sdel-count",
+      "data-sdel-panel",
+      "data-sdel-empty",
+      "data-sdel-toolbar",
+      "data-sdel-list",
+      "data-sdel-row",
+      "data-sdel-row-title",
+      "data-sdel-row-meta",
+      "data-sdel-row-actions",
+      "data-sdel-batch",
+      "data-sdel-confirm-row",
+      "data-sdel-impact",
+      "data-sdel-readonly",
+      "data-sdel-error",
+      "data-sdel-settings",
+      "data-sdel-group",
+      "data-sdel-health",
+      "data-sdel-receipts",
+      "data-sdel-audit",
+      "data-sdel-toast",
+    ];
+    const missing = anchors.filter((anchor) => !source.includes(anchor));
+    assert.deepEqual(missing, [], `缺少 data-* 锚点：${missing.join(", ")}`);
+  });
+});

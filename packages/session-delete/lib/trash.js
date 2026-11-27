@@ -2,7 +2,17 @@
 // 回收站：原子移动 + meta.json + 恢复 + 彻底删除。
 // 回收站目录固定放在数据根下（同卷，rename 才是 O(1)），陌生条目一律保留并告警。
 import { randomUUID } from "node:crypto";
-import { cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  readdir,
+  readFile,
+  readlink,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { isInside, requireInside, requireSessionId, trashRoot } from "./paths.js";
 
@@ -75,23 +85,147 @@ export function entryMetaPath(dataRoot, entryId) {
 }
 
 /**
- * 原子移动目录。同卷 rename；跨卷（EXDEV）退化为 cp → 校验 → 删源。
+ * 把一棵目录树读成「相对路径 → 条目指纹」的表，用来逐项比对 cp 的结果。
+ * 指纹包含类型与大小；符号链接比对链接文本，不跟随（cp 默认也不跟随）。
+ * @param {string} root
+ * @returns {Promise<Map<string, string>>}
+ */
+async function treeFingerprints(root) {
+  /** @type {Map<string, string>} */
+  const out = new Map();
+  /** @type {{ dir: string, prefix: string }[]} */
+  const stack = [{ dir: root, prefix: "" }];
+  while (stack.length > 0) {
+    const next = /** @type {{ dir: string, prefix: string }} */ (stack.pop());
+    let entries;
+    try {
+      entries = await readdir(next.dir, { withFileTypes: true });
+    } catch (error) {
+      out.set(
+        `${next.prefix || "."}/`,
+        `unreadable:${/** @type {any} */ (error)?.code ?? "error"}`,
+      );
+      continue;
+    }
+    for (const entry of entries) {
+      const rel = next.prefix ? `${next.prefix}/${entry.name}` : entry.name;
+      const full = join(next.dir, entry.name);
+      if (entry.isSymbolicLink()) {
+        const target = await readlink(full).catch(() => "?");
+        out.set(rel, `link:${target}`);
+      } else if (entry.isDirectory()) {
+        stack.push({ dir: full, prefix: rel });
+      } else if (entry.isFile()) {
+        const info = await stat(full).catch(() => null);
+        out.set(rel, `file:${info?.size ?? -1}`);
+      } else {
+        out.set(rel, "other");
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * 校验「目标目录是源目录的完整副本」：条目集合、每项类型/大小、总字节数都要一致。
+ * 跨卷回退在删源之前必须过这一关——只判断「目标是目录」等于没有校验。
  * @param {string} source
  * @param {string} target
+ * @returns {Promise<{ ok: boolean, sourceFiles: number, targetFiles: number, sourceBytes: number,
+ *   targetBytes: number, missing: string[], extra: string[], differing: string[] }>}
+ */
+export async function verifyDirectoryCopy(source, target) {
+  const [sourceTree, targetTree] = await Promise.all([
+    treeFingerprints(source),
+    treeFingerprints(target),
+  ]);
+  /** @type {string[]} */
+  const missing = [];
+  /** @type {string[]} */
+  const extra = [];
+  /** @type {string[]} */
+  const differing = [];
+  /** @param {string} fingerprint */
+  const sizeOf = (fingerprint) => {
+    const match = /^file:(\d+)$/u.exec(fingerprint);
+    return match ? Number(match[1]) : 0;
+  };
+  let sourceBytes = 0;
+  let sourceFiles = 0;
+  let targetBytes = 0;
+  let targetFiles = 0;
+  for (const [rel, fingerprint] of sourceTree) {
+    if (fingerprint.startsWith("file:")) {
+      sourceFiles += 1;
+      sourceBytes += sizeOf(fingerprint);
+    }
+    if (!targetTree.has(rel)) missing.push(rel);
+    else if (targetTree.get(rel) !== fingerprint) differing.push(rel);
+  }
+  for (const [rel, fingerprint] of targetTree) {
+    if (fingerprint.startsWith("file:")) {
+      targetFiles += 1;
+      targetBytes += sizeOf(fingerprint);
+    }
+    if (!sourceTree.has(rel)) extra.push(rel);
+  }
+  return {
+    ok: missing.length === 0 && extra.length === 0 && differing.length === 0,
+    sourceFiles,
+    targetFiles,
+    sourceBytes,
+    targetBytes,
+    missing,
+    extra,
+    differing,
+  };
+}
+
+/**
+ * 原子移动目录。同卷 rename；跨卷（EXDEV）退化为 cp → **逐项校验** → 删源。
+ * 校验不过就不删源：宁可留下「源还在、目标副本不完整」，也不能制造唯一副本不完整的状态。
+ * @param {string} source
+ * @param {string} target
+ * @param {{ renameImpl?: (source: string, target: string) => Promise<void>,
+ *   cpImpl?: (source: string, target: string, options?: any) => Promise<void> }} [deps]
+ *   仅供单测注入（跨卷路径无法在本机复现）。
  * @returns {Promise<void>}
  */
-async function moveDirectory(source, target) {
+export async function moveDirectory(source, target, deps = {}) {
+  const renameImpl = deps.renameImpl ?? rename;
+  const cpImpl = deps.cpImpl ?? cp;
   try {
-    await rename(source, target);
+    await renameImpl(source, target);
     return;
   } catch (error) {
     const code = /** @type {any} */ (error)?.code;
     if (code !== "EXDEV") throw error;
   }
-  await cp(source, target, { recursive: true, errorOnExist: true, force: false });
-  const [sourceStat, targetStat] = await Promise.all([stat(source), stat(target)]);
-  if (!targetStat.isDirectory()) throw new Error("cross-device copy did not produce a directory");
-  void sourceStat;
+  await cpImpl(source, target, { recursive: true, errorOnExist: true, force: false });
+  const verified = await verifyDirectoryCopy(source, target);
+  if (!verified.ok) {
+    // 目标副本是本次调用新造的（调用方都先确认过目标不存在），删掉它只是恢复原状；
+    // 源始终是权威副本，任何情况下都不删。清理失败就写进错误里，不当静默成功。
+    /** @type {string | null} */
+    let cleanupError = null;
+    try {
+      await rm(target, { recursive: true, force: true });
+    } catch (error) {
+      cleanupError = error instanceof Error ? error.message : String(error);
+    }
+    throw Object.assign(
+      new Error(
+        `cross-device copy verification failed: ${verified.missing.length} missing, ` +
+          `${verified.extra.length} extra, ${verified.differing.length} differing ` +
+          `(${verified.sourceFiles} files / ${verified.sourceBytes} B expected, ` +
+          `got ${verified.targetFiles} files / ${verified.targetBytes} B)`,
+      ),
+      {
+        code: "session-delete/copy-verify-failed",
+        details: { ...verified, cleanupError },
+      },
+    );
+  }
   await rm(source, { recursive: true, force: false });
 }
 
@@ -218,20 +352,29 @@ export async function restoreEntry({ dataRoot, entryId, destinationDir }) {
 
   await mkdir(dirname(destination), { recursive: true });
   await moveDirectory(dataDir, destination);
+  await finalizeRestoreEntry({ dataRoot, entryId, meta, restoredTo: destination });
+  return { meta, restoredTo: destination };
+}
 
+/**
+ * 恢复的收尾：写一份历史记录（条目被清掉后仍可查），再删除回收站条目目录。
+ * 单独抽出来是因为「数据已搬回、条目还没删」正是崩溃后需要补做的那一步。
+ * @param {object} options
+ * @param {string} options.dataRoot
+ * @param {string} options.entryId
+ * @param {TrashMeta} options.meta
+ * @param {string} options.restoredTo
+ * @returns {Promise<void>}
+ */
+export async function finalizeRestoreEntry({ dataRoot, entryId, meta, restoredTo }) {
   const historyDir = join(trashRoot(dataRoot), ".history");
   await mkdir(historyDir, { recursive: true });
   await writeFile(
     join(historyDir, `${entryId}.json`),
-    JSON.stringify(
-      { ...meta, restoredAt: new Date().toISOString(), restoredTo: destination },
-      null,
-      2,
-    ),
+    JSON.stringify({ ...meta, restoredAt: new Date().toISOString(), restoredTo }, null, 2),
     "utf8",
   );
   await rm(entryDir(dataRoot, entryId), { recursive: true, force: true });
-  return { meta, restoredTo: destination };
 }
 
 /**

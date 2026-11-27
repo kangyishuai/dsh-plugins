@@ -128,3 +128,58 @@ test("内部错误归一成模型友好的 code", () => {
   });
   assert.equal(normalizeToolError(new Error("boom")).code, "error");
 });
+
+// ---------------------------------------------------------------------------
+// AUD-SD-04：模型工具的拒绝（token / stale-plan / caller-session）也要留痕。
+// 审计里「20 天 0 条 refused」是取证缺口，而不是系统真的从未拒绝过。
+// ---------------------------------------------------------------------------
+test("拒绝都走审计钩子（token-required / stale-plan / caller-session / blocked）", async () => {
+  /** @type {{ sessionId?: string, code?: string }[]} */
+  const refusals = [];
+  const ops = fakeOps();
+  const controller = createAgentToolController({
+    ops,
+    onRefusal: (/** @type {{ sessionId?: string, code?: string }} */ event) => {
+      refusals.push(event);
+    },
+  });
+
+  const noToken = await controller.remove({ sessionId: "session-abc" });
+  assert.equal(noToken.code, "token-required");
+
+  const blockedController = createAgentToolController({
+    ops: fakeOps({ blockers: [{ code: "session-delete/location-unknown", message: "no dir" }] }),
+    onRefusal: (/** @type {{ sessionId?: string, code?: string }} */ event) => {
+      refusals.push(event);
+    },
+  });
+  const blocked = await blockedController.plan({ sessionId: "session-abc" });
+  assert.equal(blocked.code, "blocked");
+
+  const preview = await controller.plan({ sessionId: "session-abc" });
+  ops.plan = async () => ({
+    sessionId: "session-abc",
+    title: "hello",
+    sizeBytes: 4096,
+    live: false,
+    children: [],
+    blockers: [],
+    digest: "digest-2",
+  });
+  const stale = await controller.remove({ sessionId: "session-abc", token: preview.token });
+  assert.equal(stale.code, "stale-plan");
+
+  const callerPreview = await controller.plan({ sessionId: "session-abc" });
+  const caller = await controller.remove({
+    sessionId: "session-abc",
+    token: callerPreview.token,
+    callerSessionId: "session-abc",
+  });
+  assert.equal(caller.code, "caller-session");
+
+  const codes = refusals.map((item) => item.code);
+  for (const code of ["token-required", "blocked", "stale-plan", "caller-session"]) {
+    assert.ok(codes.includes(code), `${code} 没有进拒绝钩子：${JSON.stringify(refusals)}`);
+  }
+  assert.ok(refusals.every((item) => item.sessionId === "session-abc"));
+});

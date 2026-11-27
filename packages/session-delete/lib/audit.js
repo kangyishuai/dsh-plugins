@@ -10,7 +10,7 @@ const MAX_LINE = 4096;
 
 /**
  * @typedef {object} AuditEntry
- * @property {"plan" | "trash" | "restore" | "purge" | "reconcile" | "health"} action
+ * @property {"plan" | "trash" | "restore" | "purge" | "reconcile" | "health" | "recover"} action
  * @property {"ok" | "refused" | "failed"} result
  * @property {string} [sessionId]
  * @property {string} [entryId]

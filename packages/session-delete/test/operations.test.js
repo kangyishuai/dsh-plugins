@@ -1,119 +1,10 @@
 // @ts-check
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { createOperations } from "../lib/operations.js";
-import { encodeSegment, projectKey } from "../lib/paths.js";
-
-/**
- * 造一个「像宿主」的最小替身。
- * @param {{ live?: boolean, createDir?: boolean, children?: { id: string, title: string | null }[], gate?: () => Promise<void> }} [options]
- */
-async function fixture(options = {}) {
-  const { live = false, createDir = true, children = [], gate } = options;
-  const dataRoot = await mkdtemp(join(tmpdir(), "dsh-sdel-ops-"));
-  const sessionId = "session-abc";
-  const cwd = "/w";
-  const sessionDir = join(dataRoot, "sessions", projectKey(cwd), encodeSegment(sessionId));
-  if (createDir) {
-    await mkdir(sessionDir, { recursive: true });
-    await writeFile(join(sessionDir, "session.v4.jsonl.zstd"), "x".repeat(4096));
-  }
-
-  const state = {
-    archived: false,
-    pinned: false,
-    sessionIds: new Set([sessionId]),
-    flushed: 0,
-    stopped: 0,
-    detached: 0,
-  };
-
-  const workspace = {
-    list: () => [
-      {
-        id: "ws1",
-        sessionIds: [...state.sessionIds],
-        detachSession: async (/** @type {string} */ id) => {
-          state.sessionIds.delete(id);
-          state.detached += 1;
-        },
-        attachSession: async (/** @type {string} */ id) => {
-          state.sessionIds.add(id);
-        },
-      },
-    ],
-    archiveSession: async () => {
-      // 测试并发时不靠「谁先跑完」猜时序：给一个显式挂起点，
-      // 让第一个操作确定地停在 in-flight 状态里（之前这条断言在负载高时会假失败）。
-      if (typeof gate === "function") await gate();
-      state.archived = true;
-    },
-    unarchiveSession: async () => {
-      state.archived = false;
-    },
-    pinSession: async () => {
-      state.pinned = true;
-    },
-    unpinSession: async () => {
-      state.pinned = false;
-    },
-  };
-
-  const persistence = {
-    stat: async (/** @type {string} */ id) => {
-      if (id === sessionId) {
-        return { header: { id: sessionId, title: "hello", cwd }, sizeBytes: 4096 };
-      }
-      const child = children.find((/** @type {any} */ item) => item.id === id);
-      if (child) {
-        return {
-          header: { id, title: child.title, cwd, parentSession: sessionId },
-          sizeBytes: 128,
-        };
-      }
-      return undefined;
-    },
-    list: async () => [
-      { id: sessionId, header: { id: sessionId, title: "hello", cwd } },
-      ...children.map((/** @type {any} */ child) => ({
-        id: child.id,
-        header: { id: child.id, title: child.title, cwd, parentSession: sessionId },
-      })),
-    ],
-  };
-  const liveEntry = live ? { header: { id: sessionId, cwd } } : undefined;
-  const sessions = {
-    get: (/** @type {string} */ id) => (id === sessionId ? liveEntry : undefined),
-    flush: async () => {
-      state.flushed += 1;
-    },
-  };
-
-  /** @type {Record<string, any>} */
-  const services = { sessionPersistence: persistence, sessions, workspaceRegistry: workspace };
-  const ctx = {
-    logger: { info() {}, warn() {}, error() {} },
-    get: (/** @type {string} */ name) => services[name],
-    parallel: async () => {
-      state.stopped += 1;
-    },
-    waterfall: async () => [{ kind: "subagent", items: [{ id: "child-1", label: "子代理一" }] }],
-  };
-
-  const childDirs = [];
-  for (const child of children) {
-    const dir = join(dataRoot, "sessions", projectKey(cwd), encodeSegment(child.id));
-    await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, "session.v4.jsonl.zstd"), "y".repeat(64));
-    childDirs.push(dir);
-  }
-
-  const ops = createOperations({ ctx, dataRoot, logger: ctx.logger });
-  return { dataRoot, sessionId, sessionDir, childDirs, state, ops, ctx };
-}
+import { readEntry } from "../lib/trash.js";
+import { fixture, seedWorkspaceFile } from "./helpers.js";
 
 test("plan 汇总体积、活动、子会话与引用清单", async () => {
   const { ops, sessionId, dataRoot } = await fixture();
@@ -401,5 +292,144 @@ test("trashWorkspace 逐条删除并把全部会话移出工作区记账", async
 test("trashWorkspace 对不存在的工作区明确报错", async () => {
   const { ops, dataRoot } = await fixture();
   await assert.rejects(ops.planWorkspace("ws-missing"), /找不到工作区/u);
+  await rm(dataRoot, { recursive: true, force: true });
+});
+
+// ---------------------------------------------------------------------------
+// AUD-SD-02：恢复不能「一律报成功」。置顶状态要真的被保存与还原，引用恢复与校验
+// 结果要进回执、进界面，失败必须说出来。
+// ---------------------------------------------------------------------------
+test("trash 保存置顶状态，restore 还原置顶与工作区并回执带 refs/checks", async () => {
+  const { ops, sessionId, state, dataRoot } = await fixture();
+  await seedWorkspaceFile(dataRoot, { pinned: [sessionId], workspaces: { ws1: [sessionId] } });
+  const plan = await ops.plan(sessionId);
+  const trashed = await ops.trash(sessionId, { digest: plan.digest });
+  const meta = await readEntry(dataRoot, trashed.entryId);
+  assert.equal(meta.pinned, true, "AUD-SD-06：置顶状态必须写进 meta（此前恒为 null）");
+  assert.equal(state.pinned, false, "删除时置顶标记要被摘掉");
+  const trashReceipt = (await ops.receipts(5)).entries.find((entry) => entry.action === "trash");
+  assert.ok(trashReceipt);
+  assert.ok(
+    trashReceipt.removed.some(
+      (/** @type {any} */ item) => item.id === "workspace-pin" && item.status === "ok",
+    ),
+    JSON.stringify(trashReceipt.removed),
+  );
+
+  const restored = await ops.restore(trashed.entryId);
+  assert.equal(restored.ok, true);
+  assert.equal(restored.partial, false, JSON.stringify(restored.refs));
+  assert.equal(state.pinned, true, "AUD-SD-02：恢复要还原置顶");
+  assert.equal(state.sessionIds.has(sessionId), true, "恢复要挂回原工作区");
+  assert.ok(restored.checks.find((item) => item.id === "session-dir" && item.status === "ok"));
+  assert.ok(restored.checks.find((item) => item.id === "workspace-slot" && item.status === "ok"));
+  assert.ok(restored.checks.find((item) => item.id === "workspace-pin" && item.status === "ok"));
+
+  const restoreReceipt = (await ops.receipts(5)).entries.find(
+    (entry) => entry.action === "restore",
+  );
+  assert.ok(Array.isArray(restoreReceipt.refs), "恢复回执要逐项记录引用结果");
+  assert.ok(Array.isArray(restoreReceipt.checks), "恢复回执要带恢复后的校验结果");
+  assert.equal(restoreReceipt.partial, false);
+  await rm(dataRoot, { recursive: true, force: true });
+});
+
+test("restore 引用恢复失败时如实报告 partial，不再一律报成功", async () => {
+  const { ops, sessionId, dataRoot } = await fixture({ failAttach: true, failPin: true });
+  await seedWorkspaceFile(dataRoot, { pinned: [sessionId], workspaces: { ws1: [sessionId] } });
+  const plan = await ops.plan(sessionId);
+  const trashed = await ops.trash(sessionId, { digest: plan.digest });
+  const restored = await ops.restore(trashed.entryId);
+  assert.equal(restored.ok, true, "会话文件已经回来了，ok 仍是 true");
+  assert.equal(restored.partial, true, "引用没恢复成功时不能报完整成功");
+  const failed = restored.refs
+    .filter((/** @type {any} */ item) => item.status === "failed")
+    .map((/** @type {any} */ item) => item.id);
+  assert.ok(failed.includes("workspace-pin"), JSON.stringify(restored.refs));
+  assert.ok(failed.includes("workspace-slot"), JSON.stringify(restored.refs));
+  assert.ok(restored.checks.some((/** @type {any} */ item) => item.status === "failed"));
+
+  const audit = await ops.auditLog(20);
+  const restoreEntry = audit.entries.find((entry) => entry.action === "restore");
+  assert.ok(restoreEntry);
+  assert.match(String(restoreEntry.detail), /未通过/u, "失败原因要进审计，不能只 logger.warn");
+  const receipt = (await ops.receipts(5)).entries.find((entry) => entry.action === "restore");
+  assert.equal(receipt.partial, true);
+  await rm(dataRoot, { recursive: true, force: true });
+});
+
+// ---------------------------------------------------------------------------
+// AUD-SD-03：trash 已经移动、收尾失败时，磁盘事实是「会话在回收站」。
+// 错误语义、审计与回执都必须跟磁盘一致，而不是一句「删除失败」。
+// ---------------------------------------------------------------------------
+test("trash 已移动但收尾失败：审计写明已进回收站，并写 partial 回执", async () => {
+  /** @type {string} */
+  let entryId = "";
+  const { ops, sessionId, sessionDir, dataRoot } = await fixture({
+    // 在归档步骤里制造一次确定性失败：把 journal 的原子写临时路径换成目录，
+    // 于是 updateOperation（移动后立刻写 entryId）会 EISDIR。不依赖 chmod/权限。
+    gate: async () => {
+      const dir = join(dataRoot, "session-trash", "journal");
+      const names = await readdir(dir);
+      const record = names.find((name) => name.endsWith(".json"));
+      assert.ok(record, "journal 里应当已经有一条 intent 记录");
+      await mkdir(join(dir, `${String(record).replace(/\.json$/u, "")}.json.tmp`));
+    },
+  });
+  const plan = await ops.plan(sessionId);
+  await assert.rejects(ops.trash(sessionId, { digest: plan.digest }), (error) => {
+    if (/** @type {any} */ (error).code !== "session-delete/partial") return false;
+    assert.equal(/** @type {any} */ (error).details?.partial, true);
+    entryId = String(/** @type {any} */ (error).details?.entryId ?? "");
+    return true;
+  });
+  // 数据安全：会话确实在回收站（不是「什么都没发生」，也不是「删丢了」）。
+  await assert.rejects(stat(sessionDir));
+  const listed = await ops.list();
+  assert.equal(listed.entries.length, 1);
+  assert.equal(listed.entries[0].sessionId, sessionId);
+  assert.ok(entryId.length > 0, "错误详情要给出可以人工恢复的 entryId");
+
+  const audit = await ops.auditLog(20);
+  const failed = audit.entries.find(
+    (entry) => entry.action === "trash" && entry.result === "failed",
+  );
+  assert.ok(failed);
+  assert.match(String(failed.detail), /已移入回收站/u);
+  const partial = (await ops.receipts(10)).entries.find(
+    (entry) => entry.action === "trash" && entry.partial === true,
+  );
+  assert.ok(partial, "partial 回执是事后核对引用清理进度的唯一依据");
+  assert.equal(partial.entryId, listed.entries[0].entryId);
+  await rm(dataRoot, { recursive: true, force: true });
+});
+
+// ---------------------------------------------------------------------------
+// AUD-SD-04：plan 阶段的拒绝必须进审计
+// ---------------------------------------------------------------------------
+test("plan 阶段的拒绝（stale-plan / not-found）也写拒绝审计", async () => {
+  const { ops, sessionId, dataRoot } = await fixture();
+  const before = (await ops.auditLog(200)).entries.filter((entry) => entry.result === "refused");
+  await assert.rejects(
+    ops.trash(sessionId, { digest: "deadbeef" }),
+    (error) => /** @type {any} */ (error).code === "session-delete/stale-plan",
+  );
+  await assert.rejects(ops.trash("session-missing"), /no session named/);
+  const refused = (await ops.auditLog(200)).entries.filter((entry) => entry.result === "refused");
+  assert.equal(refused.length, before.length + 2, "两次拒绝都要留痕");
+  assert.ok(refused.some((entry) => /stale-plan/u.test(String(entry.detail))));
+  assert.ok(refused.some((entry) => /not-found/u.test(String(entry.detail))));
+  await rm(dataRoot, { recursive: true, force: true });
+});
+
+test("restoreMany 把 partial 带进批量结果（批量行才能说出未还原项）", async () => {
+  const { ops, sessionId, dataRoot } = await fixture({ failAttach: true });
+  await seedWorkspaceFile(dataRoot, { workspaces: { ws1: [sessionId] } });
+  const plan = await ops.plan(sessionId);
+  const trashed = await ops.trash(sessionId, { digest: plan.digest });
+  const batch = await ops.restoreMany({ entryIds: [trashed.entryId] });
+  assert.equal(batch.ok, true);
+  assert.equal(batch.results[0].ok, true);
+  assert.equal(batch.results[0].partial, true);
   await rm(dataRoot, { recursive: true, force: true });
 });
