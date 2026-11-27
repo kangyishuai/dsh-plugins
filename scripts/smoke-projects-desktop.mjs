@@ -20,7 +20,7 @@
 //   无渲染崩溃 / 摘要已本地化 / 新建控件存在（不提交）/
 //   详情页两列栅格 + 6 个状态药丸 + 3 个页签（§7.3）+ Library 右栏入口 + 审计不在详情页 /
 //   设置四个分区 + 审计在 Debug 分区 + PR 档位/预授权入口（设置页被禁用时如实 SKIP）/
-//   审批卡片影响面（每行都有 data-projects-approval-impact）/
+//   审批卡片影响面（有审批行时断言每行非空，profile 无数据则如实 SKIP）/
 //   无协调者时的「唤醒不会执行」提示（data-projects-coordinator-wake-hint）/
 //   Esc 关闭后界面仍可用 / 截图落盘。
 //   `--create` 另有：建临时项目 / 删除进回收站 / 彻底删除 / 盘上 projects.json 校验。
@@ -401,6 +401,14 @@ const main = async () => {
             const node = document.querySelector("[data-projects-approval-impact]");
             return node ? String(node.innerText || "").slice(0, 120) : "";
           })(),
+          // 每行都必须有**非空**影响面文本（复审 F6d：只看「行数==影响面数」在
+          // approvals 为空的 profile 里是 0=0 恒真，等于没覆盖）。
+          approvalRowsWithText: [...document.querySelectorAll("[data-projects-approval-row]")].filter(
+            (row) => {
+              const node = row.querySelector("[data-projects-approval-impact]");
+              return Boolean(node) && String(node.innerText || "").trim() !== "";
+            },
+          ).length,
         };
       })()`);
 
@@ -571,16 +579,28 @@ const main = async () => {
           }),
         );
       }
-      // AUD-PROJ-07（只读）：审批行必须带「影响面」；没有待审批时两边都是 0。
-      check(
-        "审批卡片显示影响面（每行都有 data-projects-approval-impact；无审批时 0=0）",
-        snap.approvalRows === snap.approvalImpacts,
-        JSON.stringify({
-          rows: snap.approvalRows,
-          impacts: snap.approvalImpacts,
-          sample: snap.approvalImpactText,
-        }),
-      );
+      // AUD-PROJ-07（只读）：有审批行就必须每行都有**非空**影响面文本。
+      // 复审 F6d：之前写成 `rows === impacts`，live profile 没有待审批时恒 0=0，
+      // 等于把「未覆盖」伪装成 PASS——现在没有数据就如实 SKIP。
+      if (snap.approvalRows > 0) {
+        check(
+          "审批卡片显示影响面（每一行都有非空 data-projects-approval-impact，含对象标识）",
+          snap.approvalRowsWithText === snap.approvalRows &&
+            /(PR|repo|branch|session|project|keys|retentionDays)=/u.test(
+              String(snap.approvalImpactText),
+            ),
+          JSON.stringify({
+            rows: snap.approvalRows,
+            withText: snap.approvalRowsWithText,
+            sample: snap.approvalImpactText,
+          }),
+        );
+      } else {
+        skip(
+          "审批卡片显示影响面（每一行都有非空 data-projects-approval-impact，含对象标识）",
+          "该 profile 没有待审批/待执行申请（只读回归不造数据；影响面的渲染与投影由 approval-view 单测覆盖）",
+        );
+      }
       // 结构对齐 Claude 后：详情页 = 左对话 + 右面板；指令/记忆/上下文在「项目设置」抽屉里
       const drawer = await cdp.evaluate(`(async () => {
         const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
