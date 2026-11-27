@@ -2262,20 +2262,14 @@ export class ProjectsService extends TypertRemoteService {
       wantsTiming,
     });
     // AUD-PROJ-02：只有「手动 → 自动档」（action=create）会**新开**一条会投递的宿主定时，
-    // 暂停/归档项目下要拒绝（否则 pause 之后还能靠编辑 routine 重新打开花钱的路径）。
+    // 暂停/归档项目下不能让它真的开始投递（否则 pause 之后还能靠编辑 routine 重新打开花钱的路径）。
+    // 回归修正（2026-11-28）：与 createRoutine 同一处置——**建但按住**（paused），不硬拒绝
+    // （硬拒绝会让用户在暂停项目里改不动任何 routine，而拒绝理由只在一次性的消息条上闪过）。
     // 改指令 / 改成手动 / 删除都是收窄或无害，照旧放行。
+    let heldPaused = false;
     if (action === "create") {
       const automationGate = checkProjectAcceptsAutomation(project);
-      if (!automationGate.ok) {
-        store.appendAudit({
-          action: "routine/update-refused",
-          projectId,
-          routineId,
-          reason: automationGate.reason,
-        });
-        store.save();
-        return { ok: false, reason: automationGate.reason };
-      }
+      heldPaused = !automationGate.ok;
     }
     const schedule = this.scheduleHost();
     let nextScheduleId = String(routine.scheduleId ?? "");
@@ -2363,6 +2357,26 @@ export class ProjectsService extends TypertRemoteService {
         return { ok: false, reason: "schedule-failed" };
       }
       if (nextScheduleId === "") return { ok: false, reason: "schedule/no-id" };
+      if (heldPaused) {
+        const held = await this.holdSchedulePaused(nextScheduleId, schedule);
+        if (!held.ok) {
+          try {
+            await schedule.edit({ id: nextScheduleId, action: "delete" });
+          } catch {
+            /* 撤不掉：审计里带 scheduleId，用户能在宿主侧清理 */
+          }
+          store.appendAudit({
+            action: "routine/update-failed",
+            projectId: project.id,
+            routineId,
+            reason: "hold-paused-failed",
+            detail: held.reason,
+            scheduleId: nextScheduleId,
+          });
+          store.save();
+          return { ok: false, reason: `schedule/${held.reason || "hold-paused-failed"}` };
+        }
+      }
     }
     const written = store.patchRoutine(project.id, routineId, {
       ...planned.local,
@@ -2375,9 +2389,10 @@ export class ProjectsService extends TypertRemoteService {
       frequency: planned.local.frequency,
       hostAction: action,
       scheduleId: nextScheduleId,
+      heldPaused,
     });
     store.save();
-    return { ok: true, routine: written.routine, hostAction: action };
+    return { ok: true, routine: written.routine, hostAction: action, heldPaused };
   }
 
   /**
@@ -5134,6 +5149,8 @@ export class ProjectsService extends TypertRemoteService {
       model,
       checked: verdict.checked,
       found: verdict.found,
+      // 目录不认识 provider / 读不到目录时不拦，但审计要留下「为什么没校验」。
+      reason: verdict.reason,
     });
     store.save();
     if (verdict.checked && !verdict.found) {
@@ -6517,6 +6534,40 @@ export class ProjectsService extends TypertRemoteService {
   }
 
   /**
+   * 把一条刚建好的宿主定时**按住**（`patch.active:false`），并回读确认真的 paused。
+   *
+   * AUD-PROJ-02 的回归修正：暂停/归档项目下新建自动档 routine 时，条目要存在（可停用/可删/
+   * 可回读），但不能到点投递。宿主 `create` 没有 `active` 字段（见 docs/runtime §14 的
+   * `ScheduleCreateInput`），所以先建再改；**必须回读**——只看「没抛错」会把假成功当成功。
+   * @param {string} scheduleId @param {any} schedule
+   * @returns {Promise<{ ok: boolean, reason: string }>}
+   */
+  async holdSchedulePaused(scheduleId, schedule) {
+    if (scheduleId === "") return { ok: false, reason: "no-schedule-id" };
+    if (!schedule || typeof schedule.edit !== "function") {
+      return { ok: false, reason: "schedule-unavailable" };
+    }
+    try {
+      const edited = await schedule.edit({
+        id: scheduleId,
+        action: "update",
+        patch: hostActivePatch("pause"),
+      });
+      const outcome = classifyHostScheduleResult(edited);
+      if (outcome.kind !== "task") return { ok: false, reason: outcome.code || outcome.kind };
+      if (outcome.status !== "paused") {
+        return { ok: false, reason: `status-${outcome.status || "unknown"}` };
+      }
+      return { ok: true, reason: "" };
+    } catch (error) {
+      return {
+        ok: false,
+        reason: String(/** @type {any} */ (error)?.message ?? error).slice(0, 160),
+      };
+    }
+  }
+
+  /**
    * F36：Routines 视图（列表 + 每条 routine 的宿主状态 + 历史 + 成本提示）。
    * @param {string} projectId
    * @returns {Promise<any>}
@@ -6578,16 +6629,17 @@ export class ProjectsService extends TypertRemoteService {
     const routineId = newRoutineId();
     /** @type {any} */
     let scheduleId = "";
+    // 项目被暂停/归档时，宿主条目建完就按成 paused（见下面的 holdSchedulePaused）。
+    let heldPaused = false;
     const schedule = this.scheduleHost();
     if (timing.timing !== null) {
-      // AUD-PROJ-02：暂停/归档的项目不能再建「到点自动投递（= 花 token）」的定时任务，
-      // 否则 pause 只是停内存里的东西，花钱的路径照旧。手动档没有宿主条目，不拦。
+      // AUD-PROJ-02：暂停/归档的项目不能再「到点自动投递（= 花 token）」。
+      // 回归修正（2026-11-28）：以前这里是**硬拒绝**，结果是「用了暂停项目的用户在建完
+      // routine 之后看不到任何行，也没有可回读的状态」——静默死锁。真金白银的风险是
+      // 「到点自动投递」，所以改成：照常建宿主条目，随后立刻把它按成 paused
+      // （`holdSchedulePaused`）；恢复项目时 `resumeProject` 的对账会放开它。
+      // 手动档没有宿主条目，根本不会自己花钱，不涉及这一段。
       const gate = checkProjectAcceptsAutomation(project);
-      if (!gate.ok) {
-        store.appendAudit({ action: "routine/create-refused", projectId, reason: gate.reason });
-        store.save();
-        return { ok: false, reason: gate.reason };
-      }
       if (!schedule || typeof schedule.create !== "function") {
         return { ok: false, reason: "schedule-unavailable" };
       }
@@ -6620,6 +6672,32 @@ export class ProjectsService extends TypertRemoteService {
         };
       }
       if (scheduleId === "") return { ok: false, reason: "schedule/no-id" };
+      // AUD-PROJ-02（回归修正）：暂停/归档项目下新建的自动档「建但按住」——条目存在、
+      // 可停用/可删除/可回读，但宿主侧是 paused，不会到点投递。按不住就撤掉条目并如实报错
+      // （宁可不建，也不留一条会花钱的孤儿）。
+      if (!gate.ok) {
+        const held = await this.holdSchedulePaused(scheduleId, schedule);
+        if (!held.ok) {
+          if (typeof schedule.edit === "function") {
+            try {
+              await schedule.edit({ id: scheduleId, action: "delete" });
+            } catch {
+              /* 撤不掉：下面把 scheduleId 写进审计，用户能在宿主侧清理 */
+            }
+          }
+          store.appendAudit({
+            action: "routine/create-failed",
+            projectId,
+            frequency: value.frequency,
+            reason: "hold-paused-failed",
+            detail: held.reason,
+            scheduleId,
+          });
+          store.save();
+          return { ok: false, reason: `schedule/${held.reason || "hold-paused-failed"}` };
+        }
+        heldPaused = true;
+      }
     }
     try {
       const added = store.addRoutine(projectId, {
@@ -6645,6 +6723,9 @@ export class ProjectsService extends TypertRemoteService {
         routineId,
         frequency: value.frequency,
         scheduleId,
+        // 暂停/归档项目下建的那条会被按成 paused（本地 enabled 仍是 true，
+        // 恢复项目时对账会放开它）——审计里要能区分，不然看起来像「建了就生效了」。
+        heldPaused,
       });
       store.save();
       const entry = await this.scheduleEntry(scheduleId);
@@ -6653,9 +6734,10 @@ export class ProjectsService extends TypertRemoteService {
         routine: {
           ...added.routine,
           description: describeRoutineFrequency(added.routine),
-          status: describeScheduleStatus(entry, true),
+          status: describeScheduleStatus(entry, added.routine.enabled !== false),
         },
         scheduleId,
+        heldPaused,
         timing: timing.timing,
       };
     } catch (error) {
@@ -6685,6 +6767,12 @@ export class ProjectsService extends TypertRemoteService {
       .listRoutines(projectId)
       .find((/** @type {any} */ item) => item.id === routineId);
     if (!routine) return { ok: false, reason: "routine/not-found" };
+    const project = store.getProject(String(projectId ?? ""));
+    if (!project) throw new Error(`projects: unknown project ${projectId}`);
+    // AUD-PROJ-02 回归修正：暂停/归档项目里点「启用」不能真把宿主条目放开——否则
+    // 「停用 → 启用」一步就绕过了项目暂停，条目在项目仍 paused 时继续到点烧 token。
+    // 本地 `enabled` 照实写（恢复项目时对账会放开它），宿主这一侧强制留在 paused。
+    const holdPaused = enabled === true && !checkProjectAcceptsAutomation(project).ok;
     const schedule = this.scheduleHost();
     let hostResult = "manual";
     if (routine.scheduleId !== "") {
@@ -6696,13 +6784,17 @@ export class ProjectsService extends TypertRemoteService {
         const edited = await schedule.edit({
           id: routine.scheduleId,
           action: "update",
-          patch: hostActivePatch(enabled === true ? "resume" : "pause"),
+          patch: hostActivePatch(enabled === true && !holdPaused ? "resume" : "pause"),
         });
         const outcome = classifyHostScheduleResult(edited);
         if (outcome.kind === "not-found" || outcome.kind === "conflict") {
           return { ok: false, reason: `schedule/${outcome.code || outcome.kind}` };
         }
-        hostResult = enabled === true ? "active" : "paused";
+        hostResult = enabled === true && !holdPaused ? "active" : "paused";
+        // 按住之后回读一次，别把「发了 patch 但宿主没变」当成功
+        if (holdPaused && outcome.kind === "task" && outcome.status !== "paused") {
+          return { ok: false, reason: `schedule/status-${outcome.status || "unknown"}` };
+        }
       } catch (error) {
         return {
           ok: false,
@@ -6717,6 +6809,8 @@ export class ProjectsService extends TypertRemoteService {
       routineId,
       enabled: enabled === true,
       hostResult,
+      // 项目暂停/归档时「启用」只是把本地开关打开，宿主条目仍按住（恢复项目才放开）。
+      heldPaused: holdPaused,
     });
     store.save();
     const entry = await this.scheduleEntry(routine.scheduleId);
@@ -6728,6 +6822,7 @@ export class ProjectsService extends TypertRemoteService {
         status: describeScheduleStatus(entry, enabled === true),
       },
       hostResult,
+      heldPaused: holdPaused,
     };
   }
 

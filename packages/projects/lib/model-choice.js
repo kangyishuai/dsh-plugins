@@ -42,10 +42,19 @@ export function catalogChoices(catalog) {
 /**
  * 校验一个 `{provider, model}` 是否在目录里。
  *
- * 三种结果：
- *  - `checked:false` → 目录拿不到/为空，**无法判断**（写入口应当放过并如实标注）
+ * 四种结果：
+ *  - `checked:false, reason:'model/empty'` → 没写模型（继承宿主默认），没什么可校验
+ *  - `checked:false, reason:'catalog-unavailable'` → 目录拿不到/为空，**无法判断**（写入口放过）
+ *  - `checked:false, reason:'provider-unknown'` → 目录里根本没有这个 provider，**无法判断**
  *  - `checked:true, found:true` → 命中
  *  - `checked:true, found:false` → 明确不在目录里（写入口应当拒绝并给可读原因）
+ *
+ * 为什么 provider 不在目录里要按「无法判断」处理（B3 复审 P0 的回归修正）：
+ * `sessionController.modelCatalog` 只列出**当前部署可用**的 provider，而项目级默认模型允许
+ * 手填（无凭据部署 / 目录未覆盖的部署特有 provider，见 client 的「手填」兜底）。
+ * 目录不认识这个 provider，就没有任何依据说这条模型不可用——判成 not-found 会把
+ * 「手填一个目录外的 provider + 部署特有 effort」整条写入拒掉（web 冒烟 F42 就是这么红的）。
+ * 反过来，provider 在目录里而模型不在，才是 AUD-PROJ-24 要抓的真事（换 provider 后默认模型失效）。
  * @param {any} catalog
  * @param {{ provider?: string, model?: string }} choice
  * @returns {{ checked: boolean, found: boolean, reason: string }}
@@ -56,6 +65,10 @@ export function checkCatalogChoice(catalog, choice) {
   const choices = catalogChoices(catalog);
   if (choices.length === 0) return { checked: false, found: false, reason: "catalog-unavailable" };
   const provider = String(choice?.provider ?? "").trim();
+  // 目录里有 provider 字段（group.id/provider/name）但没有这个 provider → 目录对这条选择没有发言权。
+  if (provider !== "" && !choices.some((item) => item.provider === provider)) {
+    return { checked: false, found: false, reason: "provider-unknown" };
+  }
   const found = choices.some(
     (item) =>
       item.model === model &&
