@@ -153,7 +153,7 @@ export function buildToolDefinitions(handlers, projectOf) {
     {
       name: TOOL_NAMES.project,
       description:
-        "casefile 项目：open 新建或打开已有项目，list 列出，get 看详情，update 改授权档/范围/状态；trash/restore/purge 管理回收站。",
+        "casefile 项目：open 新建或打开已有项目，list 列出，get 看详情，update 改授权档/范围/状态；trash/restore/purge 管理回收站。drop 会移动整个项目目录：只能在用户明确同意后调用，不要自行 drop 项目（面板的「危险操作 → 移入回收站」是给用户自己点的路径）。",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -241,7 +241,7 @@ export function buildToolDefinitions(handlers, projectOf) {
           confirm: {
             type: "boolean",
             description:
-              "drop/purge 时必须传 true：drop 把整个项目目录移进 trash（可在回收站恢复）；purge 硬删回收站条目（不可恢复）",
+              "drop/purge 时必须传 true：drop 把整个项目目录移进 trash（可在回收站恢复）；purge 硬删回收站条目（不可恢复）。drop 前必须先得到用户明确同意（用户原话要求丢弃该项目），不得自行决定。",
           },
         },
         required: ["action"],

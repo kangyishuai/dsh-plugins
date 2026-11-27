@@ -7,8 +7,9 @@
 //   # 2) 跑（发版门禁加 --require：连不上端口时失败而不是跳过）
 //   pnpm smoke:casefile-desktop --require
 //
-// 只读：只切换主面板与设置分节、打开/取消新建表单，然后 Esc 关闭。
-// 不写任何项目数据、不关闭义务、不点删除，因此可以直接跑在真实 profile 上。
+// 只读：切换主面板与设置分节、打开/取消新建表单、打开项目详情与「危险操作 → 移入回收站」的
+// 影响面预览（dry-run，不落盘）、最后 Esc 关闭。
+// 不写任何项目数据、不关闭义务、不确认任何删除，因此可以直接跑在真实 profile 上。
 // 数据面的断言（建项目/记证据/关义务被拒）在 `pnpm smoke:casefile` 的临时 DSH_HOME 里做。
 //
 // 端口可用 --port 或 DSH_CDP_PORT 覆盖（默认 9222）。
@@ -215,6 +216,17 @@ async function main() {
       "面板显示自主性级别徽章（data-casefile-autonomy，默认 L2）",
       autonomy != null && /^L[0-3]$/.test(String(autonomy.level)) && autonomy.text.length > 0,
     );
+    const autonomyHint = await page.evaluate(`(() => {
+      const el = document.querySelector("[data-casefile-autonomy]");
+      return el ? String(el.getAttribute("title") || "") : "";
+    })()`);
+    check(
+      "自主性提示是人话（保留 L0–L3 副标题、无 scope= 代码术语）",
+      typeof autonomyHint === "string" &&
+        autonomyHint.includes("L0") &&
+        !autonomyHint.includes("scope="),
+      String(autonomyHint).slice(0, 120),
+    );
     await screenshot(page, "panel");
 
     // 3) 新建表单可打开/取消（不提交）
@@ -222,6 +234,43 @@ async function main() {
     check("「新建项目」按钮可点击", newHit === true);
     const formMounted = await waitFor(page, "[data-casefile-create]", 3000);
     check("新建表单渲染（data-casefile-create）", formMounted === true);
+    const fieldInfo = await page.evaluate(`(() => {
+      const form = document.querySelector("[data-casefile-create]");
+      if (!form) return null;
+      const title = form.querySelector('[data-casefile-field-input="title"]');
+      const submit = form.querySelector("[data-casefile-submit]");
+      return {
+        labels: Array.from(form.querySelectorAll("label")).map((node) => (node.textContent || "").trim()),
+        titleRequired: title ? title.getAttribute("aria-required") : null,
+        submitDisabled: submit ? submit.disabled === true : null,
+      };
+    })()`);
+    check(
+      "新建表单四个字段都有可见标签（标题/目标/对象类型/授权范围）",
+      fieldInfo != null &&
+        Array.isArray(fieldInfo.labels) &&
+        fieldInfo.labels.length >= 4 &&
+        fieldInfo.labels.join(" ").includes("项目标题") &&
+        fieldInfo.labels.join(" ").includes("授权范围"),
+      JSON.stringify(fieldInfo?.labels),
+    );
+    check(
+      "标题标记必填；空标题时「创建」仍可点（否则就是「点了没反应」）",
+      fieldInfo != null && fieldInfo.titleRequired === "true" && fieldInfo.submitDisabled === false,
+      JSON.stringify(fieldInfo),
+    );
+    const submitEmpty = await clickTextScoped(page, "创建", "[data-casefile-create]");
+    const errorShown = await waitFor(page, "[data-casefile-create-error]", 2000);
+    check("空标题点「创建」给出可见错误", submitEmpty === true && errorShown === true);
+    const titleInvalid = await page.evaluate(`(() => {
+      const input = document.querySelector('[data-casefile-field-input="title"]');
+      return input ? input.getAttribute("data-invalid") : null;
+    })()`);
+    check(
+      "必填未填时标题输入框高亮（data-invalid=true）",
+      titleInvalid === "true",
+      String(titleInvalid),
+    );
     const cancelHit = await clickTextScoped(page, "取消", "[data-casefile-create]");
     check("「取消」能收起表单", cancelHit === true);
     await sleep(300);
@@ -234,6 +283,20 @@ async function main() {
       hasRows === true || hasEmpty === true,
       `rows=${hasRows} empty=${hasEmpty}`,
     );
+    if (hasEmpty === true) {
+      const emptyText = await textOf(page, '[data-casefile-empty="projects"]');
+      const emptyAdvanced = await exists(
+        page,
+        '[data-casefile-empty="projects"] details[data-casefile-advanced]',
+      );
+      check(
+        "空态是人话引导（含「第一步」），工具名收在高级折叠",
+        typeof emptyText === "string" && emptyText.includes("第一步") && emptyAdvanced === true,
+        `text=${String(emptyText).slice(0, 80)} advanced=${emptyAdvanced}`,
+      );
+    } else {
+      check("空态是人话引导（含「第一步」），工具名收在高级折叠", true, "有项目，空态不可见");
+    }
 
     // 4b) 回收站入口（只读：点开、看到空/条目、返回；不点恢复/清空）
     const trashToggle = await clickTextScoped(page, "回收站", "[data-casefile-page]");
@@ -252,6 +315,39 @@ async function main() {
     check("回收站能返回项目列表", trashBack === true);
     await waitFor(page, "[data-casefile-empty], [data-casefile-project-row]", 3000);
 
+    // 4c) 危险操作：drop 的用户入口 + dry-run 影响面（只读，不确认）
+    if (hasRows === true) {
+      const opened = await page.evaluate(`(() => {
+        const row = document.querySelector("[data-casefile-project-row]");
+        if (!row) return false;
+        row.click();
+        return true;
+      })()`);
+      const danger = await waitFor(page, "[data-casefile-danger]", 4000);
+      check(
+        "详情页有默认收起的「危险操作」区（drop 的用户入口）",
+        opened === true && danger === true,
+      );
+      const dropHit = await clickTextScoped(page, "移入回收站…", "[data-casefile-danger]");
+      const preview = await waitFor(page, "[data-casefile-drop-preview]", 4000);
+      check("drop 入口先展示影响面（dry-run，不执行）", dropHit === true && preview === true);
+      const previewText = await textOf(page, "[data-casefile-drop-preview]");
+      check(
+        "影响面文案说明可恢复",
+        typeof previewText === "string" && previewText.includes("恢复"),
+        String(previewText).slice(0, 100),
+      );
+      const dropCancel = await clickTextScoped(page, "取消", "[data-casefile-drop-preview]");
+      check("危险操作影响面可以取消（只读）", dropCancel === true);
+      await clickTextScoped(page, "返回列表", "[data-casefile-page]");
+      await sleep(300);
+    } else {
+      check("详情页有默认收起的「危险操作」区（drop 的用户入口）", true, "无项目，跳过");
+      check("drop 入口先展示影响面（dry-run，不执行）", true, "无项目，跳过");
+      check("影响面文案说明可恢复", true, "无项目，跳过");
+      check("危险操作影响面可以取消（只读）", true, "无项目，跳过");
+    }
+
     // 5) 设置分节：账号菜单 → 设置 → 在设置面板内点「案卷」
     const menuHit = await clickAria(page, "账号菜单");
     check("能打开账号菜单", menuHit === true);
@@ -268,9 +364,30 @@ async function main() {
     await waitFor(page, "[data-casefile-rea]", 4000);
     const reaLine = await textOf(page, "[data-casefile-rea]");
     check(
-      "设置里显示 REA 能力状态",
+      "设置里显示 REA 接入状态",
       typeof reaLine === "string" && reaLine.length > 0,
       String(reaLine),
+    );
+    const reaInfo = await page.evaluate(`(() => {
+      const notice = document.querySelector("[data-casefile-rea-notice]");
+      const rea = document.querySelector("[data-casefile-rea]");
+      return notice
+        ? {
+            className: String(notice.className || ""),
+            state: rea ? rea.getAttribute("data-state") : null,
+            text: rea ? String(rea.textContent || "").trim() : "",
+          }
+        : null;
+    })()`);
+    const reaInfoClassName = reaInfo ? String(reaInfo.className) : "";
+    const reaInfoText = reaInfo ? String(reaInfo.text) : "";
+    check(
+      "REA 未接入按信息/不可用说明呈现（不是红色错误）",
+      reaInfoClassName.includes("cf-info") &&
+        !reaInfoClassName.includes("cf-error") &&
+        reaInfoText.length > 0 &&
+        (reaInfo?.state === "connected" || reaInfo?.state === "unavailable"),
+      JSON.stringify(reaInfo),
     );
     await screenshot(page, "settings");
 
