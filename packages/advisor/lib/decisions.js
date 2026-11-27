@@ -256,23 +256,55 @@ export function createDecisionLog(options) {
   const dir = join(options.home, LEDGER_DIR);
   const path = join(dir, DECISIONS_FILE);
 
+  // 进行中的写操作计数 + `flush()`：调用方（尤其是测试）可以**确定性地**等到落盘，
+  // 不必用 `setTimeout` 猜时序（接线测试曾因此偶发红）。`track()` 里的回填是 fire-and-forget，
+  // 但 `backfillOutcome` 在被调用的同步段就会登记 inflight，所以 flush 不会漏掉它们。
+  let inflight = 0;
+  /** @type {Array<() => void>} */
+  const waiters = [];
+  /** @template T @param {() => Promise<T>} task @returns {Promise<T>} */
+  const trackWrite = async (task) => {
+    inflight += 1;
+    try {
+      return await task();
+    } finally {
+      inflight -= 1;
+      if (inflight === 0) {
+        for (const resolve of waiters.splice(0)) resolve();
+      }
+    }
+  };
+
   return {
     path,
+
+    /**
+     * 等到当前所有写操作（追加 / 回填）落盘。没有在途写时立即 resolve。
+     * @returns {Promise<void>}
+     */
+    flush() {
+      if (inflight === 0) return Promise.resolve();
+      return new Promise((resolve) => {
+        waiters.push(resolve);
+      });
+    },
 
     /**
      * 追加一行（O_APPEND 单写 + 进程内单写队列；不再读全文再覆盖，审计 AUD-ADV-01）。
      * @param {any} record
      * @returns {Promise<void>}
      */
-    async append(record) {
-      try {
-        await appendJsonLine(path, record, {
-          rotateBytes: DECISIONS_MAX_BYTES,
-          rotateTo: `${path}.1`,
-        });
-      } catch (error) {
-        options.logger?.warn?.(`[advisor] 写决策日志失败：${String(error)}`);
-      }
+    append(record) {
+      return trackWrite(async () => {
+        try {
+          await appendJsonLine(path, record, {
+            rotateBytes: DECISIONS_MAX_BYTES,
+            rotateTo: `${path}.1`,
+          });
+        } catch (error) {
+          options.logger?.warn?.(`[advisor] 写决策日志失败：${String(error)}`);
+        }
+      });
     },
 
     /**
@@ -288,32 +320,34 @@ export function createDecisionLog(options) {
      * @param {string} [why] 归因依据（tool-call / assistant-message / user-message / no-follow-up）
      * @returns {Promise<boolean>} 是否真的改到了
      */
-    async backfillOutcome(sessionId, turn, outcome, why = "") {
-      try {
-        return await serializeByPath(path, async () => {
-          const records = await readDecisions(path);
-          let changed = false;
-          for (let index = records.length - 1; index >= 0; index -= 1) {
-            const record = records[index];
-            if (record?.sessionId === sessionId && record?.turn === turn) {
-              if (record.outcome === outcome && (record.outcomeWhy ?? "") === why) return true;
-              record.outcome = outcome;
-              record.outcomeWhy = why;
-              changed = true;
-              break;
+    backfillOutcome(sessionId, turn, outcome, why = "") {
+      return trackWrite(async () => {
+        try {
+          return await serializeByPath(path, async () => {
+            const records = await readDecisions(path);
+            let changed = false;
+            for (let index = records.length - 1; index >= 0; index -= 1) {
+              const record = records[index];
+              if (record?.sessionId === sessionId && record?.turn === turn) {
+                if (record.outcome === outcome && (record.outcomeWhy ?? "") === why) return true;
+                record.outcome = outcome;
+                record.outcomeWhy = why;
+                changed = true;
+                break;
+              }
             }
-          }
-          if (!changed) return false;
-          await writeTextAtomic(
-            path,
-            `${records.map((item) => JSON.stringify(item)).join("\n")}\n`,
-          );
-          return true;
-        });
-      } catch (error) {
-        options.logger?.warn?.(`[advisor] 回填决策日志失败：${String(error)}`);
-        return false;
-      }
+            if (!changed) return false;
+            await writeTextAtomic(
+              path,
+              `${records.map((item) => JSON.stringify(item)).join("\n")}\n`,
+            );
+            return true;
+          });
+        } catch (error) {
+          options.logger?.warn?.(`[advisor] 回填决策日志失败：${String(error)}`);
+          return false;
+        }
+      });
     },
   };
 }

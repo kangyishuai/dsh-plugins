@@ -315,3 +315,37 @@ describe("createDecisionLog：回填与追加共用一个写队列（AUD-ADV-01�
     assert.equal(records[0].outcomeWhy, "assistant");
   });
 });
+
+describe("createDecisionLog.flush（确定性等待，取代 sleep）", () => {
+  it("flush 等到 fire-and-forget 的 outcome 回填落盘", async () => {
+    const home = await tempDir("advisor-decisions");
+    const log = createDecisionLog({ home });
+    await log.append({ sessionId: "s1", turn: 1, consulted: true, outcome: null });
+    // 模拟 tracker 里的 `void log.backfillOutcome(...)`：不 await，再靠 flush 等落盘。
+    void log.backfillOutcome("s1", 1, "accepted", "tool-call");
+    await log.flush();
+    const records = await readDecisions(log.path);
+    assert.equal(records[0].outcome, "accepted");
+    assert.equal(records[0].outcomeWhy, "tool-call");
+  });
+
+  it("没有在途写时 flush 立即 resolve，可重复调用", async () => {
+    const home = await tempDir("advisor-decisions");
+    const log = createDecisionLog({ home });
+    await log.flush();
+    await log.flush();
+    assert.equal(typeof log.flush, "function");
+  });
+
+  it("并发 append + 回填后 flush 一次等到全部落盘", async () => {
+    const home = await tempDir("advisor-decisions");
+    const log = createDecisionLog({ home });
+    await log.append({ sessionId: "s1", turn: 1, consulted: true, outcome: null });
+    void log.append({ sessionId: "s1", turn: 2, consulted: false });
+    void log.backfillOutcome("s1", 1, "no-action", "no-follow-up");
+    await log.flush();
+    const records = await readDecisions(log.path);
+    assert.equal(records.length, 2);
+    assert.equal(records[0].outcome, "no-action");
+  });
+});
