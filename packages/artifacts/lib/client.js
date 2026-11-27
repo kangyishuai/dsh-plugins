@@ -46,15 +46,128 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 从工具行的内容里认领 artifact id：结果文本第一行是 `artifact <id> · <title> · vN · B · kind`。
-     * 认不出就返回 undefined，由调用方回退到"最近一个 artifact"。
+     * 从工具结果文本里认领 artifact id：结果文本第一行是
+     * `artifact <id> · <title> · vN · B · kind`（`lib/tool.js` 的 renderToolOutput）。
+     *
+     * id 由 `slugify` 生成、**刻意保留中文**（`q3-报告-2026`），所以不能用 ASCII 正则
+     * （AUD-ARTIFACTS-01：历史 14/14 个真实产物都解析失败）。这里按「行首 `artifact ` 到
+     * ` · `」切片，再做一次 id 边界校验：生成侧保证 id 不含空白与路径分隔符、不以点开头。
+     * @param {string} text
+     * @returns {string | undefined}
+     */
+    function pickIdFromText(text) {
+      for (const rawLine of String(text ?? "").split("\n")) {
+        const line = rawLine.trim();
+        // `(.+?)` 惰性匹配到第一个 ` · `：id 里若出现 `·`（无空格）也不会截错。
+        const match = /^artifact (.+?) · /u.exec(line);
+        if (match === null) continue;
+        const id = match[1];
+        // 与 store.js 的 id 生成/校验同源的保守边界：非空、无空白、无路径分隔符、不以点开头。
+        if (id === "" || id.startsWith(".") || /[\s/\\]/u.test(id)) return undefined;
+        return id;
+      }
+      return undefined;
+    }
+
+    /**
+     * 从工具行的内容里认领 artifact id；认不出返回 undefined，由调用方回退到"最近一个 artifact"。
+     * 优先只扫 result 的 content（argsRaw 里嵌着正文，正文里写 `artifact xx ·` 不应劫持本行）。
      * @param {any} props
      * @returns {string | undefined}
      */
     function pickId(props) {
-      const text = collectStrings(props?.block).join("\n");
-      const match = /artifact ([a-z0-9][a-z0-9-]*) ·/u.exec(text);
-      return match === null ? undefined : match[1];
+      const block = props?.block;
+      /** @type {any[] | undefined} */
+      const content = Array.isArray(block?.content) ? block.content : undefined;
+      const text =
+        content === undefined
+          ? collectStrings(block).join("\n")
+          : content.map((item) => (typeof item?.text === "string" ? item.text : "")).join("\n");
+      return pickIdFromText(text);
+    }
+
+    /**
+     * 这次工具调用的 action（publish/append/list/read）。宿主在 start 阶段只给 `argsRaw`，
+     * result 阶段给 `call.argsRaw`（回填的 tool/call）；解析失败返回 undefined，不抛。
+     * @param {any} props
+     * @returns {string | undefined}
+     */
+    function actionOf(props) {
+      const block = props?.block;
+      const raw =
+        typeof block?.call?.argsRaw === "string"
+          ? block.call.argsRaw
+          : typeof block?.argsRaw === "string"
+            ? block.argsRaw
+            : "";
+      if (raw === "") return undefined;
+      try {
+        const parsed = JSON.parse(raw);
+        return typeof parsed?.action === "string" ? parsed.action : undefined;
+      } catch {
+        return undefined;
+      }
+    }
+
+    /**
+     * 时间线行只对写 action（publish/append）有意义：list/read 的调用没有"打开这个产物"的
+     * 语义，渲染一行「（未识别 id）+ 打开预览（跳去库）」是噪声（报告 A-伪-5）。
+     * @param {any} props
+     * @returns {boolean}
+     */
+    function shouldRenderRow(props) {
+      const action = actionOf(props);
+      return action !== "list" && action !== "read";
+    }
+
+    /**
+     * 右栏面板 iframe 的文档级 CSP（AUD-ARTIFACTS-03）。srcDoc 不继承宿主文档 CSP，
+     * 这里注入与只读路由等价（宽松到能渲染自包含页面，收紧到不能外连）：
+     *   - `default-src 'none'`：禁止脚本/外连/表单；
+     *   - `style-src 'unsafe-inline'`：保留内联样式；
+     *   - `img-src data: blob:`：保留 data:/blob: 图片（相对 URL 在 opaque 源里本来也取不到）；
+     *   - `font-src data:`：保留内嵌字体（与路由 CSP 同一口径）。
+     */
+    const PANEL_CSP =
+      "default-src 'none'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:";
+    const PANEL_CSP_META = `<meta http-equiv="Content-Security-Policy" content="${PANEL_CSP}">`;
+
+    /**
+     * 把 CSP meta 插进待渲染的 html：有 `<head>` 插到它最前面，没有就整体前置
+     * （浏览器会把开头的 meta 归到隐式 head，照样生效）。
+     *
+     * **始终注入**，即使作者自己写了 CSP：多份策略是"同时强制"（取交集），我们的
+     * `default-src 'none'` 不会因为作者写了一份宽松策略而失效；反过来若在这里跳过注入，
+     * 产物只要写一条宽松 CSP 就能绕过面板硬化。
+     * @param {string} html
+     * @returns {string}
+     */
+    function withPanelCsp(html) {
+      const source = typeof html === "string" ? html : "";
+      const head = /<head(?:\s[^>]*)?>/iu.exec(source);
+      if (head !== null) {
+        const at = head.index + head[0].length;
+        return `${source.slice(0, at)}${PANEL_CSP_META}${source.slice(at)}`;
+      }
+      return `${PANEL_CSP_META}${source}`;
+    }
+
+    /**
+     * html 预览 iframe 的属性（抽出来是为了单测能直接断言 srcDoc 已注入 CSP）。
+     * @param {string} id
+     * @param {string} title
+     * @param {string} html
+     * @returns {Record<string, any>}
+     */
+    function htmlFrameProps(id, title, html) {
+      return {
+        "data-dsh-artifact-frame": id,
+        title: title || id,
+        // 保持不透明源（无 allow-same-origin）；脚本本来就由文档 CSP 的 default-src 'none' 掐掉。
+        sandbox: "allow-scripts",
+        srcDoc: withPanelCsp(html),
+        style: { flex: 1, width: "100%", border: "0", background: "#fff", minHeight: 0 },
+      };
     }
 
     /** @param {string} id @returns {string} */
@@ -565,14 +678,7 @@ window.__ModuleLoader__.load({
       /** @type {any} */
       let body = null;
       if (state.kind === "html") {
-        body = h("iframe", {
-          ref: frameRef,
-          "data-dsh-artifact-frame": id,
-          title: state.title || id,
-          sandbox: "allow-scripts",
-          srcDoc: state.html,
-          style: { flex: 1, width: "100%", border: "0", background: "#fff", minHeight: 0 },
-        });
+        body = h("iframe", { ref: frameRef, ...htmlFrameProps(id, state.title || id, state.html) });
       } else if (state.kind === "image") {
         body =
           state.previewUrl === ""
@@ -635,6 +741,8 @@ window.__ModuleLoader__.load({
       const open = props.open;
 
       React.useEffect(() => {
+        // list/read 的调用不渲染行（A-伪-5）：没必要为它们拉一次全量列表。
+        if (!shouldRenderRow(props)) return undefined;
         let alive = true;
         const load = async () => {
           const result = await props.rpc("list");
@@ -652,6 +760,9 @@ window.__ModuleLoader__.load({
           alive = false;
         };
       }, [id, props]);
+
+      // hooks 必须无条件调用（宿主可能在 start→result 阶段重渲染同一行）；先算完再决定不渲染。
+      if (!shouldRenderRow(props)) return null;
 
       return h(
         "div",
@@ -858,6 +969,18 @@ window.__ModuleLoader__.load({
 
     exports.inject = ["slots", "locale", "connection", "sidebarRightTabs", "sidebarRight"];
     exports.apply = apply;
+    // 单测入口（test/client.test.js 用 node:vm 执行真实源码）：只暴露纯函数与行组件，
+    // 不挂 window 全局、不暴露服务/数据；宿主只消费 inject/apply，额外字段无副作用。
+    exports.__test = {
+      collectStrings,
+      pickId,
+      pickIdFromText,
+      actionOf,
+      shouldRenderRow,
+      withPanelCsp,
+      htmlFrameProps,
+      ArtifactRow,
+    };
     return module.exports;
   },
 });

@@ -104,7 +104,16 @@ function failureOf(error, extra = {}) {
         ? /** @type {any} */ (error).code
         : "artifacts/failed";
   const message = error instanceof Error ? error.message : String(error);
-  return { ok: false, code, message, ...extra };
+  const reason =
+    error instanceof ArtifactError && typeof error.reason === "string" ? error.reason : undefined;
+  return {
+    ok: false,
+    code,
+    message,
+    // 可选细分原因（§8.6：加可选字段不升契约版本）。目前只有 corrupt-version。
+    ...(reason === undefined ? {} : { reason }),
+    ...extra,
+  };
 }
 
 /**
@@ -210,13 +219,17 @@ export function publicArtifact(meta, routePrefix = "/artifacts") {
 
 /**
  * 影响面：给 dry-run 与真实执行共用的"将要/已经动了什么"。
+ *
+ * `bytes` 是**实际会移动/删除的全部字节**（所有历史版本之和），不是行里那个"最新版字节"：
+ * ADR 0002 §2 要求确认框里的"大小"是真实影响面（AUD-ARTIFACTS-08）。行与 `summary` 的
+ * `bytes` 仍是 0.1/0.2 的最新版口径，两处含义不同（`totalBytes` 见行字段）。
  * @param {import("./store.js").ArtifactMeta[]} metas
  * @returns {{ count: number, bytes: number, ids: string[] }}
  */
 function impactOf(metas) {
   return {
     count: metas.length,
-    bytes: metas.reduce((sum, meta) => sum + latestBytes(meta), 0),
+    bytes: metas.reduce((sum, meta) => sum + totalBytes(meta), 0),
     ids: metas.map((meta) => meta.id),
   };
 }

@@ -4,17 +4,27 @@
 // 设计取舍（docs/artifacts 调研 / ADR 0016 / ADR 0017）：
 //   - 字节落文件而不是会话事件 / storageDomain：大 HTML 不能进会话日志（token + 磁盘代价）；
 //   - 元数据与字节分开：列表只读 meta，预览只读最新版本；
-//   - 每次写入先写临时文件再 rename，失败不会留下半个版本；
+//   - 每次写入先写唯一临时文件再原子发布，失败不会留下半个版本；
+//   - 同一 id 的写路径在进程内串行化（append/archive/remove/restore），跨进程靠 `vN.<ext>`
+//     的独占创建（`open(..., "wx")`，即 O_EXCL）抢版本号：冲突就重读 meta 重算，有限重试；
+//   - `read()` 校验 meta 的 bytes/sha256：不一致抛 corrupt-version，绝不静默返回坏内容
+//     （错误码仍是契约里已有的 `artifacts/failed`，附加 `reason: "corrupt-version"`）；
 //   - 数据根可注入（config.dataRoot > $DSH_HOME > ~/.dsh），测试用 mkdtemp；
 //   - 0.2 起 meta 带 `kind`（html/markdown/json/csv/image）与归属字段（projectId/sessionId/
 //     threadId/source）；旧 meta 缺这些字段时按 html + 无归属读，不迁移、不改名（见 ADR 0020）；
 //   - 删除遵循 ADR 0002：默认移入 `<root>/artifacts-trash/`，硬删只发生在 purge（清回收站）。
 import { createHash, randomBytes } from "node:crypto";
-import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 /** 单页上限：与 Claude 的 16 MiB 相比刻意收紧，先保证内存与写放大可控。 */
 export const MAX_BYTES = 2 * 1024 * 1024;
+
+/**
+ * 抢版本号的最大尝试次数：正常并发由进程内队列消掉，这里只兜跨进程/残留文件；
+ * 超过就明确报错，不无限重试。
+ */
+const VERSION_CLAIM_ATTEMPTS = 5;
 
 /** 跨插件契约版本：方法名/参数/返回形状的版本号，**不跟随插件版本**（见 docs/plugin-conventions.md §8）。 */
 export const ARTIFACT_CONTRACT = "artifacts/2";
@@ -94,17 +104,40 @@ const IMAGE_EXT = /** @type {Record<string, string>} */ ({
 /**
  * 带稳定错误码的错误：调用方（工具 / Remote / 路由）按 code 决定文案与降级，不解析 message。
  * 旧版只抛 `Error`，message 里带 "empty" / "over the ... limit"，这些措辞保持不变。
+ *
+ * `reason` 是可选的**细分原因**（契约里的可选附加字段，§8.6：加可选字段不升契约版本）：
+ * 比如 `code: "artifacts/failed"` + `reason: "corrupt-version"`——调用方既有的按 code 降级
+ * 不用改，需要区分"损坏"与"普通 IO 失败"的消费者（HTTP 路由/测试）再读 reason。
  */
 export class ArtifactError extends Error {
   /**
    * @param {string} code
    * @param {string} message
+   * @param {{ reason?: string }} [details]
    */
-  constructor(code, message) {
+  constructor(code, message, details = {}) {
     super(message);
     this.name = "ArtifactError";
     this.code = code;
+    /** @type {string | undefined} */
+    this.reason = details.reason;
   }
+}
+
+/**
+ * 版本字节与 meta 声明不一致（长度/sha256/文件缺失）。**绝不**回退成"没有这个版本"：
+ * 静默返回坏内容比报错更糟（AUD-ARTIFACTS-02）。
+ * @param {string} id
+ * @param {number} version
+ * @param {string} detail
+ * @returns {ArtifactError}
+ */
+function corruptVersionError(id, version, detail) {
+  return new ArtifactError(
+    "artifacts/failed",
+    `corrupt artifact version ${id} v${version}: ${detail}`,
+    { reason: "corrupt-version" },
+  );
 }
 
 /**
@@ -544,10 +577,48 @@ export function createArtifactStore({ root }) {
   const dir = join(root, "artifacts");
   const trashDir = join(root, "artifacts-trash");
 
+  /**
+   * 进程内按 artifact id 串行化的写队列（append/archive/remove/restore 共用）。
+   * `tail` 只在新写者到来时前进；队列空了就删 key，不随工件数无限增长。
+   * 跨进程并发由版本号的 O_EXCL 抢占兜底。
+   * @type {Map<string, Promise<unknown>>}
+   */
+  const writeQueues = new Map();
+
+  /**
+   * @template T
+   * @param {string} key
+   * @param {() => Promise<T>} task
+   * @returns {Promise<T>}
+   */
+  async function withWriteLock(key, task) {
+    const previous = writeQueues.get(key) ?? Promise.resolve();
+    /** @type {() => void} */
+    let release = () => {};
+    const gate = new Promise((resolve) => {
+      release = () => resolve(undefined);
+    });
+    const tail = previous.then(() => gate);
+    writeQueues.set(key, tail);
+    await previous;
+    try {
+      return await task();
+    } finally {
+      release();
+      if (writeQueues.get(key) === tail) writeQueues.delete(key);
+    }
+  }
+
   /** @param {string} id */
   const artifactDir = (id) => join(dir, assertSafeArtifactId(id, dir));
   /** @param {string} id */
   const metaPath = (id) => join(artifactDir(id), "meta.json");
+  /**
+   * 同目录唯一临时名：固定 `${file}.tmp` 会让并发写者互相覆盖（AUD-ARTIFACTS-02）。
+   * @param {string} path
+   * @returns {string}
+   */
+  const tempPathFor = (path) => `${path}.${randomBytes(6).toString("hex")}.tmp`;
 
   /** @param {string} id @returns {Promise<ArtifactMeta | undefined>} */
   async function readMeta(id) {
@@ -560,83 +631,175 @@ export function createArtifactStore({ root }) {
     }
   }
 
-  /** @param {string} id @param {ArtifactMeta} meta */
+  /** 原子写 meta：唯一 tmp + rename。 @param {string} id @param {ArtifactMeta} meta */
   async function writeMeta(id, meta) {
     await mkdir(artifactDir(id), { recursive: true });
-    const tmp = `${metaPath(id)}.tmp`;
+    const tmp = tempPathFor(metaPath(id));
     await writeFile(tmp, JSON.stringify(meta, null, 2), "utf8");
     await rename(tmp, metaPath(id));
   }
 
   /**
-   * 落一个版本文件（tmp + rename），并更新 meta。
+   * 独占创建一个版本文件（`wx`，即 O_EXCL）：目标已存在就抛 EEXIST，由调用方重算版本号。
+   * 先占名字（空文件），再把完整字节写进唯一 tmp 后 rename 覆盖占位：读者要么看到占位
+   * （此时 meta 还没声明这个版本，不会被引用），要么看到完整字节——中途崩溃不会留下
+   * 被当成正文的"半个版本"。
+   * @param {string} file
+   * @param {Buffer} data
+   * @returns {Promise<void>}
+   */
+  async function publishVersionFile(file, data) {
+    const claim = await open(file, "wx");
+    await claim.close();
+    const tmp = tempPathFor(file);
+    try {
+      await writeFile(tmp, data);
+      await rename(tmp, file);
+    } catch (error) {
+      await rm(tmp, { force: true }).catch(() => {});
+      await rm(file, { force: true }).catch(() => {});
+      throw error;
+    }
+  }
+
+  /**
+   * 目录里已经出现的最大版本号（含未登记进 meta 的占位/残留文件）。
    * @param {string} id
-   * @param {ArtifactMeta} meta
+   * @returns {Promise<number>}
+   */
+  async function maxVersionOnDisk(id) {
+    /** @type {string[]} */
+    let names = [];
+    try {
+      names = await readdir(artifactDir(id));
+    } catch {
+      return 0;
+    }
+    let max = 0;
+    for (const name of names) {
+      const match = /^v(\d+)\.[a-z0-9]{1,8}$/u.exec(name);
+      if (match === null) continue;
+      const version = Number(match[1]);
+      if (Number.isInteger(version) && version > max) max = version;
+    }
+    return max;
+  }
+
+  /**
+   * 落一个版本文件并更新 meta。
+   *
+   * 并发安全：进程内由 `withWriteLock(id)` 串行化；版本号用 O_EXCL 抢占，
+   * 抢不到就重读 meta 并按磁盘上已有的最大版本重算（跨进程写者/残留占位文件），
+   * 最多 5 次后明确报错。
+   * @param {string} id
    * @param {{ kind: string, mime: string, ext: string, data: Buffer }} payload
    * @param {WriteInput} input
    * @returns {Promise<ArtifactMeta>}
    */
-  async function writeVersion(id, meta, payload, input) {
-    const version = meta.latest + 1;
-    const file = join(artifactDir(id), `v${version}.${meta.ext}`);
-    const tmp = `${file}.tmp`;
-    await mkdir(artifactDir(id), { recursive: true });
-    await writeFile(tmp, payload.data);
-    await rename(tmp, file);
-    const at = Date.now();
-    const source = normalizeSource(input.source);
-    /** @type {ArtifactVersion} */
-    const record = { version, bytes: payload.data.length, sha256: digest(payload.data), at };
-    if (source !== undefined) record.source = source;
-    const title = optionalText(input.title) ?? meta.title;
-    /** @type {ArtifactMeta} */
-    const next = {
-      ...meta,
-      // 归属只在"还没有"时补：meta 记的是**首次产生**它的会话/调用，
-      // 每个版本自己的来源另存 versions[].source（能反查"这一版是哪次跑出来的"）。
-      ...fillAttribution(meta, attributionOf(input)),
-      title,
-      latest: version,
-      updatedAt: at,
-      versions: [...meta.versions, record],
-    };
-    await writeMeta(id, next);
-    return next;
+  async function writeVersion(id, payload, input) {
+    /** @type {string | undefined} */
+    let lastConflict;
+    for (let attempt = 1; attempt <= VERSION_CLAIM_ATTEMPTS; attempt += 1) {
+      const meta = await readMeta(id);
+      if (meta === undefined)
+        throw new ArtifactError("artifacts/not-found", `unknown artifact: ${id}`);
+      if (meta.archived === true)
+        throw new ArtifactError("artifacts/archived", `artifact ${id} is archived (read-only)`);
+      const version =
+        attempt === 1
+          ? meta.latest + 1
+          : Math.max(meta.latest + 1, (await maxVersionOnDisk(id)) + 1);
+      const file = join(artifactDir(id), `v${version}.${meta.ext}`);
+      try {
+        await mkdir(artifactDir(id), { recursive: true });
+        await publishVersionFile(file, payload.data);
+      } catch (error) {
+        if (/** @type {any} */ (error)?.code !== "EEXIST") throw error;
+        lastConflict = `v${version}`;
+        continue;
+      }
+      const at = Date.now();
+      const source = normalizeSource(input.source);
+      /** @type {ArtifactVersion} */
+      const record = { version, bytes: payload.data.length, sha256: digest(payload.data), at };
+      if (source !== undefined) record.source = source;
+      const title = optionalText(input.title) ?? meta.title;
+      /** @type {ArtifactMeta} */
+      const next = {
+        ...meta,
+        // 归属只在"还没有"时补：meta 记的是**首次产生**它的会话/调用，
+        // 每个版本自己的来源另存 versions[].source（能反查"这一版是哪次跑出来的"）。
+        ...fillAttribution(meta, attributionOf(input)),
+        title,
+        latest: version,
+        updatedAt: at,
+        versions: [...meta.versions.filter((item) => item.version !== version), record].sort(
+          (a, b) => a.version - b.version,
+        ),
+      };
+      await writeMeta(id, next);
+      return next;
+    }
+    throw new ArtifactError(
+      "artifacts/failed",
+      `artifact ${id}: could not claim a version file after ${VERSION_CLAIM_ATTEMPTS} attempts${
+        lastConflict === undefined ? "" : ` (last conflict: ${lastConflict})`
+      }`,
+    );
   }
 
   /**
    * 新建 artifact（v1）。`kind` 省略时按 html（给了 `data` 则按 image）。
+   *
+   * 先落 v1 再写 meta（AUD-ARTIFACTS-07）：中途崩溃只留下"有版本文件、没 meta"的孤儿目录，
+   * `scan()` 会跳过并告警；不会再出现 latest=0 的永久残骸行。
    * @param {WriteInput} input
    * @returns {Promise<ArtifactMeta>}
    */
   async function create(input) {
     const payload = resolvePayload(input);
     const title = optionalText(input.title) ?? "Artifact";
-    let id = `${slugify(title)}-${randomBytes(3).toString("hex")}`;
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      try {
-        await readFile(metaPath(id));
-        id = `${slugify(title)}-${randomBytes(3).toString("hex")}`;
-      } catch {
-        break;
-      }
-    }
     const now = Date.now();
-    /** @type {ArtifactMeta} */
-    const meta = {
-      id,
-      title,
-      kind: payload.kind,
-      mime: payload.mime,
-      ext: payload.ext,
-      latest: 0,
-      createdAt: now,
-      updatedAt: now,
-      versions: [],
-      ...attributionOf(input),
-    };
-    await writeMeta(id, meta);
-    return writeVersion(id, meta, payload, input);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const id = `${slugify(title)}-${randomBytes(3).toString("hex")}`;
+      if (await exists(metaPath(id))) continue;
+      const source = normalizeSource(input.source);
+      /** @type {ArtifactVersion} */
+      const record = {
+        version: 1,
+        bytes: payload.data.length,
+        sha256: digest(payload.data),
+        at: now,
+      };
+      if (source !== undefined) record.source = source;
+      /** @type {ArtifactMeta} */
+      const meta = {
+        id,
+        title,
+        kind: payload.kind,
+        mime: payload.mime,
+        ext: payload.ext,
+        latest: 1,
+        createdAt: now,
+        updatedAt: now,
+        versions: [record],
+        ...attributionOf(input),
+      };
+      try {
+        await mkdir(artifactDir(id), { recursive: true });
+        await publishVersionFile(join(artifactDir(id), `v1.${payload.ext}`), payload.data);
+      } catch (error) {
+        // 极小概率撞上同名 id 的孤儿 v1（崩溃残留）：换一个随机后缀重来。
+        if (/** @type {any} */ (error)?.code === "EEXIST") continue;
+        throw error;
+      }
+      await writeMeta(id, meta);
+      return meta;
+    }
+    throw new ArtifactError(
+      "artifacts/failed",
+      `artifact: could not allocate a unique id for title ${JSON.stringify(title)}`,
+    );
   }
 
   /**
@@ -646,18 +809,20 @@ export function createArtifactStore({ root }) {
    * @returns {Promise<ArtifactMeta>}
    */
   async function append(id, input) {
-    const meta = await readMeta(id);
-    if (meta === undefined)
-      throw new ArtifactError("artifacts/not-found", `unknown artifact: ${id}`);
-    if (meta.archived === true)
-      throw new ArtifactError("artifacts/archived", `artifact ${id} is archived (read-only)`);
-    const payload = resolvePayload(input, meta.kind);
-    if (payload.kind !== meta.kind)
-      throw new ArtifactError(
-        "artifacts/kind-mismatch",
-        `artifact ${id} is ${meta.kind}, cannot append ${payload.kind}`,
-      );
-    return writeVersion(id, meta, payload, input);
+    return withWriteLock(String(id), async () => {
+      const meta = await readMeta(id);
+      if (meta === undefined)
+        throw new ArtifactError("artifacts/not-found", `unknown artifact: ${id}`);
+      if (meta.archived === true)
+        throw new ArtifactError("artifacts/archived", `artifact ${id} is archived (read-only)`);
+      const payload = resolvePayload(input, meta.kind);
+      if (payload.kind !== meta.kind)
+        throw new ArtifactError(
+          "artifacts/kind-mismatch",
+          `artifact ${id} is ${meta.kind}, cannot append ${payload.kind}`,
+        );
+      return writeVersion(id, payload, input);
+    });
   }
 
   /**
@@ -681,6 +846,14 @@ export function createArtifactStore({ root }) {
       const meta = await readMetaFrom(base, entry.name);
       if (meta === undefined) {
         console.warn(`[artifacts] skipping unknown entry: ${join(base, entry.name)}`);
+        continue;
+      }
+      // AUD-ARTIFACTS-07：老版本 create() 先写 meta(latest:0) 再写 v1，中途崩溃会留下
+      // "有 meta、没版本"的残骸行。跳过并告警，绝不把它当成正常工件（列表/预览/封面都坏）。
+      if (meta.latest === 0 && meta.versions.length === 0) {
+        console.warn(
+          `[artifacts] skipping empty artifact (no versions): ${join(base, entry.name)}`,
+        );
         continue;
       }
       metas.push(meta);
@@ -716,6 +889,10 @@ export function createArtifactStore({ root }) {
   /**
    * 读某个版本（默认最新）。文本类型给 `text`（`html` 是 0.1.0 的旧名，继续给），
    * 图片给 `data`；`data` 在任何类型上都是权威字节。
+   *
+   * 完整性（AUD-ARTIFACTS-02）：meta 里登记了 bytes/sha256 的版本必须与落盘字节一致，
+   * 不一致（含文件缺失/截断）抛 `corrupt-version`，**绝不**静默返回坏内容。
+   * 旧 meta 可能没有可核对的摘要（sha256 不是 64 位 hex）时只读不校验，避免把老数据误判成损坏。
    * @param {string} id
    * @param {number} [version]
    * @returns {Promise<{
@@ -735,62 +912,86 @@ export function createArtifactStore({ root }) {
     if (meta === undefined) return undefined;
     const wanted = typeof version === "number" ? version : meta.latest;
     if (!Number.isInteger(wanted) || wanted < 1 || wanted > meta.latest) return undefined;
+    // 没有登记在 meta 里的版本号（残骸占位/旧数据空洞）按"不存在"处理，不当成正文。
+    const record = meta.versions.find((item) => item.version === wanted);
+    if (record === undefined) return undefined;
+    /** @type {Buffer} */
+    let data;
     try {
-      const data = await readFile(join(artifactDir(id), `v${wanted}.${meta.ext}`));
-      const text = isTextKind(meta.kind) ? data.toString("utf8") : "";
-      return {
-        meta,
-        version: wanted,
-        kind: meta.kind,
-        mime: meta.mime,
-        ext: meta.ext,
-        bytes: data.length,
-        data,
-        text,
-        html: text,
-      };
-    } catch {
-      return undefined;
+      data = await readFile(join(artifactDir(id), `v${wanted}.${meta.ext}`));
+    } catch (error) {
+      if (/** @type {any} */ (error)?.code === "ENOENT")
+        throw corruptVersionError(id, wanted, "the version file is missing");
+      throw error;
     }
+    if (/^[0-9a-f]{64}$/u.test(record.sha256)) {
+      if (data.length !== record.bytes)
+        throw corruptVersionError(
+          id,
+          wanted,
+          `meta declares ${record.bytes} bytes but the file has ${data.length}`,
+        );
+      const actual = digest(data);
+      if (actual !== record.sha256)
+        throw corruptVersionError(id, wanted, "sha256 does not match meta.json");
+    }
+    const text = isTextKind(meta.kind) ? data.toString("utf8") : "";
+    return {
+      meta,
+      version: wanted,
+      kind: meta.kind,
+      mime: meta.mime,
+      ext: meta.ext,
+      bytes: data.length,
+      data,
+      text,
+      html: text,
+    };
   }
 
   /**
    * 归档 / 取消归档。归档后 `append` 被拒绝，列表默认不显示。
+   * meta 是读-改-写：和 append 共用同一把按 id 的进程内锁。
    * @param {string} id
    * @param {boolean} [archived]
    * @returns {Promise<ArtifactMeta | undefined>}
    */
   async function archive(id, archived = true) {
-    const meta = await readMeta(id);
-    if (meta === undefined) return undefined;
-    /** @type {ArtifactMeta} */
-    const next = { ...meta };
-    if (archived) {
-      next.archived = true;
-      next.archivedAt = Date.now();
-    } else {
-      next.archived = undefined;
-      next.archivedAt = undefined;
-    }
-    await writeMeta(id, next);
-    return next;
+    return withWriteLock(String(id), async () => {
+      const meta = await readMeta(id);
+      if (meta === undefined) return undefined;
+      /** @type {ArtifactMeta} */
+      const next = { ...meta };
+      if (archived) {
+        next.archived = true;
+        next.archivedAt = Date.now();
+      } else {
+        next.archived = undefined;
+        next.archivedAt = undefined;
+      }
+      await writeMeta(id, next);
+      return next;
+    });
   }
 
   /**
    * 移入回收站（ADR 0002：默认不是硬删）。返回是否真的移动。
+   * 与 append 共用按 id 的锁：不让"正在写的版本文件"跟着半个目录被搬走。
    * @param {string} id
    * @returns {Promise<boolean>}
    */
   async function remove(id) {
     const safe = assertSafeArtifactId(id, dir);
-    const meta = await readMeta(safe);
-    if (meta === undefined) return false;
-    await mkdir(trashDir, { recursive: true });
-    // 回收站目录名（trashKey）是权威键：同名已存在时加时间后缀，绝不覆盖上一条。
-    let key = safe;
-    if (await exists(join(trashDir, key))) key = `${safe}.${Date.now().toString(36)}`;
-    await rename(artifactDir(safe), join(trashDir, assertSafeArtifactId(key, trashDir)));
-    return true;
+    return withWriteLock(safe, async () => {
+      const meta = await readMeta(safe);
+      if (meta === undefined) return false;
+      await mkdir(trashDir, { recursive: true });
+      // 回收站目录名（trashKey）是权威键：同名已存在时加时间后缀，绝不覆盖上一条。
+      let key = safe;
+      if (await exists(join(trashDir, key))) key = `${safe}.${Date.now().toString(36)}`;
+      await rename(artifactDir(safe), join(trashDir, assertSafeArtifactId(key, trashDir)));
+      return true;
+    });
   }
 
   /**
@@ -838,10 +1039,12 @@ export function createArtifactStore({ root }) {
     const target = /** @type {string} */ (meta.id);
     // 旧数据里可能有 id 不安全的 meta：留在回收站（不猜、不动），由调用方记为 unknown。
     if (!isSafeArtifactId(target)) return false;
-    if ((await readMeta(target)) !== undefined) return false;
-    await mkdir(dir, { recursive: true });
-    await rename(join(trashDir, key), artifactDir(target));
-    return true;
+    return withWriteLock(target, async () => {
+      if ((await readMeta(target)) !== undefined) return false;
+      await mkdir(dir, { recursive: true });
+      await rename(join(trashDir, key), artifactDir(target));
+      return true;
+    });
   }
 
   /**

@@ -1,7 +1,7 @@
 // @ts-check
 // 路由单测：假 req/res，不启真实 server。覆盖鉴权、方法、404 与两个 GET 资源。
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
@@ -228,4 +228,42 @@ test("编码斜杠 / 穿越 / 点开头 id 一律 400，绝不落进文件系统
   const { req, res } = fakeExchange({ url: "/artifacts/nope-000000" });
   await handler(req, res);
   assert.equal(res.statusCode, 404);
+});
+
+test("AUD-ARTIFACTS-04：畸形百分号编码 → 400，且不泄露内部错误文本", async () => {
+  const handler = createRouteHandler({ store, connection: () => undefined });
+  for (const url of ["/artifacts/%", "/artifacts/%E0%A4%A", "/artifacts/%ZZ", "/artifacts/ok%Z"]) {
+    const { req, res } = fakeExchange({ url });
+    await handler(req, res);
+    assert.equal(res.statusCode, 400, `${url} should be 400, got ${res.statusCode}`);
+    assert.doesNotMatch(res.body, /URI|route error|malformed|decode/iu);
+  }
+});
+
+test("AUD-ARTIFACTS-05：?v= 存在但不是正整数 → 400，不静默回落最新版", async () => {
+  const handler = createRouteHandler({ store, connection: () => undefined });
+  const bad = ["abc", "1.5", "0", "-1", "", "1e2", "2abc", " 1"];
+  for (const value of bad) {
+    const { req, res } = fakeExchange({
+      url: `/artifacts/${artifactId}?v=${encodeURIComponent(value)}`,
+    });
+    await handler(req, res);
+    assert.equal(res.statusCode, 400, `?v=${JSON.stringify(value)} should be 400`);
+    assert.doesNotMatch(res.body, /<h1>hello<\/h1>/u, "must not silently serve the latest version");
+  }
+  // 合法版本不受影响。
+  const ok = fakeExchange({ url: `/artifacts/${artifactId}?v=1` });
+  await handler(ok.req, ok.res);
+  assert.equal(ok.res.statusCode, 200);
+});
+
+test("AUD-ARTIFACTS-02：版本文件被篡改 → 500 + 明确文案，不送坏正文", async () => {
+  const meta = await store.create({ title: "Tampered route", html: "<h1>good</h1>" });
+  await writeFile(join(store.root, meta.id, "v1.html"), "<h1>evil payload</h1>", "utf8");
+  const handler = createRouteHandler({ store, connection: () => undefined });
+  const { req, res } = fakeExchange({ url: `/artifacts/${meta.id}` });
+  await handler(req, res);
+  assert.equal(res.statusCode, 500);
+  assert.equal(res.body, "artifact version corrupted");
+  assert.doesNotMatch(res.body, /evil|<h1>/u);
 });
