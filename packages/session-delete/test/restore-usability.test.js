@@ -221,8 +221,9 @@ test("旧回执（没有 expected 快照）拒绝重检，不假装「全部恢�
   delete restoreFile.receipt.expected;
   await writeFile(restoreFile.file, JSON.stringify(restoreFile.receipt, null, 2), "utf8");
 
+  // 客户端实际发送的是 receiptId（顺便覆盖「同一会话多条回执时按 id 定位」）。
   await assert.rejects(
-    ops.recheckRestore({ sessionId }),
+    ops.recheckRestore({ receiptId: restoreFile.receipt.id, sessionId }),
     (error) => /** @type {any} */ (error).code === "session-delete/receipt-legacy",
   );
   // 旧回执不产生「重检通过」的假回执：receipts 里仍然只有原来那两条。
@@ -241,9 +242,9 @@ test("正常回执（带 expected）可以重检；会话目录已不在时拒�
   await seedWorkspaceFile(dataRoot, { workspaces: { ws1: [sessionId] } });
   const plan = await ops.plan(sessionId);
   const trashed = await ops.trash(sessionId, { digest: plan.digest });
-  await ops.restore(trashed.entryId);
+  const restored = await ops.restore(trashed.entryId);
   setAttachRefused(false);
-  const ok = await ops.recheckRestore({ sessionId });
+  const ok = await ops.recheckRestore({ receiptId: restored.receiptId, sessionId });
   assert.equal(ok.ok, true, JSON.stringify(ok.failures));
   assert.equal(state.sessionIds.has(sessionId), true);
 
