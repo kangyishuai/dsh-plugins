@@ -38,8 +38,12 @@ pnpm verify                               # 仓库门禁
 
 - `listCandidates` / `planRewind` / `cutsOf`：候选过滤（只收 surface 上的真人 user 消息）、
   replace 区间（目标及其后全部 surface 节点）、`bad-target` / `not-on-surface`；
-- `resolveSession` / `rewindResponse`：`not-found` / `busy` / `inert` 的优先级、并发重入、
-  append 抛错时的 in-flight 清理；
+- `operations.js`：`not-found` / `busy` / `inert` 的优先级、marker 输入与 surface 元数据形状；
+- `rewind-flow.js`（AUD-REW-10，本批新增）：preview → 救援点 → marker → apply → 部分失败兜底 →
+  审计的编排状态机；覆盖 chat/both 成功、冲突拒绝、无文件动作、marker 已写/未写两种失败、
+  运行中取消与拒绝、tracking/cwd 不可用、并发重入、审计失败不致命；
+- `command.js`（AUD-REW-09）：`/rewind @<seq> [chat|both] [confirm]` 解析、`both` 执行前回执与
+  冲突回执、成功回执；
 - 客户端纯函数：`DoubleEscape` 双击窗口、`cutOfMarkerNode`/`collectCuts`、`errorTextKey`；
 - 输入历史召回：`isRecallGesture`（组合键/输入法/已被消费一律放行）、`recallStep`（进入、到底不环绕、
   越过最新一条恢复 pending line）、`caretEdges`（首/末行为两个独立布尔，单行草稿两者都成立）、
@@ -55,11 +59,12 @@ pnpm gate session-rewind --deep --workspace ~/Workspace/dsh-rewind-ui-smoke
 
 按「便宜的先跑」排序，任何一步失败立刻停并给出下一步提示：
 
-1. `pnpm verify`（lint + 类型 + 规范 + 公开边界 + 233 单测）
+1. `pnpm verify`（lint + 类型 + 规范 + 公开边界 + 277 单测）
 2. `pnpm probe:runtime`（宿主包/API/slot/私有 seam，72 项）
-3. `pnpm smoke:session-rewind`（临时 DSH_HOME 的 web 端到端，52 项）
-4. 桌面只读回归（25 项，**永远带 `--require`**：没开调试端口就是失败，不是跳过）
-5. 桌面 `--deep` 文件模式 e2e（25 只读 + 16 深链 = 41 项，需 `--workspace`；2026-11-13 时只读段是 24 项，当时实测 40/40 全绿；2026-11-14 只读段增加到 25 项，深链段本轮未重跑）
+3. `pnpm smoke:session-rewind`（临时 DSH_HOME 的 web 端到端，约 62 项；本批新增 10 条：可恢复性 / 默认聚焦 / Tab 环绕 / 回收站入口 / 更多设置 / 命令 both 确认 / 跟踪范围 / 面板「选择消息回退」/ 命令候选键盘路径 / 诊断审计计数）
+4. 桌面只读回归（34 项，**永远带 `--require`**：没开调试端口就是失败，不是跳过）
+5. 桌面 `--deep` 文件模式 e2e（34 只读 + 24 深链 = 58 项，需 `--workspace`；本批只读 +9、深链 +8，
+   **未在本分支运行**，待真机复验；历史上 2026-11-13 实测 40/40 全绿，2026-11-14 只读段 25 项）
 
 只有显式 `--skip-desktop` 才跳过桌面端，且结束时会明确打印「门禁不完整」。
 
@@ -108,6 +113,7 @@ pnpm smoke:session-rewind
 > agent 遗留的 TaskSpace、`--apply` 清理（只清 `ownership=agent`，不碰用户 space）。
 > 失败时临时 `DSH_HOME` 会自动保留并打印 `host.log` 尾部（不必再设 `SMOKE_KEEP=1`）。
 > 临时 home 里启动真实宿主 + ego-browser，52 项断言：
+> 临时 home 里启动真实宿主 + ego-browser，约 62 项断言（本批 +10）：
 
 | #     | 断言                                                                                                  |
 | ----- | ----------------------------------------------------------------------------------------------------- |
@@ -143,6 +149,12 @@ pnpm smoke:session-rewind
 | 43    | 关掉「输入框 ↑/↓ 召回历史输入」后 `↑` 既不填草稿，也不在 window 阶段被 `preventDefault`（A6）         |
 | 44    | 设置可以恢复为开启（后续设置类断言不受影响）                                                          |
 | 45–49 | 草稿清理（不残留影响回溯回填）、截图与收尾断言                                                        |
+| 50    | 确认框写明可恢复性（`data-rewind-recoverable`：撤回内容留在面板；文件有救援点/回收站）（AUD-REW-06）  |
+| 51    | 确认框默认聚焦主按钮（`data-modal-autofocus` = 主按钮且 `activeElement` 在框内）（AUD-REW-07）        |
+| 52    | 确认框 Tab 不穿透（合成 Tab 后焦点仍在框内环绕）（AUD-REW-07）                                        |
+| 53    | 救援点页签里有回收站入口（`data-srw-trash`，可恢复/可清空）（AUD-REW-08）                             |
+| 54    | 设置分节的低频项与诊断收进「更多设置」且默认收起（AUD-REW-17）                                        |
+| 55    | `/rewind @<seq> both` 无 `confirm` 只回执影响面、不写文件（审计 marker 数不变）（AUD-REW-09）         |
 
 冒烟会先**定向清理** loopback（127.0.0.1 / localhost）的 cookie 后再打开页面：ego-browser 是用户真实的
 浏览器 profile，绝不能整库清空（会踢掉真实登录态）。清理结果打印成 `SMOKE_COOKIES {"removed":…,"total":…}`。
@@ -159,11 +171,12 @@ pnpm smoke:session-rewind
 
 ## 2.5 文件引擎单测（每次提交）
 
-`cd packages/session-rewind && pnpm test` 里包含 60 个文件引擎/追踪单测（临时目录）：
+`cd packages/session-rewind && pnpm test` 里包含 70 个文件引擎/追踪单测（临时目录）：
 
 - 捕获与记录：write create/update、edit、apply_patch add/update/delete/move；
 - 路径安全：cwd 逃逸、符号链接、`.git`/`node_modules`、非普通文件；
-- 限制：单文件 8 MiB 跳过、不可读文件跳过；
+- 限制：单文件 8 MiB 跳过、不可读文件跳过；**恢复侧同上限**（当前文件被外部写大 → 计划里记
+  `too-large` 而不是整块读；计划后才变大 → 救援点失败、一个字节不写；被污染的救援点内容也拒绝写出）（AUD-REW-12）；
 - 恢复计划：多 anchor 同一路径取最早 before、trash 列表、按**目标状态**判定（已满足即 no-op；
   只有当前内容既不是 before 也不是该路径记录过的状态才算 `modified-externally` 冲突）；
 - 删除文件还原：agent 删除的文件回退时按记录重建（父目录 `mkdir -p`）、重命名（delete+add）
@@ -174,6 +187,13 @@ pnpm smoke:session-rewind
 - 执行：救援点失败不写、写后哈希校验、失败回滚、回收站移动、保留/GC/软上限；
 - 写入安全：还原 / 救援点恢复 / 回收站恢复三处共用 `assertWriteTarget`——父目录换成指向
   工作区外的 symlink、或目标本身是 symlink 时全部拒绝，工作区外文件不被改写；
+- 跳过原因可见（AUD-REW-04）：符号链接 / 工作区外 / 排除目录 / 捕获失败都会落一条 `skipped`
+  entry（相对路径），预览按原因分组报数，`file-tracking` 对 `recordChange` 的返回值逐原因告警一次；
+- 执行安全网补充（AUD-REW-13/15）：marker（`beforeApply`）失败时丢弃救援点、不留幽灵救援点；
+  新建文件进回收站后自底向上收回因此变空的目录（目录里还有其它文件时不收回）；
+- 回收站（AUD-REW-08）：`restoreTrash` 先建 rescue-of-rescue 并返回 `safetyRescueId`；
+  `clearTrash` 的 dry-run 只报影响面（文件数/字节/路径），确认后才永久删除；
+- blob GC（AUD-REW-24）：`collectGarbage` 清掉无引用 blob、保留有引用内容（启动时自动跑一次）；
 - 工具钩子：`parsePatchPaths`、`commitFromToolResult`、`latestHumanUserSeq`、install 后
   tools/execute + post-execute 的正常/异常路径。
 - 孤儿清理（`test/orphans.test.js`）：用真实宿主 slug 形态（`--Users-someone-Workspace-project--`）
@@ -186,15 +206,23 @@ pnpm smoke:session-rewind
   不会妨碍清理真实孤儿（不过度保守）；计划审计失败时不执行删除；不认识的插件数据条目进
   `unknownIds`、保留并告警。
 
-## 2.6 文件模式端到端（桌面版，已自动化）
+## 2.6 文件模式端到端（桌面版）
 
-2026-11-07 已用 CDP（`--remote-debugging-port=9222`，仅绑定 127.0.0.1，验证后关闭）在桌面版
-自动跑通：冲突时文件模式置灰并列出冲突、创建文件后回退进回收站、修改文件后回退还原内容、
-救援点恢复、面板/审计/诊断。脚本思路：`/json/list` 取 renderer → `Runtime.evaluate` 点按钮/
-填 composer → `Page.captureScreenshot` 留证；工作区用临时目录，prompt 只让 agent 写一个测试文件。
+**现状（2026-11-28）**：web 冒烟的确定性断言只覆盖客户端侧（确认框/面板/设置/命令回执）；
+「修改还原 / 删除文件 / 冲突拒绝」三条需要真实模型写文件的路径**已补进桌面 `--deep` 脚本**
+（本次改动，**尚未在本分支运行**，待真机复验）。历史记录：2026-11-07 用 CDP 手跑过一次
+（冲突置灰、创建文件进回收站、修改还原、救援点恢复），但那些步骤此后**没有落成门禁脚本**——
+审计 AUD-REW-11 指出的「测试文档声称已自动化」失真本批已修正：本文件不再声称它们已在 CI/门禁里。
 
-上表列的是**真实外部改动**造成的冲突；删除文件还原、重复回溯、写入侧 symlink 拒绝与孤儿清理
-的安全护栏目前由上面的单测覆盖，`--deep` 段落仍只覆盖「新建文件→回收站→救援点恢复」。
+`--deep` 段落现在覆盖（脚本步骤，未跑前不算通过）：
+
+1. 新建文件 → 确认框 → 移入回收站 → toast/回填 → 救援点恢复 → 时间线出现 rescue-restore（原有 16 条）；
+2. **修改还原**：agent 用 `write` 覆盖已有文件 → 回溯「对话+文件」→ 内容回到覆盖前（新增）；
+3. **删除文件**：agent 用 `apply_patch` 删除文件 → 回溯 → 文件按记录重建（新增，依赖 AUD-REW-02 修复）；
+4. **冲突拒绝**：外部把同一文件改成第三种内容 → 文件模式置灰并列出冲突 → 取消后外部内容原样（新增）。
+
+删除文件还原、重复回溯、写入侧 symlink 拒绝、恢复侧大小上限、空目录收回、跳过原因可见等
+安全护栏仍由上面的单测覆盖；`--deep` 需要真模型额度 + 专用工作区，日常/CI 不一定跑。
 
 桌面版（Electron）一键回归，**只读**：只切会话、开关对话框与面板、点取消；不回溯、不写文件、
 不发模型请求，可以直接跑在真实 profile 上。
@@ -269,7 +297,9 @@ pnpm smoke:session-rewind-desktop -- --require --recall --deep \
 | 23  | 诊断报告孤儿数据检查存在                                        |
 | 24  | 面板可关闭                                                      |
 
-门禁建议直接跑**全量组合** `--recall --deep`（48 项 = 25 只读 + 7 召回 + 16 深链）：只读与召回 2026-11-12 实测全绿，只读 + 深链 2026-11-13 实测 40/40 全绿；**47 项的整串组合本身还没一次跑完过**（分两段验的）：召回段会切会话、`--deep`
+门禁建议直接跑**全量组合** `--recall --deep`（65 项 = 34 只读 + 7 召回 + 24 深链；本批数字为
+脚本静态计数，**未整串运行**）：历史实测 2026-11-12 只读+召回全绿、2026-11-13 只读+深链 40/40；
+2026-11-28 只读段 +6、深链段 +8 后尚未复跑，由 lead 真机复验。召回段会切会话、`--deep`
 段自己新建会话，互不干扰；召回段结束会把草稿清空，`--deep` 的输入才不会被旧草稿污染。
 
 `--recall` 追加的 7 项（合计 31 项）：找到可召回的会话 → 输入框已聚焦且草稿为空 → 空草稿按 `↑`
@@ -285,8 +315,9 @@ pnpm smoke:session-rewind-desktop -- --require --recall --deep \
    这一轮（脚本自己的工具调用会被 abort）。脚本先切到有消息的空闲会话，最后切回原会话。
 2. 侧栏里可能有没有消息的会话，切过去候选为空；脚本只挑**有用户消息**的会话。
 
-**桌面端跑不了「写文件 e2e」**：文件模式需要真实 `write` 工具调用（要花模型额度并改真实工作区），
-所以那条放在 web 组合的冒烟里（临时 `DSH_HOME` + 临时工作区），桌面端只做只读回归。
+**桌面端能跑「写文件 e2e」，但要花模型额度**：文件模式需要真实 `write`/`apply_patch` 工具调用，
+所以放在 `--deep`（专用 `--workspace`，脚本自建会话）而不是默认只读回归；web 冒烟只覆盖
+客户端侧的确定性断言（它不调用模型）。
 
 如需人工复核，仍可按下面的手工步骤走一遍：
 
@@ -295,8 +326,40 @@ pnpm smoke:session-rewind-desktop -- --require --recall --deep \
 2. 等回合结束，确认文件存在；点该用户消息的 ↶ → 预览应显示「将还原/移入回收站 1 个文件」；
 3. 选「回退对话和文件」→ 确认：文件消失（进插件回收站），composer 回填；
 4. 回溯面板 → 救援点 → 恢复：文件内容回来；
-5. 制造冲突：再让模型改一次文件后，手工再改同一文件 → 回溯文件模式应拒绝并列出冲突；
-6. 检查 `~/Library/.../DSH_HOME/session-rewind/audit.jsonl` 有本次记录、trash 里有被移走的文件。
+5. 修改还原：再让模型用 `write` 覆盖已有文件 → 回溯「对话+文件」→ 内容回到覆盖前；
+6. 删除文件：让模型用 `apply_patch` 删除文件 → 回溯「对话+文件」→ 文件按记录重建；
+7. 制造冲突：再让模型改一次文件后，手工再改同一文件 → 回溯文件模式应拒绝并列出冲突，
+   取消后外部内容原样（没有被插件覆盖）；
+8. 检查 `~/Library/.../DSH_HOME/session-rewind/audit.jsonl` 有本次记录、trash 里有被移走的文件；
+9. **重启持久性（USIM-U3-01）**：见 §2.7。
+
+## 2.7 重启/冷启动后的持久性（USIM-U3-01，本批修复）
+
+宿主重启后「对话仍被截断」由两层共同保证，缺一不可：
+
+1. **宿主 replay（模型上下文）**：marker 写入时带 `surfaceOp: {op:'replace', startSeq, endSeq}` 与
+   完整 `sourceEventSeqs`；会话加载时 surface fold 会真正执行这次 replacement。v4 物理格式会把
+   `sourceEventSeqs` 压缩成 `[start,end]` 区间（宿主 `decodeSeqRanges` 再展开），**看到嵌套数组不是
+   插件写坏**。本批用 u3 模拟实例的两份日志做过实测：展开区间后 `foldSurface()` 得到 replacement
+   列表，且 server 事件里被遮蔽的 user/assistant 节点不在 surface 里（模型上下文已截断）。
+2. **客户端可见性（transcript）**：宿主对话流**有意**保留原始事件（历史记录不因替换而消失），
+   撤回行的隐藏由本插件的 chat builder 包装层负责。它依赖**宿主 cuts**，不能依赖 marker 节点：
+   宿主 `input-message` 定义只把 `surfaceOp === 'append'` 的 user/message 变成 chat node，
+   replacement marker 不会出现在节点树里。
+   本批修复两个冷启动缺口：① builder 可能在「当前会话未知」时创建，旧实现把 null 会话 id 永久
+   捕获；现在 rebuild 时动态解析并记住会话 id。② 选会话与宿主 resume 会话并发，第一次 `cuts`
+   RPC 可能失败；旧实现一次失败就静默放弃，现在有限次退避重试，并允许打开回溯面板时补种 cuts。
+
+**真机复验步骤**（本分支未运行，由 lead 做）：
+
+1. 在测试会话里做一次「仅对话」回溯，确认目标行消失；
+2. **完全退出并重启** DSH 桌面版（不是刷新页面、不是只重载客户端）；
+3. 打开同一会话：被撤回的 user message 与 assistant 回复应仍不可见，面板「已撤回」内容一致；
+4. 重启后立刻发送一条新消息，确认上下文从截断处继续（没有把被撤回内容带回来）。
+
+单测层面由 `test/client.test.js` 的 `cold-start visibility (USIM-U3-01)` 覆盖：假 builder 重放
+「先以 null 会话创建 → 宿主 cuts 到达后 rebuild 隐藏 → 后续流式 apply 仍保持隐藏」，以及
+`cuts` RPC 第一次失败后会重试。
 
 ## 3. 界面手测 / 边界（发版与 DSH 升级后）
 
@@ -321,8 +384,14 @@ pnpm smoke:session-rewind-desktop -- --require --recall --deep \
 见 [docs/runtime/0.2.2-rc.1.md §9](../runtime/0.2.2-rc.1.md)：
 
 1. `Session.append` 的 surface `replace` 约束有没有变（`sourceEventSeqs` 完整覆盖被遮蔽节点）；
+   同时确认会话加载的 surface fold 仍会应用 `replace`（决定重启后模型上下文是否截断），以及 v4
+   物理格式仍把 `sourceEventSeqs` 压缩成 `[start,end]` 区间；
 2. Chat 快照 builder 的 `visibility` 语义与 `uiConversation.views`/`definition.create` 是否还在；
+   同时确认宿主 chat node 定义仍只把 `surfaceOp === 'append'` 的 user/message 变成节点
+   （决定「可见性只能靠宿主 cuts + builder 包装，不能靠 marker 节点」这条实现假设）；
 3. `conversation.chat.node` 的键控账本（`entries`/`subscribe`/`component` 可写）是否还在；
+   以及 `commandUi.decorate` 的 `ui.kind:"action"`（裸 `/rewind` 靠它打开插件自己的对话框；
+   USIM-U2-26 实测宿主 `popupSelect` 在插件这条路径上键盘导航失效，故不再使用）；
 4. `ctx.get("conversation").input.shell(id).setDraft`、`shortcuts.observeFixedInput` 的过滤器语义
    （输入历史召回依赖它把**每个 keydown** 都送给观察者，并附带 `context.region` / `gesture.composing`）；
    `data-conversation-session` 这个会话根 DOM 标记也由 `dsh-client-ui-conversation` 提供；

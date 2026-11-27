@@ -180,6 +180,7 @@ export class FileStoreError extends Error {
  * @property {string} auditId 审计 id
  * @property {string[]} rolledBack 回滚成功的路径
  * @property {Array<{path: string, reason: string}>} rollbackFailed 回滚失败的路径
+ * @property {string[]} removedDirs 回溯后收回的空目录（AUD-REW-15；相对 cwd）
  */
 
 /**
@@ -289,6 +290,27 @@ export function safeRelativePath(cwd, input) {
     }
   }
   return { ok: true, relPath, absPath: target };
+}
+
+/**
+ * 尽力把路径显示成相对 cwd（用于无法规范化的 skipped entry：预览里不展示绝对主机路径）。
+ * 纯词法；失败时原样返回输入。
+ * @param {string} cwd
+ * @param {unknown} input
+ * @returns {string}
+ */
+function displayPathOf(cwd, input) {
+  if (typeof input !== "string" || input.length === 0) return "";
+  try {
+    if (typeof cwd !== "string" || cwd.length === 0) return input;
+    const root = path.resolve(cwd);
+    const abs = path.isAbsolute(input) ? path.resolve(input) : path.resolve(root, input);
+    const relative = path.relative(root, abs);
+    if (relative.length === 0) return input;
+    return relative.split(path.sep).join("/");
+  } catch (_error) {
+    return input;
+  }
 }
 
 /**
@@ -1055,13 +1077,15 @@ export function createFileStore(input = {}) {
    * @property {string | Buffer | Uint8Array | null} [beforeContent] 改动前内容
    * @property {string | Buffer | Uint8Array | null} [afterContent] 改动后内容
    * @property {number | null} [mode] 改动前权限位
+   * @property {string} [skipReason] 捕获阶段已判定无法追踪的原因（AUD-REW-04；上层直接传入）
    */
 
   /**
-   * 记录一次成功的文件改动：存 before/after blob + 追加 entry。
+   * 记录一次文件改动：存 before/after blob + 追加 entry。
    *
-   * 超限/二进制/路径不合法都会落一条 `skipped` 告警 entry（不阻断工具），
-   * 返回 `{ok:false, reason}`。软上限暂停捕获时返回 `storage-full` 且不写盘。
+   * AUD-REW-04：超限/二进制/路径不合法/捕获失败都会落一条 `skipped` 告警 entry（不阻断工具，
+   * 但预览会展示原因与数量），返回 `{ok:false, reason}`。软上限暂停捕获时返回 `storage-full`
+   * 且不写盘。
    * @param {RecordChangeInput} change
    * @returns {Promise<{ok: true, entry: FileEntry} | {ok: false, path: string, reason: string, entry?: FileEntry}>}
    */
@@ -1071,47 +1095,37 @@ export function createFileStore(input = {}) {
     if (state.captureBlocked) {
       return { ok: false, path: String(change.path ?? ""), reason: SKIP_REASONS.storageFull };
     }
-    const resolved = await resolveWorkspacePath(
-      change.cwd ?? (await sessionCwdOf(sessionId)) ?? "",
-      change.path,
-    );
-    if (!resolved.ok) {
-      return {
-        ok: false,
-        path: typeof change.path === "string" ? change.path : "",
-        reason: resolved.reason,
-      };
-    }
+    /** 捕获阶段已判定的跳过原因（file-tracking 传入）；优先级高于重新解析。 */
+    const knownSkip =
+      typeof change.skipReason === "string" && change.skipReason.length > 0
+        ? change.skipReason
+        : undefined;
+    const cwd = change.cwd ?? (await sessionCwdOf(sessionId)) ?? "";
+    const resolved = await resolveWorkspacePath(cwd, change.path);
     const before = contentBuffer(change.beforeContent);
     const after = contentBuffer(change.afterContent);
-    if (before === undefined || after === undefined) {
-      return { ok: false, path: resolved.relPath, reason: SKIP_REASONS.unreadable };
-    }
-    const existedBefore =
-      typeof change.existedBefore === "boolean" ? change.existedBefore : before !== null;
-    const beforeBytes = before === null ? 0 : before.length;
-    const afterBytes = after === null ? 0 : after.length;
-    const tooLarge = Math.max(beforeBytes, afterBytes) > options.maxFileBytes;
-    const binary =
-      (before !== null && decodeText(before) === null) ||
-      (after !== null && decodeText(after) === null);
+    const beforeBytes = before === null || before === undefined ? 0 : before.length;
+    const afterBytes = after === null || after === undefined ? 0 : after.length;
 
     /**
+     * 落一条 skipped entry（路径无法规范化时保留原始输入，便于预览里定位原因）。
      * @param {string} reason
+     * @param {string} [relPath]
+     * @param {number} [bytes]
      * @returns {Promise<{ok: false, path: string, reason: string, entry: FileEntry}>}
      */
-    async function skip(reason) {
+    async function skip(reason, relPath, bytes) {
       /** @type {FileEntry} */
       const entry = {
         v: ENTRY_VERSION,
         sessionId,
         anchorSeq: seqOf(change.anchorSeq),
-        path: resolved.ok ? resolved.relPath : String(change.path ?? ""),
+        path: relPath ?? (resolved.ok ? resolved.relPath : displayPathOf(cwd, change.path)),
         existedBefore: false,
         beforeHash: null,
         afterHash: null,
         mode: null,
-        bytes: Math.max(beforeBytes, afterBytes),
+        bytes: bytes ?? Math.max(beforeBytes, afterBytes),
         beforeBytes: 0,
         tool: typeof change.tool === "string" ? change.tool : "unknown",
         callId: typeof change.callId === "string" ? change.callId : null,
@@ -1123,15 +1137,24 @@ export function createFileStore(input = {}) {
       return { ok: false, path: entry.path, reason, entry };
     }
 
+    if (!resolved.ok) return skip(knownSkip ?? resolved.reason);
+    if (before === undefined || after === undefined)
+      return skip(knownSkip ?? SKIP_REASONS.unreadable);
+    if (knownSkip !== undefined) return skip(knownSkip);
+    const existedBefore =
+      typeof change.existedBefore === "boolean" ? change.existedBefore : before !== null;
+    const tooLarge = Math.max(beforeBytes, afterBytes) > options.maxFileBytes;
+    const binary =
+      (before !== null && decodeText(before) === null) ||
+      (after !== null && decodeText(after) === null);
+
     if (tooLarge) return skip(SKIP_REASONS.tooLarge);
     if (binary) return skip(SKIP_REASONS.binary);
 
     await ensureSessionMeta(sessionId, change.cwd);
     const beforeBlob = before === null ? null : await putBlob(before);
     const afterBlob = after === null ? null : await putBlob(after);
-    if (before === null && after === null) {
-      return { ok: false, path: resolved.relPath, reason: SKIP_REASONS.unreadable };
-    }
+    if (before === null && after === null) return skip(SKIP_REASONS.unreadable);
     /** @type {FileEntry} */
     const entry = {
       v: ENTRY_VERSION,
@@ -1174,6 +1197,7 @@ export function createFileStore(input = {}) {
    * @property {number} bytes
    * @property {number | null} mode
    * @property {boolean} symlink
+   * @property {boolean} [tooLarge] 超过单文件上限、未整块读进内存（AUD-REW-12）
    */
 
   /**
@@ -1196,6 +1220,19 @@ export function createFileStore(input = {}) {
     if (info.isSymbolicLink())
       return { exists: false, hash: null, bytes: 0, mode: null, symlink: true };
     if (!info.isFile()) return { exists: false, hash: null, bytes: 0, mode: null, symlink: false };
+    // AUD-REW-12：恢复侧也用捕获时的单文件上限做 stat 预检。外部把一个被追踪文件写成
+    // 超大文件时，整块 readFile 可能触发 ERR_FS_FILE_TOO_LARGE（>2 GiB）或把内存打满；
+    // 这里直接标记 too-large，由 planRestore 记 skipped + 明确原因，交给用户处理。
+    if (info.size > options.maxFileBytes) {
+      return {
+        exists: true,
+        hash: null,
+        bytes: info.size,
+        mode: info.mode & 0o777,
+        symlink: false,
+        tooLarge: true,
+      };
+    }
     try {
       const buffer = await fs.readFile(absPath);
       return {
@@ -1357,6 +1394,11 @@ export function createFileStore(input = {}) {
         plan.skipped.push({ path: group.path, reason: SKIP_REASONS.symlink });
         continue;
       }
+      // AUD-REW-12：当前文件超过单文件上限时不整块读，也不写；记 skipped（原因可见）。
+      if (current.tooLarge === true) {
+        plan.skipped.push({ path: group.path, reason: SKIP_REASONS.tooLarge });
+        continue;
+      }
       // 目标态 = before 状态：beforeHash 为 null 表示「回溯后这个路径不存在」。
       const targetIsAbsent = beforeHash === null;
       const currentAtTarget = targetIsAbsent
@@ -1424,9 +1466,18 @@ export function createFileStore(input = {}) {
       plan.totalBytes += action.bytes;
     }
     if (plan.skipped.length > 0) {
+      // AUD-REW-04：按原因分组报数，预览能区分「太大 / 二进制 / 符号链接 / 工作区外 / 排除目录」。
+      /** @type {Map<string, number>} */
+      const byReason = new Map();
+      for (const item of plan.skipped) {
+        byReason.set(item.reason, (byReason.get(item.reason) ?? 0) + 1);
+      }
+      const detail = [...byReason.entries()]
+        .map(([reason, count]) => `${reason}: ${count}`)
+        .join(", ");
       plan.warnings.push({
         code: "files-skipped",
-        message: `${plan.skipped.length} file(s) were not tracked (over 8 MiB, unreadable, or symbolic link)`,
+        message: `${plan.skipped.length} file(s) were not tracked (${detail})`,
       });
     }
     plan.available = plan.conflicts.length === 0 && plan.actions.length > 0;
@@ -1549,6 +1600,13 @@ export function createFileStore(input = {}) {
           continue;
         }
         if (!info.isFile()) throw new Error(`cannot rescue ${safe.relPath}: not a regular file`);
+        // AUD-REW-12：计划之后文件可能被外部写大；救援点要能原样回滚，超过上限就整体失败
+        // （失败在安全侧，一个字节都不写），而不是把超大内容整块读进内存。
+        if (info.size > options.maxFileBytes) {
+          throw new Error(
+            `cannot rescue ${safe.relPath}: larger than the ${options.maxFileBytes}-byte rescue limit`,
+          );
+        }
         const buffer = await fs.readFile(absPath);
         const mode = info.mode & 0o777;
         await writeFileAtomic(rescueFileOf(dir, safe.relPath), buffer, mode);
@@ -1683,7 +1741,14 @@ export function createFileStore(input = {}) {
         // 与捕获侧同一套 canonical 校验：救援点是任意时刻恢复的，写入窗口可能很长。
         const target = await assertWriteTarget(cwd, saved.path);
         if (!target.ok) throw new Error(target.reason);
-        const buffer = await fs.readFile(rescueFileOf(loaded.dir, target.relPath));
+        const savedPath = rescueFileOf(loaded.dir, target.relPath);
+        // AUD-REW-12：恢复侧同样先 stat 预检，拒绝把超大/非文件内容整块读进内存。
+        const savedInfo = await fs.lstat(savedPath);
+        if (!savedInfo.isFile()) throw new Error("rescue content is not a regular file");
+        if (savedInfo.size > options.maxFileBytes) {
+          throw new Error(`rescue content is larger than the ${options.maxFileBytes}-byte limit`);
+        }
+        const buffer = await fs.readFile(savedPath);
         if (typeof saved.sha256 === "string" && hashOf(buffer) !== saved.sha256) {
           throw new Error("rescue content hash mismatch");
         }
@@ -1715,6 +1780,32 @@ export function createFileStore(input = {}) {
       totalBytes: 0,
       actions: [],
     };
+  }
+
+  /**
+   * 自底向上收回「因为文件被移走而变空」的父目录（AUD-REW-15）。
+   *
+   * 只 `rmdir` 空目录，遇到非空/没有权限/到 cwd 就停；不会碰 cwd 本身，也不会递归删内容。
+   * @param {string} cwd
+   * @param {string} relPath 刚被移走的文件（相对 cwd 的 POSIX 路径）
+   * @returns {Promise<string[]>} 收回的目录（相对 cwd，自底向上）
+   */
+  async function removeEmptyParents(cwd, relPath) {
+    const root = path.resolve(cwd);
+    /** @type {string[]} */
+    const removed = [];
+    let dir = path.dirname(joinRelative(root, relPath));
+    for (let depth = 0; depth < 64; depth++) {
+      if (dir === root || !isInside(root, dir)) break;
+      try {
+        await fs.rmdir(dir);
+      } catch {
+        break;
+      }
+      removed.push(path.relative(root, dir).split(path.sep).join("/"));
+      dir = path.dirname(dir);
+    }
+    return removed;
   }
 
   // ---------------------------------------------------------------- 执行
@@ -1754,6 +1845,7 @@ export function createFileStore(input = {}) {
       auditId,
       rolledBack: [],
       rollbackFailed: [],
+      removedDirs: [],
     };
     if (Array.isArray(plan.conflicts) && plan.conflicts.length > 0) {
       throw new FileStoreError(
@@ -1775,8 +1867,9 @@ export function createFileStore(input = {}) {
 
     // 1) 救援点必须成功，否则一个字节都不动（设计 §2.4 步骤 2）。
     let rescue;
-    if (typeof request?.rescueId === "string" && request.rescueId.length > 0) {
-      const loaded = await loadRescue(sessionId, request.rescueId);
+    const reuseRescue = typeof request?.rescueId === "string" && request.rescueId.length > 0;
+    if (reuseRescue) {
+      const loaded = await loadRescue(sessionId, String(request.rescueId));
       if (loaded === null) {
         throw new FileStoreError(
           FILE_ERROR_CODES.rescueNotFound,
@@ -1800,8 +1893,22 @@ export function createFileStore(input = {}) {
     /** @type {Record<string, any>} */
     let extras = {};
     if (typeof request?.beforeApply === "function") {
-      const value = await request.beforeApply();
-      if (isRecord(value)) extras = value;
+      try {
+        const value = await request.beforeApply();
+        if (isRecord(value)) extras = value;
+      } catch (error) {
+        // AUD-REW-13：marker 追加失败时丢弃救援点（设计 §2.4 步骤 3），否则面板里会留下
+        // 一次从未发生过的回溯的「幽灵救援点」，还会占掉每会话的救援点配额。
+        if (!reuseRescue) {
+          try {
+            await removeTree(rescue.dir);
+            result.rescueId = null;
+          } catch {
+            // 丢弃失败保留原异常：安全侧已保证没有写文件
+          }
+        }
+        throw error;
+      }
     }
 
     /** @type {Array<{action: RestoreAction, trashPath?: string}>} */
@@ -1875,6 +1982,15 @@ export function createFileStore(input = {}) {
         result.trashed.push(relPath);
       } catch (error) {
         result.failed.push({ path: relPath, reason: messageOf(error) });
+      }
+    }
+
+    // AUD-REW-15：全部动作成功时，收回因为文件被移走而变空的父目录（只删空目录）。
+    if (result.failed.length === 0) {
+      for (const relPath of result.trashed) {
+        for (const removedDir of await removeEmptyParents(cwd, relPath)) {
+          if (!result.removedDirs.includes(removedDir)) result.removedDirs.push(removedDir);
+        }
       }
     }
 
@@ -1987,25 +2103,28 @@ export function createFileStore(input = {}) {
   /**
    * 列出会话的回收站操作（最新在前）。`request` 既可以是 `{sessionId}`，也可以是裸 sessionId。
    * @param {{sessionId: string} | string} request
-   * @returns {Promise<Array<{id: string, time: number, targetSeq: number | null, paths: Array<{path: string, bytes: number}>}>>}
+   * @returns {Promise<Array<{id: string, time: number, targetSeq: number | null, rescueId: string | null, totalBytes: number, paths: Array<{path: string, bytes: number}>}>>}
    */
   async function listTrash(request) {
     const sessionId = typeof request === "string" ? request : (request?.sessionId ?? "");
     const sessionDir = path.join(home, "trash", safeSegment(sessionId));
     const ids = await listSubdirs(sessionDir);
-    /** @type {Array<{id: string, time: number, targetSeq: number | null, paths: Array<{path: string, bytes: number}>}>} */
+    /** @type {Array<{id: string, time: number, targetSeq: number | null, rescueId: string | null, totalBytes: number, paths: Array<{path: string, bytes: number}>}>} */
     const ops = [];
     for (const id of ids) {
       const manifest = await readJson(path.join(sessionDir, id, "manifest.json"));
       if (!isRecord(manifest)) continue;
       const paths = Array.isArray(manifest.paths) ? manifest.paths : [];
+      const listed = paths
+        .filter((entry) => isRecord(entry) && typeof entry.path === "string")
+        .map((entry) => ({ path: entry.path, bytes: seqOf(entry.bytes) }));
       ops.push({
         id,
         time: seqOf(manifest.createdAt),
         targetSeq: isSeq(manifest.targetSeq) ? manifest.targetSeq : null,
-        paths: paths
-          .filter((entry) => isRecord(entry) && typeof entry.path === "string")
-          .map((entry) => ({ path: entry.path, bytes: seqOf(entry.bytes) })),
+        rescueId: typeof manifest.rescueId === "string" ? manifest.rescueId : null,
+        totalBytes: listed.reduce((sum, item) => sum + item.bytes, 0),
+        paths: listed,
       });
     }
     ops.sort((left, right) => (left.id < right.id ? 1 : left.id > right.id ? -1 : 0));
@@ -2014,8 +2133,11 @@ export function createFileStore(input = {}) {
 
   /**
    * 从回收站恢复一次操作的产物（目标已存在则拒绝覆盖）。
+   *
+   * ADR 0002 / AUD-REW-08：恢复前先对「当前受影响的文件」再建一个 rescue-of-rescue，
+   * 这样「恢复回收站」本身也是可逆的；安全网建不出来就一个文件都不动。
    * @param {{sessionId: string, cwd?: string, auditId: string}} request
-   * @returns {Promise<{restored: string[], failed: Array<{path: string, reason: string}>}>}
+   * @returns {Promise<{restored: string[], failed: Array<{path: string, reason: string}>, safetyRescueId: string | null}>}
    */
   async function restoreTrash(request) {
     const sessionId = request?.sessionId ?? "";
@@ -2036,6 +2158,26 @@ export function createFileStore(input = {}) {
       );
     }
     const paths = Array.isArray(manifest.paths) ? manifest.paths : [];
+    if (paths.length === 0) {
+      await removeTree(dir);
+      return { restored: [], failed: [], safetyRescueId: null };
+    }
+    // rescue-of-rescue：与 restoreRescue 同一套安全网（先存当前内容，再写回）。
+    const safetyPlan = {
+      ...planRestoreShell(),
+      cwd,
+      actions: paths.map((entry) => ({
+        path: isRecord(entry) && typeof entry.path === "string" ? entry.path : "",
+        action: /** @type {"restore"} */ ("restore"),
+        beforeHash: null,
+        afterHash: null,
+        currentHash: null,
+        bytes: isRecord(entry) ? seqOf(entry.bytes) : 0,
+        mode: isRecord(entry) && typeof entry.mode === "number" ? entry.mode : null,
+        anchorSeq: 0,
+      })),
+    };
+    const safety = await createRescue({ sessionId, cwd, plan: safetyPlan });
     /** @type {string[]} */
     const restored = [];
     /** @type {Array<{path: string, reason: string}>} */
@@ -2065,6 +2207,12 @@ export function createFileStore(input = {}) {
           exists = false;
         }
         if (exists) throw new Error("destination already exists");
+        // 恢复前回收站内容也要做一次大小预检，避免把超大文件读进内存/写出半成品。
+        const sourceInfo = await fs.lstat(source);
+        if (!sourceInfo.isFile()) throw new Error("trash content is not a regular file");
+        if (sourceInfo.size > options.maxFileBytes) {
+          throw new Error(`trash content is larger than the ${options.maxFileBytes}-byte limit`);
+        }
         await moveFile(source, target.absPath, entry.mode ?? undefined);
         restored.push(target.relPath);
       } catch (error) {
@@ -2079,7 +2227,46 @@ export function createFileStore(input = {}) {
     }
     if (remaining.length === 0) await removeTree(dir);
     else await writeJsonAtomic(path.join(dir, "manifest.json"), { ...manifest, paths: remaining });
-    return { restored, failed };
+    return { restored, failed, safetyRescueId: safety.rescueId };
+  }
+
+  /**
+   * 清空一次回收站操作（永久删除，ADR 0002：先给影响面，再由调用方确认）。
+   *
+   * `dryRun: true` 只返回影响面（文件数/字节/路径），不删任何东西；正式清空后目录即消失。
+   * @param {{sessionId: string, auditId: string, dryRun?: boolean}} request
+   * @returns {Promise<{dryRun: boolean, auditId: string, files: number, bytes: number, paths: string[]}>}
+   */
+  async function clearTrash(request) {
+    const sessionId = request?.sessionId ?? "";
+    const auditId = request?.auditId ?? "";
+    if (sessionId === "" || auditId === "") {
+      throw new FileStoreError(FILE_ERROR_CODES.failed, "a session id and a trash id are required");
+    }
+    const dir = trashDirOf(sessionId, auditId);
+    const manifest = await readJson(path.join(dir, "manifest.json"));
+    if (!isRecord(manifest)) {
+      throw new FileStoreError(
+        FILE_ERROR_CODES.failed,
+        `trash operation "${auditId}" was not found`,
+      );
+    }
+    const paths = Array.isArray(manifest.paths) ? manifest.paths : [];
+    /** @type {string[]} */
+    const listed = [];
+    let files = 0;
+    let bytes = 0;
+    for (const entry of paths) {
+      if (!isRecord(entry) || typeof entry.path !== "string") continue;
+      listed.push(entry.path);
+      files += 1;
+      bytes += seqOf(entry.bytes);
+    }
+    if (request?.dryRun === true) return { dryRun: true, auditId, files, bytes, paths: listed };
+    // 实际占用按目录统计（含 manifest / 文件系统块之外的元数据），影响面里两个数都给。
+    const stats = await dirStats(dir);
+    await removeTree(dir);
+    return { dryRun: false, auditId, files, bytes: stats.bytes, paths: listed };
   }
 
   // ---------------------------------------------------------------- 审计
@@ -2510,10 +2697,12 @@ export function createFileStore(input = {}) {
     restoreRescue,
     listTrash,
     restoreTrash,
+    clearTrash,
     appendAudit,
     readAudit,
     usage,
     prune,
+    collectGarbage,
     blobPathOf,
     readBlob,
     /** 当前是否因软上限暂停捕获。 */

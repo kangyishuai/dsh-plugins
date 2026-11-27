@@ -745,6 +745,62 @@ const modeInfo = await page.evaluate(() => {
 });
 check("确认框有仅对话/对话+文件两个范围", modeInfo !== null && modeInfo.radios.length === 2, JSON.stringify(modeInfo && modeInfo.radios));
 check("没有文件变更时文件模式被禁用", modeInfo !== null && modeInfo.radios.some((r) => r.value === "both" && r.disabled) && /无文件变更|No file changes/u.test(modeInfo.text), JSON.stringify(modeInfo && modeInfo.radios));
+const recoveryInfo = await page.evaluate(() => {
+  const dialog = [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')].find((d) => (d.className || "").includes("dsh-srw"));
+  if (!dialog) return null;
+  const recoverable = dialog.querySelector("[data-rewind-recoverable]");
+  const primary = dialog.querySelector(".dsh-srw-btn-primary");
+  const autofocus = dialog.querySelector("[data-modal-autofocus]");
+  return {
+    recoverable: recoverable ? (recoverable.textContent || "").trim() : "",
+    primaryPresent: !!primary,
+    autofocusPresent: !!autofocus,
+    autofocusIsPrimary: !!autofocus && autofocus === primary,
+    focusInDialog: dialog.contains(document.activeElement),
+    focusOnAutofocus: autofocus === document.activeElement,
+  };
+});
+check(
+  "确认框写明可恢复性（消息留在已撤回页签 / 文件有救援点与回收站）",
+  recoveryInfo !== null && /撤回|withdrawn/u.test(recoveryInfo.recoverable) && /救援点|rescue|回收站|trash/iu.test(recoveryInfo.recoverable),
+  JSON.stringify(recoveryInfo),
+);
+const trackingScope = await page.evaluate(() => {
+  const dialog = [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')].find((d) => (d.className || "").includes("dsh-srw"));
+  if (!dialog) return null;
+  const el = dialog.querySelector("[data-srw-tracking-scope]");
+  return {
+    present: !!el,
+    text: el ? (el.textContent || "").replace(/\\s+/g, " ").trim() : "",
+  };
+});
+check(
+  "确认框写明文件追踪范围（write/edit/apply_patch；bash/子代理不追踪，USIM-U2-03/U3-08）",
+  trackingScope !== null &&
+    trackingScope.present === true &&
+    /write/iu.test(trackingScope.text) &&
+    /apply_patch|编辑|edit/iu.test(trackingScope.text),
+  JSON.stringify(trackingScope).slice(0, 240),
+);
+check(
+  "确认框默认聚焦主按钮（data-modal-autofocus，AUD-REW-07）",
+  recoveryInfo !== null && recoveryInfo.autofocusIsPrimary === true && recoveryInfo.focusOnAutofocus === true,
+  JSON.stringify(recoveryInfo),
+);
+const tabTrap = await page.evaluate(() => {
+  const dialog = [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')].find((d) => (d.className || "").includes("dsh-srw"));
+  if (!dialog) return null;
+  const nodes = [...dialog.querySelectorAll('button:not([disabled]), input:not([disabled])')];
+  const last = nodes[nodes.length - 1];
+  if (!last) return null;
+  last.focus();
+  last.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+  return {
+    inside: dialog.contains(document.activeElement),
+    active: (document.activeElement && document.activeElement.textContent || "").trim(),
+  };
+});
+check("确认框 Tab 不穿透（焦点在框内环绕，AUD-REW-07）", tabTrap?.inside === true, JSON.stringify(tabTrap));
 const resendBox = await page.evaluate(() => {
   const box = document.querySelector('.dsh-srw-dialog input[data-rewind-resend="true"]');
   return box ? { present: true, checked: box.checked } : { present: false, checked: false };
@@ -858,6 +914,26 @@ const auditText = await page.evaluate(() => {
   return root ? (root.textContent || "").replace(/s+/g, " ") : "";
 });
 check("回溯记录页签出现本次回执", auditTab && /仅对话|Conversation/u.test(auditText) && /条|message/u.test(auditText), auditText.slice(0, 160));
+const rescuesTab = await page.evaluate(() => {
+  const tab = [...document.querySelectorAll(".dsh-srw-tab")].find((t) => (t.textContent || "").trim() === "救援点");
+  if (!tab) return { clicked: false };
+  tab.click();
+  return { clicked: true };
+});
+await page.waitForTimeout(900);
+const trashSection = await page.evaluate(() => {
+  const root = document.querySelector(".dsh-srw-drawer");
+  const section = root ? root.querySelector("[data-srw-trash]") : null;
+  return {
+    present: !!section,
+    text: section ? (section.textContent || "").replace(/s+/g, " ") : "",
+  };
+});
+check(
+  "救援点页签里能看到回收站入口（可恢复/可清空，AUD-REW-08）",
+  rescuesTab.clicked === true && trashSection.present === true && /回收站|Trash/iu.test(trashSection.text),
+  JSON.stringify(trashSection).slice(0, 200),
+);
 const timeline = await page.evaluate(() => {
   const root = document.querySelector(".dsh-srw-timeline");
   if (!root) return null;
@@ -1023,25 +1099,95 @@ if (commandSession === null) {
   await page.waitForTimeout(200);
   await page.keyboard.press("Enter");
   await page.waitForTimeout(1400);
-  const popup = await page.evaluate(() => {
-    const root = document.querySelector('[role="listbox"], [role="menu"], [class*="popup"]');
-    if (!root) return { open: false, options: [] };
-    const options = [...root.querySelectorAll('[role="option"], [role="menuitem"], button')].map((el) => (el.textContent || "").trim()).filter((text) => text !== "");
-    return { open: true, options: options.slice(0, 6), html: (root.outerHTML || "").slice(0, 300) };
-  });
-  check("/rewind 命令打开候选", filled.filled && popup.open && popup.options.length > 0, JSON.stringify({ filled, popup }));
-  if (popup.open && popup.options.length > 0) {
-    await page.evaluate(() => {
-      const root = document.querySelector('[role="listbox"], [role="menu"], [class*="popup"]');
-      const option = root ? [...root.querySelectorAll('[role="option"], [role="menuitem"], button')].find((el) => (el.textContent || "").trim() !== "") : null;
-      if (option) option.click();
-    });
+  // USIM-U2-26：裸 /rewind 现在直接打开本插件自己的候选对话框（不再用宿主 popupSelect，
+  // 它的 ↑/↓/Enter 在本插件这条路径上实测失效）。
+  const commandListDialog = await dialogInfo();
+  check(
+    "/rewind 命令打开插件候选对话框（只列会话消息）",
+    filled.filled &&
+      commandListDialog !== null &&
+      matches(commandListDialog.title, LABELS.dialogList) &&
+      commandListDialog.rows.length > 0,
+    JSON.stringify({ filled, dialog: commandListDialog && { title: commandListDialog.title, rows: commandListDialog.rows.length } }),
+  );
+  if (commandListDialog !== null && commandListDialog.rows.length > 0) {
+    // 键盘路径：↑/↓ 移动选中、Enter 打开确认框（与 Esc Esc 完全同一套交互）。
+    await page.keyboard.press("ArrowDown");
+    await page.waitForTimeout(150);
+    await page.keyboard.press("ArrowUp");
+    await page.waitForTimeout(150);
+    await page.keyboard.press("Enter");
     await page.waitForTimeout(1200);
     const commandConfirm = await dialogInfo();
-    check("/rewind 选择候选后进入确认框", commandConfirm !== null && matches(commandConfirm.title, LABELS.dialogConfirm), commandConfirm && commandConfirm.title);
+    check(
+      "/rewind 候选可用 ↑/↓ 选择 + Enter 进入确认框",
+      commandConfirm !== null && matches(commandConfirm.title, LABELS.dialogConfirm),
+      commandConfirm && commandConfirm.title,
+    );
     await clickDialogButton(LABELS.cancel);
     await page.waitForTimeout(400);
   }
+}
+
+// /rewind @<seq> both 必须显式 confirm（AUD-REW-09）：无 confirm 时只回执影响面，绝不写文件。
+// 注意：本段代码在浏览器侧模板字符串里，避免反斜杠/模板插值（见脚本头部转义约定）。
+if (commandSession !== null) {
+  const bothSessionId = String(commandSession).replace("session:", "");
+  let beforeBoth = null;
+  try {
+    beforeBoth = await readSessionDigest({ home: HOME, sessionId: bothSessionId }, digestDeps);
+  } catch (_error) {
+    beforeBoth = null;
+  }
+  const bothTarget =
+    beforeBoth && Array.isArray(beforeBoth.visibleHumanSeqs) && beforeBoth.visibleHumanSeqs.length > 0
+      ? beforeBoth.visibleHumanSeqs[0]
+      : null;
+  await page.evaluate(() => {
+    const el = document.querySelector("[data-composer-input]");
+    if (!el) return;
+    el.focus();
+    const sel = document.getSelection();
+    if (!sel) return;
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    document.execCommand("delete", false);
+  });
+  await page.waitForTimeout(200);
+  let receiptText = "";
+  if (bothTarget !== null) {
+    await page.evaluate(() => {
+      const el = document.querySelector("[data-composer-input]");
+      if (el && el.focus) el.focus();
+    });
+    await page.keyboard.insertText("/rewind @" + bothTarget + " both");
+    await page.waitForTimeout(300);
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(2000);
+    receiptText = await page.evaluate(() => document.body.innerText || "");
+  }
+  let afterBoth = null;
+  try {
+    afterBoth = await readSessionDigest({ home: HOME, sessionId: bothSessionId }, digestDeps);
+  } catch (_error) {
+    afterBoth = null;
+  }
+  check(
+    "/rewind @<seq> both 无 confirm 时只回执影响面、不写文件（AUD-REW-09）",
+    bothTarget !== null &&
+      beforeBoth !== null &&
+      afterBoth !== null &&
+      afterBoth.markerCount === beforeBoth.markerCount &&
+      /Nothing has been written yet/u.test(receiptText),
+    JSON.stringify({
+      bothTarget: bothTarget,
+      before: beforeBoth && beforeBoth.markerCount,
+      after: afterBoth && afterBoth.markerCount,
+      receipt: receiptText.slice(-240),
+    }),
+  );
 }
 
 // 抽屉页签：设置已迁到独立设置分节，抽屉里应当只剩 3 个会话级页签
@@ -1058,6 +1204,38 @@ check(
   drawerTabs.length === 3 && drawerTabs.includes("已撤回") && drawerTabs.includes("回溯记录") && drawerTabs.includes("救援点"),
   JSON.stringify(drawerTabs),
 );
+const drawerHint = await page.evaluate(() => {
+  const root = document.querySelector(".dsh-srw-drawer");
+  if (!root) return null;
+  const hint = root.querySelector(".dsh-srw-drawer-hint");
+  const buttons = [...root.querySelectorAll("button")].map((b) => (b.textContent || "").trim());
+  return {
+    present: !!hint,
+    text: hint ? (hint.textContent || "").replace(/\\s+/g, " ").trim() : "",
+    hasPick: buttons.some((text) => /选择消息回退|Pick a message/iu.test(text)),
+  };
+});
+check(
+  "回溯面板提供「选择消息回退」入口（不再必须先关面板，USIM-U2-10）",
+  drawerHint !== null && drawerHint.present === true && drawerHint.hasPick === true,
+  JSON.stringify(drawerHint).slice(0, 240),
+);
+const pickOpened = await page.evaluate(() => {
+  const root = document.querySelector(".dsh-srw-drawer");
+  const btn = root ? [...root.querySelectorAll("button")].find((b) => /选择消息回退|Pick a message/iu.test((b.textContent || "").trim())) : null;
+  if (!btn) return false;
+  btn.click();
+  return true;
+});
+await page.waitForTimeout(900);
+const pickDialog = await dialogInfo();
+check(
+  "「选择消息回退」会关闭面板并打开候选对话框",
+  pickOpened === true && pickDialog !== null && matches(pickDialog.title, LABELS.dialogList),
+  pickDialog && pickDialog.title,
+);
+await clickDialogButton(LABELS.cancel);
+await page.waitForTimeout(400);
 check("抽屉里不再有「设置」页签", !drawerTabs.includes("设置"), JSON.stringify(drawerTabs));
 
 // 关抽屉，改到 设置 → 会话回溯 里验证偏好与诊断
@@ -1096,6 +1274,25 @@ const openRewindSettings = () =>
 const settingsOpened = await openRewindSettings();
 check("设置里出现「会话回溯」分节", settingsOpened === "ok", String(settingsOpened));
 
+const moreSettings = await page.evaluate(() => {
+  const details = document.querySelector("[data-srw-settings] details[data-srw-more-settings]");
+  if (!details) return null;
+  return {
+    open: details.open === true,
+    summary: (details.querySelector("summary")?.textContent || "").trim(),
+  };
+});
+check(
+  "低频设置与诊断收进「更多设置」且默认收起（AUD-REW-17）",
+  moreSettings !== null && moreSettings.open === false && /更多设置|More settings/iu.test(moreSettings.summary),
+  JSON.stringify(moreSettings),
+);
+// 展开后再改偏好 / 读诊断（后续断言依赖这些输入）。
+await page.evaluate(() => {
+  const details = document.querySelector("[data-srw-settings] details[data-srw-more-settings]");
+  if (details) details.open = true;
+});
+
 const sectionHealth = await page.evaluate(async () => {
   const panel = document.querySelector('[data-srw-settings]');
   if (!panel) return { ok: false, reason: "no-section" };
@@ -1106,8 +1303,15 @@ const sectionHealth = await page.evaluate(async () => {
 });
 check(
   "设置分节的诊断报告只读工具已注册",
-  sectionHealth.ok === true && /只读工具/u.test(sectionHealth.text || "") && /enabled|disabled by config/u.test(sectionHealth.text || ""),
+  sectionHealth.ok === true && /只读工具/u.test(sectionHealth.text || "") && /已启用|已关闭|enabled|disabled/u.test(sectionHealth.text || ""),
   String(sectionHealth.text || "").slice(0, 400),
+);
+const auditCountMatch = String(sectionHealth.text || "").match(/可读\\s*(\\d+)\\s*条记录|(\\d+)\\s*record\\(s\\) readable/u);
+const auditCount = auditCountMatch ? Number(auditCountMatch[1] || auditCountMatch[2]) : null;
+check(
+  "诊断的审计条数按真实行数统计（不是恒为 1，USIM-U3-06）",
+  auditCount !== null && auditCount >= 2,
+  JSON.stringify({ auditCount, text: String(sectionHealth.text || "").slice(0, 240) }),
 );
 
 const changed = await page.evaluate(() => {
@@ -1212,7 +1416,7 @@ function decodeZstdFrames(buffer) {
  * 内联进浏览器脚本，所以只能依赖 deps 里传进来的能力，不能引用模块级变量。
  * @param {{ home?: string, sessionId?: string }} args
  * @param {{ readFile: any, readdir: any, join: any, gunzipSync: any, decodeZstdFrames: any }} deps
- * @returns {Promise<null | { logName: string, eventCount: number, maxSeq: number, humanSeqs: number[], userMessageSeqs: number[], visibleTexts: string[], markerCount: number, cutCount: number }>}
+ * @returns {Promise<null | { logName: string, eventCount: number, maxSeq: number, humanSeqs: number[], userMessageSeqs: number[], visibleTexts: string[], visibleHumanSeqs: number[], markerCount: number, cutCount: number }>}
  */
 async function readSessionDigest(args, deps) {
   const home = args && typeof args.home === "string" ? args.home : "";
@@ -1317,6 +1521,7 @@ async function readSessionDigest(args, deps) {
       .filter((event) => typeof event.seq === "number")
       .map((event) => event.seq),
     visibleTexts: visible.map(textOf).filter((value) => value.trim() !== ""),
+    visibleHumanSeqs: visible.map((event) => event.seq),
     markerCount: markers.length,
     cutCount: cuts.length,
   };

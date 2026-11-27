@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  countVisibleMessages,
   cutsOf,
   DEFAULT_CANDIDATE_LIMIT,
   isHumanUserMessageEvent,
@@ -404,4 +405,24 @@ test("messageImages / targetContent 提取图片引用", async () => {
       { attachmentId: "a1", mediaType: "image/png", bytes: 12, width: 1, height: 2, name: "x.png" },
     ],
   });
+});
+
+test("countVisibleMessages: 只数用户/助手消息（与面板 ghost 同口径，USIM-U2-20）", () => {
+  const events = [
+    { seq: 0, type: "system/message", data: { content: [] } },
+    { seq: 1, type: "user/message", data: { source: { kind: "user" } } },
+    { seq: 2, type: "tool/result", data: {} },
+    {
+      seq: 3,
+      type: "assistant/message",
+      data: { message: { content: [{ type: "text", text: "hi" }] } },
+    },
+    { seq: 4, type: "assistant/message", data: { message: { content: [] } } },
+    { seq: 5, type: "user/message", data: { source: { kind: "system-reminder" } } },
+    { seq: 6, type: "user/message", data: { source: { kind: "user" } } },
+  ];
+  assert.equal(countVisibleMessages(events, [0, 1, 2, 3, 4, 5, 6]), 3);
+  assert.equal(countVisibleMessages(events, [1, 3]), 2);
+  assert.equal(countVisibleMessages(events, []), 0);
+  assert.equal(countVisibleMessages([], [1, 2]), 0);
 });

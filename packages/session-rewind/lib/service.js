@@ -15,20 +15,32 @@ import { deriveEventMessage, isAppendSurfaceEvent } from "@deepseek-ai/dsh-sessi
 import { estimateMessage } from "@deepseek-ai/dsh-token-meter/estimate";
 import { Remote, RemoteError, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 import { settleAgent } from "./agent-settle.js";
+import {
+  formatBothConflicts,
+  formatBothPreview,
+  formatRewindReceipt,
+  parseRewindCommand,
+} from "./command.js";
 import { installFileTracking } from "./file-tracking.js";
 import { createFileStore } from "./files.js";
 import { collectGhost } from "./ghost.js";
+import { buildHealth, sessionHealthFacts } from "./health.js";
 import {
-  appendRewindMarker,
   createMarkerMessageInput,
   ERROR_CODES,
   RewindRequestError,
   resolveRewindTarget,
-  resolveSession,
   sessionEvents,
 } from "./operations.js";
 import { findOrphans, pruneOrphans } from "./orphans.js";
-import { cutsOf, hasOpenToolCalls, listCandidatesPage, targetContent } from "./plan.js";
+import {
+  countVisibleMessages,
+  cutsOf,
+  hasOpenToolCalls,
+  listCandidatesPage,
+  targetContent,
+} from "./plan.js";
+import { createRewindFlow } from "./rewind-flow.js";
 import { stateChangeSummary } from "./state-changes.js";
 import { describeToolImpact, installRewindTool, listToolCandidates } from "./tool.js";
 
@@ -162,6 +174,8 @@ export class SessionRewindService extends TypertRemoteService {
     this.dataRoot = resolveDataRoot(this.config);
     /** @type {any} */
     this._store = null;
+    /** @type {any} */
+    this._flow = null;
     this.installFileTracking();
     this.installCommand();
     // 只读 agent 工具：让模型自己看清候选与影响面（绝不执行回溯）。
@@ -176,8 +190,8 @@ export class SessionRewindService extends TypertRemoteService {
         },
       });
     }
-    // 启动时清一次已删除会话的残留数据（失败只告警，不阻塞插件）。
-    if (this.config.cleanupOrphans !== false) void this.cleanupOrphans();
+    // 启动维护：清一次已删除会话的残留数据 + 清无引用内容（失败只告警，不阻塞插件）。
+    void this.startupMaintenance();
   }
 
   /** 惰性创建文件引擎：数据根/配置在服务挂载后解析。 @returns {any} */
@@ -309,6 +323,48 @@ export class SessionRewindService extends TypertRemoteService {
     }
   }
 
+  /**
+   * 启动维护（失败只告警，不阻塞插件）：
+   * 1) 清理已删除会话的残留数据（AUD-REW-01 的护栏在 orphans.js）；
+   * 2) 清一次没有任何 entry/manifest 引用的 blob（AUD-REW-24：内容不再长期滞留）。
+   * @returns {Promise<void>}
+   */
+  async startupMaintenance() {
+    if (this.config.cleanupOrphans !== false) await this.cleanupOrphans();
+    if (this.config.gcOnStartup !== false) await this.collectBlobs();
+  }
+
+  /**
+   * 清掉无引用的 blob（有引用保护；只删内容，不动 entries/manifests）。
+   * @returns {Promise<void>}
+   */
+  async collectBlobs() {
+    try {
+      const result = await this.store.collectGarbage();
+      if (result.removedBlobs > 0) {
+        this.ctx?.logger?.info?.(
+          `session-rewind: removed ${result.removedBlobs} unreferenced blob(s) (${result.bytesFreed} bytes)`,
+        );
+        try {
+          await this.store.appendAudit({
+            id: `gc-${Date.now()}`,
+            action: "gc-blobs",
+            time: Date.now(),
+            sessionId: null,
+            removedBlobs: result.removedBlobs,
+            bytesFreed: result.bytesFreed,
+          });
+        } catch (_error) {
+          /* 审计失败不影响 GC */
+        }
+      }
+    } catch (error) {
+      this.ctx?.logger?.warn?.(
+        `session-rewind: blob GC failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   /** 文件追踪是否开启。 @returns {boolean} */
   trackingEnabled() {
     return this.config.fileTracking !== false;
@@ -363,37 +419,53 @@ export class SessionRewindService extends TypertRemoteService {
   }
 
   /**
-   * `/rewind @<seq> [chat|both]` 命令入口。
+   * `/rewind @<seq> [chat|both] [confirm]` 命令入口（AUD-REW-09）。
+   *
+   * `both` 会写工作区文件：先 preview 回执影响面，必须显式带 `confirm` 才执行；运行中的会话
+   * 一律拒绝（命令没有确认框来解释「会先停止回合」）。`chat` 行为不变。
    * @param {any} invocation CommandInvocation
    * @returns {Promise<any>}
    */
   async handleRewindCommand(invocation) {
-    const raw = typeof invocation?.rawInput === "string" ? invocation.rawInput.trim() : "";
-    const tokens = raw.split(/\s+/u).filter((/** @type {string} */ token) => token !== "");
-    const targetToken = tokens.find((/** @type {string} */ token) => /^@?\d+$/u.test(token));
-    if (targetToken === undefined) {
-      return {
-        kind: "error",
-        text: "Usage: /rewind @<seq> [chat|both] — or pick a message from the UI.",
-      };
-    }
-    const targetSeq = Number(targetToken.replace(/^@/u, ""));
-    const modeToken = tokens.find(
-      (/** @type {string} */ token) => token === "both" || token === "chat",
-    );
-    const mode = modeToken === "both" ? "both" : "chat";
+    const parsed = parseRewindCommand(invocation?.rawInput);
+    if (parsed.ok !== true) return { kind: "error", text: parsed.text };
     const session = invocation?.agent?.session;
     if (session === undefined) return { kind: "error", text: "No active session." };
+    const sessionId = session.id;
+    if (parsed.mode === "both") {
+      const status = invocation?.agent?.status;
+      if (typeof status === "string" && status !== "idle") {
+        return {
+          kind: "error",
+          text: "The session is running. Stop the current turn first (Esc), or pick the message in the UI: the dialog stops the turn for you and shows the full impact before writing.",
+        };
+      }
+      if (parsed.confirmed !== true) {
+        let preview;
+        try {
+          preview = await this.preview({ sessionId, targetSeq: parsed.targetSeq });
+        } catch (error) {
+          return {
+            kind: "error",
+            text: error instanceof Error ? error.message : String(error),
+          };
+        }
+        if (Array.isArray(preview?.files?.conflicts) && preview.files.conflicts.length > 0) {
+          return { kind: "error", text: formatBothConflicts(preview) };
+        }
+        return { kind: "success", text: formatBothPreview(preview, parsed.targetSeq) };
+      }
+    }
     try {
       const result = await this.executeRewind({
-        sessionId: session.id,
-        targetSeq,
-        mode,
-        requestedBy: "command",
+        sessionId,
+        targetSeq: parsed.targetSeq,
+        mode: parsed.mode,
+        requestedBy: parsed.mode === "both" ? "command-confirm" : "command",
       });
       return {
         kind: "success",
-        text: `Rewound to before message ${result.targetSeq} (${result.removedCount} messages, ~${result.tokens} tokens)${mode === "both" ? `; ${result.files?.restored.length ?? 0} files restored, ${result.files?.trashed.length ?? 0} moved to trash` : ""}.`,
+        text: formatRewindReceipt(result, parsed.mode),
         sourceEventSeq: result.markerSeq,
       };
     } catch (error) {
@@ -546,6 +618,8 @@ export class SessionRewindService extends TypertRemoteService {
       const subtitle = target.text.replace(/\s+/gu, " ").trim();
       // 被撤回区间里改过的会话状态（plan/goal/todo/模型…）：回溯不会回滚它们，只提示。
       const stateChanges = stateChangeSummary(events, plan.surfaceStart, plan.surfaceEnd);
+      // USIM-U2-20：与面板 ghost 列表同口径的「用户/助手消息」条数。
+      const removedMessageCount = countVisibleMessages(events, plan.shadowedSeqs);
       /** @type {any} */
       let files = {
         available: false,
@@ -607,6 +681,7 @@ export class SessionRewindService extends TypertRemoteService {
         },
         chat: {
           removedCount: plan.shadowedSeqs.length,
+          removedMessageCount,
           tokens,
           crossesOpenToolCall: hasOpenToolCalls(events, plan.targetSeq),
           reachable: true,
@@ -639,174 +714,34 @@ export class SessionRewindService extends TypertRemoteService {
   }
 
   /**
+   * 一次回溯的编排：下沉到 rewind-flow.js（不 import 宿主包，可单测，AUD-REW-10）。
+   * @returns {any}
+   */
+  rewindFlow() {
+    if (this._flow === null) {
+      this._flow = createRewindFlow({
+        store: this.store,
+        config: this.config,
+        trackingEnabled: () => this.trackingEnabled(),
+        cwdOf: (/** @type {any} */ session) => cwdOf(session),
+        logger: this.ctx?.logger ?? console,
+        inflight: this.inflight,
+        serviceDeps: () => this.deps(),
+        estimateTokens: (/** @type {any[]} */ events, /** @type {number[]} */ seqs) =>
+          this.estimateTokens(events, seqs),
+        settle: (/** @type {any} */ agent, /** @type {any} */ options) =>
+          settleAgent(agent, options),
+      });
+    }
+    return this._flow;
+  }
+
+  /**
    * @param {{sessionId?: string, targetSeq?: number, mode: "chat" | "both", requestedBy: string}} input
    * @returns {Promise<any>}
    */
   async executeRewind(input) {
-    const deps = this.deps();
-    // 先按「允许运行中」解析，拿到 agent；运行中的回合必须先停下，否则 surface 会在
-    // 我们求值与 append 之间继续增长，marker 的 replace 范围就失效了。
-    const pre = resolveSession(deps, input.sessionId, { allowRunning: true });
-    const agent = pre.agent;
-    /** @type {{cancelledTurn: boolean, droppedSteering: number}} */
-    const settle = { cancelledTurn: false, droppedSteering: 0 };
-    if (agent !== undefined && agent !== null && agent.status !== "idle") {
-      if (this.config.cancelRunning === false) {
-        throw new RewindRequestError(
-          ERROR_CODES.busy,
-          `session "${input.sessionId}" is not idle; stop the running turn before rewinding`,
-        );
-      }
-      const outcome = await settleAgent(agent, {
-        ...(typeof this.config.cancelTimeoutMs === "number"
-          ? { timeoutMs: this.config.cancelTimeoutMs }
-          : {}),
-      });
-      settle.cancelledTurn = outcome.cancelled;
-      settle.droppedSteering = outcome.droppedSteering.length;
-      if (!outcome.idle) {
-        throw new RewindRequestError(
-          ERROR_CODES.busy,
-          `session "${input.sessionId}" did not become idle after cancelling the running turn`,
-        );
-      }
-    }
-    // 停稳之后重新求值：取消前的快照可能已经被这一轮追加的事件改变。
-    const resolved = resolveRewindTarget(deps, input);
-    const { session, sessionId, plan, targetEvent } = resolved;
-    if (this.inflight.has(sessionId)) {
-      throw new RewindRequestError(
-        ERROR_CODES.failed,
-        `a rewind is already in progress for session "${sessionId}"`,
-      );
-    }
-    this.inflight.add(sessionId);
-    const auditId =
-      typeof this.store.newAuditId === "function" ? this.store.newAuditId() : `rw-${Date.now()}`;
-    const mode = input.mode === "both" ? "both" : "chat";
-    /** @type {any} */
-    let files = null;
-    /** @type {any} */
-    let markerEvent;
-    try {
-      if (mode === "both") {
-        const cwd = cwdOf(session);
-        if (!this.trackingEnabled() || cwd === undefined) {
-          throw new RewindRequestError(
-            ERROR_CODES.filesUnavailable,
-            "file restore is unavailable for this session (tracking disabled or no working directory)",
-          );
-        }
-        const filePlan = await this.store.planRestore({
-          sessionId,
-          targetSeq: plan.targetSeq,
-          cwd,
-        });
-        if (
-          Array.isArray(filePlan.warnings) &&
-          filePlan.warnings.some((/** @type {any} */ item) => item.code === "files-unavailable")
-        ) {
-          throw new RewindRequestError(
-            ERROR_CODES.filesUnavailable,
-            "file restore is unavailable for this session",
-          );
-        }
-        if (Array.isArray(filePlan.conflicts) && filePlan.conflicts.length > 0) {
-          const error = new RewindRequestError(
-            ERROR_CODES.filesConflict,
-            `file restore would overwrite externally changed files: ${filePlan.conflicts
-              .map((/** @type {any} */ item) => item.path)
-              .join(", ")}`,
-          );
-          /** @type {any} */ (error).details = { conflicts: filePlan.conflicts };
-          throw error;
-        }
-        if (!Array.isArray(filePlan.actions) || filePlan.actions.length === 0) {
-          // 没有需要改动的文件：仍然要追加会话 marker（applyRestore 在 actions 为空时
-          // 会提前返回，不会调用 beforeApply）。
-          markerEvent = appendRewindMarker(session, plan, deps, { mode: "both", auditId });
-          files = {
-            restored: [],
-            trashed: [],
-            skipped: filePlan.skipped ?? [],
-            failed: [],
-            rescueId: null,
-          };
-        } else {
-          let outcome;
-          try {
-            outcome = await this.store.applyRestore({
-              sessionId,
-              cwd,
-              plan: filePlan,
-              auditId,
-              beforeApply: () => {
-                markerEvent = appendRewindMarker(session, plan, deps, { mode: "both", auditId });
-              },
-            });
-          } catch (error) {
-            if (markerEvent === undefined) throw error;
-            // marker 已写入：会话已回溯，文件未能写入；返回部分结果而不是丢掉响应。
-            outcome = {
-              restored: [],
-              trashed: [],
-              skipped: filePlan.skipped ?? [],
-              failed: [
-                { path: "*", reason: error instanceof Error ? error.message : String(error) },
-              ],
-              rescueId: null,
-            };
-          }
-          files = {
-            restored: outcome.restored ?? [],
-            trashed: outcome.trashed ?? [],
-            skipped: outcome.skipped ?? [],
-            failed: outcome.failed ?? [],
-            rescueId: outcome.rescueId ?? null,
-          };
-        }
-        // 文件失败不回滚会话；在响应里报告（客户端显示为部分成功）。
-      } else {
-        markerEvent = appendRewindMarker(session, plan, deps, { mode: "chat", auditId });
-      }
-      const events = session.snapshotEvents();
-      const tokens = this.estimateTokens(events, plan.shadowedSeqs);
-      const response = {
-        targetSeq: plan.targetSeq,
-        markerSeq: markerEvent.seq,
-        removedCount: plan.shadowedSeqs.length,
-        tokens,
-        auditId,
-        target: targetContent(targetEvent),
-        files,
-        // v2.1：执行时是否为了回溯而停下了运行中的回合。
-        cancelledTurn: settle.cancelledTurn,
-        droppedSteering: settle.droppedSteering,
-      };
-      try {
-        await this.store.appendAudit({
-          id: auditId,
-          sessionId,
-          time: Date.now(),
-          targetSeq: plan.targetSeq,
-          markerSeq: markerEvent.seq,
-          mode,
-          removedCount: plan.shadowedSeqs.length,
-          tokens,
-          files,
-          requestedBy: input.requestedBy,
-          cancelledTurn: settle.cancelledTurn,
-          droppedSteering: settle.droppedSteering,
-        });
-      } catch (error) {
-        this.ctx?.logger?.warn?.(
-          `session-rewind: audit append failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-      return response;
-    } finally {
-      this.inflight.delete(sessionId);
-    }
+    return this.rewindFlow().execute(input);
   }
 
   /**
@@ -969,105 +904,165 @@ export class SessionRewindService extends TypertRemoteService {
   }
 
   /**
-   * 健康检查（doctor）：数据根、schema、usage、追踪状态、可选会话的 marker 形状。
+   * 会话回收站操作列表（AUD-REW-08）：被回溯移走的文件在这里可见、可恢复。
+   * @param {{sessionId?: string}} [request]
+   */
+  async trash(request) {
+    try {
+      const sessionId = request?.sessionId;
+      if (typeof sessionId !== "string" || sessionId === "") {
+        throw new RewindRequestError(ERROR_CODES.notFound, "a session id is required");
+      }
+      return { operations: await this.store.listTrash({ sessionId }) };
+    } catch (error) {
+      rethrowRemote(error);
+    }
+  }
+
+  /**
+   * 从回收站恢复一次回溯移走的文件（恢复前先建 rescue-of-rescue，与救援点恢复同一套安全网）。
+   * @param {{sessionId?: string, auditId?: string}} [request]
+   */
+  async restoreTrash(request) {
+    try {
+      const deps = this.deps();
+      const { session } = sessionEvents(deps, /** @type {any} */ (request?.sessionId));
+      const sessionId = session.id;
+      const cwd = cwdOf(session);
+      if (cwd === undefined) {
+        throw new RewindRequestError(
+          ERROR_CODES.filesUnavailable,
+          "session has no working directory",
+        );
+      }
+      const auditId = request?.auditId;
+      if (typeof auditId !== "string" || auditId === "") {
+        throw new RewindRequestError(ERROR_CODES.notFound, "a trash id is required");
+      }
+      const result = await this.store.restoreTrash({ sessionId, cwd, auditId });
+      try {
+        await this.store.appendAudit({
+          version: 1,
+          action: "trash-restore",
+          id:
+            typeof this.store.newAuditId === "function"
+              ? this.store.newAuditId()
+              : `tr-${Date.now()}`,
+          time: Date.now(),
+          sessionId,
+          trashId: auditId,
+          rescueId: result.safetyRescueId ?? null,
+          mode: "files",
+          targetSeq: null,
+          markerSeq: null,
+          removedCount: null,
+          tokens: null,
+          files: {
+            restored: result.restored ?? [],
+            trashed: [],
+            skipped: [],
+            failed: result.failed ?? [],
+            rescueId: result.safetyRescueId ?? null,
+          },
+          requestedBy: "ui",
+        });
+      } catch (error) {
+        this.ctx?.logger?.warn?.(
+          `session-rewind: trash-restore audit failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      if (Array.isArray(result.failed) && result.failed.length > 0) {
+        const error = new RewindRequestError(
+          ERROR_CODES.filesFailed,
+          "some files could not be restored from the trash",
+        );
+        /** @type {any} */ (error).details = { files: result };
+        throw error;
+      }
+      return result;
+    } catch (error) {
+      rethrowRemote(error);
+    }
+  }
+
+  /**
+   * 清空一次回收站操作（永久删除）。`dryRun: true` 只回影响面，供客户端二次确认（ADR 0002）。
+   * @param {{sessionId?: string, auditId?: string, dryRun?: boolean}} [request]
+   */
+  async clearTrash(request) {
+    try {
+      const deps = this.deps();
+      const { session } = sessionEvents(deps, /** @type {any} */ (request?.sessionId));
+      const sessionId = session.id;
+      const auditId = request?.auditId;
+      if (typeof auditId !== "string" || auditId === "") {
+        throw new RewindRequestError(ERROR_CODES.notFound, "a trash id is required");
+      }
+      const dryRun = request?.dryRun === true;
+      const result = await this.store.clearTrash({ sessionId, auditId, dryRun });
+      if (dryRun !== true) {
+        try {
+          await this.store.appendAudit({
+            version: 1,
+            action: "trash-clear",
+            id:
+              typeof this.store.newAuditId === "function"
+                ? this.store.newAuditId()
+                : `tc-${Date.now()}`,
+            time: Date.now(),
+            sessionId,
+            trashId: auditId,
+            mode: "files",
+            targetSeq: null,
+            markerSeq: null,
+            removedCount: null,
+            tokens: null,
+            files: { restored: [], trashed: [], skipped: [], failed: [], cleared: result.files },
+            bytes: result.bytes,
+            paths: result.paths,
+            requestedBy: "ui",
+          });
+        } catch (error) {
+          this.ctx?.logger?.warn?.(
+            `session-rewind: trash-clear audit failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+      return result;
+    } catch (error) {
+      rethrowRemote(error);
+    }
+  }
+
+  /**
+   * 健康检查（doctor）：数据根、usage、追踪状态、可选会话的 marker 形状。
+   *
+   * 检查项的构造在 ./health.js（host-free、可单测）；这里只提供宿主能力。
+   * USIM-U3-06：审计条数按真实行数统计，不再用 `readAudit({ limit: 1 })` 把长度当条数。
    * @param {{sessionId?: string}} [request]
    */
   async health(request) {
-    /** @type {{name: string, ok: boolean, detail: string}[]} */
-    const checks = [];
-    const push = (
-      /** @type {string} */ name,
-      /** @type {boolean} */ ok,
-      /** @type {string} */ detail = "",
-    ) => checks.push({ name, ok, detail });
-    push("数据根", typeof this.dataRoot === "string" && this.dataRoot !== "", this.dataRoot);
-    push(
-      "文件追踪",
-      this.trackingEnabled(),
-      this.trackingEnabled() ? "enabled" : "disabled in config",
-    );
-    /** @type {any} */
-    let usage = null;
-    try {
-      usage = await this.store.usage();
-      push(
-        "文件存储",
-        true,
-        `${usage.bytes} bytes / ${usage.entries} entries / ${usage.sessions} sessions`,
-      );
-    } catch (error) {
-      push("文件存储", false, error instanceof Error ? error.message : String(error));
-    }
-    try {
-      const audits = await this.store.readAudit({ limit: 1 });
-      push("审计日志", true, `${audits.length} record(s) readable`);
-    } catch (error) {
-      push("审计日志", false, error instanceof Error ? error.message : String(error));
-    }
-    push(
-      "只读工具",
-      this.config.readOnlyTool === false ? true : this.readOnlyToolInstalled === true,
-      this.config.readOnlyTool === false
-        ? "disabled by config"
-        : this.readOnlyToolInstalled === true
-          ? "enabled"
-          : "not registered",
-    );
-    try {
-      const orphans = await findOrphans({ dataRoot: this.dataRoot });
-      const unknownCount = Array.isArray(orphans.unknownIds) ? orphans.unknownIds.length : 0;
-      const unknownSuffix = unknownCount === 0 ? "" : `；保留 ${unknownCount} 个未知条目`;
-      if (orphans.enumerationFailed) {
-        /** @type {string[]} */
-        const problems = [];
-        if (orphans.unreadableWorkspaces > 0) {
-          problems.push(`${orphans.unreadableWorkspaces} 个 workspace 不可读`);
-        }
-        const unknownWorkspaces = Array.isArray(orphans.unknownWorkspaces)
-          ? orphans.unknownWorkspaces
-          : [];
-        if (unknownWorkspaces.length > 0) {
-          problems.push(`${unknownWorkspaces.length} 个 workspace 布局未知`);
-        }
-        push(
-          "孤儿数据",
-          false,
-          `${
-            problems.length > 0 ? problems.join("、") : "无法枚举存活会话（会话存储缺失或布局未知）"
-          }，已跳过孤儿清理${unknownSuffix}`,
-        );
-      } else {
-        const count =
-          orphans.sessionIds.length + orphans.trashIds.length + orphans.rescueIds.length;
-        push(
-          "孤儿数据",
-          count === 0,
-          count === 0
-            ? `none${unknownSuffix}`
-            : `${count} dir(s), ${orphans.bytes} bytes${unknownSuffix}`,
-        );
-      }
-    } catch (error) {
-      push("孤儿数据", false, error instanceof Error ? error.message : String(error));
-    }
-    if (typeof request?.sessionId === "string" && request.sessionId !== "") {
-      try {
-        const { events, session } = sessionEvents(this.deps(), request.sessionId);
-        const cuts = cutsOf(events);
-        const shaped = cuts.every((cut) => cut.targetSeq < cut.markerSeq);
-        push("会话 marker 形状", shaped, `${cuts.length} cut(s)`);
-        push("会话 cwd", cwdOf(session) !== undefined, cwdOf(session) ?? "missing");
-      } catch (error) {
-        push("会话检查", false, error instanceof Error ? error.message : String(error));
-      }
-    }
-    return {
-      ok: checks.every((check) => check.ok),
-      version: 1,
+    const sessionId =
+      typeof request?.sessionId === "string" && request.sessionId !== ""
+        ? request.sessionId
+        : undefined;
+    return buildHealth({
       dataRoot: this.dataRoot,
-      checks,
-      usage: usage ?? { bytes: 0, entries: 0, sessions: 0, blobs: 0 },
-    };
+      trackingEnabled: this.trackingEnabled(),
+      store: this.store,
+      findOrphans,
+      config: this.config,
+      readOnlyToolInstalled: this.readOnlyToolInstalled === true,
+      ...(sessionId === undefined
+        ? {}
+        : {
+            sessionId,
+            sessionCheck: (/** @type {string} */ id) => {
+              const { events, session } = sessionEvents(this.deps(), id);
+              return sessionHealthFacts(events, cwdOf(session));
+            },
+          }),
+    });
   }
 }
 
@@ -1079,4 +1074,7 @@ declareRemote(SessionRewindService, "ghost");
 declareRemote(SessionRewindService, "audit");
 declareRemote(SessionRewindService, "rescues");
 declareRemote(SessionRewindService, "restoreRescue");
+declareRemote(SessionRewindService, "trash");
+declareRemote(SessionRewindService, "restoreTrash");
+declareRemote(SessionRewindService, "clearTrash");
 declareRemote(SessionRewindService, "health");

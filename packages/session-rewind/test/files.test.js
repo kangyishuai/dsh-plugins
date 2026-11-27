@@ -297,7 +297,7 @@ test("recordChange: 含 NUL 的内容按二进制跳过", async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-test("recordChange: 拒绝 cwd 外的路径（不落 entry）", async () => {
+test("recordChange: 拒绝 cwd 外的路径，但落一条 skipped entry（AUD-REW-04）", async () => {
   const { root, cwd, store } = await makeStore();
   const result = await store.recordChange({
     sessionId: "session-escape",
@@ -311,7 +311,10 @@ test("recordChange: 拒绝 cwd 外的路径（不落 entry）", async () => {
   });
   assert.equal(result.ok, false);
   assert.equal(result.ok === false && result.reason, SKIP_REASONS.outsideCwd);
-  assert.deepEqual(await store.entriesForSession("session-escape"), []);
+  const entries = await store.entriesForSession("session-escape");
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].skipped, SKIP_REASONS.outsideCwd);
+  assert.equal(entries[0].path, "../escape.txt");
   await rm(root, { recursive: true, force: true });
 });
 
@@ -1612,6 +1615,287 @@ test("原子写: 恢复后工作区与数据目录里没有残留临时文件", 
     assert.equal(/\.tmp-/.test(entry), false, `unexpected temp file: ${entry}`);
   }
   await assertText(path.join(cwd, "a.txt"), "v0");
+  await rm(root, { recursive: true, force: true });
+});
+
+test("recordChange: 捕获失败的路径也落 skipped entry，预览按原因报数（AUD-REW-04）", async () => {
+  const { root, cwd, store } = await makeStore();
+  await writeFile(path.join(root, "outside.txt"), "x");
+  await symlink(path.join(root, "outside.txt"), path.join(cwd, "link.txt"));
+  const failed = await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 2,
+    tool: "write",
+    callId: "c-link",
+    path: "link.txt",
+    existedBefore: true,
+    beforeContent: "x",
+    afterContent: "y",
+    skipReason: SKIP_REASONS.symlink,
+  });
+  assert.equal(failed.ok, false);
+  assert.equal(failed.ok === false && failed.reason, SKIP_REASONS.symlink);
+  const entries = await store.entriesForSession("s");
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].skipped, SKIP_REASONS.symlink);
+  const plan = await store.planRestore({ sessionId: "s", targetSeq: 2, cwd });
+  assert.deepEqual(plan.skipped, [{ path: "link.txt", reason: SKIP_REASONS.symlink }]);
+  assert.ok(plan.actions.length === 0 && plan.conflicts.length === 0);
+  const warning = plan.warnings.find((item) => item.code === "files-skipped");
+  assert.ok(warning && /symlink: 1/u.test(warning.message), warning?.message);
+  await rm(root, { recursive: true, force: true });
+});
+
+test("planRestore: 当前文件超过上限时记为 too-large、不整块读（AUD-REW-12）", async () => {
+  const { root, cwd, store } = await makeStore({ maxFileBytes: 64 });
+  await writeFile(path.join(cwd, "log.txt"), "small");
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 1,
+    tool: "write",
+    callId: "c-log",
+    path: "log.txt",
+    beforeContent: null,
+    afterContent: "small",
+  });
+  // 外部把被追踪文件写成超过上限的大小：恢复计划不能整块读，也不能把它当普通改动。
+  await writeFile(path.join(cwd, "log.txt"), "x".repeat(200));
+  const plan = await store.planRestore({ sessionId: "s", targetSeq: 1, cwd });
+  assert.equal(plan.actions.length, 0);
+  assert.equal(plan.conflicts.length, 0);
+  assert.deepEqual(plan.skipped, [{ path: "log.txt", reason: SKIP_REASONS.tooLarge }]);
+  assert.equal(plan.available, false);
+  await rm(root, { recursive: true, force: true });
+});
+
+test("applyRestore: 计划后文件被写成超大时救援点失败、一个字节都不动（AUD-REW-12）", async () => {
+  const { root, cwd, store } = await makeStore({ maxFileBytes: 64 });
+  const filePath = path.join(cwd, "f.txt");
+  await writeFile(filePath, "old");
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 1,
+    tool: "write",
+    callId: "c-1",
+    path: "f.txt",
+    beforeContent: "old",
+    afterContent: "new",
+  });
+  await writeFile(filePath, "new");
+  const plan = await store.planRestore({ sessionId: "s", targetSeq: 1, cwd });
+  assert.equal(plan.actions.length, 1);
+  // 计划与执行之间被外部写大：救援点复制不了原内容，必须整体失败（不能部分写）。
+  await writeFile(filePath, "y".repeat(200));
+  await assert.rejects(
+    () => store.applyRestore({ sessionId: "s", cwd, plan }),
+    (error) => /** @type {any} */ (error).code === FILE_ERROR_CODES.rescueFailed,
+  );
+  assert.equal(await readFile(filePath, "utf8"), "y".repeat(200));
+  await rm(root, { recursive: true, force: true });
+});
+
+test("restoreRescue: 救援点内容超过上限时拒绝写出（AUD-REW-12）", async () => {
+  const { root, cwd, store } = await makeStore({ maxFileBytes: 64 });
+  const filePath = path.join(cwd, "f.txt");
+  await writeFile(filePath, "v1");
+  /** @type {any} */
+  const plan = {
+    available: true,
+    tracked: true,
+    sessionId: "s",
+    targetSeq: 1,
+    cwd,
+    restore: [{ path: "f.txt", bytes: 2 }],
+    trash: [],
+    skipped: [],
+    conflicts: [],
+    warnings: [],
+    totalBytes: 2,
+    actions: [
+      {
+        path: "f.txt",
+        action: "restore",
+        beforeHash: null,
+        afterHash: null,
+        currentHash: null,
+        bytes: 2,
+        mode: null,
+        anchorSeq: 0,
+      },
+    ],
+  };
+  const rescue = await store.createRescue({ sessionId: "s", cwd, plan });
+  // 救援点内容被写大（模拟旧数据/被外部污染）：恢复时必须拒绝，而不是整块读进内存。
+  await writeFile(path.join(rescue.dir, "files", "f.txt"), "z".repeat(200));
+  const result = await store.restoreRescue({ sessionId: "s", cwd, rescueId: rescue.rescueId });
+  assert.equal(result.restored.length, 0);
+  assert.equal(result.failed.length, 1);
+  assert.match(result.failed[0].reason, /limit/u);
+  assert.equal(await readFile(filePath, "utf8"), "v1");
+  await rm(root, { recursive: true, force: true });
+});
+
+test("applyRestore: beforeApply 失败时丢弃救援点（AUD-REW-13）", async () => {
+  const { root, cwd, store } = await makeStore();
+  const filePath = path.join(cwd, "f.txt");
+  await writeFile(filePath, "old");
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 1,
+    tool: "write",
+    callId: "c-1",
+    path: "f.txt",
+    beforeContent: "old",
+    afterContent: "new",
+  });
+  await writeFile(filePath, "new");
+  const plan = await store.planRestore({ sessionId: "s", targetSeq: 1, cwd });
+  await assert.rejects(
+    () =>
+      store.applyRestore({
+        sessionId: "s",
+        cwd,
+        plan,
+        beforeApply: () => {
+          throw new Error("marker boom");
+        },
+      }),
+    /marker boom/u,
+  );
+  assert.equal(await readFile(filePath, "utf8"), "new");
+  // 救援点不能留下「一次从未发生过的回溯」的幽灵副本。
+  assert.deepEqual(await store.listRescues({ sessionId: "s" }), []);
+  await rm(root, { recursive: true, force: true });
+});
+
+test("applyRestore: 新建文件进回收站后收回被创建的空目录（AUD-REW-15）", async () => {
+  const { root, cwd, store } = await makeStore();
+  await mkdir(path.join(cwd, "newdir", "nested"), { recursive: true });
+  await writeFile(path.join(cwd, "newdir", "nested", "a.txt"), "hi");
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 1,
+    tool: "write",
+    callId: "c-1",
+    path: "newdir/nested/a.txt",
+    beforeContent: null,
+    afterContent: "hi",
+  });
+  const plan = await store.planRestore({ sessionId: "s", targetSeq: 1, cwd });
+  const result = await store.applyRestore({ sessionId: "s", cwd, plan });
+  assert.deepEqual(result.trashed, ["newdir/nested/a.txt"]);
+  assert.deepEqual(result.removedDirs, ["newdir/nested", "newdir"]);
+  await assert.rejects(() => defaultFs.stat(path.join(cwd, "newdir")), /ENOENT/u);
+  await rm(root, { recursive: true, force: true });
+});
+
+test("applyRestore: 目录里还有其它文件时不收回目录（AUD-REW-15）", async () => {
+  const { root, cwd, store } = await makeStore();
+  await mkdir(path.join(cwd, "keep"), { recursive: true });
+  await writeFile(path.join(cwd, "keep", "a.txt"), "hi");
+  await writeFile(path.join(cwd, "keep", "other.txt"), "keep me");
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 1,
+    tool: "write",
+    callId: "c-1",
+    path: "keep/a.txt",
+    beforeContent: null,
+    afterContent: "hi",
+  });
+  const plan = await store.planRestore({ sessionId: "s", targetSeq: 1, cwd });
+  const result = await store.applyRestore({ sessionId: "s", cwd, plan });
+  assert.deepEqual(result.removedDirs, []);
+  assert.equal(await readFile(path.join(cwd, "keep", "other.txt"), "utf8"), "keep me");
+  await rm(root, { recursive: true, force: true });
+});
+
+test("restoreTrash: 恢复前先建 rescue-of-rescue（AUD-REW-08）", async () => {
+  const { root, cwd, store } = await makeStore();
+  await writeFile(path.join(cwd, "n.txt"), "created");
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 1,
+    tool: "write",
+    callId: "c-1",
+    path: "n.txt",
+    beforeContent: null,
+    afterContent: "created",
+  });
+  const plan = await store.planRestore({ sessionId: "s", targetSeq: 1, cwd });
+  await store.applyRestore({ sessionId: "s", cwd, plan });
+  const trashed = await store.listTrash({ sessionId: "s" });
+  assert.equal(trashed.length, 1);
+  assert.equal(trashed[0].totalBytes, 7);
+  const restored = await store.restoreTrash({ sessionId: "s", cwd, auditId: trashed[0].id });
+  assert.deepEqual(restored.restored, ["n.txt"]);
+  assert.ok(typeof restored.safetyRescueId === "string" && restored.safetyRescueId.length > 0);
+  const rescues = await store.listRescues({ sessionId: "s" });
+  assert.ok(rescues.some((item) => item.id === restored.safetyRescueId));
+  assert.equal(await readFile(path.join(cwd, "n.txt"), "utf8"), "created");
+  await rm(root, { recursive: true, force: true });
+});
+
+test("clearTrash: dryRun 只报影响面，确认后才永久删除（AUD-REW-08 / ADR 0002）", async () => {
+  const { root, cwd, store } = await makeStore();
+  await writeFile(path.join(cwd, "n.txt"), "created");
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 1,
+    tool: "write",
+    callId: "c-1",
+    path: "n.txt",
+    beforeContent: null,
+    afterContent: "created",
+  });
+  const plan = await store.planRestore({ sessionId: "s", targetSeq: 1, cwd });
+  await store.applyRestore({ sessionId: "s", cwd, plan });
+  const [op] = await store.listTrash({ sessionId: "s" });
+  const preview = await store.clearTrash({ sessionId: "s", auditId: op.id, dryRun: true });
+  assert.equal(preview.dryRun, true);
+  assert.equal(preview.files, 1);
+  assert.deepEqual(preview.paths, ["n.txt"]);
+  assert.equal((await store.listTrash({ sessionId: "s" })).length, 1);
+  const cleared = await store.clearTrash({ sessionId: "s", auditId: op.id });
+  assert.equal(cleared.dryRun, false);
+  assert.equal(cleared.files, 1);
+  assert.deepEqual(await store.listTrash({ sessionId: "s" }), []);
+  await rm(root, { recursive: true, force: true });
+});
+
+test("collectGarbage: 清掉无引用 blob，保留有引用内容（AUD-REW-24）", async () => {
+  const { root, cwd, store } = await makeStore();
+  const home = store.home;
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 1,
+    tool: "write",
+    callId: "c-1",
+    path: "a.txt",
+    beforeContent: null,
+    afterContent: "kept",
+  });
+  const [entry] = await store.entriesForSession("s");
+  assert.equal(typeof entry.afterHash, "string");
+  const referenced = store.blobPathOf(/** @type {string} */ (entry.afterHash));
+  const orphanDir = path.join(home, "blobs", "ff");
+  await mkdir(orphanDir, { recursive: true });
+  const orphan = path.join(orphanDir, `${"0".repeat(62)}ff`);
+  await writeFile(orphan, "garbage");
+  const gc = await store.collectGarbage();
+  assert.equal(gc.removedBlobs, 1);
+  assert.ok(gc.bytesFreed > 0);
+  await assert.rejects(() => defaultFs.stat(orphan), /ENOENT/u);
+  assert.ok((await readFile(referenced)).length > 0);
   await rm(root, { recursive: true, force: true });
 });
 

@@ -590,12 +590,17 @@ test("installFileTracking: options.enabled=false 时不注册任何监听", asyn
   assert.doesNotThrow(() => tracking.dispose());
 });
 
-test("installFileTracking: 跳过 .git/逃逸/符号链接路径，但工具照常执行", async (t) => {
+test("installFileTracking: .git/逃逸/符号链接路径落 skipped entry，工具照常执行（AUD-REW-04）", async (t) => {
   const env = await makeEnv({ pruneEvery: 0 });
   t.after(() => rm(env.root, { recursive: true, force: true }));
   const session = makeSession("session-1", env.cwd, makeEvents(2, [0]));
   const bus = createBus();
-  installFileTracking(bus.ctx, { store: env.store });
+  /** @type {string[]} */
+  const warnings = [];
+  installFileTracking(bus.ctx, {
+    store: env.store,
+    logger: { warn: (message) => warnings.push(String(message)) },
+  });
   const outside = path.join(env.root, "outside.txt");
   await writeFile(outside, "secret");
   await symlink(outside, path.join(env.cwd, "link.txt"));
@@ -624,7 +629,26 @@ test("installFileTracking: 跳过 .git/逃逸/符号链接路径，但工具照�
     });
     assert.equal(result.isError, false);
   }
-  assert.deepEqual(await env.store.entriesForSession("session-1"), []);
+  const entries = await env.store.entriesForSession("session-1");
+  assert.equal(entries.length, 3);
+  assert.deepEqual(
+    entries.map((entry) => [entry.path, entry.skipped]),
+    [
+      ["../outside.txt", "outside-cwd"],
+      [".git/config", "excluded"],
+      ["link.txt", "symlink"],
+    ],
+  );
+  // 预览按原因报数（不是笼统的「未追踪」）。
+  const plan = await env.store.planRestore({ sessionId: "session-1", targetSeq: 0, cwd: env.cwd });
+  assert.deepEqual(plan.skipped.map((item) => item.reason).sort(), [
+    "excluded",
+    "outside-cwd",
+    "symlink",
+  ]);
+  assert.ok(plan.warnings.some((w) => w.code === "files-skipped"));
+  // 返回值不再被忽略：每个会话+原因只 warn 一次。
+  assert.equal(warnings.filter((message) => /not tracking/u.test(message)).length, 3);
 });
 
 test("installFileTracking: store 抛错时工具不被阻断，只记录 warn", async (t) => {
