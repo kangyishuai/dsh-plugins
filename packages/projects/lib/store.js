@@ -7,7 +7,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { DEFAULT_BUDGET } from "./budget.js";
+import { BUDGET_FIELDS, DEFAULT_BUDGET } from "./budget.js";
 import { mergeArtifactRefs, normalizeArtifactRef } from "./library.js";
 import { DEFAULT_NOTIFY_PREFS } from "./notify.js";
 import { REPLAY_EVENT_CAP, THREAD_STATES } from "./overview.js";
@@ -41,6 +41,18 @@ const MAX_DIR_CHARS = 1024;
 const MAX_APPROVAL_ARGS_CHARS = 8192;
 /** 审批 reason 上限。 */
 const MAX_APPROVAL_REASON_CHARS = 2000;
+/**
+ * 待审批队列上限（AUD-PROJ-09）：协调器工具 `project_request_action` 可以让模型直接写入，
+ * 以前无上限、无分页，`projects.json` 会被刷大，每次 RPC 还要全量序列化。
+ * 与 audit（5000 上限）不同，审批是**可执行清单**：满了拒绝新申请而不是静默丢旧的。
+ */
+export const MAX_APPROVALS = 500;
+/**
+ * 占位（claim）的过期时间（AUD-PROJ-08）：执行窗口内进程崩溃会让审批永久卡在 claimed。
+ * 超过这个时间没有任何进展，下一次执行或启动时可以把占位收回（不可逆动作本身仍有
+ * 危险开关 + 人工批准两道闸，收回占位不等于自动执行）。
+ */
+export const APPROVAL_CLAIM_TTL_MS = 10 * 60 * 1000;
 
 /**
  * 写入口的目录校验：必须是绝对路径、不能含 `..` 段、长度有上限。
@@ -284,7 +296,11 @@ export function normalizePolicy(raw, fallbackPolicy) {
         maxDiffLines: num(raw.maxDiffLines, 600),
       };
     })(),
-    // 只接受显式 true 的仓库授权；其它写法一律当没授权
+    // 只接受显式 true 的仓库授权；其它写法一律当没授权。
+    // AUD-PROJ-03：这里必须区分「**没提供**该字段」和「显式提供空对象」——
+    // 以前是「新值非空才用，否则回落上一份」，于是撤销最后一个仓库授权永远不生效
+    // （安全控制收不回来：`push-protected-branch` 的 per-repo 授权一旦授予就永久开着）。
+    // 现在：policy 里**有**这个键就以新值为准（含 `{}`）；只有完全没这个键时才继承。
     repoGrants: (() => {
       const pick = (/** @type {any} */ source) =>
         source && typeof source === "object" && !Array.isArray(source)
@@ -294,8 +310,8 @@ export function normalizePolicy(raw, fallbackPolicy) {
               ),
             )
           : {};
-      const fromPolicy = pick(policy.repoGrants);
-      return Object.keys(fromPolicy).length > 0 ? fromPolicy : pick(previous.repoGrants);
+      if (Object.hasOwn(policy, "repoGrants")) return pick(policy.repoGrants);
+      return pick(previous.repoGrants);
     })(),
     // F21：PR 档位。只接受四档词表里的值；非法值落回上一份合法值，再不行才 draft。
     pr: (() => {
@@ -311,6 +327,30 @@ export function normalizePolicy(raw, fallbackPolicy) {
 /** @param {number} [now] */
 function iso(now = Date.now()) {
   return new Date(now).toISOString();
+}
+
+/**
+ * 用量桶的日期键：**本地时区**的 `YYYY-MM-DD`（AUD-PROJ-17）。
+ *
+ * 以前桶键用 UTC 日期，而线程日限/周起点用本地时区：UTC+8 下 token 日线在当地 08:00 才重置、
+ * 周窗口多算约一天。统一成本地口径（文档 §14 一直宣称的是「本地时区」）。
+ * @param {number} now
+ * @returns {string}
+ */
+export function localDateKey(now) {
+  const date = new Date(now);
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+/**
+ * 旧版桶键（UTC 日期）：**只用于读旧数据**，新写入一律用 `localDateKey`。
+ * @param {number} now
+ * @returns {string}
+ */
+export function utcDateKey(now) {
+  return new Date(now).toISOString().slice(0, 10);
 }
 
 /**
@@ -495,25 +535,20 @@ export function normalize(raw, root) {
         policy: normalizePolicy(project.policy),
         // F22：新项目带默认预算；老记录里**显式写过的 null** 保持 null（升级不改变已有项目行为），
         // 整段 budget 缺失（更早的数据）才补默认值。
+        // AUD-PROJ-04：weeklyTokens 以前不在白名单里 → 手改 projects.json 写入的值 load 时被丢、
+        // 下一次 save 就从文件消失。现在它与其它预算字段同口径收敛；**未知字段保留**（硬性约定 1）。
         budget:
           project.budget && typeof project.budget === "object"
             ? {
-                dailyTokens:
-                  typeof project.budget.dailyTokens === "number"
-                    ? project.budget.dailyTokens
-                    : null,
-                maxThreadsPerDay:
-                  typeof project.budget.maxThreadsPerDay === "number"
-                    ? project.budget.maxThreadsPerDay
-                    : null,
-                maxConcurrent:
-                  typeof project.budget.maxConcurrent === "number"
-                    ? project.budget.maxConcurrent
-                    : null,
-                maxStepsPerThread:
-                  typeof project.budget.maxStepsPerThread === "number"
-                    ? project.budget.maxStepsPerThread
-                    : null,
+                ...Object.fromEntries(
+                  Object.entries(project.budget).filter(([key]) => !BUDGET_FIELDS.includes(key)),
+                ),
+                ...Object.fromEntries(
+                  BUDGET_FIELDS.map((key) => [
+                    key,
+                    typeof project.budget[key] === "number" ? project.budget[key] : null,
+                  ]),
+                ),
               }
             : { ...DEFAULT_BUDGET },
         // F58：按项目的通知开关（失败/等你默认开，完成默认关）
@@ -1029,8 +1064,9 @@ export class ProjectStore {
 
   /**
    * 删除一个项目记录，并摘掉它的线程归属（**不动会话日志**）。
-   * 返回被删内容，供调用方写进回收站清单。
+   * 返回被删内容，供调用方写进回收站清单（AUD-PROJ-10 起带上被清掉的用量桶）。
    * @param {string} id
+   * @returns {{ project: any, threads: any[], usage: any }}
    */
   removeProject(id) {
     const project = this.state.projects[id];
@@ -1040,7 +1076,14 @@ export class ProjectStore {
       .map(([sessionId, thread]) => ({ sessionId, .../** @type {any} */ (thread) }));
     delete this.state.projects[id];
     for (const thread of threads) delete this.state.threads[thread.sessionId];
-    return { project: { ...project }, threads };
+    // AUD-PROJ-10：用量桶以前永久保留（真实数据里 100 个桶 vs 1 个现役项目）。
+    // 项目删了就没有「本项目的花费」这个概念了——顺手删桶，别让已删项目的花费长期留在盘上。
+    // 删除前把总量写进审计（可追溯，不在 projects.json 里继续占位）。
+    const usage = this.state.usage?.[id];
+    if (usage) {
+      delete this.state.usage[id];
+    }
+    return { project: { ...project }, threads, usage: usage ?? null };
   }
 
   /**
@@ -1095,13 +1138,19 @@ export class ProjectStore {
   /**
    * 把回收站里的项目放回仓储（规格 §7.5 行 4a 的可恢复性）。
    * 同 id 已存在时拒绝，不覆盖当前项目。
-   * @param {{ project: any, threads: any[] }} input
+   * @param {{ project: any, threads: any[], usage?: any }} input
    */
   restoreProject(input) {
     const project = input?.project;
     const threads = Array.isArray(input?.threads) ? input.threads : [];
     const id = String(project?.id ?? "");
     if (id === "") throw new Error("projects: restoreProject requires project.id");
+    // AUD-PROJ-11：manifest 是**回收站里的文件**，可能被本地改坏/改过。
+    // id 会被拼进 `join(dataRoot, id)` / `join(dataRoot, "workspaces", id)`：
+    // 以前只判 `id !== ""`，改成 `../../x` 就能把内容 rename 到数据根之外。按 load 同口径拒。
+    if (!isSafeRecordKey(id)) {
+      throw new Error(`projects: restoreProject rejected unsafe project id ${id.slice(0, 60)}`);
+    }
     if (this.state.projects[id]) throw new Error(`projects: project already exists ${id}`);
     // 恢复要**保留原状态**：归档的仍是归档、暂停的仍是暂停，别把用户显式设过的状态抹掉
     const state = ["active", "paused", "archived"].includes(String(project?.state))
@@ -1110,9 +1159,15 @@ export class ProjectStore {
     this.state.projects[id] = { ...project, state };
     for (const thread of threads) {
       const sessionId = String(thread?.sessionId ?? "");
-      if (sessionId === "") continue;
+      if (sessionId === "" || !isSafeRecordKey(sessionId)) continue;
       const { sessionId: _ignored, ...rest } = thread;
       this.state.threads[sessionId] = { ...rest, projectId: id };
+    }
+    // AUD-PROJ-10：删除时把用量桶一起清掉了，恢复时按 manifest 带回来的桶放回去
+    // （没有就保持空——不伪造花费）。
+    if (input?.usage && typeof input.usage === "object" && !this.state.usage?.[id]) {
+      this.state.usage = this.state.usage ?? {};
+      this.state.usage[id] = input.usage;
     }
     return { project: { ...this.state.projects[id] }, threadCount: threads.length };
   }
@@ -1124,7 +1179,7 @@ export class ProjectStore {
    */
   addTokenUsage(projectId, tokens, now = this.now()) {
     const amount = Number.isFinite(tokens) ? Math.max(0, Math.trunc(Number(tokens))) : 0;
-    const date = new Date(now).toISOString().slice(0, 10);
+    const date = localDateKey(now);
     this.state.usage = this.state.usage ?? {};
     const bucket = this.state.usage[projectId] ?? { days: {} };
     // 旧形状（单日桶）迁移成按天表
@@ -1156,11 +1211,19 @@ export class ProjectStore {
    * @returns {number}
    */
   tokenUsageOn(projectId, now = this.now()) {
-    const date = new Date(now).toISOString().slice(0, 10);
+    const date = localDateKey(now);
     const bucket = this.state.usage?.[projectId];
     if (!bucket) return 0;
-    if (bucket.days) return Number(bucket.days[date]) || 0;
-    return bucket.date === date ? Number(bucket.tokens) || 0 : 0; // 旧形状兜底
+    if (bucket.days) {
+      if (Number.isFinite(Number(bucket.days[date]))) return Number(bucket.days[date]) || 0;
+      // 旧数据：桶键是 UTC 日期（0.10.x 及以前）。同一个时刻算出的 UTC 日期也查一次，
+      // 升级当天不把已有花费读丢（新写入一律用本地日期）。
+      const legacy = utcDateKey(now);
+      return Number(bucket.days[legacy]) || 0;
+    }
+    const legacyDate = utcDateKey(now);
+    if (bucket.date === date || bucket.date === legacyDate) return Number(bucket.tokens) || 0;
+    return 0; // 旧形状兜底
   }
 
   /**
@@ -1171,7 +1234,9 @@ export class ProjectStore {
   tokenUsageSince(projectId, fromMs = 0) {
     const bucket = this.state.usage?.[projectId];
     if (!bucket) return 0;
-    const fromDate = new Date(fromMs).toISOString().slice(0, 10);
+    // 与写入同口径：本地日期（AUD-PROJ-17）。周窗口由 budget.startOfWeek 给 **本地** 周一 00:00，
+    // 以前这里再把它转成 UTC 日期串比较，UTC+8 下实际多算了约一天。
+    const fromDate = localDateKey(fromMs);
     if (bucket.days) {
       return Object.entries(bucket.days)
         .filter(([date]) => date >= fromDate)
@@ -1632,6 +1697,33 @@ export class ProjectStore {
     if (argsText.length > MAX_APPROVAL_ARGS_CHARS) {
       throw new Error(`projects: approval args exceed ${MAX_APPROVAL_ARGS_CHARS} characters`);
     }
+    // AUD-PROJ-09：队列有上限。先淘汰**已了结**（有 executedAt / 已拒绝）的最旧记录，
+    // 全是 pending 时拒绝新申请——绝不静默丢一条还能执行的申请。
+    if (this.state.approvals.length >= MAX_APPROVALS) {
+      const settled = (/** @type {any} */ item) =>
+        typeof item?.executedAt === "string" ||
+        item?.status === "approved" ||
+        item?.status === "rejected";
+      const before = this.state.approvals.length;
+      this.state.approvals = this.state.approvals.filter(
+        (/** @type {any} */ item) => !settled(item),
+      );
+      const dropped = before - this.state.approvals.length;
+      if (this.state.approvals.length >= MAX_APPROVALS) {
+        throw new Error(
+          `projects: approval queue is full (${before} rows, all pending); settle some before requesting more`,
+        );
+      }
+      if (dropped > 0) {
+        this.state.audit = Array.isArray(this.state.audit) ? this.state.audit : [];
+        this.state.audit.push({
+          action: "approval/queue-pruned",
+          projectId: String(request.projectId),
+          dropped,
+          at: iso(this.now()),
+        });
+      }
+    }
     const requestId = `apr_${this.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     this.state.approvals.push({
       requestId,
@@ -1648,12 +1740,17 @@ export class ProjectStore {
 
   /**
    * @param {string} [projectId] 省略则返回全部
+   * @param {{ limit?: number, offset?: number }} [options] 分页（AUD-PROJ-09）
    * @returns {any[]}
    */
-  listApprovals(projectId) {
-    return this.state.approvals.filter((/** @type {any} */ item) =>
+  listApprovals(projectId, options) {
+    const rows = this.state.approvals.filter((/** @type {any} */ item) =>
       projectId ? item.projectId === projectId : true,
     );
+    const offset = Number.isFinite(options?.offset) ? Math.max(0, Number(options?.offset)) : 0;
+    const limit = Number.isFinite(options?.limit) ? Math.max(0, Number(options?.limit)) : 0;
+    if (limit === 0 && offset === 0) return rows;
+    return rows.slice(offset, limit === 0 ? undefined : offset + limit);
   }
 
   /**
@@ -1665,9 +1762,10 @@ export class ProjectStore {
    * 占位（claim）：真正执行**之前**先原子占用，防并发重复执行。
    * 与 executedAt 分开存：占位失败可释放，已执行则不可再动。
    * @param {string} requestId
-   * @returns {{ requestId: string }}
+   * @param {{ ttlMs?: number }} [options] 占位过期时间（默认 {@link APPROVAL_CLAIM_TTL_MS}）
+   * @returns {{ requestId: string, recovered?: boolean }}
    */
-  claimApproval(requestId) {
+  claimApproval(requestId, options) {
     const found = this.state.approvals.find(
       (/** @type {any} */ item) => item.requestId === requestId,
     );
@@ -1676,10 +1774,48 @@ export class ProjectStore {
       throw new Error(`projects: approval ${requestId} already executed`);
     }
     if (typeof found.claimedAt === "string" && found.claimedAt !== "") {
-      throw new Error(`projects: approval ${requestId} already claimed`);
+      // AUD-PROJ-08：执行窗口内进程崩溃会让申请永久卡在 claimed（界面上无法恢复）。
+      // 超过 TTL 的占位可以接管，接管事实写审计；执行本身的闸门（危险开关 + 人工批准）
+      // 仍然在 executeApproval 里，接管不等于跳过审批。
+      const ttl = Number.isFinite(options?.ttlMs) ? Number(options?.ttlMs) : APPROVAL_CLAIM_TTL_MS;
+      const claimedAt = Date.parse(String(found.claimedAt));
+      const stale = !Number.isFinite(claimedAt) || this.now() - claimedAt >= ttl;
+      if (!stale) throw new Error(`projects: approval ${requestId} already claimed`);
+      const previousClaimedAt = String(found.claimedAt);
+      found.claimedAt = iso(this.now());
+      this.state.audit = Array.isArray(this.state.audit) ? this.state.audit : [];
+      this.state.audit.push({
+        action: "approval/claim-recovered",
+        projectId: String(found.projectId ?? ""),
+        requestId,
+        previousClaimedAt,
+        at: iso(this.now()),
+      });
+      return { requestId, recovered: true };
     }
     found.claimedAt = iso(this.now());
     return { requestId };
+  }
+
+  /**
+   * 收回**所有**超过 TTL 的占位（启动时调用，让崩溃遗留的审批重新可执行）。
+   * @param {{ ttlMs?: number, now?: number }} [options]
+   * @returns {any[]} 被收回的申请
+   */
+  releaseStaleApprovals(options = {}) {
+    const ttl = Number.isFinite(options.ttlMs) ? Number(options.ttlMs) : APPROVAL_CLAIM_TTL_MS;
+    const now = Number.isFinite(options.now) ? Number(options.now) : this.now();
+    /** @type {any[]} */
+    const released = [];
+    for (const item of this.state.approvals) {
+      if (typeof item?.claimedAt !== "string" || item.claimedAt === "") continue;
+      if (typeof item.executedAt === "string" && item.executedAt !== "") continue;
+      const claimedAt = Date.parse(item.claimedAt);
+      if (Number.isFinite(claimedAt) && now - claimedAt < ttl) continue;
+      item.claimedAt = null;
+      released.push({ ...item });
+    }
+    return released;
   }
 
   /**

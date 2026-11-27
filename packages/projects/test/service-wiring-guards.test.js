@@ -17,7 +17,10 @@ const clientSource = readFileSync(join(here, "..", "lib", "client.js"), "utf8");
  * @returns {string}
  */
 function methodRegion(source, name) {
-  const start = source.indexOf(`async ${name}(`);
+  // 同步方法也要能找到（例如 `attachCoordinatorTools(agent, project)`）：先试 async 形态。
+  const asyncStart = source.indexOf(`async ${name}(`);
+  const syncStart = source.indexOf(`\n  ${name}(`);
+  const start = asyncStart >= 0 ? asyncStart : syncStart;
   assert.ok(start >= 0, `找不到方法 ${name}`);
   const rest = source.slice(start + 1);
   // 下一个同级方法：以两个空格缩进的 `async xxx(` 或 `/**` 后的方法名为界
@@ -121,10 +124,55 @@ describe("审查 P1 回归防线", () => {
     assert.doesNotMatch(region, /state !== "active"/u);
   });
 
-  it("无目录项目的线程 cwd 走 workspaces 专用目录", () => {
+  it("无目录项目的线程 cwd 走 workspaces 专用目录（单一出口 projectWorkspaceDir）", () => {
     const threadSource = readFileSync(join(here, "..", "lib", "thread.js"), "utf8");
-    assert.match(threadSource, /workspaces\/\$\{/u);
-    assert.doesNotMatch(threadSource, /: \[dataRoot\];/u);
+    assert.match(threadSource, /projectWorkspaceDir\(/u);
+    assert.doesNotMatch(threadSource, /: \[dataRoot\];/u, "不能回落数据根");
+  });
+
+  it("AUD-PROJ-01：协调者/定时/提醒的 cwd 都走 projectCwd，不再回落 this.dataRoot", () => {
+    // 4 条路径：createCoordinator / updateRoutine / createRoutine / createReminder。
+    for (const name of ["createCoordinator", "updateRoutine", "createRoutine", "createReminder"]) {
+      const region = methodRegion(serviceSource, name);
+      assert.match(region, /projectCwd\(project, this\.dataRoot\)/u, `${name} 的 cwd 必须同源`);
+      assert.doesNotMatch(region, /: this\.dataRoot/u, `${name} 不能回落数据根`);
+    }
+    assert.doesNotMatch(
+      serviceSource,
+      /\? project\.dirs\[0\] : this\.dataRoot/u,
+      "不允许再出现「无目录 → 插件数据根」的回落",
+    );
+    // 协调者创建处必须有兜底短路（异常输入时宁可不建，也不把数据根交出去）
+    const region = methodRegion(serviceSource, "createCoordinator");
+    assert.match(region, /refusing to use the plugin data root/u);
+  });
+
+  it("AUD-PROJ-02：pause/archive/delete 都会对账宿主定时任务", () => {
+    for (const name of ["pauseProject", "resumeProject", "archiveProject", "deleteProject"]) {
+      const region = methodRegion(serviceSource, name);
+      assert.match(region, /reconcileSchedules\(/u, `${name} 必须对账宿主定时`);
+    }
+    // createRoutine / createReminder / updateRoutine 的项目状态闸
+    for (const name of ["createRoutine", "createReminder", "updateRoutine"]) {
+      const region = methodRegion(serviceSource, name);
+      assert.match(region, /checkProjectAcceptsAutomation\(/u, `${name} 必须检查项目状态`);
+    }
+  });
+
+  it("AUD-PROJ-06：merge 审批找不到本项目线程时拒绝，不回落 dirs[0]", () => {
+    const executeSource = readFileSync(join(here, "..", "lib", "execute.js"), "utf8");
+    // 顶层分支（缩进 2）——`.find((item) => { if (approval.action === "merge") … })` 也含同串
+    const start = executeSource.indexOf('\n  if (approval.action === "merge") {');
+    assert.ok(start >= 0);
+    const region = executeSource.slice(start, start + 2600);
+    assert.match(region, /merge\/pr-not-ours/u);
+    assert.match(region, /merge\/pr-invalid/u);
+  });
+
+  it("AUD-PROJ-26：协调器工具 messageThread 走归属校验", () => {
+    const region = methodRegion(serviceSource, "attachCoordinatorTools");
+    assert.match(region, /promptOwnedThread\(/u);
+    assert.doesNotMatch(region, /messageThread:[\s\S]{0,120}this\.promptThread\(/u);
   });
 });
 
@@ -408,5 +456,64 @@ describe("第 3 轮 UI 复审补充：行菜单点击不能打开详情", () => 
     const region = client.slice(start, start + 1800);
     assert.match(region, /closest\?\.\(/u);
     assert.match(region, /\[role=menuitem\]/u);
+  });
+});
+
+describe("2026-11-28 审计：接线守卫（第二批）", () => {
+  it("AUD-PROJ-05：openPr 的 merge 决策交给审批队列，不再落到「push + gh pr create」", () => {
+    const region = methodRegion(serviceSource, "openPr");
+    assert.match(region, /decision\.action === "merge"/u);
+    assert.match(region, /appendApproval\(\{/u);
+    assert.match(region, /action: "merge"/u);
+    assert.match(region, /merge\/awaiting-approval/u);
+    // merge 分支必须在「push + gh pr create」之前 return（否则会重复开 PR）
+    const mergeIndex = region.indexOf('decision.action === "merge"');
+    const pushIndex = region.indexOf('runGit(["push", "-u", "origin"');
+    assert.ok(mergeIndex >= 0 && pushIndex > mergeIndex, "merge 处理必须早于 push/创建 PR");
+    // ciState 要能从线程记录读（否则 auto-merge 档永远停在 wait-ci）
+    assert.match(region, /options\?\.ciState \?\? thread\.ciState/u);
+  });
+
+  it("AUD-PROJ-04/19：周预算进入暂停闸 + token 入账走合并写盘", () => {
+    const region = methodRegion(serviceSource, "enforceTokenBudget");
+    assert.match(region, /checkWeeklyTokenBudget\(/u, "周超支也要暂停项目");
+    assert.match(region, /reconcileSchedules\(projectId, "pause"\)/u, "暂停要停宿主定时");
+    // token 入账不再每条全量 save()，改 saveSoon
+    const usageAnchor = serviceSource.indexOf("addTokenUsage(usageProject.id, tokens, nowMs)");
+    assert.ok(usageAnchor >= 0);
+    const around = serviceSource.slice(usageAnchor, usageAnchor + 420);
+    assert.match(around, /saveSoon\(250\)/u);
+    assert.doesNotMatch(around, /this\.store\.save\(\);/u);
+  });
+
+  it("AUD-PROJ-14：policy 变更审计覆盖 repoGrants / preapprove / pr.tier", () => {
+    const region = methodRegion(serviceSource, "updateProject");
+    assert.match(region, /grantsChanged/u);
+    assert.match(region, /preapproveChanged/u);
+    assert.match(region, /prTierChanged/u);
+  });
+
+  it("AUD-PROJ-08：启动时回收过期占位", () => {
+    assert.match(serviceSource, /releaseStaleApprovals\(/u);
+  });
+
+  it("AUD-PROJ-07：listApprovals 返回带影响面的行", () => {
+    const region = methodRegion(serviceSource, "listApprovals");
+    assert.match(region, /withApprovalImpact\(/u);
+  });
+
+  it("AUD-PROJ-24：默认模型写入口做可用性校验，createThread 把失败带到回执", () => {
+    for (const name of ["setThreadDefaults", "setCoordinatorDefaults"]) {
+      const region = methodRegion(serviceSource, name);
+      assert.match(region, /assertModelUsable\(/u, `${name} 写前校验模型`);
+    }
+    const region = serviceSource.slice(serviceSource.indexOf("// F42：新线程套用项目级默认模型"));
+    assert.match(region.slice(0, 1400), /modelWarning/u, "失败要能被界面看到，不能只写审计");
+  });
+
+  it("AUD-PROJ-11：restoreTrash 校验 manifest 里的 project.id", () => {
+    const region = methodRegion(serviceSource, "restoreTrash");
+    assert.match(region, /isSafeRecordKey\(/u);
+    assert.match(region, /unsafe project id/u);
   });
 });

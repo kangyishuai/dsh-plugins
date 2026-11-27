@@ -212,3 +212,44 @@ describe("周预算与步数预算（规格 §7.7.4）", () => {
     assert.equal(checkStepBudget({ maxSteps: null, steps: 999 }).ok, true);
   });
 });
+
+describe("AUD-PROJ-04：周 token 预算字段（以前是死闸门）", () => {
+  it("weeklyTokens 在预算字段表里，补丁可写、可清空、负数拒绝", async () => {
+    const { BUDGET_FIELDS, DEFAULT_BUDGET, normalizeBudgetPatch } = await import(
+      "../lib/budget.js"
+    );
+    assert.ok(BUDGET_FIELDS.includes("weeklyTokens"));
+    assert.equal(DEFAULT_BUDGET.weeklyTokens, null);
+    assert.deepEqual(normalizeBudgetPatch({ weeklyTokens: 12000 }), {
+      ok: true,
+      budget: { weeklyTokens: 12000 },
+    });
+    assert.deepEqual(normalizeBudgetPatch({ weeklyTokens: null }), {
+      ok: true,
+      budget: { weeklyTokens: null },
+    });
+    const bad = normalizeBudgetPatch({ weeklyTokens: -5 });
+    assert.equal(bad.ok, false);
+    assert.equal(/** @type {any} */ (bad).reason, "budget/invalid:weeklyTokens");
+  });
+
+  it("checkWeeklyTokenBudget：null 不限、到线拒建、未到线放行", () => {
+    assert.equal(checkWeeklyTokenBudget({ weeklyTokens: null, usedTokens: 999999 }).ok, true);
+    assert.equal(checkWeeklyTokenBudget({ weeklyTokens: 100, usedTokens: 99 }).ok, true);
+    const hit = checkWeeklyTokenBudget({ weeklyTokens: 100, usedTokens: 100 });
+    assert.equal(hit.ok, false);
+    assert.equal(hit.reason, "budget/weekly-tokens");
+    assert.equal(hit.limit, 100);
+  });
+
+  it("周起点是本地周一 00:00（与日闸同口径），且 sum(周起之后) >= sum(今天)", async () => {
+    const { startOfDay, startOfWeek } = await import("../lib/budget.js");
+    const now = new Date();
+    now.setHours(13, 0, 0, 0);
+    const weekStart = startOfWeek(now.getTime());
+    assert.ok(weekStart <= startOfDay(now.getTime()));
+    const week = new Date(weekStart);
+    assert.equal(week.getHours(), 0);
+    assert.equal((week.getDay() + 6) % 7, 0, "必须是周一");
+  });
+});

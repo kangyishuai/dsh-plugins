@@ -139,18 +139,31 @@ export function checkStepBudget(input) {
  */
 export const DEFAULT_BUDGET = Object.freeze({
   dailyTokens: null,
+  // AUD-PROJ-04：周 token 预算以前不在 DEFAULT_BUDGET/BUDGET_FIELDS/normalize 里，
+  // setBudget 写不进去、手改 projects.json 下次 save 就丢——闸门（checkWeeklyTokenBudget）
+  // 实际永远拿到 null。现在它是正经的预算字段（null = 不限）。
+  weeklyTokens: null,
   maxThreadsPerDay: 20,
   maxConcurrent: 2,
   maxStepsPerThread: 60,
 });
 
-/** 预算字段的合法范围（设置页写入口用；null 表示不限）。 */
+/**
+ * 预算字段（设置页写入口用；null 表示不限）。
+ *
+ * AUD-PROJ-04：`weeklyTokens` 必须在这里，否则 `normalizeBudgetPatch` 会在
+ * `setBudget` 里把它当未知字段丢掉，回执却看起来成功。
+ */
 export const BUDGET_FIELDS = Object.freeze([
   "dailyTokens",
+  "weeklyTokens",
   "maxThreadsPerDay",
   "maxConcurrent",
   "maxStepsPerThread",
 ]);
+
+/** token 类字段（只有这两个是 token 计数，其它是线程数）。 */
+export const TOKEN_BUDGET_FIELDS = Object.freeze(["dailyTokens", "weeklyTokens"]);
 
 /**
  * 规范化一个预算补丁：数值取整、非负；null/空串表示"不限"；未知字段忽略。

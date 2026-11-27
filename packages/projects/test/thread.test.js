@@ -9,13 +9,8 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { promisify } from "node:util";
 
 import { ProjectStore } from "../lib/store.js";
-import {
-  cleanupThreadBranch,
-  createIsolatedThread,
-  reclaimThreadWorktree,
-  reconcileWorktrees,
-} from "../lib/thread.js";
-import { branchName } from "../lib/worktree.js";
+import { createIsolatedThread, reclaimThreadWorktree, reconcileWorktrees } from "../lib/thread.js";
+import { nextThreadIndex, worktreePath } from "../lib/worktree.js";
 
 const exec = promisify(execFile);
 
@@ -121,9 +116,11 @@ describe("createIsolatedThread", () => {
     const store = new ProjectStore({ root: join(root, "data") }).load();
     const project = store.createProject("payments", { dirs: [repo] });
     const sessions = fakeSessions();
-    // 先造一个同名分支，让 worktree add -b 必然失败（分支名含项目短 id）
-    const colliding = branchName({ projectName: "payments", index: 1, projectId: project.id });
-    await runGit(["branch", colliding], repo);
+    // 目标目录被占（非空目录）会让 `git worktree add` 必然失败。
+    // 注意不能再用「先造同名分支」：AUD-PROJ-27 修好后序号会跳过已存在分支，那种造法不再失败。
+    const collidingPath = worktreePath({ repoRoot: repo, projectId: project.id, index: 1 });
+    mkdirSync(collidingPath, { recursive: true });
+    writeFileSync(join(collidingPath, "occupied.txt"), "x\n", "utf8");
 
     const thread = await createIsolatedThread({
       store,
@@ -326,71 +323,6 @@ describe("reconcileWorktrees（启动对账）", () => {
   });
 });
 
-describe("cleanupThreadBranch（M4 §5）", () => {
-  it("已合并的 dsh/ 分支被删除", async () => {
-    const store = new ProjectStore({ root: join(root, "data") }).load();
-    const project = store.createProject("payments", { dirs: [repo] });
-    const deps = { runGit, createSession: fakeSessions().createSession };
-    const thread = await createIsolatedThread({
-      store,
-      dataRoot: join(root, "data"),
-      projectId: project.id,
-      deps,
-    });
-    // 顺序贴近真实：先回收 worktree（git 不允许 merge 一个仍被别的 worktree 检出的分支），
-    // 再把它合回 main（模拟 PR 已合并），最后清理分支。
-    await reclaimThreadWorktree({ store, sessionId: thread.sessionId, deps: { runGit } });
-    // 把该分支合并回 main（模拟 PR 已合并）
-    await runGit(
-      [
-        "-c",
-        "user.email=t@local",
-        "-c",
-        "user.name=t",
-        "merge",
-        "--no-ff",
-        "-m",
-        "merge",
-        String(thread.branch),
-      ],
-      repo,
-    );
-
-    const result = await cleanupThreadBranch({
-      store,
-      sessionId: thread.sessionId,
-      repoRoot: repo,
-      deps: { runGit },
-    });
-    assert.deepEqual(result, { deleted: true, reason: "" });
-    const branches = await runGit(["branch", "--list"], repo);
-    assert.ok(!String(branches.stdout).includes(String(thread.branch)), "分支应已删除");
-  });
-
-  it("未合并的分支保留（宁可留垃圾也不丢提交）", async () => {
-    const store = new ProjectStore({ root: join(root, "data") }).load();
-    const project = store.createProject("payments", { dirs: [repo] });
-    const deps = { runGit, createSession: fakeSessions().createSession };
-    const thread = await createIsolatedThread({
-      store,
-      dataRoot: join(root, "data"),
-      projectId: project.id,
-      deps,
-    });
-
-    const result = await cleanupThreadBranch({
-      store,
-      sessionId: thread.sessionId,
-      repoRoot: repo,
-      deps: { runGit },
-    });
-    assert.equal(result.deleted, false);
-    assert.ok(["not-merged", "unpushed-commits"].includes(result.reason), result.reason);
-    const branches = await runGit(["branch", "--list"], repo);
-    assert.ok(String(branches.stdout).includes(String(thread.branch)), "分支必须还在");
-  });
-});
-
 describe("reclaimThreadWorktree：未推送判据（修 base..HEAD 的缺陷）", () => {
   const commitIn = async (/** @type {string} */ worktree, /** @type {string} */ file) => {
     writeFileSync(join(worktree, file), "x\n", "utf8");
@@ -508,5 +440,99 @@ describe("reclaimThreadWorktree：已合并线程（squash + 删分支）也能�
       deps: { runGit },
     });
     assert.equal(after.reclaimed, true, `应允许回收：${after.reason}`);
+  });
+});
+
+describe("AUD-PROJ-01 无目录项目的线程 cwd 不落在插件数据根", () => {
+  it("无目录项目：cwd 是 <dataRoot>/workspaces/<id>，不是 dataRoot", async () => {
+    const dataRoot = join(root, "data");
+    const store = new ProjectStore({ root: dataRoot }).load();
+    const project = store.createProject("no-dirs");
+    const sessions = fakeSessions();
+    const thread = await createIsolatedThread({
+      store,
+      dataRoot,
+      projectId: project.id,
+      deps: { runGit, createSession: sessions.createSession },
+    });
+    const cwd = sessions.requests[0].cwd;
+    assert.equal(cwd, join(dataRoot, "workspaces", project.id));
+    assert.notEqual(cwd, dataRoot);
+    assert.equal(thread.dir, cwd);
+    // 目录真的建出来了（宿主 create 不会替我们 mkdir 失败的路径）
+    assert.doesNotThrow(() => readdirSync(cwd));
+  });
+});
+
+describe("AUD-PROJ-27 分支序号取已用最大值 + 1（删线程后不复用旧名）", () => {
+  it("nextThreadIndex：扫 worktree 与分支名里的序号", () => {
+    assert.equal(nextThreadIndex([]), 1);
+    assert.equal(nextThreadIndex([{ branch: "dsh/p-1-abc123", worktree: "/w/p-1" }]), 2);
+    assert.equal(
+      nextThreadIndex([
+        { branch: "dsh/p-3-abc123", worktree: "/w/p-3" },
+        { branch: null, worktree: null },
+      ]),
+      4,
+    );
+    // 记录里没有 worktree（已回收）时仍能从分支名取到序号
+    assert.equal(nextThreadIndex([{ branch: "dsh/p-7-abc123", worktree: null }]), 8);
+  });
+
+  it("删掉一条线程后新建线程不复用已存在的分支名", async () => {
+    const store = new ProjectStore({ root: join(root, "data") }).load();
+    const project = store.createProject("payments", { dirs: [repo] });
+    const deps = { runGit, createSession: fakeSessions().createSession };
+    const first = await createIsolatedThread({
+      store,
+      dataRoot: join(root, "data"),
+      projectId: project.id,
+      deps,
+    });
+    assert.match(String(first.branch), /^dsh\/payments-1-/u);
+    // 模拟「线程记录被删掉，但 worktree/分支还在」（真实数据有 164 次建线程 + 大量删除）
+    store.detachThread(first.sessionId);
+    const second = await createIsolatedThread({
+      store,
+      dataRoot: join(root, "data"),
+      projectId: project.id,
+      deps,
+    });
+    assert.match(String(second.branch), /^dsh\/payments-2-/u);
+    assert.notEqual(second.branch, first.branch);
+  });
+});
+
+describe("AUD-PROJ-21 建会话失败时回滚刚建的 worktree/分支", () => {
+  it("createSession 抛错 → worktree 被移除、分支被删、审计留痕，原始错误照旧抛出", async () => {
+    const store = new ProjectStore({ root: join(root, "data") }).load();
+    const project = store.createProject("payments", { dirs: [repo] });
+    /** @type {any[]} */
+    const audits = [];
+    store.appendAudit = (/** @type {any} */ entry) => {
+      audits.push(entry);
+      return entry;
+    };
+    await assert.rejects(
+      () =>
+        createIsolatedThread({
+          store,
+          dataRoot: join(root, "data"),
+          projectId: project.id,
+          deps: {
+            runGit,
+            createSession: async () => {
+              throw new Error("boom");
+            },
+          },
+        }),
+      /boom/u,
+    );
+    const branches = await runGit(["branch", "--list", "dsh/*"], repo);
+    assert.equal(String(branches.stdout).trim(), "", "回滚后不应留下 dsh/* 分支");
+    const worktrees = await runGit(["worktree", "list", "--porcelain"], repo);
+    assert.ok(!String(worktrees.stdout).includes(".dsh-worktrees"), "回滚后不应留下 worktree");
+    assert.equal(store.listThreads(project.id).length, 0);
+    assert.ok(audits.some((item) => item.action === "thread/worktree-rolled-back"));
   });
 });

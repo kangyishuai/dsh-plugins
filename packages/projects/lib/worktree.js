@@ -58,6 +58,31 @@ export function worktreePath(input) {
 }
 
 /**
+ * 下一条线程该用的序号（AUD-PROJ-27）。
+ *
+ * 以前是 `store.listThreads(projectId).length + 1`：删掉/脱离一条线程后计数下降，新线程
+ * 会复用**已存在**的分支名与 worktree 目录 → `git worktree add -b` 失败，然后静默降级成
+ * 「共享目录」或继续往旧分支提交。改成扫已有记录的序号取最大值 + 1。
+ *
+ * 只读记录，不做 I/O；仓库里还留着的历史分支由 `createIsolatedThread` 再查一次。
+ * @param {Array<{ branch?: string|null, worktree?: string|null }>} threads
+ * @returns {number}
+ */
+export function nextThreadIndex(threads) {
+  let max = 0;
+  for (const thread of Array.isArray(threads) ? threads : []) {
+    const worktree = String(thread?.worktree ?? "");
+    const fromWorktree = worktree.match(/-(\d+)$/u);
+    if (fromWorktree) max = Math.max(max, Number(fromWorktree[1]));
+    const branch = String(thread?.branch ?? "");
+    // 分支形如 dsh/<slug>-<n>[-<短 id>]
+    const fromBranch = branch.match(/-(\d+)(?:-[A-Za-z0-9]+)?$/u);
+    if (fromBranch) max = Math.max(max, Number(fromBranch[1]));
+  }
+  return Number.isFinite(max) && max > 0 ? max + 1 : 1;
+}
+
+/**
  * 生成建 worktree 的参数（不含可执行文件本身）。
  * @param {{ path: string, branch: string, base?: string }} input
  * @returns {string[]}
@@ -133,6 +158,10 @@ export function shouldReclaim(input) {
 
 /**
  * 解析 `git branch --merged <base>` 的输出（每行一个分支，可能带 `*` 前缀）。
+ *
+ * @deprecated 只服务于已被 `shouldDeleteBranchV2` 取代的 V1 判据（AUD-PROJ-22）。
+ * `git branch --merged` 在「未提交的新分支」与「squash 合并的分支」两个方向都会误判，
+ * **禁止**在任何新的删除路径里使用；保留导出只为让 worktree.test.js 记着这段历史原因。
  * @param {string} text
  * @returns {string[]}
  */
@@ -144,8 +173,11 @@ export function parseMergedBranches(text) {
 }
 
 /**
- * 是否允许删除一个本地分支。
- * 四条都要满足：是我们建的、已合并、不是当前分支、没有未推送提交。
+ * 是否允许删除一个本地分支（**V1 判据，已废弃**）。
+ *
+ * @deprecated AUD-PROJ-22：V2（`shouldDeleteBranchV2`）已替代它，service 里零调用。
+ * 它依赖的 `git branch --merged` 两向都误判，谁下轮接错线就会复活已知错误判据——
+ * **禁止**在新代码里使用，只在 worktree.test.js 里作为对照保留。
  * @param {{ branch: string, mergedBranches: string[], currentBranch: string, unpushedCommits?: number }} input
  * @returns {{ ok: boolean, reason: string }}
  */

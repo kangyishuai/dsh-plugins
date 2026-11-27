@@ -308,9 +308,36 @@ export async function executeApprovalCore(deps, requestId) {
   if (approval.action === "merge") {
     const project = store.getProject(approval.projectId);
     const prNumber = Number(approval.args?.prNumber);
+    if (!Number.isInteger(prNumber) || prNumber <= 0) {
+      store.appendAudit({
+        action: "approval/execution-refused",
+        projectId: approval.projectId,
+        requestId,
+        dangerAction: approval.action,
+        reason: "merge/pr-invalid",
+      });
+      store.save();
+      return settle({ executed: false, reason: "merge/pr-invalid" });
+    }
+    // AUD-PROJ-06：合并**必须**是本项目某条线程开出来的 PR（线程记录里有这个 prNumber）。
+    // 以前找不到线程就直接 `pickRepoRoot({dirs})` → dirs[0]，等于「猜一个仓库 + 同号 PR」
+    // 去合并别人的 PR（审批 args 是模型可控的，前置换仓库检查只保证「那个仓库里同号 PR 已绿」）。
+    // 找不到就拒绝，并说明原因；绝不回落 dirs[0]。
     const mergeThread = store
       .listThreads(approval.projectId)
       .find((/** @type {any} */ item) => Number(item?.prNumber) === prNumber);
+    if (!mergeThread) {
+      store.appendAudit({
+        action: "approval/execution-refused",
+        projectId: approval.projectId,
+        requestId,
+        dangerAction: approval.action,
+        prNumber,
+        reason: "merge/pr-not-ours",
+      });
+      store.save();
+      return settle({ executed: false, reason: "merge/pr-not-ours" });
+    }
     // 多目录项目（[repoA, repoB]）里 PR 属于哪个仓库，唯一可靠来源是线程 worktree；
     // 以前用 dirs[0] 会把 repoB 的 PR 合到 repoA 的同号 PR 上（不可逆）。
     const repoDir = pickRepoRoot({

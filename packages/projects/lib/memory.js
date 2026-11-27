@@ -39,7 +39,15 @@ export function appendEntry(existing, entry, options) {
     .trimEnd();
   const normalized = normalizeEntry(entry);
   if (normalized === "") return { ok: false, text: base, reason: "empty-entry", added: false };
-  if (base.includes(normalized)) return { ok: true, text: base, reason: "duplicate", added: false };
+  // AUD-PROJ-12：以前用 `base.includes(normalized)` 判重——**子串**匹配会把短条目误吞：
+  // 已有「always run tests before commit」时，新记忆「run tests」被判成 duplicate、
+  // 界面显示「已经知道」但内容没写进去。改成按记忆块的**完全相等**判重
+  // （行的切分口径与 parseMemoryBlocks 一致，trailing 时间注释不影响比较）。
+  const wanted = normalized.trim();
+  const existingBlocks = parseMemoryBlocks(base).map((block) => String(block.text ?? "").trim());
+  if (existingBlocks.includes(wanted)) {
+    return { ok: true, text: base, reason: "duplicate", added: false };
+  }
 
   const requestedMax = options?.maxChars;
   const maxChars = Number.isFinite(requestedMax) ? Number(requestedMax) : MEMORY_MAX_CHARS;

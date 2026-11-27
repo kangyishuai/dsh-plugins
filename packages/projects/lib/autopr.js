@@ -178,19 +178,3 @@ export function pickRepoRoot(input) {
   }
   return "";
 }
-
-/**
- * 项目级 PR 轮询的工作目录（纯函数）：优先用任一线程的 worktree，其次项目目录。
- * 项目目录被移走/改成多目录时，轮询不该直接失效（worktree 仍在同一个仓库里）。
- * @param {{ threads?: any[], dirs?: string[] }} input
- * @returns {string}
- */
-export function pickPollRoot(input) {
-  const threads = Array.isArray(input?.threads) ? input.threads : [];
-  const withWorktree = threads.find((thread) => String(thread?.worktree ?? "").trim() !== "");
-  return pickRepoRoot({
-    worktree: withWorktree?.worktree,
-    dir: withWorktree?.dir,
-    dirs: input?.dirs,
-  });
-}
