@@ -2,7 +2,7 @@
 // 建/回收隔离线程的集成测试：用**真实 git** 在 mkdtemp 里跑，sessionController 用假的。
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -242,6 +242,37 @@ describe("reclaimThreadWorktree", () => {
     assert.equal(result.reclaimed, false);
     assert.equal(result.reason, "dirty");
     assert.ok(readdirSync(String(thread.worktree)).includes("dirty.txt"), "脏文件必须还在");
+  });
+
+  it("只有 .gitignore 里的文件时也拒绝回收（ignored 文件绝不随 worktree 删除）", async () => {
+    // 复审 P0：git 的「干净」不包含 ignored 文件；.env / 模型缓存常被 ignore。
+    const repo2 = join(root, "ignore-repo");
+    mkdirSync(repo2, { recursive: true });
+    await runGit(["init", "-b", "main"], repo2);
+    writeFileSync(join(repo2, ".gitignore"), "*.env\nmodels/\n", "utf8");
+    writeFileSync(join(repo2, "README.md"), "# demo\n", "utf8");
+    await runGit(["add", "-A"], repo2);
+    await runGit(
+      ["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-m", "init"],
+      repo2,
+    );
+    const store = new ProjectStore({ root: join(root, "data-ignore") }).load();
+    const project = store.createProject("ignored", { dirs: [repo2] });
+    const sessions = fakeSessions();
+    const deps = { runGit, createSession: sessions.createSession };
+    const thread = await createIsolatedThread({
+      store,
+      dataRoot: join(root, "data-ignore"),
+      projectId: project.id,
+      deps,
+    });
+    assert.ok(thread.worktree);
+    writeFileSync(join(String(thread.worktree), ".env"), "SECRET=1\n", "utf8");
+
+    const result = await reclaimThreadWorktree({ store, sessionId: thread.sessionId, deps });
+    assert.equal(result.reclaimed, false);
+    assert.equal(result.reason, "dirty");
+    assert.ok(readdirSync(String(thread.worktree)).includes(".env"), "ignored 文件必须还在");
   });
 
   it("没有 worktree 的线程回收是 no-op", async () => {

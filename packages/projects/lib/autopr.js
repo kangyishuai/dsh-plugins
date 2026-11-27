@@ -161,12 +161,16 @@ export function planMergeSteps(input) {
  * 以前 `prOverview`/`mergePr` 一律用 `project.dirs[0]`：多目录项目里第 0 个目录
  * 可能不是线程所在仓库，`gh pr view <n>` 会去**另一个仓库**查同号 PR（不可逆操作尤其危险）。
  * 线程有 worktree 就优先用它，其次项目目录。
- * @param {{ worktree?: string|null, dirs?: string[] }} input
+ * @param {{ worktree?: string|null, dir?: string|null, dirs?: string[] }} input
  * @returns {string}
  */
 export function pickRepoRoot(input) {
   const worktree = String(input?.worktree ?? "").trim();
   if (worktree !== "") return worktree;
+  // 线程记录里的 `dir` 是**创建时**实际所在的仓库（多目录项目里可能不是 dirs[0]）。
+  // worktree 被回收/归档后只剩它，以前直接回落 dirs[0] → 合并/查 PR 会跑到错仓库（复审 P1）。
+  const threadDir = String(input?.dir ?? "").trim();
+  if (threadDir !== "") return threadDir;
   const dirs = Array.isArray(input?.dirs) ? input.dirs : [];
   for (const dir of dirs) {
     const value = String(dir ?? "").trim();
@@ -184,5 +188,9 @@ export function pickRepoRoot(input) {
 export function pickPollRoot(input) {
   const threads = Array.isArray(input?.threads) ? input.threads : [];
   const withWorktree = threads.find((thread) => String(thread?.worktree ?? "").trim() !== "");
-  return pickRepoRoot({ worktree: withWorktree?.worktree, dirs: input?.dirs });
+  return pickRepoRoot({
+    worktree: withWorktree?.worktree,
+    dir: withWorktree?.dir,
+    dirs: input?.dirs,
+  });
 }

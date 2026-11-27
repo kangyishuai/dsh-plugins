@@ -297,9 +297,9 @@ pnpm gate:all --plugins projects --idle-session "<任一空闲会话标题的子
 | 1   | 建项目 → 详情页绑定一个 git 仓库目录 → 新建线程 | 线程行出现，状态「进行中」→ 最终「已完成」或「失败」                                  |
 | 2   | 看 `.dsh-worktrees/<repo>/<prj>-<n>`            | 目录存在；`git worktree list` 里能看到 `dsh/…` 分支                                   |
 | 3   | 在项目目录里改点东西（不提交）→ 归档该线程会话  | worktree **保留**，日志里有 `worktree/reclaim` 审计且结果非 ok                        |
-| 4   | 干净线程直接归档                                | worktree 被删除，`git worktree list` 里消失                                           |
+| 4   | 干净线程直接归档                                | worktree **默认保留**（归档只做元数据）；显式 `cleanupBranches` 且带 confirm 才会删   |
 | 5   | 重启 DSH                                        | 面板项目与线程仍在；记录里指向不存在目录的 worktree 被清掉（审计 `worktree/missing`） |
-| 6   | 归档项目                                        | 项目从列表消失但数据保留；可 Unarchive                                                |
+| 6   | 归档项目                                        | 项目从列表消失但数据保留；worktree/分支不动；可 Unarchive                             |
 
 ## 5. 已知坑（踩过并已绕过）
 
@@ -593,11 +593,16 @@ CI 有 FAILURE    → merge/ci-not-green
 | 确有合并结果 | 记录 `mergedAt`，或 `merge-base --is-ancestor <branch> HEAD` | `not-merged`                              |
 | 无未推送提交 | `rev-list --count <branch> --not --remotes` 为 0             | `unpushed-commits`（读不出也算不满足）    |
 
-**worktree 先处理**：分支被 worktree 占用时 `git branch -d` 会拒绝；所以只在 worktree
-`git status --porcelain` **为空**时用 `git worktree remove`（不加 `--force`）移除，脏的一律保留。
+**worktree 默认只报告、不删**：分支被 worktree 占用时 `git branch -d` 会拒绝。要删 worktree
+必须调用方显式 `removeWorktrees: true` **且** `confirm: true`，并且先过两道判据：
+`git status --porcelain --ignored` 必须为空（`--ignored` 不能省：`.env` / 模型缓存在 `.gitignore` 里，
+普通 porcelain 看不出来），且已合并 + 无未推送提交。删除会写 `worktree/removed` 审计。
+**归档项目不再自动清理分支/worktree**（归档只做元数据，可恢复语义才成立）。
 
-删除**只用 `git branch -d`，永不用 `-D`**。RPC `cleanupBranches` 默认 dry-run，真删需 `confirm: true`；
-归档项目时自动跑一次（失败不影响归档）。
+线程回收（`reclaimThread` / 宿主 `session-archived` 钩子 / `delete-thread` 审批）同样用
+`--porcelain --ignored` 判非空，非空一律 `dirty` 保留。
+
+删除分支**只用 `git branch -d`，永不用 `-D`**。RPC `cleanupBranches` 默认 dry-run，真删需 `confirm: true`。
 
 真机（临时裸远端 + 桩 gh）：已合并且已推送的分支被删；未合并的保留（`not-merged`）。
 

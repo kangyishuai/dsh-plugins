@@ -54,7 +54,7 @@ export const FOLDER_GATED_ACTIONS = Object.freeze([
  * worktree 位于 `<repoParent>/.dsh-worktrees/<repoName>/<projectId>-<n>`（仓库的兄弟目录）。
  * 语义：worktree **继承**它所属项目目录的授权——按本插件自己的 worktree 命名规则反查
  * 是哪个 `dirs[i]` 生出来的；反查不到才退回 `dirs[0]`（并在审计里标 inherited=false）。
- * @param {any} project @param {string} action @param {{ worktree?: string }} [context]
+ * @param {any} project @param {string} action @param {{ worktree?: string, dir?: string }} [context]
  * @returns {{ dir: string, cwd: string, inherited: boolean }}
  */
 export function actionDirectory(project, action, context = {}) {
@@ -64,8 +64,14 @@ export function actionDirectory(project, action, context = {}) {
   const primary = dirs[0] ?? "";
   const worktree =
     typeof context?.worktree === "string" && context.worktree !== "" ? context.worktree : "";
-  if (String(action) !== "push-branch" || worktree === "") {
-    return { dir: primary, cwd: primary, inherited: false };
+  const threadDir = typeof context?.dir === "string" && context.dir !== "" ? context.dir : "";
+  // merge 的 gh 命令也跑在线程 worktree / 线程创建目录里（不是 dirs[0]），
+  // 以前只给 push-branch 传 worktree，多目录项目里对非首目录的 deny 会被绕过（复审 P2）。
+  const gated = String(action) === "push-branch" || String(action) === "merge";
+  if (!gated) return { dir: primary, cwd: primary, inherited: false };
+  if (worktree === "") {
+    const dir = threadDir !== "" ? threadDir : primary;
+    return { dir, cwd: dir, inherited: false };
   }
   for (const dir of dirs) {
     const clean = dir.replace(/\/+$/u, "");
@@ -75,8 +81,8 @@ export function actionDirectory(project, action, context = {}) {
     const stem = `${parent}/${WORKTREE_DIR}/${repoName}/`;
     if (worktree.startsWith(stem)) return { dir, cwd: worktree, inherited: true };
   }
-  // 反查不到（旧数据 / 用户手动改过 worktree）：按主目录授权判，但如实标 inherited=false。
-  return { dir: primary, cwd: worktree, inherited: false };
+  // 反查不到（旧数据 / 用户手动改过 worktree）：按线程目录/主目录授权判，但如实标 inherited=false。
+  return { dir: threadDir !== "" ? threadDir : primary, cwd: worktree, inherited: false };
 }
 
 /**
@@ -87,7 +93,7 @@ export function actionDirectory(project, action, context = {}) {
  *  - `deny`    → 拒绝执行（命令不会发出去）
  *  - `once`    → 本次放行，但**这里不消费**：凭据要等所有闸通过、占位成功后才落 `used=true`。
  *                B3 复审 P2 修复：以前在 checkExecutable 之前就消费，动作被拒时授权被烧掉。
- * @param {any} project @param {string} action @param {{ worktree?: string }} [context]
+ * @param {any} project @param {string} action @param {{ worktree?: string, dir?: string }} [context]
  * @returns {{ ok: true, mode: string, dir: string, cwd: string, inherited: boolean, consume: boolean } | { ok: false, mode: string, dir: string, cwd: string, inherited: boolean, reason: string }}
  */
 export function folderGate(project, action, context = {}) {
@@ -178,20 +184,30 @@ export async function executeApprovalCore(deps, requestId) {
   // push-branch 的 cwd 在线程 worktree 里（不是 dirs[0]）：先取出线程，闸门按**实际 cwd**
   // 所属目录求 mode（worktree 继承其项目目录的授权，见 actionDirectory）。
   const gateSessionId = String(approval.args?.sessionId ?? approval.args?.threadSessionId ?? "");
-  const gateThread =
-    approval.action === "push-branch"
-      ? store
-          .listThreads(approval.projectId)
-          .find((/** @type {any} */ item) => item.sessionId === gateSessionId)
-      : null;
+  const gatePrNumber = Number(approval.args?.prNumber);
+  const gateThreads = store.listThreads(approval.projectId);
+  const gateThread = gateThreads.find((/** @type {any} */ item) => {
+    if (approval.action === "push-branch") return String(item?.sessionId ?? "") === gateSessionId;
+    if (approval.action === "merge")
+      return Number.isFinite(gatePrNumber) && Number(item?.prNumber) === gatePrNumber;
+    return false;
+  });
   const gateWorktree =
     typeof gateThread?.worktree === "string" && gateThread.worktree !== ""
       ? gateThread.worktree
       : "";
+  // 闸门与实际执行用同一个目录：worktree 优先，其次线程创建时的 dir，最后才是 dirs[0]。
+  const gateDir = gateThread
+    ? pickRepoRoot({
+        worktree: gateWorktree,
+        dir: gateThread.dir,
+        dirs: project?.dirs,
+      })
+    : "";
 
   // F55：文件夹授权闸（deny / once / default 三键真的影响执行）。
   // once **不在这里消费**：要等 checkExecutable + 占位都通过后再落 used（复审 P2）。
-  const folder = folderGate(project, approval.action, { worktree: gateWorktree });
+  const folder = folderGate(project, approval.action, { worktree: gateWorktree, dir: gateDir });
   if (!folder.ok) {
     store.appendAudit({
       action: "approval/execution-refused",
@@ -299,6 +315,7 @@ export async function executeApprovalCore(deps, requestId) {
     // 以前用 dirs[0] 会把 repoB 的 PR 合到 repoA 的同号 PR 上（不可逆）。
     const repoDir = pickRepoRoot({
       worktree: typeof mergeThread?.worktree === "string" ? mergeThread.worktree : "",
+      dir: mergeThread?.dir,
       dirs: project?.dirs,
     });
     mergeRepoDir = repoDir;
@@ -534,6 +551,7 @@ export async function executeApprovalCore(deps, requestId) {
       .find((/** @type {any} */ item) => String(item?.branch ?? "") === branch);
     const grDir = pickRepoRoot({
       worktree: typeof grThread?.worktree === "string" ? grThread.worktree : "",
+      dir: grThread?.dir,
       dirs: grProject?.dirs,
     });
     const grRemote =
