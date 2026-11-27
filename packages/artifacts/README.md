@@ -71,10 +71,10 @@ Do not treat an artifact URL as an access-control boundary: the route authentica
 
 ## Compatibility
 
-| Plugin | Verified on DSH | Notes                                                                                  |
-| ------ | --------------- | -------------------------------------------------------------------------------------- |
-| 0.0.0  | 0.2.2-rc.3      | preview/version mechanics                                                              |
-| 0.2.0  | 0.2.2-rc.5      | `pnpm smoke:artifacts` 10/10 (web, temporary `DSH_HOME`); desktop **not verified yet** |
+| Plugin | Verified on DSH | Notes                                                                                                                           |
+| ------ | --------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| 0.0.0  | 0.2.2-rc.3      | preview/version mechanics                                                                                                       |
+| 0.2.0  | 0.2.2-rc.5      | `pnpm smoke:artifacts` 10/10 (web, temporary `DSH_HOME`); `pnpm gate artifacts` green — desktop read-only regression **4 PASS** |
 
 ## License
 
