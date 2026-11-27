@@ -25,11 +25,12 @@ export function trashDirFor(input) {
 /**
  * 汇总「删除这个项目会影响什么」。数字全部由调用方给，函数只负责表述与兜底。
  * ADR 0002 要求：数量 · 体积 · 是否在跑 · 能否恢复，四件都要能说清。
- * @param {{threads: {state?: string}[], contentBytes: number, hasContentDir: boolean, name: string, worktrees?: any[]}} input
+ * @param {{threads: {state?: string}[], contentBytes: number, hasContentDir: boolean, name: string, worktrees?: any[], hostScheduleCount?: number}} input
  * @returns {{
  *   threadCount: number,
  *   liveThreadCount: number,
  *   worktreeCount: number,
+ *   hostScheduleCount: number,
  *   contentBytes: number,
  *   hasContentDir: boolean,
  *   restorable: true,
@@ -44,10 +45,16 @@ export function impactOf(input) {
     : 0;
   const hasContentDir = input?.hasContentDir === true;
   const worktrees = Array.isArray(input?.worktrees) ? input.worktrees : [];
+  // 复审 F2：删除会连带删除宿主定时任务（不可恢复，且不随回收站恢复）。
+  // 影响面必须写出来，否则用户不知道「删项目 = 删掉 N 条自动化」。
+  const hostScheduleCount = Number.isFinite(input?.hostScheduleCount)
+    ? Math.max(0, Number(input.hostScheduleCount))
+    : 0;
   const parts = [
     `${threads.length} 个线程（${live} 个在跑）`,
     hasContentDir ? `项目内容 ${formatBytes(contentBytes)}` : "无项目内容文件",
     worktrees.length > 0 ? `${worktrees.length} 个 worktree 留在磁盘（删除不会清理）` : "",
+    hostScheduleCount > 0 ? `会删除 ${hostScheduleCount} 条宿主定时任务（不可从回收站恢复）` : "",
     "会话日志不受影响",
     "可恢复：删除只移入回收站",
   ];
@@ -55,6 +62,7 @@ export function impactOf(input) {
     threadCount: threads.length,
     liveThreadCount: live,
     worktreeCount: worktrees.length,
+    hostScheduleCount,
     contentBytes,
     hasContentDir,
     restorable: true,

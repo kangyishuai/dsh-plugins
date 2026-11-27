@@ -138,7 +138,13 @@ import {
 } from "./routines.js";
 import { decideRoute } from "./routing.js";
 import { deriveSubtitle, deriveToolState } from "./row-subtitle.js";
-import { checkProjectAcceptsAutomation, reconcileHostSchedules } from "./schedules.js";
+import {
+  checkProjectAcceptsAutomation,
+  classifyHostScheduleResult,
+  collectHostSchedules,
+  hostActivePatch,
+  reconcileHostSchedules,
+} from "./schedules.js";
 import { APPROVAL_CLAIM_TTL_MS, isSafeRecordKey, localDateKey, ProjectStore } from "./store.js";
 import {
   MANAGED_BEGIN,
@@ -1771,7 +1777,7 @@ export class ProjectsService extends TypertRemoteService {
    * **删除**失败要往上抛——否则项目记录没了，就再也没有入口去停那批还在烧 token 的条目。
    * @param {string} projectId
    * @param {"pause"|"archive"|"resume"|"delete"} action
-   * @returns {Promise<{ ok: boolean, planned: string, handled: any[], failures: any[], skipped: string[] }>}
+   * @returns {Promise<{ ok: boolean, planned: string, handled: any[], failures: any[], skipped: string[], unavailable?: number }>}
    */
   async reconcileSchedules(projectId, action) {
     const store = this.requireStore();
@@ -2283,17 +2289,19 @@ export class ProjectsService extends TypertRemoteService {
             ? { id: nextScheduleId, action: "delete" }
             : { id: nextScheduleId, action: "update", patch: planned.hostPatch },
         );
-        // 宿主可能用 {ok:false} 而不是抛错来拒绝；以前会当成功继续改本地记录 → 本地/宿主漂移
-        if (edited && typeof edited === "object" && edited.ok === false) {
+        // 宿主契约：拒绝是**抛错**或返回 `{code:'schedule_not_found'|'schedule_conflict'}`，
+        // 没有 `{ok:false}` 这种形状（以前判 ok 的分支永远不成立 → 本地/宿主偷偷漂移）。
+        const outcome = classifyHostScheduleResult(edited);
+        if (outcome.kind === "not-found" || outcome.kind === "conflict") {
           store.appendAudit({
             action: "routine/update-failed",
             projectId: project.id,
             routineId,
             reason: `${action}-rejected`,
-            detail: String(edited.reason ?? "").slice(0, 160),
+            detail: outcome.code,
           });
           store.save();
-          return { ok: false, reason: "schedule-rejected" };
+          return { ok: false, reason: `schedule/${outcome.code}` };
         }
       } catch (error) {
         store.appendAudit({
@@ -2328,18 +2336,21 @@ export class ProjectsService extends TypertRemoteService {
           timing: planned.hostPatch.timing,
           target: { kind: "new", create: { cwd } },
         });
-        if (created && typeof created === "object" && created.ok === false) {
+        // 宿主 `create` 失败是**抛错**（契约里没有 {ok:false}）；返回形状是任务条目。
+        // 拿不到 id 就当创建没落地，别继续写本地记录（否则本地/宿主漂移）。
+        const createdOutcome = classifyHostScheduleResult(created);
+        if (createdOutcome.kind !== "task" || String(created?.id ?? "") === "") {
           store.appendAudit({
             action: "routine/update-failed",
             projectId: project.id,
             routineId,
             reason: "create-rejected",
-            detail: String(created.reason ?? "").slice(0, 160),
+            detail: createdOutcome.code || "no-id",
           });
           store.save();
           return { ok: false, reason: "schedule-rejected" };
         }
-        nextScheduleId = String(created?.id ?? "");
+        nextScheduleId = String(created.id);
       } catch (error) {
         store.appendAudit({
           action: "routine/update-failed",
@@ -2532,12 +2543,15 @@ export class ProjectsService extends TypertRemoteService {
    * 取消归档：回到 active，线程归属与内容文件都还在（归档从不删数据）。
    * @param {string} id
    */
-  unarchiveProject(id) {
+  async unarchiveProject(id) {
     const store = this.requireStore();
     const project = store.updateProject(id, { state: "active" });
     store.appendAudit({ action: "project/unarchived", projectId: id });
     store.save();
-    return project;
+    // 复审 F3：archive 会暂停宿主定时，取消归档必须对称恢复（否则 routines 永久停在
+    // 宿主 paused，本地没有任何提示）。用户显式停用的 routine 由 reconcile 自己跳过。
+    const schedules = await this.reconcileSchedules(id, "resume");
+    return { ...project, schedules };
   }
 
   /**
@@ -2613,12 +2627,16 @@ export class ProjectsService extends TypertRemoteService {
     const liveBusy = threads.filter((/** @type {any} */ thread) =>
       this.threadBusy(thread, live.states, String(thread?.sessionId ?? "")),
     ).length;
+    // 复审 F2：影响面要写出「会删几条宿主定时任务」（删除它们不可从回收站恢复）。
+    // 计数只读项目记录（`collectHostSchedules` 是纯函数），不碰宿主、不产生副作用。
+    const hostSchedules = collectHostSchedules(project);
     const impact = impactOf({
       threads,
       contentBytes,
       hasContentDir,
       name: project.name,
       worktrees,
+      hostScheduleCount: hostSchedules.length,
     });
     impact.liveThreadCount = liveBusy;
     if (liveBusy > 0) {
@@ -2639,6 +2657,11 @@ export class ProjectsService extends TypertRemoteService {
       contentDir,
       workspaceDir,
       hasWorkspaceDir,
+      hostSchedules: hostSchedules.map((entry) => ({
+        scheduleId: entry.scheduleId,
+        kind: entry.kind,
+        id: entry.id,
+      })),
     };
   }
 
@@ -2649,14 +2672,9 @@ export class ProjectsService extends TypertRemoteService {
    */
   async deleteProject(id) {
     const store = this.requireStore();
-    // AUD-PROJ-02：先停宿主定时任务再动数据。删不掉就**拒绝删除**——记录没了以后就
-    // 没有入口再去停那批还在到点投递（= 花 token）的条目，用户只会看到钱在掉。
-    const schedules = await this.reconcileSchedules(id, "delete");
-    if (schedules.failures.length > 0) {
-      throw new Error(
-        `projects: ${schedules.failures.length} host scheduled task(s) could not be removed; retry or stop them before deleting this project`,
-      );
-    }
+    // 顺序（复审 F2）：**先做所有可能失败的校验**（preview/busy），再动宿主定时。
+    // 以前先删宿主条目：删除被 busy/preview 拒绝时项目还在，但 routines/提醒的宿主条目
+    // 已经被静默删掉且没有任何地方可恢复。
     const preview = await this.previewDeleteProject(id);
     // 在跑的线程：删掉记录后 agent 的结果无法回写，用户会以为任务还在跑（审查实测）
     const previewThreads = store.listThreads(id);
@@ -2673,6 +2691,23 @@ export class ProjectsService extends TypertRemoteService {
       throw new Error(
         `projects: project has ${busy.length} running/waiting thread(s); stop them before deleting`,
       );
+    }
+    // 校验都过了才开始动宿主定时：删不掉就**拒绝删除**——记录没了以后就没有入口再去停
+    // 那批还在到点投递（= 花 token）的条目。宿主根本没有 schedule 服务时不存在投递机制，
+    // 按「无可停」处理并写审计，不让项目卡成不可删（复审 F6a/F7）。
+    const schedules = await this.reconcileSchedules(id, "delete");
+    if (schedules.failures.length > 0) {
+      throw new Error(
+        `projects: ${schedules.failures.length} host scheduled task(s) could not be removed (open the host's Automation tasks page to stop them), then retry deleting this project`,
+      );
+    }
+    if ((schedules.unavailable ?? 0) > 0) {
+      store.appendAudit({
+        action: "project/schedules-unavailable",
+        projectId: id,
+        entries: Number(schedules.unavailable),
+      });
+      store.save();
     }
     const trashDir = trashDirFor({ dataRoot: this.dataRoot, projectId: id });
     const projectRecord = store.getProject(id);
@@ -6656,11 +6691,17 @@ export class ProjectsService extends TypertRemoteService {
       if (!schedule || typeof schedule.edit !== "function")
         return { ok: false, reason: "schedule-unavailable" };
       try {
-        await schedule.edit({
+        // 复审 F1：宿主 SchedulePatch 只认 `active: boolean`（以前写 `{status}` 被静默忽略，
+        // Routines 的启停从 0.10.x 起其实从未生效过）。这里也必须判返回值，不能当成功。
+        const edited = await schedule.edit({
           id: routine.scheduleId,
           action: "update",
-          patch: { status: enabled === true ? "active" : "paused" },
+          patch: hostActivePatch(enabled === true ? "resume" : "pause"),
         });
+        const outcome = classifyHostScheduleResult(edited);
+        if (outcome.kind === "not-found" || outcome.kind === "conflict") {
+          return { ok: false, reason: `schedule/${outcome.code || outcome.kind}` };
+        }
         hostResult = enabled === true ? "active" : "paused";
       } catch (error) {
         return {
@@ -6706,7 +6747,12 @@ export class ProjectsService extends TypertRemoteService {
       if (!schedule || typeof schedule.edit !== "function")
         return { ok: false, reason: "schedule-unavailable" };
       try {
-        await schedule.edit({ id: routine.scheduleId, action: "delete" });
+        const removedHost = await schedule.edit({ id: routine.scheduleId, action: "delete" });
+        const outcome = classifyHostScheduleResult(removedHost);
+        // `deleted:false + schedule_not_found` = 宿主里本来就没有：目标已达成，不算失败。
+        if (outcome.kind === "conflict") {
+          return { ok: false, reason: "schedule/schedule_conflict" };
+        }
       } catch (error) {
         return {
           ok: false,
@@ -6742,7 +6788,28 @@ export class ProjectsService extends TypertRemoteService {
     const at = new Date().toISOString();
     if (routine.scheduleId !== "" && schedule && typeof schedule.run === "function") {
       try {
-        await schedule.run({ id: routine.scheduleId });
+        const ran = await schedule.run({ id: routine.scheduleId });
+        // 宿主 `run` 的失败形状是 `{code:'schedule_not_found'|'schedule_execution_pending'}`
+        // （不抛错），以前会把「没投递」当成功写进历史。
+        const ranOutcome = classifyHostScheduleResult(ran);
+        if (ranOutcome.kind !== "task" && ranOutcome.kind !== "unknown") {
+          store.patchRoutine(projectId, routineId, {
+            history: appendRoutineHistory(routine, {
+              at,
+              status: "run-failed",
+              message: String(ranOutcome.code || ranOutcome.kind),
+              source: "run-now",
+            }),
+          });
+          store.appendAudit({
+            action: "routine/run-failed",
+            projectId,
+            routineId,
+            reason: String(ranOutcome.code || ranOutcome.kind),
+          });
+          store.save();
+          return { ok: false, reason: `schedule/${ranOutcome.code || ranOutcome.kind}` };
+        }
         store.patchRoutine(projectId, routineId, {
           lastRunAt: at,
           history: appendRoutineHistory(routine, {

@@ -48,7 +48,7 @@ window.__ModuleLoader__.load({
       "settings.nav.usage": "用量",
       "settings.nav.debug": "调试",
       "settings.sectionTitle": "设置分区",
-      "settings.budget": "预算（日线程 / 并发 / 步数 / token）",
+      "settings.budget": "预算（日线程 / 并发 / 步数 / 日 token / 周 token）",
       "settings.autoRetry": "失败自动重试（最多 2 次）",
       "settings.autoRetryHint":
         "线程以失败结束时，60 秒后自动再发一句「继续」；累计最多 2 次（不因中间恢复清零）。这不是「用量恢复续跑」。",
@@ -220,6 +220,8 @@ window.__ModuleLoader__.load({
       "detail.prCreating": "正在开 PR…",
       "detail.prCreated": "已开 PR #{number}",
       "detail.prFailed": "开 PR 失败：{reason}",
+      "detail.prPendingApproval":
+        "已排入合并审批：PR #{number} 等你在审批队列里确认（插件不会自己合并）。",
       "detail.prBranch": "分支 {branch}",
       "detail.prCi": "CI {state}",
       "detail.noBranch": "还没有分支（线程还没产出提交）",
@@ -269,7 +271,7 @@ window.__ModuleLoader__.load({
       "detail.threadsEmpty":
         "在下面输入框派个任务，回车即可新建线程；也可以用「…」菜单把已有会话归属进来。",
       "detail.noDirHint":
-        "还没有绑定项目目录：线程会跑在插件的数据目录里（不隔离，也不便接手你的仓库）。建议先在「项目设置 → 环境 → 项目目录」里绑定一个 git 仓库，线程才会各占一个 worktree。",
+        "还没有绑定项目目录：线程会跑在项目专用工作区（插件数据目录下的 workspaces/<id>，不隔离，也不便接手你的仓库）。建议先在「项目设置 → 环境 → 项目目录」里绑定一个 git 仓库，线程才会各占一个 worktree。",
       "detail.threadState": "状态：{state}",
       "detail.instructions": "常设规则（instructions.md）",
       "detail.memoryEdit": "编辑常设规则",
@@ -385,7 +387,7 @@ window.__ModuleLoader__.load({
       "settings.prTier.auto-merge": "自动合并（CI 通过后进审批队列）",
       "settings.preapproveTitle": "预授权（勾上即自动执行）",
       "settings.preapproveHint":
-        "这些动作勾上后不再逐次等审批：命中策略就直接执行。默认全空，建议只在明确知道后果时打开。",
+        "这些动作勾上后不再逐次等审批：命中策略就直接执行（对应的危险开关还必须同时打开，否则仍然不会自动执行）。默认全空，建议只在明确知道后果时打开。",
       "settings.preapproveRisk": "已启用预授权：命中时动作会被直接执行，不可逆动作也没有二次确认。",
       "settings.preapprove.push-branch": "推送分支",
       "settings.preapprove.delete-thread": "删除线程 / 回收 worktree",
@@ -613,6 +615,9 @@ window.__ModuleLoader__.load({
       "detail.prCard.mergeOk": "已合并 #{number}",
       "detail.prCard.mergeFail": "合并失败：{reason}",
       "detail.prCard.copy": "复制链接",
+      "detail.prCard.continueHint":
+        "重跑一次 PR 流程：已开 PR 时不会重复开；auto-merge 档在 CI 通过时会排入合并审批（不会直接合并）。",
+      "detail.prCard.continue": "继续 PR 流程",
       "detail.prCard.copied": "PR 链接已复制",
       "detail.prCard.loading": "读取 PR 信息…",
       "detail.prCard.unavailable": "读不到 PR",
@@ -843,6 +848,8 @@ window.__ModuleLoader__.load({
       "detail.prCreating": "Creating PR…",
       "detail.prCreated": "Opened PR #{number}",
       "detail.prFailed": "Create PR failed: {reason}",
+      "detail.prPendingApproval":
+        "Queued for merge approval: PR #{number} waits for you in the approval queue (the plugin never merges by itself).",
       "detail.prBranch": "Branch {branch}",
       "detail.prCi": "CI {state}",
       "detail.noBranch": "No branch yet (no commits from this thread)",
@@ -893,7 +900,7 @@ window.__ModuleLoader__.load({
       "detail.threadsEmpty":
         "Type a task below and press Enter to start a thread; or use a session’s … menu to add it here.",
       "detail.noDirHint":
-        "No project directory bound yet: threads run inside the plugin’s data directory (no isolation, and they cannot work on your repo). Bind a git repository above first — then each thread gets its own worktree.",
+        "No project directory bound yet: threads run in the project's own workspace (`workspaces/<id>` under the plugin data directory; no isolation, and they cannot work on your repo). Bind a git repository above first — then each thread gets its own worktree.",
       "detail.threadState": "state: {state}",
       "detail.instructions": "Standing rules (instructions.md)",
       "detail.memoryIndex": "Memory index (MEMORY.md)",
@@ -1000,7 +1007,7 @@ window.__ModuleLoader__.load({
       "settings.prTier.auto-merge": "auto-merge (queues an approval once CI passes)",
       "settings.preapproveTitle": "Pre-approval (runs automatically when checked)",
       "settings.preapproveHint":
-        "Checked actions stop waiting for per-incident approval: a matching policy request is executed directly. Empty by default; only enable what you fully understand.",
+        "Checked actions stop waiting for per-incident approval: a matching policy request is executed directly (the matching danger switch must also be on, otherwise nothing is auto-executed). Empty by default; only enable what you fully understand.",
       "settings.preapproveRisk":
         "Pre-approval is on: matching actions execute immediately, with no second confirmation even for irreversible ones.",
       "settings.preapprove.push-branch": "push branch",
@@ -1235,6 +1242,9 @@ window.__ModuleLoader__.load({
       "detail.prCard.mergeOk": "Merged #{number}",
       "detail.prCard.mergeFail": "Merge failed: {reason}",
       "detail.prCard.copy": "Copy link",
+      "detail.prCard.continueHint":
+        "Re-run the PR pipeline: it never opens a second PR; in the auto-merge tier a passing-CI PR is queued as a merge approval (never merged directly).",
+      "detail.prCard.continue": "Continue PR flow",
       "detail.prCard.copied": "PR link copied",
       "detail.prCard.loading": "Loading PR…",
       "detail.prCard.unavailable": "PR unavailable",
@@ -1353,7 +1363,8 @@ window.__ModuleLoader__.load({
       "settings.nav.usage": "Usage",
       "settings.nav.debug": "Debug",
       "settings.sectionTitle": "Settings sections",
-      "settings.budget": "Budget (threads/day / concurrent / steps / tokens)",
+      "settings.budget":
+        "Budget (threads/day / concurrent / steps / tokens per day / tokens per week)",
       "settings.autoRetry": "Auto-retry on failure (max 2)",
       "settings.autoRetryHint":
         'When a thread ends failed, it re-sends "continue" after 60s; at most 2 tries per thread, never reset. Not the same as resuming after a usage limit.',
@@ -6758,12 +6769,20 @@ window.__ModuleLoader__.load({
             (/** @type {any} */ result) => {
               setBusyAction("");
               const opened = result?.opened === true;
+              const reason = String(result?.reason ?? "?");
+              // 复审 F4：auto-merge 档跑到 CI 通过时，这里返回的是「已排入合并审批」，
+              // 不是失败——如实给一个正向回执，别让用户以为出错了。
+              const awaitingApproval = reason === "merge/awaiting-approval";
               setThreadAction({
                 pending: "",
-                ok: opened,
+                ok: opened || awaitingApproval,
                 message: opened
                   ? text(t, "detail.prCreated", { number: Number(result?.prNumber ?? 0) })
-                  : text(t, "detail.prFailed", { reason: String(result?.reason ?? "?") }),
+                  : awaitingApproval
+                    ? text(t, "detail.prPendingApproval", {
+                        number: Number(result?.prNumber ?? 0),
+                      })
+                    : text(t, "detail.prFailed", { reason }),
               });
               load(true);
             },
@@ -8619,6 +8638,26 @@ window.__ModuleLoader__.load({
                                     ? `${text(t, "detail.prCard.unavailable")} · ${String(info?.reason ?? "")}`
                                     : text(t, "detail.prCard.loading"),
                                 ),
+                            // 复审 F4：`nextPrAction` 的 merge 决策只在 `openPr` 里产生，而 UI
+                            // 以前在「已有 PR 号」时把 Create PR 整条隐藏 → auto-merge 档永远
+                            // 触发不到审批队列。这里给一个稳定入口：重跑一次 PR 流程
+                            // （需要合并时它会生成一张 merge 审批，而不是直接合并）。
+                            h(
+                              "button",
+                              {
+                                type: "button",
+                                style: {
+                                  ...styles.secondaryButton,
+                                  padding: "1px 8px",
+                                  fontSize: "11.5px",
+                                },
+                                "data-projects-thread-pr-continue": row.sessionId,
+                                disabled: busyAction !== "",
+                                title: text(t, "detail.prCard.continueHint"),
+                                onClick: () => createPrFor(String(row.sessionId)),
+                              },
+                              text(t, "detail.prCard.continue"),
+                            ),
                             (() => {
                               const dangerOn =
                                 (data.liveProject ?? props.project)?.policy?.danger?.autoMerge ===
@@ -14516,7 +14555,15 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         loadB3();
       }, [loadB3]);
-      var budgetKeys = ["maxThreadsPerDay", "maxConcurrent", "maxStepsPerThread", "dailyTokens"];
+      // 复审 F5：`weeklyTokens` 早就是真预算字段（写入口/归一化/两道闸都有），
+      // 但设置页这里硬编码 4 个 key，用户根本改不到周预算。
+      var budgetKeys = [
+        "maxThreadsPerDay",
+        "maxConcurrent",
+        "maxStepsPerThread",
+        "dailyTokens",
+        "weeklyTokens",
+      ];
       var budgetValues = /** @type {Record<string, any>} */ ({});
       budgetKeys.forEach((/** @type {any} */ key) => {
         var stored = selectedForB3?.budget ? selectedForB3.budget[key] : null;

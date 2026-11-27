@@ -162,9 +162,6 @@ export const BUDGET_FIELDS = Object.freeze([
   "maxStepsPerThread",
 ]);
 
-/** token 类字段（只有这两个是 token 计数，其它是线程数）。 */
-export const TOKEN_BUDGET_FIELDS = Object.freeze(["dailyTokens", "weeklyTokens"]);
-
 /**
  * 规范化一个预算补丁：数值取整、非负；null/空串表示"不限"；未知字段忽略。
  * @param {unknown} patch

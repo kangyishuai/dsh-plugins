@@ -295,11 +295,14 @@ describe("最终自查补漏", () => {
 });
 
 describe("剩余审查项", () => {
-  it("routine 更新：宿主 {ok:false} 也按失败处理（不写本地）", () => {
+  it("routine 更新：按宿主**真实契约**判失败（{code:schedule_not_found|conflict} / 抛错），不写本地", () => {
+    // 复审 F1：宿主从不用 {ok:false} 表达失败（失败是抛错或返回 {code}），
+    // 以前那两条 `ok === false` 断言保护的是一个永远不成立的分支。
     const region = methodRegion(serviceSource, "updateRoutine");
-    assert.match(region, /edited\.ok === false/u);
-    assert.match(region, /created\.ok === false/u);
+    assert.match(region, /classifyHostScheduleResult\(/u);
+    assert.match(region, /create-rejected/u);
     assert.match(region, /schedule-rejected/u);
+    assert.doesNotMatch(region, /created\.ok === false/u);
   });
 
   it("progress 的产物列表只取一次（不再每行克隆）", () => {
@@ -550,5 +553,97 @@ describe("AUD-HIST-06：无协调者时不再每轮写 wake/skipped", () => {
       "coordinator 卡空态必须有提示锚点",
     );
     assert.match(clientSource, /detail\.coordinatorNoWake/u);
+  });
+});
+
+describe("复审 F1/F2/F3/F4/F5：契约与顺序修正", () => {
+  it("F1：全仓不再向宿主发送 patch.status（宿主只认 active:boolean）", () => {
+    assert.doesNotMatch(
+      serviceSource,
+      /patch:\s*\{\s*status:/u,
+      "宿主 SchedulePatch 没有 status 字段，发了会被静默忽略（假成功）",
+    );
+    const schedulesSource = readFileSync(join(here, "..", "lib", "schedules.js"), "utf8");
+    assert.doesNotMatch(schedulesSource, /patch:\s*\{\s*status:/u);
+    // 唯一的启停写入口是 hostActivePatch（防止再手写一份 patch 字面量）
+    assert.match(serviceSource, /hostActivePatch\(/u);
+    assert.match(schedulesSource, /hostActivePatch\(/u);
+    // 反向契约：宿主不用 {ok:false} 表达失败，改用分类函数
+    const updateRoutine = methodRegion(serviceSource, "updateRoutine");
+    assert.match(updateRoutine, /classifyHostScheduleResult\(/u);
+    assert.doesNotMatch(updateRoutine, /edited\.ok === false/u);
+  });
+
+  it("F2：deleteProject 先校验（preview/busy）再删宿主定时", () => {
+    const region = methodRegion(serviceSource, "deleteProject");
+    const previewAt = region.indexOf("previewDeleteProject(");
+    const busyAt = region.indexOf("busy.length > 0");
+    const reconcileAt = region.indexOf('reconcileSchedules(id, "delete")');
+    assert.ok(previewAt >= 0 && busyAt > previewAt, "preview 在 busy 之前");
+    assert.ok(
+      reconcileAt > busyAt,
+      "删宿主定时必须在 preview/busy 校验之后（否则删除被拒时定时已被静默删掉）",
+    );
+    // 无 schedule 服务时不阻断，但要留审计
+    assert.match(region, /schedules-unavailable/u);
+    // 错误文案要可操作（指向宿主页面）
+    assert.match(region, /Automation tasks/u);
+  });
+
+  it("F2：preview 影响面带宿主定时计数", () => {
+    const region = methodRegion(serviceSource, "previewDeleteProject");
+    assert.match(region, /collectHostSchedules\(/u);
+    assert.match(region, /hostScheduleCount/u);
+  });
+
+  it("F3：unarchiveProject 与 archive 对称恢复宿主定时", () => {
+    const region = methodRegion(serviceSource, "unarchiveProject");
+    assert.match(region, /reconcileSchedules\(id, "resume"\)/u);
+  });
+
+  it("F4：PR 卡有「继续 PR 流程」入口，覆盖 auto-merge 审批闭环", () => {
+    assert.match(clientSource, /"data-projects-thread-pr-continue"/u);
+    // 入口必须调 createPr（openPr 的唯一 UI 调用方），否则 merge 决策仍不可达
+    const anchor = clientSource.indexOf('"data-projects-thread-pr-continue"');
+    const around = clientSource.slice(anchor, anchor + 900);
+    assert.match(around, /createPrFor\(/u);
+    // 「已排入合并审批」是正向回执，不能当失败提示
+    assert.match(clientSource, /merge\/awaiting-approval/u);
+    assert.match(clientSource, /detail\.prPendingApproval/u);
+  });
+
+  it("F5：设置页预算包含 weeklyTokens；死导出已删", () => {
+    assert.match(clientSource, /"weeklyTokens",/u);
+    const budgetSource = readFileSync(join(here, "..", "lib", "budget.js"), "utf8");
+    assert.doesNotMatch(budgetSource, /TOKEN_BUDGET_FIELDS/u, "零引用的死导出应删除");
+  });
+
+  it("F6c：noDirHint 文案指向项目专用工作区（不再是数据根本身）", () => {
+    assert.match(clientSource, /workspaces\/<id>/u);
+    // 中文文案不能再写「跑在插件的数据目录里」
+    assert.doesNotMatch(clientSource, /线程会跑在插件的数据目录里/u);
+  });
+});
+
+describe("复审 nit：可预授权动作清单不能漂移", () => {
+  it("client 的 PREAPPROVE_ACTIONS 与 executor 的 POLICY_GRANT_ACTIONS 一致", () => {
+    const executorSource = readFileSync(join(here, "..", "lib", "executor.js"), "utf8");
+    const parse = (/** @type {string} */ source, /** @type {string} */ name) => {
+      const start = source.indexOf(`var ${name} = [`);
+      const start2 = source.indexOf(`export const ${name} = Object.freeze([`);
+      const marker = start >= 0 ? start : start2;
+      assert.ok(marker >= 0, `找不到 ${name}`);
+      const open = source.indexOf("[", marker);
+      const close = source.indexOf("]", open);
+      return [...source.slice(open, close).matchAll(/"([^"]+)"/gu)].map((item) => item[1]);
+    };
+    const clientActions = parse(clientSource, "PREAPPROVE_ACTIONS");
+    const executorActions = parse(executorSource, "POLICY_GRANT_ACTIONS");
+    assert.ok(clientActions.length > 0 && executorActions.length > 0);
+    assert.deepEqual(
+      [...clientActions].sort(),
+      [...executorActions].sort(),
+      "预授权 UI 与执行器白名单必须同源（增删动作时两边一起改）",
+    );
   });
 });

@@ -13,6 +13,43 @@
 export const SCHEDULE_ACTIONS = Object.freeze(["pause", "resume", "delete", "none"]);
 
 /**
+ * 暂停/恢复宿主条目时的 **SchedulePatch**（shipped contract，别凭想象写）。
+ *
+ * `@deepseek-ai/dsh-schedule@0.2.2-rc.5` 的 `SchedulePatch` 只有
+ * `{title?, prompt?, timing?, target?, active?: boolean}`；宿主 `revisedTask()` 只读
+ * `patch.active`（`false` → paused，`true` → active），**没有 `patch.status`**——
+ * 复审实测：插件以前发 `{status:"paused"}` 被静默忽略，pause/archive/resume 全是假成功。
+ * 所有「改宿主启停」的路径都必须经过这里，别再手写 patch 字面量。
+ * @param {string} op `"pause"` 之外的任何值都按「恢复」处理
+ * @returns {{ active: boolean }}
+ */
+export function hostActivePatch(op) {
+  return { active: String(op) !== "pause" };
+}
+
+/**
+ * 分类宿主 `schedule.edit()` 的返回（shipped contract）。
+ *
+ * 契约（`ScheduleEditResult`）：成功 → 任务条目（含 `id`/`status`）；删除成功 →
+ * `{id, deleted:true}`；查不到 → `{id, code:'schedule_not_found'}`；版本冲突 →
+ * `{id, code:'schedule_conflict'}`。**不会**用 `{ok:false}` 表达失败（失败是抛错），
+ * 所以以前 `edited.ok === false` 的分支永远不成立。
+ * @param {any} result
+ * @returns {{ kind: "task"|"deleted"|"not-found"|"conflict"|"unknown", code: string, status: string }}
+ */
+export function classifyHostScheduleResult(result) {
+  const code = String(result?.code ?? "");
+  if (code === "schedule_not_found") return { kind: "not-found", code, status: "" };
+  if (code === "schedule_conflict") return { kind: "conflict", code, status: "" };
+  if (code !== "") return { kind: "unknown", code, status: "" };
+  if (result?.deleted === true) return { kind: "deleted", code: "", status: "" };
+  if (result && typeof result === "object" && typeof result.id === "string") {
+    return { kind: "task", code: "", status: String(result.status ?? "") };
+  }
+  return { kind: "unknown", code: "", status: "" };
+}
+
+/**
  * 项目状态对应的对账动作。
  * @param {string} action 本插件发起的生命周期动作：pause / resume / archive / delete
  * @returns {"pause"|"resume"|"delete"|"none"}
@@ -64,7 +101,7 @@ export function collectHostSchedules(project) {
  * 对账：把项目当前状态对应的处置应用到宿主 schedule 上。
  *
  * 语义：
- *  - `pause` / `archive`：宿主动作是 `update status=paused`（可逆：取消暂停/取消归档时恢复）。
+ *  - `pause` / `archive`：宿主动作是 `update {active:false}`（可逆：取消暂停/取消归档时 `{active:true}`）。
  *    已经有本地 `enabled:false` 的 routine 不重复改（它本来就是 paused）。
  *  - `delete`：宿主动作是 `edit action=delete`（项目没了，条目不该再存在）；
  *    且**只删除**——删不掉的如实记 failure，不静默吞。
@@ -77,7 +114,7 @@ export function collectHostSchedules(project) {
  * @param {string} input.action 生命周期动作
  * @param {{ edit?: (request: any) => Promise<any>, create?: any } | null} [input.schedule] 宿主 schedule 服务
  * @param {(entry: any) => void} [input.onAudit] 审计回调（每条处置一次）
- * @returns {Promise<{ ok: boolean, planned: string, handled: any[], failures: any[], skipped: string[] }>}
+ * @returns {Promise<{ ok: boolean, planned: string, handled: any[], failures: any[], skipped: string[], unavailable?: number }>}
  */
 export async function reconcileHostSchedules(input) {
   const planned = plannedScheduleAction(input?.action);
@@ -94,14 +131,17 @@ export async function reconcileHostSchedules(input) {
 
   const schedule = input?.schedule;
   if (!schedule || typeof schedule.edit !== "function") {
-    // 宿主服务不可用：如实失败，让调用方决定是否阻断（删除项目时**必须**阻断，
-    // 否则会留下无人值守继续烧 token 的孤儿条目）。
+    // 没有宿主 schedule 服务 = 这台部署里**不存在投递机制**（不是"暂时读不到"：
+    // `ctx.get("schedule")` 拿到的是同进程服务实例，缺失只可能是部署里没装载）。
+    // 既然条目不可能被触发，就不能因此把项目卡成不可删（复审 F6a/F7）。
+    // 如实返回 skipped + 条目数，由调用方写一条审计说明「这些记录停不了、也不会跑」。
     return {
-      ok: false,
+      ok: true,
       planned,
       handled,
-      failures: entries.map((entry) => ({ ...entry, reason: "schedule-unavailable" })),
+      failures,
       skipped: ["schedule-unavailable"],
+      unavailable: entries.length,
     };
   }
 
@@ -126,16 +166,43 @@ export async function reconcileHostSchedules(input) {
       }
     }
     try {
-      if (planned === "delete") {
-        await schedule.edit({ id: entry.scheduleId, action: "delete" });
-      } else {
-        await schedule.edit({
-          id: entry.scheduleId,
-          action: "update",
-          patch: { status: planned === "pause" ? "paused" : "active" },
+      const result =
+        planned === "delete"
+          ? await schedule.edit({ id: entry.scheduleId, action: "delete" })
+          : await schedule.edit({
+              id: entry.scheduleId,
+              action: "update",
+              // 宿主契约：只有 `active` 能改启停（写 `status` 会被静默忽略 → 假成功）。
+              patch: hostActivePatch(planned === "pause" ? "pause" : "resume"),
+            });
+      const outcome = classifyHostScheduleResult(result);
+      if (outcome.kind === "conflict") {
+        // 宿主条目在别处被改过：不能假装暂停/删除成功（审计如实记 refused）
+        failures.push({ ...entry, reason: "schedule_conflict" });
+        input?.onAudit?.({
+          action: `${entry.kind}/reconcile-failed`,
+          ...entry,
+          op: planned,
+          reason: "schedule_conflict",
         });
+        continue;
       }
-      handled.push({ ...entry, op: planned });
+      if (outcome.kind === "not-found") {
+        // 宿主里已经没有这条任务 → 不可能再投递，目标状态已达成（不阻塞删除）。
+        handled.push({ ...entry, op: planned, missing: true });
+        input?.onAudit?.({
+          action: `${entry.kind}/reconciled`,
+          ...entry,
+          op: planned,
+          missing: true,
+        });
+        continue;
+      }
+      handled.push({
+        ...entry,
+        op: planned,
+        verified: outcome.kind === "task" ? outcome.status : "",
+      });
       input?.onAudit?.({ action: `${entry.kind}/reconciled`, ...entry, op: planned });
     } catch (error) {
       const reason = String(/** @type {any} */ (error)?.message ?? error).slice(0, 160);
