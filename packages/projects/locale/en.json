@@ -271,7 +271,7 @@
     "detail.tasksNone": "No task list yet (appears once the model writes todos)",
     "detail.tasksCount": "{done}/{total}",
     "detail.steer": "Steer",
-    "detail.steerPlaceholder": "Steer this thread with one line",
+    "detail.steerPlaceholder": "Send a line to this thread",
     "detail.steered": "Steered (thread running, applied immediately)",
     "detail.steeredQueued": "Steered (thread idle, the host will queue it)",
     "detail.model": "Model",
@@ -482,7 +482,7 @@
     "library.filesNoDir": "This project has no folder bound yet: bind one under \"project folders\" to see files.",
     "library.filesNoSession": "No project thread session yet: the file view comes from the host workspaceFiles session scope, so create or attach a session first.",
     "library.filesHostUnavailable": "This deployment has no workspaceFiles service: the file view is unavailable (no invented file list).",
-    "library.searchByNameOnly": "Search matches file names / paths only, not file contents (the workspaceFiles.search boundary).",
+    "library.searchByNameOnly": "Searches file names and paths only, not file contents.",
     "library.searchPlaceholder": "Search by file name…",
     "library.search": "Search",
     "library.searching": "Searching…",
@@ -681,6 +681,7 @@
     "detail.prBarDismiss": "Hide the create-PR bar",
     "detail.threadTask": "Task: {task}",
     "detail.threadRemovedWithWorktree": "Tracking removed (worktree still on disk: {path})",
-    "detail.threadPromptFailed": "Thread created, but the first task was not delivered: {reason}"
+    "detail.threadPromptFailed": "Thread created, but the first task was not delivered: {reason}",
+    "detail.sparkEmpty": "No activity in the last 7 days"
   }
 }

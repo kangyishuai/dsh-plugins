@@ -193,7 +193,7 @@ window.__ModuleLoader__.load({
       "detail.tasksNone": "还没有任务清单（模型写 todo 后出现）",
       "detail.tasksCount": "{done}/{total}",
       "detail.steer": "插话",
-      "detail.steerPlaceholder": "给这个线程插一句（steering）",
+      "detail.steerPlaceholder": "给这个线程插一句话",
       "detail.steered": "已插话（线程在跑，立即生效）",
       "detail.steeredQueued": "已插话（线程没在跑，宿主会排队）",
       "detail.model": "模型",
@@ -635,6 +635,7 @@ window.__ModuleLoader__.load({
       "detail.resolved": "已标记解决（可重开）",
       "detail.settings": "项目设置",
       "detail.settingsHint": "插件设置入口在宿主「设置 → 插件 → 项目」里。",
+      "detail.sparkEmpty": "近 7 天无活动",
       "detail.sparkCaption": "近 7 天",
       "detail.sparkHint": "最近 7 天的 token 用量",
       "detail.steps": "{done}/{total}",
@@ -720,8 +721,7 @@ window.__ModuleLoader__.load({
         "还没有项目线程会话：文件面由宿主 workspaceFiles 按会话作用域提供，建一个线程或归属一个会话后才有。",
       "library.filesHostUnavailable":
         "这个部署没有 workspaceFiles 服务：文件面不可用（不伪造文件列表）。",
-      "library.searchByNameOnly":
-        "搜索只匹配文件名 / 路径，不搜正文（宿主 workspaceFiles.search 的边界）。",
+      "library.searchByNameOnly": "只按文件名 / 路径搜索，不搜正文。",
       "library.searchPlaceholder": "按文件名搜索…",
       "library.search": "搜索",
       "library.searching": "搜索中…",
@@ -782,7 +782,7 @@ window.__ModuleLoader__.load({
       "detail.tasksNone": "No task list yet (appears once the model writes todos)",
       "detail.tasksCount": "{done}/{total}",
       "detail.steer": "Steer",
-      "detail.steerPlaceholder": "Steer this thread with one line",
+      "detail.steerPlaceholder": "Send a line to this thread",
       "detail.steered": "Steered (thread running, applied immediately)",
       "detail.steeredQueued": "Steered (thread idle, the host will queue it)",
       "detail.model": "Model",
@@ -1225,6 +1225,7 @@ window.__ModuleLoader__.load({
       "detail.resolved": "Marked resolved (reopenable)",
       "detail.settings": "Project settings",
       "detail.settingsHint": "Plugin settings live under Settings → Plugins → Projects.",
+      "detail.sparkEmpty": "No activity in the last 7 days",
       "detail.sparkCaption": "last 7 days",
       "detail.sparkHint": "Tokens used in the last 7 days",
       "detail.steps": "{done}/{total}",
@@ -1465,8 +1466,7 @@ window.__ModuleLoader__.load({
         "No project thread session yet: the file view comes from the host workspaceFiles session scope, so create or attach a session first.",
       "library.filesHostUnavailable":
         "This deployment has no workspaceFiles service: the file view is unavailable (no invented file list).",
-      "library.searchByNameOnly":
-        "Search matches file names / paths only, not file contents (the workspaceFiles.search boundary).",
+      "library.searchByNameOnly": "Searches file names and paths only, not file contents.",
       "library.searchPlaceholder": "Search by file name…",
       "library.search": "Search",
       "library.searching": "Searching…",
@@ -2005,7 +2005,8 @@ window.__ModuleLoader__.load({
       detailGrid: {
         display: "grid",
         // 视频实测右栏占 28–32%，静态参考 35–65%：取 63:37（右栏 ≈37%，落在两者交集附近）
-        gridTemplateColumns: "minmax(0, 63fr) minmax(340px, 37fr)",
+        // 1280 窗口下 340px 下限会把「模型 / 继承默认」裁成「模…」：给右栏一个真实下限
+        gridTemplateColumns: "minmax(0, 63fr) minmax(400px, 37fr)",
         gap: "28px",
         alignItems: "stretch",
       },
@@ -3116,7 +3117,18 @@ window.__ModuleLoader__.load({
                 gap: "8px",
               },
             },
-            h("span", { style: styles.meta }, text(t, "panel.new.description")),
+            h(
+              "span",
+              {
+                style: {
+                  ...styles.meta,
+                  whiteSpace: "normal",
+                  overflow: "visible",
+                  lineHeight: 1.5,
+                },
+              },
+              text(t, "panel.new.description"),
+            ),
             h(
               "button",
               {
@@ -3974,6 +3986,15 @@ window.__ModuleLoader__.load({
             view.error ? "error" : "ok"
           }|${describe ? describe.attachedSessions : "-"}`,
         },
+        // 内联样式写不了 :disabled / :focus-visible：面板级注入两条规则
+        h(
+          "style",
+          { key: "projects-ui-rules" },
+          [
+            "[data-projects-panel] button:disabled{opacity:.45;cursor:not-allowed}",
+            '[data-projects-panel] [role="button"]:focus-visible,[data-projects-panel] button:focus-visible{outline:2px solid var(--dsw-alias-label-primary-bluish,#2f6fed);outline-offset:2px}',
+          ].join("\n"),
+        ),
         h(
           "div",
           { style: styles.page },
@@ -6572,12 +6593,20 @@ window.__ModuleLoader__.load({
                   : String(item?.id ?? item?.value ?? item?.name ?? ""),
               )
               .filter((/** @type {string} */ item) => item !== "");
+            const modelLabel =
+              model && typeof model === "object"
+                ? String(model.label ?? model.name ?? model.displayName ?? id)
+                : id;
+            const groupLabel = String(group?.label ?? group?.name ?? provider);
             out.push({
               key: `${provider}:${id}`,
               provider,
               model: id,
               efforts,
-              label: `${String(group?.label ?? group?.name ?? provider)}/${id}`,
+              label:
+                groupLabel !== "" && !modelLabel.toLowerCase().includes(groupLabel.toLowerCase())
+                  ? `${modelLabel}（${groupLabel}）`
+                  : modelLabel,
             });
           }
         }
@@ -7185,7 +7214,7 @@ window.__ModuleLoader__.load({
         if (!node || typeof ResizeObserver !== "function") return undefined;
         const observer = new ResizeObserver((entries) => {
           const width = entries[0]?.contentRect?.width ?? 0;
-          if (width > 0) setNarrow(width < 820);
+          if (width > 0) setNarrow(width < 940);
         });
         observer.observe(node);
         return () => observer.disconnect();
@@ -7977,12 +8006,18 @@ window.__ModuleLoader__.load({
                   h(
                     "div",
                     {
-                      style: { display: "flex", gap: "6px", alignItems: "center" },
+                      // 右栏只有 400px：模型/档位/应用一行放不下时要能换行，不能把「模型」裁成「模…」
+                      style: {
+                        display: "flex",
+                        gap: "6px",
+                        alignItems: "center",
+                        flexWrap: "wrap",
+                      },
                       "data-projects-thread-model-row": row.sessionId,
                       "data-projects-thread-model-available":
                         modelOptions.length > 0 ? "yes" : "no",
                     },
-                    h("span", { style: styles.meta }, text(t, "detail.model")),
+                    h("span", { style: { ...styles.meta, flex: "none" } }, text(t, "detail.model")),
                     modelOptions.length > 0
                       ? h(
                           "select",
@@ -9866,23 +9901,8 @@ window.__ModuleLoader__.load({
               ),
             ),
             // 主列空态：Claude 的项目主页有一段"欢迎 + 怎么用"的文字，不是纯空白
-            Number(data.progress?.total ?? 0) === 0 &&
-              !(Array.isArray(data.coordinator?.messages) && data.coordinator.messages.length > 0)
-              ? h(
-                  "div",
-                  { style: { padding: "10px 2px 0" }, "data-projects-main-welcome": "" },
-                  h(
-                    "div",
-                    { style: { ...styles.welcomeTitle, fontSize: "21px" } },
-                    text(t, "detail.mainWelcomeTitle"),
-                  ),
-                  h(
-                    "div",
-                    { style: { ...styles.welcomeSub, maxWidth: "620px", lineHeight: 1.5 } },
-                    text(t, "detail.mainWelcomeBody"),
-                  ),
-                )
-              : null,
+            // 右栏已经有「欢迎回来」，这里再放一块会像两个页面拼在一起（审查 UI P2）
+            null,
             threadAction.message !== ""
               ? h(
                   "div",
@@ -10788,8 +10808,9 @@ window.__ModuleLoader__.load({
                       borderRadius: "999px",
                       border: "none",
                       background: busy || coordinatorBusy ? T.hover : T.brand,
-                      // 配对前景 token：写死白字在浅色主题下会和白底糊在一起（check 也会警告）
-                      color: T.onPrimary,
+                      // 品牌紫是常量色（两主题同色）→ 配 onBrand 白字（4.78:1）；
+                      // onPrimary 是「反色表面」的前景，深色下会变成深色前景（对比度只有 4.04）
+                      color: busy || coordinatorBusy ? T.dim : T.onBrand,
                       fontSize: "13px",
                       lineHeight: 1,
                       cursor: busy || coordinatorBusy ? "default" : "pointer",
@@ -11083,7 +11104,12 @@ window.__ModuleLoader__.load({
                         background: tab === item.id ? T.hover : "transparent",
                         border: "none",
                         borderRadius: "6px",
-                        padding: "5px 7px",
+                        padding: "0 7px",
+                        height: "26px",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        fontSize: "12.5px",
+                        lineHeight: 1,
                         whiteSpace: "nowrap",
                         flexShrink: 0,
                         color: tab === item.id ? T.text : T.dim,
@@ -11235,24 +11261,33 @@ window.__ModuleLoader__.load({
                         },
                         text(t, "detail.sparkCaption"),
                       ),
-                      h(
-                        "div",
-                        { style: styles.spark },
-                        usageDays.map((/** @type {any} */ item) =>
-                          h("span", {
-                            key: String(item.date),
-                            "data-projects-spark-bar": String(item.date),
-                            style: {
-                              ...styles.sparkBar,
-                              height:
-                                peak > 0
-                                  ? `${Math.max(3, Math.round(((Number(item.tokens) || 0) / peak) * 22))}px`
-                                  : "3px",
-                              background: Number(item.tokens) > 0 ? T.accentText : T.border,
+                      peak > 0
+                        ? h(
+                            "div",
+                            { style: styles.spark },
+                            usageDays.map((/** @type {any} */ item) =>
+                              h("span", {
+                                key: String(item.date),
+                                "data-projects-spark-bar": String(item.date),
+                                style: {
+                                  ...styles.sparkBar,
+                                  height:
+                                    peak > 0
+                                      ? `${Math.max(3, Math.round(((Number(item.tokens) || 0) / peak) * 22))}px`
+                                      : "3px",
+                                  background: Number(item.tokens) > 0 ? T.accentText : T.border,
+                                },
+                              }),
+                            ),
+                          )
+                        : h(
+                            "span",
+                            {
+                              style: { ...styles.meta, fontSize: "10.5px" },
+                              "data-projects-spark-empty": "",
                             },
-                          }),
-                        ),
-                      ),
+                            text(t, "detail.sparkEmpty"),
+                          ),
                     )
                   : null,
               );

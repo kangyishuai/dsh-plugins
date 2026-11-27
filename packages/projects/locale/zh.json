@@ -271,7 +271,7 @@
     "detail.tasksNone": "还没有任务清单（模型写 todo 后出现）",
     "detail.tasksCount": "{done}/{total}",
     "detail.steer": "插话",
-    "detail.steerPlaceholder": "给这个线程插一句（steering）",
+    "detail.steerPlaceholder": "给这个线程插一句话",
     "detail.steered": "已插话（线程在跑，立即生效）",
     "detail.steeredQueued": "已插话（线程没在跑，宿主会排队）",
     "detail.model": "模型",
@@ -482,7 +482,7 @@
     "library.filesNoDir": "这个项目还没有绑定目录：先在「项目目录」里绑定一个文件夹，再看文件。",
     "library.filesNoSession": "还没有项目线程会话：文件面由宿主 workspaceFiles 按会话作用域提供，建一个线程或归属一个会话后才有。",
     "library.filesHostUnavailable": "这个部署没有 workspaceFiles 服务：文件面不可用（不伪造文件列表）。",
-    "library.searchByNameOnly": "搜索只匹配文件名 / 路径，不搜正文（宿主 workspaceFiles.search 的边界）。",
+    "library.searchByNameOnly": "只按文件名 / 路径搜索，不搜正文。",
     "library.searchPlaceholder": "按文件名搜索…",
     "library.search": "搜索",
     "library.searching": "搜索中…",
@@ -681,6 +681,7 @@
     "detail.prBarDismiss": "收起创建 PR 条",
     "detail.threadTask": "任务：{task}",
     "detail.threadRemovedWithWorktree": "已移除追踪（worktree 仍在磁盘：{path}）",
-    "detail.threadPromptFailed": "线程已建，但首条任务没送达：{reason}"
+    "detail.threadPromptFailed": "线程已建，但首条任务没送达：{reason}",
+    "detail.sparkEmpty": "近 7 天无活动"
   }
 }
