@@ -6,6 +6,9 @@
 //   open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1
 //   # 2) 跑（发版门禁加 --require：连不上端口时失败而不是跳过）
 //   pnpm smoke:advisor-desktop --require
+//   # 3) 若被测实例用的是自定义 DSH_HOME（临时 home / 非默认 profile），必须显式指过来，
+//   #    否则脚本会去 ~/.dsh 扫会话日志、命令类断言会因为「读不到日志」而假红：
+//   DSH_HOME=/path/to/that/dsh-home pnpm smoke:advisor-desktop --require
 //
 // 覆盖（全部**只读**：不选模型、不跑 `/advisor ask`、不改任何设置值、不点保存、不碰任何模型接口）：
 //   1. 插件已加载：client 半注入的 `style[data-plugin]`（失败时打印已注入的插件样式清单与排查命令）
@@ -381,8 +384,14 @@ async function commandLog(sessionId) {
     }
   };
   await walk(roots, 0);
-  if (!sessionDirSeen) log.error = `在 ${roots} 下没找到会话目录 ${sessionId}（会话可能还没落盘）`;
-  else if (files.length === 0) log.error = `会话目录 ${sessionId} 里没有 session.v* 日志文件`;
+  // 读不到日志最常见的两个原因：会话还没落盘，或桌面版用的是**另一个** DSH_HOME。
+  // 后者必须显式提示，否则会被误判成「命令没执行」（复审 F6/本批实测）。
+  const homeHint = `；若被测桌面版用自定义 DSH_HOME 启动，请用 DSH_HOME=<那个目录> 跑本脚本（当前扫的是 ${roots}）`;
+  if (!sessionDirSeen) {
+    log.error = `在 ${roots} 下没找到会话目录 ${sessionId}（会话可能还没落盘）${homeHint}`;
+  } else if (files.length === 0) {
+    log.error = `会话目录 ${sessionId} 里没有 session.v* 日志文件${homeHint}`;
+  }
   /** @type {string} */
   let raw = "";
   for (const file of files) {
