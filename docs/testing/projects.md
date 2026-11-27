@@ -989,7 +989,9 @@ AGENTS.md 受管区块幂等合并、`@` 候选排序）。`pnpm smoke:projects`
   `assessMergePr` 合并门禁、写入口路径校验、saveSoon 失败可见、源码守卫等；2026-11-28 审计修复新增 59 条，
   见 §20）。
 - `pnpm smoke:projects`：**270 PASS / 0 SKIP / 0 FAIL**（临时 `DSH_HOME`，ego 浏览器）。
-- `pnpm smoke:projects-desktop --require`：**有项目时 20 PASS / 0 SKIP**；空 profile 时 **17 PASS / 3 SKIP**（数据依赖，`build/gates/latest-projects.json` 会记当次计数）。
+- `pnpm smoke:projects-desktop --require`：**有项目时 20 PASS / 0 SKIP**（有审批数据）或 **19 PASS / 1 SKIP**
+  （有项目但 approvals 为空 → 「审批卡片影响面」如实 SKIP，见 AUD-PROJ-07/N4）；空 profile 时 **17 PASS / 3 SKIP**
+  （数据依赖，`build/gates/latest-projects.json` 会记当次计数）。
 - 新增断言（锚点均在 `lib/client.js`）：
   - 可见性开关写项目记录并回读（`data-projects-views-pane` 与副标题不再出现 `n/a`）；
   - 路由开关默认收起（`data-projects-route-toggle`，≥8×8，位于 composer 内）；
@@ -997,8 +999,9 @@ AGENTS.md 受管区块幂等合并、`@` 候选排序）。`pnpm smoke:projects`
   - 线程行 `tabindex=0` / `role=button` / `aria-expanded` 同步，Enter 可展开；
   - 行内菜单有危险操作分隔线，↑↓ 可在 `role=menuitem` 间移动焦点；
   - Create PR 条：分支名直接展示、`data-projects-pr-bar-dismiss` 可收起、已有 PR 时整条隐藏。
-  - 审批卡片影响面（AUD-PROJ-07）：每行都有 `data-projects-approval-impact`，行数 ==
-    `data-projects-approval-row` 数（无待审批时 0=0）。
+  - 审批卡片影响面（AUD-PROJ-07）：**有审批行时**断言每个影响面节点非空、数量不超过行数且含对象标识
+    （`PR=`/`repo=`/… 形态）；有行但都投影不出白名单字段（`args=null`）或无审批数据时**如实 SKIP**
+    ——不再用「0=0」冒充覆盖（第 2 轮复审 N4/F6d）。
   - 设置里的 PR 四档与预授权入口（AUD-PROJ-05/30）：`data-projects-policy-pr-tier`（四档齐全）+
     `data-projects-policy-preapprove` + 5 个 `data-projects-preapprove-action`。
 - **对比度**：用浏览器内脚本遍历面板可见文本（逐级取实际背景色合成，按 WCAG 计算），
@@ -1109,7 +1112,9 @@ AGENTS.md 受管区块幂等合并、`@` 候选排序）。`pnpm smoke:projects`
   （条目本来就不在）按成功处理，不阻塞。
 - **宿主根本没有 `schedule` 服务**：这台部署里不存在投递机制，条目不可能被触发 →
   `reconcileHostSchedules` 返回 `ok:true` + `unavailable:N`，`deleteProject` 写一条
-  `project/schedules-unavailable` 审计后照常删除（不让项目卡成不可删）。
+  `project/schedules-unavailable` 审计后照常删除（不让项目卡成不可删）。这种部署下删除预览仍写
+  「会删除 N 条宿主定时任务」——口径略高估（实际是「这些记录停不了、也不会跑」，第 2 轮复审 N9）；
+  预览不接触宿主，无法当场判定，作为已知偏差记录。
 
 ### 20.2 P3（本轮修掉的）
 
@@ -1141,18 +1146,19 @@ AGENTS.md 受管区块幂等合并、`@` 候选排序）。`pnpm smoke:projects`
 
 **其余未修项（全部是 P3/待定，已书面 defer，不是「伪问题」）**：
 
-| 编号        | 状态              | 理由 / 影响                                                                                                                                                               |
-| ----------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| AUD-PROJ-18 | **未修（真 P3）** | 唤醒信封的 report 仍以 `trust: principal` 注入（跨 agent 模型输出被当可信）。AUD-PROJ-26 已把「往别的项目会话投递」堵住，注入面缩小；改它要动信封可信模型，留待专门一批。 |
-| AUD-PROJ-20 | **未修（真 P3）** | 建协调者固定花一次模型调用（warmUp），README 成本段仍未提。纯文档工作，未在本批范围内。                                                                                   |
-| AUD-PROJ-23 | **未修（真 P3）** | 本批补了 store/RPC 级回归（清空型 patch、预算 round-trip、未知字段、错误契约分类），但 host 半仍无 service 实例测试；F1 正说明这类缺口仍在。                              |
-| AUD-PROJ-25 | 待定              | `store.save` 无 fsync（断电窗口），无法在本批做故障注入验证。                                                                                                             |
-| AUD-PROJ-28 | 待定              | 消息 requestId 用 `Date.now()`，宿主对重复 requestId 的语义未验证。                                                                                                       |
-| F9          | P3（复审提出）    | 审批队列满 500 时会先淘汰「已批准未执行」的行（安全方向 fail-safe，但会丢已批准动作）；改成只淘汰 executed/rejected 留待下一批（当前队列远未逼近上限）。                  |
-| F10         | P3（复审提出）    | 审批影响面的标签仍是硬编码英文（`PR`/`repo`/`branch`…），中文界面混排；安全问题不成立（纯文本节点）。                                                                     |
-| F11         | P3（复审提出）    | `listApprovals` 对所有行附 `impact`、client 每 5s 拉全量且不传 `{limit}`；500 行时才成为负载问题。                                                                        |
-| F12/F13/F14 | nit               | claim TTL 的接管窗口、`thread.js` mkdir 失败的降级提示、`workspaceKey` 字符裁剪的理论撞目录（当前 id 生成器不会）。                                                       |
-| F16         | 集成批次事项      | settings order 94 与 btw/casefile 当前也 94；FIX-GUIDE 指定由 repo 批次统一改（btw 95 / casefile 96），本分支未动别人插件。                                               |
+| 编号        | 状态               | 理由 / 影响                                                                                                                                                                                                  |
+| ----------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| AUD-PROJ-18 | **未修（真 P3）**  | 唤醒信封的 report 仍以 `trust: principal` 注入（跨 agent 模型输出被当可信）。AUD-PROJ-26 已把「往别的项目会话投递」堵住，注入面缩小；改它要动信封可信模型，留待专门一批。                                    |
+| AUD-PROJ-20 | **未修（真 P3）**  | 建协调者固定花一次模型调用（warmUp），README 成本段仍未提。纯文档工作，未在本批范围内。                                                                                                                      |
+| AUD-PROJ-23 | **未修（真 P3）**  | 本批补了 store/RPC 级回归（清空型 patch、预算 round-trip、未知字段、错误契约分类），但 host 半仍无 service 实例测试；F1 正说明这类缺口仍在。                                                                 |
+| AUD-PROJ-25 | 待定               | `store.save` 无 fsync（断电窗口），无法在本批做故障注入验证。                                                                                                                                                |
+| AUD-PROJ-28 | 待定               | 消息 requestId 用 `Date.now()`，宿主对重复 requestId 的语义未验证。                                                                                                                                          |
+| F9          | P3（复审提出）     | 审批队列满 500 时会先淘汰「已批准未执行」的行（安全方向 fail-safe，但会丢已批准动作）；改成只淘汰 executed/rejected 留待下一批（当前队列远未逼近上限）。                                                     |
+| F10         | P3（复审提出）     | 审批影响面的标签仍是硬编码英文（`PR`/`repo`/`branch`…），中文界面混排；安全问题不成立（纯文本节点）。                                                                                                        |
+| F11         | P3（复审提出）     | `listApprovals` 对所有行附 `impact`、client 每 5s 拉全量且不传 `{limit}`；500 行时才成为负载问题。                                                                                                           |
+| F12/F13/F14 | nit                | claim TTL 的接管窗口、`thread.js` mkdir 失败的降级提示、`workspaceKey` 字符裁剪的理论撞目录（当前 id 生成器不会）。                                                                                          |
+| N10         | P3（限制，非 bug） | `resumeProject`/`unarchiveProject` 会把项目名下的 routine 置回 active，插件无法区分「本地 enabled」与「宿主侧被用户手动暂停」——恢复项目会顺带重开后者。改它需要读宿主 catalog 并引入状态快照，留待专门一批。 |
+| F16         | 集成批次事项       | settings order 94 与 btw/casefile 当前也 94；FIX-GUIDE 指定由 repo 批次统一改（btw 95 / casefile 96），本分支未动别人插件。                                                                                  |
 
 ### 20.3b 独立复审（2026-11-28）修正
 
@@ -1176,10 +1182,12 @@ AGENTS.md 受管区块幂等合并、`@` 候选排序）。`pnpm smoke:projects`
 `model-choice.test.js`（新，5）、`store-hardening.test.js`（+20）、`budget.test.js`（+3）、
 `memory.test.js`（+2）、`thread.test.js`（+4，去掉 2 条 V1 死代码用例）、`service-execute.test.js`（+3）、
 `service-wiring-guards.test.js`（+12）、`executor.test.js`（替换 1）、`b3.test.js`（默认预算含 `weeklyTokens`）、
-`wake.test.js`（+4，跳过唤醒的审计限频）；复审修正又给 `schedules.test.js`（+2 契约/分类）、
-`trash.test.js`（+2 影响面披露）、`service-wiring-guards.test.js`（+8 契约/顺序/入口/清单漂移）补了用例。
+`wake.test.js`（+4，跳过唤醒的审计限频）；第 1 轮复审修正又给 `schedules.test.js`（+4 契约/分类/
+stale not-found/conflict）、`trash.test.js`（+2 影响面披露）、`service-wiring-guards.test.js`（+8 契约/
+顺序/入口/清单漂移）补了用例；第 2 轮复审再补 `schedules.test.js`（+3 终止态）与
+`service-wiring-guards.test.js`（+3 N1/N5/N11）。
 
-合计 **800** 条（720 + 80；含 AUD-HIST-06 的 7 条与复审修正的 14 条），`node --test` 0 fail。
+合计 **806** 条（720 + 86；含 AUD-HIST-06 的 7 条、第 1 轮复审 14 条、第 2 轮复审 6 条），`node --test` 0 fail。
 
 **红→绿证据（本批做过一次）**：把 `packages/projects/lib/` 的改动 `git stash` 掉、只留新测试，
 再跑这几个文件，得到的就是修复前的失败：
