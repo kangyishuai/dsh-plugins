@@ -18,8 +18,8 @@
 //     脚本按设计 SKIP。这种「假绿」比红更危险，所以这里按断言计数判定。
 //   - 只有显式 --skip-desktop 才跳过桌面端，且结束时会大声提示「门禁不完整」。
 //   - 每个插件缺哪个脚本就跳过哪一步（并在输出里说明），不假装跑过。
-import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { execFileSync, spawn } from "node:child_process";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -146,19 +146,52 @@ const main = async () => {
       process.exitCode = 1;
       return;
     }
+    /** @type {Array<{title: string, status: "pass"|"fail"|"skipped"|"missing", ms: number, counts: any, outputTail: string}>} */
+    const structureRecords = stages.map((stage) => ({
+      title: stage.title,
+      status: stage.args.length > 0 ? "pass" : "skipped",
+      ms: 0,
+      counts: null,
+      outputTail: "",
+    }));
+    const reportPath = await writeGateReport(plugin, "structure-pass", structureRecords, {
+      startedAt: new Date().toISOString(),
+      durationMs: 0,
+    });
     console.log(
       `PASS ${plugin}: 门禁结构完整${client ? "（含桌面端）" : "（无 client 半，桌面端不适用）"}`,
     );
+    console.log(`报告：${reportPath}`);
     return;
   }
 
   const started = Date.now();
+  /** @type {Array<{title: string, status: "pass"|"fail"|"skipped"|"missing", ms: number, counts: any, outputTail: string}>} */
+  const records = [];
+  const startedAt = new Date().toISOString();
+  const finish = async (/** @type {"pass"|"fail"} */ verdict) => {
+    const path = await writeGateReport(plugin, verdict, records, {
+      startedAt,
+      durationMs: Date.now() - started,
+      skipDesktop: values["skip-desktop"] === true,
+      deep: values.deep === true,
+    });
+    console.log(`报告：${path}`);
+  };
   let index = 0;
   let skipped = 0;
   for (const stage of stages) {
     index += 1;
     if (stage.args.length === 0) {
       if (stage.missing === true) {
+        records.push({
+          title: stage.title,
+          status: "missing",
+          ms: 0,
+          counts: null,
+          outputTail: "",
+        });
+        await finish("fail");
         console.error(`\nFAIL ${plugin}: ${stage.title}`);
         console.error(
           "      有 client 半的插件必须提供桌面端自动化测试（docs/plugin-conventions.md §6）。",
@@ -167,13 +200,24 @@ const main = async () => {
         return;
       }
       console.log(`- [${index}/${stages.length}] ${stage.title}`);
+      records.push({ title: stage.title, status: "skipped", ms: 0, counts: null, outputTail: "" });
       skipped += 1;
       continue;
     }
     console.log("");
     console.log(`▶ [${index}/${stages.length}] ${stage.title}`);
+    const stageStart = Date.now();
     const { code, output } = await run(stage.args);
+    const countsForStage = parseCounts(output);
     if (code !== 0) {
+      records.push({
+        title: stage.title,
+        status: "fail",
+        ms: Date.now() - stageStart,
+        counts: countsForStage,
+        outputTail: String(output).split("\n").slice(-40).join("\n"),
+      });
+      await finish("fail");
       console.error("");
       console.error(`FAIL 门禁中止：「${stage.title}」退出码 ${code}`);
       if (String(stage.args[0]).startsWith("smoke:") && stage.args.includes("--require")) {
@@ -209,16 +253,32 @@ const main = async () => {
           console.error("      退出码 0 不代表验证过任何东西。常见原因：可见会话有运行中的回合");
           console.error("      （agent 在自己会话里跑回归时），把可见会话切到空闲会话再跑。");
         }
+        records.push({
+          title: stage.title,
+          status: "fail",
+          ms: Date.now() - stageStart,
+          counts: countsForStage,
+          outputTail: String(output).split("\n").slice(-40).join("\n"),
+        });
+        await finish("fail");
         process.exitCode = 1;
         return;
       }
     }
+    records.push({
+      title: stage.title,
+      status: "pass",
+      ms: Date.now() - stageStart,
+      counts: countsForStage,
+      outputTail: "",
+    });
     console.log(`✓ ${stage.title}`);
   }
 
   const seconds = Math.round((Date.now() - started) / 1000);
   console.log("");
   console.log(`PASS ${plugin} 门禁全绿（${stages.length - skipped} 步，${seconds}s）`);
+  await finish("pass");
   if (values["skip-desktop"] === true) {
     console.log("注意：本次用了 --skip-desktop，**没有**验证桌面端，门禁不完整。");
   }
@@ -229,6 +289,44 @@ const main = async () => {
     console.log("提示：没跑 --deep 就不包含桌面写文件类 e2e（需要 --workspace 指定测试目录）。");
   }
 };
+
+/**
+ * 门禁结果落盘：`build/gates/latest-<plugin>.json` + 带时间戳的副本。
+ * 以前结果只活在 commit message/终端里，事后无法机器核对「哪次 gate 真的绿了」。
+ * `build/` 已被 gitignore，不污染仓库。
+ * @param {string} plugin
+ * @param {"pass"|"fail"|"structure-pass"} verdict
+ * @param {Array<{title: string, status: "pass"|"fail"|"skipped"|"missing", ms: number, counts: any, outputTail: string}>} records
+ * @param {Record<string, any>} meta
+ * @returns {Promise<string>}
+ */
+async function writeGateReport(plugin, verdict, records, meta) {
+  let commit = "";
+  try {
+    commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: REPO, encoding: "utf8" }).trim();
+  } catch {
+    commit = "";
+  }
+  const dir = join(REPO, "build", "gates");
+  await mkdir(dir, { recursive: true });
+  const report = {
+    format: 1,
+    plugin,
+    verdict,
+    commit,
+    startedAt: meta.startedAt ?? null,
+    durationMs: meta.durationMs ?? null,
+    skipDesktop: meta.skipDesktop === true,
+    deep: meta.deep === true,
+    stages: records,
+  };
+  const body = `${JSON.stringify(report, null, 2)}\n`;
+  const latest = join(dir, `latest-${plugin}.json`);
+  await writeFile(latest, body, "utf8");
+  const stamp = new Date().toISOString().replace(/[:.]/gu, "-");
+  await writeFile(join(dir, `${plugin}-${stamp}.json`), body, "utf8");
+  return latest;
+}
 
 /**
  * @param {string[]} args

@@ -16,6 +16,12 @@ import { ProjectStore } from "../lib/store.js";
 let root;
 /** @type {string} */
 let modeFile;
+/** 桩 gh 收到的命令（断言「合并打到哪个仓库」） */
+/** @type {string[]} */
+let ghCalls = [];
+/** cwd → 远端仓库名（多目录测试用） */
+/** @type {Map<string, string>} */
+let remoteByCwd = new Map();
 
 /** 场景文件：桩 gh 按此返回不同 PR 状态。 */
 const setMode = (/** @type {string} */ mode) => writeFileSync(modeFile, mode, "utf8");
@@ -23,6 +29,7 @@ const setMode = (/** @type {string} */ mode) => writeFileSync(modeFile, mode, "u
 /** 假 gh：按 mode 返回不同 PR 状态（不碰网络、不碰 PATH）。 */
 const fakeGh = async (/** @type {string[]} */ args) => {
   const line = args.join(" ");
+  ghCalls.push(line);
   const mode = existsSync(modeFile) ? readFileSync(modeFile, "utf8").trim() : "ok";
   const prState = (() => {
     if (line.includes("pr view")) {
@@ -49,6 +56,17 @@ const fakeGh = async (/** @type {string[]} */ args) => {
           state: "OPEN",
           statusCheckRollup: [{ conclusion: "SUCCESS" }],
           reviews: [],
+        };
+      if (mode === "big-diff")
+        return {
+          isDraft: false,
+          mergeable: "MERGEABLE",
+          state: "OPEN",
+          statusCheckRollup: [{ conclusion: "SUCCESS" }],
+          reviews: [{ state: "APPROVED", author: { login: "a" } }],
+          additions: 5000,
+          deletions: 5000,
+          changedFiles: 300,
         };
       if (mode === "draft")
         return {
@@ -79,10 +97,12 @@ const fakeGh = async (/** @type {string[]} */ args) => {
 };
 
 /** 假 git：remote 解析固定为 stub/repo，其余成功。 */
-const fakeGit = async (/** @type {string[]} */ args) => {
+const fakeGit = async (/** @type {string[]} */ args, /** @type {string} */ cwd = "") => {
   const line = args.join(" ");
-  if (line.includes("remote get-url origin"))
-    return { code: 0, stdout: "https://github.com/stub/repo.git", stderr: "" };
+  if (line.includes("remote get-url origin")) {
+    const repo = remoteByCwd.get(String(cwd ?? "")) ?? "repo";
+    return { code: 0, stdout: `https://github.com/stub/${repo}.git`, stderr: "" };
+  }
   if (line.includes("rev-parse"))
     return { code: 0, stdout: "0123456789abcdef0123456789abcdef01234567", stderr: "" };
   return { code: 0, stdout: "", stderr: "" };
@@ -92,6 +112,8 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "dsh-svc-exec-"));
   modeFile = join(root, "mode");
   writeFileSync(modeFile, "ok", "utf8");
+  ghCalls = [];
+  remoteByCwd = new Map();
 });
 
 afterEach(() => {
@@ -418,5 +440,64 @@ describe("F55 闸门目录语义（复审 P2）", () => {
     const unknown = actionDirectory(project, "push-branch", { worktree: "/elsewhere/wt" });
     assert.equal(unknown.dir, "/w/one");
     assert.equal(unknown.inherited, false);
+  });
+});
+
+describe("复审 P0/P1：审批合并的仓库解析与改动量门槛", () => {
+  it("多目录项目：合并用线程 worktree 所在仓库，不用 dirs[0]", async () => {
+    const { deps, store, project } = makeDeps({ danger: { autoMerge: true } });
+    const repoA = join(root, "repo-a");
+    const repoB = join(root, "repo-b");
+    store.updateProject(project.id, { dirs: [repoA, repoB] });
+    store.attachThread("session-multi", project.id);
+    store.setThreadWorktree("session-multi", {
+      worktree: repoB,
+      branch: "dsh/multi-1",
+      prNumber: 7,
+    });
+    store.save();
+    remoteByCwd.set(repoA, "repoA");
+    remoteByCwd.set(repoB, "repoB");
+    const requestId = approvedRequest(store, project.id, "merge", { prNumber: 7 });
+    const result = await executeApprovalCore(deps, requestId);
+    assert.equal(result.executed, true, JSON.stringify(result));
+    const mergeCall = ghCalls.find((line) => line.includes("pr merge"));
+    assert.ok(mergeCall, "必须执行 gh pr merge");
+    assert.match(mergeCall, /--repo stub\/repoB/u, "必须合并 worktree 所在仓库");
+    assert.doesNotMatch(mergeCall, /repoA/u);
+  });
+
+  it("改动量超阈值：审批路径也拒绝（以前只查 CI/批准数）", async () => {
+    setMode("big-diff");
+    const { deps, store, project } = makeDeps({
+      danger: { autoMerge: true },
+      merge: { maxDiffFiles: 1, maxDiffLines: 100 },
+    });
+    const requestId = approvedRequest(store, project.id, "merge", { prNumber: 3 });
+    const result = await executeApprovalCore(deps, requestId);
+    assert.equal(result.executed, false);
+    assert.equal(result.reason, "merge/diff-files", JSON.stringify(result));
+    assert.equal(
+      ghCalls.some((line) => line.includes("pr merge")),
+      false,
+      "不能真的 merge",
+    );
+    assert.ok(!approvalOf(store, requestId).executedAt, "被拒不能标记已执行");
+  });
+
+  it("delete-project 审批：失败要如实报 executed=false（漏 await 回归）", async () => {
+    const { deps, store, project } = makeDeps({ danger: { trashAuto: true } });
+    deps.deleteProject = async () => {
+      throw new Error(
+        "projects: project has 1 running/waiting thread(s); stop them before deleting",
+      );
+    };
+    const requestId = approvedRequest(store, project.id, "delete-project", {
+      projectId: project.id,
+    });
+    const result = await executeApprovalCore(deps, requestId);
+    assert.equal(result.executed, false, JSON.stringify(result));
+    assert.match(String(result.reason), /running\/waiting/u);
+    assert.ok(!approvalOf(store, requestId).executedAt);
   });
 });
