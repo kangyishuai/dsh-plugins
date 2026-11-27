@@ -4363,10 +4363,14 @@ window.__ModuleLoader__.load({
                 h(
                   "span",
                   {
-                    style: { color: T.text, fontSize: "13px" },
+                    style: { color: rowDelete.error !== "" ? T.danger : T.text, fontSize: "13px" },
                     "data-projects-row-delete-impact": "",
+                    ...(rowDelete.error !== "" ? { "data-projects-row-delete-error": "" } : {}),
                   },
-                  rowDelete.impact?.impact?.summary ?? rowDelete.error,
+                  // 以前 error 永远被 impact.summary 遮住：拒绝删除时用户看不到任何原因
+                  rowDelete.error !== ""
+                    ? rowDelete.error
+                    : (rowDelete.impact?.impact?.summary ?? ""),
                 ),
                 h(
                   "div",
