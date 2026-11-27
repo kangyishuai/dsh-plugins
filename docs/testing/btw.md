@@ -1176,6 +1176,6 @@ document body because the docked composer contains them**"，而浮层原本就�
 - **B2 IME 判据补齐**：`shouldSubmitOnKey` 新增 `nativeEvent.isComposing`、`which === 229`、
   `key === "Process"` 与 composition ref 四条判据（对齐 projects 的 `isImeConfirmKey`）；两个输入框
   都接 `onCompositionStart/End` 维护 `compositionRef`，`onKeyDown` 把 ref 传进去。
-- 顺手把上表写错的计数改真（`notice.test.js` 6 项、`client.test.js` 10 项、总数 118 / +18；冒烟实际是
+- 顺手把上表写错的计数改真（`notice.test.js` 6 项、`client.test.js` 10 项、总数 121 / +18；冒烟实际是
   默认段 +3、`--deep` +2、改写 1 条）。本轮 follow-up 后 `client.test.js` 13 项（B1 行为 2 条 + 防漂移
   1 条），btw 包内 **121 pass / 0 fail**。
