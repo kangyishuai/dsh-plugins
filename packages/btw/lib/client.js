@@ -28,7 +28,7 @@ window.__ModuleLoader__.load({
     /** setDraft 走异步更新：轮询草稿落定（与 next-step 同参数）。 */
     const DRAFT_POLL_TRIES = 15;
     const DRAFT_POLL_INTERVAL_MS = 20;
-    /** 抽屉列出的线程条数上限（host 还会按 perSessionRecords 再夹一次）。 */
+    /** 抽屉列出的线程条数上限（host 还会按设置里的 historyLimit 再夹一次）。 */
     const LIMITS_CLIENT_THREADS = 20;
     /** 提交后轮询历史，等新记录出现；按实测 /btw 耗时（20–40s）给足 120s 窗口。 */
     const REFRESH_MAX_MS = 120_000;

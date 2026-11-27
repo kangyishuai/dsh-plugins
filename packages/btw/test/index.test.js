@@ -655,7 +655,7 @@ test("bounded: 不 eligible 时完全不物化父会话事件（长会话性能�
       return [];
     },
   };
-  assert.deepEqual(collectBoundedEvents(session, false), { events: [], windowed: false });
+  assert.deepEqual(collectBoundedEvents(session, false), { events: [] });
   assert.equal(calls, 0, "bounded 没开时不能先 snapshotEvents() 全量再筛 12 条");
   // 开关与阈值都来自设置：默认关；到 400K tokens 才算 eligible
   assert.equal(isBoundedEligible(undefined, 999_999), false);
@@ -664,7 +664,7 @@ test("bounded: 不 eligible 时完全不物化父会话事件（长会话性能�
   assert.equal(isBoundedEligible({ boundedContext: true }, LIMITS.boundedTriggerTokens), true);
 });
 
-test("bounded: eligible 时只取尾部事件窗口，digest 仍能拿到最近消息", () => {
+test("bounded: eligible 时全量取一次事件，且不截尾窗（复审 BLK-1 回归）", () => {
   /** @type {any[]} */
   const events = [];
   for (let i = 0; i < 400; i += 1) {
@@ -677,33 +677,67 @@ test("bounded: eligible 时只取尾部事件窗口，digest 仍能拿到最近�
       data: { message: { content: [{ type: "text", text: `a${i}` }] } },
     });
   }
-  /** @type {number[]} */
+  /** @type {any[][]} */
   const calls = [];
   const session = {
     seq: events.length,
-    snapshotEvents: (/** @type {number} */ from = 0) => {
-      calls.push(from);
-      return events.slice(from);
+    snapshotEvents: (/** @type {any[]} */ ...args) => {
+      calls.push(args);
+      return events;
     },
   };
   const collected = collectBoundedEvents(session, true);
-  assert.deepEqual(calls, [events.length - LIMITS.boundedTailEvents], "只取尾部窗口");
-  assert.equal(collected.windowed, true);
-  assert.equal(collected.events.length, LIMITS.boundedTailEvents);
+  // 必须是「全量取」：带 fromSeq 的尾部窗口在真实事件配比下凑不满 12 条消息（BLK-1）。
+  assert.deepEqual(calls, [[]], "snapshotEvents() 必须不带参数（全量），不能偷偷截尾窗");
+  assert.equal(collected.events.length, events.length);
   const digest = buildBoundedDigest(collected.events);
   assert.equal(digest.messages, LIMITS.boundedMessages);
   assert.ok(digest.text.includes("q399"), "最近的消息仍在 digest 里");
 });
 
-test("bounded: 事件不足一窗 / 没有 snapshotEvents / 抛错都降级为空", () => {
-  const small = {
-    seq: 3,
-    snapshotEvents: (/** @type {number} */ from = 0) => [{}, {}, {}].slice(from),
+test("bounded: 真实事件配比（消息之间夹 step/tool/job）也能凑满 12 条消息", () => {
+  // 复审 BLK-1 的实测口径：长会话里每条消息之间夹着 step/tool/job 事件，
+  // 「最近 12 条消息」在事件轴上跨得很远（p50≈586 条事件）。尾窗 80 只能拿到 p50=5 条。
+  /** @type {any[]} */
+  const events = [];
+  for (let turn = 0; turn < 120; turn += 1) {
+    events.push({
+      type: "user/message",
+      data: { source: { kind: "user" }, content: [{ type: "text", text: `问题 ${turn}` }] },
+    });
+    events.push({ type: "step/start", data: { step: 1 } });
+    events.push({ type: "tool/call", data: { name: "read", id: `c${turn}` } });
+    events.push({ type: "tool/result", data: { id: `c${turn}` } });
+    events.push({
+      type: "assistant/message",
+      data: { message: { content: [{ type: "text", text: `回答 ${turn}` }] } },
+    });
+    events.push({ type: "step/end", data: { step: 1 } });
+    events.push({ type: "job/registered", data: { id: `j${turn}` } });
+  }
+  // 会话尾部再挂 500 个纯 tool/step 事件：真实会话常见（工具批量跑完才回复）。
+  for (let i = 0; i < 500; i += 1) events.push({ type: "tool/result", data: { id: `tail${i}` } });
+
+  // 假会话要像宿主的 snapshotEvents(fromSeq) 那样真的切片：否则尾窗实现测不出来。
+  const session = {
+    seq: events.length,
+    snapshotEvents: (/** @type {number} */ from = 0) => events.slice(from),
   };
-  const smallWindow = collectBoundedEvents(small, true);
-  assert.equal(smallWindow.windowed, false, "事件数小于窗口时不标记 windowed");
-  assert.equal(smallWindow.events.length, 3);
-  assert.deepEqual(collectBoundedEvents({}, true), { events: [], windowed: false });
+  const digest = buildBoundedDigest(collectBoundedEvents(session, true).events);
+  assert.equal(digest.messages, LIMITS.boundedMessages, "必须凑满 12 条消息（尾窗会掉到 0–5 条）");
+  assert.ok(digest.text.includes("问题 119"), "保留的是最近的用户消息");
+  const tailOnly = buildBoundedDigest(events.slice(-80));
+  assert.equal(
+    tailOnly.messages,
+    0,
+    "旧尾窗 80 在这条流上一条消息都拿不到（BLK-1 的 5.1% 静默 fork 场景）",
+  );
+});
+
+test("bounded: 没有 snapshotEvents / 抛错都降级为空", () => {
+  const small = { seq: 3, snapshotEvents: () => [{}, {}, {}] };
+  assert.equal(collectBoundedEvents(small, true).events.length, 3);
+  assert.deepEqual(collectBoundedEvents({}, true), { events: [] });
   assert.deepEqual(
     collectBoundedEvents(
       {
@@ -714,12 +748,9 @@ test("bounded: 事件不足一窗 / 没有 snapshotEvents / 抛错都降级为�
       },
       true,
     ),
-    { events: [], windowed: false },
+    { events: [] },
   );
-  assert.deepEqual(collectBoundedEvents(undefined, true), { events: [], windowed: false });
-  // seq 不可用时退回全量（行为与旧版一致），但只会在 eligible 时才走到这里
-  const noSeq = { snapshotEvents: () => [{ type: "user/message" }] };
-  assert.equal(collectBoundedEvents(noSeq, true).events.length, 1);
+  assert.deepEqual(collectBoundedEvents(undefined, true), { events: [] });
 });
 
 test("service: bounded 只在 eligible 时取事件，不再无条件 snapshotEvents（AUD-BTW-07）", async () => {
@@ -729,10 +760,14 @@ test("service: bounded 只在 eligible 时取事件，不再无条件 snapshotEv
   assert.equal(
     (code.match(/snapshotEvents/g) ?? []).length,
     0,
-    "service.js 必须通过 collectBoundedEvents 取事件，不能先全量物化父会话",
+    "service.js 必须通过 collectBoundedEvents 取事件（只在 eligible 时），不能自己无条件取",
   );
   assert.ok(source.includes("isBoundedEligible("), "触发条件要与 bounded 模块同一处判定");
   assert.ok(source.includes("collectBoundedEvents("), "取事件要走 bounded 模块（可单测）");
+  assert.ok(
+    source.includes("falling back to a full fork"),
+    "digest 为空退回 full fork 时必须 warn（不能静默降级，复审 BLK-1）",
+  );
 });
 
 test("bounded: threadTurn 透出 mode（老记录为空 = fork）", () => {

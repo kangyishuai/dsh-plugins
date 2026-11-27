@@ -2,7 +2,10 @@
 // 所有上限集中一处，便于测试与调参。
 
 export const LIMITS = {
-  /** 单个父会话保留的旁问条数 */
+  /**
+   * 单个父会话保留的旁问条数**默认值**（设置页的 `historyLimit` 可覆盖，范围 1–200；
+   * 服务端所有历史读写都按设置的生效值走，见 `settings.js` 的 `historyLimitOf`）。
+   */
   perSessionRecords: 50,
   /** 回放给模型的历史条数（对应 Claude 的 20 条） */
   replayRecords: 20,
@@ -39,12 +42,6 @@ export const LIMITS = {
   boundedMessageChars: 700,
   /** bounded digest 总字符上限（决定 spawn prompt 的成本上限）。 */
   boundedTotalChars: 4_000,
-  /**
-   * bounded 模式从父会话尾部取多少条事件。
-   * 只为凑够 `boundedMessages` 条消息服务（一条消息 = 一个事件，工具事件可能更多），
-   * 取 80 足够 12 条消息，又避免把数万条事件的会话整棵物化（AUD-BTW-07）。
-   */
-  boundedTailEvents: 80,
   /**
    * `llm/stream` 用量表最多记多少个会话。
    * 旁问只用自己子会话的条目（结束时删除），这里兜住「宿主里其它会话流过」的增长（AUD-BTW-08）。

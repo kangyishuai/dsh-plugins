@@ -36,30 +36,35 @@ export function isBoundedEligible(stored, pressureTokens) {
 }
 
 /**
- * 取父会话尾部事件窗口（**只在 eligible 时**调用）。
+ * 取父会话事件（**只在 eligible 时**调用）。
  *
- * 背景：bounded 默认关；过去 service 无条件 `parentSession.snapshotEvents()` 把整棵事件
- * 数组物化一遍，哪怕最后只用到 12 条消息 —— 触发条件本身就是 400K+ tokens 的长会话
- * （事件数可达数万），纯浪费（AUD-BTW-07）。宿主的 `snapshotEvents(fromSeq)` 支持从
- * 指定 seq 开始切片（`this.log.slice(fromSeq, toSeqExclusive)`），`session.seq` 是
- * 「下一个事件的序号 = 日志长度」，所以可以直接从尾部取。
+ * 背景（AUD-BTW-07）：bounded 默认关；过去 service **无条件**
+ * `parentSession.snapshotEvents()` 把整棵事件数组物化一遍，哪怕最后只用到 12 条消息。
+ * 修法就是这里：只有命中触发条件时才取。全量快照本身只是复制一个引用数组
+ * （毫秒级、几百 KB），而 bounded 是少见的 opt-in 分支，不值得为省这点换消息质量。
+ *
+ * **为什么不再只取尾部窗口**（2026-11-28 复审 BLK-1，实测证据）：
+ * 真实事件流里每条消息之间夹着 `step/start`、`step/end`、`tool/call`、`tool/result`、
+ * `job/registered` 等事件，而 `extractBoundedMessages` 只收真实 user 消息与有文本的
+ * assistant 消息。所以「最近 12 条消息」在事件轴上跨得很远：长会话（>400 events，n=172）
+ * 实测 p50=586、p90=1160 条事件。固定 80 条尾窗在长会话里 digest 消息数 p50 只有 5、
+ * 0% 凑满 12 条，且 5.1% 的会话尾窗里 0 条消息 → `digest.messages === 0` → 静默退回
+ * full fork（正是 bounded 想避免的一次几十万 tokens）。固定 600 条也只有 72% 能凑满，
+ * 自适应扩窗又会把复杂度加回来 —— 所以这里回到「eligible 时全量取」。
  * @param {any} session 父会话（宿主 Session；拿不到就降级为空）
  * @param {boolean} eligible 是否命中 bounded 触发条件
- * @returns {{ events: any[], windowed: boolean }} windowed = 是否真的做了尾部裁剪
+ * @returns {{ events: any[] }}
  */
 export function collectBoundedEvents(session, eligible) {
   if (eligible !== true || typeof session?.snapshotEvents !== "function") {
-    return { events: [], windowed: false };
+    return { events: [] };
   }
   try {
-    const seq = Number(session.seq);
-    const tail = LIMITS.boundedTailEvents;
-    const from = Number.isFinite(seq) && seq > tail ? seq - tail : 0;
-    const events = session.snapshotEvents(from);
-    return { events: Array.isArray(events) ? events : [], windowed: from > 0 };
+    const events = session.snapshotEvents();
+    return { events: Array.isArray(events) ? events : [] };
   } catch {
-    // 取事件失败不该让旁问失败：digest 为空时 service 会退回 fork。
-    return { events: [], windowed: false };
+    // 取事件失败不该让旁问失败：digest 为空时 service 会退回 fork（并 warn）。
+    return { events: [] };
   }
 }
 

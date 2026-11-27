@@ -106,7 +106,9 @@ export function makeReadOnlyGuard(allowedTools) {
  *   「Register a monotonic denial **in the calling scope**」；`this.ctx` 由 Cordis 的
  *   traceable proxy 取**调用点**的 ctx，所以 `child.ctx.tools.guard(...)` 落在子代理的 scope 层。
  * - `checkGuards(exec)` 只遍历 `[guards.global, ...guards.chainLayers(exec.agent)]`，
- *   所以子代理 scope 上的 guard 只拦这个子代理（以及它自己的子代理）。
+ *   而 agent scope 之间没有 parent link（宿主的 `bindScopeParent` 只给 agent-preset
+ *   registry 用），所以子代理 scope 上的 guard **只拦这个子代理**，父会话/其它 agent
+ *   都不继承这条 guard。
  * - 插件自己的 ctx 没有 scope → `scopeOf(ctx)` 为 undefined → 落到 **global 层**，会拒绝
  *   **整个宿主进程里所有 agent** 的工具调用（旁问运行期间其它会话/agent teams 全部被拒）。
  *   因此取不到子代理 ctx 时宁可不挂 guard（提示词仍然禁止用工具），也不能全局兜底。

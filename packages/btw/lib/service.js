@@ -229,7 +229,8 @@ export class BtwService extends TypertRemoteService {
     // bounded-context（ADR-0022）：只有用户显式开启、且父会话压力超过阈值时才用
     // spawn（fresh context）+「最近 N 条消息 + 问题」替代 full fork。默认关，绝不静默切换。
     // 注意：**先判 eligible 再取事件**。旧版无条件 snapshotEvents() 把整棵事件数组物化一遍，
-    // 哪怕 bounded 没开、最后只用到 12 条消息（AUD-BTW-07）。
+    // 哪怕 bounded 没开、最后只用到 12 条消息（AUD-BTW-07）。取到的事件是**全量**：
+    // 真实事件流里消息之间夹着 step/tool/job 事件，尾部窗口凑不满 12 条消息（复审 BLK-1）。
     const boundedEligible = isBoundedEligible(stored, pressure?.pressureTokens);
     let mode = "fork";
     /** @type {{ type: "text", text: string }[] | undefined} */
@@ -246,6 +247,12 @@ export class BtwService extends TypertRemoteService {
       if (digest.messages > 0) {
         mode = "bounded";
         boundedPrompt = buildBoundedPrompt(question.text, digest, { history });
+      } else {
+        // 不静默降级：用户开了 bounded 却拿不到 digest 时，这次会退回 full fork
+        // （一次可能几十万 tokens）。日志里留一条，README 的副作用一节也写明了。
+        this.logger?.warn?.(
+          "[btw] bounded-context is enabled but the parent session has no digestible messages; falling back to a full fork",
+        );
       }
     }
     // 线程 id 在 fork 之前就定下来：面板流式卡片和最终记录必须是同一个线程。
