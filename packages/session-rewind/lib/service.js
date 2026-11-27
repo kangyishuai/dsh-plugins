@@ -207,11 +207,69 @@ export class SessionRewindService extends TypertRemoteService {
 
   /**
    * 删除已不存在会话的插件数据（entries/trash/rescues）。audit.jsonl 保留。
+   *
+   * 安全约定（AUD-REW-01 + 复审 B1）：
+   * - 枚举不到存活会话、未知宿主布局、或任一 workspace 不可读（`incomplete`）时视为枚举失败并
+   *   跳过清理；
+   * - 删除前先把 dry-run 计划写审计（`cleanup-orphans-plan`），审计失败则不删；
+   * - 不认识的插件数据条目保留并逐条告警；
+   * - 删除结果（含逐条失败）写审计并告警。
    * @returns {Promise<void>}
    */
   async cleanupOrphans() {
     try {
-      const result = await pruneOrphans({ dataRoot: this.dataRoot, dryRun: false });
+      const result = await pruneOrphans({
+        dataRoot: this.dataRoot,
+        onPlan: async (report) => {
+          await this.store.appendAudit({
+            id: `cleanup-plan-${Date.now()}`,
+            action: "cleanup-orphans-plan",
+            time: Date.now(),
+            sessionId: null,
+            sessions: report.sessionIds,
+            trash: report.trashIds,
+            rescues: report.rescueIds,
+            bytes: report.bytes,
+            liveSessionCount: report.liveSessionCount,
+            enumerationFailed: report.enumerationFailed,
+            incomplete: report.incomplete,
+            unreadableWorkspaces: report.unreadableWorkspaces,
+            unknownWorkspaces: report.unknownWorkspaces,
+            unknownIds: report.unknownIds,
+          });
+        },
+      });
+      // 不认识的条目保留是安全行为，但必须告警（AGENTS 硬性约定 1「保留并告警」）。
+      for (const unknown of result.report.unknownIds ?? []) {
+        this.ctx?.logger?.warn?.(
+          `session-rewind: keeping unrecognized orphan candidate ${unknown.root}/${unknown.id} (${unknown.reason})`,
+        );
+      }
+      if (result.reason === "enumeration-failed") {
+        /** @type {string[]} */
+        const problems = [];
+        if (result.report.unreadableWorkspaces > 0) {
+          problems.push(`${result.report.unreadableWorkspaces} unreadable workspace(s)`);
+        }
+        const unknownWorkspaces = Array.isArray(result.report.unknownWorkspaces)
+          ? result.report.unknownWorkspaces
+          : [];
+        if (unknownWorkspaces.length > 0) {
+          problems.push(`${unknownWorkspaces.length} workspace(s) with unknown layout`);
+        }
+        this.ctx?.logger?.warn?.(
+          `session-rewind: cannot enumerate live sessions${
+            problems.length > 0 ? ` (${problems.join(", ")})` : " (found 0 sessions)"
+          }; skipped orphan cleanup`,
+        );
+        return;
+      }
+      if (result.reason === "plan-audit-failed") {
+        this.ctx?.logger?.warn?.(
+          "session-rewind: cannot write the orphan-cleanup audit plan; skipped orphan cleanup",
+        );
+        return;
+      }
       const removed =
         result.removed.sessions.length +
         result.removed.trash.length +
@@ -220,6 +278,13 @@ export class SessionRewindService extends TypertRemoteService {
         this.ctx?.logger?.info?.(
           `session-rewind: cleaned ${removed} orphan data dir(s) (${result.report.bytes} bytes)`,
         );
+      }
+      for (const failure of result.failed) {
+        this.ctx?.logger?.warn?.(
+          `session-rewind: cannot remove orphan data "${failure.target}": ${failure.error}`,
+        );
+      }
+      if (removed > 0 || result.failed.length > 0) {
         try {
           await this.store.appendAudit({
             id: `cleanup-${Date.now()}`,
@@ -230,6 +295,7 @@ export class SessionRewindService extends TypertRemoteService {
             trash: result.removed.trash,
             rescues: result.removed.rescues,
             bytes: result.report.bytes,
+            liveSessionCount: result.report.liveSessionCount,
             failed: result.failed,
           });
         } catch (_error) {
@@ -949,12 +1015,38 @@ export class SessionRewindService extends TypertRemoteService {
     );
     try {
       const orphans = await findOrphans({ dataRoot: this.dataRoot });
-      const count = orphans.sessionIds.length + orphans.trashIds.length + orphans.rescueIds.length;
-      push(
-        "孤儿数据",
-        count === 0,
-        count === 0 ? "none" : `${count} dir(s), ${orphans.bytes} bytes`,
-      );
+      const unknownCount = Array.isArray(orphans.unknownIds) ? orphans.unknownIds.length : 0;
+      const unknownSuffix = unknownCount === 0 ? "" : `；保留 ${unknownCount} 个未知条目`;
+      if (orphans.enumerationFailed) {
+        /** @type {string[]} */
+        const problems = [];
+        if (orphans.unreadableWorkspaces > 0) {
+          problems.push(`${orphans.unreadableWorkspaces} 个 workspace 不可读`);
+        }
+        const unknownWorkspaces = Array.isArray(orphans.unknownWorkspaces)
+          ? orphans.unknownWorkspaces
+          : [];
+        if (unknownWorkspaces.length > 0) {
+          problems.push(`${unknownWorkspaces.length} 个 workspace 布局未知`);
+        }
+        push(
+          "孤儿数据",
+          false,
+          `${
+            problems.length > 0 ? problems.join("、") : "无法枚举存活会话（会话存储缺失或布局未知）"
+          }，已跳过孤儿清理${unknownSuffix}`,
+        );
+      } else {
+        const count =
+          orphans.sessionIds.length + orphans.trashIds.length + orphans.rescueIds.length;
+        push(
+          "孤儿数据",
+          count === 0,
+          count === 0
+            ? `none${unknownSuffix}`
+            : `${count} dir(s), ${orphans.bytes} bytes${unknownSuffix}`,
+        );
+      }
     } catch (error) {
       push("孤儿数据", false, error instanceof Error ? error.message : String(error));
     }

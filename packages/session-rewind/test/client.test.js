@@ -373,7 +373,10 @@ describe("preview normalization", () => {
         available: true,
         tracked: true,
         totalBytes: 2048,
-        restore: [{ path: "a.ts", bytes: 100 }],
+        restore: [
+          { path: "a.ts", bytes: 100 },
+          { path: "deleted.ts", bytes: 10, deleted: true },
+        ],
         trash: [{ path: "b.ts", bytes: 200 }],
         skipped: [{ path: "c.bin", reason: "too-large" }],
         conflicts: [],
@@ -386,6 +389,8 @@ describe("preview normalization", () => {
     assert.equal(preview.chat.crossesOpenToolCall, true);
     assert.equal(preview.files.available, true);
     assert.equal(preview.files.restore[0].path, "a.ts");
+    assert.equal(preview.files.restore[0].deleted, false);
+    assert.equal(preview.files.restore[1].deleted, true);
     assert.equal(preview.files.skipped[0].reason, "too-large");
     assert.equal(preview.warnings.length, 1);
     assert.equal(preview.warnings[0].message, "careful");
@@ -442,6 +447,23 @@ describe("fileModeState / effectiveMode", () => {
     assert.equal(
       testApi.fileModeState(previewWith({ available: true, tracked: true })).reasonKey,
       "confirm.filesNone",
+    );
+    // 记录过文件改动、但全部已满足目标态（例如第二次回溯到同一目标）：
+    // 说明「无文件变更」，而不是「无法回退文件」。
+    assert.equal(
+      testApi.fileModeState(previewWith({ available: false, tracked: true })).reasonKey,
+      "confirm.filesNone",
+    );
+    // 只有被跳过的文件（too-large / binary）时不能暗示「这轮没改过文件」。
+    assert.equal(
+      testApi.fileModeState(
+        previewWith({
+          available: false,
+          tracked: true,
+          skipped: [{ path: "big.bin", reason: "too-large" }],
+        }),
+      ).reasonKey,
+      "confirm.filesUnavailable",
     );
   });
 
@@ -755,6 +777,7 @@ describe("dictionaries", () => {
       "timeline.kindRescue",
       "timeline.rescueMeta",
       "confirm.fileSummary",
+      "confirm.restoreDeleted",
       "toast.rewound",
       "toast.view",
       "drawer.tab.ghost",
