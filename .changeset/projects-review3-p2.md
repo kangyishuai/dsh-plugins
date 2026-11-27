@@ -11,3 +11,4 @@
 - `waiting-user` 在 turn 中途（已有 turn/start、尚无 turn/end）仍采信记录，避免 journal 缺 `interaction/pending` 时误判成 failed
 - 修复 `liveCache` 拼写（实际字段是 `liveStateCache`），resolve/reopen 后缓存真正失效
 - UI：设置分区 tablist 补 `aria-label`；右栏 Routines 入口中英混排改「打开定时任务 / 提醒」
+- **窄窗（<940）改为「对话 / 线程」视图切换**：不再把右栏纵向堆到 composer 之后；真机 1100×900 实测 composer 贴底可见（y≈831），切到「线程」时显示四个页签、主列隐藏

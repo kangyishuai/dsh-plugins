@@ -693,6 +693,9 @@
     "detail.tab.routines": "定时任务",
     "detail.tabsLabel": "项目视图",
     "detail.settingsTabsLabel": "设置分区",
-    "routines.openRail": "打开定时任务 / 提醒"
+    "routines.openRail": "打开定时任务 / 提醒",
+    "detail.narrowTabsLabel": "窄窗视图切换",
+    "detail.narrowChat": "对话",
+    "detail.narrowThreads": "线程"
   }
 }

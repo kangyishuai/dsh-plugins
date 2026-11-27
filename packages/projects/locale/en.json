@@ -693,6 +693,9 @@
     "detail.tab.routines": "Routines",
     "detail.tabsLabel": "Project views",
     "detail.settingsTabsLabel": "Settings sections",
-    "routines.openRail": "Open Routines / reminders"
+    "routines.openRail": "Open Routines / reminders",
+    "detail.narrowTabsLabel": "Narrow view switch",
+    "detail.narrowChat": "Chat",
+    "detail.narrowThreads": "Threads"
   }
 }

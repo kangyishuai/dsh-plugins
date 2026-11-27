@@ -251,6 +251,9 @@ window.__ModuleLoader__.load({
       "detail.tab.library": "库",
       "detail.tab.views": "视图",
       "detail.tabsLabel": "项目视图",
+      "detail.narrowTabsLabel": "窄窗视图切换",
+      "detail.narrowChat": "对话",
+      "detail.narrowThreads": "线程",
       "detail.settingsTabsLabel": "设置分区",
       "detail.tab.routines": "定时任务",
       "views.title": "视图可见性",
@@ -854,6 +857,9 @@ window.__ModuleLoader__.load({
       "detail.tab.library": "Library",
       "detail.tab.views": "Views",
       "detail.tabsLabel": "Project views",
+      "detail.narrowTabsLabel": "Narrow view switch",
+      "detail.narrowChat": "Chat",
+      "detail.narrowThreads": "Threads",
       "detail.settingsTabsLabel": "Settings sections",
       "detail.tab.routines": "Routines",
       "views.title": "Visible views",
@@ -4150,6 +4156,9 @@ window.__ModuleLoader__.load({
             // 这里按 color-scheme 取成对颜色（浅色 #b3261e / 深色 #ff8c8c），两主题都 ≥4.5:1
             "[data-projects-panel] [data-projects-danger]{color:light-dark(#b3261e,#ff8c8c)!important}",
             "[data-projects-panel] [data-projects-danger]{border-color:light-dark(#b3261e,#ff8c8c)!important}",
+            // 窄窗单列：一次只显示「对话」或「线程面板」之一（composer 不再被右栏挤到中部）
+            '[data-projects-panel] [data-projects-detail-grid][data-narrow-pane="threads"] [data-projects-detail-main]{display:none!important}',
+            '[data-projects-panel] [data-projects-detail-grid][data-narrow-pane="chat"] [data-panel-column]{display:none!important}',
           ].join("\n"),
         ),
         h(
@@ -6994,6 +7003,11 @@ window.__ModuleLoader__.load({
       const colorScheme = useColorScheme();
       const narrow = narrowState[0];
       const setNarrow = narrowState[1];
+      // 窄窗单列：右栏与主列不再纵向堆叠（复审 P2：composer 悬在页面中部、线程面板要滚 900px），
+      // 改为「对话 / 线程」两个视图切换，同一时间只显示一个。
+      const narrowPaneState = useState("chat");
+      const narrowPane = narrowPaneState[0];
+      const setNarrowPane = narrowPaneState[1];
       const content = data.content || {};
       const counts = data.progress?.counts ?? {};
       const pills = data.progress?.pills ?? counts;
@@ -10066,12 +10080,47 @@ window.__ModuleLoader__.load({
               project.goal,
             )
           : null,
+        narrow
+          ? h(
+              "div",
+              {
+                role: "tablist",
+                "aria-label": text(t, "detail.narrowTabsLabel"),
+                style: { display: "flex", gap: "4px", marginBottom: "4px" },
+                "data-projects-narrow-tabs": "",
+              },
+              ...[
+                ["chat", text(t, "detail.narrowChat")],
+                ["threads", text(t, "detail.narrowThreads")],
+              ].map(([id, label]) =>
+                h(
+                  "button",
+                  {
+                    key: id,
+                    type: "button",
+                    role: "tab",
+                    "aria-selected": narrowPane === id ? "true" : "false",
+                    "data-projects-narrow-pane": id,
+                    style: {
+                      ...styles.secondaryButton,
+                      fontSize: "12px",
+                      padding: "2px 10px",
+                      background: narrowPane === id ? T.hover : "transparent",
+                    },
+                    onClick: () => setNarrowPane(id),
+                  },
+                  label,
+                ),
+              ),
+            )
+          : null,
         h(
           "div",
           {
             ref: gridRef,
             style: narrow ? styles.detailGridNarrow : styles.detailGrid,
             "data-projects-detail-grid": "",
+            "data-narrow-pane": narrow ? narrowPane : "",
           },
           // —— 左列：项目对话（thread 操作条 / 协调者 / composer / 按规则派活 / 审批）——
           h(
