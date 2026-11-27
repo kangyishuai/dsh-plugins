@@ -248,8 +248,9 @@ window.__ModuleLoader__.load({
       "detail.loading": "加载中…",
       "detail.tab.threads": "线程 ({count})",
       "detail.tab.memory": "记忆",
-      "detail.tab.library": "Library",
+      "detail.tab.library": "库",
       "detail.tab.views": "视图",
+      "detail.tab.routines": "定时任务",
       "views.title": "视图可见性",
       "views.hint": "关掉不需要的视图，右栏就只显示你常用的那几个。",
       "views.savedTitle": "已保存的筛选视图",
@@ -849,6 +850,7 @@ window.__ModuleLoader__.load({
       "detail.tab.memory": "Memory",
       "detail.tab.library": "Library",
       "detail.tab.views": "Views",
+      "detail.tab.routines": "Routines",
       "views.title": "Visible views",
       "views.hint": "Hide the views you don't need; the panel shows only the ones you use.",
       "views.savedTitle": "Saved filter views",
@@ -6817,7 +6819,7 @@ window.__ModuleLoader__.load({
           }),
         },
         { id: "library", label: text(t, "detail.tab.library") },
-        { id: "routines", label: "Routines" },
+        { id: "routines", label: text(t, "detail.tab.routines") },
         { id: "views", label: text(t, "detail.tab.views") },
       ];
 
@@ -9197,7 +9199,7 @@ window.__ModuleLoader__.load({
                   }),
                 ],
                 ["library", text(t, "detail.tab.library")],
-                ["routines", "Routines"],
+                ["routines", text(t, "detail.tab.routines")],
               ].map(([id, label]) =>
                 (() => {
                   const on = visibleTabs[id] !== false;
@@ -9966,8 +9968,10 @@ window.__ModuleLoader__.load({
             "div",
             {
               // 宽窗让 composer 贴左列底部（Claude 形状）；窄窗单列时不撑高，避免中间一大段空白
+              // 单列（窄窗）也要撑高：否则 composer 紧跟在内容后面、悬在页面中部，
+              // 线程栏还得往下滚（UI 复审实测）。spacer 的 flex:1 会把它推到底部。
               style: narrow
-                ? styles.mainCol
+                ? { ...styles.mainCol, minHeight: "calc(100vh - 200px)" }
                 : {
                     ...styles.mainCol,
                     minHeight: "calc(100vh - 160px)",
