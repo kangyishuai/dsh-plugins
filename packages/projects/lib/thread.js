@@ -2,6 +2,8 @@
 // 建「隔离线程」：先建 worktree，再建会话（cwd 建后不可变，顺序不能反），最后落归属记录。
 // 依赖通过 deps 注入，所以能用真实 git + 假 sessionController 做集成测试。
 
+import { mkdirSync } from "node:fs";
+
 import {
   branchName,
   parseMergedBranches,
@@ -38,6 +40,7 @@ import {
  *   worktree: string|null,
  *   branch: string|null,
  *   baseSha: string|null,
+ *   dir: string,
  *   warning: string,
  * }>}
  */
@@ -47,8 +50,24 @@ export async function createIsolatedThread(input) {
   if (!project) throw new Error(`projects: unknown project ${projectId}`);
   if (project.state === "archived") throw new Error(`projects: project ${projectId} is archived`);
 
-  const primaryDir =
-    Array.isArray(project.dirs) && project.dirs.length > 0 ? project.dirs[0] : dataRoot;
+  // F35 多目录：dirs[] 全部生效。线程按顺序找**第一个可用**的 git 仓库建 worktree；
+  // 都不是 git 仓库时退回第一个目录（共享目录，界面会如实标「未隔离」）。
+  // 不在这里逐个 dir 都建 worktree：一个线程只有一个 cwd（宿主 create 的 cwd 出生即固定）。
+  // 无目录项目：绝不能把**插件数据根**当线程 cwd（projects.json/其它项目都在那儿）。
+  // 给每条项目一个专用工作区目录，agent 只能在这里折腾。
+  let fallbackDir = "";
+  if (!Array.isArray(project.dirs) || project.dirs.length === 0) {
+    fallbackDir = `${String(dataRoot).replace(/\/+$/u, "")}/workspaces/${String(projectId).replace(/[^A-Za-z0-9_-]/gu, "")}`;
+    try {
+      mkdirSync(fallbackDir, { recursive: true });
+    } catch {
+      fallbackDir = dataRoot;
+    }
+  }
+  const candidates =
+    Array.isArray(project.dirs) && project.dirs.length > 0
+      ? project.dirs.filter((/** @type {unknown} */ dir) => typeof dir === "string" && dir !== "")
+      : [fallbackDir || dataRoot];
   const index = store.listThreads(projectId).length + 1;
 
   /** 依次尝试：只有「是 git 仓库 + worktree add 成功」才隔离。 */
@@ -57,15 +76,23 @@ export async function createIsolatedThread(input) {
   let branch = null;
   let baseSha = null;
   let warning = "";
+  let primaryDir = candidates[0] ?? dataRoot;
+  let repoRoot = "";
 
-  const probe = await safeGit(deps.runGit, ["rev-parse", "--show-toplevel"], primaryDir);
-  if (probe.code !== 0) {
+  for (const candidate of candidates) {
+    const probe = await safeGit(deps.runGit, ["rev-parse", "--show-toplevel"], candidate);
+    if (probe.code === 0) {
+      primaryDir = candidate;
+      repoRoot = String(probe.stdout ?? "").trim() || candidate;
+      break;
+    }
+  }
+  if (repoRoot === "") {
     warning = "not-a-git-repository";
   } else {
-    const repoRoot = String(probe.stdout ?? "").trim() || primaryDir;
     const head = await safeGit(deps.runGit, ["rev-parse", "HEAD"], repoRoot);
     const candidatePath = worktreePath({ repoRoot, projectId, index });
-    const candidateBranch = branchName({ projectName: project.name, index });
+    const candidateBranch = branchName({ projectName: project.name, index, projectId: project.id });
     const created = await safeGit(
       deps.runGit,
       planCreate({ path: candidatePath, branch: candidateBranch }),
@@ -86,10 +113,12 @@ export async function createIsolatedThread(input) {
   });
   const sessionId = String(createdSession.sessionId);
   store.attachThread(sessionId, projectId);
+  // 记录线程实际落在哪个目录（多目录时 UI 要能说清「这条线程跑在哪个 root」）
+  store.setThreadDir(sessionId, primaryDir);
   if (isolated) {
     store.setThreadWorktree(sessionId, { worktree, branch, baseSha, state: "idle" });
   }
-  return { sessionId, isolated, worktree, branch, baseSha, warning };
+  return { sessionId, isolated, worktree, branch, baseSha, dir: primaryDir, warning };
 }
 
 /**

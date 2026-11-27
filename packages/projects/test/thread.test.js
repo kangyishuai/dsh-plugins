@@ -15,6 +15,7 @@ import {
   reclaimThreadWorktree,
   reconcileWorktrees,
 } from "../lib/thread.js";
+import { branchName } from "../lib/worktree.js";
 
 const exec = promisify(execFile);
 
@@ -84,7 +85,7 @@ describe("createIsolatedThread", () => {
 
     assert.equal(thread.isolated, true);
     assert.equal(thread.warning, "");
-    assert.match(String(thread.branch), /^dsh\/payments-1$/u);
+    assert.match(String(thread.branch), /^dsh\/payments-1-[a-z0-9]+$/u);
     assert.equal(sessions.requests.length, 1);
     assert.equal(sessions.requests[0].cwd, thread.worktree);
 
@@ -120,8 +121,9 @@ describe("createIsolatedThread", () => {
     const store = new ProjectStore({ root: join(root, "data") }).load();
     const project = store.createProject("payments", { dirs: [repo] });
     const sessions = fakeSessions();
-    // 先造一个同名分支，让 worktree add -b 必然失败
-    await runGit(["branch", "dsh/payments-1"], repo);
+    // 先造一个同名分支，让 worktree add -b 必然失败（分支名含项目短 id）
+    const colliding = branchName({ projectName: "payments", index: 1, projectId: project.id });
+    await runGit(["branch", colliding], repo);
 
     const thread = await createIsolatedThread({
       store,
@@ -133,6 +135,23 @@ describe("createIsolatedThread", () => {
     assert.equal(thread.isolated, false);
     assert.match(thread.warning, /^worktree-failed: /u);
     assert.equal(sessions.requests[0].cwd, repo);
+  });
+
+  it("无目录项目：线程 cwd 在专用工作区，而不是插件数据根（审查 P1）", async () => {
+    const rootDir = join(root, "data-nodir");
+    const store = new ProjectStore({ root: rootDir }).load();
+    const project = store.createProject("nodir");
+    const sessions = fakeSessions();
+    const thread = await createIsolatedThread({
+      store,
+      dataRoot: rootDir,
+      projectId: project.id,
+      deps: { runGit, createSession: sessions.createSession },
+    });
+    const cwd = String(sessions.requests[0].cwd);
+    assert.notEqual(cwd, rootDir, "不能把插件数据根当工作区");
+    assert.equal(cwd, join(rootDir, "workspaces", project.id));
+    assert.equal(thread.warning, "not-a-git-repository");
   });
 
   it("未知项目 / 已归档项目直接拒绝", async () => {
@@ -177,8 +196,8 @@ describe("createIsolatedThread", () => {
       projectId: project.id,
       deps,
     });
-    assert.equal(first.branch, "dsh/payments-1");
-    assert.equal(second.branch, "dsh/payments-2");
+    assert.match(String(first.branch), /^dsh\/payments-1-[a-z0-9]+$/u);
+    assert.match(String(second.branch), /^dsh\/payments-2-[a-z0-9]+$/u);
     assert.notEqual(first.worktree, second.worktree);
   });
 });
@@ -314,7 +333,7 @@ describe("cleanupThreadBranch（M4 §5）", () => {
     });
     assert.deepEqual(result, { deleted: true, reason: "" });
     const branches = await runGit(["branch", "--list"], repo);
-    assert.ok(!String(branches.stdout).includes("dsh/payments-1"), "分支应已删除");
+    assert.ok(!String(branches.stdout).includes(String(thread.branch)), "分支应已删除");
   });
 
   it("未合并的分支保留（宁可留垃圾也不丢提交）", async () => {
@@ -337,7 +356,7 @@ describe("cleanupThreadBranch（M4 §5）", () => {
     assert.equal(result.deleted, false);
     assert.ok(["not-merged", "unpushed-commits"].includes(result.reason), result.reason);
     const branches = await runGit(["branch", "--list"], repo);
-    assert.ok(String(branches.stdout).includes("dsh/payments-1"), "分支必须还在");
+    assert.ok(String(branches.stdout).includes(String(thread.branch)), "分支必须还在");
   });
 });
 

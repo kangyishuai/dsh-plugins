@@ -3,6 +3,7 @@
 // 这个模块**故意不 import 任何 @deepseek-ai/\***（宿主的包只在运行时可用），
 // 这样它能在 node --test 里直接单测。
 import { PROJECT_CONTEXT_ORDER, renderProjectContext } from "./context.js";
+import { readHostInstructions } from "./host-instructions.js";
 import { readProjectFiles } from "./project-files.js";
 
 /** @typedef {import("./store.js").ProjectStore} ProjectStore */
@@ -19,6 +20,7 @@ import { readProjectFiles } from "./project-files.js";
  * @param {() => string} deps.getDataRoot
  * @param {(entry: any) => any} deps.register 实际的 systemPrompt.context 调用
  * @param {(project: any) => string} [deps.renderPersona] 协调器会话的人格文本
+ * @param {(dirs: readonly string[]) => string} [deps.readHostInstructions] 宿主已注入指令的读取（F38 去重；测试可注入）
  * @param {(sessionId: string, kind: "call"|"unmatched"|"thread"|"coordinator") => void} [deps.onRender] 诊断回调
  * @returns {() => void} disposer
  */
@@ -45,19 +47,39 @@ export function registerProjectContext(deps) {
         .listProjects()
         .find((/** @type {any} */ item) => item.coordinatorSessionId === sessionId);
       const project = threadProject ?? coordinatorProject;
-      if (project?.state !== "active") {
+      // F44：暂停（paused）只停「新建线程 + 定时任务」，**不**停上下文注入——
+      // 暂停后再和已有线程对话仍然应该带着项目规则与记忆（以前这里只认 active，
+      // 暂停项目一对话上下文就静默消失，是个不容易发现的回归）。
+      // 归档（archived）才是真的不再注入：数据还在，但项目已经不在工作集里。
+      const injectable = Boolean(project) && project.state !== "archived";
+      if (!injectable) {
         deps.onRender?.(sessionId, "unmatched");
         return "";
       }
       deps.onRender?.(sessionId, threadProject ? "thread" : "coordinator");
 
       const blocks = [];
+      // F38：把宿主 `dsh-agent-instructions` 也会注入的 AGENTS.md/CLAUDE.md 读进来，
+      // 渲染时按段去重（否则同一批规则在 systemPrompt 与 user message 里各出现一次）。
+      // 读不到就返回空串，去重自然退化为「不去重」，不影响注入本身。
+      const readHost =
+        typeof deps.readHostInstructions === "function"
+          ? deps.readHostInstructions
+          : (/** @type {readonly string[]} */ dirs) => readHostInstructions(dirs).text;
+      const hostText = (() => {
+        try {
+          return String(readHost(Array.isArray(project.dirs) ? project.dirs : []) ?? "");
+        } catch {
+          return "";
+        }
+      })();
       if (threadProject) {
         const files = readProjectFiles(deps.getDataRoot(), project.id);
         const text = renderProjectContext({
           project,
           instructions: files.instructions,
           memoryIndex: files.memoryIndex,
+          hostInstructions: hostText,
         });
         if (text !== "") blocks.push(text);
       } else if (typeof deps.renderPersona === "function") {
@@ -67,6 +89,7 @@ export function registerProjectContext(deps) {
           project,
           instructions: files.instructions,
           memoryIndex: files.memoryIndex,
+          hostInstructions: hostText,
         });
         if (text !== "") blocks.push(text);
         const persona = deps.renderPersona(project);

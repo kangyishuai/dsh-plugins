@@ -84,3 +84,24 @@ test("coverDataUri 输出可直接用于 img src", () => {
   );
   assert.ok(decoded.startsWith("<svg"));
 });
+
+test("firstHeading 认识 markdown / json / csv 的标题", () => {
+  assert.equal(firstHeading("# 周报\n\n正文", "markdown"), "周报");
+  // 取的是第一个**标题行**（前面没有标题的正文不算）。
+  assert.equal(firstHeading("前言\n\n## 二级标题", "markdown"), "二级标题");
+  assert.equal(firstHeading("<h1>HTML 标题</h1>\n正文", "markdown"), "HTML 标题");
+  assert.equal(firstHeading('{"title":"数据概览","a":1}', "json"), "数据概览");
+  assert.equal(firstHeading('{"name":"命名"}', "json"), "命名");
+  assert.equal(firstHeading("not json", "json"), "not json");
+  assert.equal(firstHeading("a,b,c\n1,2,3", "csv"), "a,b,c");
+  assert.equal(firstHeading("<svg/>", "image"), "");
+});
+
+test("封面按 kind 打类型徽章，非 html 也能生成合法 SVG", () => {
+  for (const kind of ["html", "markdown", "json", "csv", "image"]) {
+    const svg = createCoverSvg({ id: `k-${kind}`, title: "样例", html: "", kind });
+    assert.ok(svg.startsWith("<svg"), `${kind} should render`);
+    assert.ok(svg.includes(`>${kind}</text>`), `${kind} badge missing`);
+    assert.ok(Buffer.byteLength(svg) < 4096);
+  }
+});

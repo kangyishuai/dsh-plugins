@@ -69,20 +69,6 @@ export function buildPrText(input) {
 }
 
 /**
- * 是否允许合并（auto-merge 档的额外门槛；真正执行仍要过执行器闸门）。
- * @param {{ tier?: string, ciState?: string, mergeable?: boolean, dangerMerge?: boolean }} input
- * @returns {{ ok: boolean, reason: string }}
- */
-export function canAutoMerge(input) {
-  if (String(input?.tier ?? "") !== "auto-merge")
-    return { ok: false, reason: "tier-not-auto-merge" };
-  if (input?.dangerMerge !== true) return { ok: false, reason: "switch-off" };
-  if (String(input?.ciState ?? "") !== "passing") return { ok: false, reason: "ci-not-passing" };
-  if (input?.mergeable === false) return { ok: false, reason: "not-mergeable" };
-  return { ok: true, reason: "" };
-}
-
-/**
  * 生成 `gh pr create` 的 argv（不做 shell 插值）。
  * @param {{ title: string, body: string, base?: string, draft?: boolean, branch: string, repo?: string }} input
  * @returns {{ argv: string[] } | { error: string }}
@@ -112,4 +98,91 @@ export function parsePrNumber(stdout) {
   if (!match) return null;
   const value = Number(match[1]);
   return Number.isInteger(value) && value > 0 ? value : null;
+}
+
+/**
+ * 兜底 push 计划：宿主进程拿不到 ssh/keychain 凭据时，用 gh 的 credential helper 走 https。
+ * 只做参数组装（纯函数），是否执行、失败如何记录由调用方决定。
+ * @param {{ url?: string, branch?: string }} input
+ * @returns {{ argv: string[] } | { error: string }}
+ */
+export function planHttpsPush(input) {
+  const url = String(input?.url ?? "").trim();
+  const branch = String(input?.branch ?? "").trim();
+  if (!/^https:\/\/[^\s]+$/u.test(url)) return { error: "url-not-https" };
+  if (branch === "") return { error: "branch-required" };
+  return {
+    argv: [
+      "-c",
+      "credential.helper=",
+      "-c",
+      "credential.helper=!gh auth git-credential",
+      "push",
+      "-u",
+      url,
+      branch,
+    ],
+  };
+}
+
+/**
+ * 「能不能合并这个 PR」的判定（纯函数）：**默认拒绝**，必须同时满足
+ * ① 有 PR 号 ② 用户二次确认 ③ 项目危险开关 autoMerge 打开。
+ * 合并是不可逆动作，任何一环缺失都如实给出原因（不假装成功）。
+ * @param {{ prNumber?: number, confirmed?: boolean, dangerAutoMerge?: boolean }} input
+ * @returns {{ ok: true } | { ok: false, reason: string }}
+ */
+export function canMergePr(input) {
+  const prNumber = Number(input?.prNumber);
+  if (!Number.isInteger(prNumber) || prNumber <= 0) return { ok: false, reason: "no-pr" };
+  if (input?.confirmed !== true) return { ok: false, reason: "need-confirm" };
+  if (input?.dangerAutoMerge !== true) return { ok: false, reason: "danger-off" };
+  return { ok: true };
+}
+
+/**
+ * 合并前的步骤计划（纯函数）：草稿 PR 不能直接 merge（GitHub 会拒），先 `pr ready`。
+ * @param {{ prNumber?: number, isDraft?: boolean }} input
+ * @returns {{ error: string } | { steps: string[][] }}
+ */
+export function planMergeSteps(input) {
+  const prNumber = Number(input?.prNumber);
+  if (!Number.isInteger(prNumber) || prNumber <= 0) return { error: "no-pr" };
+  const merge = ["pr", "merge", String(prNumber), "--squash", "--delete-branch"];
+  if (input?.isDraft === true) {
+    return { steps: [["pr", "ready", String(prNumber)], merge] };
+  }
+  return { steps: [merge] };
+}
+
+/**
+ * 选 PR 相关命令的工作目录（纯函数）。
+ *
+ * 以前 `prOverview`/`mergePr` 一律用 `project.dirs[0]`：多目录项目里第 0 个目录
+ * 可能不是线程所在仓库，`gh pr view <n>` 会去**另一个仓库**查同号 PR（不可逆操作尤其危险）。
+ * 线程有 worktree 就优先用它，其次项目目录。
+ * @param {{ worktree?: string|null, dirs?: string[] }} input
+ * @returns {string}
+ */
+export function pickRepoRoot(input) {
+  const worktree = String(input?.worktree ?? "").trim();
+  if (worktree !== "") return worktree;
+  const dirs = Array.isArray(input?.dirs) ? input.dirs : [];
+  for (const dir of dirs) {
+    const value = String(dir ?? "").trim();
+    if (value !== "") return value;
+  }
+  return "";
+}
+
+/**
+ * 项目级 PR 轮询的工作目录（纯函数）：优先用任一线程的 worktree，其次项目目录。
+ * 项目目录被移走/改成多目录时，轮询不该直接失效（worktree 仍在同一个仓库里）。
+ * @param {{ threads?: any[], dirs?: string[] }} input
+ * @returns {string}
+ */
+export function pickPollRoot(input) {
+  const threads = Array.isArray(input?.threads) ? input.threads : [];
+  const withWorktree = threads.find((thread) => String(thread?.worktree ?? "").trim() !== "");
+  return pickRepoRoot({ worktree: withWorktree?.worktree, dirs: input?.dirs });
 }

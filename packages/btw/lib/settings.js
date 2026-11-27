@@ -54,7 +54,7 @@ export function sanitizeSettings(raw) {
     ? Math.min(Math.max(Math.trunc(limitRaw), 1), 200)
     : LIMITS.perSessionRecords;
   // 只有显式 false 关闭；缺省/other 值保持 true（旧设置文件与向后兼容）。
-  const echoAnswer = input.echoAnswer === false ? false : true;
+  const echoAnswer = input.echoAnswer !== false;
   // bounded 是 opt-in：只有显式 true 才开，缺省/旧设置保持关闭。
   const boundedContext = input.boundedContext === true;
   return {

@@ -20,10 +20,11 @@ export function initialStats() {
 
 /**
  * 从命令类工具的参数里取命令名（宿主 `tool/call` 的入参形状不保证，取不到就记工具名）。
+ * 同时用做 Overview 行副标题（F27/U12）：它必须是「人话、短、可读」，所以取第一行并截断。
  * @param {any} data
  * @returns {string}
  */
-function commandNameOf(data) {
+export function toolSummaryOf(data) {
   const args = data?.args ?? data?.input ?? data?.call?.args ?? null;
   const raw =
     (typeof args?.command === "string" && args.command) ||
@@ -60,7 +61,7 @@ export function observeEvent(stats, event) {
   }
 
   if (type === "tool/call") {
-    const name = commandNameOf(data);
+    const name = toolSummaryOf(data);
     const commands = [...base.commands, { name, ok: null }].slice(-RECENT_COMMANDS);
     return {
       ...base,
@@ -71,10 +72,11 @@ export function observeEvent(stats, event) {
   }
 
   if (type === "tool/result") {
-    const ok =
-      data?.ok === false || data?.error !== undefined || String(data?.status ?? "") === "error"
-        ? false
-        : true;
+    const ok = !(
+      data?.ok === false ||
+      data?.error !== undefined ||
+      String(data?.status ?? "") === "error"
+    );
     const commands = [...base.commands];
     for (let i = commands.length - 1; i >= 0; i -= 1) {
       if (commands[i].ok === null) {
@@ -143,18 +145,51 @@ export function parseNumstat(numstat) {
 }
 
 /**
- * 给面板用的一行摘要。缺失数据显式写 n/a（不猜）。
+ * 给面板行副标题用的一行**人话**结果摘要：只写真实观测到的量，缺的就不提（不写 n/a）。
+ * 例：`2 步 · 3 次工具 · +5/−2`；什么都没观测到就返回空串，让调用方回退到状态文案。
+ * 之前这里恒返回 `0 步 · 0 次工具 · diff n/a · tokens n/a`——真机行副标题因此变成调试串。
+ * 完整明细仍在展开面板（`data-projects-thread-steps` 等锚点），不丢信息。
  * @param {{stats?: any, diff?: any}} input
  * @returns {string}
  */
 export function summarizeForRow(input) {
   const stats = input?.stats ?? initialStats();
   const diff = input?.diff ?? null;
-  const parts = [
-    `${stats.steps} 步`,
-    `${stats.toolCalls} 次工具`,
-    diff ? `diff ${diff.files} 文件 +${diff.added}/-${diff.removed}` : "diff n/a",
-    stats.usageSeen ? `${stats.tokens} tokens` : "tokens n/a",
-  ];
+  /** @type {string[]} */
+  const parts = [];
+  if (Number(stats.steps ?? 0) > 0) parts.push(`${stats.steps} 步`);
+  if (Number(stats.toolCalls ?? 0) > 0) parts.push(`${stats.toolCalls} 次工具`);
+  if (diff && Number(diff.files ?? 0) > 0) parts.push(`+${diff.added}/−${diff.removed}`);
+  if (stats.usageSeen === true && Number(stats.tokens ?? 0) > 0)
+    parts.push(`${stats.tokens} tokens`);
   return parts.join(" · ");
+}
+
+/**
+ * 选出这一轮真的要算 diff 的线程：只算有 worktree 的，按最近活动降序取前 `limit` 条。
+ * 目的：200 条线程的 project 一次 progress 不能 spawn 200 个 git；超出的行本轮不显示 diff。
+ * @param {any[]} threads
+ * @param {number} [limit]
+ * @returns {any[]}
+ */
+export function selectDiffTargets(threads, limit = 24) {
+  const cap = Number.isFinite(limit) && Number(limit) > 0 ? Number(limit) : 24;
+  const eligible = (Array.isArray(threads) ? threads : []).filter(
+    (thread) => String(thread?.worktree ?? "") !== "",
+  );
+  if (eligible.length <= cap) return eligible;
+  // lastActivityAt 可能是数字毫秒，也可能是 ISO 字符串（盘上持久化的是字符串）——
+  // 直接用 Number() 会得到 NaN，排序退化成 sessionId 字典序（真机验收发现）。
+  const toMs = (/** @type {any} */ value) => {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    const parsed = Date.parse(String(value ?? ""));
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  return [...eligible]
+    .sort(
+      (a, b) =>
+        toMs(b?.lastActivityAt) - toMs(a?.lastActivityAt) ||
+        String(a?.sessionId ?? "").localeCompare(String(b?.sessionId ?? "")),
+    )
+    .slice(0, cap);
 }

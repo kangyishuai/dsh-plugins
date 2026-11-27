@@ -131,3 +131,49 @@ export function checkStepBudget(input) {
   if (steps > limit) return { ok: false, steps, limit, reason: "budget/steps-per-thread" };
   return { ok: true, steps, limit, reason: "" };
 }
+
+/**
+ * F22：项目预算的默认值。以前默认全 null = 闸门不生效（"假开关"），
+ * 现在新建项目就带一组保守默认值；用户可以在设置里改，也可以清空回"不限"。
+ * token 默认 null = 不限（没有价目 API，按 token 限流只在用户主动设置时生效）。
+ */
+export const DEFAULT_BUDGET = Object.freeze({
+  dailyTokens: null,
+  maxThreadsPerDay: 20,
+  maxConcurrent: 2,
+  maxStepsPerThread: 60,
+});
+
+/** 预算字段的合法范围（设置页写入口用；null 表示不限）。 */
+export const BUDGET_FIELDS = Object.freeze([
+  "dailyTokens",
+  "maxThreadsPerDay",
+  "maxConcurrent",
+  "maxStepsPerThread",
+]);
+
+/**
+ * 规范化一个预算补丁：数值取整、非负；null/空串表示"不限"；未知字段忽略。
+ * @param {unknown} patch
+ * @returns {{ ok: true, budget: Record<string, number|null> } | { ok: false, reason: string }}
+ */
+export function normalizeBudgetPatch(patch) {
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+    return { ok: false, reason: "budget/patch-required" };
+  }
+  /** @type {Record<string, number|null>} */
+  const budget = {};
+  for (const key of BUDGET_FIELDS) {
+    if (!Object.hasOwn(patch, key)) continue;
+    const raw = /** @type {any} */ (patch)[key];
+    if (raw === null || raw === "" || raw === undefined) {
+      budget[key] = null;
+      continue;
+    }
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value < 0) return { ok: false, reason: `budget/invalid:${key}` };
+    budget[key] = Math.trunc(value);
+  }
+  if (Object.keys(budget).length === 0) return { ok: false, reason: "budget/patch-empty" };
+  return { ok: true, budget };
+}

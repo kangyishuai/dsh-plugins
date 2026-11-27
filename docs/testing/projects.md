@@ -57,14 +57,157 @@ pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体�
 | `memory.test.js`    | 记忆写入：幂等、单条与总量上限、时间戳注释、被拒时给出原因                                    |
 | `exec.test.js`      | 子进程封装：参数原样传递、失败返回 code 不抛、cwd 生效、命令不存在也不抛                      |
 
-## 2. web 端到端冒烟（78 项）
+## 2. web 端到端冒烟（250 项）
+
+> 0.10.0 面板改版后：新建走「入口 → 模态（两入口）→ 表单」，列表页新增搜索/排序/收藏，详情页改为
+> 主列 + 右栏（右栏为值行 + 编辑动作），并补了 toast、两列 DOM 顺序、值行无 input 等断言，故 78 → 102。
+> 旧版断言清单仍适用于 0.9.x，新增部分见 `scripts/smoke-projects.mjs` 中 `data-projects-new*` /
+> `data-projects-search` / `data-projects-sort` / `data-projects-pin` / `data-projects-rail-*` 相关断言。
+
+> B1（Overview 与项目主页）再 +31，故 102 → 133。新增的 `data-*` 锚点：
+> `data-projects-firstrun*`（首启引导只出现一次，`firstRunDone` 落 `storages/projects_ui.json`）、
+> `data-projects-pill*`（5 类计数 + 点击过滤 + 过滤为空的空态）、
+> `data-projects-group*`（分组计数/折叠/折叠状态跨进详情保留）、
+> `data-projects-welcome*` + `data-projects-spark`（Welcome 头/状态句/7 日迷你图）、
+> `data-projects-thread-steps`（无 todo 时必须是 `—`）、`data-projects-thread-subtitle`（缺数据必须留空）、
+> `data-projects-thread-resolve` / `-unread-toggle`（手动 resolve/重开、未读圆点）、
+> `data-projects-switcher*`（真切换项目）、`data-projects-dir-item/-remove/-limit`（多目录 ≤10）。
+> 宿主侧另外断言：线程六态与 `resolvedAt` 已回写 `projects.json`、项目 `icon/repos/dirs` 落盘、
+> `firstRunDone=true` 在宿主 storageDomain 里可回读。
+
+
+> B2（把桩接通）再 +24，故 133 → 157。新增的 `data-*` 锚点与断言：
+> `data-projects-coordinator*`（项目页的协调者区：不是宿主 composer；空态 → 点「建协调者」→
+> 回读 `data-projects-coordinator-session` 非空；`compaction` 有无都要给出明确结论，这是 F10 的判空兜底）、
+> `data-projects-poll-state` + `data-projects-detail-realtime-ci`（F21：轮询状态可见；实验开关 **disabled** 且
+> `data-projects-detail-realtime-ci-implemented="no"`——实时监听未实现，盘上不允许出现 `realtimeCi=true` 的假状态）、
+> `data-projects-thread-expand` → `data-projects-thread-detail`（展开面板：`-start-card` 起始卡、
+> `-chips`/`-params` 行内 chip、`-tasks` + `-tasks-source`（无 todo 必须是 `none`，不编 0/0）、
+> `-steer-input`/`-steer`、`-model-row`（`available=yes|no` 显式降级）、
+> `-create-pr` + `-branch-bar`（无分支时按钮禁用并写明原因））。
+> 宿主侧另外断言：`coordinatorSessionId` 落盘、`coordinator/created` 写审计、
+> 每条线程记录都带 `ciState`/`headRefOid` 字段（`null` 也显式存在，不是缺字段）、
+> 线程 `state` 回写为具体值 `resolved` 且与 UI 最后显示一致、
+> `resolvedAt` 非空且与 UI 回读逐字符相同、无 todo 的线程 `todos` 恒为 `null`、
+> 归档项目 `archivedAt` 是可解析 ISO 时间、未归档项目 `archivedAt` 恒为 `null`、
+> **冷启动读路径**（`ProjectStore.load()` + `deriveThreadState()`）与 UI 最后显示一致、
+> 线程 `dir` 是项目目录之一、`resolve`/`reopen` 写审计。
+
+> **B4（结构性三项：Routines / 权限收窄 / 双模式提醒）再 +24，故 196 → 220。** 新增锚点与断言：
+> `data-projects-rail-routines*`（详情右栏「定时任务」段：计数 + 新建入口 + 提醒入口）、
+> `data-projects-routines*`（可用性 `available=yes|no` 如实反映宿主 `schedule` 是否装载、成本提示里必须有
+> 「一次模型调用」与「60 秒」、六档频率枚举逐项等于 `manual,hourly,daily,weekdays,weekly,monthly`）、
+> `data-projects-routine*`（创建 daily 09:30 → 行出现且描述「每天 09:30」+ 宿主 status；History 面板
+> `-count=0` 且写明「还没有投递」——不编造投递；停用后按钮回读成「启用」；手动档描述必须有
+> 「只有点 Run now」且**不建宿主任务**；删除后行消失且盘上不留记录）、
+> `data-projects-reminder*`（默认模式 `timer` + 项目设置两档；对话框两模式按钮齐全，timer 档文案必须含
+> 「不花模型调用 / 关着不响」，切 schedule 后必须含「跑一次模型 / 关着也会跑」；`minutes=0.02` 创建后
+> **真到点**：行状态回读 `fired`、`shell.overlay` toast 出现「冒烟提醒」；再建一条 60 分钟的并取消，
+> 状态回读 `cancelled`）、
+> `data-projects-preset*`（默认 `current=""` 即「继承宿主」、选项来自宿主 `catalog()` 且带「更窄」标记、
+> 卡片必须写明「推 / 合并 / 删除永远需要你批准」且不绕过；选一个比宿主默认更窄的档 → `-current` 回读等于所选，
+> `-readback` 里至少有一个会话 `ok=true` 且 `currentPreset` 等于所选）。
+> 宿主侧另外断言：`routines[]` 落盘带宿主 `scheduleId`、频率 daily、时间被补成 `09:30:00`；
+> 停用后本地 `enabled=false`；手动档删干净；`reminders[]` 里 timer 那条 `state=fired` + `firedAt` + `unread=true`；
+> 取消那条 `state=cancelled`；`project.preset` 等于 UI 所选（写→回读）。
+> 覆盖不到的宿主侧行为（`schedule` 到点投递、重启后 timer 恢复）用单测固定：`test/routines.test.js`、
+> `test/reminders.test.js`（`planReminderRecovery` 覆盖「关机期间到点」）、`test/b4-store.test.js`。
+
+> **B4 反向验证（每条新断言为什么坏实现会红）**：Routines 的成本提示若被删，`/一次模型调用/` 与
+> `/60 秒/` 两条正则同时红；`describeRoutineFrequency` 若把 daily 写成「每天 09:30:00」而 UI 漏了截断，
+> 「每天 09:30」断言红；`schedule.create` 没被调用时行拿不到宿主 status（`data-projects-routine-status`
+> 会是 `manual` 而不是 `active/paused`）且 Node 侧 `scheduleId` 为空；timer 若没真起、或到点没写回，
+> `reminder-state` 永远停 `pending`、盘上 `firedAt` 为空；toast 若没接 `shell.overlay`，
+> `data-projects-reminder-toast` 不会出现；权限开关若只是「存了名字没应用」，`-readback` 里没有
+> `ok=true && currentPreset===所选`（我们会同时校验 current 与 readback 两处）；若把默认档写成
+> 「工作区可写」而不是继承，`-current` 初值断言直接红。
+
+> **B1 审查修复（同一分支，2026-11-23）**：上一版有 4 条宿主侧断言是恒真式（只校验「∈ 六态枚举」/
+> 「`null` 或字符串」），已在上面替换成具体值 + 深比较；另外补了「冷启动读得回来」与「UI/盘上一致」两组，
+> 保证坏实现（永远不写回、写进去读不回）会 FAIL。批次记录见 `notes/projects/claude-borrow/progress.md`
+> （私有笔记，不在公开仓库）。
+
+> **B5（Library / Artifacts：F33 F34 U15）+ B3 复审修复再 +18，故 220 → 238。** 新增锚点与断言：
+> `data-projects-library`（+`-loaded` / `-degraded` / `-artifacts-available` / `-meter` / `-file-count`）、
+> `data-projects-library-search`（+`-search-note` / `-search-run` / `-matches` / `-match`）、
+> `data-projects-library-files`（+`-file` / `-dir` / `-files-unavailable`）、`data-projects-library-degraded-note`、
+> `data-projects-artifact-open`、`data-projects-artifact-card`（+`-kind` / `-version` / `-available` / `-time` / `-cover`）、
+> `data-projects-thread-artifacts`（+`-available` / `-count`）、`data-projects-folder-cwd-hint`。
+> 断言覆盖：Library 真渲染（不再是「待接入」占位）、文件面列出项目目录里的 `seed.txt`、搜索只按文件名且
+> `seed` 命中、产物面降级明示「需要 dsh-artifacts 0.2」且打开按钮禁用、降级时不伪造产物卡、授权卡写明
+> cwd 语义（push-branch 在 worktree 里跑并继承项目目录授权）。宿主侧（Node 直连 RPC，`token → cookie →
+> POST /api/<ns>/<method>` 的 client-request 信封）：`recordArtifact`→`libraryView.artifacts.stored` 的
+> 写→回读（含 `source.toolCallId`）、`storedSummary` 计量、`artifacts-not-installed` 降级 reason、
+> `workspaceFiles` 文件面读回 `seed.txt`、只搜文件名（正文里的 `needle` 不命中）、未知 `projectId` 的
+> `listMemoryFragments` 被拒、`authorizeFolder(once)` → `requestAction(merge)` → `resolveApproval` →
+> `executeApproval` 被 `switch-off` 拒后 once 仍 `used=false`。
+
+> **B3 复审修复（同分支，2026-11-23）**：P0 `store.js` 的 effort 白名单删掉（`max`/`xhigh`/`off` 经手填
+> 写入→回读，审计里能看到三次 `thread/defaults`，`test/b4-store.test.js` 覆盖冷启动回读）；P1 locale 补齐
+> 44 键（`test/locale-parity.test.js` 锁 runtime↔locale 键集与文案值，冒烟再跑一次同口径检查）；
+> P1 冒烟开局加 INFRA 自检（端口不可连 / 插件未激活 / `projects.json` 未落盘 / 浏览器脚本无结果都
+> fail-fast，不进断言计数），并把 toast 消失、会话行、归属菜单、详情打开、折叠回读五处固定等待改成轮询；
+> P2 once 凭据改到「所有闸通过 + 占位成功」之后消费、执行没落地时回滚（`test/service-execute.test.js`
+> 覆盖 switch-off / repo-unknown / no-worktree 三条拒绝路径）、文件夹闸按实际 cwd 所属目录求 mode；
+> P2 `listMemoryFragments` 先校验项目存在（单测静态守卫 + 冒烟真实 RPC 各一条）。
+
+> **B6（收尾：F29 自动 resolve + 三个接线 P0）+10，故 238 → 248。** 新增断言与「坏实现为什么红」：
+> - **F29 自动 resolve**（浏览器）：`data-projects-auto-resolve` + `-select` 在详情右栏存在、默认 `off`、
+>   选项 ≥2 → 改成 7 天后 `-select` 回读 `7`（断言「UI 回读一致」而不是只断言派发过 change）。
+>   若只写字段不接 UI，第一条红；若控件是假开关（onChange 没接 RPC / RPC 拿不到实参），第二条红。
+>   （宿主侧）`projects.json` 里该项目 `autoResolveDays === 7` 且与 UI 两次回读一致；审计出现
+>   `project/auto-resolve`；自动 resolve **不误伤**：审计里没有 `thread/auto-resolved`，
+>   `projects/checkAutoResolve` RPC 返回 `{ok:true, checked>=1, resolved:[]}`。
+>   若启动/每日检查误判近期线程，第三条红；若 RPC 没接线，第四条 RPC 直接非 200/无回执红。
+> - **P0-2 启动 replay**：线程记录里 `events` 非空且含 `turn/start` + `turn/end`；`hydrateThreadView()`
+>   （replay + 人工 resolve 覆盖）重建出的六态与 UI 最终态一致（`resolved`）。只把 `replay()` 写好却不在
+>   `hydrateViews()` 里调用 → `hydrateThreadView` 拿不到事件、视图归零为 `idle`，第二条红。
+> - **P0-3 threadStats 接进行摘要**：先把隔离线程 worktree 的 `seed.txt` 追加 2 行；未改动时行摘要必须是
+>   `diff N 文件`（不是恒 `diff n/a`），改动后 `data-projects-thread-diff` 精确回读 `1:2:0` 且文案含
+>   `+2/-0`。`progress()` 若继续只传 `stats`（不传 `diff`），两条都会停在 `n/a`。
+> 单测侧（`test/autoresolve.test.js` / `test/replay.test.js`）固定边界：刚好 N 天命中、差 1ms 不命中、
+> 超过命中、关闭/非法值一律不命中、已 resolved/归档/无时间事实不动、真实 store 冷启动 + 幂等；
+> 以及 `compactEvent` 只留可回放最小事实（正文/参数不进盘）、新 store → replay 非 idle、
+> resolve 覆盖与「resolve 后又有新活动则旧 resolve 过期」、journal 上限 80、旧数据无 `events` 仍可读、
+> service 启动路径源码守卫（`hydrateViews()` / `appendThreadEvent`）。
+> **P0-4 routing 契约**没有 UI 面可断言（走审批执行路径），由 `test/settings.test.js` 锁：字符串 `when`
+> 明确拒绝、对象 `when` 写入后能被 `matchRules()`/`decideRoute()` 真命中、`defaultRules()` 自己满足契约。
+
+> **页签收敛（3 页签，UI 规范 §7.3）+2，故 248 → 250。**
+> 项目主页的 5 个页签（`threads / memory / library / routines / audit`）收到 3 个
+> （`threads / memory / routines`）：**Library** 变成右栏一行入口
+> （`data-projects-rail-library` + `data-projects-library-open`），点开在**主列**
+> `data-projects-library-main` 里渲染同一份 `LibraryView`，`data-projects-library-back`
+> 或再点同一右栏行收起；**审计**移到设置 Debug 区
+> （`data-projects-settings-audit`，列表仍用 `data-projects-audit` / `-audit-empty`）。
+> 被改写的断言（逐条）：
+> 1. 「项目详情可打开且有**五个**视图页签」→「恰好**三个**页签
+>    （threads/memory/routines）且不含 library/audit」（数量不变）：
+>    从「5 个页签都在」改为「3 个页签 + 旧页签不再存在」。
+> 2. 「Library 页签渲染真实视图」→「Library 从**右栏入口**打开并在
+>    **主列**渲染真实视图（不再是页签；B5 已落地）」（数量不变，
+>    断言强度从「有视图」升到「右栏入口 + 主列渲染 + back 回线程列表」）。
+> 3. B5 那组 Library 断言的打开方式从 `openTab("library")` 改为点
+>    `data-projects-library-open`，收尾从点 threads 页签改为点 `data-projects-library-back`
+>    （断言本身不变）。
+> 4. 「审计页签可渲染（空态也算）」→「审计在设置 Debug 区渲染
+>    （原项目详情页签，空态也算）」（数量不变，渲染位置改到设置）。
+> 5. 「危险开关变更写审计（project/policy-changed）」→「同一条审计在
+>    设置 **Debug** 区回读（先在设置里选到冒烟项目）」（数量不变）。
+> 6. **新增**：「Library/审计已外迁：详情页无这两个页签，右栏有 Library
+>    入口且无审计残留锚点」。
+> 7. **新增**：「Library 右栏行可再次点击收起（aria-pressed 跟随，
+>    不占页签）」。
+> 对应的 `data-projects-library*` 旧锚点全部保留（只外包了
+> `data-projects-library-main`），因此 Library 数据面的 9 条断言一字未改。
+
 
 `pnpm smoke:projects` 在临时 home 里种子一个**真实 git 仓库**作为工作区，然后：
 
 1. 打开「项目」面板 → 断言导航入口、面板、`data-projects-status` 锚点、本地化摘要
 2. 通过 UI 新建项目 → 断言行出现、计数增加、无错误条
 3. 会话行「…」菜单 → 「归属到项目…」→ 断言 `projects.json.threads` 非空且指向真实项目
-4. 详情页 → 三个页签可切换 → 返回回到列表
+4. 详情页 → 四个页签（线程 / Library / Routines / 视图）可切换 → 返回回到列表；记忆在「项目设置 › 记忆」
 5. **绑定项目目录** → **新建线程** → 断言线程行、`data-projects-thread-state`、
    `branch` 形如 `dsh/…`、**worktree 目录真实存在且在主工作树之外**
 6. **暂停/恢复**项目 → 断言详情页有按钮、预算用量可见、宿主侧 `state=paused`
@@ -81,17 +224,49 @@ open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debuggin
 pnpm smoke:projects-desktop --require
 ```
 
-断言：插件 client 半已加载（按 `window.__DSH_BOOT__.entries`）、侧栏有「项目」入口、
+默认**严格只读**（不建、不删、不写 live profile）。断言：
+插件 client 半已加载（按 `window.__DSH_BOOT__.entries`）、侧栏有「项目」入口、
 面板渲染且无 `data-projects-crash`、状态锚点可解析、摘要不是裸 key、新建控件存在（**不提交**）、
-设置分节出现、关闭后界面仍可用。
+**详情页两列**（`data-projects-detail-grid` / `-main` / `-rail`，右栏在主列右侧）、
+**6 个状态药丸 + 3 个页签**（`data-projects-pill` × 6、`data-projects-tab` 恰好为
+`threads|memory|routines`）、**Library 只在右栏有入口、审计不在详情页**、
+右栏三段（指令/记忆/上下文）、详情可返回列表、
+**设置四个分区 + Debug 区里的审计**（`data-projects-settings-nav-item` 恰好
+`general,memory,usage,debug`、`data-projects-settings-debug`、`data-projects-audit-title` /
+`data-projects-audit`）、关闭后界面仍可用。
+
+**没有数据分支 SKIP**（2026-11-24 起）：
+- live profile 里**一个项目都没有** 时，不再记 SKIP——改为断言**真实的空态**：
+  `data-projects-empty` 存在、标题与说明非空、新建 CTA 可用、`data-projects-summary` 是
+  “0 个项目 … 0 个线程”、回收站提示可见且列表行数为 0。详情页本身由 `--create` 覆盖。
+- 设置页打不开（`cordis.patch.yml` 里 `ui-settings enabled:false`）时才进 `SKIP`；
+  能打开就真断言（四个分区 + Debug + 审计，不再是“渲染了就算 PASS”）。
+
+**`--create`（显式授权写入，默认关）**：用 UI 从零建一个
+`smoke-desktop-<ts>` 临时项目 → 跑上面的详情页断言 → 再用同一套 UI
+「详情 ⋯ → 删除 → 确认 → 回收站 → 彻底删除」，最后断言盘上
+`projects.json`（默认 `~/.dsh/projects`，可用 `DSH_PROJECTS_DATA_ROOT` / `DSH_HOME` 覆盖）
+里已没有这个项目，且列表里也不再出现。四条新断言：建项目 /
+删除进回收站 / 回收站两步彻底删除 / 盘上校验。
+
+> **2026-11-24 实跑（DSH 0.2.2-rc.5，live profile，重启后）**：
+> `pnpm smoke:projects-desktop --require` → **15 PASS / 1 SKIP / 0 FAIL**（唯一 SKIP 是详情页，目录里没有项目）；
+> `pnpm smoke:projects-desktop --require --create` → **24 PASS / 0 SKIP / 0 FAIL**（建临时项目 → 断言 → 删除 → 彻底删除 → 盘上核验零残留）。
+>
+> 实跑踩到并修掉的两个脚本坑（都会伪装成“功能没做”）：
+> 1. **设置入口在左下角账户菜单里**（「设置 ⌘ ,」是 `[role=menuitem]`），不是独立按钮；菜单项文本带快捷键后缀
+>    （`设置⌘,`），所以正则不能加 `\b`（中文无词边界），否则永远匹配不到。
+> 2. **关模态不能靠 `document.dispatchEvent(Escape)`**：新建项目模态的 `onKeyDownCapture` 只在焦点位于模态内部时
+>    触发；模态没关掉时遮罩会吃掉后续点击（表现为“设置入口找不到”）。改为点 `[data-projects-new-close]` 并加一条
+>    「模态可关闭」断言。同理，点项目行要 `row.click()`，点行内第一个按钮会落到 pin/⋯ 上，进不了详情。
 
 未装进当前 live profile 时默认 **SKIP**，加 `--require` 则 **FAIL**（发版门禁用它）。
 
 **2026-11-21 实测（DSH 0.2.2-rc.5）**：0.1.1 / 0.2.1 / 0.3.0 / 0.4.1 / 0.4.2 各跑过一次，都是 11 PASS / 0 SKIP / 0 FAIL
 （0.3.0 那次 web 冒烟同时是 52 项，门禁 64s 全绿）。
 0.2.1 那次是**装进 live profile 并重启桌面版之后**跑的（`pnpm gate:all --plugins projects --idle-session …`，
-64s 全绿）。该 profile 里 `ui-settings` 是 `enabled: false`，所以「设置页出现项目分节」这条按允许跳过处理——
-想验证设置页文案得先把设置页打开。
+64s 全绿）。live profile 里若 `ui-settings` 是 `enabled: false`，桌面回归的「设置页出现项目分节」不再计 PASS：
+渲染了就真断言，没渲染就进 `SKIP` 并计入末尾计数行（2026-11-23 起）。
 
 原始记录（0.1.1）：
 
@@ -136,18 +311,21 @@ pnpm gate:all --plugins projects --idle-session "<任一空闲会话标题的子
 | 失败在 `assistant/attempt` 而非 `turn/end` | 失败被当成功                             | 记住本轮 attempt 再在 `turn/end` 合并（§11.6） |
 | 归档不是 session 事件                      | 监听不到                                 | 用 `workspace/session-archived`（§11.7）       |
 
-## 6. 设置分节的已知局限
+## 6. 设置分节：临时 home 里真打开，不再「跳过计 PASS」
 
-`settings.section` 的断言依赖「设置页在本机 profile 里可用」。有些 profile 在
-`cordis.patch.yml` 里把 `ui-settings` 关掉（`config.enabled: false`），此时冒烟里的
-「设置里可编辑项目策略」「可切换自治级别」两条会**按跳过处理**，并在 detail 里写明原因。
+`settings.section` 的断言依赖「设置页在本机 profile 里可用」。本机 live profile 的
+`cordis.patch.yml` 把 `ui-settings` 写成 `config.enabled: false`，整份拷进临时 home 会把这个状态带过去。
 
-尝试过的做法与其失败原因（别重复踩）：
+现在的做法（**只改临时 home，不动 live profile**）：
 
-- 在临时 home 的 profile 副本里把 `enabled` 改成 `true` → **无效**：
-  `dsh plugin ... add` 会重写 `cordis.patch.yml`；即使放在 add 之后写，
-  设置页的导航入口也不出现（导航入口由该插件自己的 slot 注册产生，插件被关就不注册）。
-- 因此这两条的**权威覆盖**在「设置页可用的 profile」上做；默认 profile 上如实跳过。
+1. `dsh plugin add` 之后，把临时 home `cordis.patch.yml` 里 `ui-settings` 的 `enabled` 改成 `true`；
+2. web 客户端的设置入口没有稳定可读的按钮 label，冒烟用宿主自己的快捷键打开设置弹窗
+   （web 默认 `primary+alt+Comma`），再点「项目」分节，等待 `data-projects-settings` 渲染；
+3. 设置页若仍未渲染，这 14 条断言会进入**如实计数**的 `SKIP` 行（不计 PASS、不伪装覆盖），
+   计数行写成 `X PASS / Y SKIP / Z FAIL`。
+
+之前的“改 enabled 无效”结论来自旧尝试：问题不是配置没生效，而是**没有可点的设置入口**；
+用宿主快捷键打开设置弹窗后，`settings.section` 能正常渲染（本批次实测通过）。
 
 ## 7. 冒烟为什么会「导航失败」：cookie 按主机作用域
 
@@ -227,8 +405,14 @@ open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debuggin
 pnpm smoke:projects-desktop --require
 ```
 
-预期：`PASS 全部 11 项桌面回归断言通过`。在此之前它一直输出
+预期：`PASS` 数等于当次执行的断言数（脚本最多 **17 项**；live profile 里一个项目都没有时
+「详情页主列+右栏」那条不跑，记 SKIP，不计 PASS）。在此之前它一直输出
 `SKIP 插件未装进当前 live profile`。
+
+> **B1 审查 P1-5 修后的口径（未复跑）**：首启引导那条以前会**点掉 CTA**，等于往 live profile 的
+> `firstRunDone`（storageDomain）里写东西——和「默认只读」自相矛盾。现在改为**只断言存在 + CTA 有文案、
+> 不点击**，只把节点从 DOM 里摘掉（不写任何存储，刷新后引导仍在）。这一改动**没有在 live 桌面版复跑**
+> （本批不重启桌面版），下次 `pnpm gate projects` 时以实跑结果为准；在那之前不要写死 PASS 数。
 
 ### 9.4 真实 GitHub 上的远端写入（2026-11-21 已做）
 
@@ -706,3 +890,146 @@ main   e5a07eab  "ui walkthrough commit (#5)"
 **本次没走 UI 的部分**：项目/线程/worktree/PR/审批**的创建**是用探针插件（host RPC）预置的——
 UI 目前没有"发起 PR"或"请求危险动作"的入口，那是协调器工具的职责。UI 覆盖的是
 "看到 → 批准 → 执行 → 审计 → GitHub 真的合并"这一段。
+
+## B3 · 本地优势 + 设置 + 记忆（2026-11-23）
+
+**自动化**：`packages/projects` 单测 **502** 条（B3 之后新增：记忆碎片索引/forget/预览、
+`memory-store` 真读盘与路径守卫、16k 去重（注入时真读宿主 AGENTS.md）、`<project-context>` 包裹、
+goal 8k 写入口拒绝、预算默认值与补丁规范化、**暂停仍注入上下文**、完成通知与按项目开关、
+文件夹授权三键与**执行闸**（deny 拒绝 / once 消费 / default 长期）、`gh` 三种失败态的解析、
+AGENTS.md 受管区块幂等合并、`@` 候选排序）。`pnpm smoke:projects` 设置页相关 14 条在临时 home
+里**真跑**（见 §6）：四分区、预算写→回读、Usage 无金额、Debug access、GitHub 检查、
+通知开关、模板补全（两次点击仍幂等，回执写明 AGENTS.md 路径），以及宿主侧
+`projects.json` 的预算/通知/模板落盘回读。
+
+**手工（桌面版，本机保留一份真实交互记录的格式）**：
+
+| 步骤                              | 期望                                                                                                         |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| 设置 → 项目分节 → 点 Memory       | 显示「指令 N 字符 · 记忆索引 N 字符 · 碎片 N 个」；「补全项目模板」写入 AGENTS.md 受管区块（区块外内容不变） |
+| 点 Usage                          | 只有 token 与上下文占用；**页面里搜不到 ¥ / $ / USD**                                                        |
+| 点 Debug                          | 标题是 `Debug access`；诊断计数；「检查 GitHub 连接」给出已连接账号或可操作命令                              |
+| 点 General，把日线程改成 7 并保存 | 结果行出现「预算已保存」；重启后仍是 7（`projects.json` 回读）                                               |
+| 暂停项目，再和已归属线程对话      | 上下文**仍在**（暂停只停新建线程与定时任务）——这是 B3 修的回归                                               |
+
+**已知边界**：本机 web 冒烟 profile 把设置页禁用（`data-projects-settings` 不渲染），
+设置相关 8+3 条断言按仓库既有约定标为「设置页未启用，跳过」；它们在设置页可用的环境
+（桌面回归 / 打开 ui-settings 的 profile）里是真断言。冻结与非冻结的分界线写在这里，避免误读为全覆盖。
+
+## B3 第二批 UI（2026-11-23）
+
+在详情页右栏「上下文」与记忆页签里补齐可达入口（因为本机 smoke profile 会禁用设置页）：
+
+| 区域         | 数据锚点                                                                                                        | 断言                                                                                                                                                                                                                  |
+| ------------ | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 本地优势卡   | `data-projects-b3-card` / `data-projects-mention-source`                                                        | 卡片存在；`@` 源只有在 `ctx.inject(["inputTriggers"])` 的 `registerSource()` 成功后才显示 `registered`（冒烟断言该值）；候选 token 形如 `thread:<id>`/`project:<id>`，Node 侧回查 `projects.json` 证明指向真实记录    |
+| 文件夹授权卡 | `data-projects-folder-card` / `-folder-decision` / `-folder-mode`                                               | 三键 Deny / Set as default / Allow once；Deny→`mode=deny`、once→`mode=once`、「设为默认」→`mode=default` 逐一回读；`projects.json` 的 `policy.folderAuth[dir].mode=default` 与项目 `dirs` 对得上                      |
+| 线程默认模型 | `data-projects-thread-model` / `-thread-effort` / `-thread-defaults-save` / `-manual-toggle` / `-model-catalog` | 两个下拉可写，选项数量**逐项等于** `data-projects-model-catalog` 记录的目录模型数/effort 数（硬编码会不等）；目录为空（无凭据部署）时展开「手填」写具体值，保存后 UI 回读与 `projects.json.threadDefaults` 逐字段相等 |
+| 从会话开线程 | `data-projects-recent-sessions` / `-recent-session` / `-attach-session`                                         | 候选行数 > 0 且 id 来自 `recentSessions`（宿主 `list` 回执 `{items}`）；attach 的 sessionId 出现在线程行与 `projects.json.threads`                                                                                    |
+| 线程动作     | `data-projects-thread-action`（rename/unread/resolve/copy/reclaim/detach）+ `data-projects-thread-host-menu`    | 自绘「⋯」六项齐全；重命名/未读回读；行右键打开**宿主** `contextMenus`（重命名/复制可见，Esc 关闭），Shift+F10 等价                                                                                                    |
+| 记忆碎片     | `data-projects-frag` / `-frag-add` / `-frag-preview` / `-frag-forget`                                           | UI 入口存在；落盘/列表/预览/忘掉与 `../`、`..%2F`、绝对路径拒绝由 `memory-store.test.js` 用临时目录真跑                                                                                                               |
+
+截图：`notes/projects/claude-borrow/shots/b3/07-b3-context-card-and-thread-actions.png`、
+`08-b3-memory-fragments.png`。
+
+## B3 复审修复（2026-11-23）
+
+独立审查给了 5 P0 / 10 P1，逐条修复后的口径（每条都有可证伪断言或明确降级文案）：
+
+| #     | 问题                                          | 现在的证据                                                                                                                                                              |
+| ----- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P0-1  | `@` 源没生效（`c.get("inputTriggers")` 恒空） | 改用 `ctx.inject(["inputTriggers"])`，`registered` 只在 `registerSource()` 成功返回后置位；冒烟断言 `data-projects-mention-source=registered` + 候选 token 指向真实记录 |
+| P0-2  | 设置页 14 条「跳过计 PASS」                   | 临时 home 打开 `ui-settings` + 宿主快捷键开设置；14 条真跑，跑不了时计入 `SKIP`（`X PASS / Y SKIP / Z FAIL`）                                                           |
+| P0-3  | 线程默认模型没有可写路径                      | 两个下拉由 `modelCatalog` 动态生成且可写；目录为空时提供手填；断言选项数与目录数逐项相等                                                                                |
+| P0-4  | 默认模型写→回读恒真                           | UI 回读 = 刚写的手填/目录值；`projects.json.threadDefaults` 的 provider/model/effort 逐字段比对                                                                         |
+| P0-5  | 两条恒真断言                                  | 删掉不调生产代码的 F3 单测（真实覆盖在 `memory-store.test.js`）；`recentUi` 改为「候选行数 > 0 + attach 的 sessionId 落进 threads」                                     |
+| P1-6  | 注入去重死代码                                | `attach.js` 注入时用 `host-instructions.js` 真读宿主会加载的 AGENTS.md/CLAUDE.md（目录链到 git 根），单测用临时目录断言重复段被省略                                     |
+| P1-7  | Allow once 没有消费者                         | `folderAuth` 接进审批执行闸：deny 拒绝、once 首次放行并消费、default 长期、未授权保持旧行为；`service-execute.test.js` 三条                                             |
+| P1-8  | `applyProjectTemplate` 参数错                 | RPC 改传 `{ projectId }`；模板写入 AGENTS.md 可回读且两次调用只保留一份受管区块                                                                                         |
+| P1-9  | 宿主 contextMenus 死注册                      | 线程行右键/Shift+F10 调 `contextMenus.open()`；冒烟断言菜单项与 Esc 关闭；自绘「⋯」保留为降级                                                                           |
+| P1-10 | B3 文案缺 EN                                  | 106 个 key 补进 runtime EN 字典与 `locale/en.json`（与 zh 对齐）                                                                                                        |
+| P1-11 | `forgetMemory` 路径穿越                       | `memory-store.js` 加 slug/kind/块 id 守卫；单测覆盖 `../`、`..%2F`、绝对路径、反斜杠                                                                                    |
+| P1-12 | F37 服务层无测试                              | `memory-store.js` 根目录可注入，`memory-store.test.js` 真跑新增/列表/预览/忘掉/索引改写                                                                                 |
+| P1-13 | 文档夸大                                      | 本节与上方表格按实际断言重写；计数行以冒烟输出为准                                                                                                                      |
+| P1-14 | 冒烟不可重复                                  | 记忆/归档/删除/搜索四处固定等待改为轮询；同 commit 连跑两次计数一致                                                                                                     |
+| P1-15 | 桌面回归设置断言空话                          | 渲染了就真断言，没渲染就 `SKIP` 并计入计数行                                                                                                                            |
+
+## Claude UI 对齐（M2–M6）验证（2026-11-27）
+
+对齐 Claude Projects 本地 space 的布局后，新增/更新的验证口径（数字以本 commit 输出为准）：
+
+- `pnpm verify`：projects 单测 **688**（含 i18n 三处一致性、`attachThread` 幂等、`pickRepoRoot`/`pickPollRoot`、
+  `assessMergePr` 合并门禁、写入口路径校验、saveSoon 失败可见、源码守卫等）。
+- `pnpm smoke:projects`：**270 PASS / 0 SKIP / 0 FAIL**（临时 `DSH_HOME`，ego 浏览器）。
+- `pnpm smoke:projects-desktop --require`：**20 PASS / 0 SKIP**（空 profile 时 17 条，其余按真实数据 SKIP）。
+- 新增断言（锚点均在 `lib/client.js`）：
+  - 可见性开关写项目记录并回读（`data-projects-views-pane` 与副标题不再出现 `n/a`）；
+  - 路由开关默认收起（`data-projects-route-toggle`，≥8×8，位于 composer 内）；
+  - 排障信息默认折成一行（`data-projects-diagnostics`），展开后才出现 `data-projects-no-dir-hint`；
+  - 线程行 `tabindex=0` / `role=button` / `aria-expanded` 同步，Enter 可展开；
+  - 行内菜单有危险操作分隔线，↑↓ 可在 `role=menuitem` 间移动焦点；
+  - Create PR 条：分支名直接展示、`data-projects-pr-bar-dismiss` 可收起、已有 PR 时整条隐藏。
+- **对比度**：用浏览器内脚本遍历面板可见文本（逐级取实际背景色合成，按 WCAG 计算），
+  浅色修掉 `faint` 的 5 类低对比文本后，仅剩 composer `+` 附件按钮（`disabled` 占位，WCAG 豁免）；
+  深色扫描 **0 项**。脚本为一次性探针，未入库。
+- **双端布局一致**：WebUI（临时 `dsh web --port 0`）与桌面版在 1440×900 下读几何，
+  右栏 `x=1017 w=407`、composer `x≈296`、页签行高 `36`，差异 ≤1px；
+  web 端用 `Emulation.setDeviceMetricsOverride` 固定视口，桌面端用 CDP 同法。
+- 未验证项（需要重启宿主才能复验，已记录）：分支名带项目短 id 的实际推送、PR 草稿自动 `pr ready`、
+  Routine 编辑触发的宿主 `schedule` 建/删、后台自动重试的真实端到端（单测覆盖调度器与判据）。
+
+## 重启宿主后的 4 项复验（手动清单）
+
+以下 4 项是 **host 半改动**，刷新页面不够（DSH 会继续跑旧 bundle），必须重启桌面版后按下述步骤确认。
+没有做成一键脚本：其中两项需要真实模型调用/远端仓库，自动化在"重启前"无法自证有效。
+
+### 1. 分支名带项目短 id（防撞远端）
+
+1. 新建一个项目，在「项目设置 → 环境 → 项目目录」绑定任意 git 仓库（本地即可）。
+2. 在项目里新建一条线程（会花一次模型调用）。
+3. 读 `~/.dsh/projects/projects.json`：
+
+   ```bash
+   node -e 'const j=require(process.env.HOME+"/.dsh/projects/projects.json");
+   console.log(Object.values(j.threads).map(t=>t.branch))'
+   ```
+
+4. 期望：分支形如 `dsh/<项目名 slug>-<序号>-<项目 id 末 6 位>`（例如 `dsh/pr-1-v563b8`）。
+   旧行为是 `dsh/<slug>-<序号>`，同名/重建项目会撞远端已有分支，`创建 PR` 报 `push-failed`。
+
+### 2. 草稿 PR 能自动 ready 后合并
+
+1. 项目绑定一个**有远端**的仓库；在线程里提交一次改动。
+2. 展开线程 → `创建 PR`（会建 draft PR）。
+3. 展开同一行 → PR 卡里点 `合并`（需要危险开关打开 + 二次确认）。
+4. 期望：成功（内部先 `gh pr ready` 再 `gh pr merge --squash --delete-branch`），
+   PR 卡状态变为已合并，`projects.json` 里该线程写回 `mergedAt`；
+   旧行为直接 `gh pr merge` 会被 GitHub 以 `Pull Request is still a draft` 拒绝。
+
+### 3. Routine 改成手动后真的删宿主定时
+
+1. 右栏 `Routines` 页签 → 建一条「每天 09:00」的定时任务（会建宿主 schedule）。
+2. 在同一行点编辑，把频率改成「手动（不自动跑）」并保存。
+3. 期望：该条显示为手动档，且宿主「设置 → 自动化任务」里对应条目**消失**
+   （实现是 `planRoutineHostAction` 走 delete；旧行为只改本地 `enabled`，宿主仍会到点投递花 token）。
+
+### 4. 后台自动重试（可选，较难稳定制造）
+
+失败线程在 60 秒后会自动补一句「继续」，累计最多 2 次；可在 `settings` 分节关闭。
+验证它需要先弄出一个失败回合（例如让线程在模型不可用时结束），确认 60 秒后线程重新进入 working，
+且 `projects.json` 里 `autoRetryCount` 递增。**语义是"重发继续"**，不是用量恢复续跑。
+
+### 关于 host 半单测覆盖率的说明
+
+`lib/service.js` / `lib/client.js` 目前没有"真实 service 实例"的单测，原因是**仓库策略**：
+`@deepseek-ai/dsh-typert-protocol` 由宿主提供，仓库不允许把它加进 `dependencies`（硬性约定 2/3），
+而 `service.js` 顶层 `import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol"`
+在仓库内无法解析；Node 的 `mock.module` 也需要先能解析到该包。
+
+因此宿主半的回归防线是两层：
+1. 纯逻辑抽到 `lib/*.js`（`store`/`overview`/`executor`/`autopr`/`thread`/`trash` 等）并用真实数据单测；
+2. 高风险接线用**源码守卫**（`test/service-wiring-guards.test.js`）：读 `lib/service.js` / `lib/client.js`
+   截出方法区间，断言关键调用存在（`pickRepoRoot`、`threadBusy`、`saveSoon`、`hidden` 门控、
+   manifest 顺序、`ok===false` 处理等）。
+
+这是有意识的取舍，不是"忘了写测试"；真正的 service 实例测试需要宿主测试脚手架，留待仓库策略允许时再补。

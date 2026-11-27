@@ -352,10 +352,156 @@ ego 的浏览器是**和用户共用**的实例：它的 cookie jar 里装着用
 > **别把关键开关只放在设置分节里**（2026-11-22 实测）：`settings.section` 只在**已登录**的 profile 里渲染——
 > 未登录时页面停在「开始使用」，插件配置区根本不出现。dsh-projects 因此把六个危险开关同时放进了
 > 项目详情的「高级设置」；设置分节仍保留，但不再是唯一入口。
-- [ ] 面板页签 ≤3，次要功能已外迁。
+- [ ] 面板页签 ≤3，次要功能已外迁；**对齐宿主产品的固定 IA 时允许 4 个**（须在 README 说明理由，如 `dsh-projects` 的「线程/Library/Routines/视图」对齐 Claude Projects）。
 - [ ] 破坏性操作：一行影响面 + 默认聚焦主按钮 + 分批 + 可停止 + 写审计。
 - [ ] 列表行文本块有 `min-width: 0`，窄容器下标题不会被压成省略号。
 - [ ] 只用宿主已定义的主题 token，前景/底色成对（§2）。
 - [ ] 中英文案同步，没有重复定义的键。
 - [ ] 关键节点有 `data-*` 锚点，web 冒烟与桌面回归都能定位。
 - [ ] README 截图已重拍并脱敏。
+
+## 8. 跨插件调用契约（Remote API）
+
+> 本节只写**跨插件可见的稳定契约**：别的插件能调什么、怎么调、出错怎么判、装不上怎么降级。
+> 存储布局、客户端组件这些实现细节**不是**契约，随时会变。
+> 契约实例：`@kangyishuai/dsh-artifacts`（0.2，契约版本 `artifacts/2`）；新增跨插件契约按本节格式补一节。
+
+### 8.1 三条原则
+
+1. **只走 Remote（或宿主 cordis 服务），不读别人插件的存储目录。** 目录布局是私有的：读它等于把两个插件的发版绑死，而且插件升级后可能静默读到一半数据。
+2. **两端两个入口**：client 半用 `ctx.connection.rpc.call("/api", "<service>/<method>", …)`；host 半用 `ctx.get("<service>")`。两条入口背后是**同一个** service 实例和方法集。
+3. **先探契约再调**：每次使用先问 `version()` 的 `contract`（或至少判 `ctx.get()` 是否 `undefined`）。**缺依赖时降级并且明示**，不要伪装成"没有数据"。
+
+### 8.2 调用形状
+
+**client 半**（另一个插件的 `lib/client.js`）：
+
+```js
+/** 统一解 { ok, value } 信封；失败返回 undefined，由调用方降级。 */
+async function call(method, request) {
+  const rpc = ctx.connection?.rpc;
+  if (typeof rpc?.call !== "function") return undefined;
+  const payload = request === undefined ? { args: {} } : { args: { request } };
+  const result = await rpc.call("/api", `artifacts/${method}`, payload);
+  if (result && typeof result === "object" && Object.hasOwn(result, "value")) return result.value;
+  return result;
+}
+```
+
+- **参数必须包两层**：`{ args: { request } }`；无参数方法用 `{ args: {} }`（见 [runtime 0.2.2-rc.3 §12.4](runtime/0.2.2-rc.3.md#124-client-半ui)）。
+- 网关信封是 `{ ok: true, value }` / `{ ok: false, error: { code, message } }`；插件自己的信封在 `value` 里，另有 `value.ok`。
+- 没有 typert 生成的客户端产物，**不要**用 `ctx.reflect.get("remote.artifacts")`。
+
+**host 半**（另一个插件的 `lib/index.js`）：
+
+```js
+const artifacts = ctx.get?.("artifacts");                       // 未安装 → undefined
+if (artifacts === undefined || typeof artifacts.list !== "function") return degraded();
+const version = await artifacts.version().catch(() => undefined); // 契约探针（可选）
+const page = await artifacts.list({ projectId });
+```
+
+- `ctx.get()` 是"可选依赖"的取法：拿不到就返回 `undefined`，不会挂起。**不要**为了可选依赖写 `ctx.inject(["artifacts"], …)`。
+- service 实例被宿主包成 **Proxy**：只调方法，不要访问 `#private` 字段或私有属性（[runtime 0.2.2-rc.3 §11.1](runtime/0.2.2-rc.3.md#111-service-实例被-cordis-包成-proxy--不能用--私有成员)）。
+- 跨插件**不要**用 host 半去 `fetch("/api/...")` 兜底：那要多一次鉴权上下文，且拿不到同一份内存状态。
+
+### 8.3 `artifacts` · 契约版本 `artifacts/2`
+
+方法集（`version().methods` 与本节必须一致，`test/remote-declarations.test.js` 会静态对账）：
+
+| Remote 方法         | 参数（`request`）                                                                                               | 成功返回（除 `ok: true` 外）                                                                                    | 用途                                                                  |
+| ------------------- | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `artifacts/version` | 无                                                                                                              | `{ service, plugin, packageVersion, contract, kinds[], maxBytes, methods[] }`                                   | 契约探针：先问版本再决定用哪些字段                                    |
+| `artifacts/list`    | `{ projectId?, sessionId?, threadId?, kind?, title?, since?, until?, includeArchived?, onlyArchived?, limit? }` | `{ contract, artifacts: Row[], summary: Summary }`                                                              | 列表 + 项目级汇总（Library 的主入口）                                 |
+| `artifacts/latest`  | `{ id, since? }`                                                                                                | `{ contract, id, title, kind, mime, version, bytes, totalBytes, projectId, source, versionSource, changed, … }` | 轮询/预览；`since === version` 时只回 `changed: false`                |
+| `artifacts/archive` | `{ ids?, projectId?, archived?, dryRun? }`                                                                      | `{ contract, dryRun, archived, count, bytes, ids[], unknown[] }`                                                | 归档（只读 + 默认不进列表）；可按项目级联                             |
+| `artifacts/remove`  | `{ ids?, projectId?, dryRun? }`                                                                                 | `{ contract, dryRun, restorable: true, trashRoot, count, bytes, ids[], removed[], unknown[] }`                  | 级联清理（**移入回收站**，ADR 0002）                                  |
+| `artifacts/restore` | `{ ids, dryRun? }`                                                                                              | `{ contract, dryRun, count, bytes, ids[], restored[], unknown[] }`                                              | 从回收站恢复（`ids` 可给 id 或 `trashKey`）                           |
+| `artifacts/trash`   | 无                                                                                                              | `{ contract, artifacts: Row[], summary }`（行多 `trashKey` + `trashedAt`）                                      | 回收站清单                                                            |
+| `artifacts/purge`   | `{ ids?, projectId?, dryRun? }`                                                                                 | `{ contract, dryRun, restorable: false, count, bytes, ids[], purged[], unknown[] }`                             | 硬删（**不可恢复**，只对回收站生效；`ids` 同样接受 id 或 `trashKey`） |
+
+**`list` 过滤语义**（条件之间是 AND；全部不传 = 全量，兼容 0.1.0）：
+
+| 参数              | 类型                 | 语义                                                                         |
+| ----------------- | -------------------- | ---------------------------------------------------------------------------- |
+| `projectId`       | `string \| null`     | 精确匹配；`null` = 只要**没有归属**的产物；**不传** = 不按项目过滤           |
+| `sessionId`       | `string`             | 精确匹配产生它的会话                                                         |
+| `threadId`        | `string`             | 精确匹配产生它的线程（项目自己维护线程 id 时用）                             |
+| `kind`            | `string \| string[]` | `html` / `markdown` / `json` / `csv` / `image`；不认识 → `artifacts/invalid` |
+| `title`           | `string`             | 标题子串、大小写不敏感                                                       |
+| `since` / `until` | `number`（epoch ms） | 按 `updatedAt` 的时间窗（含端点）                                            |
+| `includeArchived` | `boolean`            | `true` 时把已归档的一起列出来（默认排除）                                    |
+| `onlyArchived`    | `boolean`            | `true` 时只列已归档的                                                        |
+| `limit`           | `number`             | 截断条数（`summary` 同时按截断后的集合算）                                   |
+
+**行 `Row`（跨插件只依赖这些字段）**：
+
+| 字段                                      | 类型                                     | 说明                                                                         |
+| ----------------------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------- |
+| `id`                                      | `string`                                 | 稳定 id（删除后不复用）                                                      |
+| `title` / `kind` / `mime`                 | `string`                                 | `kind` 是 `html` / `markdown` / `json` / `csv` / `image`                     |
+| `latest`                                  | `number`                                 | 最新版本号（从 1 开始）                                                      |
+| `bytes` / `totalBytes`                    | `number`                                 | 最新版本字节数 / 所有版本之和                                                |
+| `createdAt` / `updatedAt`                 | `number`                                 | epoch ms                                                                     |
+| `projectId` / `sessionId` / `threadId`    | `string \| null`                         | 归属；没有就是 `null`（不是缺字段）                                          |
+| `source`                                  | `{ sessionId, toolCallId, via } \| null` | 来自哪个会话的哪次工具调用（"哪次线程跑出来的"）                             |
+| `archived` / `archivedAt`                 | `boolean` / `number \| null`             | 归档后只读；列表默认不返回                                                   |
+| `coverUrl` / `previewUrl` / `downloadUrl` | `string`                                 | **相对路径**（`/artifacts/<id>…`），客户端直接用；`downloadUrl` 触发附件下载 |
+
+**id / trashKey 的边界**：`list` 与 `latest` 的 `id` 必须是**单段目录名**——带 `/`、`\\`、控制字符、`.`/`..` 或以点开头的 id 一律拒绝（契约层给 `artifacts/invalid`，HTTP 路由给 `400`）。回收站里同名条目会加时间后缀，所以 `trash()` 行里的 **`trashKey` 才是权威键**：`restore` / `purge` 的 `ids` 接受 id 或 trashKey；找到了但恢复不了（目标 id 被占用）会出现在 `unknown[]` 里，**不会静默留字节**。
+
+**`Summary`**：`{ count, bytes, byProject: [{ projectId: string \| null, count, bytes }] }`。
+`bytes` 一律是"各工件**最新版本**字节数之和"，与行里的 `bytes` 同一口径（`totalBytes` 才是含历史的占用）。
+
+**`latest` 的正文语义**：`kind=html` 给 `html`；`markdown` / `json` / `csv` 给 `text`；`image` **不给正文**（二进制不上行），用 `previewUrl` 交给 `<img>` 或浏览器。`changed: false` 也带 `kind`，客户端不需要猜类型。
+
+**归属/来源字段（`meta.json`，写侧契约）**：`projectId?` / `sessionId?` / `threadId?` 由 `artifact` 工具的 `projectId` / `threadId` 参数与工具上下文（`exec.agent.id`、`exec.callId`）写入；`source` 记首次产生它的调用，`versions[].source` 记每一版各自的调用。旧数据缺这些字段时按 `html` + 无归属读，**不会迁移或改名**。
+
+### 8.4 错误码与降级
+
+| `code`                       | 含义                                                     | 调用方应该做什么                                        |
+| ---------------------------- | -------------------------------------------------------- | ------------------------------------------------------- |
+| `artifacts/invalid`          | 参数不合法（缺 `id`、缺 `ids`/`projectId`、未知 `kind`） | 修参数；**不要**重试                                    |
+| `artifacts/not-found`        | id / 版本不存在                                          | 从列表里剔掉，刷新 UI                                   |
+| `artifacts/archived`         | 已归档，拒绝追加版本                                     | 提示"已归档，先取消归档"                                |
+| `artifacts/kind-mismatch`    | 追加的类型与已有工件不同                                 | 换新 id 发布，不要混版本                                |
+| `artifacts/too-large`        | 单件超过 2 MiB                                           | 拆分或压缩                                              |
+| `artifacts/unsupported-kind` | 不认识的类型/图片格式                                    | 换支持的格式（png/jpeg/gif/webp/svg）                   |
+| `artifacts/failed`           | 文件系统/内部错误（EACCES、ENOSPC、EIO…）                | 提示失败原因；用信封里的 `processed[]` 判断已处理了哪些 |
+| 网关 `404`（纯文本）/ 抛错   | **插件没装**，或方法名写错                               | 降级 + 明示"未安装 artifacts"                           |
+
+**降级的正确姿势**（以 projects 的 Library 为例）：
+
+1. host 侧：`ctx.get("artifacts")` 为 `undefined`，或 `typeof service.list !== "function"` → 判定未安装；
+2. `await service.version()` 抛错或 `version().contract !== "artifacts/2"` → 判定版本不兼容（0.1.0 没有 `version()`）；
+3. 未安装/不兼容 → 退回宿主 `workspaceFiles` 的文件列表，并在面板写明"产物库需要 artifacts 0.2"，**不要**显示"这个项目没有产物"；
+4. client 侧同一套判断：RPC 抛错或 `value?.ok !== true` → 同上降级。
+
+**失败信封的形状**：任何方法都不会向调用方抛异常；失败时除 `{ ok:false, code, message }` 外，
+破坏性方法还带 `dryRun` 与 `processed[]`（已经真处理过的 id/key），`restore`/`purge`/`remove` 的
+`unknown[]` 是"请求了但没动成"的 id（不存在 / 目标 id 被占用 / 不安全 id）。
+
+**破坏性操作由调用方负责确认框**：`remove` / `purge` 是 API 层，插件自己不带确认 UI。调用方必须先 `dryRun: true` 拿影响面（`count` / `bytes` / `ids`），把数量与"可恢复/不可恢复"写进确认框（ADR 0002），再执行。
+
+### 8.5 从别的插件打开产物面板（client 半）
+
+`artifacts` 的右栏页签类型是 `artifact`，参数如下：
+
+| `params`                         | 效果                                                                   |
+| -------------------------------- | ---------------------------------------------------------------------- |
+| `{ id }`                         | 预览该 id 的最新版本（html 用 iframe，文本用 `<pre>`，图片用 `<img>`） |
+| `{ view: "library" }`            | 全局库视图（列表 + 缩略图 + 搜索/类型过滤）                            |
+| `{ view: "library", projectId }` | **按项目过滤的库视图**（项目页点"产物"用它）                           |
+
+```js
+// 另一个插件的 client 半（自己 inject "sidebarRight"；拿不到就降级为自绘入口）
+ctx.sidebarRight?.openTab?.("artifact", { params: { projectId } });
+```
+
+冒烟与桌面回归依赖的 `data-*` 锚点（改名等于拆测试）：`data-dsh-artifact-library`、`data-dsh-artifact-library-scope`、`data-dsh-artifact-summary`、`data-dsh-artifact-search`、`data-dsh-artifact-kind-filter`、`data-dsh-artifact-list`、`data-dsh-artifact-card`、`data-dsh-artifact-cover`、`data-dsh-artifact-frame`、`data-dsh-artifact-text`、`data-dsh-artifact-image`、`data-dsh-artifact-version`、`data-dsh-artifact-back`、`data-dsh-artifact-header`。
+
+### 8.6 改契约的流程
+
+- **加方法 / 加可选字段**：契约版本不变（`artifacts/2` 仍是 `artifacts/2`），但要同步：本节表格、`version()` 的 `methods`、`test/remote-declarations.test.js`。
+- **改字段含义 / 删字段 / 改默认值**：契约版本 +1（`artifacts/3`），在 CHANGELOG 写清迁移方式，并保留至少一个 minor 的旧行为或明确弃用窗口。
+- **表里没写的字段不要依赖**：那是实现细节，不承诺稳定。

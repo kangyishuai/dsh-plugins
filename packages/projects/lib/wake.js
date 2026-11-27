@@ -33,6 +33,15 @@ export const CONTEXT_MAX_CHARS = 2000;
 export const PERSONA_MAX_CHARS = 1200;
 
 /**
+ * 「最近线程」段落上限（F10：协调者上下文 = 最近消息 + 最近 thread + 项目记忆索引）。
+ * 为什么需要：协调器看不到线程之间的横向关系，只看到单条信封时会把同一件事说三遍。
+ */
+export const RECENT_THREAD_MAX_CHARS = 1200;
+
+/** 「记忆索引」段落上限（F10；完整 MEMORY.md 由文件工具按需读取）。 */
+export const MEMORY_INDEX_MAX_CHARS = 1200;
+
+/**
  * 信任级别是否构成授权。
  * 模型输出、外部网页内容、另一个 agent 的消息都不能授权——它们只能是 peer/relay。
  * @param {unknown} trust
@@ -65,6 +74,8 @@ export function clipReport(text, max = REPORT_MAX_CHARS) {
  * @param {string} [input.trust]
  * @param {{id: string, name: string}} input.project
  * @param {{sessionId: string, state?: string, turn?: number, branch?: string|null}} input.thread
+ * @param {string} [input.recentThread] 最近线程的一行摘要（F10：让协调者知道同类线程已存在）
+ * @param {string} [input.memoryIndex] 项目记忆索引（F10；与 context 分开，便于单独裁剪）
  * @param {string} input.report
  * @param {string} [input.context] 项目规则/记忆摘要（随信封送达协调器）
  * @param {string} [input.persona] 协调器人格（同样随信封送达）
@@ -100,9 +111,18 @@ export function buildEnvelope(input) {
 
   const context = clipReport(input?.context, CONTEXT_MAX_CHARS);
   const persona = clipReport(input?.persona, PERSONA_MAX_CHARS);
+  // F10：最近线程 + 记忆索引是**独立段落**，各自可裁剪；空串就不出现（不占上下文）
+  const recentThread = clipReport(input?.recentThread, RECENT_THREAD_MAX_CHARS);
+  const memoryIndex = clipReport(input?.memoryIndex, MEMORY_INDEX_MAX_CHARS);
   const sections = [
     { name: "wake", text: head },
     ...(context === "" ? [] : [{ name: "project", text: `project-context:\n${context}` }]),
+    ...(memoryIndex === ""
+      ? []
+      : [{ name: "memory", text: `project-memory-index:\n${memoryIndex}` }]),
+    ...(recentThread === ""
+      ? []
+      : [{ name: "recent-thread", text: `recent-thread:\n${recentThread}` }]),
     ...(persona === "" ? [] : [{ name: "persona", text: `persona:\n${persona}` }]),
     ...(report === "" ? [] : [{ name: "report", text: `report:\n${report}` }]),
     { name: "next", text: `next: ${next}` },

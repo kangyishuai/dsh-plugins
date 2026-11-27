@@ -338,6 +338,42 @@ export function checkMergeReadiness(input) {
 }
 
 /**
+ * 「这个 PR 现在能不能合并」的统一判定：把 `checkMergeReadiness` 与项目策略里的
+ * 改动量阈值（`policy.merge.maxDiffFiles / maxDiffLines`）合成一次判完。
+ *
+ * 为什么需要它：UI 的合并按钮（RPC `mergePr`）以前只查危险开关就 `gh pr merge`，
+ * 而设置页文案承诺「仍然要求改动量在阈值内、CI 通过、人工批准数达标」——两套答案。
+ * @param {{
+ *   pr?: any,
+ *   allowedMethods?: string[]|null,
+ *   minApprovals?: number,
+ *   maxDiffFiles?: number,
+ *   maxDiffLines?: number,
+ * }} input
+ * @returns {{ ok: boolean, reason?: string, approvals?: number, changedFiles?: number, lines?: number, maxDiffFiles?: number, maxDiffLines?: number }}
+ */
+export function assessMergePr(input) {
+  const readiness = checkMergeReadiness({
+    pr: input?.pr,
+    reviews: input?.pr?.reviews ?? [],
+    allowedMethods: Array.isArray(input?.allowedMethods) ? input.allowedMethods : undefined,
+    minApprovals: input?.minApprovals,
+  });
+  if (!readiness.ok) return readiness;
+  const changedFiles = Number(input?.pr?.changedFiles ?? 0);
+  const lines = Number(input?.pr?.additions ?? 0) + Number(input?.pr?.deletions ?? 0);
+  const maxDiffFiles = Number.isFinite(input?.maxDiffFiles) ? Number(input.maxDiffFiles) : 20;
+  const maxDiffLines = Number.isFinite(input?.maxDiffLines) ? Number(input.maxDiffLines) : 600;
+  if (Number.isFinite(changedFiles) && changedFiles > maxDiffFiles) {
+    return { ok: false, reason: "merge/diff-files", changedFiles, maxDiffFiles };
+  }
+  if (Number.isFinite(lines) && lines > maxDiffLines) {
+    return { ok: false, reason: "merge/diff-lines", lines, maxDiffLines };
+  }
+  return { ok: true, approvals: readiness.approvals, changedFiles, lines };
+}
+
+/**
  * 授权来源是 `policy-grant` 的动作（规格 §7.5 表）。
  * 只有这些动作**可能**被 `policy.preapprove` 预授权放行——
  * `merge`（approval-event）与 `push-protected-branch`（per-incident）永远不行。
