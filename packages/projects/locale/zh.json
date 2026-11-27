@@ -679,6 +679,8 @@
     "routines.save": "保存",
     "routines.update": "更新",
     "detail.prBarDismiss": "收起创建 PR 条",
-    "detail.threadTask": "任务：{task}"
+    "detail.threadTask": "任务：{task}",
+    "detail.threadRemovedWithWorktree": "已移除追踪（worktree 仍在磁盘：{path}）",
+    "detail.threadPromptFailed": "线程已建，但首条任务没送达：{reason}"
   }
 }

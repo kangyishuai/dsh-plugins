@@ -319,6 +319,8 @@ window.__ModuleLoader__.load({
       "detail.threadReclaimKept": "未回收：{reason}",
       "detail.threadRemove": "移除",
       "detail.threadRemoveConfirm": "确认移除追踪？",
+      "detail.threadRemovedWithWorktree": "已移除追踪（worktree 仍在磁盘：{path}）",
+      "detail.threadPromptFailed": "线程已建，但首条任务没送达：{reason}",
       "detail.threadRemoved": "已移除追踪",
       "detail.threadActionFailed": "操作失败：{reason}",
       "detail.pause": "暂停项目",
@@ -898,6 +900,8 @@ window.__ModuleLoader__.load({
       "detail.threadReclaimKept": "Not reclaimed: {reason}",
       "detail.threadRemove": "Remove",
       "detail.threadRemoveConfirm": "Remove tracking?",
+      "detail.threadRemovedWithWorktree": "Tracking removed (worktree still on disk: {path})",
+      "detail.threadPromptFailed": "Thread created, but the first task was not delivered: {reason}",
       "detail.threadRemoved": "Tracking removed",
       "detail.threadActionFailed": "Action failed: {reason}",
       "detail.pause": "Pause project",
@@ -5711,8 +5715,15 @@ window.__ModuleLoader__.load({
             return;
           }
           call(api.ctx, "detachThread", { sessionId }).then(
-            () => {
-              setThreadAction({ pending: "", ok: true, message: text(t, "detail.threadRemoved") });
+            (/** @type {any} */ result) => {
+              // 记录删了，但 worktree/分支还在磁盘：如实提示，别让用户以为已经清干净
+              setThreadAction({
+                pending: "",
+                ok: true,
+                message: result?.worktree
+                  ? text(t, "detail.threadRemovedWithWorktree", { path: String(result.worktree) })
+                  : text(t, "detail.threadRemoved"),
+              });
               load();
               if (typeof props.onChanged === "function") props.onChanged();
             },
@@ -6214,10 +6225,20 @@ window.__ModuleLoader__.load({
         if (task === "" || busy) return;
         setBusy(true);
         call(api.ctx, "createThread", { projectId: project.id, task }).then(
-          () => {
+          (/** @type {any} */ created) => {
             setDraft("");
             setBusy(false);
             load();
+            // 线程建了但首条任务没送达：以前完全静默，用户会看到一条永远 idle 的线程
+            if (created?.warning) {
+              setThreadAction({
+                pending: "",
+                ok: false,
+                message: text(t, "detail.threadPromptFailed", {
+                  reason: String(created.warning),
+                }),
+              });
+            }
           },
           (error) => {
             setBusy(false);

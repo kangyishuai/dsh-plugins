@@ -350,6 +350,7 @@ export class ProjectsService extends TypertRemoteService {
      * F21 PR/CI 轮询状态（默认轮询：只对「有开放 PR 的项目」；应用关闭即停）。
      * @type {{ timer: any, running: boolean, lastAt: number, lastResult: any, failures: number, inFlight: boolean }}
      */
+    /** @type {any} */
     this.prPoll = {
       timer: null,
       running: false,
@@ -357,6 +358,7 @@ export class ProjectsService extends TypertRemoteService {
       lastResult: null,
       failures: 0,
       inFlight: false,
+      lastFailure: "",
     };
     /**
      * UI 状态（F63 首启一次 / F25 分组折叠）。优先 `storageDomain`（探针写验证过跨重启保留：
@@ -519,6 +521,10 @@ export class ProjectsService extends TypertRemoteService {
     try {
       this.dataRoot = resolveDataRoot(config);
       this.store = new ProjectStore({ root: this.dataRoot }).load();
+      this.store.onSaveError = (/** @type {any} */ error) =>
+        this.logger?.warn?.(
+          `[projects] save failed: ${String(/** @type {any} */ (error)?.message ?? error).slice(0, 200)}`,
+        );
       this.logger.info?.(
         `[projects] loaded ${this.store.listProjects().length} project(s) from ${this.store.file}`,
       );
@@ -1188,6 +1194,7 @@ export class ProjectsService extends TypertRemoteService {
           ? Object.keys(this.store.state?.threads ?? {})
           : [];
     // 硬上限：一个项目里堆上百个线程时不把宿主读穿；超出的行退回事件推导
+    const capped = tracked.length > 200;
     const ids = tracked.slice(0, 200);
     /** @type {Map<string, any>} */
     const states = new Map();
@@ -1240,7 +1247,7 @@ export class ProjectsService extends TypertRemoteService {
       const entries = [...this.liveStateCache.entries()].sort((a, b) => a[1].at - b[1].at);
       for (let i = 0; i < entries.length - 500; i += 1) this.liveStateCache.delete(entries[i][0]);
     }
-    return { states, summaries };
+    return { states, summaries, partial: capped };
   }
 
   /**
@@ -4083,6 +4090,7 @@ export class ProjectsService extends TypertRemoteService {
       projectCount: projects.length,
       activeCount: projects.filter((p) => p.state === "active").length,
       attachedSessions: this.attached.size,
+      lastSaveError: this.store?.lastSaveError ?? "",
       renderStats: this.renderStats ?? {},
     };
   }
@@ -4204,8 +4212,18 @@ export class ProjectsService extends TypertRemoteService {
           },
           new AbortController().signal,
         );
-      } catch {
-        /* 投递失败不影响线程本身；面板会显示 idle */
+      } catch (error) {
+        // 线程建成功、任务从没送达：以前完全静默，用户看到一条永远 idle 的线程
+        const reason = String(/** @type {any} */ (error)?.message ?? error).slice(0, 160);
+        store.appendAudit({
+          action: "thread/prompt-failed",
+          projectId,
+          sessionId: thread.sessionId,
+          reason,
+        });
+        store.save();
+        /** @type {any} */ (thread).promptFailed = true;
+        thread.warning = `prompt-failed: ${reason}`;
       }
     }
     return thread;
@@ -4233,17 +4251,26 @@ export class ProjectsService extends TypertRemoteService {
   /** @param {string} sessionId */
   detachThread(sessionId) {
     const store = this.requireStore();
-    const project = store.projectOfSession(sessionId);
-    const removed = store.detachThread(sessionId);
+    const id = String(sessionId ?? "");
+    const project = store.projectOfSession(id);
+    const record = store.state?.threads?.[id] ?? null;
+    // 记录删掉后 worktree 目录与 dsh/ 分支仍在磁盘：必须如实告诉调用方，别让它们变孤儿
+    const orphaned = {
+      worktree: String(record?.worktree ?? ""),
+      branch: String(record?.branch ?? ""),
+    };
+    const removed = store.detachThread(id);
     if (removed) {
       store.appendAudit({
         action: "thread/detached",
         ...(project?.id ? { projectId: project.id } : {}),
-        sessionId,
+        sessionId: id,
+        ...(orphaned.worktree !== "" ? { worktree: orphaned.worktree } : {}),
+        ...(orphaned.branch !== "" ? { branch: orphaned.branch } : {}),
       });
     }
     store.save();
-    return removed;
+    return { detached: removed === true, ...orphaned };
   }
 
   // ================= B2：把桩接通（协调器 / 审批 / PR / thread 体验） =================
@@ -4535,11 +4562,15 @@ export class ProjectsService extends TypertRemoteService {
         const parsed =
           gh.code === 0 ? parsePrList(gh.stdout) : { ok: false, rows: [], reason: "gh-failed" };
         if (!parsed.ok) {
-          store.appendAudit({
-            action: "pr/poll-failed",
-            projectId: project.id,
-            reason: parsed.reason,
-          });
+          if (this.prPoll.lastFailure !== parsed.reason) {
+            store.appendAudit({
+              action: "pr/poll-failed",
+              projectId: project.id,
+              reason: parsed.reason,
+            });
+            this.prPoll.lastFailure = parsed.reason;
+            store.save();
+          }
           projects.push({
             projectId: project.id,
             name: project.name,
@@ -4559,13 +4590,15 @@ export class ProjectsService extends TypertRemoteService {
             /* 线程可能在轮询期间被移除 */
           }
         }
-        if (patches.length > 0) store.save();
-        store.appendAudit({
-          action: "pr/polled",
-          projectId: project.id,
-          openPrs: verdict.openPrs,
-          changed: patches.length,
-        });
+        if (patches.length > 0) {
+          store.appendAudit({
+            action: "pr/polled",
+            projectId: project.id,
+            openPrs: verdict.openPrs,
+            changed: patches.length,
+          });
+          store.save();
+        }
         projects.push({
           projectId: project.id,
           name: project.name,
@@ -4585,7 +4618,8 @@ export class ProjectsService extends TypertRemoteService {
         nextDelayMs: nextPollDelay({ failures: this.prPoll.failures }),
       };
       this.prPoll.lastResult = result;
-      store.save();
+      if (anyPolled) this.prPoll.lastFailure = "";
+      // 不在这里无条件 store.save()：每 30–90s 全量重写且挤审计，改动已在 patron 分支里落盘
       return result;
     } finally {
       this.prPoll.inFlight = false;
@@ -5170,41 +5204,61 @@ export class ProjectsService extends TypertRemoteService {
       threads.find((/** @type {any} */ thread) => String(thread.sessionId ?? "") !== "")
         ?.sessionId ?? "";
     const dirs = Array.isArray(project.dirs) ? project.dirs.filter(Boolean) : [];
-    const sessionId = sessionForProjectDir(threads, String(dirs[0] ?? ""), fallbackSession);
     if (dirs.length === 0) return { available: false, reason: "no-dir", query: text, matches: [] };
-    if (String(sessionId) === "")
-      return { available: false, reason: "no-session", query: text, matches: [] };
     const workspaceFiles = this.hostService("workspaceFiles");
     if (workspaceFiles === undefined || typeof workspaceFiles.search !== "function")
       return { available: false, reason: "host-unavailable", query: text, matches: [] };
     if (text === "") return { available: true, reason: "", query: "", matches: [], nameOnly: true };
-    try {
-      const page = await workspaceFiles.search(
-        { sessionId: String(sessionId), workspaceRoot: String(dirs[0]) },
-        {
-          query: text,
-          excludedPaths: [],
-          includeHidden: true,
-          respectGitignore: true,
-        },
-        new AbortController().signal,
-      );
-      const matches = (Array.isArray(page?.matches) ? page.matches : [])
-        .slice(0, 50)
-        .map((/** @type {any} */ match) => ({
-          path: String(match?.path ?? ""),
-          type: String(match?.type ?? "file"),
-        }));
-      return { available: true, reason: "", query: text, matches, nameOnly: true };
-    } catch (error) {
+    /** @type {any[]} */
+    const matches = [];
+    let searched = 0;
+    let lastError = "";
+    // 多目录项目以前只搜 dirs[0]：其它目录里的文件永远搜不到（审查指出）
+    for (const dir of dirs.slice(0, 10)) {
+      const sessionId = sessionForProjectDir(threads, String(dir), fallbackSession);
+      if (String(sessionId) === "") continue;
+      try {
+        const page = await workspaceFiles.search(
+          { sessionId: String(sessionId), workspaceRoot: String(dir) },
+          {
+            query: text,
+            excludedPaths: [],
+            includeHidden: true,
+            respectGitignore: true,
+          },
+          new AbortController().signal,
+        );
+        searched += 1;
+        for (const match of Array.isArray(page?.matches) ? page.matches : []) {
+          if (matches.length >= 50) break;
+          matches.push({
+            path: String(match?.path ?? ""),
+            type: String(match?.type ?? "file"),
+            dir: String(dir),
+          });
+        }
+      } catch (error) {
+        lastError = String(error instanceof Error ? error.message : error).slice(0, 200);
+      }
+      if (matches.length >= 50) break;
+    }
+    if (searched === 0) {
       return {
         available: false,
         reason: "search-failed",
         query: text,
         matches: [],
-        error: String(error instanceof Error ? error.message : error).slice(0, 200),
+        error: lastError,
       };
     }
+    return {
+      available: true,
+      reason: "",
+      query: text,
+      matches,
+      nameOnly: true,
+      dirsSearched: searched,
+    };
   }
 
   /**

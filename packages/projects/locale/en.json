@@ -679,6 +679,8 @@
     "routines.save": "Save",
     "routines.update": "Update",
     "detail.prBarDismiss": "Hide the create-PR bar",
-    "detail.threadTask": "Task: {task}"
+    "detail.threadTask": "Task: {task}",
+    "detail.threadRemovedWithWorktree": "Tracking removed (worktree still on disk: {path})",
+    "detail.threadPromptFailed": "Thread created, but the first task was not delivered: {reason}"
   }
 }

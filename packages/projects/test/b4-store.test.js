@@ -2,7 +2,7 @@
 // B4 落盘单测：F52 preset / F36 routines / F30 reminders 三个字段的读写往返与上限。
 // 仓储是「写→回读」的证据链起点：UI 上看到的东西必须能从磁盘再读回来。
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -351,6 +351,28 @@ describe("setThreadTask：行标题的原始任务", () => {
       assert.equal(long.task.length, 200);
       assert.equal(store.setThreadTask("missing", "x"), null);
     } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("saveSoon：写盘失败不再静默", () => {
+  it("目录不可写时 lastSaveError 与 onSaveError 都会给出", async () => {
+    if (typeof process.getuid === "function" && process.getuid() === 0) return; // root 用户下权限无效
+    const root = mkdtempSync(join(tmpdir(), "dsh-save-error-"));
+    try {
+      const store = new ProjectStore({ root }).load();
+      store.createProject("will-fail");
+      /** @type {string[]} */
+      const seen = [];
+      store.onSaveError = (/** @type {any} */ error) => seen.push(String(error?.message ?? error));
+      chmodSync(root, 0o500);
+      store.saveSoon(10);
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      assert.notEqual(store.lastSaveError, "");
+      assert.equal(seen.length > 0, true);
+    } finally {
+      chmodSync(root, 0o700);
       rmSync(root, { recursive: true, force: true });
     }
   });

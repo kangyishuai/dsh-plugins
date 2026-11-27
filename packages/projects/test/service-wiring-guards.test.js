@@ -150,3 +150,39 @@ describe("审查 P1（第二批）回归防线", () => {
     assert.match(region, /sessionId is required/u);
   });
 });
+
+describe("审查 P2 回归防线（第三批）", () => {
+  it("PR 轮询只在有变化时写审计/写盘，失败原因去重", () => {
+    const start = serviceSource.indexOf("async pollPrs(");
+    assert.ok(start >= 0);
+    const region = serviceSource.slice(start, start + 7000);
+    assert.match(region, /lastFailure/u);
+    assert.match(region, /if \(patches\.length > 0\)/u);
+    assert.doesNotMatch(region, /this\.prPoll\.lastResult = result;\s*\n\s*store\.save\(\);/u);
+  });
+
+  it("detachThread 返回 worktree/分支（不让它们变孤儿），createThread 记录 prompt 失败", () => {
+    const detachStart = serviceSource.indexOf("  detachThread(");
+    assert.ok(detachStart >= 0);
+    const detach = serviceSource.slice(detachStart, detachStart + 1600);
+    assert.match(detach, /detached:/u);
+    assert.match(detach, /worktree/u);
+    const create = methodRegion(serviceSource, "createThread");
+    assert.match(create, /thread\/prompt-failed/u);
+    assert.match(create, /promptFailed/u);
+  });
+
+  it("searchLibraryFiles 遍历多个 dirs（不再只看 dirs[0]）", () => {
+    const start = serviceSource.indexOf("async searchLibraryFiles(");
+    assert.ok(start >= 0);
+    const region = serviceSource.slice(start, start + 4000);
+    assert.match(region, /for \(const dir of dirs/u);
+    assert.match(region, /dirsSearched/u);
+  });
+
+  it("写盘失败会通知（lastSaveError/onSaveError）", () => {
+    const storeSource = readFileSync(join(here, "..", "lib", "store.js"), "utf8");
+    assert.match(storeSource, /lastSaveError/u);
+    assert.match(storeSource, /onSaveError\?\.\(/u);
+  });
+});

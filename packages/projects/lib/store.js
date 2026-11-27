@@ -638,6 +638,10 @@ export class ProjectStore {
     this.now = options.now ?? (() => Date.now());
     /** 待写盘定时器（saveSoon 合并用）；null 表示没有排队中的写。 @type {any} */
     this.saveTimer = null;
+    /** 最近一次合并写盘失败的消息（供 describe/日志暴露，不再静默）。 */
+    this.lastSaveError = "";
+    /** 可选回调：写盘失败时通知宿主（service 接到 logger.warn）。 @type {any} */
+    this.onSaveError = null;
     /** @type {any} */
     this.state = emptyState(this.root);
   }
@@ -677,6 +681,7 @@ export class ProjectStore {
     // 紧凑 JSON：pretty 版本实测大 57%（2.36MB 时单次写 6ms），落盘体积/耗时都是纯浪费
     writeFileSync(tmp, `${JSON.stringify(this.state)}\n`, { mode: 0o600 });
     renameSync(tmp, this.file);
+    this.lastSaveError = "";
     return this;
   }
 
@@ -693,8 +698,14 @@ export class ProjectStore {
         this.saveTimer = null;
         try {
           this.save();
-        } catch {
-          /* 写盘失败下次再试；不打断事件处理 */
+        } catch (error) {
+          // 磁盘满/权限变化时以前完全静默：事件在内存里更新、重启全丢，调用方毫不知情
+          this.lastSaveError = String(/** @type {any} */ (error)?.message ?? error).slice(0, 200);
+          try {
+            this.onSaveError?.(error);
+          } catch {
+            /* ignore */
+          }
         }
       },
       Math.max(0, Number(delayMs) || 0),
