@@ -1,5 +1,16 @@
 # @kangyishuai/dsh-projects
 
+## 0.10.10
+
+### Patch Changes
+
+- [#348](https://github.com/kangyishuai/dsh-plugins/pull/348) [`efccaca`](https://github.com/kangyishuai/dsh-plugins/commit/efccaca07913e9942be88cf19ad215c6ed7b54e6) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 修一个真机复验发现的 UX bug：在项目列表点行尾 `⋯ → 删除…` 时，点击会冒泡到整行，
+  **删除确认框弹出的同时把项目详情页也打开了**（确认框挂在详情页之上，关闭后落在 BODY/详情页）。
+  
+  - 项目行 `onClick` 现在忽略来自行内 button/menu/menuitem/input 等控件的点击（与详情页线程行的守卫同口径）
+  - 重新验证：打开行删除确认后仍在列表页；取消/Esc 关闭后焦点归还「更多操作」按钮
+  - 附带把这条写进源码守卫，防止回归
+
 ## 0.10.9
 
 ### Patch Changes
