@@ -4,13 +4,13 @@
 
 ## 分层
 
-| 层                   | 命令                                           | 覆盖                                                                                                                                                                                      | 依赖                                                         |
-| -------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| 单元                 | `pnpm --filter @kangyishuai/dsh-casefile test` | **263 项**：core（model/store/digest/manifest/brief/bundle/ingest/autonomy/provenance/app-bundle/login-wait/png）、actions（含义务关闭硬门、外部摄入、L3 预算）、tools、Remote 声明一致性 | 无                                                           |
-| 静态                 | `pnpm verify`                                  | lint + 类型 + 插件规范 + 文档一致性 + 公开边界 + 全部测试                                                                                                                                 | 无                                                           |
-| web 端到端（API 级） | `pnpm smoke:casefile`                          | **69 项**：临时 DSH_HOME 装包 + 真实 web 宿主，打 Remote 端点：项目/证据/结论/义务/检查/规格包/脱敏/审计/能力探测 + **外部报告摄入（dryRun 与真摄入）**                                   | 本机 `dsh`                                                   |
-| 桌面只读回归         | `pnpm smoke:casefile-desktop --require`        | **19 项**：真实 Electron 渲染进程：侧栏入口、工作台页、**自主性级别徽章**、**回收站入口/列表/返回（只读）**、新建表单开关、设置分节、Esc 不崩                                             | 桌面版**已装本插件**且带 `--remote-debugging-port=9222` 启动 |
-| 发版门禁             | `pnpm gate casefile`                           | verify → web 冒烟 → 桌面回归                                                                                                                                                              | 同上；桌面未就绪时用 `--skip-desktop`（门禁不完整）          |
+| 层                   | 命令                                           | 覆盖                                                                                                                                                                                                                                                  | 依赖                                                         |
+| -------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| 单元                 | `pnpm --filter @kangyishuai/dsh-casefile test` | **277 项**：core（model/store/digest/manifest/brief/bundle/ingest/autonomy/provenance/app-bundle/login-wait/png）、actions（含义务关闭硬门、外部摄入、L3 预算）、tools、Remote 声明一致性、**client 半 UX（vm 渲染真实 `lib/client.js`，14 项）**     | 无                                                           |
+| 静态                 | `pnpm verify`                                  | lint + 类型 + 插件规范 + 文档一致性 + 公开边界 + 全部测试                                                                                                                                                                                             | 无                                                           |
+| web 端到端（API 级） | `pnpm smoke:casefile`                          | **69 项**：临时 DSH_HOME 装包 + 真实 web 宿主，打 Remote 端点：项目/证据/结论/义务/检查/规格包/脱敏/审计/能力探测 + **外部报告摄入（dryRun 与真摄入）**                                                                                               | 本机 `dsh`                                                   |
+| 桌面只读回归         | `pnpm smoke:casefile-desktop --require`        | **30 项**：真实 Electron 渲染进程：侧栏入口、工作台页、自主性徽章与**人话提示**、**空态引导/高级折叠**、新建表单开关/**标签/必填校验**、回收站入口/列表/返回（只读）、**危险操作 → drop 影响面 dry-run（只读）**、设置分节与 **REA 信息态**、Esc 不崩 | 桌面版**已装本插件**且带 `--remote-debugging-port=9222` 启动 |
+| 发版门禁             | `pnpm gate casefile`                           | verify → web 冒烟 → 桌面回归                                                                                                                                                                                                                          | 同上；桌面未就绪时用 `--skip-desktop`（门禁不完整）          |
 
 ## web 冒烟（API 级）
 
@@ -106,7 +106,7 @@ DSH_HOME="$H" dsh web --port 0 --no-open    # 打印 http://127.0.0.1:<port>/?to
 | `publishConfig.access`            | `public`                                                                                                                   |
 | `dsh.bundle.patch` / `dsh.client` | 均在，client 注入 `dsh-client-ui-workspace` + `dsh-client-ui-slots`                                                        |
 | `pnpm probe:runtime`              | **72/72 PASS**（0 WARN / 0 FAIL）                                                                                          |
-| `pnpm verify`                     | 通过（当时 138 项；现 263 项）                                                                                             |
+| `pnpm verify`                     | 通过（当时 138 项；现 277 项）                                                                                             |
 | web 冒烟                          | 52/52                                                                                                                      |
 | 桌面只读回归                      | **14 PASS / 0 FAIL**（真实 Electron 渲染进程，CDP 9222，2026-11-18）                                                       |
 
@@ -201,3 +201,18 @@ await page.evaluate(`(() => { ... })()`);
 **独立复审补修（2026-11-28，第二轮）**：B1 冒烟变量名写错（实测 56 PASS / 1 FAIL → 修后 69 PASS / 0 FAIL）；B2「带扩展名路径」脱敏分支恒不命中（`${PATH_TAIL}?` → `(?:${PATH_TAIL})?`，补正/负例）；`restore` 先校验条目 manifest 再搬家（坏条目留在回收站并写 `project/restore-failed` 审计）；drop dry-run 改返回 `previewTrashPath`（预览路径非最终落点）；指针淘汰改 LRU；`updateJson` 串行化测试改用含 `await` 的 mutate（撤锁会红）；报告脱敏冒烟改为「target.ref 是本机路径」的探针强断言。F4/F6/F7/F12/F13/F14 记入复审报告延后。
 
 **第三轮复审补修（2026-11-28）**：`listTrash` 对更高版本/不可读的 `project.json` 降级为「元数据未知」（不再整表 `read-only-newer` 报错）并补 version 99 的 list/restore 测试；恢复失败审计写入失败只告警、不顶掉原始错误；README 把「任意带扩展名路径」收窄为「绝对路径 + 1–8 字符扩展名」；删除 Config 表里不存在的 `redactOnExport`；报告脱敏强断言去掉永远为真的空断言；`purge` dry-run 字段改 `trashRoot`（与 drop 的 `previewTrashPath` 分开）。N7 的回滚分支与 N8 的 actor 口径仍按 F12/F14 记录延后。
+
+## 2026-11-28 用户模拟 UX 修复批次（非技术用户实测，0.9.1）
+
+这一批只改 client 半文案/表单行为 + README，接口契约不变（`case_project` 的 drop 说明新增「必须用户明确同意」，属于描述收紧）。全部先红后绿：新增 `test/client-ux.test.js`，用 vm 把**真实的 `lib/client.js`** 渲染成树再断言（React shim + 假宿主 ctx），覆盖：
+
+| 审计项     | 用户可见问题                                                  | 修法与断言                                                                                                                                                                                                                                          |
+| ---------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| USIM-U1-04 | 空态直接教用户调 `case_claim` / `case_evidence`，像报错       | 项目空态改成「是什么 / 适合谁 / 第一步」；三个页签空态人话在前；工具名收进「给开发者 / AI 的说明」`<details>`；设置里 REA 未接入改为 `.cf-info` 可选/不可用说明（`data-casefile-rea-notice`，不再是红色错误），`mcp__rea__*` 检测细节进同一高级折叠 |
+| USIM-U1-05 | 新建表单两个下拉无标签、空标题点「创建」没反应                | 四个字段都包 `<label>` + `aria-label`/`aria-required`；必填标题失焦/提交时 `data-invalid=true` 高亮并给可读错误（`data-casefile-create-error`）；提交中禁用输入与按钮；失败留在表单上显示「创建失败：…」                                            |
+| USIM-U1-16 | 「自主性 L2」悬浮说明是 `scope=selected` 代码术语             | 悬浮提示改人话，L0–L3 作为第二行副标题保留                                                                                                                                                                                                          |
+| USIM-U2-16 | 「运行」tab 空态同一句出现两次                                | 空态只由居中块渲染一次；`data-casefile-empty="runs"`                                                                                                                                                                                                |
+| USIM-U3-07 | drop 只能由 agent 工具 `confirm:true` 触发，用户端无入口/确认 | 详情页新增默认收起的「危险操作 → 移入回收站」：先 `dryRun` 展示文件数/体积/可恢复，再显式确认；工具描述写明「必须用户明确同意，不得自行 drop」；README 明示 `danger-full-access` / `approval: never` 下宿主不额外弹审批（文档约束而非强制）         |
+| USIM-U3-11 | README 缺卸载残留说明                                         | 双语 README 新增「卸载后残留 / Uninstall」：数据根、`projects/`、`trash/`、审计与指针文件、手工 `rm -rf` 清理与先导出 spec/report 的提醒                                                                                                            |
+
+**验证**：`node --test`（包内）**277 pass / 0 fail**（263 → 277，新增 14 条 client UX）。桌面只读脚本由 19 项增至 **30 项**（新增空态/表单校验/REA 信息态/危险操作 dry-run 断言；**本轮未跑桌面**，需发版门禁在真实桌面版上重跑后回填 PASS 记录）。web 冒烟未跑（接口契约未变；`case_project` 只在 description 上收紧）。
