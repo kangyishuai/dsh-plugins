@@ -48,6 +48,7 @@ import {
 } from "./events.js";
 import { createFollowupTracker } from "./followup.js";
 import { cheapSkipReason } from "./gates.js";
+import { createGenerateStatus } from "./generate-status.js";
 import { createInflightRegistry, inflightBlocksGenerateNow } from "./inflight.js";
 import { nextStepProjection } from "./projection.js";
 import {
@@ -327,6 +328,11 @@ export class NextStepService extends TypertRemoteService {
      * `turn/start` 只标记 superseded、不 abort，让已花的 token 变成 `shown:false` 候选。
      */
     this.inflight = createInflightRegistry();
+    /**
+     * 每会话最近一次**已结束**的生成（成功也记）：客户端用 `generateState` 查询它，把自动生成/
+     * 手动生成的失败落成「重试 + 原因摘要」，而不是只写进诊断日志（USIM-U2-04，见 generate-status.js）。
+     */
+    this.generateStatus = createGenerateStatus();
     /** 设置缓存（1s TTL），使「改文件即生效」成立又不必每次读盘。 */
     this.settingsCache = { at: 0, value: /** @type {any} */ (null) };
     /** 事件日志（惰性创建：需要知道包版本）。**缓存 promise**，避免并发创建写两条 meta。 @type {any} */
@@ -586,7 +592,10 @@ export class NextStepService extends TypertRemoteService {
   }
 
   /**
-   * 跑一次模型调用并为该轮写卡（自动门控与手动补生成共用）。
+   * 跑一次模型调用并为该轮写卡（自动门控与手动补生成共用），**并把结局记进每会话的
+   * `generateStatus`**：自动生成失败没有会话记录可写，客户端只能靠这条记录得知「刚才失败了、
+   * 原因是什么」（USIM-U2-04）。失败记录带 `detail`（schema 的 `json:empty`、宿主错误消息、
+   * 超时秒数等），客户端把它做「一行原因 + 可展开详情」。
    * @param {any} session
    * @param {any} settings
    * @param {{
@@ -595,9 +604,26 @@ export class NextStepService extends TypertRemoteService {
    *   context?: { transcript: string, material: string },
    * }} options
    *   force=true 时无视档位阈值（用户明确要卡），但仍受总开关/预算约束
-   * @returns {Promise<{ ok: true, card: any } | { ok: false, reason: string }>}
+   * @returns {Promise<{ ok: true, card: any } | { ok: false, reason: string, detail: string }>}
    */
   async writeCardFor(session, settings, options) {
+    const outcome = await this.generateCardFor(session, settings, options);
+    this.generateStatus.record(session.id, outcome, options.turn);
+    return outcome;
+  }
+
+  /**
+   * `writeCardFor` 的实现体（不记录：由外层统一记录，避免每个失败分支各抄一遍）。
+   * @param {any} session
+   * @param {any} settings
+   * @param {{
+   *   turn: number, seq: number, force: boolean,
+   *   feat?: { answerChars: number, toolCalls: number },
+   *   context?: { transcript: string, material: string },
+   * }} options
+   * @returns {Promise<{ ok: true, card: any } | { ok: false, reason: string, detail: string }>}
+   */
+  async generateCardFor(session, settings, options) {
     const sessionId = session.id;
     const turn = options.turn;
     const feat = options.feat ?? answerStatsOf(session);
@@ -607,7 +633,11 @@ export class NextStepService extends TypertRemoteService {
     if (!hasContext(context.transcript)) {
       this.counters.skipped += 1;
       this.markSkip("no-context", "no conversation content to base a card on");
-      return { ok: false, reason: "no-context" };
+      return {
+        ok: false,
+        reason: "no-context",
+        detail: "no conversation content to base a card on",
+      };
     }
     // 同一会话又要起一次新生成：旧的那次已经没有任何价值，取消掉（登记簿负责 abort + 注销）。
     if (this.inflight.has(sessionId)) this.abortInflight(sessionId);
@@ -620,13 +650,14 @@ export class NextStepService extends TypertRemoteService {
     try {
       const result = await this.generate(session, settings, controller.signal, context);
       if (controller.signal.aborted) {
+        const abortKind = abortReasonOf(controller.signal.reason);
         this.markAbort(controller.signal.reason, settings.timeoutMs);
-        await this.writeErrorEvent(
-          sid,
-          turn,
-          abortSkipKind(abortReasonOf(controller.signal.reason)),
-        );
-        return { ok: false, reason: "aborted" };
+        await this.writeErrorEvent(sid, turn, abortSkipKind(abortKind));
+        return {
+          ok: false,
+          reason: abortKind,
+          detail: abortReasonText(abortKind, settings.timeoutMs),
+        };
       }
       // 同一会话又起了新的一次生成（登记簿已被替换、自己也被 abort）：算取消而不是超时。
       // 注意：`turn/start` 走的是 supersede（不 abort），不会命中这里——那种情况要继续往下走，
@@ -634,7 +665,11 @@ export class NextStepService extends TypertRemoteService {
       if (!this.inflight.isCurrent(sessionId, controller)) {
         this.markAbort(undefined, settings.timeoutMs);
         await this.writeErrorEvent(sid, turn, "cancelled");
-        return { ok: false, reason: "aborted" };
+        return {
+          ok: false,
+          reason: "cancelled",
+          detail: abortReasonText("cancelled", settings.timeoutMs),
+        };
       }
       if (result.ok !== true) {
         // 三种「没有可用卡片」的结局分开记，诊断面板才说得出是哪一种（docstring 见 generate）。
@@ -643,11 +678,15 @@ export class NextStepService extends TypertRemoteService {
           this.lastError = "generated card is not grounded in this conversation";
           this.markFailure(this.lastError);
           await this.writeErrorEvent(sid, turn, "ungrounded", result.detail);
-          return { ok: false, reason: "ungrounded" };
+          return {
+            ok: false,
+            reason: "ungrounded",
+            detail: result.detail ?? "generated card is not grounded in this conversation",
+          };
         }
         // generate() 已经把原因写进 lastError；这里只补事件。
         await this.writeErrorEvent(sid, turn, "schema", this.lastError);
-        return { ok: false, reason: "schema" };
+        return { ok: false, reason: "schema", detail: this.lastError };
       }
       const value = result.suggestion.value;
       // 三个输入共同决定 shown（见 write-plan.js）：
@@ -683,7 +722,7 @@ export class NextStepService extends TypertRemoteService {
         this.lastError = "generated card failed validation";
         this.markFailure(this.lastError);
         await this.writeErrorEvent(sid, turn, "schema", this.lastError);
-        return { ok: false, reason: "schema" };
+        return { ok: false, reason: "schema", detail: this.lastError };
       }
       appendPluginRecord(session, CARD_RECORD, card);
       this.counters.generated += 1;
@@ -731,26 +770,35 @@ export class NextStepService extends TypertRemoteService {
       // 超时/取消会让 generate() 以抛错收场（不是返回 null）：这种中止原来完全无痕，
       // 既不计 failed 也不写 lastSkip，诊断里看不到——所以先单独归类。
       if (controller.signal.aborted) {
+        const abortKind = abortReasonOf(controller.signal.reason);
         this.markAbort(controller.signal.reason, settings.timeoutMs);
-        await this.writeErrorEvent(
-          sid,
-          turn,
-          abortSkipKind(abortReasonOf(controller.signal.reason)),
-        );
-        return { ok: false, reason: "aborted" };
+        await this.writeErrorEvent(sid, turn, abortSkipKind(abortKind));
+        return {
+          ok: false,
+          reason: abortKind,
+          detail: abortReasonText(abortKind, settings.timeoutMs),
+        };
       }
       // 宿主自己抛的错误里也可能写着超时（定时器还没触发）：同样按中止记，不记成 failed。
       if (abortReasonOf(error) === "timeout") {
         this.markAbort(error, settings.timeoutMs);
         await this.writeErrorEvent(sid, turn, "timeout");
-        return { ok: false, reason: "aborted" };
+        return {
+          ok: false,
+          reason: "timeout",
+          detail: abortReasonText("timeout", settings.timeoutMs),
+        };
       }
       this.counters.failed += 1;
       this.lastError = error instanceof Error ? error.message : String(error);
       this.markFailure(this.lastError);
       await this.writeErrorEvent(sid, turn, /route/u.test(this.lastError) ? "route" : "llm");
       this.warn("card generation failed", error);
-      return { ok: false, reason: "failed" };
+      return {
+        ok: false,
+        reason: /route/u.test(this.lastError) ? "route" : "failed",
+        detail: this.lastError,
+      };
     } finally {
       clearTimeout(timer);
       this.inflight.finish(sessionId, controller);
@@ -1267,7 +1315,13 @@ export class NextStepService extends TypertRemoteService {
       // 只有「本次要的回合、且未被取代」才值得等；其余（别的回合 / superseded）取消后继续。
       const pending = this.inflight.get(sessionId);
       if (pending !== undefined) {
-        if (inflightBlocksGenerateNow(pending, turn)) return { ok: false, reason: "inflight" };
+        if (inflightBlocksGenerateNow(pending, turn)) {
+          return {
+            ok: false,
+            reason: "inflight",
+            detail: "a generation for this turn is still running",
+          };
+        }
         this.abortInflight(sessionId);
       }
       const result = await this.writeCardFor(session, settings, {
@@ -1280,7 +1334,55 @@ export class NextStepService extends TypertRemoteService {
       );
       return result.ok === true
         ? { ok: true, via: "generated" }
-        : { ok: false, reason: result.reason };
+        : { ok: false, reason: result.reason, detail: result.detail ?? "" };
+    } catch (error) {
+      rethrowRemote(error);
+    }
+  }
+
+  /**
+   * 客户端查询「这个会话现在的生成状态」：是否有在途生成、最近一次结束的生成结果。
+   * **只读**（不写会话日志、不发模型调用），客户端在补生成入口挂载时查一次，把自动生成的失败
+   * 显示成「重试 + 原因摘要」（USIM-U2-04）；在途时进入等待态并轮询它，而不是把一次 `inflight`
+   * 回执当成永久状态。旧客户端/旧宿主不认识这个方法也没关系：调用失败时客户端按「没有信息」降级。
+   * @param {any} request
+   * @returns {Promise<any>}
+   */
+  async generateState(request) {
+    try {
+      const sessionId = typeof request?.sessionId === "string" ? request.sessionId : "";
+      if (sessionId === "") return { ok: false, reason: "missing" };
+      const pending = this.inflight.get(sessionId);
+      return {
+        ok: true,
+        inflight: pending !== undefined,
+        // 在途生成对应的回合（没有在途时为 null）：客户端只在「同一回合」时等待，
+        // 别的回合（例如被 superseded 的旧回合）不该挡住本回合的补生成按钮。
+        turn: pending === undefined ? null : pending.turn,
+        last: this.generateStatus.last(sessionId),
+      };
+    } catch (error) {
+      rethrowRemote(error);
+    }
+  }
+
+  /**
+   * 取消该会话的在途生成（客户端超时兜底用）：UI 结束 loading 前先让服务端真的停下来，
+   * 避免「界面说超时了、后台还在跑」（USIM-U2-04 的要求）。只取消、不写决策/不写会话日志。
+   * @param {any} request
+   * @returns {Promise<any>}
+   */
+  async cancelGenerate(request) {
+    try {
+      const sessionId = typeof request?.sessionId === "string" ? request.sessionId : "";
+      if (sessionId === "") return { ok: false, reason: "missing" };
+      const pending = this.inflight.get(sessionId);
+      if (pending === undefined) return { ok: true, cancelled: false };
+      // 复审 B2：带 turn 时只取消同一回合的在途生成，避免过期超时误杀更晚/别的窗口的生成。
+      const turn = typeof request?.turn === "number" ? request.turn : null;
+      if (turn !== null && pending.turn !== turn) return { ok: true, cancelled: false };
+      this.abortInflight(sessionId);
+      return { ok: true, cancelled: true };
     } catch (error) {
       rethrowRemote(error);
     }
@@ -1435,6 +1537,8 @@ export class NextStepService extends TypertRemoteService {
 declareRemote(NextStepService, "act");
 declareRemote(NextStepService, "dismiss");
 declareRemote(NextStepService, "generateNow");
+declareRemote(NextStepService, "generateState");
+declareRemote(NextStepService, "cancelGenerate");
 declareRemote(NextStepService, "impression");
 declareRemote(NextStepService, "report");
 declareRemote(NextStepService, "settings");

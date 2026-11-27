@@ -187,18 +187,19 @@ pnpm verify                          # 仓库门禁（含单测、规范、文�
 
 应覆盖的范围（与 `lib/`、`test/` 同步维护）：
 
-| 主题             | 要证明的事                                                                                                                                                                                                                                                                                                                                                                                       |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 输出校验         | 严格 JSON 解析；**1–2 条** option、两条时 `stance` 必须不同、`label` **2–20 字**且必须含具体对象（泛化按钮被丢弃）、`nextPrompt` ≤150 字且与推荐项共享具体对象（否则退化成该按钮文案）、`value` 必须是三档之一（旧字段 `needed` 兼容映射）、**超长展示文本截断**、**单条不合格只丢这一条**；只有「结构不可用 / 三档缺失 / 一条可用建议都不剩」才 `problem=json\|value\|options` 并交给修复调用。 |
-| 触发门           | 只有 `reason.kind === "completed"` 的回合会**生成**；非 completed 的回合也会进一次便宜闸并落 `gate:"turn-error"` 事件（AUD-NS-05，仍不调模型）；`enabled` / `card` 关上、暂停、**出过的卡**数到 `maxCardsPerSession` 都不生成；短答闸是「**本轮回答总字数 <80 且本轮无工具调用**」；同一 turn 已有 card 或 decision 不重复。三档 × 档位的 `shouldShow` 有 9 格真值表。                           |
-| 子代理与会话状态 | `origin === "subagent"` 或 `delegationDepth > 0` 的会话跳过；会话不 live 时跳过。                                                                                                                                                                                                                                                                                                                |
-| 投影折叠         | card + decision + reveal 记录折叠成 `{ cards, decisions, reveals }`；`turn` 是 key；旧记录（无 `value`/`shown`）读成 `shown:true / value:"must"`；`resolveVisibility` 覆盖「显示 × 揭示 × 决策 × 是否最新轮」全组合。                                                                                                                                                                            |
-| RPC              | `act` 返回 `stale` / `missing` / `disabled` / `error` 的优先级；`act` 只写 decision 并回按钮文本，**不发送**；`generateNow` 只对「最近一个已完成回合」生效（`no-turn` / `stale` / `exists` / `inflight` / `budget` / `disabled`），`force` 时忽略 `needed=false`；`dismiss`、`settings`、`updateSettings`、`diagnostics`（含 `lastSkip` / `skippedByModel`）形状。                               |
-| 设置 v3          | `cardThreshold` 只认三值（非法回落 `could`）、`telemetry` 只认布尔、预算默认 **60**；迁移只改「恰好等于旧默认值」的字段：v1 的 30 → 60、v2 的 120 → 60，显式 `schemaVersion:2/3` 的 30 / 45 / 120（非旧默认值）不动；读取不凭空建文件。                                                                                                                                                          |
-| 客户端纯函数     | 只对最后一轮渲染可交互卡；有 decision 即只读并回显被点那一粒（`decision.index` → `label`）；ghost 显示条件（ghost 开、草稿空、无附件/`@`/`/`、`phase === "plain"`、空闲）；草稿非空时胶囊禁用；`⌘↵` 只在「输入干净 + 空闲 + 卡片可交互」时接管；关闭总开关时依赖设置项不渲染。                                                                                                                   |
-| 旧卡折叠         | `test/client-card-collapse.test.js`：`state="readonly"` 的卡必须折叠成一行（`data-next-step-collapsed`，只有摘要首句、无提问/胶囊/✕，完整摘要在 `title`）；可交互卡与已决策卡不折叠；`firstSentenceOf` 的截断/压空白/上限。                                                                                                                                                                      |
-| i18n 键集 parity | `test/locale-parity.test.js`：`client.js` 内联 zh/en 字典与 `locale/{zh,en}.json` 键集一一对应；`error.aborted` 这类漏键会直接红（AUD-NS-07）。                                                                                                                                                                                                                                                  |
-| 卡片 ⌘↵ 登记时序 | `test/client-card-shortcut.test.js`（迷你 hooks 运行时驱动**真实 client 源码**）：尾部先挂载、卡片晚到后 `⌘↵` 仍须被接管（一粒 / 两粒胶囊都覆盖）；草稿非空 / 未揭示 / 已决策一律透传。回归哨兵：卡片是投影晚到的，登记 effect 漏了可见性就永远登记不上（点击正常、快捷键静默失效）。**别按胶囊数量归因**：0.4.0 上晚到的**一粒**卡片同样不接管。                                                |
+| 主题               | 要证明的事                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 输出校验           | 严格 JSON 解析；**1–2 条** option、两条时 `stance` 必须不同、`label` **2–20 字**且必须含具体对象（泛化按钮被丢弃）、`nextPrompt` ≤150 字且与推荐项共享具体对象（否则退化成该按钮文案）、`value` 必须是三档之一（旧字段 `needed` 兼容映射）、**超长展示文本截断**、**单条不合格只丢这一条**；只有「结构不可用 / 三档缺失 / 一条可用建议都不剩」才 `problem=json\|value\|options` 并交给修复调用。                                                                    |
+| 触发门             | 只有 `reason.kind === "completed"` 的回合会**生成**；非 completed 的回合也会进一次便宜闸并落 `gate:"turn-error"` 事件（AUD-NS-05，仍不调模型）；`enabled` / `card` 关上、暂停、**出过的卡**数到 `maxCardsPerSession` 都不生成；短答闸是「**本轮回答总字数 <80 且本轮无工具调用**」；同一 turn 已有 card 或 decision 不重复。三档 × 档位的 `shouldShow` 有 9 格真值表。                                                                                              |
+| 子代理与会话状态   | `origin === "subagent"` 或 `delegationDepth > 0` 的会话跳过；会话不 live 时跳过。                                                                                                                                                                                                                                                                                                                                                                                   |
+| 投影折叠           | card + decision + reveal 记录折叠成 `{ cards, decisions, reveals }`；`turn` 是 key；旧记录（无 `value`/`shown`）读成 `shown:true / value:"must"`；`resolveVisibility` 覆盖「显示 × 揭示 × 决策 × 是否最新轮」全组合。                                                                                                                                                                                                                                               |
+| RPC                | `act` 返回 `stale` / `missing` / `disabled` / `error` 的优先级；`act` 只写 decision 并回按钮文本，**不发送**；`generateNow` 只对「最近一个已完成回合」生效（`no-turn` / `stale` / `exists` / `inflight` / `budget` / `disabled`），`force` 时忽略 `needed=false`；`dismiss`、`settings`、`updateSettings`、`diagnostics`（含 `lastSkip` / `skippedByModel`）形状。                                                                                                  |
+| 设置 v3            | `cardThreshold` 只认三值（非法回落 `could`）、`telemetry` 只认布尔、预算默认 **60**；迁移只改「恰好等于旧默认值」的字段：v1 的 30 → 60、v2 的 120 → 60，显式 `schemaVersion:2/3` 的 30 / 45 / 120（非旧默认值）不动；读取不凭空建文件。                                                                                                                                                                                                                             |
+| 客户端纯函数       | 只对最后一轮渲染可交互卡；有 decision 即只读并回显被点那一粒（`decision.index` → `label`）；ghost 显示条件（ghost 开、草稿空、无附件/`@`/`/`、`phase === "plain"`、空闲）；草稿非空时胶囊禁用；`⌘↵` 只在「输入干净 + 空闲 + 卡片可交互」时接管；关闭总开关时依赖设置项不渲染。                                                                                                                                                                                      |
+| 旧卡折叠           | `test/client-card-collapse.test.js`：`state="readonly"` 的卡必须折叠成一行（`data-next-step-collapsed`，只有摘要首句、无提问/胶囊/✕，完整摘要在 `title`）；可交互卡与已决策卡不折叠；`firstSentenceOf` 的截断/压空白/上限。                                                                                                                                                                                                                                         |
+| i18n 键集 parity   | `test/locale-parity.test.js`：`client.js` 内联 zh/en 字典与 `locale/{zh,en}.json` 键集一一对应；`error.aborted` 这类漏键会直接红（AUD-NS-07）。                                                                                                                                                                                                                                                                                                                     |
+| 生成失败反馈与超时 | `test/generate-status.test.js`：宿主侧「每会话最近一次生成」记录（成功/失败归一、detail 截断、FIFO、空 id）。`test/client-retry-feedback.test.js`（迷你 hooks 驱动真实 client）：手动失败 → loading 结束 + 一行原因 + 「重试」+ 详情可展开；自动生成失败/刷新后靠 `generateState` 显示同一套反馈；RPC 挂起 → 客户端超时、**先 `cancelGenerate` 再**显示「生成超时，可重试」；`inflight` 进入等待态轮询后台状态；旧宿主缺 `generateState` 时静默降级（USIM-U2-04）。 |
+| 卡片 ⌘↵ 登记时序   | `test/client-card-shortcut.test.js`（迷你 hooks 运行时驱动**真实 client 源码**）：尾部先挂载、卡片晚到后 `⌘↵` 仍须被接管（一粒 / 两粒胶囊都覆盖）；草稿非空 / 未揭示 / 已决策一律透传。回归哨兵：卡片是投影晚到的，登记 effect 漏了可见性就永远登记不上（点击正常、快捷键静默失效）。**别按胶囊数量归因**：0.4.0 上晚到的**一粒**卡片同样不接管。                                                                                                                   |
 
 **没覆盖**：真实宿主槽位、真实 Electron 渲染进程、真实的 `setDraft` → `submit` 时序。所以下面两层不能省。
 （`test/client-card-shortcut.test.js` 已经用迷你 hooks 运行时贴近了「投影晚到 + 重渲染」的时序，但仍不是真实 React 与真实槽位。）
@@ -669,7 +670,7 @@ ls ~/.dsh/next-step/report-*.md
 | AUD-NS-07 | `error.aborted` 补进 `locale/{zh,en}.json`；新增内联字典 ↔ locale 文件的键集 parity 测试                                                                                                                                                       | `test/locale-parity.test.js`（3 项；修复前缺 `error.aborted` 即红，parity 断言失败）                                     |
 | AUD-NS-08 | README（中英）隐私段补「生成的胶囊文案会原样记录」                                                                                                                                                                                             | 文档改动，无测试                                                                                                         |
 
-单测总数：**194 → 223**（`node --test packages/next-step`，0 fail）；Wave 2 增补（§7.5）后 **229**。
+单测总数：**194 → 223**（`node --test packages/next-step`，0 fail）；Wave 2 增补（§7.5）后 **229**；USIM-U2-04（§9）后 **245**。
 
 ### 8.2 口径变化（读报表 / 诊断时注意）
 
@@ -707,3 +708,53 @@ ls ~/.dsh/next-step/report-*.md
 | 桌面只读回归（折叠断言、折叠态无 ✕）                        | **未运行**（本轮不操作 live DSH）      | `pnpm smoke:next-step-desktop --require`，预期 25 项、SKIP 均为数据分支   |
 | 会话切走时立即结算 followup                                 | 宿主没有该事件，靠 TTL 15 分钟兜底     | 已知限制，已写进两份 README；不要据此判缺陷                               |
 | ADR 0013 的预算默认值（120）与本次 60                       | ADR 属于 repo 级文档，不在本批改动范围 | 由 lead 在 repo 批次统一（ADR 增补或勘误）                                |
+
+## 9. 生成失败反馈与客户端超时（2026-11-28，USIM-U2-04）
+
+> 来源：`notes/audit/2026-11-28/user-sim-u2.md` USIM-U2-04（用户实测 P2）。现象：点「生成下一步建议」后
+> 聊天区一直显示「正在生成，请稍候」，2 分钟以上不结束、无取消/重试；诊断里其实已记录失败（`json:empty`）；
+> 整页刷新后重试，聊天区又静默恢复原状、无失败提示——与两份 README 里「补生成按钮会说明卡片被丢弃 /
+> 超时或被取消」的承诺不一致。
+>
+> 用户给的判据：失败必须在聊天区/触发按钮处**可见、可操作**；要有**客户端超时**且与服务端真实状态对齐；
+> 失败后能**重试**；**手动生成**与**自动生成后的**两条入口都要覆盖；默认仍**只读**（不写 decision）。
+
+### 9.1 三个根因
+
+1. 自动生成（`turn/end` 之后那次调用）失败**不写会话日志**，客户端没有任何通道得知「刚才失败了」，
+   于是按钮永远写着「生成下一步建议」，用户看不出刚才失败过（刷新后更是什么都不剩）。
+2. 手动生成撞上在途生成时，`generateNow` 回 `inflight`，客户端把它当**静态错误文案**「正在生成，请稍候」
+   显示一次——后台随后失败也不会有人清掉它，于是变成永久提示。
+3. 客户端没有自己的超时：`generateNow` RPC 挂住时 loading 态无限持续。
+
+### 9.2 修法
+
+| 层          | 改动                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| host 纯逻辑 | 新增 `lib/generate-status.js`：每会话记录最近一次**已结束**的生成 `{turn, ok, reason, detail, at}`（成功也记，供客户端清掉旧失败；FIFO 上限 64；detail 截断 240 字）。`writeCardFor` 包一层 `generateCardFor`，在**唯一出口**记录结局；所有失败分支统一带 `reason` + `detail`（schema 的 `json:empty`、宿主错误消息、`generation timeout after 20s` 等），超时/取消的 reason 从笼统的 `aborted` 细分为 `timeout` / `cancelled`。                                                                       |
+| host RPC    | 新增**只读** `nextStep/generateState`（`{ inflight, turn, last }`）与 `nextStep/cancelGenerate`（客户端超时兜底：取消该会话在途生成，返回 `{cancelled}`）。`generateNow` 的失败返回继续带 `reason` 并新增 `detail`；`inflight` 也带 detail。两者都不写会话日志、不写 decision。                                                                                                                                                                                                                        |
+| client      | 补生成入口变成四态状态机 `idle / loading / waiting / error`：挂载时查一次 `generateState`（自动生成失败或刷新后 → 直接「重试 + 一行原因」；同回合在途 → 等待态）；`waiting` 每 2 秒轮询，后台失败转 error、成功则随投影出卡；失败显示一行原因摘要 + 「查看详情」展开 detail；按钮文案「重试」。客户端超时 = `clamp(服务端 timeoutMs + 5s, 30s, 60s)`，超时**先调 `cancelGenerate` 再结束 loading**，显示「生成超时，可重试」。换轮次/换会话会重置状态并作废晚到的 RPC 回执；旧宿主缺新方法时静默降级。 |
+
+### 9.3 先红后绿与变异证据
+
+- **旧代码红**：把 `git show HEAD:packages/next-step/lib/client.js`（修复前的 client）放进 `/tmp` 的包副本，
+  用本次新增的 `test/client-retry-feedback.test.js` 跑 → **6/6 红**（旧 client 没有状态机/超时/状态查询）。
+- **变异红**（都在 `/tmp` 包副本上做，不动工作区）：`inflight` 不进等待态 / 去掉客户端超时定时器 /
+  超时前不调 `cancelGenerate` / 去掉挂载时状态查询的失败分支 / 轮询里忽略后台失败 → 对应用例逐个变红
+  （5/5 命中）。
+- 新测试：`test/generate-status.test.js` 8 项（纯记录层）+ `test/client-retry-feedback.test.js` 8 项（交互状态机，含换轮次状态重置）。
+
+单测计数：**229 → 245**（`node --test packages/next-step`，0 fail）。
+
+### 9.4 口径与未验证项
+
+- 服务端仍有自己的生成超时（默认 20 秒，设置可调 3–120 秒）；客户端兜底（30–60 秒）只在 RPC 自身挂住时
+  触发，且会**取消服务端在途生成**，所以默认路径下不会出现「UI 结束、后台还在跑」。
+- `inflight` 语义变化：它不再作为用户可见的错误，而是「后台仍在生成」的等待信号；等待结束后由
+  `generateState.last` 决定「出卡 / 重试 + 原因」。
+- 自动生成失败能显示，依赖宿主新增的 `generateState`。新 client + 旧 host 的混搭（DSH 换文件 + 刷新的
+  旧 bundle 缓存问题）会静默降级：按钮回到「生成下一步建议」，不影响首生成。
+- **未验证**：`generateState` / `cancelGenerate` 的真实 RPC 注册与返回形状不在 `node --test` 覆盖范围内
+  （`service.js` 依赖 `@deepseek-ai/*`，加载不了），本轮只做静态核对 + 纯记录层单测。发版门禁需要补齐：
+  web 冒烟新增两条断言（没出卡时 `data-next-step-retry-phase === "error"`、按钮文案不再是「正在生成」），
+  以及「自动生成失败后刷新仍显示重试」的桌面手工路径。

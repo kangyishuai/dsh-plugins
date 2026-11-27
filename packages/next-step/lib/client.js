@@ -31,8 +31,24 @@ window.__ModuleLoader__.load({
     let DRAFT_POLL_INTERVAL_MS = 20;
     /** 输入第一个字符后，幽灵提示在这段时间内不闪回。 */
     let GHOST_SUPPRESS_MS = 2000;
-    /** 没出卡时，等多久再露出「补生成」按钮（给自动生成留窗口，避免闪一下）。 */
-    let RETRY_GRACE_MS = 2500;
+    /**
+     * 补生成 / 等待 / 客户端超时的时序（**单测出口 `__test.timings` 会改它**，线上永远是下面这组）。
+     * - `retryGraceMs`：没出卡时等多久再露出补生成按钮（给自动生成留窗口，避免闪一下）。
+     * - `pollIntervalMs`：后台还有生成在跑时，隔多久查一次 `generateState`（不把 inflight 当永久态）。
+     * - 客户端超时 = `clamp(服务端 timeoutMs + margin, floor, ceil)`：服务端默认 20s → 30s，
+     *   用户把服务端超时调到 50s/120s 时 → 55s/60s。超过就结束 loading，并**取消服务端在途生成**
+     *   （不能 UI 说超时、后台还在跑），然后显示「生成超时，可重试」。
+     */
+    let TIMINGS = {
+      retryGraceMs: 2500,
+      pollIntervalMs: 2000,
+      clientTimeoutMarginMs: 5000,
+      clientTimeoutFloorMs: 30000,
+      clientTimeoutCeilMs: 60000,
+    };
+
+    /** 失败详情（服务端 detail）的展示上限：不把一整段模型/宿主错误塞进 UI。 */
+    let RETRY_DETAIL_CHARS = 240;
 
     /**
      * 简体中文字典（键集的事实来源）。
@@ -54,6 +70,11 @@ window.__ModuleLoader__.load({
       "error.disabled": "插件已停用",
       "error.failed": "操作失败，请重试",
       "error.aborted": "生成超时或被取消，请重试",
+      "error.timeout": "生成超时，可重试",
+      "error.cancelled": "生成已取消，可重试",
+      "error.schema": "生成失败：模型输出不符合卡片格式",
+      "error.llm": "生成失败：模型调用出错",
+      "error.route": "生成失败：没有可用的模型路由",
       "error.send": "没能把建议写进输入框",
       "error.budget": "本会话的卡片预算已用完",
       "error.exists": "这一轮已经有卡片了",
@@ -62,7 +83,11 @@ window.__ModuleLoader__.load({
       "error.ungrounded": "生成的卡片与这段对话无关，已丢弃",
       "error.noContext": "没有可用的对话内容，未生成卡片",
       "retry.generate": "生成下一步建议",
+      "retry.retry": "重试",
       "retry.generating": "正在生成…",
+      "retry.waiting": "后台正在生成，请稍候…",
+      "retry.detail": "查看详情",
+      "retry.hideDetail": "收起详情",
       "settings.title": "下一步建议",
       "settings.nav": "下一步建议",
       "settings.desc":
@@ -131,6 +156,11 @@ window.__ModuleLoader__.load({
       "error.disabled": "The plugin is disabled",
       "error.failed": "Something went wrong. Try again.",
       "error.aborted": "Generation timed out or was cancelled. Try again.",
+      "error.timeout": "Generation timed out. Try again.",
+      "error.cancelled": "Generation was cancelled. Try again.",
+      "error.schema": "Generation failed: the model output did not match the card format",
+      "error.llm": "Generation failed: the model call errored",
+      "error.route": "Generation failed: no model route available",
       "error.send": "Could not fill the composer",
       "error.budget": "This session has used up its card budget",
       "error.exists": "This turn already has a card",
@@ -139,7 +169,11 @@ window.__ModuleLoader__.load({
       "error.ungrounded": "The generated card did not refer to this conversation; discarded",
       "error.noContext": "No conversation content to generate a card from",
       "retry.generate": "Generate a next-step card",
+      "retry.retry": "Try again",
       "retry.generating": "Generating…",
+      "retry.waiting": "Still generating in the background…",
+      "retry.detail": "Details",
+      "retry.hideDetail": "Hide details",
       "settings.title": "Next-step suggestions",
       "settings.nav": "Next-step suggestions",
       "settings.desc":
@@ -199,7 +233,11 @@ window.__ModuleLoader__.load({
       hidden: "error.hidden",
     };
 
-    /** 手动补生成失败原因 → 文案 key。 @type {Record<string, string>} */
+    /**
+     * 生成失败原因（`nextStep/generateNow` 与 `nextStep/generateState.last` 共用）→ 一行原因摘要。
+     * `inflight` 已被调用方特判成「等待态」，这里留一条兜底文案（旧宿主只会回 inflight）。
+     * @type {Record<string, string>}
+     */
     let RETRY_ERROR_KEYS = {
       stale: "error.stale",
       disabled: "error.disabled",
@@ -207,13 +245,57 @@ window.__ModuleLoader__.load({
       exists: "error.exists",
       inflight: "error.inflight",
       "no-turn": "error.noTurn",
-      failed: "error.failed",
-      schema: "error.failed",
+      failed: "error.llm",
+      llm: "error.llm",
+      route: "error.route",
+      schema: "error.schema",
       ungrounded: "error.ungrounded",
       "no-context": "error.noContext",
       aborted: "error.aborted",
+      cancelled: "error.cancelled",
+      timeout: "error.timeout",
       "not-needed": "error.failed",
     };
+
+    /**
+     * 「生成失败」→ 展示用的 `{ key, detail }`（纯函数，单测出口）。
+     * detail 是服务端给的技术原因（`json:empty`、宿主错误消息、`generation timeout after 20s`），
+     * UI 默认只显示一行原因摘要，detail 放在「查看详情」里。
+     * @param {any} result
+     * @returns {{ key: string, detail: string }}
+     */
+    function retryFailureOf(result) {
+      let reason =
+        result && typeof result === "object" && typeof result.reason === "string"
+          ? result.reason
+          : "failed";
+      let key = RETRY_ERROR_KEYS[reason];
+      if (typeof key !== "string") key = "error.failed";
+      let detail =
+        result && typeof result === "object" && typeof result.detail === "string"
+          ? result.detail.trim()
+          : "";
+      if (detail.length > RETRY_DETAIL_CHARS) {
+        detail = `${detail.slice(0, RETRY_DETAIL_CHARS - 1)}…`;
+      }
+      return { key: key, detail: detail };
+    }
+
+    /**
+     * 客户端超时：比服务端自己的生成超时多留一段余量，夹在 30–60s（要求：超过则结束 loading、
+     * 显示「生成超时，可重试」，并在结束前取消服务端在途生成）。
+     * @param {any} settings
+     * @returns {number}
+     */
+    function retryTimeoutOf(settings) {
+      let server =
+        settings && typeof settings.timeoutMs === "number" && Number.isFinite(settings.timeoutMs)
+          ? settings.timeoutMs
+          : 0;
+      let value =
+        server > 0 ? server + TIMINGS.clientTimeoutMarginMs : TIMINGS.clientTimeoutFloorMs;
+      return Math.min(TIMINGS.clientTimeoutCeilMs, Math.max(TIMINGS.clientTimeoutFloorMs, value));
+    }
 
     // 颜色/尺寸严格照契约 §5 的表：优先用宿主 token，token 缺失时用截图实测值兜底。
     // 只注入这一份样式（data-plugin-css 判重，HMR/重复挂载不会再插一份）。
@@ -256,7 +338,11 @@ window.__ModuleLoader__.load({
 .ns_retryBtn:hover:not(:disabled){color:var(--dsw-alias-label-secondary,#a4a4a4);border-color:var(--dsw-alias-border-l4,#4a4a4a);}
 .ns_retryBtn:focus-visible{outline:2px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#4176e6));outline-offset:2px;}
 .ns_retryBtn:disabled{cursor:default;opacity:.6;}
-.ns_retryError{font-size:12px;line-height:18px;color:var(--dsw-alias-label-caption,#81858c);}
+.ns_retryError{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-caption,#81858c);}
+.ns_retryMore{padding:0;border:none;background:transparent;color:var(--dsw-alias-label-tertiary,#a4a4a4);font-family:inherit;font-size:12px;line-height:18px;text-decoration:underline;cursor:pointer;}
+.ns_retryMore:hover{color:var(--dsw-alias-label-secondary,#a4a4a4);}
+.ns_retryMore:focus-visible{outline:2px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#4176e6));outline-offset:2px;border-radius:4px;}
+.ns_retryDetail{flex-basis:100%;min-width:0;color:var(--dsw-alias-label-tertiary,#a4a4a4);white-space:pre-wrap;overflow-wrap:anywhere;}
 .ns_ghost{position:absolute;z-index:1;top:12px;left:14px;right:12px;color:var(--dsw-alias-label-caption,#81858c);font-size:inherit;line-height:inherit;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;user-select:none;}
 @keyframes ns_spin{to{transform:rotate(360deg);}}
 @media (prefers-reduced-motion:reduce){.ns_spinner{animation-duration:2.4s;}}
@@ -796,21 +882,33 @@ window.__ModuleLoader__.load({
       let settingsState = React.useState(/** @type {any} */ (null));
       let settings = settingsState[0];
       let setSettings = settingsState[1];
+      // 补生成入口的状态机（USIM-U2-04）：
+      //   ""（idle）→ 普通「生成下一步建议」；"loading" → 点了按钮、等 RPC；
+      //   "waiting" → 后台还有同回合生成，轮询 generateState 等它结束；"error" → 失败，按钮变「重试」。
       let retryState = React.useState("");
       let retryPhase = retryState[0];
       let setRetryPhase = retryState[1];
-      let retryErrorState = React.useState("");
-      let retryErrorKey = retryErrorState[0];
-      let setRetryErrorKey = retryErrorState[1];
+      let retryErrorState = React.useState(/** @type {any} */ (null));
+      let retryError = retryErrorState[0];
+      let setRetryError = retryErrorState[1];
+      let retryDetailState = React.useState(false);
+      let retryDetailOpen = retryDetailState[0];
+      let setRetryDetailOpen = retryDetailState[1];
       let graceState = React.useState(false);
       let grace = graceState[0];
       let setGrace = graceState[1];
+      // 每次点「生成 / 重试」的序号：超时或卸载之后晚到的 RPC 回执不能覆盖更新的状态。
+      let retryAttemptRef = React.useRef(0);
+      let retryTimerRef = React.useRef(/** @type {any} */ (null));
+      let retryMountedRef = React.useRef(true);
 
       let card = cardOf(view, turnNumber);
       let decision = decisionOf(view, turnNumber);
       let revealed = revealedOf(view, turnNumber);
       // 被档位抑制、用户还没要求显示的候选：不渲染卡片，只渲染「生成下一步建议」。
       let hiddenCard = card !== undefined && card !== null && card.shown === false && !revealed;
+      // 真正的可见卡（被抑制且未揭示的不算）。放在 effect 之前，补生成入口的 effect 要用它。
+      let visibleCard = card !== undefined && card !== null && !hiddenCard ? card : null;
 
       // 只有「最新一轮且没有卡」才需要读设置（决定要不要画补生成按钮），
       // 历史轮次不读，避免一个长会话里每个 turn-tail 都发一次 RPC。
@@ -835,9 +933,128 @@ window.__ModuleLoader__.load({
           setGrace(false);
           return undefined;
         }
-        let timer = setTimeout(() => setGrace(true), RETRY_GRACE_MS);
+        let timer = setTimeout(() => setGrace(true), TIMINGS.retryGraceMs);
         return () => clearTimeout(timer);
       }, [turnNumber, card, hiddenCard, sessionId, isLastTurn]);
+
+      // 换会话 / 换轮次时清掉上一张的补生成状态：否则「重试 + 上一轮的原因」会串到新一轮
+      // （组件实例可能被复用来渲染新的 turn-tail）。同时作废在途 RPC 回执。
+      React.useEffect(() => {
+        retryAttemptRef.current += 1;
+        if (retryTimerRef.current !== null) {
+          clearTimeout(retryTimerRef.current);
+          retryTimerRef.current = null;
+        }
+        setRetryPhase("");
+        setRetryError(null);
+        setRetryDetailOpen(false);
+      }, [sessionId, turnNumber]);
+
+      // USIM-U2-04：补生成入口挂载时先查一次「这个会话现在的生成状态」。
+      // 自动生成（turn/end 之后那次调用）失败**不写会话日志**，客户端只能靠这条记录把
+      // 「重试 + 原因」显示出来；在途时进入等待态（不把一次 `inflight` 回执当成永久状态）。
+      // 旧宿主没有 generateState 时静默降级成原来的首生成按钮。
+      React.useEffect(() => {
+        if (visibleCard !== null) return undefined;
+        if (!isLastTurn || sessionId === "" || turnNumber < 0) return undefined;
+        if (!api || typeof api.generateState !== "function") return undefined;
+        let alive = true;
+        Promise.resolve(api.generateState(sessionId, turnNumber))
+          .then((result) => {
+            if (!alive || !result || typeof result !== "object" || result.ok === false) return;
+            // 同一回合还有生成在跑 → 等待，不要显示「生成下一步建议」让用户点出一个 inflight。
+            if (result.inflight === true && result.turn === turnNumber) {
+              setRetryPhase((/** @type {string} */ phase) => (phase === "" ? "waiting" : phase));
+              return;
+            }
+            // 刚失败过（自动生成或上次手动生成）→ 直接进错误态，按钮变「重试」。
+            let last = result.last;
+            if (last && last.turn === turnNumber && last.ok === false) {
+              setRetryError(retryFailureOf(last));
+              setRetryPhase((/** @type {string} */ phase) => (phase === "" ? "error" : phase));
+            }
+          })
+          .catch(() => undefined);
+        return () => {
+          alive = false;
+        };
+      }, [api, isLastTurn, sessionId, turnNumber, visibleCard === null]);
+
+      // 等待态：后台仍在生成（同回合）时每隔 pollIntervalMs 查一次 generateState，直到
+      // ① 卡片从投影进来（本 effect 随 visibleCard 变化被清掉）；② 后台失败 → 显示原因 + 重试；
+      // ③ 到达客户端超时 → 取消服务端在途生成，结束等待并显示「生成超时，可重试」。
+      React.useEffect(() => {
+        if (retryPhase !== "waiting") return undefined;
+        if (sessionId === "" || turnNumber < 0) return undefined;
+        let alive = true;
+        /** @type {any} */
+        let timer = null;
+        let deadline = Date.now() + retryTimeoutOf(settings);
+        let finishWithTimeout = () => {
+          // 先让服务端停下来，再结束 UI 等待：不能「界面说超时了、后台还在跑」。
+          if (api && typeof api.cancelGenerate === "function") {
+            Promise.resolve(api.cancelGenerate(sessionId, turnNumber)).catch(() => undefined);
+          }
+          setRetryError({ key: "error.timeout", detail: "" });
+          setRetryPhase("error");
+        };
+        /** @type {() => void} */
+        let probe = () => {
+          if (!alive) return;
+          if (Date.now() >= deadline) {
+            alive = false;
+            finishWithTimeout();
+            return;
+          }
+          Promise.resolve(
+            api && typeof api.generateState === "function"
+              ? api.generateState(sessionId, turnNumber)
+              : undefined,
+          )
+            .then((result) => {
+              if (!alive) return;
+              if (!result || typeof result !== "object" || result.ok === false) {
+                timer = setTimeout(probe, TIMINGS.pollIntervalMs);
+                return;
+              }
+              if (result.inflight === true && result.turn === turnNumber) {
+                timer = setTimeout(probe, TIMINGS.pollIntervalMs);
+                return;
+              }
+              let last = result.last;
+              if (last && last.turn === turnNumber && last.ok === false) {
+                alive = false;
+                setRetryError(retryFailureOf(last));
+                setRetryPhase("error");
+                return;
+              }
+              // 生成成功了：卡片会从投影进来（visibleCard 变化会清掉本 effect）；没有候选时
+              // 回到普通入口，让用户再点一次（揭示/重新生成由宿主判断）。
+              alive = false;
+              setRetryPhase("");
+            })
+            .catch(() => {
+              if (alive) timer = setTimeout(probe, TIMINGS.pollIntervalMs);
+            });
+        };
+        timer = setTimeout(probe, TIMINGS.pollIntervalMs);
+        return () => {
+          alive = false;
+          if (timer !== null) clearTimeout(timer);
+        };
+      }, [retryPhase, api, sessionId, turnNumber, settings]);
+
+      // 卸载后不再落状态；顺手清掉 loading 的兜底定时器（否则真机/单测都会留下悬空 timer）。
+      React.useEffect(() => {
+        retryMountedRef.current = true;
+        return () => {
+          retryMountedRef.current = false;
+          if (retryTimerRef.current !== null) {
+            clearTimeout(retryTimerRef.current);
+            retryTimerRef.current = null;
+          }
+        };
+      }, []);
 
       // 投影一旦追上，乐观态就退场（投影是唯一事实来源）。
       React.useEffect(() => {
@@ -852,7 +1069,6 @@ window.__ModuleLoader__.load({
         setShowMore(overflowing);
       });
 
-      let visibleCard = card !== undefined && card !== null && !hiddenCard ? card : null;
       let options = visibleCard && Array.isArray(visibleCard.options) ? visibleCard.options : [];
       let summary =
         visibleCard && typeof visibleCard.summary === "string" ? visibleCard.summary : "";
@@ -864,6 +1080,78 @@ window.__ModuleLoader__.load({
       let draftBusy = draft !== "";
       let canCall = Boolean(api) && typeof api.act === "function";
       let keycap = api && typeof api.keycap === "string" ? api.keycap : "⌘↵";
+      let retryTimeoutMs = retryTimeoutOf(settings);
+
+      /**
+       * 「生成下一步建议 / 重试」：loading → 结果。三条出口都落到用户看得见的地方（USIM-U2-04）：
+       * - `ok: true`：回到 idle（卡片会从投影进来）；
+       * - `inflight`：进入等待态轮询 generateState，后台结束后出卡 / 显示失败原因；
+       * - 失败：按钮变「重试」+ 一行原因摘要，detail 放「查看详情」；
+       * - 客户端超时：**先取消服务端在途生成**再结束 loading，显示「生成超时，可重试」。
+       */
+      let startGenerate = () => {
+        if (retryPhase === "loading" || retryPhase === "waiting") return;
+        if (!api || typeof api.generate !== "function") {
+          setRetryError({ key: "error.failed", detail: "" });
+          setRetryPhase("error");
+          return;
+        }
+        retryAttemptRef.current += 1;
+        let attempt = retryAttemptRef.current;
+        let settled = false;
+        setRetryError(null);
+        setRetryDetailOpen(false);
+        setRetryPhase("loading");
+        let clearTimer = () => {
+          if (retryTimerRef.current !== null) {
+            clearTimeout(retryTimerRef.current);
+            retryTimerRef.current = null;
+          }
+        };
+        let finish = (/** @type {() => void} */ fn) => {
+          if (settled || !retryMountedRef.current || retryAttemptRef.current !== attempt) return;
+          settled = true;
+          clearTimer();
+          fn();
+        };
+        retryTimerRef.current = setTimeout(() => {
+          retryTimerRef.current = null;
+          if (settled || !retryMountedRef.current || retryAttemptRef.current !== attempt) return;
+          settled = true;
+          // 客户端兜底：先让服务端停下来，再结束 loading——不能「UI 说超时了、后台还在跑」。
+          if (typeof api.cancelGenerate === "function") {
+            Promise.resolve(api.cancelGenerate(sessionId, turnNumber)).catch(() => undefined);
+          }
+          setRetryError({ key: "error.timeout", detail: "" });
+          setRetryPhase("error");
+        }, retryTimeoutMs);
+        Promise.resolve(api.generate(sessionId, turnNumber))
+          .then((result) => {
+            finish(() => {
+              if (result && typeof result === "object" && result.ok === true) {
+                setRetryPhase("");
+                return;
+              }
+              let reason =
+                result && typeof result === "object" && typeof result.reason === "string"
+                  ? result.reason
+                  : "failed";
+              if (reason === "inflight") {
+                // 同回合还有一笔在跑：等它结束（成功出卡 / 失败给原因），别留一句永久「正在生成」。
+                setRetryPhase("waiting");
+                return;
+              }
+              setRetryError(retryFailureOf(result));
+              setRetryPhase("error");
+            });
+          })
+          .catch(() => {
+            finish(() => {
+              setRetryError({ key: "error.failed", detail: "" });
+              setRetryPhase("error");
+            });
+          });
+      };
 
       /**
        * 点击胶囊：RPC → 立刻切只读态 → 写草稿、等落定、提交。
@@ -1021,13 +1309,21 @@ window.__ModuleLoader__.load({
           Boolean(api) &&
           typeof api.generate === "function";
         if (!retryEnabled) return null;
-        let generating = retryPhase === "loading";
+        let working = retryPhase === "loading" || retryPhase === "waiting";
+        let label = working
+          ? t("retry.generating")
+          : retryPhase === "error"
+            ? t("retry.retry")
+            : t("retry.generate");
+        let detail = retryError && typeof retryError.detail === "string" ? retryError.detail : "";
+        // 相位与原因都带 data-* 锚点：web 冒烟与桌面回归可以只读断言「失败后按钮真的变成重试」。
         return h(
           "section",
           {
             className: "ns_retry",
             "data-next-step-retry": "",
             "data-next-step-turn": String(turnNumber),
+            "data-next-step-retry-phase": retryPhase === "" ? "idle" : retryPhase,
           },
           h(
             "button",
@@ -1035,33 +1331,49 @@ window.__ModuleLoader__.load({
               type: "button",
               className: "ns_retryBtn",
               "data-next-step-generate": "",
-              disabled: generating,
-              onClick: () => {
-                if (generating || !api || typeof api.generate !== "function") return;
-                setRetryPhase("loading");
-                setRetryErrorKey("");
-                Promise.resolve(api.generate(sessionId, turnNumber))
-                  .then((result) => {
-                    setRetryPhase("");
-                    if (result && typeof result === "object" && result.ok === true) return;
-                    let reason =
-                      result && typeof result.reason === "string" ? result.reason : "failed";
-                    setRetryErrorKey(RETRY_ERROR_KEYS[reason] ?? "error.failed");
-                  })
-                  .catch(() => {
-                    setRetryPhase("");
-                    setRetryErrorKey("error.failed");
-                  });
-              },
+              disabled: working,
+              "aria-busy": working ? "true" : undefined,
+              onClick: startGenerate,
             },
-            generating ? t("retry.generating") : t("retry.generate"),
+            label,
           ),
-          retryErrorKey === ""
+          retryPhase === "waiting"
+            ? h(
+                "span",
+                { className: "ns_retryError", role: "status", "data-next-step-retry-waiting": "" },
+                t("retry.waiting"),
+              )
+            : null,
+          retryError === null
             ? null
             : h(
-                "span",
+                "div",
                 { className: "ns_retryError", role: "alert", "data-next-step-retry-error": "" },
-                t(retryErrorKey),
+                h(
+                  "span",
+                  { "data-next-step-retry-reason": "" },
+                  t(typeof retryError.key === "string" ? retryError.key : "error.failed"),
+                ),
+                detail === ""
+                  ? null
+                  : h(
+                      "button",
+                      {
+                        type: "button",
+                        className: "ns_retryMore",
+                        "data-next-step-retry-detail-toggle": "",
+                        "aria-expanded": retryDetailOpen ? "true" : "false",
+                        onClick: () => setRetryDetailOpen((/** @type {boolean} */ open) => !open),
+                      },
+                      retryDetailOpen ? t("retry.hideDetail") : t("retry.detail"),
+                    ),
+                retryDetailOpen && detail !== ""
+                  ? h(
+                      "span",
+                      { className: "ns_retryDetail", "data-next-step-retry-detail": "" },
+                      detail,
+                    )
+                  : null,
               ),
         );
       }
@@ -1972,6 +2284,10 @@ window.__ModuleLoader__.load({
 
     exports.inject = ["slots", "locale", "connection"];
 
+    // 生产 api 表面（复审 B1 契约测试用）：apply() 里构建后记下来，__test 暴露键名。
+    /** @type {Record<string, any> | null} */
+    let __apiRef = null;
+
     /** @param {any} ctx */
     exports.apply = function apply(ctx) {
       ctx.effect(() => ctx.locale.register(NS, { zh: zh, en: en }), "next-step: dictionaries");
@@ -2134,6 +2450,12 @@ window.__ModuleLoader__.load({
         sendText: sendText,
         generate: (/** @type {string} */ sessionId, /** @type {number} */ turn) =>
           callRemote("generateNow", { sessionId: sessionId, turn: turn }),
+        // USIM-U2-04：只读状态查询与取消在途生成（复审 B1：必须真正接进生产 api，否则超时/重试/刷新后
+        // 失败态三条承诺都是死代码）。旧宿主没有这两个 Remote 时调用会失败，组件层按「没有信息」降级。
+        generateState: (/** @type {string} */ sessionId, /** @type {number | null} */ turn) =>
+          callRemote("generateState", { sessionId: sessionId, turn: turn }),
+        cancelGenerate: (/** @type {string} */ sessionId, /** @type {number} */ turn) =>
+          callRemote("cancelGenerate", { sessionId: sessionId, turn: turn }),
         updateSettings: (/** @type {any} */ patch) =>
           callRemote("updateSettings", { patch: patch }).then((result) =>
             result && typeof result === "object" ? result : { ok: false },
@@ -2160,6 +2482,7 @@ window.__ModuleLoader__.load({
             return result.stats && typeof result.stats === "object" ? result.stats : null;
           }),
       };
+      __apiRef = api;
 
       // 决策卡：每轮答案尾部一张。
       ctx.effect(
@@ -2237,6 +2560,14 @@ window.__ModuleLoader__.load({
       en: en,
       firstSentenceOf: firstSentenceOf,
       FOLDED_SUMMARY_CHARS: FOLDED_SUMMARY_CHARS,
+      // USIM-U2-04：失败展示与客户端超时的纯逻辑 + 时序表（测试可改 TIMINGS 把 2.5s/30s 缩短）。
+      retryFailureOf: retryFailureOf,
+      retryTimeoutOf: retryTimeoutOf,
+      RETRY_ERROR_KEYS: RETRY_ERROR_KEYS,
+      RETRY_DETAIL_CHARS: RETRY_DETAIL_CHARS,
+      timings: TIMINGS,
+      // 复审 B1 的契约测试：生产 api 表面必须包含这两个 Remote（防再次漏接线）。
+      apiSurface: () => (__apiRef === null ? [] : Object.keys(__apiRef)),
     };
 
     return module.exports;

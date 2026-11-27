@@ -457,6 +457,19 @@ if (cards.length === 0) {
     retryVisible === true,
     retryVisible ? "" : "既没有自动出卡，也没有补生成按钮（宿主链路/客户端渲染可能坏了）",
   );
+  // USIM-U2-04：按钮所在 section 必须带四态锚点（idle / loading / waiting / error）。
+  // 只读读取：不点击、不改状态；失败时会用它断言「失败后按钮真的变成重试」。
+  const retryPhaseBefore = retryVisible
+    ? await page.evaluate(() => {
+        const section = document.querySelector("[data-next-step-retry]");
+        return section ? String(section.getAttribute("data-next-step-retry-phase") || "") : "";
+      })
+    : "";
+  check(
+    "补生成入口带失败反馈状态锚点（data-next-step-retry-phase）",
+    retryPhaseBefore !== "",
+    retryPhaseBefore === "" ? "section 上没有 data-next-step-retry-phase" : "phase=" + retryPhaseBefore,
+  );
   if (retryVisible) {
     const retryClicked = await page.evaluate(() => {
       const button = document.querySelector("[data-next-step-generate]");
@@ -483,10 +496,20 @@ if (card === null) {
   // 文案已经能区分「超时/取消」与「其它失败」（error.aborted vs error.failed）。
   // 没有这段，冒烟只能报「宿主生成失败/被门挡/客户端没渲染」——2026-11-14 就卡在这。
   let retryErrorText = "";
+  let retryPhaseAfter = "";
+  let retryButtonText = "";
   try {
     retryErrorText = await page.evaluate(() => {
       const el = document.querySelector("[data-next-step-retry-error]");
       return el ? String(el.textContent || "").trim() : "";
+    });
+    retryPhaseAfter = await page.evaluate(() => {
+      const section = document.querySelector("[data-next-step-retry]");
+      return section ? String(section.getAttribute("data-next-step-retry-phase") || "") : "";
+    });
+    retryButtonText = await page.evaluate(() => {
+      const button = document.querySelector("[data-next-step-generate]");
+      return button ? String(button.textContent || "").trim() : "";
     });
   } catch (error) {
     retryErrorText = "读取失败： " + String(error).slice(0, 120);
@@ -495,6 +518,17 @@ if (card === null) {
     name: "没出卡时插件报的原因（data-next-step-retry-error）",
     ok: retryErrorText !== "",
     detail: retryErrorText === "" ? "失败区没有渲染出原因文案" : retryErrorText,
+  });
+  // USIM-U2-04：失败后 loading 必须结束、按钮可重试——不能停在「正在生成」或无限 loading 态。
+  checks.push({
+    name: "没出卡时补生成入口进入 error 态（失败反馈可见可操作）",
+    ok: retryPhaseAfter === "error",
+    detail: retryPhaseAfter === "error" ? "" : "phase=" + JSON.stringify(retryPhaseAfter),
+  });
+  checks.push({
+    name: "失败后按钮文案变成「重试」",
+    ok: retryButtonText !== "" && !/正在生成/u.test(retryButtonText),
+    detail: retryButtonText === "" ? "按钮没有文案" : "文案=" + retryButtonText,
   });
   await finishTask();
   console.log(
