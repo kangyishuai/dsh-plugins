@@ -92,6 +92,19 @@ window.__ModuleLoader__.load({
       "panel.pending": "{n} 个未完成的操作（重启后自动对账；仍未处理需人工核对）",
       "panel.readOnly": "只读模式：当前 DSH 版本缺少依赖接口，删除功能已禁用。",
       "panel.close": "关闭",
+      "receipt.refs": "引用",
+      "receipt.removed": "已清理的引用",
+      "receipt.checks": "校验",
+      "receipt.summary.ok": "全部通过",
+      "receipt.summary.partial": "{n} 处未通过",
+      "restore.detail.title": "未通过的引用与校验",
+      "restore.detail.retry": "重试未通过的引用",
+      "restore.detail.retrying": "正在重试…",
+      "restore.detail.retried": "已自动重试一次",
+      "restore.retry.ok": "重检通过：引用与校验全部恢复",
+      "restore.retry.partial": "重检后仍有 {n} 处未通过",
+      "restore.busyHint":
+        "若发送被拒（提示 session/agent-busy），说明宿主还把这个会话标记为忙碌：重启 DSH，或新建会话继续。",
       "trash.selectAll": "全选",
       "trash.selectCount": "已选 {n}/{total}",
       "trash.restoreMany": "恢复（{n}）",
@@ -106,6 +119,9 @@ window.__ModuleLoader__.load({
       "toast.trashPartial": "已移入回收站，但收尾未完成：{message}（会话可在回收站恢复）",
       "toast.restorePartial": "会话已恢复，但 {n} 处引用/校验未通过（详见操作回执）",
       "toast.undoFailed": "撤销失败：{message}",
+      "toast.trashedCurrent": "已移入回收站，可在回收站恢复",
+      "toast.restored": "会话已恢复，正在重新打开",
+      "toast.restoredMany": "已恢复 {n} 个会话，正在刷新列表",
       "settings.nav": "会话回收站",
       "settings.group.delete": "删除偏好",
       "settings.cascade.title": "记住「同时删除子会话」",
@@ -186,6 +202,19 @@ window.__ModuleLoader__.load({
       "panel.readOnly":
         "Read-only: this DSH version is missing required APIs; deletion is disabled.",
       "panel.close": "Close",
+      "receipt.refs": "References",
+      "receipt.removed": "References cleaned",
+      "receipt.checks": "Checks",
+      "receipt.summary.ok": "all passed",
+      "receipt.summary.partial": "{n} did not pass",
+      "restore.detail.title": "References and checks that did not pass",
+      "restore.detail.retry": "Retry the failed references",
+      "restore.detail.retrying": "Retrying…",
+      "restore.detail.retried": "retried once automatically",
+      "restore.retry.ok": "Re-check passed: every reference and check recovered",
+      "restore.retry.partial": "{n} still did not pass after the re-check",
+      "restore.busyHint":
+        "If sending is rejected (session/agent-busy), the host still marks this session busy: restart DSH, or continue in a new session.",
       "trash.selectAll": "Select all",
       "trash.selectCount": "{n}/{total} selected",
       "trash.restoreMany": "Restore ({n})",
@@ -202,6 +231,9 @@ window.__ModuleLoader__.load({
       "toast.restorePartial":
         "Session restored, but {n} reference/check(s) did not pass (see the receipt)",
       "toast.undoFailed": "Undo failed: {message}",
+      "toast.trashedCurrent": "Moved to the trash — restore it from there",
+      "toast.restored": "Session restored — reopening it",
+      "toast.restoredMany": "Restored {n} session(s); refreshing the list",
       "settings.nav": "Session trash",
       "settings.group.delete": "Deletion preferences",
       "settings.cascade.title": 'Remember "also delete child sessions"',
@@ -655,6 +687,96 @@ window.__ModuleLoader__.load({
       return t("toast.restorePartial", { n: count });
     }
 
+    /**
+     * 恢复结果里「没通过」的逐项清单（USIM-U3-05）：引用在前、校验在后。
+     * 新宿主直接给 `failures`（带 label/detail）；老宿主只有 refs/checks，
+     * 这里按同一形状兜底，界面不用关心宿主版本。
+     * @param {any} result
+     * @returns {{ id: string, label: string, detail: string, kind: "ref" | "check" }[]}
+     */
+    function restoreFailures(result) {
+      /** @type {{ id: string, label: string, detail: string, kind: "ref" | "check" }[]} */
+      var out = [];
+      var failures = Array.isArray(result?.failures) ? result.failures : null;
+      /** @type {any} */
+      var item;
+      /** @type {any} */
+      var group;
+      /** @type {any} */
+      var entry;
+      if (failures) {
+        for (let index = 0; index < failures.length; index += 1) {
+          item = failures[index] || {};
+          out.push({
+            id: String(item.id || ""),
+            label: String(item.label || item.id || ""),
+            detail: String(item.detail || ""),
+            kind: "ref",
+          });
+        }
+        return out;
+      }
+      /** @type {{ list: any[] | undefined, kind: "ref" | "check" }[]} */
+      var groups = [
+        { list: result?.refs, kind: "ref" },
+        { list: result?.checks, kind: "check" },
+      ];
+      for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
+        group = groups[groupIndex];
+        if (!Array.isArray(group.list)) continue;
+        for (let itemIndex = 0; itemIndex < group.list.length; itemIndex += 1) {
+          entry = group.list[itemIndex] || {};
+          if (entry.status !== "failed") continue;
+          out.push({
+            id: String(entry.id || ""),
+            label: String(entry.label || entry.id || ""),
+            detail: String(entry.detail || ""),
+            kind: group.kind,
+          });
+        }
+      }
+      return out;
+    }
+
+    /**
+     * 恢复失败时给界面看的多行文本：哪一处没通过 + 下一步做什么。
+     * @param {{ label: string, detail: string }[]} failures
+     * @returns {string | null}
+     */
+    function restoreDetailText(failures) {
+      if (!Array.isArray(failures) || failures.length === 0) return null;
+      var lines = [];
+      /** @type {any} */
+      var item;
+      for (let index = 0; index < failures.length; index += 1) {
+        item = failures[index];
+        lines.push(item.label ? `${item.label}：${item.detail}` : item.detail);
+      }
+      return lines.join("\n");
+    }
+
+    /**
+     * 删除当前正在看的会话后该去哪（USIM-U2-05）：优先下一个可用会话，没有就回新会话页。
+     * 纯函数，便于单测钉住「不要把人留在已删除的会话上」。
+     * @param {{ deletedId?: string | null, currentId?: string | null, candidates?: string[] }} input
+     * @returns {{ navigate: boolean, target: "session" | "home" | "none", id?: string }}
+     */
+    function afterTrashNavigation(input) {
+      var deletedId = typeof input?.deletedId === "string" ? input.deletedId : "";
+      var currentId = typeof input?.currentId === "string" ? input.currentId : "";
+      if (!deletedId || currentId !== deletedId) return { navigate: false, target: "none" };
+      var candidates = Array.isArray(input?.candidates) ? input.candidates : [];
+      /** @type {any} */
+      var id;
+      for (let index = 0; index < candidates.length; index += 1) {
+        id = candidates[index];
+        if (typeof id === "string" && id.length > 0 && id !== deletedId) {
+          return { navigate: true, target: "session", id: id };
+        }
+      }
+      return { navigate: true, target: "home" };
+    }
+
     function DeleteSessionMenuItem(/** @type {any} */ props) {
       var menuState =
         typeof props.useMenuOpenState === "function" ? props.useMenuOpenState() : [false, () => {}];
@@ -870,7 +992,13 @@ window.__ModuleLoader__.load({
           .then((/** @type {any} */ result) => {
             props.requestStore.set(null);
             if (isWorkspace) props.onTrashedMany?.(result);
-            else props.onTrashed?.(result);
+            else
+              props.onTrashed?.(
+                Object.assign({}, result, {
+                  wasCurrent: request.currentId === request.sessionId,
+                  workspaceId: request.workspaceId ?? null,
+                }),
+              );
           })
           .catch((/** @type {any} */ reason) => {
             setBusy(false);
@@ -883,6 +1011,8 @@ window.__ModuleLoader__.load({
                 sessionId: request.sessionId,
                 entryId: partialEntryId,
                 title: request.title || null,
+                wasCurrent: request.currentId === request.sessionId,
+                workspaceId: request.workspaceId ?? null,
               });
               // 错误 toast 也带上 entryId：partial 的「已进回收站」仍然给撤销入口，
               // 否则用户只剩面板一条路（复审 F12）。
@@ -1107,6 +1237,13 @@ window.__ModuleLoader__.load({
       var readOnlyState = React.useState(false);
       var readOnly = readOnlyState[0];
       var setReadOnly = readOnlyState[1];
+      // 恢复结果里没通过的引用（USIM-U3-05）：留住清单，界面才能「可展开 + 可重试」。
+      var restoreDetailState = React.useState(null);
+      var restoreDetail = restoreDetailState[0];
+      var setRestoreDetail = restoreDetailState[1];
+      var retryingState = React.useState(false);
+      var retrying = retryingState[0];
+      var setRetrying = retryingState[1];
       var batchControl = React.useRef({ stop: false });
 
       var loader = React.useMemo(
@@ -1151,18 +1288,72 @@ window.__ModuleLoader__.load({
 
       var doRestore = (/** @type {any} */ entryId, /** @type {any} */ sessionId) => {
         setBusyId(entryId);
+        setRestoreDetail(null);
         props
           .call("restore", { entryId: entryId })
           .then((/** @type {any} */ result) => {
             setBusyId(null);
             refresh();
             props.bump?.();
-            props.onRestored?.(sessionId);
-            // 引用/校验没全过时把话说清楚，而不是一律「恢复成功」（AUD-SD-02）。
+            var failures = restoreFailures(result);
+            if (failures.length === 0) {
+              // 恢复成功的终点就是「回到会话里」：先关框再重开（USIM-U2-17）。
+              // 成功路径只走 onRestoreComplete 一处（N2：以前这里还会再调一次
+              // onRestored，导致 refreshRows + openSession 各跑两遍）。
+              setError(null);
+              setRestoreDetail(null);
+              props.onRestoreComplete?.(result);
+              return;
+            }
+            // 没全过：仍要把 retired 清掉并刷新列表，再把话说清楚（AUD-SD-02）。
+            props.onRestored?.(result?.sessionId || sessionId, { open: false });
             setError(restoreNotice(result, props.t));
+            setRestoreDetail({
+              sessionId: result?.sessionId || sessionId,
+              result: result,
+              failures: failures,
+            });
           })
           .catch((/** @type {any} */ reason) => {
             setBusyId(null);
+            setError(errorText(reason));
+          });
+      };
+
+      /**
+       * 重检未通过的引用（USIM-U3-05 的可操作出口）：宿主按回执里的快照重放一次。
+       */
+      var retryFailedRefs = () => {
+        if (!restoreDetail || retrying) return;
+        setRetrying(true);
+        props
+          .call("recheckRestore", {
+            receiptId:
+              typeof restoreDetail.result?.receiptId === "string"
+                ? restoreDetail.result.receiptId
+                : undefined,
+            sessionId: restoreDetail.sessionId,
+          })
+          .then((/** @type {any} */ result) => {
+            setRetrying(false);
+            props.bump?.();
+            var left = restoreFailures(result);
+            if (left.length === 0) {
+              setError(props.t("restore.retry.ok"));
+              setRestoreDetail(null);
+              props.onRestored?.(result?.sessionId || restoreDetail.sessionId);
+              refresh();
+              return;
+            }
+            setError(props.t("restore.retry.partial", { n: left.length }));
+            setRestoreDetail({
+              sessionId: result?.sessionId || restoreDetail.sessionId,
+              result: result,
+              failures: left,
+            });
+          })
+          .catch((/** @type {any} */ reason) => {
+            setRetrying(false);
             setError(errorText(reason));
           });
       };
@@ -1202,7 +1393,8 @@ window.__ModuleLoader__.load({
             setBatch(state);
           },
           shouldStop: () => batchControl.current.stop === true,
-          onRestored: (/** @type {any} */ sessionId) => props.onRestored?.(sessionId),
+          onRestored: (/** @type {any} */ sessionId, /** @type {any} */ info) =>
+            props.onRestored?.(sessionId, info),
         }).then((/** @type {any} */ summary) => {
           setSelected((/** @type {any} */ current) => {
             /** @type {Record<string, boolean>} */
@@ -1218,6 +1410,10 @@ window.__ModuleLoader__.load({
           refresh();
           props.bump?.();
           if (kind === "purge") props.onPurged?.(undefined);
+          // 批量恢复全绿时同样「完成即关框」（U2-17 的批量版）；有失败就留在面板里看清单。
+          if (kind === "restore" && summary.failures.length === 0) {
+            props.onBatchRestoreDone?.(summary);
+          }
         });
       };
 
@@ -1447,6 +1643,62 @@ window.__ModuleLoader__.load({
               error,
             )
           : null,
+        restoreDetail
+          ? h(
+              "div",
+              {
+                className: "dsh-sdel-restore-detail",
+                "data-session-delete-restore-detail": "",
+                role: "alert",
+                style: {
+                  border: `1px solid ${T.border}`,
+                  borderRadius: "8px",
+                  padding: "8px 10px",
+                  marginBottom: "10px",
+                  fontSize: "12px",
+                  color: T.dim,
+                },
+              },
+              h(
+                "div",
+                { style: { color: T.danger, fontWeight: 600, marginBottom: "4px" } },
+                props.t("restore.detail.title"),
+              ),
+              restoreDetail.failures.map((/** @type {any} */ item, /** @type {number} */ index) =>
+                h(
+                  "div",
+                  {
+                    key: `restore-failure-${index}`,
+                    className: "dsh-sdel-truncate",
+                    title: `${item.label}：${item.detail}`,
+                    "data-session-delete-restore-failure": item.id,
+                  },
+                  `${item.label}：${item.detail}`,
+                ),
+              ),
+              restoreDetail.result?.wasLive === true
+                ? h(
+                    "div",
+                    { style: { marginTop: "6px", color: T.faint } },
+                    props.t("restore.busyHint"),
+                  )
+                : null,
+              h(
+                "div",
+                { style: { marginTop: "8px" } },
+                h(
+                  Btn,
+                  {
+                    tight: true,
+                    action: "restore-retry",
+                    disabled: retrying,
+                    onClick: retryFailedRefs,
+                  },
+                  retrying ? props.t("restore.detail.retrying") : props.t("restore.detail.retry"),
+                ),
+              ),
+            )
+          : null,
         entries.length === 0
           ? h(
               "div",
@@ -1504,6 +1756,142 @@ window.__ModuleLoader__.load({
           ),
         },
         body,
+      );
+    }
+
+    /**
+     * 一条操作回执：摘要一行，展开后逐项列出引用/校验结果（USIM-U3-05）。
+     * 用户被 toast 指引来「详见操作回执」，这里就必须真的能查到是哪一处没通过，
+     * 并且对恢复回执提供「重试未通过的引用」。
+     */
+    function ReceiptRow(/** @type {any} */ props) {
+      var receipt = props.receipt || {};
+      var retryingState = React.useState(false);
+      var retrying = retryingState[0];
+      var setRetrying = retryingState[1];
+      var noteState = React.useState(null);
+      var note = noteState[0];
+      var setNote = noteState[1];
+      var refs = Array.isArray(receipt.refs) ? receipt.refs : [];
+      var checks = Array.isArray(receipt.checks) ? receipt.checks : [];
+      var failures = restoreFailures(receipt);
+      var action = String(receipt.action || "");
+      // B1（复审）：没有 `expected` 快照的旧回执不能重检——服务端也会拒绝，
+      // 这里先不给按钮，别让用户点出一个假的「重检通过」。
+      var hasSnapshot = receipt.expected !== null && typeof receipt.expected === "object";
+      var retryable =
+        failures.length > 0 &&
+        (action === "restore" || action === "restore-recheck") &&
+        typeof receipt.sessionId === "string" &&
+        hasSnapshot &&
+        typeof props.call === "function";
+
+      /** @type {any[]} */
+      var detailLines = [];
+      /** @param {string} title @param {any[]} items @param {string} keyPrefix */
+      var pushGroup = (title, items, keyPrefix) => {
+        if (items.length === 0) return;
+        detailLines.push(
+          h(
+            "div",
+            { key: `${keyPrefix}-title`, style: { color: T.faint, marginTop: "4px" } },
+            title,
+          ),
+        );
+        items.forEach((/** @type {any} */ item, /** @type {number} */ index) => {
+          var status = String(item?.status || "");
+          var label = String(item?.label || item?.id || "");
+          var detail = item?.detail ? String(item.detail) : "";
+          var mark = status === "ok" ? "✓" : status === "failed" ? "✗" : "·";
+          detailLines.push(
+            h(
+              "div",
+              {
+                key: `${keyPrefix}-${index}`,
+                style: { color: status === "failed" ? T.danger : T.dim },
+                "data-session-delete-receipt-item": `${item?.id || ""}:${status}`,
+              },
+              `${mark} ${label}${detail ? `：${detail}` : ""}${item?.retried === true ? `（${props.t("restore.detail.retried")}）` : ""}`,
+            ),
+          );
+        });
+      };
+      pushGroup(props.t("receipt.refs"), refs, "refs");
+      // trash 回执的引用清单在 `removed` 里（N3）：两者都渲染，文案才对得上
+      // README 的「show every reference and check」。
+      var removed = Array.isArray(receipt.removed) ? receipt.removed : [];
+      pushGroup(props.t("receipt.removed"), removed, "removed");
+      pushGroup(props.t("receipt.checks"), checks, "checks");
+
+      var summaryText = `${formatTime(receipt.at)} · ${action} · ${String(receipt.title || receipt.sessionId || "")}`;
+      if (refs.length > 0 || checks.length > 0) {
+        summaryText +=
+          failures.length > 0
+            ? ` · ${props.t("receipt.summary.partial", { n: failures.length })}`
+            : ` · ${props.t("receipt.summary.ok")}`;
+      }
+
+      return h(
+        "details",
+        {
+          className: "dsh-sdel-receipt",
+          "data-session-delete-receipt": String(receipt.id || ""),
+          style: { padding: "2px 0" },
+        },
+        h("summary", { className: "dsh-sdel-truncate", title: summaryText }, summaryText),
+        detailLines.length > 0
+          ? h(
+              "div",
+              { style: { padding: "4px 0 4px 12px", fontSize: "12px", lineHeight: 1.5 } },
+              detailLines,
+            )
+          : null,
+        receipt.wasLive === true
+          ? h(
+              "div",
+              { style: { padding: "0 0 4px 12px", fontSize: "12px", color: T.faint } },
+              props.t("restore.busyHint"),
+            )
+          : null,
+        retryable
+          ? h(
+              "div",
+              { style: { padding: "0 0 4px 12px" } },
+              h(
+                Btn,
+                {
+                  tight: true,
+                  action: "receipt-restore-retry",
+                  disabled: retrying,
+                  onClick: () => {
+                    if (retrying) return;
+                    setRetrying(true);
+                    props
+                      .call("recheckRestore", {
+                        receiptId: typeof receipt.id === "string" ? receipt.id : undefined,
+                        sessionId: receipt.sessionId,
+                      })
+                      .then((/** @type {any} */ result) => {
+                        setRetrying(false);
+                        var left = restoreFailures(result);
+                        setNote(
+                          left.length === 0
+                            ? props.t("restore.retry.ok")
+                            : props.t("restore.retry.partial", { n: left.length }),
+                        );
+                        props.onChanged?.();
+                      })
+                      .catch((/** @type {any} */ reason) => {
+                        setRetrying(false);
+                        setNote(errorText(reason));
+                      });
+                  },
+                },
+                retrying ? props.t("restore.detail.retrying") : props.t("restore.detail.retry"),
+              ),
+              note ? h("div", { style: { color: T.faint, marginTop: "4px" } }, String(note)) : null,
+            )
+          : null,
       );
     }
 
@@ -1797,11 +2185,15 @@ window.__ModuleLoader__.load({
             !receipts || receipts.length === 0
               ? h("div", null, props.t("settings.receipts.empty"))
               : receipts.map((/** @type {any} */ receipt, /** @type {any} */ receiptIndex) =>
-                  h(
-                    "div",
-                    { key: `receipt-${receiptIndex}`, className: "dsh-sdel-truncate" },
-                    `${formatTime(receipt.at)} · ${String(receipt.action || "")} · ${String(receipt.title || receipt.sessionId || "")}`,
-                  ),
+                  h(ReceiptRow, {
+                    key: `receipt-${receiptIndex}`,
+                    receipt: receipt,
+                    call: props.call,
+                    t: props.t,
+                    onChanged: () => {
+                      void loader.load();
+                    },
+                  }),
                 ),
           ),
         ),
@@ -2105,7 +2497,7 @@ window.__ModuleLoader__.load({
      * 「部分失败被汇总、成功的也不再算失败」。
      * @param {{ ids: string[], kind: "purge" | "restore", call: (method: string, request?: any) => Promise<any>,
      *   chunkSize?: number, onProgress?: (state: any) => void, shouldStop?: () => boolean,
-     *   onRestored?: (sessionId: string) => void }} options
+     *   onRestored?: (sessionId: string, options?: { open?: boolean }) => void }} options
      * @returns {Promise<{ kind: string, total: number, done: number, ok: number, failures: any[],
      *   partials: number, stopped: boolean }>}
      */
@@ -2148,7 +2540,11 @@ window.__ModuleLoader__.load({
             else {
               // 条目回来了但引用没全回来：单独计数，批量行里要说出来（AUD-SD-02）。
               if (item.partial === true) partials += 1;
-              if (kind === "restore" && item.sessionId) options.onRestored?.(item.sessionId);
+              // N1：批量恢复不逐条导航——宿主 replaceMain 会互相 supersede，
+              // 最终停在任意一条还会闪；批量结束后统一交给 onBatchRestoreDone。
+              if (kind === "restore" && item.sessionId) {
+                options.onRestored?.(item.sessionId, { open: false });
+              }
             }
           }
         } catch (reason) {
@@ -2195,6 +2591,8 @@ window.__ModuleLoader__.load({
             call: props.call,
             onPurged: props.onPurged,
             onRestored: props.onRestored,
+            onRestoreComplete: props.onRestoreComplete,
+            onBatchRestoreDone: props.onBatchRestoreDone,
             tickStore: props.tickStore,
             bump: props.bump,
           }),
@@ -2358,6 +2756,105 @@ window.__ModuleLoader__.load({
           }
         });
       };
+
+      /**
+       * 宿主的界面导航服务（Client 半的 `uiWorkspace`）。
+       * 不是公开契约，所以按「有就用、没有就降级」处理，绝不因为缺它抛错。
+       */
+      const uiWorkspace = () => {
+        try {
+          return ctx.get ? ctx.get("uiWorkspace") : undefined;
+        } catch (_error) {
+          return undefined;
+        }
+      };
+
+      /** 当前列表里第一个可切换的会话 id（用于删除当前会话后自动跳走）。 */
+      const availableSessionIds = () => {
+        const sessions = hostSessions();
+        const list = sessions?.list?.getSnapshot?.();
+        if (!list) return [];
+        const ids = Array.isArray(list.ids) ? list.ids : Object.keys(list.byId || {});
+        /** @type {string[]} */
+        const out = [];
+        for (let index = 0; index < ids.length; index += 1) {
+          const id = String(ids[index]);
+          if (retired.has(id)) continue;
+          out.push(id);
+        }
+        return out;
+      };
+
+      /**
+       * 重新把视图绑到某个会话上（USIM-U2-05 / USIM-U3-02 ②）。
+       *
+       * 删除时宿主客户端会 dispose 这个会话的作用域；恢复/删除之后光刷新列表**不会**
+       * 重建主视图的绑定，页面就停在「会话不可用」上（要切走再切回才好）。
+       * `uiWorkspace.openSession` 是「选中会话并显示它的对话」这一条正式导航动作，
+       * 会重新 retain 一份引用，正好补上这一步。
+       * @param {string} sessionId
+       * @returns {boolean}
+       */
+      const reopenSession = (sessionId) => {
+        if (typeof sessionId !== "string" || sessionId.length === 0) return false;
+        const workspace = uiWorkspace();
+        if (workspace && typeof workspace.openSession === "function") {
+          try {
+            workspace.openSession(sessionId);
+            return true;
+          } catch (error) {
+            ctx.logger?.warn?.(
+              `session-delete: openSession failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        }
+        // 退化路径：至少把投影缓存刷一遍，标题与消息不至于停在旧值。
+        try {
+          const sessions = hostSessions();
+          void sessions?.refreshProjections?.(sessionId);
+        } catch (_error) {
+          /* 老宿主没有该通道时忽略 */
+        }
+        return false;
+      };
+
+      /**
+       * 删除的是当前正在看的会话时，别把人留在「已删除的会话」页上（USIM-U2-05）：
+       * 切到下一个可用会话，没有就回新会话页。
+       * @param {string | null | undefined} deletedId
+       * @param {string | null} workspaceId
+       */
+      const leaveDeletedSessionView = (deletedId, workspaceId) => {
+        if (typeof deletedId !== "string" || deletedId.length === 0) return false;
+        const decision = afterTrashNavigation({
+          deletedId: deletedId,
+          currentId: deletedId,
+          candidates: availableSessionIds(),
+        });
+        if (!decision.navigate) return false;
+        const workspace = uiWorkspace();
+        if (decision.target === "session" && decision.id) {
+          if (reopenSession(decision.id)) return true;
+        }
+        if (workspace && typeof workspace.startSession === "function") {
+          try {
+            // 带上原工作区：否则宿主可能落到「选择一个工作区开始」的空态。
+            if (typeof workspaceId === "string" && workspaceId.length > 0) {
+              workspace.startSession(workspaceId);
+            } else {
+              workspace.startSession();
+            }
+            return true;
+          } catch (error) {
+            ctx.logger?.warn?.(
+              `session-delete: startSession failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        }
+        // 宿主没有导航服务：至少让列表重算，README 里写明需要手动切换。
+        void refreshRows(undefined);
+        return false;
+      };
       // 快捷键只做「打开回收站」这种非破坏性动作；删除始终需要菜单 + 确认框。
       window.addEventListener("keydown", (/** @type {any} */ event) => {
         if (!(event.metaKey || event.ctrlKey) || !event.altKey) return;
@@ -2370,11 +2867,20 @@ window.__ModuleLoader__.load({
       });
 
       const onTrashed = (/** @type {any} */ result) => {
-        if (result?.entryId) {
-          toastStore.set({ entryId: result.entryId, title: result.title || null });
-        }
-        void refreshRows(result?.sessionId ? result.sessionId : undefined);
-        tickStore.set(tickStore.getSnapshot() + 1);
+        const deletedId = typeof result?.sessionId === "string" ? result.sessionId : null;
+        // 优先用打开确认框时记下的判断（宿主删完就把行摘了），老路径再退回实时判断。
+        const wasCurrent =
+          result?.wasCurrent === true || (Boolean(deletedId) && currentSession()?.id === deletedId);
+        toastStore.set({
+          entryId: result?.entryId ?? null,
+          title: result?.title || null,
+          // 删除当前会话时把「还能恢复」说在明处（USIM-U2-05）。
+          text: wasCurrent ? translate("toast.trashedCurrent") : undefined,
+        });
+        void refreshRows(deletedId ?? undefined).then(() => {
+          tickStore.set(tickStore.getSnapshot() + 1);
+          if (wasCurrent) leaveDeletedSessionView(deletedId, result?.workspaceId ?? null);
+        });
       };
       /**
        * 工作区批量的收尾：逐条结果汇总成一句 toast，并把删掉的 id 记进 retired，
@@ -2384,18 +2890,26 @@ window.__ModuleLoader__.load({
       const onTrashedMany = (result) => {
         var ok = 0;
         var total = 0;
+        const current = currentSession();
+        /** @type {string | null} */
+        var currentDeleted = null;
         if (result && Array.isArray(result.results)) {
           total = result.results.length;
           for (let index = 0; index < total; index += 1) {
             const item = result.results[index];
             if (!item.ok) continue;
             ok += 1;
-            if (item.sessionId) retired.add(String(item.sessionId));
+            if (item.sessionId) {
+              retired.add(String(item.sessionId));
+              if (current?.id === item.sessionId) currentDeleted = String(item.sessionId);
+            }
           }
         }
         toastStore.set({ text: translate("toast.workspace.done", { ok: ok, total: total }) });
-        void refreshRows(undefined);
-        tickStore.set(tickStore.getSnapshot() + 1);
+        void refreshRows(undefined).then(() => {
+          tickStore.set(tickStore.getSnapshot() + 1);
+          if (currentDeleted) leaveDeletedSessionView(currentDeleted, null);
+        });
       };
 
       /** 当前会话（主视图持有的那一条）。快捷键的语义就是「这个会话」。 */
@@ -2457,9 +2971,35 @@ window.__ModuleLoader__.load({
       const onPurged = (/** @type {any} */ sessionId) => {
         void refreshRows(sessionId || undefined);
       };
-      const onRestored = (/** @type {any} */ sessionId) => {
+      /**
+       * 恢复后的列表收尾。
+       * @param {any} sessionId
+       * @param {{ open?: boolean }} [options] open=false 用于批量恢复：只刷新，不逐条导航（N1）
+       */
+      const onRestored = (sessionId, options = {}) => {
         if (sessionId) retired.delete(sessionId);
+        // 恢复是「把会话还给我」：列表刷新之外还必须重建主视图绑定，
+        // 否则当前视图停在「会话不可用」上（USIM-U3-02 ②）。
+        void refreshRows(undefined).then(() => {
+          if (options.open === false) return;
+          reopenSession(typeof sessionId === "string" ? sessionId : "");
+        });
+      };
+
+      /** 恢复成功的收尾：关框 + 说一句 + 重新打开会话（USIM-U2-17）。 */
+      const onRestoreComplete = (/** @type {any} */ result) => {
+        panelStore.set(false);
+        toastStore.set({ text: translate("toast.restored") });
+        onRestored(result?.sessionId, { open: true });
+      };
+
+      /** 批量恢复全绿的收尾：关框 + 汇总 toast，只刷新一次、不逐条导航（N1）。 */
+      const onBatchRestoreDone = (/** @type {any} */ summary) => {
+        panelStore.set(false);
+        var ok = summary && typeof summary.ok === "number" ? summary.ok : 0;
+        toastStore.set({ text: translate("toast.restoredMany", { n: ok }) });
         void refreshRows(undefined);
+        tickStore.set(tickStore.getSnapshot() + 1);
       };
 
       /**
@@ -2468,7 +3008,14 @@ window.__ModuleLoader__.load({
        * 工作区「…」菜单也有正式入口。拿不到服务（老宿主）时退回旧 slot，功能不减。
        */
       const openSessionConfirm = (/** @type {any} */ sessionId, /** @type {any} */ title) => {
-        requestStore.set({ sessionId: sessionId, title: title || null });
+        // 打开确认框这一刻的「当前会话 / 当前工作区」必须记下来：
+        // 删除成功后宿主会把这一行从列表里摘掉，事后再问「删的是当前会话吗」就问不到了。
+        requestStore.set({
+          sessionId: sessionId,
+          title: title || null,
+          currentId: currentSession()?.id ?? null,
+          workspaceId: currentWorkspace()?.id ?? null,
+        });
       };
       const openWorkspaceConfirm = (/** @type {any} */ workspaceId, /** @type {any} */ title) => {
         requestStore.set({ workspaceId: String(workspaceId), title: title || null });
@@ -2751,6 +3298,8 @@ window.__ModuleLoader__.load({
                     onTrashedMany: onTrashedMany,
                     onPurged: onPurged,
                     onRestored: onRestored,
+                    onRestoreComplete: onRestoreComplete,
+                    onBatchRestoreDone: onBatchRestoreDone,
                     tickStore: tickStore,
                     bump: () => tickStore.set(tickStore.getSnapshot() + 1),
                   }),
@@ -2776,6 +3325,9 @@ window.__ModuleLoader__.load({
         createSettingsCache: createSettingsCache,
         trashFailureText: trashFailureText,
         restoreNotice: restoreNotice,
+        restoreFailures: restoreFailures,
+        restoreDetailText: restoreDetailText,
+        afterTrashNavigation: afterTrashNavigation,
         isPartialFailure: isPartialFailure,
         runBatch: runBatch,
         panelPollMs: PANEL_POLL_MS,

@@ -649,6 +649,100 @@ describe("partial result messaging", () => {
     assert.match(String(notice), /回执/u, String(notice));
   });
 
+  it("lists each failed reference with its actionable detail (USIM-U3-05)", () => {
+    const { restoreFailures, restoreDetailText } = client.__test;
+    const failures = restoreFailures({
+      ok: true,
+      partial: true,
+      failures: [
+        {
+          id: "workspace-slot",
+          label: "工作区记账",
+          detail: "未挂回工作区：ws1；可在会话右键菜单「归属到项目…」里手动挂回",
+        },
+        { id: "workspace-pin", label: "置顶标记", detail: "置顶没有恢复" },
+      ],
+      refs: [{ id: "workspace-archive", status: "skipped" }],
+      checks: [
+        { id: "workspace-slot", status: "failed", label: "工作区记账", detail: "未挂回：ws1" },
+      ],
+    });
+    assert.equal(failures.length, 2, JSON.stringify(failures));
+    assert.equal(failures[0].label, "工作区记账");
+    assert.match(String(failures[0].detail), /归属到项目/u, "detail 必须带可操作建议");
+    const text = restoreDetailText(failures);
+    assert.match(String(text), /工作区记账/u);
+    assert.match(String(text), /置顶标记/u);
+  });
+
+  it("falls back to refs/checks when an older host returns no failures list", () => {
+    const { restoreFailures } = client.__test;
+    const failures = restoreFailures({
+      ok: true,
+      partial: true,
+      refs: [
+        { id: "workspace-slot", label: "工作区记账", status: "failed", detail: "未挂回：ws1" },
+        { id: "workspace-pin", label: "置顶标记", status: "ok" },
+      ],
+      checks: [{ id: "session-dir", label: "会话目录", status: "failed", detail: "没有回到原处" }],
+    });
+    assert.deepEqual(
+      failures.map((/** @type {any} */ item) => item.id),
+      ["workspace-slot", "session-dir"],
+    );
+  });
+
+  it("leaves a deleted current session instead of staying on it (USIM-U2-05)", () => {
+    const { afterTrashNavigation } = client.__test;
+    // 删除的不是当前会话：什么都不做。
+    assert.deepEqual(afterTrashNavigation({ deletedId: "a", currentId: "b", candidates: ["b"] }), {
+      navigate: false,
+      target: "none",
+    });
+    // 删的是当前会话：切到下一个可用会话。
+    assert.deepEqual(
+      afterTrashNavigation({ deletedId: "a", currentId: "a", candidates: ["a", "b"] }),
+      { navigate: true, target: "session", id: "b" },
+    );
+    // 没有别的会话：回新会话页。
+    assert.deepEqual(afterTrashNavigation({ deletedId: "a", currentId: "a", candidates: ["a"] }), {
+      navigate: true,
+      target: "home",
+    });
+  });
+
+  it("batch restore never navigates per item (N1): onRestored gets { open: false }", async () => {
+    const { runBatch } = client.__test;
+    /** @type {{ sessionId: string, info: any }[]} */
+    const opened = [];
+    /** @type {any} */
+    const call = async (/** @type {string} */ _method, /** @type {any} */ request) => ({
+      ok: true,
+      results: request.entryIds.map((/** @type {string} */ entryId) => ({
+        entryId,
+        ok: true,
+        sessionId: `s-${entryId}`,
+      })),
+    });
+    await runBatch({
+      ids: ["a", "b", "c"],
+      kind: "restore",
+      call,
+      chunkSize: 2,
+      onRestored: (/** @type {any} */ sessionId, /** @type {any} */ info) => {
+        opened.push({ sessionId: sessionId, info: info });
+      },
+    });
+    assert.equal(opened.length, 3, "每条成功恢复仍要通知，便于清 retired");
+    for (const item of opened) {
+      assert.deepEqual(
+        item.info,
+        { open: false },
+        "批量恢复不逐条导航，避免多次 replaceMain 互相覆盖",
+      );
+    }
+  });
+
   it("runBatch counts partial restores so the batch line can report them", async () => {
     const { runBatch } = client.__test;
     /** @type {any} */
@@ -700,6 +794,11 @@ describe("stable data-* anchors", () => {
       "data-session-delete-group",
       "data-session-delete-health",
       "data-session-delete-receipts",
+      "data-session-delete-disclosure",
+      "data-session-delete-receipt",
+      "data-session-delete-receipt-item",
+      "data-session-delete-restore-detail",
+      "data-session-delete-restore-failure",
       "data-session-delete-audit",
       "data-session-delete-toast",
     ];

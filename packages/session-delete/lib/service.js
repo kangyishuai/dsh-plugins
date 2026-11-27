@@ -60,6 +60,8 @@ export class SessionDeleteService extends TypertRemoteService {
     this.agentToolRegistered = false;
     /** 启动对账只跑一次（宿主服务重建时 ctx.inject 可能重复触发）。 */
     this.recoveryRequested = false;
+    /** 补跑一轮的开关：宿主晚挂载的服务在首轮对账时还探不到。 */
+    this.recoveryRetried = false;
     this.installAgentTool();
     this.installStartupRecovery();
   }
@@ -84,6 +86,7 @@ export class SessionDeleteService extends TypertRemoteService {
                 `${summary.unresolved} unresolved, ${summary.failed} failed)`,
             );
           }
+          this.scheduleRecoveryRetry();
         })
         .catch((/** @type {any} */ error) => {
           this.recoveryRequested = false;
@@ -107,6 +110,42 @@ export class SessionDeleteService extends TypertRemoteService {
           (error instanceof Error ? error.message : String(error)),
       );
     }
+  }
+
+  /**
+   * 启动对账补跑一轮（USIM-U3-02 的宿主侧根因）：
+   * 桌面组合里 `workspaceRegistry` / `agents` 比 `sessionPersistence` 晚挂载，
+   * 首轮对账探不到它们，可能漏掉归档闸门与工作区收尾。对账本身幂等，补跑没有副作用。
+   *
+   * 覆盖范围（复审 N5）：补跑只能救 **trash 现场**——「已移动但引用未摘」的记录会以
+   * state=failed 留在 journal 里，第二轮会重跑；而 restore 收尾在首轮就已经 finalize
+   * 条目，第二轮只会走「恢复此前已完成」的捷径。restore 的引用补做靠设置页
+   * `recheckRestore`（回执里的 expected 快照），不是这里。
+   */
+  scheduleRecoveryRetry() {
+    if (this.recoveryRetried) return;
+    this.recoveryRetried = true;
+    const timer = setTimeout(() => {
+      void this.ops
+        .recoverPending({ operator: "system" })
+        .then((/** @type {any} */ summary) => {
+          if (summary.examined > 0) {
+            this.ctx.logger?.info?.(
+              `session-delete: recovery re-check examined ${summary.examined} record(s) ` +
+                `after host services settled (${summary.completed} completed, ` +
+                `${summary.rolledBack} rolled back, ${summary.unresolved} unresolved, ` +
+                `${summary.failed} failed)`,
+            );
+          }
+        })
+        .catch((/** @type {any} */ error) => {
+          this.ctx.logger?.warn?.(
+            "session-delete: recovery re-check failed: " +
+              (error instanceof Error ? error.message : String(error)),
+          );
+        });
+    }, 2500);
+    /** @type {any} */ (timer).unref?.();
   }
 
   /**
@@ -339,6 +378,21 @@ export class SessionDeleteService extends TypertRemoteService {
   }
 
   /**
+   * 重检一次已完成的恢复：重放失败的引用并重新校验（USIM-U3-05）。
+   * @param {{ sessionId?: string, receiptId?: string }} [request]
+   */
+  async recheckRestore(request) {
+    try {
+      return await this.ops.recheckRestore({
+        sessionId: typeof request?.sessionId === "string" ? request.sessionId : undefined,
+        receiptId: typeof request?.receiptId === "string" ? request.receiptId : undefined,
+      });
+    } catch (error) {
+      rethrow(error);
+    }
+  }
+
+  /**
    * 彻底删除一个回收站条目。
    * @param {{ entryId: string }} request
    */
@@ -440,6 +494,7 @@ declareRemote(SessionDeleteService, "trashWorkspace");
 declareRemote(SessionDeleteService, "trash");
 declareRemote(SessionDeleteService, "list");
 declareRemote(SessionDeleteService, "restore");
+declareRemote(SessionDeleteService, "recheckRestore");
 declareRemote(SessionDeleteService, "purge");
 declareRemote(SessionDeleteService, "audit");
 declareRemote(SessionDeleteService, "restoreMany");

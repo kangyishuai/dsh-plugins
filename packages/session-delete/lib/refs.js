@@ -56,11 +56,27 @@ export function buildRefs(caps, logger, options = {}) {
     },
     // 删除的第 1 步会 archive 会话（当作 agent/pre-step 闸门），恢复时把它解开。
     // 归档标记本身不会被还原（ADR：恢复的期望是「会话回到列表」，见 AUD-SD-11 的取舍）。
+    //
+    // USIM-U3-02 修：宿主不提供该接口时**不能抛异常**。删除阶段同样是 unknown 档、
+    // 根本没归档过，恢复阶段再报「失败」只会让用户看到一条假的「1 处引用未通过」。
+    // 返回 skipped 才是事实：这一处没动过，也没有需要撤的。
+
+    // USIM-U3-02 / N6：解除归档失败意味着「会话回来了但仍可能被归档集合挡住」
+    // ——它同时是删除时的 agent/pre-step 闸门，所以必须给出下一步而不是原始英文。
     restore: async (sessionId) => {
       if (typeof workspace?.unarchiveSession !== "function") {
-        throw new Error("unarchiveSession unavailable");
+        return { status: "skipped", detail: "当前宿主不提供 unarchiveSession，未做处理" };
       }
-      await workspace.unarchiveSession(sessionId);
+      try {
+        await workspace.unarchiveSession(sessionId);
+      } catch (error) {
+        return {
+          status: "failed",
+          detail:
+            `归档标记未能解除（${error instanceof Error ? error.message : error}）；` +
+            "会话可能仍在归档状态，可在侧栏的归档列表里手动取消归档",
+        };
+      }
       return { status: "ok" };
     },
   });
@@ -84,9 +100,18 @@ export function buildRefs(caps, logger, options = {}) {
     restore: async (sessionId, snapshot) => {
       if (snapshot?.pinned !== true) return { status: "skipped", detail: "原本未置顶" };
       if (typeof workspace?.pinSession !== "function") {
-        throw new Error("pinSession unavailable");
+        return { status: "skipped", detail: "当前宿主不提供 pinSession，未做处理" };
       }
-      await workspace.pinSession(sessionId);
+      try {
+        await workspace.pinSession(sessionId);
+      } catch (error) {
+        return {
+          status: "failed",
+          detail:
+            `置顶没有恢复（${error instanceof Error ? error.message : error}）；` +
+            "可在会话右键菜单里手动置顶",
+        };
+      }
       return { status: "ok" };
     },
   });
@@ -118,7 +143,11 @@ export function buildRefs(caps, logger, options = {}) {
       const missing = [];
       /** @type {string[]} */
       const failed = [];
-      for (const workspaceId of snapshot?.workspaceIds ?? []) {
+      const workspaceIds = snapshot?.workspaceIds ?? [];
+      if (workspaceIds.length === 0) {
+        return { status: "ok", detail: "原本不在任何工作区" };
+      }
+      for (const workspaceId of workspaceIds) {
         const item = (workspace?.list?.() ?? []).find(
           (/** @type {any} */ w) => String(w.id) === workspaceId,
         );
@@ -127,7 +156,7 @@ export function buildRefs(caps, logger, options = {}) {
           continue;
         }
         if (typeof item.attachSession !== "function") {
-          failed.push(workspaceId);
+          failed.push(`${workspaceId}（宿主没有 attachSession）`);
           continue;
         }
         try {
@@ -136,11 +165,21 @@ export function buildRefs(caps, logger, options = {}) {
           failed.push(`${workspaceId}（${error instanceof Error ? error.message : error}）`);
         }
       }
-      if (failed.length > 0) throw new Error(`挂回工作区失败：${failed.join("、")}`);
-      if (missing.length > 0) {
-        return { status: "skipped", detail: `原工作区已不存在：${missing.join("、")}` };
+      // 逐项说出是哪一处，并给下一步动作；不再 throw（throw 只会把整个引用列表
+      // 压成一句「挂回工作区失败」，用户仍然不知道点哪里修）。
+      if (failed.length > 0) {
+        return {
+          status: "failed",
+          detail: `未挂回工作区：${failed.join("、")}；可在会话右键菜单「归属到项目…」里手动挂回`,
+        };
       }
-      return { status: "ok" };
+      if (missing.length > 0) {
+        return {
+          status: "skipped",
+          detail: `原工作区已不存在：${missing.join("、")}；可在会话右键菜单「归属到项目…」里挂到别的工作区`,
+        };
+      }
+      return { status: "ok", detail: `已挂回 ${workspaceIds.length} 个工作区` };
     },
     inspect: async (sessionId) => {
       if (typeof workspace?.list !== "function") {
@@ -285,21 +324,41 @@ export async function removeAllRefs(refs, sessionId, snapshots = {}) {
 /**
  * 把引用恢复到删除前的状态；逐项记录结果，失败不中断其余项（会话文件已经回来了，
  * 不能因为一个引用失败把恢复整体判死）。
+ *
+ * 三道闸门（USIM-U3-02）：
+ * 1. `tier === "unknown"` 的引用**跳过**，不报失败 —— 删除阶段同样没动它（removeAllRefs
+ *    的同一判据），恢复阶段再报失败就是假警报；
+ * 2. 适配器自己在接口缺失时返回 `skipped`（见 refs.js 各 restore），不再抛异常；
+ * 3. 失败项的 detail 必须带「是哪一处 + 下一步动作」，直接进回执、审计和界面。
+ *
  * @param {RefAdapter[]} refs
  * @param {string} sessionId
  * @param {RefSnapshot} snapshot
- * @returns {Promise<{ id: string, label: string, status: "ok" | "failed" | "skipped", detail?: string }[]>}
+ * @param {{ onlyIds?: string[], retried?: boolean }} [options] onlyIds 只重试这些引用（自动重试一次用）
+ * @returns {Promise<{ id: string, label: string, status: "ok" | "failed" | "skipped", detail?: string, retried?: boolean }[]>}
  */
-export async function restoreAllRefs(refs, sessionId, snapshot) {
-  /** @type {{ id: string, label: string, status: "ok" | "failed" | "skipped", detail?: string }[]} */
+export async function restoreAllRefs(refs, sessionId, snapshot, options = {}) {
+  const onlyIds = Array.isArray(options.onlyIds) ? new Set(options.onlyIds) : null;
+  /** @type {{ id: string, label: string, status: "ok" | "failed" | "skipped", detail?: string, retried?: boolean }[]} */
   const results = [];
   for (const ref of refs) {
+    if (onlyIds !== null && !onlyIds.has(ref.id)) continue;
     if (typeof ref.restore !== "function") {
       results.push({
         id: ref.id,
         label: ref.label,
         status: "skipped",
         detail: "该引用没有恢复动作",
+        ...(options.retried === true ? { retried: true } : {}),
+      });
+      continue;
+    }
+    if (ref.tier === "unknown" && onlyIds === null) {
+      results.push({
+        id: ref.id,
+        label: ref.label,
+        status: "skipped",
+        detail: "当前宿主不提供该接口，未做处理",
       });
       continue;
     }
@@ -310,6 +369,7 @@ export async function restoreAllRefs(refs, sessionId, snapshot) {
         label: ref.label,
         status: outcome?.status ?? "ok",
         detail: outcome?.detail,
+        ...(options.retried === true ? { retried: true } : {}),
       });
     } catch (error) {
       results.push({
@@ -317,6 +377,7 @@ export async function restoreAllRefs(refs, sessionId, snapshot) {
         label: ref.label,
         status: "failed",
         detail: error instanceof Error ? error.message : String(error),
+        ...(options.retried === true ? { retried: true } : {}),
       });
     }
   }
