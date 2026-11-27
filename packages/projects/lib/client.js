@@ -3503,6 +3503,16 @@ window.__ModuleLoader__.load({
       var deleteState = useState({ project: null, impact: null, busy: false, error: "" });
       var rowDelete = deleteState[0];
       var setRowDelete = deleteState[1];
+      // 约定 §7.4.2：破坏性操作主按钮默认聚焦。列表行删除弹窗以前只挂属性、
+      // 没有 focus 逻辑（真机实测打开后 activeElement 还是 BODY），这里补上。
+      useEffect(() => {
+        if (!rowDelete.project) return undefined;
+        const target = /** @type {any} */ (
+          document.querySelector("[data-projects-row-delete-confirm]")
+        );
+        if (target && typeof target.focus === "function") target.focus();
+        return undefined;
+      }, [rowDelete.project?.id]);
       // F63 首启引导：一次性。默认 done=true，避免 RPC 回来之前闪一下引导框。
       // 真正的值来自宿主 storageDomain（projects_ui.firstRunDone，跨重启保留）。
       var firstRunState = useState({
@@ -4374,7 +4384,21 @@ window.__ModuleLoader__.load({
         rowDelete.project
           ? h(
               "div",
-              { style: styles.backdrop, "data-projects-row-delete-panel": rowDelete.project.id },
+              {
+                style: styles.backdrop,
+                "data-projects-row-delete-panel": rowDelete.project.id,
+                onKeyDownCapture: (/** @type {any} */ event) => {
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setRowDelete({
+                      project: null,
+                      impact: null,
+                      busy: false,
+                      error: "",
+                    });
+                  }
+                },
+              },
               h(
                 "div",
                 {
