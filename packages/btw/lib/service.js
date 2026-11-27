@@ -5,7 +5,12 @@
 import { fileURLToPath } from "node:url";
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 import { renderBadge } from "./badge.js";
-import { buildBoundedDigest, buildBoundedPrompt } from "./bounded.js";
+import {
+  buildBoundedDigest,
+  buildBoundedPrompt,
+  collectBoundedEvents,
+  isBoundedEligible,
+} from "./bounded.js";
 import { parseAllowedTools } from "./config.js";
 import { buildCostHint, formatCostHintLine, lastPromptTokens } from "./cost-hint.js";
 import { createFollowUpQueue } from "./followup-queue.js";
@@ -16,7 +21,13 @@ import { createLiveTracker } from "./live.js";
 import { parseMarkdown } from "./markdown.js";
 import { format, loadMessagesSync, pickLanguage } from "./messages.js";
 import { historyFile, resolveDataRoot } from "./paths.js";
-import { buildSettingsPatch, loadSettings, saveSettings } from "./settings.js";
+import {
+  buildSettingsPatch,
+  historyLimitOf,
+  loadSettings,
+  readHistoryLimit,
+  saveSettings,
+} from "./settings.js";
 import { observeUsage, runSideQuestion } from "./subagent.js";
 import {
   listThreads,
@@ -190,8 +201,12 @@ export class BtwService extends TypertRemoteService {
     }
 
     const stored = await loadSettings(this.dataRoot).catch(() => undefined);
+    // 设置页的「每会话保留条数」在这里生效（1–200，默认 50）：落盘裁剪与读侧上限同源。
+    const historyLimit = historyLimitOf(stored);
     const allowedTools = stored === undefined ? this.allowedTools : new Set(stored.allowedTools);
-    const sessionHistory = await listRecent(file, LIMITS.replayRecords).catch(() => []);
+    // 回放给模型的历史也不超过保留上限（降低上限后不必等下一次落盘就一致）。
+    const replayLimit = Math.min(LIMITS.replayRecords, historyLimit);
+    const sessionHistory = await listRecent(file, replayLimit).catch(() => []);
     // 成本提示（Phase 1，只提示不阻断）：父会话 contextPressure 粗估 + 上次真实 prompt 总量。
     // 探针结论：fork prompt 约为 contextPressure 的 0.75–1.2 倍，见 notes/btw/fork-cost.md §5。
     const pressure = this.pressureOf(String(agent?.id ?? ""));
@@ -210,30 +225,34 @@ export class BtwService extends TypertRemoteService {
         }),
       };
     }
-    const history = [...sessionHistory, ...priorThread].slice(-LIMITS.replayRecords);
+    const history = [...sessionHistory, ...priorThread].slice(-replayLimit);
     // bounded-context（ADR-0022）：只有用户显式开启、且父会话压力超过阈值时才用
     // spawn（fresh context）+「最近 N 条消息 + 问题」替代 full fork。默认关，绝不静默切换。
-    /** @type {any[]} */
-    let parentEvents = [];
-    try {
-      const parentSession = agent?.session;
-      if (parentSession && typeof parentSession.snapshotEvents === "function") {
-        parentEvents = parentSession.snapshotEvents();
-      }
-    } catch {
-      parentEvents = [];
-    }
-    const boundedEligible =
-      stored?.boundedContext === true &&
-      Number(pressure?.pressureTokens) >= LIMITS.boundedTriggerTokens;
+    // 注意：**先判 eligible 再取事件**。旧版无条件 snapshotEvents() 把整棵事件数组物化一遍，
+    // 哪怕 bounded 没开、最后只用到 12 条消息（AUD-BTW-07）。取到的事件是**全量**：
+    // 真实事件流里消息之间夹着 step/tool/job 事件，尾部窗口凑不满 12 条消息（复审 BLK-1）。
+    const boundedEligible = isBoundedEligible(stored, pressure?.pressureTokens);
     let mode = "fork";
     /** @type {{ type: "text", text: string }[] | undefined} */
     let boundedPrompt;
     if (boundedEligible) {
-      const digest = buildBoundedDigest(parentEvents);
+      let parentSession;
+      try {
+        parentSession = agent?.session;
+      } catch {
+        parentSession = undefined;
+      }
+      const collected = collectBoundedEvents(parentSession, true);
+      const digest = buildBoundedDigest(collected.events);
       if (digest.messages > 0) {
         mode = "bounded";
         boundedPrompt = buildBoundedPrompt(question.text, digest, { history });
+      } else {
+        // 不静默降级：用户开了 bounded 却拿不到 digest 时，这次会退回 full fork
+        // （一次可能几十万 tokens）。日志里留一条，README 的副作用一节也写明了。
+        this.logger?.warn?.(
+          "[btw] bounded-context is enabled but the parent session has no digestible messages; falling back to a full fork",
+        );
       }
     }
     // 线程 id 在 fork 之前就定下来：面板流式卡片和最终记录必须是同一个线程。
@@ -295,7 +314,7 @@ export class BtwService extends TypertRemoteService {
       ms: outcome.ms,
       at: Date.now(),
     };
-    await appendRecord(file, record).catch(() => {});
+    await appendRecord(file, record, historyLimit).catch(() => {});
     // 设置里关掉「主对话显示完整答案」时，只回一行提示；面板历史里仍有完整答案。
     // bounded 已经把成本封顶；此时再贴「fork 可能花几十万 tokens」的警告会误导，所以跳过。
     const answerHint = mode === "bounded" ? null : costHint;
@@ -317,7 +336,9 @@ export class BtwService extends TypertRemoteService {
    */
   async history(request) {
     const input = request ?? {};
-    const limit = Math.min(Number(input.limit) || LIMITS.replayRecords, LIMITS.perSessionRecords);
+    // 读侧上限也来自设置：降低上限后不必等下一次落盘，面板立刻只展示最后 N 条。
+    const historyLimit = await readHistoryLimit(this.dataRoot);
+    const limit = Math.min(Number(input.limit) || LIMITS.replayRecords, historyLimit);
     return listRecent(historyFile(this.dataRoot, String(input.sessionId ?? "")), limit);
   }
 
@@ -330,7 +351,7 @@ export class BtwService extends TypertRemoteService {
     const input = request ?? {};
     const records = await listRecent(
       historyFile(this.dataRoot, String(input.sessionId ?? "")),
-      LIMITS.perSessionRecords,
+      await readHistoryLimit(this.dataRoot),
     );
     return {
       records: records.length,
@@ -349,10 +370,8 @@ export class BtwService extends TypertRemoteService {
    */
   async threads(request) {
     const input = request ?? {};
-    const limit = Math.min(
-      Number(input.limit) || LIMITS.perSessionRecords,
-      LIMITS.perSessionRecords,
-    );
+    const historyLimit = await readHistoryLimit(this.dataRoot);
+    const limit = Math.min(Number(input.limit) || historyLimit, historyLimit);
     const records = await listRecent(
       historyFile(this.dataRoot, String(input.sessionId ?? "")),
       limit,
@@ -392,7 +411,7 @@ export class BtwService extends TypertRemoteService {
     const input = request ?? {};
     const records = await listRecent(
       historyFile(this.dataRoot, String(input.sessionId ?? "")),
-      LIMITS.perSessionRecords,
+      await readHistoryLimit(this.dataRoot),
     );
     const threadId = String(input.threadId ?? "");
     const wanted = String(input.recordId ?? "");
@@ -504,7 +523,7 @@ export class BtwService extends TypertRemoteService {
     const pressure = this.pressureOf(sessionId);
     const records = await listRecent(
       historyFile(this.dataRoot, sessionId),
-      LIMITS.perSessionRecords,
+      await readHistoryLimit(this.dataRoot),
     ).catch(() => []);
     return buildCostHint({
       pressureTokens: Number(pressure?.pressureTokens),

@@ -11,7 +11,7 @@ Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/de
 `/btw <question>` asks a side question about the current work **without interrupting the main task and without adding to the conversation history**.
 
 - **Available while the agent is working.** The command dispatches immediately instead of queueing behind the running turn (measured: 215 ms, no user message created).
-- **Read-only.** The side question runs in a forked child agent with **no tools**; a runtime guard denies any tool call that slips through, and `send_message` is always denied.
+- **Read-only.** The side question runs in a forked child agent with **no tools**; a tool guard is armed on that child's own scope and denies any tool call from it, and `send_message` is always denied.
 - **Cheap.** The fork reuses the parent conversation's prompt prefix, so the provider serves most of it from cache (measured: 57% on the first fork, 94% on a repeat). Cache writes are not billed.
 - **Kept.** Answers are written to a per-session JSONL history so you can reopen the last one with a bare `/btw`.
 - **Threads.** Follow up on a side question without losing the earlier exchange; the thread's history is replayed to the model each turn.
@@ -28,7 +28,7 @@ Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/de
 A third-party DSH plugin cannot reach a provider adapter through `ctx.llm` (every access path resolves to an instance without adapters). The supported path is a **forked subagent**:
 
 1. `ctx.subagents.startActivation({ provider: 'fork', parent: agent, … })` — the parent `Agent` comes from the command invocation.
-2. A `ctx.tools.guard(...)` is armed on the child so the side question stays read-only.
+2. A `tools.guard(...)` is armed **on the child's own context** (`ctx.agents.get(childId).ctx.tools`) so the side question stays read-only. The host registers a guard in the calling scope and checks `[global, ...agent scope chain]`, so a guard armed through the child only constrains that side question (agent scopes have no parent link, so the chain is just that agent's own layer — nothing else inherits it). The plugin never arms one through its own unscoped context: that would land in the host's **global** layer and deny tool calls for **every** agent in the process while the side question runs. If the child context cannot be resolved, no guard is armed at all — the internal run result records `guardScope: "none"` (no RPC field or UI shows it) — and the prompt still forbids tool use.
 3. The child's answer is read from the activation result, the child session is archived so it does not clutter the session list, and the Q&A is appended to history.
 
 Follow-ups re-fork each turn and replay the thread's own Q&A into the prompt — a fork is single-turn, so keeping one child alive would degenerate into a full side session with its own lifecycle.
@@ -79,12 +79,12 @@ Plugin config (set when adding the plugin to a profile):
 
 Runtime settings (editable in **Settings → Side questions**, stored in `<dataRoot>/btw/settings.json`):
 
-| Key              | Default | Meaning                                                                                                                                                         |
-| ---------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `allowedTools`   | `[]`    | Overrides the plugin config above when non-empty.                                                                                                               |
-| `historyLimit`   | `50`    | Records kept per session (1–200).                                                                                                                               |
-| `echoAnswer`     | `true`  | Also show the full answer in the conversation; off = panel only.                                                                                                |
-| `boundedContext` | `false` | Above 400K tokens of session context, use a spawn child with the last 12 messages instead of forking the whole session. Opt-in; answers may miss older context. |
+| Key              | Default | Meaning                                                                                                                                                                                             |
+| ---------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `allowedTools`   | `[]`    | Overrides the plugin config above when non-empty.                                                                                                                                                   |
+| `historyLimit`   | `50`    | Records kept per session (1–200). The plugin reads this value on every history read and write: lowering it hides older records immediately and physically trims the file on the next side question. |
+| `echoAnswer`     | `true`  | Also show the full answer in the conversation; off = panel only.                                                                                                                                    |
+| `boundedContext` | `false` | Above 400K tokens of session context, use a spawn child with the last 12 messages instead of forking the whole session. Opt-in; answers may miss older context.                                     |
 
 The settings file is re-read on every use, so edits take effect without restarting the host.
 
@@ -96,10 +96,19 @@ Panel details: the bottom「New question」input hides while a thread follow-up 
 
 - **Spends one model call** per side question (a fork of the current conversation).
 - **Creates a child session**, then archives it. If archiving is unavailable the child stays visible in the session list — the answer itself is unaffected.
-- **Writes** `<dataRoot>/btw/<parentSessionId>.jsonl` (up to 50 records per session, atomically replaced). It never copies the main conversation to disk.
-- **Read-only is enforced at runtime**, not by prompt text: a tool call from the side question is denied with a model-facing reason.
+- **Writes** `<dataRoot>/btw/<parentSessionId>.jsonl` (up to `historyLimit` records per session; default 50, configurable 1–200; atomically replaced). Two side questions in the same session cannot lose each other's record: appends are serialized per file inside the host process. It never copies the main conversation to disk.
+- **Read-only is enforced in-process by a tool guard**, not by prompt text: the guard is armed on the side-question child's own scope, so a tool call from that child is denied with a model-facing reason while other sessions stay unaffected. The scope mechanics are confirmed against the shipped host source on DSH 0.2.2-rc.5 (`tools.guard()` registers in the calling scope; `checkGuards()` walks `[global, ...agent scope chain]`); an end-to-end live denial was not re-run for this release (**pending live verification**). If the child context cannot be resolved — not observed in practice — no guard is armed, a warning is logged, and read-only falls back to the prompt only.
 - **Cost warning on very large sessions**: above a 250K-token parent context (the host's context pressure), the panel shows one warning line with the projected 0.75–1.2× range and the last actual side-question prompt size; `/btw` appends the same line to its result. It never blocks the question.
-- **Optional bounded mode (`boundedContext`)**: above 400K tokens, a side question can run on a `spawn` child that only sees the last 12 user/assistant messages (700 chars each, 4000 total) plus the question. Cost is bounded by the digest plus the host's fixed subagent overhead (tens of thousands of tokens; ~119K on a heavily loaded profile, vs 762K for a full fork on the same session), but older context is dropped and answers are marked `bounded`. Off by default; fork cache reuse is lost in this mode.
+- **Optional bounded mode (`boundedContext`)**: above 400K tokens, a side question can run on a `spawn` child that only sees the last 12 user/assistant messages (700 chars each, 4000 total) plus the question. Cost is bounded by the digest plus the host's fixed subagent overhead (tens of thousands of tokens; ~119K on a heavily loaded profile, vs 762K for a full fork on the same session), but older context is dropped and answers are marked `bounded`. Off by default; fork cache reuse is lost in this mode. The parent transcript is read only when the mode triggers (previously every side question materialized it, even with the mode off). If the digest ends up with no messages, the run logs a warning and falls back to a full fork — and that fallback costs the usual fork amount.
+
+## Uninstall & leftovers
+
+Removing the plugin removes **code only**; it never deletes data it wrote:
+
+- `<dataRoot>/btw/<parentSessionId>.jsonl` — side-question history, one file per parent session;
+- `<dataRoot>/btw/settings.json` — the settings saved from **Settings → Side questions**.
+
+`<dataRoot>` defaults to `~/.dsh` (configurable with the `dataRoot` plugin config). To clean up completely after uninstalling, delete `<dataRoot>/btw/`. Side questions also leave **archived child sessions** in the host's own session store — that data belongs to DSH, not to this plugin, and is managed with the host's session list.
 
 ## Compatibility
 

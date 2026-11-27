@@ -2,6 +2,8 @@
 // 插件设置：落在数据根下一个 JSON 文件，host 每次使用前重读。
 // **纯模块**（不 import 宿主包），便于单测直接引用——service.js 会 import 宿主 RPC 协议，
 // 在 node --test 里解析不到。
+
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { LIMITS } from "./limits.js";
@@ -9,6 +11,14 @@ import { LIMITS } from "./limits.js";
 /** 设置文件名（位于 <dataRoot>/btw/ 下）。 */
 export const SETTINGS_FILE = "settings.json";
 export const SETTINGS_SCHEMA_VERSION = 1;
+
+/**
+ * `historyLimit` 的对外边界（设置页可改、服务端按它裁剪历史）。
+ * 上限 200 是「设置能表达的范围」，与 `LIMITS.perSessionRecords`（默认 50）是两个概念：
+ * 默认值可以按产品取舍变，用户能调的范围在这里统一。
+ */
+export const HISTORY_LIMIT_MIN = 1;
+export const HISTORY_LIMIT_MAX = 200;
 
 /** 默认设置：只读（零工具）、每会话 50 条历史。 */
 export const DEFAULT_SETTINGS = Object.freeze({
@@ -26,6 +36,21 @@ export const DEFAULT_SETTINGS = Object.freeze({
 /** @param {string} dataRoot @returns {string} */
 export function settingsPath(dataRoot) {
   return join(dataRoot, "btw", SETTINGS_FILE);
+}
+
+/**
+ * 把「每会话保留条数」夹紧到 1–200；非法值回落默认。
+ *
+ * **单独抽出来**是因为服务端（`history.js` 的裁剪、`service.js` 的 5 条读写路径）
+ * 和设置页必须用同一个边界：2026-11 审计发现设置页能改能存、服务端却硬编码 50，
+ * 任何值都不生效（AUD-BTW-01）。
+ * @param {{ historyLimit?: unknown } | null | undefined} stored
+ * @returns {number}
+ */
+export function historyLimitOf(stored) {
+  const limit = Number(stored?.historyLimit);
+  if (!Number.isFinite(limit)) return LIMITS.perSessionRecords;
+  return Math.min(Math.max(Math.trunc(limit), HISTORY_LIMIT_MIN), HISTORY_LIMIT_MAX);
 }
 
 /**
@@ -49,10 +74,7 @@ export function sanitizeSettings(raw) {
     allowedTools.push(name);
     if (allowedTools.length >= LIMITS.allowedToolsMax) break;
   }
-  const limitRaw = Number(input.historyLimit);
-  const historyLimit = Number.isFinite(limitRaw)
-    ? Math.min(Math.max(Math.trunc(limitRaw), 1), 200)
-    : LIMITS.perSessionRecords;
+  const historyLimit = historyLimitOf(input);
   // 只有显式 false 关闭；缺省/other 值保持 true（旧设置文件与向后兼容）。
   const echoAnswer = input.echoAnswer !== false;
   // bounded 是 opt-in：只有显式 true 才开，缺省/旧设置保持关闭。
@@ -104,6 +126,18 @@ export async function loadSettings(dataRoot) {
 }
 
 /**
+ * 读设置并返回**生效的**每会话历史保留条数（1–200）。
+ *
+ * 服务端每条历史读写路径都走这里，保证设置页的改动立刻生效（AUD-BTW-01）。
+ * @param {string} dataRoot
+ * @returns {Promise<number>}
+ */
+export async function readHistoryLimit(dataRoot) {
+  const stored = await loadSettings(dataRoot).catch(() => undefined);
+  return historyLimitOf(stored);
+}
+
+/**
  * 原子写设置（先写临时文件再 rename）。
  * @param {string} dataRoot
  * @param {any} patch 只合并已知字段
@@ -114,7 +148,8 @@ export async function saveSettings(dataRoot, patch) {
   const merged = sanitizeSettings({ ...current, ...(patch ?? {}) });
   const file = settingsPath(dataRoot);
   await mkdir(dirname(file), { recursive: true });
-  const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  // 临时名带随机后缀：同进程/同毫秒的两次保存不会撞同一个临时文件（AUD-BTW-05 同源问题）。
+  const temp = `${file}.${process.pid}.${Date.now().toString(36)}.${randomUUID().slice(0, 8)}.tmp`;
   await writeFile(temp, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
   await rename(temp, file);
   return merged;

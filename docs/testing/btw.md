@@ -2,13 +2,13 @@
 
 ## 分层次
 
-| 层                   | 命令                                      | 覆盖                                                                                                                  |
-| -------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| 单测                 | `pnpm --filter @kangyishuai/dsh-btw test` | 路径解析、历史上限与坏行、提示词消毒、只读 guard、locale 摊平/映射、转正行数预算、成本提示纯逻辑、白名单解析（70 项） |
-| 规范 + 类型 + 文档   | `pnpm verify`                             | biome / tsc / check-plugins / index-meta / docs 一致性                                                                |
-| web 冒烟（不花钱）   | `pnpm smoke:btw`                          | 临时 `DSH_HOME` 起真实宿主：页面可交互、过掉预览版说明、能新建会话、**斜杠菜单列出 btw**                              |
-| web 冒烟（真实调用） | `pnpm smoke:btw --deep`                   | 上述 + **真跑一次 `/btw`**，断言 history 落盘与耗时/缓存数字                                                          |
-| 桌面回归             | _v0.2 起_                                 | 有 client 半后按约定 §6.1 补 `pnpm smoke:btw-desktop --require`                                                       |
+| 层                   | 命令                                      | 覆盖                                                                                                                                              |
+| -------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 单测                 | `pnpm --filter @kangyishuai/dsh-btw test` | 路径解析、历史上限与坏行、提示词消毒、只读 guard、locale 摊平/映射、转正行数预算、成本提示纯逻辑、白名单解析、fork 执行体与 settle 分类（100 项） |
+| 规范 + 类型 + 文档   | `pnpm verify`                             | biome / tsc / check-plugins / index-meta / docs 一致性                                                                                            |
+| web 冒烟（不花钱）   | `pnpm smoke:btw`                          | 临时 `DSH_HOME` 起真实宿主：页面可交互、过掉预览版说明、能新建会话、**斜杠菜单列出 btw**                                                          |
+| web 冒烟（真实调用） | `pnpm smoke:btw --deep`                   | 上述 + **真跑一次 `/btw`**，断言 history 落盘与耗时/缓存数字                                                                                      |
+| 桌面回归             | _v0.2 起_                                 | 有 client 半后按约定 §6.1 补 `pnpm smoke:btw-desktop --require`                                                                                   |
 
 ## web 冒烟为什么默认不提交
 
@@ -139,7 +139,7 @@ profile 里无法验证，因为有登录门禁）。
 
 | 层                                       | 结果                                                                                                                       |
 | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `node --test`（包内）                    | **65 pass / 0 fail**（0.6.1 补了 6 项：locale 摊平 4 项 + client 转正预算 2 项）                                           |
+| `node --test`（包内）                    | **100 pass / 0 fail**（2026-11-28 复跑；当时 65：0.6.1 补了 6 项 locale 摊平 4 项 + client 转正预算 2 项）                 |
 | `pnpm probe:runtime`                     | **72/72 PASS**                                                                                                             |
 | `pnpm smoke:btw`（web，默认）            | **15 PASS / 3 SKIP / 0 FAIL**（SKIP 全部是「默认模式不提交 / 提交前没有记录」的数据相关分支）                              |
 | `pnpm smoke:btw --deep`（web，真实模型） | **30 PASS / 1 SKIP / 0 FAIL**（先热身再提交，见下；真实花费三次模型调用：热身 1 + 旁问 1 + 面板追问 1）                    |
@@ -316,7 +316,7 @@ profile 里给 btw 固定 `language: zh`（不依赖跑测机器的 `LANG`），
 | 检查                                                                                                     | 结果                                                                                                              |
 | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `pnpm verify`                                                                                            | 通过（biome / tsc / check / check:docs / check:public / 全部单测）                                                |
-| `pnpm --filter @kangyishuai/dsh-btw test`                                                                | **65 pass / 0 fail**（0.6.0 是 59）                                                                               |
+| `pnpm --filter @kangyishuai/dsh-btw test`                                                                | **100 pass / 0 fail**（2026-11-28 复跑；0.6.0 是 59、0.6.1 当时 65）                                              |
 | `pnpm smoke:btw`                                                                                         | **15 PASS / 3 SKIP / 0 FAIL**（与 0.6.0 一致；3 条仍是数据相关分支）                                              |
 | `pnpm smoke:btw --deep`                                                                                  | **30 PASS / 1 SKIP / 0 FAIL**（「卡片内容可诊断」在 deep 下额外要求中文 locale 文案）                             |
 | `pnpm smoke:btw-desktop --require`（会话有旁问记录）                                                     | **25 PASS / 0 SKIP / 0 FAIL**                                                                                     |
@@ -401,20 +401,22 @@ CDP `Debugger.getScriptSource` 抓到**已执行**的 btw bundle 里含 `data-bt
   最近 **12 条** user/assistant 文本（单条 ≤700 字符、总 ≤4000 字符），过滤 system-reminder、工具调用/
   工具结果、非 user 来源的控制消息；prompt 里明确写「上下文被裁剪，缺信息请直接说」。
 - 答案 meta 与面板 meta 都带 `· bounded` 标记；bounded 成功结果**不再追加** fork 成本警告（成本已封顶）。
-- 线程追问：bounded 同样把该线程之前的旁问 Q/A 带进 prompt；digest 为空（没有可用消息）时安全回退 full fork。
+- 线程追问：bounded 同样把该线程之前的旁问 Q/A 带进 prompt；digest 为空（没有可用消息）时回退 full fork，并写一条 warn 日志（2026-11-28 复审 BLK-1 之后不再静默）。
 - spawn 不是 fork：不继承父会话、不复用父会话前缀缓存；这是 opt-in 的取舍（ADR-0022）。
 
 **验证**：
 
 | 检查                           | 结果                                                                                                                                                                                                              |
 | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 单测                           | **75 pass / 0 fail**（新增 5 条 `lib/bounded.js` 纯逻辑 + settings `boundedContext` 断言）                                                                                                                        |
+| 单测                           | **100 pass / 0 fail**（2026-11-28 复跑；0.6.3 当时 75：新增 5 条 `lib/bounded.js` 纯逻辑 + settings `boundedContext` 断言）                                                                                       |
 | `pnpm verify`                  | 通过（含 check:docs / check:public）                                                                                                                                                                              |
 | `pnpm smoke:btw` / `--deep`    | 默认关，计数与 0.6.2 一致（15/3/0、30/1/0）                                                                                                                                                                       |
 | 临时宿主真实大会话 bounded e2e | 父会话 `contextPressure ≈ 668K`、`boundedContext: true`、`/btw reply with exactly OK`：record `mode="bounded"`、`cost.totalTokens=21,503`（同会话 fork 实测为 762,526）、命令结果含 `· bounded`；**1 次模型调用** |
 | 桌面端                         | 需重启桌面版才载入 0.6.3 字节（runtime rc.5 §8.2）；默认关，重启前行为不变                                                                                                                                        |
 
 
+
+> 2026-11-28 复审修正：0.6.3 的「尾部事件窗口 80」在真实事件配比下凑不满 12 条消息，已回退为「命中阈值时全量 `snapshotEvents()`」，详见文末批次记录。
 
 **0.6.3 发布后复验（2026-11-20）**：npm latest / git tag / GitHub Release 已建；线上索引
 8 个插件、btw `versions[0] = 0.6.3`。
@@ -1065,3 +1067,38 @@ document body because the docked composer contains them**"，而浮层原本就�
   发送前需要用户自己滚动/收起输入框。
 - **host 命令结果文案未本地化（既有问题）**：host 加载 locale 时没有把 `answer`/`error` 嵌套展平，
   `/btw` 的命令结果一直走英文 FALLBACK；面板 client 文案不受影响。
+
+
+## 2026-11-28 审计修复批次（historyLimit / guard 作用域 / 并发写 / bounded）
+
+分支 `fix/btw-settings-guard`（**代码**只改 `packages/btw/**` + `scripts/smoke-btw.mjs`；文档同步 `docs/testing/btw.md`，另有 changeset）。
+
+**行为变化**：
+
+- `historyLimit`（1–200）真正生效：设置页保存后，服务端 5 条读路径（history/stats/threads/promote/
+  costHint）+ 1 条写路径（appendRecord 裁剪）都按它走；改小后旧记录立即不再展示，下一次旁问落盘
+  时物理裁剪文件。
+- 只读 guard 只挂旁问子代理自己的 scope（`ctx.agents.get(childId).ctx.tools`），删掉会落到宿主
+  global 层的插件 ctx 兜底；取不到子会话 ctx 时降级为「不挂 + warn」，只读只剩提示词约束。
+- 同一父会话并发的旁问历史写入按文件串行化（+ 唯一 tmp 名），不再互相覆盖丢记录。
+- bounded：仅在真正命中阈值（显式开启 + 父会话 ≥400K tokens）时才读父会话事件（AUD-BTW-07）；
+  digest 为空退回 full fork 时写一条 warn，不再静默（复审 BLK-1）。
+- `observeUsage` 用量表与追问队列按最近使用加界（64），旁问结束后删子会话条目。
+- 设置分节 `settings.section` 的 `order` 94 → 95（当前 advisor 92 / next-step 93 / projects 93 / casefile 94 / btw 95；94→95 避开的是 casefile 的 94）。
+
+**验证**：
+
+| 检查                          | 结果                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `node --test`（包内）         | **100 pass / 0 fail**（新增 `test/subagent.test.js` 13 项；另加 historyLimit 边界/死设置、并发写、bounded 事件配比、client 分节等 12 项）                                                                                                                                                                                                                                                                                   |
+| `pnpm verify`（worktree 根）  | 通过（EXIT=0：biome / tsc / check-plugins / index-meta / check:docs / check:public / 全部单测）                                                                                                                                                                                                                                                                                                                             |
+| `pnpm smoke:btw`（web，默认） | 新增 **6 条浏览器断言 + 1 条磁盘断言**：设置 →「旁问」分节、保留条数 1–200 边界、语义提示、保存按钮可用、「已保存」回执（轮询 ≤3s，证明 RPC round-trip）、保存后回填 7，以及 `<临时 DSH_HOME>/btw/settings.json` 的 `historyLimit=7`。设置对话框被门禁挡住时整段记 1 条 SKIP。**计数待实跑后回填**：设置可打开时约 **21 PASS / 3 SKIP / 0 FAIL**，被门禁挡住时 **15 PASS / 4 SKIP / 0 FAIL**（门禁只看 `pass>0` 且无 FAIL） |
+| `pnpm smoke:btw --deep`       | 同上新增断言；**计数待实跑后回填**：设置可打开时约 **36 PASS / 1 SKIP / 0 FAIL**，被门禁挡住时 **30 PASS / 2 SKIP / 0 FAIL**（不再是 30 PASS / 1 SKIP）。                                                                                                                                                                                                                                                                   |
+| 桌面回归                      | 本批未改桌面交互（只改了设置分节的 order 与提示文案），仍需重启桌面版后复跑 `pnpm smoke:btw-desktop --require`。                                                                                                                                                                                                                                                                                                            |
+| 待 live 验证                  | ①旁问运行期间另一会话执行 `read` 不应被拒；②旁问子代理若尝试工具应被拒；③设置页把保留条数改小后面板只显示 N 条。                                                                                                                                                                                                                                                                                                            |
+
+**bounded 的一处实现回退（复审 BLK-1）**：0.6.3 的实现（以及本批第一版）用「尾部事件窗口 80」取事件，
+在真实事件配比下凑不满 12 条消息（长会话实测 digest 消息数 p50=5、0% 凑满；5.1% 的会话尾窗里 0 条
+消息 → `digest.messages===0` → 静默退回 full fork，正是 bounded 要避免的一次几十万 tokens）。
+现改为「命中阈值时**全量** `snapshotEvents()`」，并补了「消息之间夹 step/tool/job 事件」的真实配比
+单测（旧实现下该测试变红）。上面的 0.6.3 表格保留历史数据，当前行为以本段为准。
