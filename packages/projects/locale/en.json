@@ -678,6 +678,7 @@
     "routines.delete": "Delete",
     "routines.save": "Save",
     "routines.update": "Update",
-    "detail.prBarDismiss": "Hide the create-PR bar"
+    "detail.prBarDismiss": "Hide the create-PR bar",
+    "detail.threadTask": "Task: {task}"
   }
 }

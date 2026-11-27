@@ -894,6 +894,22 @@ export class ProjectStore {
   }
 
   /**
+   * 把线程的初始任务写回记录（行标题用它：宿主投影标题可能只是首个工具名）。
+   * @param {string} sessionId
+   * @param {string} task
+   * @returns {any|null}
+   */
+  setThreadTask(sessionId, task) {
+    const thread = this.state.threads[sessionId];
+    if (!thread) return null;
+    thread.task = String(task ?? "")
+      .replace(/\s+/gu, " ")
+      .trim()
+      .slice(0, 200);
+    return { ...thread };
+  }
+
+  /**
    * 把会话挂进项目。F15：**线程不可跨项目移动**（Claude Projects 里 thread 属于一个项目，
    * 移来移去会让审计/记忆/PR 归属全部失真）。规则：
    *  - 空槽（没有归属记录）→ 允许挂；

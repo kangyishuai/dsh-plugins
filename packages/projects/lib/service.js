@@ -3646,9 +3646,12 @@ export class ProjectsService extends TypertRemoteService {
       dir: thread.dir ?? null,
       // 有没有独立 worktree 决定"隔不隔离"，界面要能如实显示（走查发现用户看不出来）
       isolated: typeof thread.worktree === "string" && thread.worktree !== "",
-      // 会话标题：优先人工重命名（F23 写回 thread.title），否则用 list() 的 title 投影；
+      // 会话标题：优先人工重命名（F23 写回 thread.title），其次用户建线程时写的任务
+      // （宿主 title 投影可能只是首个工具名，如 glob/bash），最后才用投影标题；
       // 都没有就留空，由 UI 退化显示分支/短 id
-      title: String(thread.title || summary?.projections?.values?.title || ""),
+      title: String(thread.title || thread.task || summary?.projections?.values?.title || ""),
+      // 原始任务单独给 UI：展开面板要能回看"我当初让它做什么"
+      task: String(thread.task || ""),
       view: { ...view, state, pendingInput },
       stats: { ...stats, commands: stats.commands.slice(-3) },
       // P0-3：行摘要里的 diff 来自真实 git numstat（以前这里只传 stats，文案恒 `diff n/a`）
@@ -3982,6 +3985,8 @@ export class ProjectsService extends TypertRemoteService {
         },
       },
     });
+    // 行标题优先展示用户写的任务：宿主投影标题可能是首个工具名（真机审查抓到的 P1）
+    store.setThreadTask(thread.sessionId, String(task ?? ""));
     store.save();
     // F52：新线程会话套用项目权限档位（默认 null = 继承宿主，什么都不做）
     if (typeof project.preset === "string" && project.preset !== "") {

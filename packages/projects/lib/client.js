@@ -553,6 +553,7 @@ window.__ModuleLoader__.load({
       "detail.groupCollapseAll": "全部折叠",
       "detail.addView": "新增视图",
       "detail.today": "今天",
+      "detail.threadTask": "任务：{task}",
       "detail.threadRemind": "加一个提醒（30 分钟后）",
       "detail.threadReminderText": "回看线程：{title}",
       "detail.threadReminderAdded": "已加提醒：30 分钟后",
@@ -1138,6 +1139,7 @@ window.__ModuleLoader__.load({
       "detail.groupCollapseAll": "Collapse all",
       "detail.addView": "Add view",
       "detail.today": "Today",
+      "detail.threadTask": "Task: {task}",
       "detail.threadRemind": "Add a reminder (in 30 min)",
       "detail.threadReminderText": "Revisit thread: {title}",
       "detail.threadReminderAdded": "Reminder added: in 30 minutes",
@@ -7704,6 +7706,17 @@ window.__ModuleLoader__.load({
                       ),
                     ),
                   ),
+                  // 线程的原始任务（行标题/展开面板都要能回看"我当初让它做什么"）
+                  row.task
+                    ? h(
+                        "div",
+                        {
+                          style: { ...styles.meta, lineHeight: 1.5 },
+                          "data-projects-thread-task": row.sessionId,
+                        },
+                        text(t, "detail.threadTask", { task: String(row.task).slice(0, 160) }),
+                      )
+                    : null,
                   // U7 行内 chip（分支 / 参数 / 引用）
                   h(
                     "div",

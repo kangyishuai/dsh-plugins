@@ -337,3 +337,21 @@ describe("saveSoon：合并写盘", () => {
     }
   });
 });
+
+describe("setThreadTask：行标题的原始任务", () => {
+  it("写回并压缩空白、截断 200 字；未知线程返回 null", () => {
+    const root = mkdtempSync(join(tmpdir(), "dsh-thread-task-"));
+    try {
+      const store = new ProjectStore({ root }).load();
+      const project = store.createProject("task-title");
+      store.attachThread("s-task-1", project.id);
+      const updated = store.setThreadTask("s-task-1", "  读一遍 README，\n\n用三点总结  ");
+      assert.equal(updated.task, "读一遍 README， 用三点总结");
+      const long = store.setThreadTask("s-task-1", "x".repeat(500));
+      assert.equal(long.task.length, 200);
+      assert.equal(store.setThreadTask("missing", "x"), null);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
