@@ -304,7 +304,8 @@ test("pruneOrphans: 扁平宿主布局（sessions/<id>/session.v4…）视为枚
 
     const report = await findOrphans({ dataRoot });
     assert.equal(report.enumerationFailed, true);
-    assert.equal(report.incomplete, false);
+    assert.equal(report.incomplete, true);
+    assert.deepEqual(report.unknownWorkspaces, ["session-flat"]);
     assert.deepEqual(report.sessionIds, []);
 
     const result = await pruneOrphans({ dataRoot });
@@ -336,6 +337,112 @@ test("pruneOrphans: workspace 内多一层 --project-- 嵌套视为枚举失败�
     assert.equal(result.reason, "enumeration-failed");
     assert.equal(await exists(entries), true);
     assert.equal(await exists(trash), true);
+  } finally {
+    await rm(dataRoot, { recursive: true, force: true });
+  }
+});
+
+test("pruneOrphans: 混合布局（正常 workspace + 多一层嵌套）视为 incomplete、不删", async () => {
+  const dataRoot = await mkdtemp(join(tmpdir(), "srw-orphans-"));
+  try {
+    // A 是当前两层布局；B 多一层（`--project--` 与安全字符集 project id 两种形态）。
+    await mkdir(join(dataRoot, "sessions", REAL_SLUG, "session-alive"), { recursive: true });
+    await mkdir(
+      join(dataRoot, "sessions", "--ws-nested-enc--", "--project-alpha--", "session-deep"),
+      {
+        recursive: true,
+      },
+    );
+    await mkdir(
+      join(dataRoot, "sessions", "--ws-nested-safe--", "prj_mwys16ka90iw4s5f", "session-deeper"),
+      { recursive: true },
+    );
+    const plugin = join(dataRoot, "session-rewind");
+    const live = await touch(plugin, ["sessions", "session-alive", "entries.jsonl"]);
+    const deep = await touch(plugin, ["sessions", "session-deep", "entries.jsonl"]);
+    const deeper = await touch(plugin, ["sessions", "session-deeper", "entries.jsonl"]);
+
+    const report = await findOrphans({ dataRoot });
+    assert.equal(report.enumerationFailed, true);
+    assert.equal(report.incomplete, true);
+    assert.equal(report.liveSessionCount, 1);
+    assert.deepEqual(report.unknownWorkspaces.slice().sort(), [
+      "--ws-nested-enc--",
+      "--ws-nested-safe--",
+    ]);
+    // 不猜测任何孤儿。
+    assert.deepEqual(report.sessionIds, []);
+
+    /** @type {any[]} */
+    const plans = [];
+    const result = await pruneOrphans({
+      dataRoot,
+      onPlan: (/** @type {any} */ reportArg) => {
+        plans.push(reportArg);
+      },
+    });
+    assert.equal(plans.length, 1);
+    assert.deepEqual(plans[0].unknownWorkspaces.slice().sort(), [
+      "--ws-nested-enc--",
+      "--ws-nested-safe--",
+    ]);
+    assert.equal(result.executed, false);
+    assert.equal(result.reason, "enumeration-failed");
+    assert.equal(await exists(live), true);
+    assert.equal(await exists(deep), true);
+    assert.equal(await exists(deeper), true);
+  } finally {
+    await rm(dataRoot, { recursive: true, force: true });
+  }
+});
+
+test("pruneOrphans: 同一 workspace 内混有两层与更深层会话 → 视为未知布局、不删", async () => {
+  const dataRoot = await mkdtemp(join(tmpdir(), "srw-orphans-"));
+  try {
+    await mkdir(join(dataRoot, "sessions", REAL_SLUG, "session-visible"), { recursive: true });
+    await mkdir(join(dataRoot, "sessions", REAL_SLUG, "proj_group1", "session-hidden"), {
+      recursive: true,
+    });
+    const plugin = join(dataRoot, "session-rewind");
+    const visible = await touch(plugin, ["sessions", "session-visible", "entries.jsonl"]);
+    const hidden = await touch(plugin, ["sessions", "session-hidden", "entries.jsonl"]);
+
+    const report = await findOrphans({ dataRoot });
+    assert.equal(report.enumerationFailed, true);
+    assert.equal(report.incomplete, true);
+    assert.deepEqual(report.unknownWorkspaces, [REAL_SLUG]);
+    assert.deepEqual(report.sessionIds, []);
+
+    const result = await pruneOrphans({ dataRoot });
+    assert.equal(result.executed, false);
+    assert.equal(await exists(visible), true);
+    assert.equal(await exists(hidden), true);
+  } finally {
+    await rm(dataRoot, { recursive: true, force: true });
+  }
+});
+
+test("pruneOrphans: 两个都是正常两层布局 → 真实孤儿照删", async () => {
+  const dataRoot = await mkdtemp(join(tmpdir(), "srw-orphans-"));
+  try {
+    await mkdir(join(dataRoot, "sessions", REAL_SLUG, "session-alive"), { recursive: true });
+    await mkdir(join(dataRoot, "sessions", REAL_SLUG_TMP, "session-other"), { recursive: true });
+    const plugin = join(dataRoot, "session-rewind");
+    const live = await touch(plugin, ["sessions", "session-alive", "entries.jsonl"]);
+    await touch(plugin, ["sessions", "session-other", "entries.jsonl"]);
+    await touch(plugin, ["sessions", "session-dead", "entries.jsonl"]);
+
+    const report = await findOrphans({ dataRoot });
+    assert.equal(report.enumerationFailed, false);
+    assert.equal(report.incomplete, false);
+    assert.deepEqual(report.unknownWorkspaces, []);
+    assert.equal(report.liveSessionCount, 2);
+    assert.deepEqual(report.sessionIds, ["session-dead"]);
+
+    const result = await pruneOrphans({ dataRoot });
+    assert.equal(result.executed, true);
+    assert.deepEqual(result.removed.sessions, ["session-dead"]);
+    assert.equal(await exists(live), true);
   } finally {
     await rm(dataRoot, { recursive: true, force: true });
   }
@@ -388,6 +495,7 @@ test("pruneOrphans: 某个 workspace 为空不影响清理真实孤儿（不过�
     const report = await findOrphans({ dataRoot });
     assert.equal(report.enumerationFailed, false);
     assert.equal(report.incomplete, false);
+    assert.deepEqual(report.unknownWorkspaces, []);
     assert.equal(report.liveSessionCount, 1);
     assert.deepEqual(report.sessionIds, ["session-dead"]);
 

@@ -55,7 +55,7 @@ pnpm gate session-rewind --deep --workspace ~/Workspace/dsh-rewind-ui-smoke
 
 按「便宜的先跑」排序，任何一步失败立刻停并给出下一步提示：
 
-1. `pnpm verify`（lint + 类型 + 规范 + 公开边界 + 230 单测）
+1. `pnpm verify`（lint + 类型 + 规范 + 公开边界 + 233 单测）
 2. `pnpm probe:runtime`（宿主包/API/slot/私有 seam，72 项）
 3. `pnpm smoke:session-rewind`（临时 DSH_HOME 的 web 端到端，52 项）
 4. 桌面只读回归（25 项，**永远带 `--require`**：没开调试端口就是失败，不是跳过）
@@ -175,6 +175,9 @@ pnpm smoke:session-rewind
 - 孤儿清理（`test/orphans.test.js`）：用真实宿主 slug 形态（`--Users-someone-Workspace-project--`）
   断言「存活会话的数据不被删」「真正孤儿被删」；枚举不到存活会话时视为枚举失败、一个字节都不删；
   未知宿主布局（扁平 `sessions/<id>/session.v4…`、多一层 `--project--` 嵌套）一律按枚举失败跳过；
+  **逐 workspace 护栏**覆盖混合布局：一个正常 workspace + 一个多一层嵌套（`--project--` 或安全字符集
+  project id）→ `unknownWorkspaces` + `incomplete`、不删；同一 workspace 内混有两层与更深层会话
+  （条目不像会话目录）同样按未知布局跳过；两个都是正常两层布局时真实孤儿照删；
   任一 workspace 不可读（注入 `EACCES`）记为 `incomplete`，不删并留审计计划；某个 workspace 为空
   不会妨碍清理真实孤儿（不过度保守）；计划审计失败时不执行删除；不认识的插件数据条目进
   `unknownIds`、保留并告警。

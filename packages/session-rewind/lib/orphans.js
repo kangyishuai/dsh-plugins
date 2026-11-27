@@ -23,6 +23,25 @@ import { join } from "node:path";
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 
 /**
+ * 判断一个安全字符集目录是否「像会话目录」：当前宿主会话目录是叶子（只含 `session.lock` /
+ * `session.v*` 等文件，不含子目录）；项目/分组中间层目录则含子目录。
+ *
+ * 用结构而不是会话 id 前缀来识别：真实宿主同一棵树里同时存在 `session-<uuid>` 和裸 `<uuid>`
+ * 两种会话目录名，按前缀过滤会把后者判成孤儿。读不到目录内容时返回 null（无法确认 → 按未知处理）。
+ * @param {string} dir
+ * @param {any} fs
+ * @returns {Promise<boolean | null>} true=像会话目录；false=含子目录；null=读不到
+ */
+async function looksLikeSessionDir(dir, fs) {
+  const entries = await listDirEntries(dir, fs);
+  if (entries === null) return null;
+  for (const entry of entries) {
+    if (entry.isDirectory()) return false;
+  }
+  return true;
+}
+
+/**
  * @typedef {object} OrphanUnknownEntry
  * @property {"sessions" | "trash" | "rescues"} root 插件数据子目录
  * @property {string} id 目录名
@@ -37,8 +56,10 @@ const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
  * @property {number} bytes 估算占用字节数
  * @property {number} liveSessionCount 枚举到的存活会话数
  * @property {boolean} enumerationFailed 无法安全枚举存活会话（结果为空 / incomplete）；为 true 时不得清理
- * @property {boolean} incomplete 至少一个 workspace 读失败（部分不可读），属枚举失败
+ * @property {boolean} incomplete 枚举不完整（任一 workspace 读失败，或非空 workspace 里认不出会话）
  * @property {number} unreadableWorkspaces workspace 读取失败的数量
+ * @property {string[]} unknownWorkspaces 未知布局的 workspace：非空却认不出会话目录，或混进不像
+ *   会话目录的安全字符集条目（保留 + 告警，跳过清理）
  * @property {OrphanUnknownEntry[]} unknownIds 插件数据里不认识/读不到的条目（保留并告警）
  */
 
@@ -108,25 +129,33 @@ async function listRemovableIds(dir, rootName, fs) {
 /**
  * 枚举宿主 `<dataRoot>/sessions/` 下所有存活会话 id。
  *
- * 布局假设与护栏（复审 B1）：
+ * 布局假设与护栏（复审 B1 + 第二轮 R1）：
  * - workspace 根与 workspace 内都只认目录（`Dirent.isDirectory()`）；文件条目不算会话。
- * - 会话 id 必须匹配安全字符集：删除目标用的是同一字符集，不可能成为删除目标的 id 不需要进
- *   存活集合；「扁平布局」（sessions/<id>/session.v4…）与「多一层嵌套 --project--」都会得到
- *   0 个候选 → 视为枚举失败，而不是把全部数据判成孤儿。
+ * - workspace 内的会话目录名必须是安全字符集、且结构上像会话目录（叶子目录，见
+ *   `looksLikeSessionDir`）。删除目标用的是同一套安全字符集，不可能成为删除目标的 id 不需要进
+ *   存活集合；「扁平布局」（sessions/<id>/session.v4…）、「多一层嵌套 --project--」、以及
+ *   「中间层用安全字符集 project id」都会得到 0 个候选 → 枚举失败。
+ * - **逐 workspace 护栏（混合布局）**：某个 workspace 非空、但一个合法会话目录都没认出来，或
+ *   混进了「不像会话目录」的安全字符集目录 → 记入 `unknownWorkspaces` 并视为 `incomplete`。
+ *   否则「部分 workspace / 部分子目录变成未知布局、另一些还是两层」时枚举会成功，前者的会话
+ *   数据会被误当孤儿删掉。
+ * - 空 workspace（`children.length === 0`）是合法形态（会话都被删了），不算失败。
  * - 任一 workspace 读失败（EACCES 等）→ `incomplete`，同样跳过清理（保守优先）。
  * @param {string} dataRoot
  * @param {any} fs
- * @returns {Promise<{ids: Set<string>, failed: boolean, incomplete: boolean, unreadableWorkspaces: number, workspaceCount: number}>}
+ * @returns {Promise<{ids: Set<string>, failed: boolean, incomplete: boolean, unreadableWorkspaces: number, unknownWorkspaces: string[], workspaceCount: number}>}
  */
 async function enumerateLiveSessionIds(dataRoot, fs) {
   const root = join(dataRoot, "sessions");
   const workspaces = await listDirEntries(root, fs);
   if (workspaces === null) {
+    // 根目录不存在/不可读：不是「某个 workspace 不可读」，用 generic 文案表达（复审 N2）。
     return {
       ids: new Set(),
       failed: true,
       incomplete: true,
-      unreadableWorkspaces: 1,
+      unreadableWorkspaces: 0,
+      unknownWorkspaces: [],
       workspaceCount: 0,
     };
   }
@@ -134,6 +163,8 @@ async function enumerateLiveSessionIds(dataRoot, fs) {
   const ids = new Set();
   let unreadableWorkspaces = 0;
   let workspaceCount = 0;
+  /** @type {string[]} */
+  const unknownWorkspaces = [];
   for (const workspace of workspaces) {
     if (!workspace.isDirectory()) continue;
     workspaceCount += 1;
@@ -142,18 +173,39 @@ async function enumerateLiveSessionIds(dataRoot, fs) {
       unreadableWorkspaces += 1;
       continue;
     }
+    let recognized = 0;
+    let suspicious = false;
+    let candidateUnreadable = false;
     for (const child of children) {
       if (!child.isDirectory()) continue;
       if (!SAFE_ID.test(child.name)) continue;
+      const looksLikeSession = await looksLikeSessionDir(
+        join(root, workspace.name, child.name),
+        fs,
+      );
+      if (looksLikeSession === null) candidateUnreadable = true;
+      if (looksLikeSession === false) suspicious = true;
+      if (looksLikeSession !== true) continue;
+      recognized += 1;
       ids.add(child.name);
     }
+    if (candidateUnreadable) {
+      unreadableWorkspaces += 1;
+      continue;
+    }
+    // 非空却认不出会话目录、或混进了「不像会话目录」的安全字符集目录：未知布局（保留 + 告警）。
+    // 空 workspace 是合法形态（会话都被删了），不在此列。
+    if (suspicious || (children.length > 0 && recognized === 0)) {
+      unknownWorkspaces.push(workspace.name);
+    }
   }
-  const incomplete = unreadableWorkspaces > 0;
+  const incomplete = unreadableWorkspaces > 0 || unknownWorkspaces.length > 0;
   return {
     ids,
     failed: incomplete || ids.size === 0,
     incomplete,
     unreadableWorkspaces,
+    unknownWorkspaces,
     workspaceCount,
   };
 }
@@ -206,6 +258,7 @@ export async function findOrphans(input) {
     enumerationFailed: live.failed,
     incomplete: live.incomplete,
     unreadableWorkspaces: live.unreadableWorkspaces,
+    unknownWorkspaces: live.unknownWorkspaces,
     unknownIds: [],
   };
   /** @type {Array<{root: string, rootName: "sessions" | "trash" | "rescues", sink: string[]}>} */

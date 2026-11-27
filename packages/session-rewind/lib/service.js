@@ -234,6 +234,7 @@ export class SessionRewindService extends TypertRemoteService {
             enumerationFailed: report.enumerationFailed,
             incomplete: report.incomplete,
             unreadableWorkspaces: report.unreadableWorkspaces,
+            unknownWorkspaces: report.unknownWorkspaces,
             unknownIds: report.unknownIds,
           });
         },
@@ -245,10 +246,21 @@ export class SessionRewindService extends TypertRemoteService {
         );
       }
       if (result.reason === "enumeration-failed") {
+        /** @type {string[]} */
+        const problems = [];
+        if (result.report.unreadableWorkspaces > 0) {
+          problems.push(`${result.report.unreadableWorkspaces} unreadable workspace(s)`);
+        }
+        const unknownWorkspaces = Array.isArray(result.report.unknownWorkspaces)
+          ? result.report.unknownWorkspaces
+          : [];
+        if (unknownWorkspaces.length > 0) {
+          problems.push(`${unknownWorkspaces.length} workspace(s) with unknown layout`);
+        }
         this.ctx?.logger?.warn?.(
-          result.report.incomplete
-            ? `session-rewind: cannot enumerate live sessions (${result.report.unreadableWorkspaces} unreadable workspace(s)); skipped orphan cleanup`
-            : "session-rewind: cannot enumerate live sessions (found 0 or unknown layout); skipped orphan cleanup",
+          `session-rewind: cannot enumerate live sessions${
+            problems.length > 0 ? ` (${problems.join(", ")})` : " (found 0 sessions)"
+          }; skipped orphan cleanup`,
         );
         return;
       }
@@ -1006,13 +1018,22 @@ export class SessionRewindService extends TypertRemoteService {
       const unknownCount = Array.isArray(orphans.unknownIds) ? orphans.unknownIds.length : 0;
       const unknownSuffix = unknownCount === 0 ? "" : `；保留 ${unknownCount} 个未知条目`;
       if (orphans.enumerationFailed) {
+        /** @type {string[]} */
+        const problems = [];
+        if (orphans.unreadableWorkspaces > 0) {
+          problems.push(`${orphans.unreadableWorkspaces} 个 workspace 不可读`);
+        }
+        const unknownWorkspaces = Array.isArray(orphans.unknownWorkspaces)
+          ? orphans.unknownWorkspaces
+          : [];
+        if (unknownWorkspaces.length > 0) {
+          problems.push(`${unknownWorkspaces.length} 个 workspace 布局未知`);
+        }
         push(
           "孤儿数据",
           false,
           `${
-            orphans.incomplete
-              ? `有 ${orphans.unreadableWorkspaces} 个 workspace 不可读`
-              : "无法枚举存活会话"
+            problems.length > 0 ? problems.join("、") : "无法枚举存活会话（会话存储缺失或布局未知）"
           }，已跳过孤儿清理${unknownSuffix}`,
         );
       } else {
@@ -1021,7 +1042,9 @@ export class SessionRewindService extends TypertRemoteService {
         push(
           "孤儿数据",
           count === 0,
-          count === 0 ? "none" : `${count} dir(s), ${orphans.bytes} bytes`,
+          count === 0
+            ? `none${unknownSuffix}`
+            : `${count} dir(s), ${orphans.bytes} bytes${unknownSuffix}`,
         );
       }
     } catch (error) {
