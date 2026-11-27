@@ -1,5 +1,12 @@
 # @kangyishuai/dsh-projects
 
+## 0.10.5
+
+### Patch Changes
+
+- [#333](https://github.com/kangyishuai/dsh-plugins/pull/333) [`51898fc`](https://github.com/kangyishuai/dsh-plugins/commit/51898fc634f8b971e7a26c7de8b187f8d58f2c22) Thanks [@kangyishuai](https://github.com/kangyishuai)! - - 窄窗/单列（<940 面板宽）时主列也撑到视口高，composer 不再悬在页面中部（真机 1100 视口实测 composer 从 y≈360 落到 y≈689–768，贴底可见）
+  - 页签文案本地化：zh 下 `Library`→`库`、`Routines`→`定时任务`（en 不变），消除中英混排
+
 ## 0.10.4
 
 ### Patch Changes
