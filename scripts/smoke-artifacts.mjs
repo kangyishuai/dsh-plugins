@@ -322,6 +322,20 @@ const library = await page.evaluate(() => {
   };
 });
 check("工件库渲染", library.library && library.cards >= 2, JSON.stringify(library));
+const filterAria = await page.evaluate(() => ({
+  search: document.querySelector("[data-dsh-artifact-search]")?.getAttribute("aria-label") ?? null,
+  chips: [...document.querySelectorAll("[data-dsh-artifact-kind-filter]")].map((chip) => ({
+    kind: chip.getAttribute("data-dsh-artifact-kind-filter"),
+    pressed: chip.getAttribute("aria-pressed"),
+  })),
+}));
+check(
+  "产物面板可访问性：搜索有 aria-label、类型筛选有 aria-pressed",
+  filterAria.search === "按标题搜索工件" &&
+    filterAria.chips.length >= 2 &&
+    filterAria.chips.every((chip) => chip.pressed === "true" || chip.pressed === "false"),
+  JSON.stringify(filterAria),
+);
 check("封面 SVG 真的加载", library.covers.length >= 2 && library.covers.every((c) => c.loaded && c.w === 320), JSON.stringify(library));
 await page.evaluate(() => {
   // 图片是最后播种的（列表按 updatedAt 倒序），点它不会有 iframe；这里明确点 html 卡片。
