@@ -1,5 +1,118 @@
 # @kangyishuai/dsh-projects
 
+## 0.10.0
+
+### Minor Changes
+
+- [#319](https://github.com/kangyishuai/dsh-plugins/pull/319) [`d194ed4`](https://github.com/kangyishuai/dsh-plugins/commit/d194ed4cedb27987517e23bbbbb638394b248132) Thanks [@kangyishuai](https://github.com/kangyishuai)! - feat(projects): B4 结构性三项 —— Routines / 权限**收窄**开关 / 双模式提醒
+  
+  - **F36 Routines（定时任务）**：六档频率（手动 / 每小时 / 每天 / 工作日 / 每周 / 每月）映射成宿主 `schedule` 的 timing —— 每小时与三档 cron 用 `cron`，每天用宿主 `daily`，时间统一补成宿主硬要求的 `HH:mm:ss`（`09:30` 会被 `ScheduleInputError` 拒，已按实测口径写死在校验里）。能力包含创建、列表、启停（宿主 `paused/active` + 本地 `enabled` 双写）、删除（先删宿主条目再删本地，宿主删失败就不动本地，避免留下会继续花钱的孤儿）、**Run now**（走 `schedule.run`；手动档则投递到协调器会话）与 **History**（宿主 `history()` 的投递记录 + 本地 Run now 记录按时间倒序合并）。数据落项目 store 的 `routines[]`（`id/name/instructions/frequency/cron/enabled/spaceId/scheduleId/lastRunAt/history`）。UI 在详情页新增「Routines」视图与右栏「定时任务」段，并强制写明成本：**每次投递 = 一次模型调用**、新建会话两次投递至少间隔 60 秒、手动档不自动跑。
+  - **F52 权限收窄开关**：方向按实测反转——本部署 `catalog().defaultPreset` 已是 `danger-full-access` + `approval: never`，所以项目开关是**收窄**而不是「打开自动」。下拉选项**全部来自 `catalog()`**（不写死 preset 名），逐项 `resolve()` 后把 `{sandbox, approval}` 翻译成人话（只读 / 工作区可写 / 全权限 / 自定义）并标出「比宿主默认更窄」。默认档是「继承宿主」（空串 = 不干预）。保存到项目 store 的 `preset`（存名字不存 spec），在**新建线程 / 协调器会话创建后**用 `permissionPresets.set(session, name)` 应用；拿不到会话句柄时如实标 `pending`（不假装生效），没有匹配档时用 `session.append('approval/policy'|'sandbox/mode')` 兜底并在 UI 标「自定义」。每次应用都做**写→回读**（`current(session)`，兜底路径读 `approval/sandbox` 的 `overrideOf`），回读结果进审计与 `data-projects-preset-readback`。UI 明示「推 / 合并 / 删除永远需要你批准（插件执行器），本开关只影响工具调用是否逐次询问、命令能否写到项目目录之外」。
+  - **F30 双模式提醒**：`timer`（默认，免费）用本机计时器 + 持久化到期时间，**重启后由 `armReminders()` 按盘上记录重建**，关机期间到点的在启动时补触发（写回 `state=fired/firedAt/unread`，重启后不会重复响）；到点走 `shell.overlay` toast（宿主没有 unread 原语，未读由插件自存）。`schedule`（计费）转宿主 `schedule`，UI 明示「到点会跑一次模型、DSH 关着也会跑」。项目设置 `reminderDefault` 决定默认模式（默认 `timer`），**每条提醒可选择另一种并记住本次选择**。支持取消（schedule 模式同时删宿主条目）、提前完成、过期清理（终态超 7 天清掉，pending 永不动）。
+  - **验证**：`pnpm verify` EXIT=0（projects 单测 **555**）；`pnpm smoke:projects` **220 PASS / 0 SKIP / 0 FAIL**（新增 24 条，含 routines 落盘回读、`current(session)` 回读、timer 真到点 + toast + fired 落盘、取消落盘、预设落盘）。宿主限制如实写进 README/UI：`schedule` 每次投递都花 token、timer 模式 DSH 不开不响、`approval` 没有「记住这次授权」。
+
+- [#319](https://github.com/kangyishuai/dsh-plugins/pull/319) [`d194ed4`](https://github.com/kangyishuai/dsh-plugins/commit/d194ed4cedb27987517e23bbbbb638394b248132) Thanks [@kangyishuai](https://github.com/kangyishuai)! - feat(projects): B5 · Library / Artifacts（F33 / F34 / U15）+ B3 复审修复
+  
+  - **F33 Library 视图**：项目页「Library」页签合并两块数据。**文件面**走宿主 `workspaceFiles`（scope `{sessionId, workspaceRoot}`，多目录逐个 list；明写「搜索只匹配文件名/路径，不搜正文」——这是宿主的边界）；**产物面**走 `artifacts` 0.2 契约（`ctx.get("artifacts")` + `version().contract === "artifacts/2"` 再 `list({projectId})`），并**自存 `projectId↔artifactId` 映射**（项目记录里的 `artifactRefs[]`：id/标题/类型/版本/字节/时间/来源；发布时在项目线程里 `recordArtifact` 落盘，冷启动可回读）。计量给 count/bytes，provenance 给「来自会话哪次工具调用」。
+  - **降级是明示的**：artifacts 未安装、`version()` 不可用或契约不是 `artifacts/2` 时，Library 写「产物库需要 dsh-artifacts 0.2」并只列文件面；**不会**显示「这个项目没有产物」。
+  - **F34 产物卡 / U15 视觉**：线程展开面板内嵌产物缩略卡（标题 + 类型 + 版本 + 时间 + provenance），Library 列表同样是「小标题 + 计量 + 缩略卡」的 Claude `Artifacts ⌄` 形态；「打开产物库」按钮走宿主右栏 `sidebarRight.openTab("artifact", { params: { projectId } })`，服务缺失时按钮禁用并说明原因。
+  - **B3 复审 P0（`store.js` effort 白名单）**：`THREAD_EFFORTS = ["","low","medium","high"]` 会把本部署的 `max` / `xhigh` / `off` 静默清空、UI 还提示「已保存」。删掉白名单改为**非空即收**（只做 40 字符上限），`setThreadDefaults` 写→冷启动回读单测覆盖三档；冒烟用手填路径逐档写入并断言回读与审计。
+  - **B3 复审 P1（locale 落后 44 键）**：`locale/{zh,en}.json` 补齐 runtime 字典缺失的 44 个键，`settings.realtimeCiHint/On/Off` 改成与 B2 一致的「未实现、不会建 webhook」；新增 `test/locale-parity.test.js` 锁 runtime↔locale 的键集与文案值，冒烟再验一次线上口径。
+  - **B3 复审 P1（冒烟 flake）**：开局加**基础设施自检**——宿主端口不可连、插件未激活、`projects.json` 未落盘、浏览器脚本没有返回结果，一律打印 `INFRA` 并 fail-fast，不再把环境问题混进断言计数；把最有劣化风险的几处固定 `waitForTimeout`（toast 自动消失、会话行、归属菜单、详情打开、折叠状态回读）改成轮询等待。
+  - **B3 复审 P2**：`once` 凭据改为**所有闸通过且占位成功之后**才消费，执行没落地时由 `settle` 回滚（`folder/once-rolled-back` 审计），动作被拒不再烧掉授权；文件夹闸按**实际 cwd 所属目录**求 mode（`push-branch` 的 worktree 继承其项目目录授权，反查不到才退回 `dirs[0]` 并标 `inherited:false`），授权卡补 cwd 语义说明；`listMemoryFragments` 先校验项目存在再拼路径（`../` 不能再枚举 dataRoot 外目录名）。
+  - **验证**：`pnpm verify` EXIT=0（projects 单测 **572**，新增 17 条：locale parity 5 / Library 6 / once+cwd 4 / effort 1 / memory guard 1）；`pnpm smoke:projects` **238 PASS / 0 SKIP / 0 FAIL**（新增 ≥10 条断言，含 A 段每条修复与 B 段文件面/产物面写→回读、降级）。
+
+- [#319](https://github.com/kangyishuai/dsh-plugins/pull/319) [`d194ed4`](https://github.com/kangyishuai/dsh-plugins/commit/d194ed4cedb27987517e23bbbbb638394b248132) Thanks [@kangyishuai](https://github.com/kangyishuai)! - Claude Projects 复刻对齐（M2–M6）+ 三轮质量审查后的修复：布局、状态呈现、协作流程与性能。
+  
+  - **布局与视觉（对齐 Claude 项目主页）**：右栏四视图（线程 / Library / Routines / 视图），
+    Views 改为**可见性开关**（写 `visibleViews` + 审计，刷新后保持）；主列单 composer
+    （新线程 / 协调者目标切换、圆形 ↵ 发送、控件行移出卡片）、composer 贴底；详情页去掉页面级
+    双标题；Welcome/药丸计数只在线程页签；分组头去噪（拖拽把手/轮播 hover 才出现）；
+    行内 PR 徽章改为绿色 `⎇ #N`；展开面板占满整行、右侧元信息悬浮右上角。
+    深浅双主题分层（浅色右栏变淡灰卡）、浅色对比度补强（除禁用「+」外均 ≥4.5:1）。
+  - **状态呈现**：行副标题按状态派生（working 动词+秒数、`✓✓✓ 使用 X`、失败/等你/结果摘要），
+    idle 结果摘要只写真实观测值（不再出现 `0 步 · diff n/a` 调试串）；步进圆环/任务弹层/
+    时长（now/Nm/Nh/Nd）/产物 chips（含封面）与 diff chip。
+  - **协调者**：结论上浮 + 消息折叠块 + 结论旁产物 chips；协调者默认模型独立于线程默认
+    （设置页写→回读）；主列顶部排障信息折成一行摘要（详情可展开）。
+  - **Routines**：详情三段（触发/指令/运行于）+ **可编辑**（频率↔手动会真正建/删宿主定时，
+    不再漂移）；整页 43 处硬编码中文抽成 i18n。
+  - **Library / 产物**：文件树表格（名称/类型/大小/更新时间）+ 交互式产物查看器
+    （markdown 标题/列表/表格/勾选清单，HTML 不渲染）。
+  - **PR 流程**：三段式卡（状态 · 标题 · CI）、复制链接、**合并**（三重门禁：有 PR 号、
+    二次确认、危险开关；草稿自动 `pr ready`）；PR 命令统一在线程 worktree 里执行
+    （多目录项目不再查/合并错仓库）；分支名带项目短 id 避免撞远端；客户端 PR 概览 30s TTL。
+  - **设置**：通知四档（真实映射三布尔）、Memory 两层（指令计数/索引更新于/文件列表）、
+    Environment 三段摘要、失败自动重试（**诚实语义**：失败后 60s 重发「继续」，累计最多 2 次，
+    不冒充"用量恢复续跑"）、短路键 P/L/R/V。
+  - **可访问性与健壮性**：线程行 `tabindex/role/aria-expanded` + Enter/Space 展开；行内菜单
+    分隔线 + ↑↓ 导航；错误条可重试；面板/详情加载态；行内操作常显（0.35）而非 hover-only。
+  - **性能**：写盘改紧凑 JSON（体积 −30%）+ 250ms 合并写；`liveSessionFacts` 只问本项目线程并
+    按会话缓存；后台标签页不轮询（详情页一轮 11 RPC）；diff 目标限 24 条 + 并发 4；缓存有界。
+  - **验证**：`pnpm gate:projects` 全绿 —— `pnpm verify` EXIT=0（projects 单测 **688**）、
+    runtime probe **72/72**、web 端到端冒烟 **270 PASS / 0 SKIP**、桌面只读回归 **20 PASS**（空 profile 17）；
+    WebUI 与桌面在 1440×900 下布局几何一致（≤1px）。两轮独立 subagent 审查（功能/性能/安全 + UI/UX）
+    的发现已修：UI 合并补回 CI/批准数/改动量门禁、项目生命周期不再误伤在跑线程、回收站保留期清理真的能清、
+    `getProject` 回读、Library 调用预算、写盘失败可见等。
+
+- [#319](https://github.com/kangyishuai/dsh-plugins/pull/319) [`d194ed4`](https://github.com/kangyishuai/dsh-plugins/commit/d194ed4cedb27987517e23bbbbb638394b248132) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 项目面板界面改版（对齐 Claude Projects 本地 space 的布局）：列表页加搜索/排序/收藏，新建项目改为「从零开始 / 使用已有文件夹」两入口模态 + toast；详情页改为「主列 + 右栏」项目主页布局（右栏为只读值行 + 编辑动作，窄窗口折叠为摘要行），配置块不再压在线程列表之前；破坏性确认框默认聚焦主按钮。web 端到端冒烟 78 → 102 条。
+
+- [#319](https://github.com/kangyishuai/dsh-plugins/pull/319) [`d194ed4`](https://github.com/kangyishuai/dsh-plugins/commit/d194ed4cedb27987517e23bbbbb638394b248132) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 本地优势 + 设置 + 记忆（B3）。数据面：记忆碎片（`MEMORY.md` 索引 + 独立 `.md`，可预览、可逐条 forget）、instructions 16k 预算与宿主 `dsh-agent-instructions` 去重、`<project-context>` 包裹 + 「这是项目记忆，不是 AGENTS.md」、goal ≤8,000 + 计数、预算默认值（日线程 20 / 并发 2 / 步数 60 / token 不限）、**暂停语义修正**（暂停不再中断上下文注入）、设置四分区（General/Memory/Usage/Debug access，Usage 只报 token 不报金额）、按项目通知开关、`gh` 只读连接检查、模板受管 AGENTS.md 区块、线程重命名、`@` 候选与 `setThreadDefaults` RPC。
+  
+  UI 面：详情右栏「上下文」新增本地优势卡（@ 候选预览、碎片计数）（**本地文件夹授权卡三键 Deny / Set as default folder / Allow once（一次性凭据用掉即失效）**、线程默认模型 / effort 下拉（`modelCatalog`，默认值落项目 store 并在建线程时套用）、从会话开线程（`recentSessions` + 挂为线程）、`@` 源状态）；记忆页签新增碎片列表（新增 / 预览 / 逐条忘掉）与 `MEMORY.md` 索引条目逐条忘掉；既有线程 ⋯ 菜单补上「重命名」（内联输入，写 `renameThread`）与「复制 ID」，并注册 `contextMenus` 自定义 target 族 `projects.thread`；`@` 源通过 client `inputTriggers.registerSource` 注册（插入 `@thread:<id>` / `@project:<id>`）；客户端的完成通知（`completed`）接到 `shell.overlay` toast 并按项目开关过滤。验证：projects 单测 472（新增断言并入既有用例），web 冒烟 172 → 180。
+
+- [#319](https://github.com/kangyishuai/dsh-plugins/pull/319) [`d194ed4`](https://github.com/kangyishuai/dsh-plugins/commit/d194ed4cedb27987517e23bbbbb638394b248132) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 项目主页对齐 Claude Projects 的 Overview（B1）：六态状态机（等你 / 失败 / 在跑 / 待审 / 空闲 / 归档，事件回写持久 `state`）、分组折叠 + 五类药丸条过滤（`~Nm` 只在能从已观测步进节奏估计时显示）、行解剖（副标题取最近 `tool/call` 的可读摘要，步进环取 `todo/write` 快照，没有 todo 显示「—」而不是 0/0）、`Welcome back` 头 + 7 日 token 迷你图、手动 resolve/重开与未读标记、项目切换器、一次性首启引导（`firstRunDone` 存宿主 `storageDomain`）、Context 多选（目录 ≤10 + 仓库 owner/repo）与多目录线程。web 端到端冒烟 102 → 133 条；桌面只读回归随新锚点更新（本阶段未重启桌面版复跑）。
+
+- [#319](https://github.com/kangyishuai/dsh-plugins/pull/319) [`d194ed4`](https://github.com/kangyishuai/dsh-plugins/commit/d194ed4cedb27987517e23bbbbb638394b248132) Thanks [@kangyishuai](https://github.com/kangyishuai)! - feat(projects): 页签收敛到 3 个（Library 走右栏入口、审计进设置 Debug），桌面回归可用 `--create` 覆盖详情页
+  
+  - **页签 5 → 3（`docs/plugin-conventions.md` §7.3「页签最多 3 个」）**：项目主页只剩 `线程 / 记忆 / Routines`。
+    `data-projects-tab` 的取值集合同步收缩为 `threads|memory|routines`；`audit`、`library` 不再是页签。
+  - **Library 外迁为右栏一行入口**：右侧栏「记忆」下方新增 `data-projects-rail-library` 段，动作按钮
+    `data-projects-library-open`（`aria-pressed` 跟随状态）点开后**在主列**渲染现有的 `LibraryView`
+    （`data-projects-library-main` 包裹，原有 `data-projects-library*` 锚点全部保留），主列顶部
+    `data-projects-library-back`（‹ 返回线程列表）或再次点同一右栏行动作都能收起；右栏段给一行摘要
+    `data-projects-library-rail-summary`（文件数 · 产物数）。数据面没有变化：仍然是宿主 `workspaceFiles`
+    文件面 + `artifacts/2` 产物面 + 自存的 `projectId ↔ artifactId` 映射。
+  - **审计外迁到设置分节 Debug 区**：项目详情不再请求/渲染审计（少一轮 5s 轮询），设置
+    Debug 分区新增 `data-projects-settings-audit`（标题 `data-projects-audit-title`，列表保留
+    `data-projects-audit` / 空态 `data-projects-audit-empty` 锚点，新的在前，最多 100 条 = `listAudit` 的截断）。
+  - **桌面只读回归新增 `--create`（默认关，默认仍严格只读）**：开启时用 UI 从零建一个
+    `smoke-desktop-<ts>` 临时项目 → 断言详情页两列（`data-projects-detail-grid/main/rail`）、6 个药丸、
+    3 个页签、Library 右栏入口、审计不在详情页 → 再用同一套 UI「详情 ⋯ → 删除 → 确认 → 回收站 → 彻底删除」，
+    最后断言盘上 `projects.json` 里没有它。默认模式（不带 `--create`）在有项目的 profile 上真断言详情页，
+    没有项目时如实 SKIP 并写明原因（不再只能吃「live profile 没有项目」这条跳过）。
+  - 设置分节那条从「渲染了就算 PASS」改成真断言：四个分区（general/memory/usage/debug）+ Debug 面板 +
+    审计锚点；设置页打不开仍如实 SKIP 并进计数行。
+  - **中英 runtime 字典 + `locale/{zh,en}.json` 三处同步**（新增 `library.railOpen/railBack/railHint/
+    railSummary/railLoading`、`settings.auditTitle`；删掉不再使用的 `detail.tab.audit`），
+    `test/locale-parity.test.js` 保持绿（键集与文案值逐条相等）。
+
+- [#319](https://github.com/kangyishuai/dsh-plugins/pull/319) [`d194ed4`](https://github.com/kangyishuai/dsh-plugins/commit/d194ed4cedb27987517e23bbbbb638394b248132) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 把桩接通（B2）：协调者区（项目页里一个长期会话，可建会话 / 发一句话 / 重开会话，**不是**宿主 composer）、协调者汇报渲染（结论上浮 + thread chip）、上下文策略（`compaction` 一律 `ctx.get()` 判空兜底 + wake 信封新增「最近线程」「记忆索引」两段）、线程 Tasks 清单（`todo/write` 整表快照 → ✓/◌ + n/m）、线程内 steering（`prompt({mode:'steer'})`）、每线程模型 / effort（`session/selectModel`，下拉取 `modelCatalog`，改后读 `modelSelection`）、Create PR 条与分支条、PR 徽章 + CI 状态点、展开面板里的 thread 起始卡与行内 chip、禁止跨项目移动（`store.attachThread` 对「已在 A 项目」的会话直接拒绝，只允许 attach 空槽 / 先 detach，含单测）、PR/CI 默认轮询（只对有开放 PR 的项目，30–90s 退避，应用关闭即停）与设置里的「实验性实时监听」开关（**disabled 且标注未实现**：真做需要 gh-webhook 扩展、仓库管理员权限与验签），以及设置页的 Restart 行。web 端到端冒烟 133 → 157 条；单测 428 → 453 条。另修 B1 审查的 3 个 P0 / 5 个 P1：宿主侧持久化断言改成具体值（不再有恒真式）、六态词表两端统一（`waiting-user` 不再被丢弃、冷启动 `failed`/`working` 读得回来）、`dirs` 在 load 时不再静默截断（超限只由写入口拒绝）、`~Nm` 的 `firstActivityAt` 用最早时间（估得出非 null）、桌面回归首启步骤改只读、`thread.dir` 在行内显示短名；F35 口径写明「本批只做多目录」。
+  
+  F35 口径：本批**只做多目录**（每项目 ≤10 个 root，全部生效；每条线程记录自己跑在哪个 root，行内显示 `thread.dir` 短名）。Claude 的 1000 文件 / 单项目 2 GB / 单文件 480 MB 属于它的上传能力，DSH 没有上传通道，随上传能力一起**后置**，本批不做也不宣称。
+
+### Patch Changes
+
+- [#319](https://github.com/kangyishuai/dsh-plugins/pull/319) [`d194ed4`](https://github.com/kangyishuai/dsh-plugins/commit/d194ed4cedb27987517e23bbbbb638394b248132) Thanks [@kangyishuai](https://github.com/kangyishuai)! - B2 复审修复：把「批准 / 派活」的入口真正接上，并清掉三处不可证伪的宣称。
+  
+  - **P0 协调器工具从未注册**：`attachCoordinatorTools` 全仓零调用者，`project_thread_start` / `project_request_action` / `project_memory_*` 运行时不存在（F18「审批产生入口」与 F9「它派活」都是死代码）。现在注册逻辑抽到 `coordinator-tools.js`，在 `onAgentCreated` 与 `warmUpCoordinator` 两条路径幂等挂载，`agent/disposed` 时摘掉；单测断言 6 个工具注册 + 失败写审计不抛，冒烟断言审计里有 `coordinator/tools` 且 `count=6`。
+  - **F21 口径**：`autoFixStep` 补上手动入口「修一轮 CI」（只在 CI 失败时可点，结果回显，服务端写审计）；实验性实时监听开关改为 **disabled + 明确「未实现」**（需要 gh-webhook 扩展与仓库管理员），README / changeset 里「会建临时 webhook」的宣称删掉。
+  - **F24 effort**：模型下拉旁新增 effort 下拉（数据来自 `modelCatalog().groups[].models[].reasoning.efforts`），`selectThreadModel` 传 `reasoningEffort` 并回读 `modelSelection`（以前只传 provider/model）。
+  - **F20 断言可证伪**：冒烟真的点 Create PR，断言行内动作条出现且原因是决策层真实原因（`no-commits` 等）；删掉 `openPr` 调用只会得到 `unknown`，这条会红。
+  - **F17 订阅单测**：`todo/write` → `reduce` 后 `todoItems` 非空（行 `tasks` 的来源），并用源码守卫钉住 `session/event` 订阅与事件回写。
+  - **写路径单测**：`sendToCoordinator` / `steerThread` / `selectThreadModel` / `createPr` 抽到 `write-paths.js`，用假 `sessionController` 断言 `mode:'queue'|'steer'`、`content:[{type:'text'}]`、`reasoningEffort`、signal 必传与错误信封。
+  - **P2**：删掉零调用者的 `threadTasks` RPC；跨项目移动冲突错误本地化；协调者 user 气泡按「同角色同文本 + 5s 窗口」去重；`defaultPolicy`/`normalizePolicy` 补 `pr.tier`（按项目 opt-out）；`setThreadState('resolved')` 维护 `resolvedAt`；`mergeRecord` 映射 `waiting-user`（盘上读回不再变 idle）；`createProject` 超限目录改为显式拒绝（不再静默截断）；`runCommand` 加 30s 超时（gh 卡住不再把轮询 inFlight 永久占住）；README 两条矛盾的 0.10.x 行合并。
+
+- [#319](https://github.com/kangyishuai/dsh-plugins/pull/319) [`d194ed4`](https://github.com/kangyishuai/dsh-plugins/commit/d194ed4cedb27987517e23bbbbb638394b248132) Thanks [@kangyishuai](https://github.com/kangyishuai)! - B3 独立审查修复（5 P0 / 10 P1）：`@` 源改用 `ctx.inject(["inputTriggers"])` 真正注册（`registered` 只在 `registerSource()` 成功后置位），冒烟断言该状态；临时 profile 里打开 `ui-settings`（只改临时 home 的 `cordis.patch.yml`），设置页 14 条断言从「跳过计 PASS」变成真跑，跑不了时如实 SKIP；线程默认模型的模型/effort 下拉从 `modelCatalog` 动态生成并可写，保存后按具体值回读；`threadDefaults` 冒烟断言改为逐字段比对 `projects.json`；删除 F3 恒真测试、`recentUi` 兜底改为「候选行数 > 0 且 attach 的 sessionId 落进 threads」；注入时真实读取宿主会加载的 `AGENTS.md`/`CLAUDE.md` 并去重（可注入读取器，测试用临时目录）；文件夹授权三键接进审批执行闸（deny 拒绝、once 消费、default 长期、unset 保持旧行为）；`applyProjectTemplate` 改传 `{ projectId }` 并补 AGENTS.md 可回读/幂等断言；线程行右键/Shift+F10 走宿主 `contextMenus`（保留自绘 ⋯ 菜单作降级）；`forgetMemory` 加路径守卫并抽到可注入根目录的 `memory-store.js`（`../`、`..%2F`、绝对路径、未知 kind 全部拒绝）；补齐 106 个 B3 EN 文案（runtime 字典 + `locale/en.json`）；冒烟把记忆/归档/删除/搜索四处固定等待改成轮询，桌面回归不再把「设置页没开」计 PASS。
+
+- [#319](https://github.com/kangyishuai/dsh-plugins/pull/319) [`d194ed4`](https://github.com/kangyishuai/dsh-plugins/commit/d194ed4cedb27987517e23bbbbb638394b248132) Thanks [@kangyishuai](https://github.com/kangyishuai)! - B6 收尾：F29 自动 resolve + 三个「接线断了」的 P0（replay / threadStats / routing 契约）。
+  
+  - **F29 自动 resolve（`autoResolveDays`）**：项目字段不再只是占位。启动时与之后每 24 小时各检查一次：项目里**无活动 ≥ N 天**的线程自动标记 resolved（`resolvedAt` 落盘），写审计 `thread/auto-resolved`（带 `days` / `idleDays`），并同步内存视图（不会下一次轮询又弹回失败）。`null` = 关闭（默认），非法值一律当关闭；刚好 N 天即算命中，差 1ms 不算；已 resolved / 归档 / 没有时间事实的线程一律不动。新增 RPC `setAutoResolveDays`（写→回读 + 审计 `project/auto-resolve`）与 `checkAutoResolve`（手动跑一趟，返回 `checked` / `resolved`）。UI 在项目详情右栏「上下文」段给出下拉（关 / 3 / 7 / 14 / 30 天）——宿主可能禁用设置页，所以这里必须能真写。
+  - **P0-2 启动 `replay()`**：以前 `overview.replay()` 全仓零调用者，重启后 Overview 视图归零。现在 `session/event` 把 `reduce()` 认的最小事实（轮起止、错误 attempt、副标题摘要、todo 快照、交互开关；正文/参数不进盘）追加到线程记录的 `events`（每线程上限 80 条），service 构造时 `hydrateViews()` 用 `hydrateThreadView()` 重建视图；人工 resolve 的时间戳晚于最后一次活动才生效（之后又有新活动则旧 resolve 过期，不会「点完已解决又自己弹回失败」）。旧数据没有 `events` 字段仍可读。
+  - **P0-3 `threadStats` 接进行摘要**：`progress()` 现在为每个有 worktree 的线程算真实 `git diff --numstat <baseSha>`（**故意不带 `..HEAD`**，未提交改动也算；5s 缓存，失败如实 `null`），`buildThreadRow` 把它传给 `summarizeForRow`，行摘要显示 `diff N 文件 +N/-M` 而不是恒 `diff n/a`；行上另有 `data-projects-thread-diff="files:added:removed"` 精确锚点。`threadStats` 与 `progress` 共用同一路径，详情页和行摘要不会给出两个口径。
+  - **P0-4 routing 契约统一**：`settings.js` 曾要求规则的 `when` 是**字符串**，而 `routing.js` 的匹配器只认**对象**（`{textMatches,textMaxChars,isQuestion,threadState}`）——真实规则（含内置 `defaultRules()`）永远进不了「改配置」审批写路径。现在 `sanitizeSettingsPatch` 用同一份白名单校验并收敛 `when`（未知键/类型错误给出可读 reason，字符串形态明确拒绝），`titleTemplate` 也会保留；单测断言写入后能被 `matchRules()` / `decideRoute()` 真命中，内置默认规则也满足自己这份契约。
+  - **验证**：`pnpm verify` EXIT=0（projects 单测 **595**，+23）；`pnpm smoke:projects` **248 PASS / 0 SKIP / 0 FAIL**（238 → 248，连跑两次一致；新增 10 条：自动 resolve 的右栏配置回读 / 落盘 / 审计 / 不误伤 + `checkAutoResolve` RPC、事件 journal 与启动 replay 重建、行摘要真实 diff 的 `n/a → +N/-M`）。单测新覆盖 `test/autoresolve.test.js`（边界：刚好 N 天 / 差 1ms / 超过 / 关闭 / 已 resolved / 无时间事实 / 真实 store 冷启动 + 幂等）与 `test/replay.test.js`（压缩只留最小事实、新 store → replay 非 idle、resolve 覆盖与过期、journal 上限、旧数据兼容、service 接线源码守卫）。
+
 ## 0.9.1
 
 ### Patch Changes

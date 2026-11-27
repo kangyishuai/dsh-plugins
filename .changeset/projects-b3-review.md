@@ -1,5 +1,0 @@
----
-"@kangyishuai/dsh-projects": patch
----
-
-B3 独立审查修复（5 P0 / 10 P1）：`@` 源改用 `ctx.inject(["inputTriggers"])` 真正注册（`registered` 只在 `registerSource()` 成功后置位），冒烟断言该状态；临时 profile 里打开 `ui-settings`（只改临时 home 的 `cordis.patch.yml`），设置页 14 条断言从「跳过计 PASS」变成真跑，跑不了时如实 SKIP；线程默认模型的模型/effort 下拉从 `modelCatalog` 动态生成并可写，保存后按具体值回读；`threadDefaults` 冒烟断言改为逐字段比对 `projects.json`；删除 F3 恒真测试、`recentUi` 兜底改为「候选行数 > 0 且 attach 的 sessionId 落进 threads」；注入时真实读取宿主会加载的 `AGENTS.md`/`CLAUDE.md` 并去重（可注入读取器，测试用临时目录）；文件夹授权三键接进审批执行闸（deny 拒绝、once 消费、default 长期、unset 保持旧行为）；`applyProjectTemplate` 改传 `{ projectId }` 并补 AGENTS.md 可回读/幂等断言；线程行右键/Shift+F10 走宿主 `contextMenus`（保留自绘 ⋯ 菜单作降级）；`forgetMemory` 加路径守卫并抽到可注入根目录的 `memory-store.js`（`../`、`..%2F`、绝对路径、未知 kind 全部拒绝）；补齐 106 个 B3 EN 文案（runtime 字典 + `locale/en.json`）；冒烟把记忆/归档/删除/搜索四处固定等待改成轮询，桌面回归不再把「设置页没开」计 PASS。
