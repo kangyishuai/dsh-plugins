@@ -138,3 +138,22 @@ tarball 的 HTTP 状态），可见后 `gh run rerun <run-id> --failed` 即可�
 - **首次发布会有延迟**：2026-11-15 实测，registry 约 **5 分 21 秒**才可见、jsDelivr 的 `latest` 约 **9 分钟**（第二次 purge 后才 200）。后续发版仍要等 registry，但 CDN 已经认识这个包，通常快得多。
 - **灾备 URL**：如果 jsDelivr 不可达，可以把 `build/index.json` 放到任意 https 直链（GitHub raw 对现成文件不跳转，实测 `cache-control: max-age=300`）临时顶上；宿主要求 URL **不带 query/fragment** 且**不跟随重定向**。
 - **不写 `engines.dsh`**：发现页因此不会按版本过滤；兼容性以各插件 README 的表格为准。
+
+## 4. 2026-11-28 全插件体检/修复后的当前计数
+
+> 来源：2026-11-28 的审计修复与 3 个用户模拟画像修复批次（PR #352–#371）合并后的实测；
+> 历史记录保留在各插件文档里，下列是**当前状态**。web 冒烟因共享 ego-browser 环境限制，部分未在本轮重跑，
+> 标「待实跑」；桌面只读回归在隔离桌面实例（`--port`）上跑。
+
+| 插件           | 单测（`node --test`） | 桌面只读回归                                | web 冒烟                            |
+| -------------- | --------------------- | ------------------------------------------- | ----------------------------------- |
+| advisor        | **232**               | 20 项（未复跑，见 docs/testing/advisor.md） | 16 项（待实跑）                     |
+| artifacts      | **100**               | 4 项                                        | 12 项                               |
+| btw            | **118**               | 新断言 +5（未复跑）                         | 默认 +3 / `--deep` +2（待实跑）     |
+| casefile       | **277**               | **30** 项（本轮在隔离实例跑过 30 PASS）     | 69 项                               |
+| next-step      | **246**               | 上限 **25** 项                              | 73 项                               |
+| projects       | **823**               | **23** 项（1 SKIP 数据分支）                | 270 项（疑似 ego 环境限制，待实跑） |
+| session-delete | **136**               | **23** 项                                   | 33 项                               |
+| session-rewind | **280**               | **34** 项（`--recall`/`--deep` 另计）       | 62 项                               |
+
+基线命令：`pnpm verify`（lint/typecheck/check/check:docs/check:public/全部单测）+ `pnpm probe:runtime`（**100 项**，见 [runtime §23](../runtime/0.2.2-rc.5.md#23-2026-11-28-第二轮实测能力挂载时序导航调度契约与命令回执)）。
