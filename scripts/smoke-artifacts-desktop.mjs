@@ -98,7 +98,12 @@ async function main() {
     await sleep(1500);
 
     const entry = await cdp.evaluate(`(() => {
-      const nodes = [...document.querySelectorAll("button, [role=button], a")];
+      // 指南条目的稳定锚点优先（宿主给的是 data-sidebar-right-guide-entry）。
+      // 全 DOM 按文本找会先命中对话里的思考行/引用（真机实测：聊天里有 "Artifacts" 字样时点错）。
+      const anchored = document.querySelector('[data-sidebar-right-guide-entry="artifact"]');
+      if (anchored) { anchored.click(); return true; }
+      const guide = document.querySelector("[data-sidebar-right-guide], [data-rightbar-panel]");
+      const nodes = [...(guide ?? document).querySelectorAll("button, [role=button], a")];
       const hit = nodes.find((n) => /Artifacts/u.test((n.textContent || "").trim()));
       if (hit) { hit.click(); return true; }
       return false;
