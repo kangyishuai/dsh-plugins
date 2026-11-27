@@ -118,7 +118,7 @@ web 冒烟与桌面回归（由 lead 统一跑）；本批没有改 client 行�
 | USIM-U2-15 | 斜杠菜单命令描述改为中英双语：host 半自己读 `locale/<lang>.json` 的 `host` 段，按 `config.language` 或 `LANG`/`LC_ALL` 选语言，读不到回落英文（宿主没有 locale 服务，见 runtime §8.1）                                                                                                              | `messages.test.js`（加载/摊平/选语言/中英描述）、`locale-parity.test.js`（`host` 段不进 client 键集）                                                                  |
 | USIM-U1-11 | advisor 工具的 skip 结果不再把「已关闭 / 未配置 / shadow」这类内部开关状态交给主模型：`exposeSkip` 在 tool 触发时换成中性 code + 「不要把顾问状态写进给用户的回复」；`lastSkip` 仍留真实原因供状态/诊断使用                                                                                         | `tool-result.test.js`（4 项）                                                                                                                                          |
 
-验证口径：`node --test`（包内）= **232 pass / 0 fail**（203 → 232，新增 5 个测试文件里的 29 项），
+验证口径：`node --test`（包内）= **232 pass / 0 fail**（203 → 232，新增 5 个测试文件里的 29 项；复审 follow-up 再 +1 条 `renderToolOutput` + `exposeSkip` 组合断言，现为 **233**），
 `pnpm verify` EXIT=0。按批次约定**没有**跑 web 冒烟与桌面回归（由 lead 统一跑）：
 
 - web 冒烟新增 1 项 Node 侧断言：「`/advisor` 命令回执第一行是原始命令行（日志）」；
