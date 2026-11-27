@@ -143,6 +143,105 @@ test("桌面端套件没打印 PASS/SKIP/FAIL 计数行时 check 报错", () => 
   }
 });
 
+test("缺环境早退的 web 冒烟必须打印计数行（2026-11-28 静态规则，AUD-XCT-05）", () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "dsh-plugins-smoke-early-exit-"));
+  try {
+    mkdirSync(join(repoRoot, "packages"));
+    mkdirSync(join(repoRoot, "scripts"), { recursive: true });
+    writeFileSync(join(repoRoot, "package.json"), JSON.stringify({ name: "repo", scripts: {} }));
+    // 只有 dsh / ego-browser 早退、且早退分支没打印计数行的脚本：旧静态检查会放行
+    writeFileSync(
+      join(repoRoot, "scripts", "smoke-early-exit.mjs"),
+      `const hasCommand = async (n) => n === "dsh";
+const main = async () => {
+  if (!(await hasCommand("dsh"))) return console.log("SKIP 未找到 dsh");
+  console.log("1 PASS / 0 SKIP / 0 FAIL");
+};
+await main();
+`,
+    );
+    let messages = checkRepo(repoRoot)
+      .filter((i) => i.level === "error")
+      .map((i) => i.message)
+      .join("\n");
+    assert.match(messages, /早退分支没有打印/);
+
+    // 早退分支补上 `0 PASS / N SKIP / 0 FAIL` 后这条错误消失
+    writeFileSync(
+      join(repoRoot, "scripts", "smoke-early-exit.mjs"),
+      `const hasCommand = async (n) => n === "dsh";
+const main = async () => {
+  if (!(await hasCommand("dsh"))) {
+    console.log("SKIP 未找到 dsh");
+    console.log("0 PASS / 1 SKIP / 0 FAIL");
+    return;
+  }
+  console.log("1 PASS / 0 SKIP / 0 FAIL");
+};
+await main();
+`,
+    );
+    messages = checkRepo(repoRoot)
+      .filter((i) => i.level === "error")
+      .map((i) => i.message)
+      .join("\n");
+    assert.doesNotMatch(messages, /早退分支没有打印/);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("settings.section 的 order 必须落在 90–96（并列在非 Wave 2 插件间算 error）", () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "dsh-plugins-settings-order-"));
+  try {
+    mkdirSync(join(repoRoot, "packages"));
+    writeFileSync(join(repoRoot, "package.json"), JSON.stringify({ name: "repo", scripts: {} }));
+    const outOfRange = scaffold({ root: repoRoot, name: "out-of-range", description: "x" });
+    writeFileSync(
+      join(outOfRange, "lib", "client.js"),
+      `window.__ModuleLoader__.load({ id: "@kangyishuai/dsh-out-of-range", factory: () => ({
+  apply(ctx) {
+    ctx.slots.inject("settings.section", () => ctx.slots.register({ name: "settings.section", order: 42 }, () => null));
+  },
+}) });
+`,
+    );
+    const messages = checkRepo(repoRoot)
+      .filter((i) => i.level === "error")
+      .map((i) => i.message)
+      .join("\n");
+    assert.match(messages, /order=42 不在约定的 90–96/);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("settings.section 的 order 并列（含原 Wave 2 插件）一律算 error", () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "dsh-plugins-settings-order-dup-"));
+  try {
+    mkdirSync(join(repoRoot, "packages"));
+    writeFileSync(join(repoRoot, "package.json"), JSON.stringify({ name: "repo", scripts: {} }));
+    const order = (name) =>
+      `window.__ModuleLoader__.load({ id: "@kangyishuai/dsh-${name}", factory: () => ({
+  apply(ctx) {
+    ctx.slots.inject("settings.section", () => ctx.slots.register({ name: "settings.section", order: 93 }, () => null));
+  },
+}) });
+`;
+    for (const name of ["alpha", "beta"]) {
+      const dir = scaffold({ root: repoRoot, name, description: "x" });
+      writeFileSync(join(dir, "lib", "client.js"), order(name));
+    }
+    const messages = checkRepo(repoRoot)
+      .filter((i) => i.level === "error")
+      .map((i) => i.message)
+      .join("\n");
+    assert.match(messages, /order=93 被 alpha \/ beta 并列使用/);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("桌面端套件缺 --require 时 check 报错", () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "dsh-plugins-desktop-require-"));
   try {

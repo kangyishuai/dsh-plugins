@@ -82,6 +82,8 @@ export function checkRepo(root = REPO_ROOT) {
   const issues = [];
   /** @type {Map<string, string>} cordis id -> 插件目录 */
   const cordisIds = new Map();
+  /** @type {Map<number, string[]>} settings.section 的 order -> 插件目录（用于查并列） */
+  const settingsOrderOwners = new Map();
   // 宿主主题 token 快照（CI 里没有 DSH 可查，所以用提交在仓库里的那份）。
   const hostTokens = new Set(readSnapshot().tokens);
 
@@ -257,6 +259,26 @@ export function checkRepo(root = REPO_ROOT) {
       }
     }
 
+    // 设置分节 order：每个插件一个分节，order 必须落在约定区间（docs/plugin-conventions.md §7.1）。
+    // 并列会让设置页顺序取决于注册时序（用户上次记住的位置会漂），所以下面按仓库级查重。
+    if (existsSync(clientFile)) {
+      const clientSrc = readFileSync(clientFile, "utf8");
+      const orderMatch =
+        /name\s*:\s*[`"']settings\.section[`"'][\s\S]{0,240}?order\s*:\s*(\d+)/u.exec(clientSrc);
+      if (orderMatch) {
+        const order = Number(orderMatch[1]);
+        if (order < 90 || order > 96) {
+          report(
+            "error",
+            `settings.section 的 order=${order} 不在约定的 90–96（见 docs/plugin-conventions.md §7.1）`,
+          );
+        }
+        const owners = settingsOrderOwners.get(order) ?? [];
+        owners.push(dir);
+        settingsOrderOwners.set(order, owners);
+      }
+    }
+
     // 主题 token：只能用宿主真实存在的 `--dsw-*` / `--ds-*`（写错名会静默落到硬编码兜底色）
     for (const file of listJsFiles(join(base, "lib"))) {
       checkThemeTokens(issues, dir, file, file.slice(root.length + 1), hostTokens);
@@ -325,6 +347,18 @@ export function checkRepo(root = REPO_ROOT) {
     }
   }
 
+  // settings.section 的 order 必须唯一（docs/plugin-conventions.md §7.1：90–96 唯一）。
+  // 2026-11-28 Wave 2 八个插件都改成唯一值（90/91/92/93/94/95/96），原先的
+  // PENDING_ORDER_PLUGINS 临时豁免已删除：任何并列都按 error 处理。
+  for (const [order, plugins] of settingsOrderOwners) {
+    if (plugins.length < 2) continue;
+    issues.push({
+      level: "error",
+      plugin: plugins.join(" / "),
+      message: `settings.section 的 order=${order} 被 ${plugins.join(" / ")} 并列使用（§7.1 要求 90–96 唯一，顺序会取决于注册时序）`,
+    });
+  }
+
   // 所有冒烟脚本（web + 桌面）都必须打印 `N PASS / M SKIP / K FAIL`：gate/gate:all 靠这一行
   // 识别「跑过但零断言」的假绿。2026-11-20 之前桌面五条脚本漏打、web 只有 btw 打了——门禁的
   // 假绿防线对它们等于不存在。这里做成静态检查，新脚本漏了会在 `pnpm check` / CI 直接拦住。
@@ -347,6 +381,18 @@ export function checkRepo(root = REPO_ROOT) {
           plugin: smokeOwner.get(name) ?? "scripts",
           message: `${name} 没有打印 \`N PASS / M SKIP / K FAIL\` 计数行（gate/gate:all 靠它判断假绿，见 docs/plugin-conventions.md §6.1）`,
         });
+      }
+      // 缺 dsh / ego-browser 时的**早退路径**同样要打印计数行（2026-11-28，AUD-XCT-05）：
+      // 早退不打印 = 门禁拿到 undefined，旧版只判退出码于是显示 ✓。现在 gate.mjs 的 web 阶段
+      // 用 gateVerdict() 判 vacuous，但前提是早退分支真的留下 `0 PASS / N SKIP / 0 FAIL`。
+      if (/hasCommand\("dsh"\)|hasCommand\("ego-browser"\)|SKIP 缺少依赖/u.test(src)) {
+        if (!/0 PASS\s*\/\s*\d+\s+SKIP\s*\/\s*0 FAIL/u.test(src)) {
+          issues.push({
+            level: "error",
+            plugin: smokeOwner.get(name) ?? "scripts",
+            message: `${name} 缺环境时会早退，但早退分支没有打印 \`0 PASS / N SKIP / 0 FAIL\`（门禁会因此判不了假绿，见 §6.1 / AUD-XCT-05）`,
+          });
+        }
       }
     }
   }

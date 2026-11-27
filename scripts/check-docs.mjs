@@ -2,13 +2,15 @@
 // @ts-check
 // 文档一致性检查：`pnpm check:docs`（CI 与 pnpm verify 都会跑）。
 //
-// 拦的是「代码改了、文档没跟上」这类漂移——人工 review 很难一直抓到：
+// 拦的是「代码改了、文档没跟上」这类漂移——人工 review 很难一直抓到。七条规则都已实现
+// （2026-11-28 补齐第 6 条，AUD-XCT-11；此前头部注释声称有、代码里没有）：
 //   1. 文档里写的「当前/目标运行时」必须等于 docs/runtime/ 里最新的版本；
 //   2. README 徽章里的 verified-on 版本必须等于同一个最新版本；
 //   3. 插件 README 的状态行不应写死具体版本号（会漂）；
 //   4. ADR 文件必须在 docs/adr/README.md 索引里出现；
 //   5. docs/runtime/ 每个版本文件必须被至少一处引用（否则等于写完就没人看）；
-//   6. 插件 README 兼容性表格里出现过的版本，必须在 docs/runtime/ 有对应记录；
+//   6. 插件 README 里写到的 DSH 版本，必须在 docs/runtime/ 有对应记录
+//      （防止把没勘察过的版本号写进兼容表）；
 //   7. 相对链接指向的文件必须存在，`#锚点` 必须能对上目标文件的标题。
 //
 // 第 7 条是 2026-11-14 补的：改标题（哪怕只是把「两条」改成「三条」）会让指向它的
@@ -158,6 +160,29 @@ export function linkErrors(docs, fileExists) {
   return { linkCount, errors };
 }
 
+/**
+ * 第 6 条：插件 README 里写到的 DSH 版本必须在 docs/runtime/ 有记录。
+ * 版本号抽取是全文匹配（兼容性表格、状态行、正文里的 `0.2.2-rc.3` 都算）——写错一个
+ * 没勘察过的版本号，就能在 npm 页面上对外声称「验证过」，这才是要拦的。
+ * @param {Map<string, string>} docs 相对仓库根的路径 → 文件内容（只含插件 README）
+ * @param {Set<string>} runtimeVersions docs/runtime/ 里存在的版本
+ * @returns {{ versionCount: number, errors: string[] }}
+ */
+export function runtimeVersionCoverageErrors(docs, runtimeVersions) {
+  /** @type {string[]} */
+  const errors = [];
+  let versionCount = 0;
+  for (const [rel, text] of docs) {
+    for (const match of text.matchAll(/\d+\.\d+\.\d+-rc\.\d+/gu)) {
+      versionCount += 1;
+      if (!runtimeVersions.has(match[0])) {
+        errors.push(`${rel}：写到 DSH ${match[0]}，但 docs/runtime/ 没有该版本的勘察记录`);
+      }
+    }
+  }
+  return { versionCount, errors };
+}
+
 const main = async () => {
   // ---- 1/2/3: 运行时引用与状态行 ----
   const runtimeFiles = (await readdir(join(REPO, "docs/runtime")).catch(() => [])).filter((name) =>
@@ -259,6 +284,19 @@ const main = async () => {
     if (!cited) warnings.push(`docs/runtime/${version}.md 没有被任何文档引用`);
   }
 
+  // ---- 6: 插件 README 里写到的 DSH 版本必须有 docs/runtime 记录 ----
+  /** @type {Map<string, string>} */
+  const pluginReadmes = new Map();
+  for (const plugin of pluginDirs) {
+    for (const file of ["README.md", "README.zh-CN.md"]) {
+      const rel = `packages/${plugin}/${file}`;
+      const text = await read(rel);
+      if (text !== "") pluginReadmes.set(rel, text);
+    }
+  }
+  const versionCoverage = runtimeVersionCoverageErrors(pluginReadmes, new Set(versions));
+  errors.push(...versionCoverage.errors);
+
   // ---- 7: 相对链接与锚点（按 GitHub 的渲染规则） ----
   const docFiles = await collectMarkdown(".");
   /** @type {Map<string, string>} */
@@ -275,7 +313,7 @@ const main = async () => {
     return;
   }
   console.log(
-    `文档一致性检查：0 个错误，${warnings.length} 个警告（含 ${docFiles.length} 个 Markdown、${links.linkCount} 条本地链接/锚点）`,
+    `文档一致性检查：0 个错误，${warnings.length} 个警告（含 ${docFiles.length} 个 Markdown、${links.linkCount} 条本地链接/锚点、${versionCoverage.versionCount} 处 DSH 版本引用）`,
   );
 };
 

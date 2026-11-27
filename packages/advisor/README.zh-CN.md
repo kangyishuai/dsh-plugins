@@ -2,7 +2,7 @@
 
 > 给主模型配一个单独配置的顾问模型，由**主模型自己决定**什么时候值得问：动手之前、反复失败时、宣告完成之前。顾问只给建议：它读整段对话、返回结构化答复，不批准、不拦截、不执行任何动作。
 
-[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-advisor?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-advisor) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.3-4b6bfb)](#兼容性) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-advisor?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-advisor) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.5-4b6bfb)](#兼容性) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
 [English](./README.md)
 

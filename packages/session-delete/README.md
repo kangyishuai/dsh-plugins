@@ -2,13 +2,13 @@
 
 > Real session deletion for DeepSeek Harness: trash by default, a plan before you delete, an audit log, and a receipt for whatever is left behind.
 
-[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-delete?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-session-delete) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.3-4b6bfb)](#compatibility--degradation) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![npm](https://img.shields.io/npm/v/@kangyishuai/dsh-session-delete?color=cb3837&logo=npm)](https://www.npmjs.com/package/@kangyishuai/dsh-session-delete) [![DSH](https://img.shields.io/badge/verified%20on%20DSH-0.2.2--rc.5-4b6bfb)](#compatibility--degradation) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
 [中文](./README.zh-CN.md)
 
 Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). Not affiliated with DeepSeek.
 
-> **Status: early.** Verified on the current target DSH version with `pnpm smoke:session-delete` (32 end-to-end assertions on a throwaway DSH home) and `pnpm probe:runtime`; the desktop read-only pass was done on an earlier version. The [Compatibility](#compatibility--degradation) table records exactly what was run. `pnpm gate session-delete` runs the whole release gate in one command. Treat it as young software and keep backups of anything you cannot lose.
+> **Status: early.** Verified on the current target DSH version with `pnpm smoke:session-delete` (33 end-to-end assertions on a throwaway DSH home) and `pnpm probe:runtime`; the desktop read-only pass was done on an earlier version. The [Compatibility](#compatibility--degradation) table records exactly what was run. `pnpm gate session-delete` runs the whole release gate in one command. Treat it as young software and keep backups of anything you cannot lose.
 
 
 ![Delete confirmation: one line of impact, an opt-in cascade checkbox, and a Details disclosure](https://raw.githubusercontent.com/kangyishuai/dsh-plugins/main/packages/session-delete/docs/images/overview.png)

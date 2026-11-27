@@ -15,26 +15,16 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const args = process.argv.slice(2);
-/** @param {string} flag @returns {string|undefined} */
-const flagValue = (flag) => {
-  const at = args.indexOf(flag);
-  return at === -1 ? undefined : args[at + 1];
-};
-
-const home = flagValue("--home") ?? process.env.DSH_HOME ?? join(homedir(), ".dsh");
-const daysRaw = flagValue("--days");
-const days = daysRaw === undefined ? undefined : Number(daysRaw);
-const asJson = args.includes("--json");
-const path = join(home, "advisor", "decisions.jsonl");
+import { isMain } from "./lib/repo.mjs";
 
 /**
  * 读决策日志；坏行跳过。
  * @param {string} file
  * @returns {Promise<any[]>}
  */
-async function readRecords(file) {
+export async function readRecords(file) {
   const text = await readFile(file, "utf8").catch(() => "");
   /** @type {any[]} */
   const out = [];
@@ -50,90 +40,134 @@ async function readRecords(file) {
   return out;
 }
 
-// 复盘逻辑与插件内 keep 同一份实现，避免两处口径漂移。
-import { fileURLToPath } from "node:url";
-
-const { summarize, bucketOf } = await import(
-  fileURLToPath(new URL("../packages/advisor/lib/decisions.js", import.meta.url))
-);
-
-let records = await readRecords(path);
-if (records.length === 0) {
-  console.log(`没有决策日志：${path}`);
-  console.log("提示：日志由 advisor 插件在宿主侧自动写入，先正常用一段时间再回来复盘。");
-  process.exit(0);
+/** 百分比；null 显示为 `-`。 @param {number|null} value @returns {string} */
+export function pctOf(value) {
+  return value === null ? "-" : `${(value * 100).toFixed(1)}%`;
 }
 
-const dayWindow = typeof days === "number" && Number.isFinite(days) && days > 0 ? days : 0;
-if (dayWindow > 0) {
-  const since = Date.now() - dayWindow * 24 * 60 * 60 * 1000;
-  records = records.filter((record) => {
-    const at = Date.parse(String(record?.at ?? ""));
-    return Number.isFinite(at) && at >= since;
-  });
+/**
+ * 人类可读输出里的「结果回填」一行：可追踪（已回填 outcome）/ 不可追踪（待回填）
+ * 与 outcome 覆盖率。
+ *
+ * 为什么单独成行：采纳率只对「已经出结果」的徵询算，未回填的不进分母；分母小时
+ * 「采纳率 0%」会被读成「建议从没被采纳」（审计 AUD-ADV-07）。把覆盖率单独报出来，
+ * 才能区分「真的没采纳」与「还没观察到结果」。
+ *
+ * `summarize()` 返回 `resolvedOutcomes` / `pendingOutcomes` / `outcomeCoverage`；
+ * 旧数据或旧实现没有这些字段时整行显示 `-`（不编 0，也不假装覆盖完整）。
+ * @param {{ consulted?: number, resolvedOutcomes?: number, pendingOutcomes?: number, outcomeCoverage?: number | null }} stats
+ * @returns {string}
+ */
+export function formatOutcomeCoverage(stats) {
+  const consulted = typeof stats?.consulted === "number" ? stats.consulted : 0;
+  const coverage = typeof stats?.outcomeCoverage === "number" ? stats.outcomeCoverage : undefined;
+  const resolved = typeof stats?.resolvedOutcomes === "number" ? stats.resolvedOutcomes : undefined;
+  const pending = typeof stats?.pendingOutcomes === "number" ? stats.pendingOutcomes : undefined;
+  const noData = coverage === undefined && pending === undefined && resolved === undefined;
+  if (noData || consulted === 0) {
+    return "结果回填：可追踪 - · 不可追踪 - · outcome 覆盖率：-";
+  }
+  return `结果回填：可追踪 ${resolved ?? "-"} · 不可追踪 ${pending ?? "-"} · outcome 覆盖率：${pctOf(coverage ?? null)}`;
 }
 
-const stats = summarize(records);
-
-if (asJson) {
-  console.log(JSON.stringify({ home, path, days: days ?? null, ...stats }, null, 2));
-  process.exit(0);
-}
-
-/** @param {number|null} value @returns {string} */
-const pct = (value) => (value === null ? "—" : `${(value * 100).toFixed(1)}%`);
 /** @param {any} record @returns {string} */
 const when = (record) =>
   String(record?.at ?? "")
     .replace("T", " ")
     .slice(0, 19);
 
-console.log(`决策日志：${path}`);
-console.log(`回合：${stats.turns} · 徵询：${stats.consulted}（${pct(stats.consultRate)}）`);
-console.log(
-  `采纳：${stats.accepted} · 另打字：${stats.ignored} · 无动作：${stats.noAction} · 采纳率：${pct(stats.acceptRate)}`,
-);
+const main = async () => {
+  const args = process.argv.slice(2);
+  /** @param {string} flag @returns {string|undefined} */
+  const flagValue = (flag) => {
+    const at = args.indexOf(flag);
+    return at === -1 ? undefined : args[at + 1];
+  };
 
-console.log("\n按分桶（长/短回答 × 有无工具 × 有无报错）");
-console.log("分桶                    回合  徵询  采纳  另打字  无动作");
-for (const bucket of stats.buckets) {
-  const label = String(bucket.bucket).padEnd(20, " ");
-  console.log(
-    `${label} ${String(bucket.turns).padStart(4)} ${String(bucket.consulted).padStart(5)} ${String(
-      bucket.accepted,
-    ).padStart(5)} ${String(bucket.ignored).padStart(7)} ${String(bucket.noAction).padStart(6)}`,
+  const home = flagValue("--home") ?? process.env.DSH_HOME ?? join(homedir(), ".dsh");
+  const daysRaw = flagValue("--days");
+  const days = daysRaw === undefined ? undefined : Number(daysRaw);
+  const asJson = args.includes("--json");
+  const path = join(home, "advisor", "decisions.jsonl");
+
+  // 复盘逻辑与插件内 keep 同一份实现，避免两处口径漂移。
+  const { summarize, bucketOf } = await import(
+    fileURLToPath(new URL("../packages/advisor/lib/decisions.js", import.meta.url))
   );
-}
 
-const skipEntries = Object.entries(stats.skipCodes ?? {}).sort(
-  (a, b) => Number(b[1]) - Number(a[1]),
-);
-if (skipEntries.length > 0) {
-  console.log("\n未徵询的原因");
-  for (const [code, count] of skipEntries) {
-    console.log(`  ${String(code).padEnd(28, " ")} ${count}`);
+  let records = await readRecords(path);
+  if (records.length === 0) {
+    console.log(`没有决策日志：${path}`);
+    console.log("提示：日志由 advisor 插件在宿主侧自动写入，先正常用一段时间再回来复盘。");
+    return;
   }
-}
 
-if (stats.missed.length > 0) {
-  console.log("\n疑似漏徵询（有工具 + 长回答 + 无报错，但没徵询）");
-  for (const record of stats.missed) {
+  const dayWindow = typeof days === "number" && Number.isFinite(days) && days > 0 ? days : 0;
+  if (dayWindow > 0) {
+    const since = Date.now() - dayWindow * 24 * 60 * 60 * 1000;
+    records = records.filter((record) => {
+      const at = Date.parse(String(record?.at ?? ""));
+      return Number.isFinite(at) && at >= since;
+    });
+  }
+
+  const stats = summarize(records);
+
+  if (asJson) {
+    console.log(JSON.stringify({ home, path, days: days ?? null, ...stats }, null, 2));
+    return;
+  }
+
+  console.log(`决策日志：${path}`);
+  console.log(`回合：${stats.turns} · 徵询：${stats.consulted}（${pctOf(stats.consultRate)}）`);
+  console.log(
+    `采纳：${stats.accepted} · 另打字：${stats.ignored} · 无动作：${stats.noAction} · 采纳率：${pctOf(stats.acceptRate)}`,
+  );
+  console.log(formatOutcomeCoverage(stats));
+
+  console.log("\n按分桶（长/短回答 × 有无工具 × 有无报错）");
+  console.log("分桶                    回合  徵询  采纳  另打字  无动作");
+  for (const bucket of stats.buckets) {
+    const label = String(bucket.bucket).padEnd(20, " ");
     console.log(
-      `  ${when(record)}  ${bucketOf(record)}  回答 ${record.answerChars} 字 · ${record.skipCode}`,
+      `${label} ${String(bucket.turns).padStart(4)} ${String(bucket.consulted).padStart(5)} ${String(
+        bucket.accepted,
+      ).padStart(5)} ${String(bucket.ignored).padStart(7)} ${String(bucket.noAction).padStart(6)}`,
     );
   }
-}
 
-if (stats.overConsulted.length > 0) {
-  console.log("\n疑似无效徵询（徵询了，但用户随后自己发了别的内容）");
-  for (const record of stats.overConsulted) {
-    console.log(
-      `  ${when(record)}  ${record.severity ?? "-"} · ${record.trigger ?? "-"} · ${bucketOf(record)}`,
-    );
+  const skipEntries = Object.entries(stats.skipCodes ?? {}).sort(
+    (a, b) => Number(b[1]) - Number(a[1]),
+  );
+  if (skipEntries.length > 0) {
+    console.log("\n未徵询的原因");
+    for (const [code, count] of skipEntries) {
+      console.log(`  ${String(code).padEnd(28, " ")} ${count}`);
+    }
   }
-}
 
-console.log(
-  "\n判读方法：漏徵询占比高 → 触发条件太严（放宽工具/长度门槛）；" +
-    "无效徵询占比高 → 触发条件太松（加上「有工具且回答够长」之外的判据）。",
-);
+  if (stats.missed.length > 0) {
+    console.log("\n疑似漏徵询（有工具 + 长回答 + 无报错，但没徵询）");
+    for (const record of stats.missed) {
+      console.log(
+        `  ${when(record)}  ${bucketOf(record)}  回答 ${record.answerChars} 字 · ${record.skipCode}`,
+      );
+    }
+  }
+
+  if (stats.overConsulted.length > 0) {
+    console.log("\n疑似无效徵询（徵询了，但用户随后自己发了别的内容）");
+    for (const record of stats.overConsulted) {
+      console.log(
+        `  ${when(record)}  ${record.severity ?? "-"} · ${record.trigger ?? "-"} · ${bucketOf(record)}`,
+      );
+    }
+  }
+
+  console.log(
+    "\n判读方法：漏徵询占比高 → 触发条件太严（放宽工具/长度门槛）；" +
+      "无效徵询占比高 → 触发条件太松（加上「有工具且回答够长」之外的判据）。",
+  );
+};
+
+if (isMain(import.meta.url)) await main();

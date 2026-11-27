@@ -15,15 +15,17 @@ import {
 } from "../gate-all.mjs";
 import { REPO_ROOT } from "../lib/repo.mjs";
 
-test("默认插件列表就是六个发布插件", () => {
+test("默认插件列表就是八个发布插件（AUD-XCT-04：旧清单漏了 artifacts / projects）", () => {
   assert.deepEqual(normalizePlugins(undefined), RELEASE_PLUGINS);
   assert.deepEqual(normalizePlugins(""), RELEASE_PLUGINS);
   assert.deepEqual(normalizePlugins("   "), RELEASE_PLUGINS);
   assert.deepEqual(RELEASE_PLUGINS, [
     "advisor",
+    "artifacts",
     "btw",
     "casefile",
     "next-step",
+    "projects",
     "session-delete",
     "session-rewind",
   ]);
@@ -98,7 +100,7 @@ test("compareCounts：一致返回 null，SKIP 漂移/新增失败都要看得�
   );
 });
 
-test("仓库里六个发布插件的 web/桌面脚本真的都在（离线结构检查）", () => {
+test("仓库里八个发布插件的 web/桌面脚本真的都在（离线结构检查）", () => {
   const scripts = JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8")).scripts ?? {};
   assert.deepEqual(missingScripts(RELEASE_PLUGINS, scripts, false), []);
 });

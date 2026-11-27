@@ -38,6 +38,9 @@ jobs:
       - run: pnpm exec biome ci --error-on-warnings .
       - run: pnpm typecheck
       - run: pnpm check
+      # 文档一致性（版本指针 / ADR 索引 / runtime 引用 / 链接锚点 / 兼容表版本）：
+      # 以前只在 nightly 的 `pnpm verify` 里跑，PR 可以带着文档漂移合入（AUD-XCT-03）。
+      - run: pnpm check:docs
       - run: pnpm check:public
       - run: pnpm test
 
@@ -52,13 +55,24 @@ jobs:
           node-version-file: .node-version
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # 没有安装 DSH 时探针会打印 SKIP 并以 0 退出（脚本自己判断），所以这里不做额外条件。
-      - run: pnpm probe:runtime
+      # runner 上没有 DSH 桌面版（没有 app.asar），旧写法会让探针打印 SKIP 后 exit 0——
+      # 而这是分支保护的必需检查，于是它恒绿（AUD-XCT-02）。现在按 AGENTS.md 的目标运行时
+      # 版本从 npm 装一份宿主面：npm 上的 @deepseek-ai/dsh 与桌面版是同一套包，
+      # 探针用 --surface 显式指向它；装不出 / 版本不对都非零退出。
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/dsh-surface
+          key: dsh-surface-${{ runner.os }}-${{ hashFiles('AGENTS.md') }}
+      - run: node scripts/prepare-dsh-surface.mjs --output "$RUNNER_TEMP/dsh-surface"
+      - run: node scripts/probe-runtime.mjs --surface "$RUNNER_TEMP/dsh-surface/node_modules"
       # 门禁结构检查：每个插件都必须有 verify/probe/web 冒烟三个必需步骤。
       - run: pnpm gate session-rewind --dry-run
       - run: pnpm gate session-delete --dry-run
       - run: pnpm gate advisor --dry-run
-      # 六插件的批量门禁结构（verify/probe 只跑一次 + 每插件 web/桌面脚本齐全），纯离线。
+      - run: pnpm gate artifacts --dry-run
+      - run: pnpm gate projects --dry-run
+      # 八个发布插件的批量门禁结构（verify/probe 只跑一次 + 每插件 web/桌面脚本齐全），纯离线。
+      # AUD-XCT-04：旧清单只有六个，artifacts / projects 不在其中。
       - run: pnpm gate:all --dry-run
 
   secrets:

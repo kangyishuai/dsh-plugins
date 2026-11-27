@@ -13,9 +13,10 @@
 //
 // 设计要点：
 //   - 第 4 步永远带 `--require`。门禁存在的意义就是「不能没跑还说通过」。
-//   - 桌面脚本**跑过但一条断言都没执行**（全 SKIP）也算失败：脚本退出码 0 不代表验证过
-//     任何东西。典型场景是 agent 在自己的会话里跑回归——可见会话有运行中的回合，
-//     脚本按设计 SKIP。这种「假绿」比红更危险，所以这里按断言计数判定。
+//   - web 与桌面脚本**都要看计数行**（2026-11-28 起）：退出码 0 不代表验证过任何东西。
+//     web 冒烟缺 `dsh` / `ego-browser` 时会早退，早退也必须打印 `0 PASS / N SKIP / 0 FAIL`
+//     （见 scripts/smoke-*.mjs 的早退分支），门禁据此判 `vacuous` 假绿；不打印计数行则判
+//     `missing-counts` 失败。桌面同理（可见会话有运行中的回合时脚本按设计 SKIP 也算失败）。
 //   - 只有显式 --skip-desktop 才跳过桌面端，且结束时会大声提示「门禁不完整」。
 //   - 每个插件缺哪个脚本就跳过哪一步（并在输出里说明），不假装跑过。
 import { execFileSync, spawn } from "node:child_process";
@@ -230,40 +231,47 @@ const main = async () => {
       process.exitCode = 1;
       return;
     }
-    // 桌面阶段：跑过但一条断言都没执行 = 假绿；脚本不打印计数行则门禁无从判断，同样判失败。
-    const isDesktopStage = String(stage.args[0] ?? "").endsWith("-desktop");
-    if (isDesktopStage) {
-      const counts = parseCounts(output);
-      const verdict = desktopGateVerdict(counts);
-      if (verdict !== "ok") {
-        console.error("");
-        if (verdict === "missing-counts") {
-          console.error(
-            `FAIL 门禁中止：「${stage.title}」没有打印 \`N PASS / M SKIP / K FAIL\` 计数行`,
-          );
-          console.error("      门禁靠这一行识别「跑过但零断言」的假绿；缺了它就没有任何判据。");
-          console.error(
-            "      按 docs/plugin-conventions.md §6.1 在脚本收尾补上这一行（pnpm check 也会拦）。",
-          );
+    // web / 桌面阶段：退出码 0 不够，还要看计数行（web 与桌面共用同一套判定）。
+    // 跑过但一条断言都没执行 = 假绿；脚本不打印计数行则门禁无从判断，同样判失败。
+    const verdict = countedStageVerdict(stage.args[0], countsForStage);
+    if (verdict !== "ok") {
+      const isDesktopStage = String(stage.args[0] ?? "").endsWith("-desktop");
+      console.error("");
+      if (verdict === "missing-counts") {
+        console.error(
+          `FAIL 门禁中止：「${stage.title}」没有打印 \`N PASS / M SKIP / K FAIL\` 计数行`,
+        );
+        console.error("      门禁靠这一行识别「跑过但零断言」的假绿；缺了它就没有任何判据。");
+        console.error(
+          "      按 docs/plugin-conventions.md §6.1 在脚本收尾补上这一行（pnpm check 也会拦）。",
+        );
+      } else {
+        console.error(`FAIL 门禁中止：「${stage.title}」跑完了但**一条断言都没执行**`);
+        console.error(
+          `      计数：${countsForStage?.pass ?? 0} PASS / ${countsForStage?.skip ?? 0} SKIP / ${countsForStage?.fail ?? 0} FAIL`,
+        );
+        console.error("      退出码 0 不代表验证过任何东西。");
+        if (isDesktopStage) {
+          console.error("      常见原因：可见会话有运行中的回合（agent 在自己会话里跑回归时），");
+          console.error("      把可见会话切到空闲会话再跑。");
         } else {
-          console.error(`FAIL 门禁中止：「${stage.title}」跑完了但**一条断言都没执行**`);
+          console.error("      常见原因：本机缺 `dsh` / `ego-browser`，web 冒烟打印 SKIP 后早退；");
+          console.error("      早退会打印 `0 PASS / N SKIP / 0 FAIL`，门禁据此判假绿。");
           console.error(
-            `      计数：${counts?.pass ?? 0} PASS / ${counts?.skip ?? 0} SKIP / ${counts?.fail ?? 0} FAIL`,
+            "      装好宿主与浏览器后重跑，或按 docs/plugin-conventions.md §6.1 排查。",
           );
-          console.error("      退出码 0 不代表验证过任何东西。常见原因：可见会话有运行中的回合");
-          console.error("      （agent 在自己会话里跑回归时），把可见会话切到空闲会话再跑。");
         }
-        records.push({
-          title: stage.title,
-          status: "fail",
-          ms: Date.now() - stageStart,
-          counts: countsForStage,
-          outputTail: String(output).split("\n").slice(-40).join("\n"),
-        });
-        await finish("fail");
-        process.exitCode = 1;
-        return;
       }
+      records.push({
+        title: stage.title,
+        status: "fail",
+        ms: Date.now() - stageStart,
+        counts: countsForStage,
+        outputTail: String(output).split("\n").slice(-40).join("\n"),
+      });
+      await finish("fail");
+      process.exitCode = 1;
+      return;
     }
     records.push({
       title: stage.title,
@@ -387,6 +395,21 @@ export function desktopGateVerdict(counts) {
  * @returns {"ok" | "missing-counts" | "vacuous"}
  */
 export const gateVerdict = desktopGateVerdict;
+
+/**
+ * 需要计数的阶段（web 冒烟 / 桌面回归）的判定；其它阶段（verify/probe）只认退出码。
+ *
+ * 2026-11-28 之前只有桌面阶段走 `desktopGateVerdict()`，web 阶段只看退出码——于是
+ * 「缺 dsh / ego-browser 时打印 SKIP 就 return」的早退路径被显示成 ✓（AUD-XCT-05）。
+ * 现在 web 冒烟早退也打印 `0 PASS / N SKIP / 0 FAIL`，这里把它接进同一套判定。
+ * @param {string | undefined} scriptName pnpm 脚本名（`smoke:<plugin>` / `smoke:<plugin>-desktop`）
+ * @param {{ pass: number, skip: number, fail: number } | undefined} counts
+ * @returns {"ok" | "missing-counts" | "vacuous"}
+ */
+export function countedStageVerdict(scriptName, counts) {
+  if (typeof scriptName !== "string" || !scriptName.startsWith("smoke:")) return "ok";
+  return gateVerdict(counts);
+}
 
 /**
  * 跑一个 pnpm 脚本：输出照常透传，同时缓存下来供断言计数解析。
