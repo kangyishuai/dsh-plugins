@@ -301,7 +301,8 @@ export class NextStepService extends TypertRemoteService {
       // 生成成功但被档位抑制（没有显示）的回合数
       hidden: 0,
       // 生成跑完时这一轮已经翻过去了（用户在途时发了下一条）：候选以 shown:false 落库。
-      // 单独计数是为了让「不丢 token」这条改动的效果可观测（旧的 aborted/cancelled 会明显下降）。
+      // 单独计数是为了让这条改动的效果可观测（旧的 aborted/cancelled 会明显下降）。
+      // 注意：这不是省 token 的改动——跑完会比中止多付输出 token。
       superseded: 0,
       failed: 0,
       // 生成被中止（超时/取消）。单独计数：中止既不写会话日志、原来也不计数，
@@ -1013,7 +1014,7 @@ export class NextStepService extends TypertRemoteService {
 
   /**
    * 当前设置：文件优先，1s 缓存。改文件即生效（不必重启宿主）。
-   * v1 → v2 迁移结果会在这里**写回一次**（之后不再写）。
+   * 旧版本设置（v1 / v2）的迁移结果会在这里**写回一次**（之后不再写）。
    * @returns {Promise<any>}
    */
   async currentSettings() {

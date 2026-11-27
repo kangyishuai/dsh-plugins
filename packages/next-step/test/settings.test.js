@@ -598,7 +598,7 @@ test("loadSettingsWithMeta：文件不存在时不标记迁移（不凭空造文
   assert.deepEqual(files, [], "读取不应创建任何文件");
 });
 
-test("saveSettings 写出的文件带 schemaVersion=2（下一次读取不再迁移）", async () => {
+test("saveSettings 写出的文件带当前 schemaVersion（下一次读取不再迁移）", async () => {
   const home = await mkdtemp(join(tmpdir(), "ns-settings-schema-"));
   tempDirs.push(home);
   await saveSettings({ home, patch: { cardThreshold: "must" } });
