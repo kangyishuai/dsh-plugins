@@ -348,19 +348,14 @@ export function checkRepo(root = REPO_ROOT) {
   }
 
   // settings.section 的 order 必须唯一（docs/plugin-conventions.md §7.1：90–96 唯一）。
-  // 例外：Wave 2 的四个插件分支正在把旧的并列（93/93、94/94）改成唯一值；在这四个插件之间
-  // 的并列先记 warn，其余任何并列都是 error。四个分支合并后应把 PENDING_ORDER_PLUGINS 删掉，
-  // 让所有并列都按 error 处理（脚本测试不会因为删掉它而失败）。
-  const PENDING_ORDER_PLUGINS = new Set(["next-step", "projects", "btw", "casefile"]);
+  // 2026-11-28 Wave 2 八个插件都改成唯一值（90/91/92/93/94/95/96），原先的
+  // PENDING_ORDER_PLUGINS 临时豁免已删除：任何并列都按 error 处理。
   for (const [order, plugins] of settingsOrderOwners) {
     if (plugins.length < 2) continue;
-    const pending = plugins.every((plugin) => PENDING_ORDER_PLUGINS.has(plugin));
     issues.push({
-      level: pending ? "warn" : "error",
+      level: "error",
       plugin: plugins.join(" / "),
-      message: pending
-        ? `settings.section 的 order=${order} 被 ${plugins.join(" / ")} 并列使用（§7.1 要求 90–96 唯一）；Wave 2 对应插件分支正在改成唯一值，合并后本条会消失`
-        : `settings.section 的 order=${order} 被 ${plugins.join(" / ")} 并列使用（§7.1 要求 90–96 唯一，顺序会取决于注册时序）`,
+      message: `settings.section 的 order=${order} 被 ${plugins.join(" / ")} 并列使用（§7.1 要求 90–96 唯一，顺序会取决于注册时序）`,
     });
   }
 

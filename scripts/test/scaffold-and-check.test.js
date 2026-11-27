@@ -216,6 +216,32 @@ test("settings.section 的 order 必须落在 90–96（并列在非 Wave 2 插�
   }
 });
 
+test("settings.section 的 order 并列（含原 Wave 2 插件）一律算 error", () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "dsh-plugins-settings-order-dup-"));
+  try {
+    mkdirSync(join(repoRoot, "packages"));
+    writeFileSync(join(repoRoot, "package.json"), JSON.stringify({ name: "repo", scripts: {} }));
+    const order = (name) =>
+      `window.__ModuleLoader__.load({ id: "@kangyishuai/dsh-${name}", factory: () => ({
+  apply(ctx) {
+    ctx.slots.inject("settings.section", () => ctx.slots.register({ name: "settings.section", order: 93 }, () => null));
+  },
+}) });
+`;
+    for (const name of ["alpha", "beta"]) {
+      const dir = scaffold({ root: repoRoot, name, description: "x" });
+      writeFileSync(join(dir, "lib", "client.js"), order(name));
+    }
+    const messages = checkRepo(repoRoot)
+      .filter((i) => i.level === "error")
+      .map((i) => i.message)
+      .join("\n");
+    assert.match(messages, /order=93 被 alpha \/ beta 并列使用/);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("桌面端套件缺 --require 时 check 报错", () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "dsh-plugins-desktop-require-"));
   try {
