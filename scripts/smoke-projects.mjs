@@ -3507,13 +3507,16 @@ try {
     throwaway === true && openedThrowaway === "clicked" && confirmed === "clicked" && goneFromList === true,
     JSON.stringify({ throwaway, openedThrowaway, confirmed }),
   );
-  const rowIds = await page.evaluate(() =>
-    [...document.querySelectorAll("[data-projects-row-id]")].map((n) => (n.textContent || "").trim()),
+  // 短 id 从可见文本改成 name 的 title（评审：#hh34o1 对用户是噪声，但重名仍需要能区分）
+  const rowIdTitles = await page.evaluate(() =>
+    [...document.querySelectorAll("[data-projects-row-name]")].map((n) =>
+      String(n.getAttribute("title") || ""),
+    ),
   );
   add(
-    "项目行带短 id（重名可区分）",
-    rowIds.length > 0 && rowIds.every((id) => /^#[A-Za-z0-9_-]{4,}$/u.test(id)),
-    JSON.stringify(rowIds.slice(0, 3)),
+    "项目行 title 带完整 id（重名可区分，不占正文）",
+    rowIdTitles.length > 0 && rowIdTitles.every((id) => /^prj_[A-Za-z0-9_-]+$/u.test(id)),
+    JSON.stringify(rowIdTitles.slice(0, 3)),
   );
 
   // —— 列表页：搜索 / 排序 / 收藏 / 行内 ⋯（Batch A 的四个新面） ——
