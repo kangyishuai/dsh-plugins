@@ -32,6 +32,11 @@ pnpm smoke:projects-desktop     # 桌面只读回归（需要 --remote-debugging
 pnpm gate projects              # 发版门禁：上面三项 + 宿主能力体检
 ```
 
+门禁结果会落盘到 `build/gates/latest-<plugin>.json`（`build/` 已 gitignore）：含当前 commit、
+每步 `status`/断言 `counts`/耗时与失败时的输出尾部。以前结果只活在终端和 commit message 里，
+事后无法机器核对「哪次 gate 真的绿了」；发版前可直接读这个文件核对。`pnpm gate --dry-run`
+也会写一份 `verdict: structure-pass` 的结构自检报告。
+
 `packages/projects/test/` 覆盖：
 
 | 文件                | 证明什么                                                                                      |
