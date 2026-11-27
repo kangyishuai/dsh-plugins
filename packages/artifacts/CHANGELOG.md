@@ -1,5 +1,11 @@
 # @kangyishuai/dsh-artifacts
 
+## 0.2.1
+
+### Patch Changes
+
+- [#331](https://github.com/kangyishuai/dsh-plugins/pull/331) [`6031d9a`](https://github.com/kangyishuai/dsh-plugins/commit/6031d9a645b1dee05208aa6c61bee276dc834683) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 产物面板补可访问性：搜索框 `aria-label`、类型筛选按钮 `aria-pressed`（选中态现在可被读屏读出）。
+
 ## 0.2.0
 
 ### Minor Changes
