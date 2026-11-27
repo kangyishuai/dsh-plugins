@@ -99,6 +99,7 @@ packages/<name>/
 - 插件 README 的状态行**不要写死版本号**（换成不依赖版本的措辞，否则每次发版都会漂）；
 - `docs/adr/` 里每个 ADR 必须在 `docs/adr/README.md` 索引里；
 - `docs/runtime/<版本>.md` 必须被至少一处文档引用；
+- 插件 README 里写到的任何 DSH 版本（兼容表、状态行、正文），必须在 `docs/runtime/` 有对应勘察记录（防止把没验证过的版本写进兼容表）；
 - **相对链接指向的文件必须存在，`#锚点` 必须能对上目标文件的标题**（按 GitHub 的 slug 规则：小写、删掉非字母数字、空格换连字符且**不折叠**连续连字符，中文原样保留）。改标题会让指向它的锚点**静默失效**——`2026-11-14` 就有一次把「两条硬约定」改成「三条」，漏掉了 `docs/runtime/` 里引用旧锚点的那处。
 
 > 已知限制：锚点检查只看 Markdown 的 `[文案](目标)`，不解析 HTML 的 `href` / `src`（README 徽章那类）。
@@ -133,7 +134,7 @@ packages/<name>/
 - `scripts/smoke-session-rewind-desktop.mjs`（25 项只读，2026-11-19 在 rc.5 实测 25/25；`--recall` 再加 7 项输入框召回；`--deep` 再加文件模式 e2e，合计 40 项）
 - `scripts/smoke-session-delete-desktop.mjs`（18 项只读，2026-11-19 在 rc.5 实测 **16 PASS + 2 SKIP**——本机回收站为空时，「保留全选与批量操作」「条目布局」是**数据相关分支**，空态下不渲染工具条/条目行，按 SKIP 记；非空时照旧断言。带 `--workspace` 时另有写文件段落。这条脚本 2026-11-19 修过一次假红，见 [runtime rc.5 §6.1](runtime/0.2.2-rc.5.md#61-session-delete-桌面回归空回收站会假红)）
 - `scripts/smoke-advisor-desktop.mjs`（20 项，2026-11-19 在 rc.5 实测 19 PASS + 1 SKIP；SKIP 是「该会话没有顾问记录」——脚本不制造徵询）
-- `scripts/smoke-next-step-desktop.mjs`（22 项只读，2026-11-20 在 rc.5 复跑 **20–21 PASS + 1–2 SKIP**——SKIP 都是数据相关分支：「该卡没有展开按钮」「只有一粒胶囊」；**默认只读不点 ✕**（decision 是写操作、不可撤销，会让连跑不幂等），点 ✕ 归 `--deep`；胶囊按 1–2 粒断言）
+- `scripts/smoke-next-step-desktop.mjs`（22 项只读，2026-11-20 在 rc.5 复跑 **20–21 PASS + 1–2 SKIP**——SKIP 都是数据相关分支：「该卡没有展开按钮」「只有一粒胶囊」；**默认只读不点 ✕**（decision 是写操作、不可撤销，会让连跑不幂等），点 ✕ 归 `--deep`；胶囊按 1–2 粒断言）。**2026-11-28 起为 25 项**：新增 3 条旧卡折叠断言（只读态卡折叠成一行、折叠行无提问/胶囊/✕、折叠行文本有界），「有没有更早的只读卡」是数据相关分支（不满足时这 3 条记 SKIP）
 - `scripts/smoke-casefile-desktop.mjs`（15 项只读，2026-11-19 在 rc.5 实测 15/15；注意它结束时页面停在「案卷」主面板，串行跑别的桌面回归前先点回会话）
 - `scripts/smoke-btw-desktop.mjs`（19 项只读，2026-11-19 在 rc.5 实测 18 PASS + 1 SKIP；会话里已有旁问记录时是 **25 PASS / 0 SKIP**（2026-11-20 实测）；`--deep` 另跑真实 `/btw`，2026-11-20 在 rc.5 实测 **22 PASS + 1 SKIP**，真实数据根落下 `status=done` 记录）
 
@@ -143,9 +144,11 @@ packages/<name>/
 
 现在有三层护栏：
 
-1. **门禁判失败**：`gate.mjs` 的 `desktopGateVerdict()` 在桌面阶段拿不到计数行时直接失败（`missing-counts`），
-   并提示按本节补这一行——不再把「无法判断」当成「通过」。
-2. **静态检查**：`pnpm check`（`check-plugins.mjs`）扫 `scripts/smoke-*-desktop.mjs`，没有计数行就是 error；
+1. **门禁判失败**：`gate.mjs` 的 `countedStageVerdict()` 对 **web 冒烟与桌面回归**都判 `missing-counts` /
+   `vacuous`，拿不到计数行或一条断言都没跑都直接失败——不再把「无法判断」当成「通过」。web 冒烟在缺
+   `dsh` / `ego-browser` 时的**早退分支也必须打印 `0 PASS / 1 SKIP / 0 FAIL`**（否则门禁同样判假绿）。
+2. **静态检查**：`pnpm check`（`check-plugins.mjs`）扫所有 `scripts/smoke-*.mjs`（web + 桌面）：没有计数行
+   就是 error；「缺环境会早退」的脚本还要求早退分支带 `0 PASS / N SKIP / 0 FAIL`。
    `templates/plugin-desktop-smoke/smoke.js` 也带这一行，新插件不会再漏。
 3. **单测锁住**：`scripts/test/gate.test.js` 覆盖 `missing-counts / vacuous / ok` 三种判定，
    `scripts/test/scaffold-and-check.test.js` 覆盖「模板生成 → 检查通过」与「漏计数行 → 报错」。
@@ -268,12 +271,12 @@ ego 的浏览器是**和用户共用**的实例：它的 cookie jar 里装着用
 
 ### 7.1 东西放哪里
 
-| 内容                                   | 去处                                      | 理由                                                                                                                                                                     |
-| -------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 插件设置（偏好、开关、预算、诊断）     | **`settings.section` 的独立分节**         | 塞进 `settings.general.item` 会把它撑成一张大卡，还要滚动才能看到；每个插件一个分节，`order` 依次排（当前 90–93），`label` 用 `ctx.locale.bind(NS)`（§2 没有现成的 `t`） |
-| 跨会话的全局能力（回收站这类）         | `sidebar.footer.action` + `shell.overlay` | 它在会话之外还有意义，不该绑死在某个会话头部                                                                                                                             |
-| 会话级数据（撤回历史、救援点、决策卡） | 会话内面板 / 对话流                       | 这些数据离开当前会话就没有意义，搬进全局设置页语义是错的                                                                                                                 |
-| 一次性动作（删除、批量清空）           | 会话/工作区菜单（`contextMenus`）、快捷键 | 用官方贡献点，菜单才会显示键位提示，也能进宿主的快捷键编辑面板                                                                                                           |
+| 内容                                   | 去处                                      | 理由                                                                                                                                                                                                                                                                                                                                            |
+| -------------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 插件设置（偏好、开关、预算、诊断）     | **`settings.section` 的独立分节**         | 塞进 `settings.general.item` 会把它撑成一张大卡，还要滚动才能看到；每个插件一个分节，`order` 在 **90–96 内唯一**（8 个发布插件按目录顺序分配：session-delete 90 / session-rewind 91 / advisor 92 / next-step 93 / projects 94 / btw 95 / casefile 96；并列会让设置页顺序取决于注册时序），`label` 用 `ctx.locale.bind(NS)`（§2 没有现成的 `t`） |
+| 跨会话的全局能力（回收站这类）         | `sidebar.footer.action` + `shell.overlay` | 它在会话之外还有意义，不该绑死在某个会话头部                                                                                                                                                                                                                                                                                                    |
+| 会话级数据（撤回历史、救援点、决策卡） | 会话内面板 / 对话流                       | 这些数据离开当前会话就没有意义，搬进全局设置页语义是错的                                                                                                                                                                                                                                                                                        |
+| 一次性动作（删除、批量清空）           | 会话/工作区菜单（`contextMenus`）、快捷键 | 用官方贡献点，菜单才会显示键位提示，也能进宿主的快捷键编辑面板                                                                                                                                                                                                                                                                                  |
 
 ### 7.2 设置页
 
@@ -448,6 +451,8 @@ const page = await artifacts.list({ projectId });
 | `archived` / `archivedAt`                 | `boolean` / `number \| null`             | 归档后只读；列表默认不返回                                                   |
 | `coverUrl` / `previewUrl` / `downloadUrl` | `string`                                 | **相对路径**（`/artifacts/<id>…`），客户端直接用；`downloadUrl` 触发附件下载 |
 
+**破坏性方法的 `bytes` 语义**：`archive` / `remove` / `restore` / `purge`（以及它们的 `dryRun` 信封）里的 `bytes` 是**这次实际会移动 / 删除 / 恢复的全部字节（所有历史版本之和）**，不是行字段里的「最新版字节」——ADR 0002 要求确认框显示真实影响面。行与 `summary` 的 `bytes` 仍是「各工件最新版本字节之和」，`totalBytes` 才是含历史的占用；两处含义不同，不要混用。
+
 **id / trashKey 的边界**：`list` 与 `latest` 的 `id` 必须是**单段目录名**——带 `/`、`\\`、控制字符、`.`/`..` 或以点开头的 id 一律拒绝（契约层给 `artifacts/invalid`，HTTP 路由给 `400`）。回收站里同名条目会加时间后缀，所以 `trash()` 行里的 **`trashKey` 才是权威键**：`restore` / `purge` 的 `ids` 接受 id 或 trashKey；找到了但恢复不了（目标 id 被占用）会出现在 `unknown[]` 里，**不会静默留字节**。
 
 **`Summary`**：`{ count, bytes, byProject: [{ projectId: string \| null, count, bytes }] }`。
@@ -459,16 +464,16 @@ const page = await artifacts.list({ projectId });
 
 ### 8.4 错误码与降级
 
-| `code`                       | 含义                                                     | 调用方应该做什么                                        |
-| ---------------------------- | -------------------------------------------------------- | ------------------------------------------------------- |
-| `artifacts/invalid`          | 参数不合法（缺 `id`、缺 `ids`/`projectId`、未知 `kind`） | 修参数；**不要**重试                                    |
-| `artifacts/not-found`        | id / 版本不存在                                          | 从列表里剔掉，刷新 UI                                   |
-| `artifacts/archived`         | 已归档，拒绝追加版本                                     | 提示"已归档，先取消归档"                                |
-| `artifacts/kind-mismatch`    | 追加的类型与已有工件不同                                 | 换新 id 发布，不要混版本                                |
-| `artifacts/too-large`        | 单件超过 2 MiB                                           | 拆分或压缩                                              |
-| `artifacts/unsupported-kind` | 不认识的类型/图片格式                                    | 换支持的格式（png/jpeg/gif/webp/svg）                   |
-| `artifacts/failed`           | 文件系统/内部错误（EACCES、ENOSPC、EIO…）                | 提示失败原因；用信封里的 `processed[]` 判断已处理了哪些 |
-| 网关 `404`（纯文本）/ 抛错   | **插件没装**，或方法名写错                               | 降级 + 明示"未安装 artifacts"                           |
+| `code`                       | 含义                                                                             | 调用方应该做什么                                        |
+| ---------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `artifacts/invalid`          | 参数不合法（缺 `id`、缺 `ids`/`projectId`、未知 `kind`）                         | 修参数；**不要**重试                                    |
+| `artifacts/not-found`        | id / 版本不存在                                                                  | 从列表里剔掉，刷新 UI                                   |
+| `artifacts/archived`         | 已归档，拒绝追加版本                                                             | 提示"已归档，先取消归档"                                |
+| `artifacts/kind-mismatch`    | 追加的类型与已有工件不同                                                         | 换新 id 发布，不要混版本                                |
+| `artifacts/too-large`        | 单件超过 2 MiB                                                                   | 拆分或压缩                                              |
+| `artifacts/unsupported-kind` | 不认识的类型/图片格式                                                            | 换支持的格式（png/jpeg/gif/webp/svg）                   |
+| `artifacts/failed`           | 文件系统/内部错误（EACCES、ENOSPC、EIO…），或**版本内容损坏**（见下条 `reason`） | 提示失败原因；用信封里的 `processed[]` 判断已处理了哪些 |
+| 网关 `404`（纯文本）/ 抛错   | **插件没装**，或方法名写错                                                       | 降级 + 明示"未安装 artifacts"                           |
 
 **降级的正确姿势**（以 projects 的 Library 为例）：
 
@@ -476,6 +481,14 @@ const page = await artifacts.list({ projectId });
 2. `await service.version()` 抛错或 `version().contract !== "artifacts/2"` → 判定版本不兼容（0.1.0 没有 `version()`）；
 3. 未安装/不兼容 → 退回宿主 `workspaceFiles` 的文件列表，并在面板写明"产物库需要 artifacts 0.2"，**不要**显示"这个项目没有产物"；
 4. client 侧同一套判断：RPC 抛错或 `value?.ok !== true` → 同上降级。
+
+**`artifacts/failed` 的可选细分原因**：失败信封可能带一个可选 `reason` 字段，用来区分「同一错误码下的不同事实」：
+
+| `reason`          | 含义                                                                                | 调用方应该做什么                                                                  |
+| ----------------- | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `corrupt-version` | 版本文件的实际字节数或 `sha256` 与 `meta.json` 记录不符（读到这一版就拒绝返回正文） | 提示「这一版已损坏」；不要重试，也别把坏正文当正常版本展示（HTTP 路由同判 `500`） |
+
+`reason` 是**加可选字段**（不升契约版本，见 §8.6）；调用方不认识某个新 `reason` 时按通用失败处理即可。
 
 **失败信封的形状**：任何方法都不会向调用方抛异常；失败时除 `{ ok:false, code, message }` 外，
 破坏性方法还带 `dryRun` 与 `processed[]`（已经真处理过的 id/key），`restore`/`purge`/`remove` 的
@@ -502,6 +515,6 @@ ctx.sidebarRight?.openTab?.("artifact", { params: { projectId } });
 
 ### 8.6 改契约的流程
 
-- **加方法 / 加可选字段**：契约版本不变（`artifacts/2` 仍是 `artifacts/2`），但要同步：本节表格、`version()` 的 `methods`、`test/remote-declarations.test.js`。
+- **加方法 / 加可选字段**：契约版本不变（`artifacts/2` 仍是 `artifacts/2`），但要同步：本节表格、`version()` 的 `methods`、`test/remote-declarations.test.js`。失败信封的 `reason` 就是按这条加的（例如 `artifacts/failed` + `reason: "corrupt-version"`）：调用方必须容忍未知值，按通用失败降级。
 - **改字段含义 / 删字段 / 改默认值**：契约版本 +1（`artifacts/3`），在 CHANGELOG 写清迁移方式，并保留至少一个 minor 的旧行为或明确弃用窗口。
 - **表里没写的字段不要依赖**：那是实现细节，不承诺稳定。
