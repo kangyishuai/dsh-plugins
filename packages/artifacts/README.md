@@ -71,11 +71,11 @@ Do not treat an artifact URL as an access-control boundary: the route authentica
 
 ## Compatibility
 
-| Plugin | Verified on DSH | Notes                                                                                                                                                                                                              |
-| ------ | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 0.0.0  | 0.2.2-rc.3      | preview/version mechanics                                                                                                                                                                                          |
-| 0.2.0  | 0.2.2-rc.5      | `pnpm smoke:artifacts` 10/10 (web, temporary `DSH_HOME`); `pnpm gate artifacts` green — desktop read-only regression **4 PASS**                                                                                    |
-| 0.2.1  | 0.2.2-rc.5      | a11y-only patch: `pnpm smoke:artifacts` **11/11** (web, includes search/label + filter `aria-pressed` assertions); desktop read-only regression **4 PASS** (verified on 0.2.0; the 0.2.1 diff is client-only a11y) |
+| Plugin | Verified on DSH | Notes                                                                                                                                                                                    |
+| ------ | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.0.0  | 0.2.2-rc.3      | preview/version mechanics                                                                                                                                                                |
+| 0.2.0  | 0.2.2-rc.5      | `pnpm smoke:artifacts` 10/10 (web, temporary `DSH_HOME`); `pnpm gate artifacts` green — desktop read-only regression **4 PASS**                                                          |
+| 0.2.1  | 0.2.2-rc.5      | a11y-only patch: `pnpm smoke:artifacts` **11/11** (web, includes search/label + filter `aria-pressed` assertions); `pnpm gate artifacts` green — desktop read-only regression **4 PASS** |
 
 ## License
 

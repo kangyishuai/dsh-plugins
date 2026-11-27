@@ -27,7 +27,6 @@ import {
   canMergePr,
   nextPrAction,
   parsePrNumber,
-  pickPollRoot,
   pickRepoRoot,
   planHttpsPush,
   planMergeSteps,
@@ -339,7 +338,8 @@ export class ProjectsService extends TypertRemoteService {
     this.liveStateCache = new Map();
     /** @type {{ at: number, summaries: Map<string, any> }} */
     this.liveSummaryCache = { at: 0, summaries: new Map() };
-    this.liveSummaryCache = { at: 0, summaries: new Map() };
+    /** @type {Map<string, any>} 宿主 list() 成功返回过的会话（用于判断记录是否已无对应会话） */
+    this.liveKnownSessions = new Map();
     /**
      * 协调器会话的最近发言（F11 汇报渲染）。只存内存：协调器的正文由宿主持久化，
      * 我们只需要"面板打开时能看到最近几条 + 结论"，重启后靠宿主 replay 重建。
@@ -1250,6 +1250,9 @@ export class ProjectsService extends TypertRemoteService {
           if (sessionId !== "") next.set(sessionId, item);
         }
         this.liveSummaryCache = { at: now, summaries: next };
+        // 宿主明确列出会话集合后，才能把「查不到 state 且不在列表里」判为会话已删除；
+        // 列表拉取失败时不动这个集合，避免把真正在跑的线程误判成陈旧记录。
+        this.liveKnownSessions = new Map(next);
       } catch {
         /* 摘要拿不到只是少个标题，不影响状态 */
       }
@@ -2276,7 +2279,10 @@ export class ProjectsService extends TypertRemoteService {
         unread: false,
       });
     }
-    this.liveCache = { at: 0, states: new Map(), summaries: new Map() };
+    // 缓存字段名必须和构造里的 liveStateCache/liveSummaryCache 一致；
+    // 以前写成 this.liveCache（不存在），resolve/reopen 后 2.5s 内仍用旧 running/pendingInput。
+    this.liveStateCache = new Map();
+    this.liveSummaryCache = { at: 0, summaries: new Map() };
     return {
       ok: true,
       sessionId: id,
@@ -2381,7 +2387,7 @@ export class ProjectsService extends TypertRemoteService {
    * dry-run：删除这个项目会影响什么（数量/体积/是否在跑/能否恢复）。
    * @param {string} id
    */
-  previewDeleteProject(id) {
+  async previewDeleteProject(id) {
     const store = this.requireStore();
     const project = store.getProject(id);
     if (!project) throw new Error(`projects: unknown project ${id}`);
@@ -2413,6 +2419,14 @@ export class ProjectsService extends TypertRemoteService {
         branch: String(thread.branch ?? ""),
         worktree: String(thread.worktree),
       }));
+    // 与 deleteProject 同源的 live busy：预览说「0 个在跑」、点删除却被拒，是复审实测的 P2。
+    const live = await this.liveSessionFacts(
+      false,
+      threads.map((/** @type {any} */ thread) => String(thread.sessionId ?? "")).filter(Boolean),
+    );
+    const liveBusy = threads.filter((/** @type {any} */ thread) =>
+      this.threadBusy(thread, live.states, String(thread?.sessionId ?? "")),
+    ).length;
     const impact = impactOf({
       threads,
       contentBytes,
@@ -2420,6 +2434,10 @@ export class ProjectsService extends TypertRemoteService {
       name: project.name,
       worktrees,
     });
+    impact.liveThreadCount = liveBusy;
+    if (liveBusy > 0) {
+      impact.summary += ` · ${liveBusy} 个在跑/等你（删除会被拒绝）`;
+    }
     if (hasWorkspaceDir) {
       impact.summary += " · 插件工作区（无目录线程的 cwd）会一起移入回收站";
     }
@@ -2445,7 +2463,7 @@ export class ProjectsService extends TypertRemoteService {
    */
   async deleteProject(id) {
     const store = this.requireStore();
-    const preview = this.previewDeleteProject(id);
+    const preview = await this.previewDeleteProject(id);
     // 在跑的线程：删掉记录后 agent 的结果无法回写，用户会以为任务还在跑（审查实测）
     const previewThreads = store.listThreads(id);
     const live = await this.liveSessionFacts(
@@ -2695,7 +2713,18 @@ export class ProjectsService extends TypertRemoteService {
     const project = manifest?.project;
     if (!project?.id) throw new Error("projects: trash manifest has no project");
 
-    const restored = store.restoreProject({ project, threads: manifest.threads ?? [] });
+    // 同一 sessionId 可能已被挂到别的项目：恢复时不能静默覆盖那条线程（复审 P2）。
+    const restoredThreads = (Array.isArray(manifest.threads) ? manifest.threads : []).filter(
+      (/** @type {any} */ thread) => {
+        const sessionId = String(thread?.sessionId ?? "");
+        if (sessionId === "") return false;
+        const current = store.state?.threads?.[sessionId];
+        return !current || String(current.projectId ?? "") === String(project.id);
+      },
+    );
+    const skippedThreads =
+      (Array.isArray(manifest.threads) ? manifest.threads : []).length - restoredThreads.length;
+    const restored = store.restoreProject({ project, threads: restoredThreads });
     // 内容目录与 workspace 都搬回原位（失败则报错，元数据已恢复但数据留在回收站，可再试）
     const restoreDir = (
       /** @type {string} */ name,
@@ -2728,6 +2757,7 @@ export class ProjectsService extends TypertRemoteService {
       projectId: project.id,
       entryId: id,
       threadCount: restored.threadCount,
+      ...(skippedThreads > 0 ? { skippedThreads } : {}),
     });
     store.save();
     return {
@@ -4139,11 +4169,23 @@ export class ProjectsService extends TypertRemoteService {
    */
   threadBusy(thread, states, sessionId) {
     const key = String(sessionId ?? thread?.sessionId ?? "");
+    const live = states?.get?.(key);
+    // 会话已被宿主删除（state() 查不到、list() 也列不到）：记录里的 working/waiting 是陈旧事实，
+    // 不能因此让项目永久删不掉（复审 P2）。只有 list() 成功拉过时才敢这样判定。
+    if (
+      live === undefined &&
+      key !== "" &&
+      this.liveKnownSessions instanceof Map &&
+      this.liveKnownSessions.size > 0 &&
+      !this.liveKnownSessions.has(key)
+    ) {
+      return false;
+    }
     // 统一走纯函数：必须把宿主 state().running 算进来（真机复验：只看事件视图会漏判）
     return isThreadBusy({
       view: this.views.get(key),
       record: thread,
-      live: states?.get?.(key),
+      live,
     });
   }
 
@@ -4758,8 +4800,22 @@ export class ProjectsService extends TypertRemoteService {
           });
           continue;
         }
-        const repoRoot = pickPollRoot({ threads, dirs: project.dirs });
-        if (repoRoot === "") {
+        // 按仓库分组轮询：PR 号只在仓库内唯一，一个项目多目录时不能拿一个仓库的
+        // `gh pr list` 去更新另一仓库线程的 CI 状态（复审 P2）。
+        /** @type {Map<string, any[]>} */
+        const groups = new Map();
+        for (const thread of threads) {
+          const root = pickRepoRoot({
+            worktree: thread.worktree,
+            dir: thread.dir,
+            dirs: project.dirs,
+          });
+          if (root === "") continue;
+          const list = groups.get(root) ?? [];
+          list.push(thread);
+          groups.set(root, list);
+        }
+        if (groups.size === 0) {
           projects.push({
             projectId: project.id,
             name: project.name,
@@ -4771,44 +4827,61 @@ export class ProjectsService extends TypertRemoteService {
           });
           continue;
         }
-        const gh = await runGh(["pr", "list", "--json", PR_LIST_FIELDS, "--limit", "30"], repoRoot);
-        const parsed =
-          gh.code === 0 ? parsePrList(gh.stdout) : { ok: false, rows: [], reason: "gh-failed" };
-        if (!parsed.ok) {
-          if (this.prPoll.lastFailure !== parsed.reason) {
+        let polledAny = false;
+        let failureReason = "";
+        /** @type {any[]} */
+        const allRows = [];
+        let totalPatches = 0;
+        for (const [repoRoot, groupThreads] of groups) {
+          const gh = await runGh(
+            ["pr", "list", "--json", PR_LIST_FIELDS, "--limit", "30"],
+            repoRoot,
+          );
+          const parsed =
+            gh.code === 0 ? parsePrList(gh.stdout) : { ok: false, rows: [], reason: "gh-failed" };
+          if (!parsed.ok) {
+            failureReason = parsed.reason;
+            continue;
+          }
+          polledAny = true;
+          allRows.push(...parsed.rows);
+          const patches = planThreadPatches({ threads: groupThreads }, parsed.rows);
+          for (const patch of patches) {
+            try {
+              store.setThreadCi(patch.sessionId, patch);
+            } catch {
+              /* 线程可能在轮询期间被移除 */
+            }
+          }
+          totalPatches += patches.length;
+        }
+        if (!polledAny) {
+          if (this.prPoll.lastFailure !== failureReason) {
             store.appendAudit({
               action: "pr/poll-failed",
               projectId: project.id,
-              reason: parsed.reason,
+              reason: failureReason,
             });
-            this.prPoll.lastFailure = parsed.reason;
+            this.prPoll.lastFailure = failureReason;
             store.save();
           }
           projects.push({
             projectId: project.id,
             name: project.name,
             polled: false,
-            reason: parsed.reason,
+            reason: failureReason,
             openPrs: verdict.openPrs,
             rows: [],
             patches: 0,
           });
           continue;
         }
-        const patches = planThreadPatches({ threads }, parsed.rows);
-        for (const patch of patches) {
-          try {
-            store.setThreadCi(patch.sessionId, patch);
-          } catch {
-            /* 线程可能在轮询期间被移除 */
-          }
-        }
-        if (patches.length > 0) {
+        if (totalPatches > 0) {
           store.appendAudit({
             action: "pr/polled",
             projectId: project.id,
             openPrs: verdict.openPrs,
-            changed: patches.length,
+            changed: totalPatches,
           });
           store.save();
         }
@@ -4818,8 +4891,8 @@ export class ProjectsService extends TypertRemoteService {
           polled: true,
           reason: "",
           openPrs: verdict.openPrs,
-          rows: parsed.rows,
-          patches: patches.length,
+          rows: allRows,
+          patches: totalPatches,
         });
       }
       const anyPolled = projects.some((item) => item.polled);

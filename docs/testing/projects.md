@@ -968,7 +968,7 @@ AGENTS.md 受管区块幂等合并、`@` 候选排序）。`pnpm smoke:projects`
 
 对齐 Claude Projects 本地 space 的布局后，新增/更新的验证口径（数字以本 commit 输出为准）：
 
-- `pnpm verify`：projects 单测 **710**（含 i18n 三处一致性、`attachThread` 幂等、`pickRepoRoot`/`pickPollRoot`、
+- `pnpm verify`：projects 单测 **720**（含 i18n 三处一致性、`attachThread` 幂等、`pickRepoRoot`/`pickPollRoot`、
   `assessMergePr` 合并门禁、写入口路径校验、saveSoon 失败可见、源码守卫等）。
 - `pnpm smoke:projects`：**270 PASS / 0 SKIP / 0 FAIL**（临时 `DSH_HOME`，ego 浏览器）。
 - `pnpm smoke:projects-desktop --require`：**有项目时 20 PASS / 0 SKIP**；空 profile 时 **17 PASS / 3 SKIP**（数据依赖，`build/gates/latest-projects.json` 会记当次计数）。

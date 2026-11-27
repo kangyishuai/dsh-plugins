@@ -38,11 +38,13 @@ describe("PR 命令的工作目录：必须走 pickRepoRoot（不能再用 dirs[
       assert.doesNotMatch(region, /project\.dirs\[0\]/u);
     });
   }
-  it("pollPrs 使用 pickPollRoot", () => {
+  it("pollPrs 按仓库分组（pickRepoRoot），每个仓库各跑一次 gh pr list", () => {
     const start = serviceSource.indexOf("async pollPrs(");
     assert.ok(start >= 0);
-    const region = serviceSource.slice(start, start + 6000);
-    assert.match(region, /pickPollRoot\(/u);
+    const region = serviceSource.slice(start, start + 9000);
+    assert.match(region, /pickRepoRoot\(/u);
+    assert.match(region, /for \(const \[repoRoot, groupThreads\] of groups\)/u);
+    assert.match(region, /planThreadPatches\(\{ threads: groupThreads \}/u);
   });
 });
 
@@ -157,7 +159,7 @@ describe("审查 P2 回归防线（第三批）", () => {
     assert.ok(start >= 0);
     const region = serviceSource.slice(start, start + 7000);
     assert.match(region, /lastFailure/u);
-    assert.match(region, /if \(patches\.length > 0\)/u);
+    assert.match(region, /if \(totalPatches > 0\)/u);
     assert.doesNotMatch(region, /this\.prPoll\.lastResult = result;\s*\n\s*store\.save\(\);/u);
   });
 

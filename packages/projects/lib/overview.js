@@ -150,7 +150,12 @@ export function mergeRecord(view, record) {
     // 与 state 同一条守卫：视图里已经有 turn 事实后，记录里的 waiting-user 只是历史残留
     // （审批被拒后 turn/end 已归约成 failed，但盘上还写着 waiting-user）——不能让它把
     // 「等你」永久粘住，否则 deriveState 恒 waiting-user → isThreadBusy 恒 true → 删不掉项目。
-    awaitingUser: awaitingUser && !hasTurnFact ? true : base.awaitingUser,
+    // 冷启动直接读回；中途（已有 turn/start、还没有 turn/end）也保留——
+    // 否则 journal 里缺 interaction/pending 时「等你」会被误判成 failed（复审 P2）。
+    awaitingUser:
+      awaitingUser && (!hasTurnFact || (!base.lastTurnFailed && base.state === "working"))
+        ? true
+        : base.awaitingUser,
     resolved: resolvedAt || recordState === "resolved",
     archived: recordState === "archived",
   };
