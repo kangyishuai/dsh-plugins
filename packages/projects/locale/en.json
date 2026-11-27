@@ -684,6 +684,10 @@
     "detail.threadPromptFailed": "Thread created, but the first task was not delivered: {reason}",
     "detail.sparkEmpty": "No activity in the last 7 days",
     "detail.threadInputLabel": "Give this thread a task",
-    "detail.coordinatorInputLabel": "Say something to the coordinator"
+    "detail.coordinatorInputLabel": "Say something to the coordinator",
+    "detail.groupCollapse": "Collapse group",
+    "detail.groupExpand": "Expand group",
+    "detail.threadIsolationHint": "No project folder bound: the thread runs in the plugin data folder ({reason}).",
+    "library.openedHint": "Requested the Artifacts tab in the right sidebar; if your layout hides it, switch back to a session to see it."
   }
 }

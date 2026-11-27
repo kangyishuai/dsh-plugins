@@ -6,7 +6,7 @@
 
 Unofficial plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). Not affiliated with DeepSeek.
 
-> **Status: mechanics verified, interface extended, desktop pass pending.** The preview/versioning behaviours below were measured on a real `dsh --profile web` host in a temporary `DSH_HOME`. The newer library features (project attribution, multi-kind artifacts, filtering, cascade cleanup, cross-plugin contract) are covered by unit tests only — their desktop smoke pass has not been run yet. See the compatibility table for exactly what was verified.
+> **Status: mechanics verified, library verified (web + desktop).** The preview/versioning behaviours below were measured on a real `dsh --profile web` host in a temporary `DSH_HOME`. The library features (project attribution, multi-kind artifacts, filtering, cascade cleanup, cross-plugin contract) are covered by unit tests, `pnpm smoke:artifacts` (web, 10 assertions) and the desktop read-only regression (4 assertions) via `pnpm gate artifacts`. See the compatibility table for exactly what was verified.
 
 ## What it does
 

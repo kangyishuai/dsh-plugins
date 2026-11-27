@@ -684,6 +684,10 @@
     "detail.threadPromptFailed": "线程已建，但首条任务没送达：{reason}",
     "detail.sparkEmpty": "近 7 天无活动",
     "detail.threadInputLabel": "给这个线程一个任务",
-    "detail.coordinatorInputLabel": "对协调者说一句话"
+    "detail.coordinatorInputLabel": "对协调者说一句话",
+    "detail.groupCollapse": "折叠分组",
+    "detail.groupExpand": "展开分组",
+    "detail.threadIsolationHint": "未绑定项目目录：线程跑在插件数据目录里（{reason}）。",
+    "library.openedHint": "已请求在右栏打开「产物」页签；当前布局不显示右栏时，请切回会话查看。"
   }
 }

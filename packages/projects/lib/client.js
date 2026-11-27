@@ -323,6 +323,7 @@ window.__ModuleLoader__.load({
       "detail.threadRemoveConfirm": "确认移除追踪？",
       "detail.threadRemovedWithWorktree": "已移除追踪（worktree 仍在磁盘：{path}）",
       "detail.threadPromptFailed": "线程已建，但首条任务没送达：{reason}",
+      "detail.threadIsolationHint": "未绑定项目目录：线程跑在插件数据目录里（{reason}）。",
       "detail.threadRemoved": "已移除追踪",
       "detail.threadActionFailed": "操作失败：{reason}",
       "detail.pause": "暂停项目",
@@ -555,6 +556,8 @@ window.__ModuleLoader__.load({
       "detail.emptySearch": "没有匹配的线程。",
       "detail.emptyOverview": "没有在等你的事。",
       "detail.groupCollapseAll": "全部折叠",
+      "detail.groupCollapse": "折叠分组",
+      "detail.groupExpand": "展开分组",
       "detail.addView": "新增视图",
       "detail.today": "今天",
       "detail.threadTask": "任务：{task}",
@@ -696,6 +699,7 @@ window.__ModuleLoader__.load({
       "library.openPanel": "打开产物库",
       "library.openPanelHint": "用右侧的 artifacts 面板打开这个项目的产物库",
       "library.openPanelUnavailable": "打开失败：宿主未提供右栏面板服务（sidebarRight）。",
+      "library.openedHint": "已请求在右栏打开「产物」页签；当前布局不显示右栏时，请切回会话查看。",
       "library.artifactsMissing": "产物库需要 dsh-artifacts 0.2；当前不可用，下面只列项目文件。",
       "library.artifactsTitle": "产物",
       "library.artifactsEmpty": "这个项目还没有产物。",
@@ -906,6 +910,8 @@ window.__ModuleLoader__.load({
       "detail.threadRemoveConfirm": "Remove tracking?",
       "detail.threadRemovedWithWorktree": "Tracking removed (worktree still on disk: {path})",
       "detail.threadPromptFailed": "Thread created, but the first task was not delivered: {reason}",
+      "detail.threadIsolationHint":
+        "No project folder bound: the thread runs in the plugin data folder ({reason}).",
       "detail.threadRemoved": "Tracking removed",
       "detail.threadActionFailed": "Action failed: {reason}",
       "detail.pause": "Pause project",
@@ -1145,6 +1151,8 @@ window.__ModuleLoader__.load({
       "detail.emptySearch": "No matching threads.",
       "detail.emptyOverview": "Nothing is waiting on you.",
       "detail.groupCollapseAll": "Collapse all",
+      "detail.groupCollapse": "Collapse group",
+      "detail.groupExpand": "Expand group",
       "detail.addView": "Add view",
       "detail.today": "Today",
       "detail.threadTask": "Task: {task}",
@@ -1441,6 +1449,8 @@ window.__ModuleLoader__.load({
       "library.openPanelHint": "Open this project's artifacts in the right-side artifacts panel",
       "library.openPanelUnavailable":
         "Could not open: the host did not provide the right-side panel service (sidebarRight).",
+      "library.openedHint":
+        "Requested the Artifacts tab in the right sidebar; if your layout hides it, switch back to a session to see it.",
       "library.artifactsMissing":
         "The artifact library needs dsh-artifacts 0.2; it is unavailable, so only project files are listed below.",
       "library.artifactsTitle": "Artifacts",
@@ -2986,8 +2996,16 @@ window.__ModuleLoader__.load({
       var setForm = props.setForm;
       var onSubmit = props.onSubmit;
       var nameRef = useRef(null);
+      // 第一步（从零开始 / 已有文件夹）没有输入框：以前 focus 落在 display:none 的项目名输入上
+      // 静默失败，焦点留在背景，Tab 会游走背景控件、Esc 也收不到。第一步聚焦第一个选项。
       useEffect(() => {
-        if (form.open && nameRef.current && typeof nameRef.current.focus === "function") {
+        if (!form.open) return;
+        if (form.mode === "") {
+          const first = /** @type {any} */ (document.querySelector("[data-projects-new-scratch]"));
+          if (first && typeof first.focus === "function") first.focus();
+          return;
+        }
+        if (nameRef.current && typeof nameRef.current.focus === "function") {
           nameRef.current.focus();
         }
       }, [form.open, form.mode]);
@@ -3087,6 +3105,25 @@ window.__ModuleLoader__.load({
             if (event.key === "Escape") {
               event.stopPropagation();
               close();
+              return;
+            }
+            // Tab 环 clamp 在对话框内：50% 遮罩下不能让焦点跑到背景的「彻底删除」上
+            if (event.key === "Tab") {
+              const dialog = event.currentTarget?.querySelector?.("[data-projects-new-dialog]");
+              if (!dialog) return;
+              const focusables = [
+                ...dialog.querySelectorAll("button, input, select, textarea, [tabindex]"),
+              ].filter((node) => node.disabled !== true && node.tabIndex !== -1);
+              if (focusables.length === 0) return;
+              const firstEl = focusables[0];
+              const lastEl = focusables[focusables.length - 1];
+              if (event.shiftKey && document.activeElement === firstEl) {
+                event.preventDefault();
+                lastEl.focus();
+              } else if (!event.shiftKey && document.activeElement === lastEl) {
+                event.preventDefault();
+                firstEl.focus();
+              }
             }
           },
         },
@@ -3095,7 +3132,9 @@ window.__ModuleLoader__.load({
           {
             ...(form.open ? { role: "dialog", "aria-modal": "true" } : { "aria-hidden": "true" }),
             "aria-label": title,
+            "aria-labelledby": "",
             "data-projects-new-dialog": "",
+            tabIndex: -1,
             style: styles.dialog,
           },
           h(
@@ -4004,6 +4043,10 @@ window.__ModuleLoader__.load({
             // 图标按钮的 hover 反馈：内联 style 无法写 :hover，用属性锚点 + !important 限定范围
             "[data-projects-panel] [data-projects-row-menu]:hover,[data-projects-panel] [data-projects-pin]:hover,[data-projects-panel] [data-projects-bell]:hover,[data-projects-panel] [data-panel-add-view]:hover,[data-projects-panel] [data-panel-settings-open]:hover,[data-projects-panel] [data-projects-thread-menu]:hover,[data-projects-panel] [data-projects-thread-expand]:hover,[data-projects-panel] [data-composer-attach]:hover,[data-projects-panel] [data-projects-composer-model]:hover,[data-projects-panel] [data-projects-search-clear]:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12))!important;border-radius:6px}",
             '[data-projects-panel] [role="button"]:focus-visible,[data-projects-panel] button:focus-visible{outline:2px solid var(--dsw-alias-label-primary-bluish,#2f6fed);outline-offset:2px}',
+            // 危险文字的可读红：宿主 state-error-primary 在深色/浅色都只有 ~2.3–4.3:1，
+            // 这里按 color-scheme 取成对颜色（浅色 #b3261e / 深色 #ff8c8c），两主题都 ≥4.5:1
+            "[data-projects-panel] [data-projects-danger]{color:light-dark(#b3261e,#ff8c8c)!important}",
+            "[data-projects-panel] [data-projects-danger]{border-color:light-dark(#b3261e,#ff8c8c)!important}",
           ].join("\n"),
         ),
         h(
@@ -4404,6 +4447,7 @@ window.__ModuleLoader__.load({
                         color: T.danger,
                       },
                       "data-projects-row-delete-confirm": "",
+                      "data-projects-danger": "",
                       disabled: rowDelete.busy,
                       onClick: confirmRowDelete,
                     },
@@ -5291,7 +5335,14 @@ window.__ModuleLoader__.load({
       var count = Number(summary.count || artifactRows.length || 0);
       var bytes = Number(summary.bytes || 0);
       var loaded = library !== null && library !== undefined;
-      var st = useState({ query: "", busy: false, matches: null, error: "", openNote: "" });
+      var st = useState({
+        query: "",
+        busy: false,
+        matches: null,
+        error: "",
+        openNote: "",
+        openNoteError: false,
+      });
       var view = st[0];
       var setView = st[1];
 
@@ -5353,7 +5404,12 @@ window.__ModuleLoader__.load({
         }
         setView((/** @type {any} */ prev) => ({
           ...prev,
-          openNote: opened ? "" : text(t, "library.openPanelUnavailable"),
+          // 成功也要反馈：projects 是全局面板，宿主右栏在当前布局可能根本不可见，
+          // 以前 openTab 成功 = 界面零变化，用户会以为按钮坏了。
+          openNote: opened
+            ? text(t, "library.openedHint")
+            : text(t, "library.openPanelUnavailable"),
+          openNoteError: !opened,
         }));
         return opened;
       };
@@ -5423,7 +5479,13 @@ window.__ModuleLoader__.load({
         view.openNote
           ? h(
               "div",
-              { style: { ...styles.meta, color: T.danger }, "data-projects-library-open-note": "" },
+              {
+                style: {
+                  ...styles.meta,
+                  color: view.openNoteError === true ? T.danger : T.dim,
+                },
+                "data-projects-library-open-note": "",
+              },
               view.openNote,
             )
           : null,
@@ -6265,15 +6327,32 @@ window.__ModuleLoader__.load({
             setDraft("");
             setBusy(false);
             load();
-            // 线程建了但首条任务没送达：以前完全静默，用户会看到一条永远 idle 的线程
+            // warning 有两种：prompt-failed 才是"任务没送达"（红色）；
+            // not-a-git-repository 是"没绑目录 → 跑在插件数据目录"的预期降级（中性提示，6s 自动消失）。
             if (created?.warning) {
-              setThreadAction({
-                pending: "",
-                ok: false,
-                message: text(t, "detail.threadPromptFailed", {
-                  reason: String(created.warning),
-                }),
-              });
+              const warning = String(created.warning);
+              if (warning.startsWith("prompt-failed:")) {
+                setThreadAction({
+                  pending: "",
+                  ok: false,
+                  message: text(t, "detail.threadPromptFailed", {
+                    reason: warning.slice("prompt-failed:".length).trim(),
+                  }),
+                });
+              } else {
+                setThreadAction({
+                  pending: "",
+                  ok: true,
+                  message: text(t, "detail.threadIsolationHint", { reason: warning }),
+                });
+                setTimeout(() => {
+                  setThreadAction((/** @type {any} */ prev) =>
+                    prev?.message === text(t, "detail.threadIsolationHint", { reason: warning })
+                      ? { pending: "", ok: null, message: "" }
+                      : prev,
+                  );
+                }, 6000);
+              }
             }
           },
           (error) => {
@@ -7187,18 +7266,20 @@ window.__ModuleLoader__.load({
         },
         [setCarousel],
       );
-      /** 时长（U12 右侧元信息）：分钟 / 小时 / 天，没有 createdAt 就不显示。 */
-      // Claude 的行尾时长是 small-caps 拉丁形式（now / 5m / 2h / 3d），不用中文长句。
-      const durationLabel = useCallback((/** @type {number|null} */ ms) => {
-        if (!(Number(ms) > 0)) return "";
-        const seconds = Math.round(Number(ms) / 1000);
-        if (seconds < 60) return "now";
-        const minutes = Math.round(seconds / 60);
-        if (minutes < 60) return `${minutes}m`;
-        const hours = Math.round(minutes / 60);
-        if (hours < 24) return `${hours}h`;
-        return `${Math.round(hours / 24)}d`;
-      }, []);
+      /** 时长（U12 右侧元信息）：与项目列表同一套相对时间文案（中文界面不再 now/5m 混排）。 */
+      const durationLabel = useCallback(
+        (/** @type {number|null} */ ms) => {
+          if (!(Number(ms) > 0)) return "";
+          const seconds = Math.round(Number(ms) / 1000);
+          if (seconds < 60) return text(t, "panel.relative.now");
+          const minutes = Math.round(seconds / 60);
+          if (minutes < 60) return text(t, "panel.relative.minutes", { count: minutes });
+          const hours = Math.round(minutes / 60);
+          if (hours < 24) return text(t, "panel.relative.hours", { count: hours });
+          return text(t, "panel.relative.days", { count: Math.round(hours / 24) });
+        },
+        [t],
+      );
       const groupLabel = useCallback(
         (/** @type {string} */ id) => {
           const value = t(`detail.group.${id}`);
@@ -10855,7 +10936,12 @@ window.__ModuleLoader__.load({
                       if (composerTarget === "coordinator") sendCoordinator();
                       else createThread();
                     },
-                    disabled: busy || coordinatorBusy,
+                    disabled:
+                      busy ||
+                      coordinatorBusy ||
+                      (composerTarget === "coordinator"
+                        ? String(coordinatorDraft).trim() === ""
+                        : String(draft).trim() === ""),
                   },
                   busy || coordinatorBusy ? "…" : "↵",
                 ),
@@ -12007,6 +12093,7 @@ window.__ModuleLoader__.load({
                                     color: T.danger,
                                   },
                                   "data-projects-trash-delete": entry.entryId,
+                                  "data-projects-danger": "",
                                   onClick: () => deleteEntry(entry),
                                 },
                                 pendingDelete.entryId === entry.entryId
@@ -12032,6 +12119,7 @@ window.__ModuleLoader__.load({
                                       color: T.danger,
                                     },
                                     "data-projects-trash-empty": "",
+                                    "data-projects-danger": "",
                                     onClick: emptyAll,
                                   },
                                   pendingDelete.confirmAll
@@ -12311,6 +12399,7 @@ window.__ModuleLoader__.load({
                       type: "button",
                       style: { ...styles.secondaryButton, borderColor: T.danger, color: T.danger },
                       "data-projects-delete-confirm": "",
+                      "data-projects-danger": "",
                       "data-modal-autofocus": "",
                       onClick: confirmDelete,
                       disabled: del.busy,

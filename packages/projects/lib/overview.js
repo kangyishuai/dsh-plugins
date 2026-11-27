@@ -147,7 +147,10 @@ export function mergeRecord(view, record) {
     ...base,
     state: !hasTurnFact && recordState === "working" ? "working" : base.state,
     lastTurnFailed: !hasTurnFact && recordState === "failed" ? true : base.lastTurnFailed,
-    awaitingUser: awaitingUser ? true : base.awaitingUser,
+    // 与 state 同一条守卫：视图里已经有 turn 事实后，记录里的 waiting-user 只是历史残留
+    // （审批被拒后 turn/end 已归约成 failed，但盘上还写着 waiting-user）——不能让它把
+    // 「等你」永久粘住，否则 deriveState 恒 waiting-user → isThreadBusy 恒 true → 删不掉项目。
+    awaitingUser: awaitingUser && !hasTurnFact ? true : base.awaitingUser,
     resolved: resolvedAt || recordState === "resolved",
     archived: recordState === "archived",
   };
@@ -621,5 +624,10 @@ export function isThreadBusy(input) {
     ...view,
     awaitingUser: pending > 0 ? true : view.awaitingUser,
   });
-  return state === "working" || state === "waiting-user";
+  if (state !== "working" && state !== "waiting-user") return false;
+  // 冷启动时记录里的 working 是持久事实；但宿主明确 running=false 且视图里没有任何 turn 事实，
+  // 说明这条 working 是历史残留（事件日志丢失/写盘失败），不能让它永久 busy（删不掉项目）。
+  const hasTurnFact = Number(view?.turn ?? 0) > 0;
+  if (!hasTurnFact && live && live.running === false && pending === 0) return false;
+  return true;
 }

@@ -665,5 +665,27 @@ describe("isThreadBusy：保护 worktree 的忙碌判据", () => {
       isThreadBusy({ view: { turn: 1, state: "idle" }, record: null, live: { running: false } }),
       false,
     );
+    // 冷启动记录 working、但宿主明确 running=false 且没 pendingInput：历史残留，不忙
+    assert.equal(
+      isThreadBusy({
+        view: { turn: 0, state: "idle" },
+        record: { state: "working" },
+        live: { running: false },
+      }),
+      false,
+    );
+  });
+
+  it("审批被拒后 waiting-user 不粘住：turn 事实已归约成 failed 时以视图为准", async () => {
+    const { mergeRecord, deriveState } = await import("../lib/overview.js");
+    // 盘上残留 waiting-user，但视图里本轮已经 turn/end(error)
+    const view = { ...initialView(), turn: 1, lastTurnFailed: true, state: "idle" };
+    const merged = mergeRecord(view, { state: "waiting-user" });
+    assert.equal(merged.awaitingUser, false);
+    assert.equal(deriveState(merged), "failed");
+    // 冷启动（还没有任何 turn 事实）仍读回 waiting-user
+    const cold = mergeRecord({ ...initialView(), turn: 0 }, { state: "waiting-user" });
+    assert.equal(cold.awaitingUser, true);
+    assert.equal(deriveState(cold), "waiting-user");
   });
 });

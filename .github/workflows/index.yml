@@ -198,7 +198,7 @@ jobs:
               node -e "
                 const fs = require('node:fs');
                 const live = JSON.parse(fs.readFileSync('/tmp/live.json', 'utf8'));
-                const built = JSON.parse(fs.readFileSync('build/index.json', 'utf8'));
+                const built = JSON.parse(fs.readFileSync('dist/index.json', 'utf8'));
                 const latest = (index) => new Map(index.plugins.map((p) => [p.name, p.versions[0]?.version ?? '']));
                 const liveMap = latest(live);
                 const builtMap = latest(built);

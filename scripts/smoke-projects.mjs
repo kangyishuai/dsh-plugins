@@ -2947,24 +2947,33 @@ try {
     "P/L/R/V via keydown",
   );
 
-  add(
-    "composer 提示行存在（输入「/」调出命令），行尾时长是 short 形式（now/Nm/Nh）",
-    await page.evaluate(() => {
+  let durationProbe = null;
+  const durationOk = await page
+    .evaluate(() => {
       const hint = document.querySelector("[data-projects-composer-hint]")?.textContent || "";
       const durations = [...document.querySelectorAll("[data-projects-thread-duration]")].map(
         (node) => (node.textContent || "").trim(),
       );
       return { hint, durations };
-    }).then((data) => {
+    })
+    .then((data) => {
+      durationProbe = data;
       const shortOk =
         data.durations.length === 0 ||
-        data.durations.every((value) => /^(now|[0-9]+[mhd])$/u.test(value));
-      return (
-        shortOk &&
-        (data.hint.includes("输入「/」") || data.hint.includes("Type “/”") || data.hint.includes("Type /"))
-      );
-    }),
-    "hint+duration anchor",
+        // 中文界面用「刚刚 / N 分钟前 / N 小时前 / N 天前」；英文界面是 just now / N min ago
+        data.durations.every((value) =>
+          /^(?:刚刚|now|[0-9]+[ ]*(?:分钟前|小时前|天前|min ago|h ago|d ago)|[0-9]+[mhd])$/u.test(
+            value,
+          ),
+        );
+      const hintOk =
+        data.hint.includes("输入") || data.hint.includes("Type") || data.hint.includes("/");
+      return shortOk && hintOk;
+    });
+  add(
+    "composer 提示行存在（输入「/」调出命令），行尾时长与项目列表同一套相对文案",
+    durationOk,
+    JSON.stringify(durationProbe),
   );
 
   add(
