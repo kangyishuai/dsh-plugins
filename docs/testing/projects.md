@@ -985,7 +985,7 @@ AGENTS.md 受管区块幂等合并、`@` 候选排序）。`pnpm smoke:projects`
 
 对齐 Claude Projects 本地 space 的布局后，新增/更新的验证口径（数字以本 commit 输出为准）：
 
-- `pnpm verify`：projects 单测 **786**（含 i18n 三处一致性、`attachThread` 幂等、`pickRepoRoot`、
+- `pnpm verify`：projects 单测 **800**（含 i18n 三处一致性、`attachThread` 幂等、`pickRepoRoot`、
   `assessMergePr` 合并门禁、写入口路径校验、saveSoon 失败可见、源码守卫等；2026-11-28 审计修复新增 59 条，
   见 §20）。
 - `pnpm smoke:projects`：**270 PASS / 0 SKIP / 0 FAIL**（临时 `DSH_HOME`，ego 浏览器）。
@@ -1085,21 +1085,31 @@ AGENTS.md 受管区块幂等合并、`@` 候选排序）。`pnpm smoke:projects`
 
 ### 20.1 必修（P1 + P2）
 
-| 编号        | 修法（一句话）                                                                                                                                                                                     | 证据（先红后绿）                                                                                                                                                                  |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| AUD-PROJ-01 | 无目录项目的协调者/routine/提醒会话 cwd 统一走 `projectCwd()` → `<dataRoot>/workspaces/<id>`；协调者不再把数据根挂成宿主 Workspace                                                                 | `paths.test.js`（纯函数 + 真实 store）、`thread.test.js`（线程 cwd 落在 workspaces）、`service-wiring-guards`（4 处调用 + 禁止 `? project.dirs[0] : this.dataRoot` + 数据根短路） |
-| AUD-PROJ-02 | `pause`/`resume`/`archive`/`delete` 对账宿主 `schedule`（暂停→`status:paused`，删除→`delete`），删除时停不掉就**拒绝删除**；`createRoutine`/`updateRoutine`/schedule 提醒在暂停/归档项目下拒绝新建 | `schedules.test.js`（假 schedule 记录每次 edit，10 条）、service 守卫（四个方法都调 `reconcileSchedules`）、`b3.test.js` 暂停语义仍在                                             |
-| AUD-PROJ-03 | `normalizePolicy` 用 `Object.hasOwn(policy,'repoGrants')` 区分「没提供」与「显式空」，空对象能落盘                                                                                                 | `store-hardening.test.js`（单条撤销 / 最后一条删空 / 读盘后仍空 / 部分 patch 仍继承）                                                                                             |
-| AUD-PROJ-04 | `weeklyTokens` 纳入 `BUDGET_FIELDS`/`DEFAULT_BUDGET`/`normalize`，gate 增到 `enforceTokenBudget`，未知预算字段保留                                                                                 | `budget.test.js`、`store-hardening.test.js`（round-trip、手改文件不被抹掉）                                                                                                       |
-| AUD-PROJ-05 | `openPr` 显式处理 `merge` 决策 → 落 `merge` 审批（先查 `danger.autoMerge`、去重 pending、再 `appendApproval`），不再落到「push + gh pr create」；`ciState` 从线程记录读                            | service 守卫（merge 分支早于 push、`merge/awaiting-approval`）、`autopr.test.js` 纯函数仍绿                                                                                       |
-| AUD-PROJ-30 | 设置页新增 PR 四档选择（`data-projects-policy-pr-tier`）与预授权面板（`data-projects-policy-preapprove`，5 个 `data-projects-preapprove-action`），并有「命中即自动执行」风险提示                  | 桌面只读断言（`smoke-projects-desktop.mjs`）+ locale 双语键                                                                                                                       |
-| AUD-PROJ-06 | merge 审批必须命中**本项目某条线程**记录的 `prNumber`，否则 `merge/pr-not-ours`（PR 号非法 → `merge/pr-invalid`），绝不回落 `dirs[0]`                                                              | `service-execute.test.js` 3 条（找不到线程时 gh 命令数为 0、多目录、非法 PR 号）                                                                                                  |
-| AUD-PROJ-07 | `listApprovals` 附 `impact`（服务端白名单投影 + 截断 + 压单行），审批行渲染纯文本影响面（`data-projects-approval-impact`）                                                                         | `approval-view.test.js` 6 条（merge/push/delete/settings/未知动作/截断与 HTML 样字符不变 DOM）+ 桌面只读断言                                                                      |
+| 编号        | 修法（一句话）                                                                                                                                                                                                                                                                              | 证据（先红后绿）                                                                                                                                                                   |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AUD-PROJ-01 | 无目录项目的协调者/routine/提醒会话 cwd 统一走 `projectCwd()` → `<dataRoot>/workspaces/<id>`；协调者不再把数据根挂成宿主 Workspace                                                                                                                                                          | `paths.test.js`（纯函数 + 真实 store）、`thread.test.js`（线程 cwd 落在 workspaces）、`service-wiring-guards`（4 处调用 + 禁止 `? project.dirs[0] : this.dataRoot` + 数据根短路）  |
+| AUD-PROJ-02 | `pause`/`resume`/`archive`/`unarchive`/`delete` 对账宿主 `schedule`：暂停/恢复发**宿主真实契约** `SchedulePatch.active:false/true`（`status` 会被宿主静默忽略），删除→`action:"delete"`；删除时停不掉就**拒绝删除**；`createRoutine`/`updateRoutine`/schedule 提醒在暂停/归档项目下拒绝新建 | `schedules.test.js`（假 schedule **只认 `active`** 并断言宿主 status 真变 paused/active；14 条）、service 守卫（方法接线 + `hostActivePatch` 唯一出口）、`b3.test.js` 暂停语义仍在 |
+| AUD-PROJ-03 | `normalizePolicy` 用 `Object.hasOwn(policy,'repoGrants')` 区分「没提供」与「显式空」，空对象能落盘                                                                                                                                                                                          | `store-hardening.test.js`（单条撤销 / 最后一条删空 / 读盘后仍空 / 部分 patch 仍继承）                                                                                              |
+| AUD-PROJ-04 | `weeklyTokens` 纳入 `BUDGET_FIELDS`/`DEFAULT_BUDGET`/`normalize`，gate 增到 `enforceTokenBudget`，未知预算字段保留                                                                                                                                                                          | `budget.test.js`、`store-hardening.test.js`（round-trip、手改文件不被抹掉）                                                                                                        |
+| AUD-PROJ-05 | `openPr` 显式处理 `merge` 决策 → 落 `merge` 审批（先查 `danger.autoMerge`、去重 pending、再 `appendApproval`），不再落到「push + gh pr create」；`ciState` 从线程记录读                                                                                                                     | service 守卫（merge 分支早于 push、`merge/awaiting-approval`）、`autopr.test.js` 纯函数仍绿                                                                                        |
+| AUD-PROJ-30 | 设置页新增 PR 四档选择（`data-projects-policy-pr-tier`）与预授权面板（`data-projects-policy-preapprove`，5 个 `data-projects-preapprove-action`），并有「命中即自动执行」风险提示                                                                                                           | 桌面只读断言（`smoke-projects-desktop.mjs`）+ locale 双语键                                                                                                                        |
+| AUD-PROJ-06 | merge 审批必须命中**本项目某条线程**记录的 `prNumber`，否则 `merge/pr-not-ours`（PR 号非法 → `merge/pr-invalid`），绝不回落 `dirs[0]`                                                                                                                                                       | `service-execute.test.js` 3 条（找不到线程时 gh 命令数为 0、多目录、非法 PR 号）                                                                                                   |
+| AUD-PROJ-07 | `listApprovals` 附 `impact`（服务端白名单投影 + 截断 + 压单行），审批行渲染纯文本影响面（`data-projects-approval-impact`）                                                                                                                                                                  | `approval-view.test.js` 6 条（merge/push/delete/settings/未知动作/截断与 HTML 样字符不变 DOM）+ 桌面只读断言                                                                       |
 
-**宿主定时对账的失败语义**（写在这里避免误读）：暂停/恢复失败只写审计（下次动作还能再对账）；
-删除时若宿主 `schedule` 存在但 `delete` 失败，则**拒绝删除项目**（`projects: N host scheduled
-task(s) could not be removed`）——否则记录没了就再没有入口去停那批还在烧 token 的条目。
-宿主根本没有 `schedule` 服务时（没有投递能力）按「无可停」处理并写审计。
+**宿主定时对账的契约与失败语义**（写在这里避免误读）：
+
+- **契约**：`@deepseek-ai/dsh-schedule@0.2.2-rc.5` 的 `SchedulePatch` 只有
+  `{title?, prompt?, timing?, target?, active?: boolean}`；`active:false` 暂停、`true` 恢复，
+  **没有 `status` 字段**（发了会被静默忽略 = 假成功）。插件唯一的启停写入口是
+  `schedules.js:hostActivePatch()`；`ScheduleEditResult` 用 `{code:'schedule_not_found'|'schedule_conflict'}`
+  表达未命中/冲突（不用 `{ok:false}`），统一由 `classifyHostScheduleResult()` 分类。
+- **暂停/恢复失败**：只写审计（项目状态已经变了，下次动作还能再对账）。
+- **删除**：宿主 `schedule` 存在但 `delete` 失败 → **拒绝删除项目**（记录没了就没有入口去停那批还在
+  烧 token 的条目），错误文案指向宿主的 Automation tasks 页面；宿主返回 `schedule_not_found`
+  （条目本来就不在）按成功处理，不阻塞。
+- **宿主根本没有 `schedule` 服务**：这台部署里不存在投递机制，条目不可能被触发 →
+  `reconcileHostSchedules` 返回 `ok:true` + `unavailable:N`，`deleteProject` 写一条
+  `project/schedules-unavailable` 审计后照常删除（不让项目卡成不可删）。
 
 ### 20.2 P3（本轮修掉的）
 
@@ -1129,7 +1139,36 @@ task(s) could not be removed`）——否则记录没了就再没有入口去停
 | AUD-PROJ-16          | `createThread` 预算闸非原子：彻底修需要一个 per-project 串行队列 + 占位记录（新建状态位），是 M3 预算模块重构的一部分；本批只保证「单次调用正确」，并发越线仍在（记录在案）。 |
 | AUD-PROJ-02 的另一半 | routine/提醒投递出来的会话**归项目 token 桶**：宿主 `schedule` 投递不回报 sessionId，插件拿不到归属；需要宿主 API 支持，本轮只做到「暂停/删除即停投递」。                     |
 
-未修清单与审计报告 §伪问题 一致（AUD-PROJ-18/20/23/25/28 判伪或待定），本轮未动。
+**其余未修项（全部是 P3/待定，已书面 defer，不是「伪问题」）**：
+
+| 编号        | 状态              | 理由 / 影响                                                                                                                                                               |
+| ----------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AUD-PROJ-18 | **未修（真 P3）** | 唤醒信封的 report 仍以 `trust: principal` 注入（跨 agent 模型输出被当可信）。AUD-PROJ-26 已把「往别的项目会话投递」堵住，注入面缩小；改它要动信封可信模型，留待专门一批。 |
+| AUD-PROJ-20 | **未修（真 P3）** | 建协调者固定花一次模型调用（warmUp），README 成本段仍未提。纯文档工作，未在本批范围内。                                                                                   |
+| AUD-PROJ-23 | **未修（真 P3）** | 本批补了 store/RPC 级回归（清空型 patch、预算 round-trip、未知字段、错误契约分类），但 host 半仍无 service 实例测试；F1 正说明这类缺口仍在。                              |
+| AUD-PROJ-25 | 待定              | `store.save` 无 fsync（断电窗口），无法在本批做故障注入验证。                                                                                                             |
+| AUD-PROJ-28 | 待定              | 消息 requestId 用 `Date.now()`，宿主对重复 requestId 的语义未验证。                                                                                                       |
+| F9          | P3（复审提出）    | 审批队列满 500 时会先淘汰「已批准未执行」的行（安全方向 fail-safe，但会丢已批准动作）；改成只淘汰 executed/rejected 留待下一批（当前队列远未逼近上限）。                  |
+| F10         | P3（复审提出）    | 审批影响面的标签仍是硬编码英文（`PR`/`repo`/`branch`…），中文界面混排；安全问题不成立（纯文本节点）。                                                                     |
+| F11         | P3（复审提出）    | `listApprovals` 对所有行附 `impact`、client 每 5s 拉全量且不传 `{limit}`；500 行时才成为负载问题。                                                                        |
+| F12/F13/F14 | nit               | claim TTL 的接管窗口、`thread.js` mkdir 失败的降级提示、`workspaceKey` 字符裁剪的理论撞目录（当前 id 生成器不会）。                                                       |
+| F16         | 集成批次事项      | settings order 94 与 btw/casefile 当前也 94；FIX-GUIDE 指定由 repo 批次统一改（btw 95 / casefile 96），本分支未动别人插件。                                               |
+
+### 20.3b 独立复审（2026-11-28）修正
+
+复审报告：`notes/audit/2026-11-28/reviews/projects.md`（REQUEST_CHANGES，1 阻塞 + 4 建议）。修正如下：
+
+| 编号 | 问题                                                                                                       | 修正                                                                                                                                                                                                                                                   |
+| ---- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| F1   | **阻塞**：`schedule.edit` 发 `{status}`，宿主只认 `{active:boolean}` → pause/archive/resume 全是静默 no-op | `schedules.js` 新增 `hostActivePatch()`（唯一出口）+ `classifyHostScheduleResult()`；`setRoutineEnabled`/`updateRoutine`/`deleteRoutine` 一并改用真实契约（`edited.ok===false` 这个永假分支删掉）；假 schedule 改成**只认 `active`** 并断言宿主 status |
+| F2   | `deleteProject` 先删宿主定时再做可能失败的校验 → 删除被拒时定时已被静默清空                                | 顺序改成 preview → busy → reconcile；影响面新增 `hostScheduleCount` 与「会删除 N 条宿主定时任务（不可从回收站恢复）」                                                                                                                                  |
+| F3   | archive 会 pause、unarchive 不 resume（F1 修好后变真 bug）                                                 | `unarchiveProject` 变 async 并 `reconcileSchedules(id,"resume")`（尊重 `enabled:false`）                                                                                                                                                               |
+| F4   | auto-merge 的 merge 审批没有可达触发点（UI 有 PR 号时隐藏 Create PR 条）                                   | PR 卡新增「继续 PR 流程」按钮（`data-projects-thread-pr-continue`，调 `createPr`→`openPr`）；`merge/awaiting-approval` 显示为正向回执而非失败                                                                                                          |
+| F5   | `weeklyTokens` 无设置页入口（changeset 说「设置页可写」不成立）、`TOKEN_BUDGET_FIELDS` 死导出              | 设置页 `budgetKeys` 加 `weeklyTokens`（web 冒烟断言输入存在），板块标题改成「日 token / 周 token」；删掉死导出                                                                                                                                         |
+| F6c  | `detail.noDirHint` 四处仍写「插件数据目录」                                                                | 改为「项目专用工作区（`workspaces/<id>`）」，web 冒烟断言同步（并要求不含旧措辞）                                                                                                                                                                      |
+| F6d  | 桌面审批影响面断言在空 approvals profile 是 0=0 恒真                                                       | 有审批行才断言「每行非空 + 含对象键」，无数据时如实 `SKIP`（不冒充 PASS）                                                                                                                                                                              |
+| F6a  | docs 写「无 schedule 服务按无可停」与实现相反                                                              | 实现按文档语义改（`ok:true` + `unavailable:N` + 审计），docs 同步                                                                                                                                                                                      |
+| F15  | changeset `minor` 与兼容表（0.10.x 行）不一致                                                              | 兼容表恢复 0.10.x 的已发布计数，新增 `0.11.x（未发版）` 行写本批与 defer 清单；changeset 仍为 minor（lead 指定）                                                                                                                                       |
 
 ### 20.4 本批新增/更新的测试文件
 
@@ -1137,9 +1176,10 @@ task(s) could not be removed`）——否则记录没了就再没有入口去停
 `model-choice.test.js`（新，5）、`store-hardening.test.js`（+20）、`budget.test.js`（+3）、
 `memory.test.js`（+2）、`thread.test.js`（+4，去掉 2 条 V1 死代码用例）、`service-execute.test.js`（+3）、
 `service-wiring-guards.test.js`（+12）、`executor.test.js`（替换 1）、`b3.test.js`（默认预算含 `weeklyTokens`）、
-`wake.test.js`（+4，跳过唤醒的审计限频）。
+`wake.test.js`（+4，跳过唤醒的审计限频）；复审修正又给 `schedules.test.js`（+2 契约/分类）、
+`trash.test.js`（+2 影响面披露）、`service-wiring-guards.test.js`（+8 契约/顺序/入口/清单漂移）补了用例。
 
-合计 **786** 条（720 + 66；含 AUD-HIST-06 的 7 条），`node --test` 0 fail。
+合计 **800** 条（720 + 80；含 AUD-HIST-06 的 7 条与复审修正的 14 条），`node --test` 0 fail。
 
 **红→绿证据（本批做过一次）**：把 `packages/projects/lib/` 的改动 `git stash` 掉、只留新测试，
 再跑这几个文件，得到的就是修复前的失败：
@@ -1153,3 +1193,15 @@ task(s) could not be removed`）——否则记录没了就再没有入口去停
   `APPROVAL_CLAIM_TTL_MS`、`localDateKey` 等本批新增的导出）。
 
 恢复改动后全部转绿（`node --test` 0 fail）。
+
+**复审修正的红→绿**（2026-11-28 第二次）：把本轮 `lib/{schedules,service,budget,trash,client}.js`
+的改动 stash 掉再跑，得到：
+
+- `schedules.test.js` → 7 条红（pause/resume 的**宿主状态**断言、not-found/conflict 分类、
+  `hostActivePatch`/`classifyHostScheduleResult` 不存在）；
+- `service-wiring-guards.test.js` → F1–F6c 共 8 条红（`patch.status` 契约、delete 顺序、preview 计数、
+  unarchive 恢复、PR 继续入口、weekly 预算入口、noDirHint 文案）；
+- `trash.test.js` → 2 条红（删除影响面不含宿主定时数量）。
+
+这一轮特别修掉了上一轮的**假绿**：旧 `schedules.test.js` 断言的是插件自己发的 `patch.status`
+字面量，改用宿主真实契约（只认 `active`、断言 status 映射）后，错误实现必然变红。
