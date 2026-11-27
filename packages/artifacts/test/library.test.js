@@ -926,3 +926,39 @@ test("点开头的标题（.env audit / .gitignore）能发布，id 不含前导
     await lib.cleanup();
   }
 });
+
+test("AUD-ARTIFACTS-08：破坏性操作的影响面按所有版本体积算（行/summary 仍是最新版口径）", async () => {
+  const lib = await makeLibrary();
+  try {
+    const body = "x".repeat(1000);
+    const meta = await lib.store.create({
+      title: "Two versions",
+      html: body,
+      projectId: "proj-a",
+    });
+    await lib.store.append(meta.id, { html: body });
+
+    // 行与 summary 保持 0.1/0.2 的口径：最新版字节。
+    const page = await lib.library.list({ projectId: "proj-a" });
+    assert.equal(page.artifacts[0].bytes, 1000);
+    assert.equal(page.artifacts[0].totalBytes, 2000);
+    assert.equal(page.summary.bytes, 1000);
+
+    // remove/purge 的影响面是"实际会移动/删除的全部字节"。
+    const removeDry = await lib.library.remove({ projectId: "proj-a", dryRun: true });
+    assert.equal(removeDry.ok, true);
+    assert.equal(removeDry.count, 1);
+    assert.equal(removeDry.bytes, 2000);
+    const removed = await lib.library.remove({ projectId: "proj-a" });
+    assert.equal(removed.bytes, 2000);
+
+    const purgeDry = await lib.library.purge({ ids: [meta.id], dryRun: true });
+    assert.equal(purgeDry.ok, true);
+    assert.equal(purgeDry.count, 1);
+    assert.equal(purgeDry.bytes, 2000);
+    const purged = await lib.library.purge({ ids: [meta.id] });
+    assert.equal(purged.bytes, 2000);
+  } finally {
+    await lib.cleanup();
+  }
+});

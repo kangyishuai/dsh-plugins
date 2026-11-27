@@ -12,7 +12,7 @@
 // （不能先转字符串，否则 PNG/JPEG 会被破坏）。markdown / csv 刻意用 text/plain 送，
 // 因为浏览器的 text/markdown、text/csv 顶层导航会变成下载，而不是预览。
 import { createCoverSvg } from "./cover.js";
-import { isSafeArtifactId } from "./store.js";
+import { ArtifactError, isSafeArtifactId } from "./store.js";
 
 const CSP = [
   "default-src 'none'",
@@ -63,7 +63,17 @@ export function createRouteHandler({ store, connection }) {
       const prefix = "/artifacts/";
       const rest = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) : "";
       const segments = rest.split("/");
-      const id = decodeURIComponent(segments[0] ?? "");
+      // 畸形百分号编码（`/%`、`/%E0%A4%A`）会让 decodeURIComponent 抛 URIError：
+      // 这是调用方的 URL 错误，语义是 400，不能落到外层兜底变成 500 并漏出内部错误文本（AUD-ARTIFACTS-04）。
+      /** @type {string} */
+      let id;
+      try {
+        id = decodeURIComponent(segments[0] ?? "");
+      } catch {
+        res.statusCode = 400;
+        res.end("bad artifact id");
+        return;
+      }
       const sub = segments[1] ?? "";
       if (id === "" || segments.length > 2) {
         res.statusCode = 404;
@@ -110,9 +120,25 @@ export function createRouteHandler({ store, connection }) {
         res.end("not found");
         return;
       }
+      // `?v=` 存在但不是正整数 → 400（AUD-ARTIFACTS-05）：静默回落最新版会让调用方
+      // 以为拿到了指定版本，排查时误判；这是 URL 参数错误，不是 404。
       const wanted = url.searchParams.get("v");
-      const version = wanted === null ? undefined : Number(wanted);
-      const found = await store.read(id, Number.isInteger(version) ? version : undefined);
+      /** @type {number | undefined} */
+      let version;
+      if (wanted !== null) {
+        if (!/^[1-9][0-9]*$/u.test(wanted)) {
+          res.statusCode = 400;
+          res.end("bad version");
+          return;
+        }
+        version = Number(wanted);
+        if (!Number.isSafeInteger(version)) {
+          res.statusCode = 400;
+          res.end("bad version");
+          return;
+        }
+      }
+      const found = await store.read(id, version);
       if (found === undefined) {
         res.statusCode = 404;
         res.end("not found");
@@ -143,7 +169,14 @@ export function createRouteHandler({ store, connection }) {
     } catch (error) {
       console.error("[artifacts] route failed:", error);
       res.statusCode = 500;
-      res.end(`route error: ${error instanceof Error ? error.message : String(error)}`);
+      // 版本字节与 meta 声明不符：明确告诉调用方"这一版坏了"，绝不把坏正文当正常版本送出
+      // （AUD-ARTIFACTS-02）。错误码仍是契约里的 artifacts/failed，细分原因是 reason。
+      if (error instanceof ArtifactError && error.reason === "corrupt-version") {
+        res.end("artifact version corrupted");
+        return;
+      }
+      // 其它内部错误只给通用文案：不要把文件路径/系统错误文本（AUD-ARTIFACTS-04）漏给调用方。
+      res.end("internal error");
     }
   };
 }

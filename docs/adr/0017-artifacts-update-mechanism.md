@@ -9,7 +9,7 @@
 Claude Code 的 artifact 体验依赖三件宿主能力：改写已渲染的工具行、服务端套壳 + 独立沙箱 origin、服务端截图缩略图。DSH 0.2.2-rc.3 三件都不成立：
 
 - `conversationEvents` 服务不存在；`conversation.chat.node` 的 keyDomain 是封闭的 `ChatNodeKind`；`card` 是封闭 union（generic/terminal/diff/search/read/web）；`presentationMeta` 每次调用复制全文 ⇒ **改写旧工具行不可行**。
-- 宿主没有兜底 CSP，也没有独立沙箱 origin ⇒ 隔离只能靠 `sandbox="allow-scripts"`（不透明源）+ 文档内 CSP 自焊。
+- 宿主没有兜底 CSP，也没有独立沙箱 origin ⇒ 当时隔离只能靠 `sandbox="allow-scripts"`（不透明源）+ 文档内 CSP 自焊。**0.2.x 复审后已收紧：预览 iframe 改用 `sandbox=""`（不含 `allow-scripts`/`allow-same-origin`），并在任何不可信字节之前注入文档级 CSP（自动请求/导航被拦；点击链接只会在预览 iframe 内自导航）。**
 - 宿主不带 headless Chromium，`ctx.officeKit` 只吃 Office/ODF/PDF ⇒ **截图式缩略图没有本地等价物**。
 
 spike 实测（`notes/artifacts/spike-report.md`）验证了替代路径可行。
