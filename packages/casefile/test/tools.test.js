@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { CLAIM_KINDS } from "../lib/core/model.js";
 import { buildToolDefinitions, TOOL_NAMES, toToolError } from "../lib/tools.js";
 
 /** 记录调用的假 handlers。 */
@@ -211,4 +212,119 @@ test("没有 isBuilderSession 实现时守卫不误伤", async () => {
   const project = definitions.find((item) => item.name === "case_project");
   const result = await project.execute({ action: "open", title: "X" }, { agent: { id: "s1" } });
   assert.equal(result.ok, true);
+});
+
+test("case_evidence.input.kind 的 schema 枚举与落库枚举一致（AUD-CASEFILE-02）", async () => {
+  const { handlers } = fakeHandlers();
+  const definitions = buildToolDefinitions(handlers, () => "p");
+  const evidence = definitions.find((item) => item.name === TOOL_NAMES.evidence);
+  const kind = evidence.parameters.properties.input.properties.kind;
+  assert.ok(Array.isArray(kind.enum), "kind 必须有 enum（自由字符串会被落库拒掉）");
+  assert.deepEqual(
+    [...kind.enum],
+    [...CLAIM_KINDS],
+    "工具 schema 的证据种类必须与 core/model.js 的 CLAIM_KINDS 同源",
+  );
+  assert.equal(kind.enum.includes("other"), true, "必须提供 other 兜底");
+});
+
+test("case_project 的 action 枚举覆盖 switch 里实现的全部动作（含 autonomy/bundle/回收站）", async () => {
+  const { handlers } = fakeHandlers();
+  const definitions = buildToolDefinitions(handlers, () => "p");
+  const project = definitions.find((item) => item.name === TOOL_NAMES.project);
+  const values = [...project.parameters.properties.action.enum];
+  for (const action of ["autonomy", "bundle", "trash", "restore", "purge"]) {
+    assert.ok(values.includes(action), `action 枚举缺 ${action}：${values.join("、")}`);
+  }
+});
+
+test("显式传 projectId 的工具调用会 remember（不需要先 open）", async () => {
+  /** @type {any[]} */
+  const remembered = [];
+  /** @type {any[]} */
+  const calls = [];
+  const handlers = {
+    rememberProject: (/** @type {any} */ exec, /** @type {string} */ id) => {
+      remembered.push([exec?.agent?.id, id]);
+    },
+    listEvidence: async (/** @type {string} */ id) => {
+      calls.push(id);
+      return [];
+    },
+  };
+  const definitions = buildToolDefinitions(handlers, () => undefined);
+  const evidence = definitions.find((item) => item.name === TOOL_NAMES.evidence);
+  const result = await evidence.execute(
+    { action: "list", projectId: "demo" },
+    { agent: { id: "s1" } },
+  );
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(calls, ["demo"]);
+  assert.deepEqual(remembered, [["s1", "demo"]]);
+});
+
+test("回收站动作分派到 trash / restore / purge，并透传 dryRun 与 confirm", async () => {
+  /** @type {any[]} */
+  const calls = [];
+  const handlers = {
+    listTrash: async () => [{ name: "entry", projectId: "p" }],
+    restoreTrash: async (/** @type {string} */ name) => {
+      calls.push(["restore", name]);
+      return { project: { id: "p" } };
+    },
+    purgeTrash: async (/** @type {any} */ options) => {
+      calls.push(["purge", options]);
+      return { dryRun: options.dryRun === true, count: 1, bytes: 10, purged: 1 };
+    },
+    dropProject: async (/** @type {string} */ id, /** @type {any} */ options) => {
+      calls.push(["drop", id, options]);
+      return { trashedTo: "/tmp/trash/x" };
+    },
+  };
+  const definitions = buildToolDefinitions(handlers, () => "p");
+  const project = definitions.find((item) => item.name === TOOL_NAMES.project);
+
+  const listed = await project.execute({ action: "trash" }, {});
+  assert.equal(listed.ok, true);
+  assert.equal(listed.trash.length, 1);
+
+  const restored = await project.execute({ action: "restore", trashName: "entry" }, {});
+  assert.equal(restored.ok, true);
+  assert.deepEqual(calls.at(-1), ["restore", "entry"]);
+
+  const preview = await project.execute({ action: "purge", dryRun: true }, {});
+  assert.equal(preview.ok, true);
+  assert.equal(calls.at(-1)?.[1]?.dryRun, true);
+
+  const dropped = await project.execute({ action: "drop", projectId: "p", dryRun: true }, {});
+  assert.equal(dropped.ok, true);
+  assert.equal(calls.at(-1)?.[2]?.dryRun, true, "drop 也要透传 dryRun");
+});
+
+test("report 的 redact 默认 true 并透传给 exportReport；open 区分新建/已有项目", async () => {
+  /** @type {any[]} */
+  const reportOptions = [];
+  const handlers = {
+    exportReport: async (/** @type {string} */ _id, /** @type {any} */ options) => {
+      reportOptions.push(options);
+      return { path: "/tmp/report", files: ["report.md"] };
+    },
+    openProject: async (/** @type {any} */ input) => ({
+      id: input.id ?? "p",
+      title: "P",
+      ...(input.id === "demo" ? { reopened: true } : {}),
+    }),
+  };
+  const definitions = buildToolDefinitions(handlers, () => "p");
+  const project = definitions.find((item) => item.name === TOOL_NAMES.project);
+  const exported = await project.execute({ action: "report" }, {});
+  assert.equal(exported.ok, true);
+  assert.equal(reportOptions.at(-1)?.redact, true, "report 默认脱敏");
+  const raw = await project.execute({ action: "report", redact: false }, {});
+  assert.equal(raw.ok, true);
+  assert.equal(reportOptions.at(-1)?.redact, false);
+
+  const reopened = await project.execute({ action: "open", id: "demo", title: "P" }, {});
+  assert.equal(reopened.ok, true);
+  assert.match(String(reopened.summary), /已有项目/u);
 });

@@ -1,16 +1,22 @@
 // @ts-check
-// tools.js：模型可调用的 6 个 casefile 工具。
+// tools.js：模型可调用的 12 个 casefile 工具。
 //
 // 设计（spec/02-architecture.md §5.2）：
 //   - 工具面控制在个位数；长尾（反编译、抓包、对比）走 REA 自己的工具；
 //   - 统一输出 { ok, data | error{code,message,hint}, summary }：错误不抛异常，
 //     让模型读到稳定错误码并自行纠正；
 //   - 每个工具都接受 projectId；省略时用「本会话最近打开的项目」（由 service 维护）。
+//
+// 工具面代价（AUD-CASEFILE-10）：12 个工具的定义（description+parameters JSON）合计约 13.6 KB
+// ≈ 3.4K tokens，常驻每个会话。
+// 这是已知取舍而非免费：低频能力（case_access/case_app/case_ingest）保留独立工具是为了
+// 每个工具的 schema 都能自解释；如果未来要压缩，优先把这三者并进一个 case_misc。
 
 import { describeIngestSchema } from "./core/ingest.js";
+import { CLAIM_KINDS } from "./core/model.js";
 import { renderToolResult, TOOL_OUTPUT_SCHEMA } from "./tool-schema.js";
 
-/** 六个工具名（文档、测试、冒烟共用）。 */
+/** 十二个工具名（文档、测试、冒烟共用）。 */
 export const TOOL_NAMES = /** @type {const} */ ({
   project: "case_project",
   evidence: "case_evidence",
@@ -42,12 +48,13 @@ export function toToolError(error) {
   const message = String(anyError?.message ?? error ?? "unknown error");
   /** @type {Record<string, string>} */
   const hints = {
-    "project-not-found": "先调用 case_project 的 open 或 list 确认项目 id。",
+    "project-not-found": "先调用 case_project 的 open/list 确认项目 id，或显式传 projectId。",
     "project-exists": "换个标题，或直接 open 已有项目。",
     "invalid-input": "按参数 description 修正字段。",
     "read-only-newer": "项目文件由更新的 casefile 写入；升级插件后再试。",
     "no-data-root": "检查插件 Config 里的 dataRoot。",
     "bad-project-id": "项目 id 必须是小写 kebab-case。",
+    "artifact-too-large": "产物超过归档上限：先裁剪，或调大插件 Config 的 maxArtifactBytes。",
   };
   return { ok: false, error: { code, message, ...(hints[code] ? { hint: hints[code] } : {}) } };
 }
@@ -126,9 +133,18 @@ export function buildToolDefinitions(handlers, projectOf) {
     const explicit = typeof args.projectId === "string" && args.projectId !== "";
     const id = explicit ? args.projectId : projectOf(exec);
     if (typeof id !== "string" || id === "") {
-      throw Object.assign(new Error("还没有指定项目：先 case_project open，或显式传 projectId"), {
-        code: "project-not-found",
-      });
+      const lastOpened =
+        typeof handlers.lastOpenedProjectId === "function" ? handlers.lastOpenedProjectId() : null;
+      throw Object.assign(
+        new Error(
+          `还没有指定项目：先 case_project open，或显式传 projectId${lastOpened ? `（上次打开的是 ${lastOpened}）` : ""}`,
+        ),
+        { code: "project-not-found" },
+      );
+    }
+    // 任何显式 projectId 调用都建立/刷新会话指针：get 之后不带 projectId 也能继续写（AUD-CASEFILE-01）。
+    if (explicit && typeof handlers.rememberProject === "function") {
+      handlers.rememberProject(exec, id);
     }
     return id;
   };
@@ -137,7 +153,7 @@ export function buildToolDefinitions(handlers, projectOf) {
     {
       name: TOOL_NAMES.project,
       description:
-        "casefile 项目：open 新建/打开调查目标，list 列出，get 看详情，update 改授权档/范围/状态。",
+        "casefile 项目：open 新建或打开已有项目，list 列出，get 看详情，update 改授权档/范围/状态；trash/restore/purge 管理回收站。",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -154,12 +170,20 @@ export function buildToolDefinitions(handlers, projectOf) {
               "overview",
               "archive",
               "drop",
+              "autonomy",
+              "bundle",
+              "trash",
+              "restore",
+              "purge",
             ],
             description: "要执行的动作",
           },
           projectId: PROJECT_ID,
           title: { type: "string", description: "open 时必填：项目标题" },
-          id: { type: "string", description: "open 时可指定 kebab-case 项目 id" },
+          id: {
+            type: "string",
+            description: "open 时可指定 kebab-case 项目 id；id 命中已有项目时直接打开它",
+          },
           target: {
             type: "object",
             additionalProperties: false,
@@ -178,7 +202,8 @@ export function buildToolDefinitions(handlers, projectOf) {
           format: {
             type: "string",
             enum: ["md", "html", "both"],
-            description: "report 时的输出格式：md（默认）/ html（单文件、可外发归档）/ both",
+            description:
+              "report 时的输出格式：md（默认）/ html（单文件、可外发归档；默认脱敏，传 redact:false 关闭）/ both",
           },
           level: {
             type: "string",
@@ -197,11 +222,26 @@ export function buildToolDefinitions(handlers, projectOf) {
           },
           redact: {
             type: "boolean",
-            description: "bundle 时是否脱敏（默认 true）",
+            description: "bundle/report 时是否脱敏（默认 true）",
+          },
+          dryRun: {
+            type: "boolean",
+            description:
+              "drop 时只给影响面（项目数/字节/previewTrashPath；预览路径不是最终落点），purge 时给条目数/字节/trashRoot；都不实际执行",
+          },
+          trashName: {
+            type: "string",
+            description: "restore 时必填：回收站条目名（case_project trash 列出的 name）",
+          },
+          names: {
+            type: "array",
+            items: { type: "string" },
+            description: "purge 时可选：只清这些回收站条目；省略 = 全部认识的条目",
           },
           confirm: {
             type: "boolean",
-            description: "drop 时必须传 true：把整个项目目录移进 trash（可手动移回）",
+            description:
+              "drop/purge 时必须传 true：drop 把整个项目目录移进 trash（可在回收站恢复）；purge 硬删回收站条目（不可恢复）",
           },
         },
         required: ["action"],
@@ -226,7 +266,12 @@ export function buildToolDefinitions(handlers, projectOf) {
                 },
                 exec,
               );
-              return { project, summary: `已打开项目 ${project.id}（${project.title}）` };
+              return {
+                project,
+                summary: project.reopened
+                  ? `已打开已有项目 ${project.id}（${project.title}）`
+                  : `已打开项目 ${project.id}（${project.title}）`,
+              };
             }
             case "list": {
               const projects = await handlers.listProjects();
@@ -294,19 +339,49 @@ export function buildToolDefinitions(handlers, projectOf) {
             case "drop": {
               const dropped = await handlers.dropProject(projectId(args, exec), {
                 confirm: args.confirm,
+                dryRun: args.dryRun,
               });
               return {
-                trashedTo: dropped.trashedTo,
-                summary: `项目已移入 trash：${dropped.trashedTo}`,
+                ...dropped,
+                summary:
+                  dropped.dryRun === true
+                    ? dropped.summary
+                    : `项目已移入 trash：${dropped.trashedTo}（可在回收站恢复）`,
               };
+            }
+            case "trash": {
+              const entries = await handlers.listTrash();
+              return { trash: entries, summary: `回收站 ${entries.length} 个条目` };
+            }
+            case "restore": {
+              const name = typeof args.trashName === "string" ? args.trashName : "";
+              if (name === "") {
+                throw Object.assign(new Error("restore 需要 trashName（trash 列出的 name）"), {
+                  code: "invalid-input",
+                });
+              }
+              const restored = await handlers.restoreTrash(name);
+              return {
+                ...restored,
+                summary: `已恢复项目 ${restored.project.id}`,
+              };
+            }
+            case "purge": {
+              const purged = await handlers.purgeTrash({
+                names: args.names,
+                confirm: args.confirm,
+                dryRun: args.dryRun,
+              });
+              return purged;
             }
             case "report": {
               const exported = await handlers.exportReport(projectId(args, exec), {
                 format: args.format,
+                redact: args.redact !== false,
               });
               return {
                 ...exported,
-                summary: `报告已写入 ${exported.path}（${(exported.files ?? []).join(" / ")}）`,
+                summary: `报告已写入 ${exported.path}（${(exported.files ?? []).join(" / ")}，${exported.redacted === false ? "未脱敏" : "已脱敏"}）`,
               };
             }
             default:
@@ -333,7 +408,12 @@ export function buildToolDefinitions(handlers, projectOf) {
             type: "object",
             additionalProperties: false,
             properties: {
-              kind: { type: "string" },
+              kind: {
+                type: "string",
+                enum: [...CLAIM_KINDS],
+                description:
+                  "证据种类（与落库枚举同源）；叫不出名字的类型用 other，原始值会记进 kindRaw",
+              },
               sourceTool: {
                 type: "string",
                 description:

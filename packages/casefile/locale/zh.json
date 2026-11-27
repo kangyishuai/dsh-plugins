@@ -25,6 +25,16 @@
     "blocker.openUnknowns": "还有未解决未知项",
     "blocker.failedObligations": "有失败的义务",
     "blocker.blockedObligations": "有阻塞的义务",
-    "blocker.coverageBelow": "覆盖率不足"
+    "blocker.coverageBelow": "覆盖率不足",
+    "trash.toggle": "回收站",
+    "trash.title": "回收站（可恢复）",
+    "trash.empty": "回收站是空的。",
+    "trash.meta": "{id} · {files} 个文件 · {bytes}",
+    "trash.restore": "恢复",
+    "trash.back": "返回项目列表",
+    "trash.purge": "清空回收站",
+    "trash.purgePreview": "将硬删 {count} 个条目（{bytes}，不可恢复）；{skipped} 个来历不明的条目会保留。",
+    "trash.purgeConfirm": "确认清空",
+    "trash.cancel": "取消"
   }
 }

@@ -59,6 +59,18 @@ test("normalizeEvidence 拒绝未知 confidence", () => {
   assert.throws(() => normalizeEvidence({ summary: "x", confidence: "maybe" }), CasefileInputError);
 });
 
+test("normalizeEvidence 未知 kind 归 other 并保留 kindRaw，不整条拒绝（AUD-CASEFILE-02）", () => {
+  const evidence = normalizeEvidence({ summary: "x", kind: "docs" });
+  assert.equal(evidence.kind, "other", "未知种类归 other");
+  assert.equal(evidence.kindRaw, "docs", "原始种类记进 kindRaw");
+  const declared = normalizeEvidence({ summary: "y", kind: "har" });
+  assert.equal(declared.kind, "har");
+  assert.equal(declared.kindRaw, undefined);
+  const legacy = normalizeEvidence({ summary: "z" });
+  assert.equal(legacy.kind, "other");
+  assert.equal(legacy.kindRaw, undefined);
+});
+
 test("normalizeClaim 默认未选中，可引用证据", () => {
   const evidence = normalizeEvidence({ summary: "x" });
   const claim = normalizeClaim({ text: "登录走 /auth/token", evidenceIds: [evidence.id] });

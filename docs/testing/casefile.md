@@ -6,10 +6,10 @@
 
 | 层                   | 命令                                           | 覆盖                                                                                                                                                                                      | 依赖                                                         |
 | -------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| 单元                 | `pnpm --filter @kangyishuai/dsh-casefile test` | **216 项**：core（model/store/digest/manifest/brief/bundle/ingest/autonomy/provenance/app-bundle/login-wait/png）、actions（含义务关闭硬门、外部摄入、L3 预算）、tools、Remote 声明一致性 | 无                                                           |
+| 单元                 | `pnpm --filter @kangyishuai/dsh-casefile test` | **263 项**：core（model/store/digest/manifest/brief/bundle/ingest/autonomy/provenance/app-bundle/login-wait/png）、actions（含义务关闭硬门、外部摄入、L3 预算）、tools、Remote 声明一致性 | 无                                                           |
 | 静态                 | `pnpm verify`                                  | lint + 类型 + 插件规范 + 文档一致性 + 公开边界 + 全部测试                                                                                                                                 | 无                                                           |
-| web 端到端（API 级） | `pnpm smoke:casefile`                          | **56 项**：临时 DSH_HOME 装包 + 真实 web 宿主，打 Remote 端点：项目/证据/结论/义务/检查/规格包/脱敏/审计/能力探测 + **外部报告摄入（dryRun 与真摄入）**                                   | 本机 `dsh`                                                   |
-| 桌面只读回归         | `pnpm smoke:casefile-desktop --require`        | **15 项**：真实 Electron 渲染进程：侧栏入口、工作台页、**自主性级别徽章**、新建表单开关、设置分节、Esc 不崩                                                                               | 桌面版**已装本插件**且带 `--remote-debugging-port=9222` 启动 |
+| web 端到端（API 级） | `pnpm smoke:casefile`                          | **69 项**：临时 DSH_HOME 装包 + 真实 web 宿主，打 Remote 端点：项目/证据/结论/义务/检查/规格包/脱敏/审计/能力探测 + **外部报告摄入（dryRun 与真摄入）**                                   | 本机 `dsh`                                                   |
+| 桌面只读回归         | `pnpm smoke:casefile-desktop --require`        | **19 项**：真实 Electron 渲染进程：侧栏入口、工作台页、**自主性级别徽章**、**回收站入口/列表/返回（只读）**、新建表单开关、设置分节、Esc 不崩                                             | 桌面版**已装本插件**且带 `--remote-debugging-port=9222` 启动 |
 | 发版门禁             | `pnpm gate casefile`                           | verify → web 冒烟 → 桌面回归                                                                                                                                                              | 同上；桌面未就绪时用 `--skip-desktop`（门禁不完整）          |
 
 ## web 冒烟（API 级）
@@ -20,7 +20,7 @@ SMOKE_DEBUG=1 pnpm smoke:casefile   # 打印每次请求/响应
 SMOKE_KEEP=1 pnpm smoke:casefile    # 成功也保留现场
 ```
 
-它验证的 52 条断言包括：
+它验证的断言包括：
 - 插件安装进临时 profile、宿主持久化启动、没有未激活插件、数据根被创建；
 - 鉴权（`GET /?token=` → 303 → `dsh-auth-*` cookie）后，`listProjects` 可用；
 - 建项目 / 非法授权档被拒（`gateway/bad-request`）/ 记证据 / 写结论 / 勾选 / 建功能 / 记未知项；
@@ -34,6 +34,10 @@ SMOKE_KEEP=1 pnpm smoke:casefile    # 成功也保留现场
 - **跨项目总览**：`overview` 聚合项目数、按目标类型分布、义务与未知项合计；
 - **一次调用闭环**：`runCycle` 在同一调用里完成构建→检查→关闭（带 builder 时先起会话并等停）；
 - **覆盖率硬门与报告**：有未关闭义务/未知项时 `closeProject` 被拒；`exportReport` 写出 md+json，报告含覆盖率、义务表与「unknown 不等于通过」声明；
+- **打开已有项目**：`createProject` 传已有项目 id 时直接打开（返回原项目，不报 `project-exists`）；
+- **证据种类容错**：`kind: "docs"` 这类 schema 之外的种类落库为 `other` 并保留 `kindRaw`，不再整条被拒；
+- **回收站**：`dropProject` dry-run 给出项目数/字节/路径且不移目录；`confirm` 后进回收站；`listTrash`/`restoreTrashEntry` 可列出与恢复；`purgeTrash` dry-run 给条数/字节、缺 `confirm` 被拒、`confirm` 后清空；drop/restore/purge 都写数据根 `audit.jsonl`；
+- **报告默认脱敏**：`exportReport` 默认 `redacted: true`，md/html 里标注「已脱敏」，本机路径不落盘；
 - **process / selfTest checker**：进程退出码与文件副作用（pass/fail）；自测 JSON 报告全绿 pass、非 JSON → unknown；
 - **web checker**：相同截图判 pass（相似度 1）；不同颜色判 fail；缺图判 unknown（不吞成 pass）；
 - **自动循环 + near-miss**：`advanceLoop` 在正确实现上关闭义务；把被测脚本改坏一个字符后，同一轮检查必须 fail 且义务回到 open；
@@ -102,7 +106,7 @@ DSH_HOME="$H" dsh web --port 0 --no-open    # 打印 http://127.0.0.1:<port>/?to
 | `publishConfig.access`            | `public`                                                                                                                   |
 | `dsh.bundle.patch` / `dsh.client` | 均在，client 注入 `dsh-client-ui-workspace` + `dsh-client-ui-slots`                                                        |
 | `pnpm probe:runtime`              | **72/72 PASS**（0 WARN / 0 FAIL）                                                                                          |
-| `pnpm verify`                     | 通过（当时 138 项；现 216 项）                                                                                             |
+| `pnpm verify`                     | 通过（当时 138 项；现 263 项）                                                                                             |
 | web 冒烟                          | 52/52                                                                                                                      |
 | 桌面只读回归                      | **14 PASS / 0 FAIL**（真实 Electron 渲染进程，CDP 9222，2026-11-18）                                                       |
 
@@ -174,3 +178,26 @@ await page.evaluate(`(() => { ... })()`);
 **串行注意**：这条桌面回归结束时页面停在「案卷」主面板（Esc 只关内层对话框）。接着跑别的插件的桌面回归会因为没有 composer 而误报（本轮 btw 首跑就因此 1 FAIL，切回会话后 18 PASS / 1 SKIP）——多条桌面回归之间先点回任一会话。
 
 结论：**rc.5 上 casefile 无回归**。
+
+## 2026-11-28 安全与契约修复批次（0.9.0，AUD-CASEFILE 簇）
+
+这一批修的是审计报告 `AUD-CASEFILE-01…11` / `AUD-XCT-07` 的问题，全部「先红后绿」（先加失败测试再改实现）：
+
+| 项          | 修复                                                                                                        | 对应用户可见变化                                                   |
+| ----------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| 会话指针    | `open` 可打开已有项目；任何显式 `projectId` 调用都会记住；指针持久化到 `<dataRoot>/session-pointers.json`   | 重启后同会话可继续不带 `projectId`；漏传时报错带「上次打开的项目」 |
+| 证据种类    | schema 写 enum（与 `CLAIM_KINDS` 同源）；未知值落 `other` + `kindRaw`                                       | `kind: "docs"` 不再整条被拒                                        |
+| 回收站      | `drop` 加 `dryRun`/影响面/数据根审计；新增 `trash`/`restore`/`purge`（dry-run + confirm）；面板加入口       | 回收站可查看/恢复/清空；硬删必须显式确认                           |
+| 报告脱敏    | `report` 接受 `redact`（默认 true），与 brief/bundle 共用 `redactPack`，报告页脚标注脱敏状态                | 「可外发归档」的 HTML 不再带本机路径                               |
+| 脱敏范围    | 通用系统根路径、`~/`、带扩展名（1–8 字符）的绝对路径；补 AIza/ASIA/npm_/JWT/私钥块/password= 等             | 规格包/报告的负向断言覆盖这些形态                                  |
+| 产物归档    | `maxArtifactBytes`（默认 64 MiB）+ stat 预检；先校验后归档                                                  | 大产物不再让主进程内存尖峰；校验失败不留孤儿文件                   |
+| 并发写      | 唯一临时名 + `updateJson` 进程内串行化（覆盖回调含 `await` 的读改写；同步 IO 下并发 add 本就不会交错）      | 跨进程写同一文件不会出半截 JSON；跨进程仍不覆盖                    |
+| schema 对账 | `case_project` 枚举补齐 `autonomy`/`bundle`/`trash`/`restore`/`purge`；测试加反向对账                       | 文档承诺的动作都能从 schema 触达                                   |
+| 工具面      | README 承认 12 工具 **13.6 KB ≈ 3.4K tokens**（实测 description+parameters）的常驻代价；`tools.js` 注释更正 | 无行为变化                                                         |
+| 设置分节    | `settings.section` order 94 → 96（消除与 btw 的并列）                                                       | 设置页顺序稳定                                                     |
+
+验证：`node --test`（包内）**263 pass / 0 fail**；web 冒烟在临时 `DSH_HOME` 上实测 **69 PASS / 0 FAIL**（2026-11-28，含本批新增 13 条：open 已有项目、未知 kind、回收站 dry-run/confirm/恢复/清空、数据根审计、报告默认脱敏强断言）。桌面只读脚本由 15 项增至 **19 项**（新增 4 条回收站只读断言），需发版门禁在真实桌面版上重跑后回填 PASS 记录。
+
+**独立复审补修（2026-11-28，第二轮）**：B1 冒烟变量名写错（实测 56 PASS / 1 FAIL → 修后 69 PASS / 0 FAIL）；B2「带扩展名路径」脱敏分支恒不命中（`${PATH_TAIL}?` → `(?:${PATH_TAIL})?`，补正/负例）；`restore` 先校验条目 manifest 再搬家（坏条目留在回收站并写 `project/restore-failed` 审计）；drop dry-run 改返回 `previewTrashPath`（预览路径非最终落点）；指针淘汰改 LRU；`updateJson` 串行化测试改用含 `await` 的 mutate（撤锁会红）；报告脱敏冒烟改为「target.ref 是本机路径」的探针强断言。F4/F6/F7/F12/F13/F14 记入复审报告延后。
+
+**第三轮复审补修（2026-11-28）**：`listTrash` 对更高版本/不可读的 `project.json` 降级为「元数据未知」（不再整表 `read-only-newer` 报错）并补 version 99 的 list/restore 测试；恢复失败审计写入失败只告警、不顶掉原始错误；README 把「任意带扩展名路径」收窄为「绝对路径 + 1–8 字符扩展名」；删除 Config 表里不存在的 `redactOnExport`；报告脱敏强断言去掉永远为真的空断言；`purge` dry-run 字段改 `trashRoot`（与 drop 的 `previewTrashPath` 分开）。N7 的回滚分支与 N8 的 actor 口径仍按 F12/F14 记录延后。

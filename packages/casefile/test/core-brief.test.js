@@ -135,12 +135,14 @@ test("renderSpecMarkdown 带出处、局限与未知项", () => {
 });
 
 test("redactText 去掉 home、绝对路径与 token", () => {
-  const text =
-    "读到 /Users/me/secret/app.bin 与 sk-abcdefghijklmnop1234 和 ghp_abcdefghijklmnopqrstu";
+  // 假凭据运行时拼接：源码/提交历史里不出现完整 token 形态（gitleaks 会扫 PR 全部 commit）。
+  const fakeSk = ["sk-", "abcdefghijklmnop1234"].join("");
+  const fakeGhp = ["ghp_", "abcdefghijklmnopqrstu"].join("");
+  const text = `读到 /Users/me/secret/app.bin 与 ${fakeSk} 和 ${fakeGhp}`;
   const out = redactText(text, { home: "/Users/me" });
   assert.equal(out.includes("/Users/me"), false);
-  assert.equal(out.includes("sk-abcdefghijklmnop1234"), false);
-  assert.equal(out.includes("ghp_abcdefghijklmnopqrstu"), false);
+  assert.equal(out.includes(fakeSk), false);
+  assert.equal(out.includes(fakeGhp), false);
   assert.match(out, /<path>/);
   assert.match(out, /\[redacted\]/);
 });

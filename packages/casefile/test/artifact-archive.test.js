@@ -74,3 +74,34 @@ test("不传 artifactPath 时 evidence.artifact 为 null（旧行为不变）", 
   const evidence = await actions.addEvidence("p", { summary: "无产物" });
   assert.equal(evidence.artifact, null);
 });
+
+test("产物超过 maxArtifactBytes 时拒绝归档，不把大文件读进内存", async () => {
+  const root = mkdtempSync(join(tmpdir(), "casefile-artifact-limit-"));
+  dirs.push(root);
+  const actions = createActions({
+    store: new CaseStore({ dataRoot: root, maxArtifactBytes: 8 }),
+    dataRoot: root,
+  });
+  await actions.openProject({ title: "P" });
+  const source = join(root, "big.har");
+  writeFileSync(source, "x".repeat(64), "utf8");
+  await assert.rejects(
+    () => actions.addEvidence("p", { summary: "大产物", artifactPath: source }),
+    (error) => /** @type {any} */ (error).code === "artifact-too-large",
+  );
+  assert.equal(existsSync(join(root, "projects", "p", "artifacts")), false, "被拒时不应留下归档");
+});
+
+test("先校验后归档：证据字段非法时不产生孤儿产物", async () => {
+  const { actions, root } = makeActions();
+  await actions.openProject({ title: "P" });
+  const source = join(root, "orphan.html");
+  writeFileSync(source, "<html>orphan</html>", "utf8");
+  // summary 缺失 → normalizeEvidence 会拒绝；旧实现会先把文件复制进 artifacts/ 再报错
+  await assert.rejects(
+    () => actions.addEvidence("p", { artifactPath: source }),
+    (error) => /** @type {any} */ (error).code === "invalid-input",
+  );
+  const artifactsDir = join(root, "projects", "p", "artifacts");
+  assert.equal(existsSync(artifactsDir), false, "校验失败时不应留下孤儿文件");
+});

@@ -11,7 +11,7 @@
 //   - JSONL append-only，修改用新记录 + supersedes（M0 先只追加）；
 //   - 所有路径从 dataRoot 派生，不写死 ~/.dsh（可在临时目录里测）。
 
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   appendFileSync,
   existsSync,
@@ -19,6 +19,7 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -58,6 +59,47 @@ export const RECORD_FILES = /** @type {const} */ ({
   attestations: "attestations.jsonl",
 });
 
+/** 回收站条目名：`<ISO 时间戳（: . 换成 -）>-<projectId>`。只认这个形状，别的条目保留不删。 */
+const TRASH_ENTRY_RE =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z-([a-z0-9][a-z0-9-]{0,63})$/u;
+
+/** 归档单个产物的默认体积上限（64 MiB）：避免把整段录屏/大 HAR 读进主进程内存。 */
+export const DEFAULT_MAX_ARTIFACT_BYTES = 64 * 1024 * 1024;
+
+/**
+ * 递归统计目录的文件数与字节数（读不了的文件跳过，不猜）。
+ * @param {string} dir
+ * @returns {{ bytes: number, files: number }}
+ */
+function dirStats(dir) {
+  let bytes = 0;
+  let files = 0;
+  /** @type {import("node:fs").Dirent[]} */
+  let children = [];
+  try {
+    children = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return { bytes, files };
+  }
+  for (const entry of children) {
+    const path = `${dir}/${entry.name}`;
+    try {
+      const stat = statSync(path);
+      if (stat.isDirectory()) {
+        const nested = dirStats(path);
+        bytes += nested.bytes;
+        files += nested.files;
+      } else if (stat.isFile()) {
+        bytes += stat.size;
+        files += 1;
+      }
+    } catch {
+      // 读不了的条目跳过：口径是"已知文件的大小"，不假装统计完整。
+    }
+  }
+  return { bytes, files };
+}
+
 /**
  * @param {unknown} value
  * @returns {value is Record<string, any>}
@@ -71,7 +113,11 @@ function isRecord(value) {
  */
 export class CaseStore {
   /**
-   * @param {{ dataRoot: string, logger?: { warn: (...args: unknown[]) => void } }} options
+   * @param {{
+   *   dataRoot: string,
+   *   logger?: { warn: (...args: unknown[]) => void },
+   *   maxArtifactBytes?: number,
+   * }} options
    */
   constructor(options) {
     if (!options || typeof options.dataRoot !== "string" || options.dataRoot === "") {
@@ -79,6 +125,14 @@ export class CaseStore {
     }
     this.dataRoot = options.dataRoot;
     this.logger = options.logger ?? { warn: () => {} };
+    const configuredMaxArtifactBytes = options.maxArtifactBytes;
+    /** @type {number} */
+    this.maxArtifactBytes =
+      typeof configuredMaxArtifactBytes === "number" && configuredMaxArtifactBytes > 0
+        ? configuredMaxArtifactBytes
+        : DEFAULT_MAX_ARTIFACT_BYTES;
+    /** 进程内串行化用的 promise 链（按文件路径分键，单进程即可覆盖绝大部分并发）。 @type {Map<string, Promise<void>>} */
+    this.locks = new Map();
     this.ensureRoot();
   }
 
@@ -148,15 +202,67 @@ export class CaseStore {
   }
 
   /**
-   * 原子写 JSON（先写临时文件再 rename）。
+   * 原子写 JSON（先写唯一临时文件再 rename）。
+   * 临时名带 pid + 随机后缀：同一个文件被并发写时不会互相截断（AUD-CASEFILE-07）。
    * @param {string} file
    * @param {Record<string, any>} value
    */
   writeJson(file, value) {
     mkdirSync(dirname(file), { recursive: true });
-    const tmp = `${file}.tmp-${process.pid}`;
-    writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-    renameSync(tmp, file);
+    const tmp = `${file}.tmp-${process.pid}-${randomBytes(6).toString("hex")}`;
+    try {
+      writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+      renameSync(tmp, file);
+    } catch (error) {
+      try {
+        rmSync(tmp, { force: true });
+      } catch {
+        /* 清理失败不掩盖原始错误 */
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * 进程内按 key 串行化：`prior.then(fn)` 保证同一个文件的读-改-写不会交错。
+   * 只覆盖单进程；跨进程仍可能竞争，但至少临时文件唯一，不会写出半截 JSON。
+   * @template T
+   * @param {string} key
+   * @param {() => T | Promise<T>} fn
+   * @returns {Promise<T>}
+   */
+  withLock(key, fn) {
+    const prior = this.locks.get(key) ?? Promise.resolve();
+    const run = prior.then(() => fn());
+    const settled = run.then(
+      () => {},
+      () => {},
+    );
+    this.locks.set(key, settled);
+    settled.then(() => {
+      if (this.locks.get(key) === settled) this.locks.delete(key);
+    });
+    return run;
+  }
+
+  /**
+   * 读-改-写一个 JSON 文件（在进程内锁里完成，避免丢失更新）。
+   * 文件不存在时返回 null 且不创建。
+   * `mutate` 可以是异步的：锁会一直持有到写盘完成，所以「读 → await → 写」不会交错。
+   * 注意：node 的同步 IO 本身不可交错，锁覆盖的是**回调里含 await** 的情形；
+   * 跨进程的竞争仍不覆盖（只靠唯一临时文件名保证不会写出半截 JSON）。
+   * @param {string} file
+   * @param {(current: Record<string, any>) => Record<string, any> | Promise<Record<string, any>>} mutate
+   * @returns {Promise<Record<string, any> | null>}
+   */
+  updateJson(file, mutate) {
+    return this.withLock(file, async () => {
+      const current = this.readJson(file);
+      if (current == null) return null;
+      const next = (await mutate(current)) ?? current;
+      this.writeJson(file, next);
+      return next;
+    });
   }
 
   /**
@@ -232,6 +338,64 @@ export class CaseStore {
       encoding: "utf8",
       flag: "a",
     });
+  }
+
+  /**
+   * 写数据根级审计（append-only）。
+   * 用途：项目目录被移进回收站后就写不进项目内 audit.jsonl，必须在数据根留痕（ADR 0002 §4）。
+   * @param {Record<string, any>} entry
+   */
+  auditRoot(entry) {
+    const file = join(this.dataRoot, "audit.jsonl");
+    writeFileSync(file, `${JSON.stringify({ at: nowIso(), ...entry })}\n`, {
+      encoding: "utf8",
+      flag: "a",
+    });
+  }
+
+  /**
+   * 读数据根级审计。
+   * @returns {Record<string, any>[]}
+   */
+  readAuditRoot() {
+    const file = join(this.dataRoot, "audit.jsonl");
+    if (!existsSync(file)) return [];
+    return readFileSync(file, "utf8")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          return null;
+        }
+      })
+      .filter((row) => row !== null);
+  }
+
+  /**
+   * 记「最近打开的项目」（跨会话/UI 共用；只用于提示，不代替会话指针）。
+   * @param {string} projectId
+   */
+  markLastOpened(projectId) {
+    const id = String(projectId ?? "");
+    if (!ID_RE.test(id)) return;
+    this.writeJson(join(this.dataRoot, "last-opened.json"), {
+      version: 1,
+      projectId: id,
+      at: nowIso(),
+    });
+  }
+
+  /**
+   * 读「最近打开的项目」id；文件不存在/读坏返回 null。
+   * @returns {string | null}
+   */
+  lastOpenedProjectId() {
+    const value = this.readJson(join(this.dataRoot, "last-opened.json"));
+    const id = value?.projectId;
+    return typeof id === "string" && ID_RE.test(id) ? id : null;
   }
 
   /**
@@ -326,21 +490,206 @@ export class CaseStore {
     return next;
   }
 
+  /** 回收站根目录。 @returns {string} */
+  get trashRoot() {
+    return join(this.dataRoot, "trash");
+  }
+
   /**
-   * 丢弃：把整个项目目录移进 `<dataRoot>/trash/`，可手动移回。
-   * 破坏性操作，必须显式 confirm。
+   * 项目目录当前占用的文件数与字节数（drop 的影响面口径）。
+   * @param {string} projectId
+   * @returns {{ bytes: number, files: number }}
+   */
+  projectImpact(projectId) {
+    return dirStats(this.projectDir(projectId));
+  }
+
+  /**
+   * drop 的**预览**回收站路径（按当前时间生成的目录名）。
+   * 只用于 dry-run 展示：实际 drop 会重新取时间戳，所以预览路径不是最终落点（F5）。
+   * @param {string} projectId
+   * @returns {string}
+   */
+  expectedTrashPath(projectId) {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    return join(this.trashRoot, `${stamp}-${projectId}`);
+  }
+
+  /**
+   * 丢弃：把整个项目目录移进 `<dataRoot>/trash/`，可恢复。
+   * 破坏性操作，必须显式 confirm（由 actions 层校验）；本方法只做搬迁。
    * @param {string} projectId
    * @returns {{ trashedTo: string, project: Record<string, any> }}
    */
   dropProject(projectId) {
     const project = this.getProject(projectId);
     if (!project) throw new CaseStoreError("project-not-found", `项目不存在：${projectId}`);
-    const trashRoot = join(this.dataRoot, "trash");
-    mkdirSync(trashRoot, { recursive: true });
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const target = join(trashRoot, `${stamp}-${projectId}`);
+    mkdirSync(this.trashRoot, { recursive: true });
+    const target = this.expectedTrashPath(projectId);
     renameSync(this.projectDir(projectId), target);
     return { trashedTo: target, project };
+  }
+
+  /**
+   * 列回收站里**认识**的条目；来历不明的条目单独计数（不删、不猜）。
+   * @returns {{ entries: Record<string, any>[], unknown: string[] }}
+   */
+  scanTrash() {
+    /** @type {Record<string, any>[]} */
+    const entries = [];
+    /** @type {string[]} */
+    const unknown = [];
+    if (!existsSync(this.trashRoot)) return { entries, unknown };
+    let children;
+    try {
+      children = readdirSync(this.trashRoot, { withFileTypes: true });
+    } catch (error) {
+      this.logger.warn(`casefile: 回收站不可读：${String(error)}`);
+      return { entries, unknown };
+    }
+    for (const entry of children) {
+      if (!entry.isDirectory()) {
+        unknown.push(entry.name);
+        continue;
+      }
+      const match = TRASH_ENTRY_RE.exec(entry.name);
+      if (!match) {
+        unknown.push(entry.name);
+        this.logger.warn(`casefile: 回收站里有不认识的条目，已保留：${entry.name}`);
+        continue;
+      }
+      const path = join(this.trashRoot, entry.name);
+      const stats = dirStats(path);
+      // project.json 可能读不了（坏 JSON / 版本高于本插件）：条目仍然要列出来
+      // （它还在 trash 里、还能手工处理），元数据按「未知」降级，而不是让整张表报错（N2）。
+      /** @type {Record<string, any> | null} */
+      let project = null;
+      let metadataUnreadable = false;
+      try {
+        project = this.readJson(join(path, "project.json"));
+      } catch (error) {
+        metadataUnreadable = true;
+        this.logger.warn(
+          `casefile: 回收站条目 ${entry.name} 的 project.json 读不了（${String(/** @type {any} */ (error)?.code ?? error)}），元数据按未知处理`,
+        );
+      }
+      entries.push({
+        name: entry.name,
+        projectId: match[8],
+        path,
+        trashedAt: `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}.${match[7]}Z`,
+        bytes: stats.bytes,
+        files: stats.files,
+        title: typeof project?.title === "string" ? project.title : null,
+        state: typeof project?.state === "string" ? project.state : null,
+        metadataUnreadable,
+      });
+    }
+    entries.sort((a, b) => String(b.trashedAt).localeCompare(String(a.trashedAt)));
+    return { entries, unknown };
+  }
+
+  /**
+   * 从回收站恢复一个条目。
+   * @param {string} name 回收站条目名（不接受路径，防穿越）
+   * @returns {{ project: Record<string, any>, restoredTo: string }}
+   */
+  restoreTrash(name) {
+    const entry = String(name ?? "");
+    const match = TRASH_ENTRY_RE.exec(entry);
+    if (!match) {
+      throw new CaseStoreError("invalid-input", `不是认识的回收站条目名：${entry || "(空)"}`);
+    }
+    const path = join(this.trashRoot, entry);
+    if (!existsSync(path)) {
+      throw new CaseStoreError("not-found", `回收站里没有这个条目：${entry}`);
+    }
+    const projectId = match[8];
+    const projectDir = this.projectDir(projectId);
+    if (existsSync(join(projectDir, "project.json"))) {
+      throw new CaseStoreError(
+        "project-exists",
+        `项目 ${projectId} 现在已存在；先处理同名项目再恢复（不会覆盖现有数据）`,
+      );
+    }
+    // 搬家前先校验条目里的 project.json（F3）：坏条目不能被「恢复」成 projects/ 下的孤儿。
+    // 失败时什么都不搬，条目继续留在回收站（数据可救）。
+    /** @type {Record<string, any> | null} */
+    let manifest = null;
+    try {
+      manifest = this.readJson(join(path, "project.json"));
+    } catch (error) {
+      throw new CaseStoreError(
+        "not-found",
+        `回收站条目不可恢复（${String(/** @type {any} */ (error)?.code ?? error)}），条目仍保留在回收站：${entry}`,
+      );
+    }
+    if (!manifest) {
+      throw new CaseStoreError(
+        "not-found",
+        `回收站条目缺少可读的 project.json，条目仍保留在回收站：${entry}`,
+      );
+    }
+    const manifestId = String(manifest.id ?? "");
+    if (manifestId !== projectId || !ID_RE.test(manifestId)) {
+      throw new CaseStoreError(
+        "invalid-input",
+        `回收站条目的 project.json 与条目名不一致（${manifestId || "空"} ≠ ${projectId}），未移动：${entry}`,
+      );
+    }
+    mkdirSync(join(this.dataRoot, "projects"), { recursive: true });
+    renameSync(path, projectDir);
+    /** @type {Record<string, any> | null} */
+    let project = null;
+    try {
+      project = this.getProject(projectId);
+    } catch {
+      project = null;
+    }
+    if (!project) {
+      // 搬家后仍读不到（例如并发把文件写坏）：回滚，别让项目在 projects/ 里变成幽灵。
+      try {
+        renameSync(projectDir, path);
+      } catch {
+        this.logger.warn(`casefile: 恢复回滚失败，项目留在 projects/${projectId}`);
+      }
+      throw new CaseStoreError("project-not-found", `恢复后读不到项目，已回滚到回收站：${entry}`);
+    }
+    return { project, restoredTo: projectDir };
+  }
+
+  /**
+   * 清空回收站里认识的条目（显式硬删；来历不明的条目保留）。
+   * @param {string[] | undefined} names 只清这些条目；省略 = 全部认识的条目
+   * @returns {{ purged: number, bytes: number, names: string[], skipped: number }}
+   */
+  purgeTrash(names) {
+    const { entries, unknown } = this.scanTrash();
+    /** @type {Record<string, any>[]} */
+    let selected = entries;
+    if (names != null) {
+      const wanted = new Set(names.map(String));
+      selected = entries.filter((entry) => wanted.has(entry.name));
+      const found = new Set(selected.map((entry) => entry.name));
+      const missing = [...wanted].filter((name) => !found.has(name));
+      if (missing.length > 0) {
+        throw new CaseStoreError("not-found", `回收站里没有这些条目：${missing.join("、")}`);
+      }
+    }
+    let bytes = 0;
+    /** @type {string[]} */
+    const purgedNames = [];
+    for (const entry of selected) {
+      bytes += Number(entry.bytes) || 0;
+      rmSync(entry.path, { recursive: true, force: false });
+      purgedNames.push(entry.name);
+    }
+    return {
+      purged: purgedNames.length,
+      bytes,
+      names: purgedNames,
+      skipped: unknown.length,
+    };
   }
 
   /**
@@ -390,13 +739,13 @@ export class CaseStore {
 
   /**
    * 只更新 updatedAt，不写审计（记录追加时用）。
+   * 走 updateJson 的进程内锁：连续的 add 不会互相覆盖 project.json（AUD-CASEFILE-07）。
    * @param {string} projectId
+   * @returns {Promise<Record<string, any> | null>}
    */
   touch(projectId) {
     const file = join(this.projectDir(projectId), "project.json");
-    const project = this.readJson(file);
-    if (!project) return;
-    this.writeJson(file, { ...project, updatedAt: nowIso() });
+    return this.updateJson(file, (project) => ({ ...project, updatedAt: nowIso() }));
   }
 
   /**
@@ -430,6 +779,13 @@ export class CaseStore {
     const stat = statSync(source);
     if (!stat.isFile()) {
       throw new CasefileInputError("invalid-input", `不是普通文件：${source}`);
+    }
+    // 先做 stat 预检再读正文：几百 MB 的 HAR/录屏直接 readFileSync 会让主进程内存尖峰（AUD-CASEFILE-06）。
+    if (stat.size > this.maxArtifactBytes) {
+      throw new CasefileInputError(
+        "artifact-too-large",
+        `产物 ${source} 有 ${stat.size} 字节，超过上限 ${this.maxArtifactBytes} 字节；请先裁剪或显式调大 maxArtifactBytes`,
+      );
     }
     const bytes = readFileSync(source);
     const digest = createHash("sha256").update(bytes).digest("hex");

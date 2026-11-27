@@ -6,7 +6,7 @@
 
 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 的非官方插件，与 DeepSeek 无关。它是 [REA](https://github.com/morluto/rea)（MIT）之上的适配层：不包含 REA 的代码，也不带分析引擎。
 
-> **状态：M3 完成（五类 checker + 一次调用闭环 + near-miss + 覆盖率硬门 + 报告）。** 落盘「项目 / 证据 / 结论 / 功能 / 未知项 / 义务 / 检查记录」，能导出去原始化的规格包，并提供工作台页（证据 / 义务 / 运行）、侧栏入口与设置分节。现在可以从项目里起一个 **builder 会话**：casefile 建子会话、只投喂规格包（不投原件），返回 sessionId；`awaitBuilder` 报它为什么停下。`case_build loop` 一次跑完一轮：构建 → 按义务自带的检查配方逐个检查 → 通过的关闭 → 命中停止条件就停。构建/检查循环真的跑命令：`case_build start` 落 `BuildRun` 并算实现 digest，`case_check run` 记录绑定该 digest 的检查结果；之后再构建若 digest 变了，**自动重开**已被它关闭的义务。已通过 70 项单元测试、临时 DSH_HOME 上的 30 项 web 端到端冒烟（含 stale 重开路径），以及真实浏览器里的一轮手工 GUI 检查；桌面只读回归脚本已写好，但仍需先把插件装进桌面 profile 才能跑。请按早期软件对待。
+> **状态：M3 完成（五类 checker + 一次调用闭环 + near-miss + 覆盖率硬门 + 报告）。** 落盘「项目 / 证据 / 结论 / 功能 / 未知项 / 义务 / 检查记录」，能导出去原始化的规格包，并提供工作台页（证据 / 义务 / 运行）、侧栏入口与设置分节。现在可以从项目里起一个 **builder 会话**：casefile 建子会话、只投喂规格包（不投原件），返回 sessionId；`awaitBuilder` 报它为什么停下。`case_build loop` 一次跑完一轮：构建 → 按义务自带的检查配方逐个检查 → 通过的关闭 → 命中停止条件就停。构建/检查循环真的跑命令：`case_build start` 落 `BuildRun` 并算实现 digest，`case_check run` 记录绑定该 digest 的检查结果；之后再构建若 digest 变了，**自动重开**已被它关闭的义务。验证以包内单测 + 临时 DSH_HOME 上的 web 端到端冒烟（含 stale 重开路径）+ 桌面只读回归为准，具体条数与命令见 [docs/testing/casefile.md](../../docs/testing/casefile.md)。请按早期软件对待。
 
 ## 它解决什么
 
@@ -19,7 +19,18 @@ casefile 补的就是这一层：
 - **可引用、可选中的结论。** `Claim` 是交接时被引用的单位：引用证据 id、带自己的局限、可被勾选（`case_claim select`）进入规格包。
 - **功能分组。** 把选中的结论归到 `Feature`，写清边界与非目标——后续「只复刻这些功能」的范围单位。
 - **未知项必须随包交付。** 未解决的未知项会进规格包；悄悄丢掉的包等于说谎。
-- **规格包导出。** `case_brief export` 写出 `spec/<时间戳>/spec.json` + `brief.md`：选中的结论、证据、功能、未知项、覆盖度摘要与内容哈希。默认脱敏（home、绝对路径、常见 token 形态）。
+- **规格包导出。** `case_brief export` 写出 `spec/<时间戳>/spec.json` + `brief.md`：选中的结论、证据、功能、未知项、覆盖度摘要与内容哈希。默认脱敏，且规格包、机器可读 bundle 与验收报告**共用同一套脱敏**（见[副作用与风险](#副作用与风险)的「隐私」段）。
+
+## 脱敏
+
+三条导出（规格包、bundle、报告）都走同一个 `redactPack`，`case_project report` 默认也脱敏：
+
+- **路径：** 常见系统根目录下的任意路径（`/Users`、`/home`、`/var`、`/tmp`、`/private`、`/Applications`、`/Volumes`、`/opt`、`/etc`、`/Library`、`/usr`、`/System`、`/bin`、`/sbin`、`/dev`、`/proc`、`/boot`、`/root`、`/mnt`、`/media`、`/snap`、`/nix`、`/data`、`/srv`、`/workspace`）、未展开的 `~/…`、以及任何**以 1–8 字符扩展名结尾的绝对路径** → `<path>`。
+- **Token：** `sk-…`、`ghp_…`、`github_pat_…`、AWS `AKIA…`/`ASIA…`、Google `AIza…`、`npm_…`、`xox[abp]-…`、`Bearer …`、JWT（`eyJ…`）、PEM 私钥块，以及 `password=` / `api_key=` / `secret=` / `token=` 的值 → `[redacted]`。
+- **刻意保留：** **不带扩展名**的 URL 与 API 路由（`https://example.test/api/todos`、`POST /api/todos`、`/auth/token`）保持可读——把每个路由都变成 `<path>` 的规格包对 builder 没有价值。带文件扩展名的绝对路径即使像路由也会被遮（`/static/app.js`、`/api/v1/openapi.json`）。
+
+已知限制：含空格的路径只遮到第一个空格为止，后面的片段会保留。脱敏是安全网，不是保证：分享前请自己过一遍。
+
 - **能力探测。** `case_project` 与 `diagnose()` 报告 `mcp__rea__*` 是否可见、casefile 依赖的工具缺哪些，而不是静默降级。
 
 ## 安装
@@ -53,13 +64,15 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-casefile-*.tgz
 
 列表页顶部有一条**总览**：项目数、按目标类型与状态的分布、义务通过数/总数、跨项目的未解决未知项；`case_project overview` 以 JSON 返回同一份数据。面板头部显示当前项目的**自主性级别**（L0–L3）；徽章提示里说明 L3 只适用于 `scope=selected` 且所有义务都带检查配方的项目。
 
+头部还有**回收站**入口：列出被 `case_project drop` 丢弃的项目（id、体积、文件数），可一键恢复；清空回收站前先用 dry-run 展示影响面（`N 个条目 / 体积；来历不明的条目会保留`）。丢弃只是移走，确认硬删之前都能恢复。按 [ADR 0002](https://github.com/kangyishuai/dsh-plugins/blob/main/docs/adr/0002-destructive-operations.md)，脚本化场景用 `case_project purge`（`dryRun` + `confirm`）；每次 drop/restore/purge 都会写数据根级 `audit.jsonl`（被丢弃的项目已经写不进自己的 audit 文件）。
+
 设置分节显示数据根、项目数与 REA 能力状态，「REA 到底接没接上」不用翻日志就能回答。
 
 ## 工具
 
 | 工具              | 动作                                            | 用途                                                                 |
 | ----------------- | ----------------------------------------------- | -------------------------------------------------------------------- |
-| `case_project`    | `open` / `list` / `get` / `update`              | 新建/打开项目、列表、详情、改授权档/范围/状态                        |
+| `case_project`    | `open` / `list` / `get` / `update`              | 新建**或打开已有**项目、列表、详情、改授权档/范围/状态               |
 | `case_evidence`   | `add` / `list` / `show`                         | 把 REA 观察写成证据；过滤；看单条                                    |
 | `case_claim`      | `add` / `list` / `search` / `select`            | 写可引用结论；搜索；勾选进入规格包                                   |
 | `case_feature`    | `add` / `list`                                  | 把结论归到功能，写边界与非目标                                       |
@@ -72,9 +85,13 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-casefile-*.tgz
 | `case_brief`      | `export`                                        | 写出脱敏的规格包（`spec.json` + `brief.md`）                         |
 | `case_ingest`     | `ingest` / `schema`                             | 按稳定契约摄入外部 agent 的报告（只记录、不背书）；`schema` 打印契约 |
 
-`case_project` 另有 `close`、`report`（`format: md / html / both`）、`bundle`（机器可读、确定性）、`overview`、`archive`、`drop`、`autonomy`（L0–L3 分级）。
+`case_project` 另有 `close`、`report`（`format: md / html / both`，默认脱敏）、`bundle`（机器可读、确定性）、`overview`、`archive`、`drop`（`dryRun` / `confirm`）、`trash`、`restore`、`purge`（`dryRun` / `confirm`）、`autonomy`（L0–L3 分级）。
+
+**会话记忆：** 任何显式传入 `projectId` 的调用都会把它设为本会话的当前项目，且该指针会落盘——`case_project open` 传已有项目 id 时直接打开而不是报 `project-exists`；重启后同一会话继续调用工具不必重复传 `projectId`。若仍漏传，错误提示会带上「上次打开的项目」而不是只说失败。
 
 所有工具统一返回 `{ ok, data?, error?{code,message,hint}, summary }`；错误带稳定 code，模型能自行纠正而不是猜。
+
+**工具面代价：** 这 12 个工具的定义（`description` + `parameters` JSON）合计约 13.6 KB ≈ 3.4K tokens（按 ~4 B/token 估算），常驻每个会话，而真正用到 casefile 的会话是少数。这是有意的取舍（每个工具的 schema 都能自解释）；如果之后要压缩，优先把低频的 `case_access` / `case_app` / `case_ingest` 并进一个 `case_misc`。
 
 义务可以带 `featureIds`，这样**只复刻选定功能**时能报出每个功能的覆盖率：挂在某功能上的义务只计入该功能，未挂的只计入全局。
 
@@ -134,14 +151,14 @@ casefile/
 
 ## 配置
 
-| 键                 | 默认                  | 含义                                      |
-| ------------------ | --------------------- | ----------------------------------------- |
-| `dataRoot`         | `<DSH_HOME>/casefile` | 项目数据位置；测试可注入                  |
-| `defaultAuthTier`  | `research`            | 新项目默认授权档                          |
-| `cleanRoomDefault` | `true`                | 预留给 builder 里程碑：builder 看不到原件 |
-| `checkers`         | `["cli","web"]`       | 预留给验收里程碑                          |
-| `maxRounds`        | `5`                   | 预留给循环                                |
-| `redactOnExport`   | `true`                | 导出强制脱敏                              |
+| 键                 | 默认                  | 含义                                                     |
+| ------------------ | --------------------- | -------------------------------------------------------- |
+| `dataRoot`         | `<DSH_HOME>/casefile` | 项目数据位置；测试可注入                                 |
+| `defaultAuthTier`  | `research`            | 新项目默认授权档                                         |
+| `cleanRoomDefault` | `true`                | 预留给 builder 里程碑：builder 看不到原件                |
+| `checkers`         | `["cli","web"]`       | 预留给验收里程碑                                         |
+| `maxRounds`        | `5`                   | 预留给循环                                               |
+| `maxArtifactBytes` | `67108864`（64 MiB）  | 归档产物体积上限；超限直接拒绝（先 stat 预检，不读正文） |
 
 配置写在 `cordis.patch.yml` 里 `casefile` 那一行的 `config:`，不要手改 profile。
 
@@ -161,8 +178,8 @@ casefile/
 ## 副作用与风险
 
 - **写哪些文件：** 只写上面的数据根。不写被调查的项目、不改 REA 二进制、不编辑 profile。
-- **破坏性操作：** M0 没有。后续里程碑（删项目、清 artifacts）遵循仓库 [ADR 0002](https://github.com/kangyishuai/dsh-plugins/blob/main/docs/adr/0002-destructive-operations.md)：默认移入回收站、确认框给一行影响面、支持 dry-run、写审计。
-- **隐私：** 项目数据只在本机。规格包默认脱敏（`HOME`、绝对路径、常见 token 形态），但**分享前仍应自己过一遍**——脱敏是安全网，不是保证。
+- **破坏性操作：** 遵循仓库 [ADR 0002](https://github.com/kangyishuai/dsh-plugins/blob/main/docs/adr/0002-destructive-operations.md)。`case_project drop` 把整个项目目录移进 `<dataRoot>/trash/<时间戳>-<id>`（可恢复），必须传 `confirm: true`，支持 `dryRun` 并给出条目数/体积/目标路径，同时写数据根审计。回收站可查看、可恢复、可清空（`case_project purge`，`dryRun` + `confirm`；回收站里来历不明的条目保留并计数，绝不 `rm -rf`）。没有显式确认就不会硬删任何东西。
+- **隐私：** 项目数据只在本机。规格包、bundle 与报告默认脱敏（系统根目录路径、`~/…`、扩展路径，以及上面列出的 token 形态），但**分享前仍应自己过一遍**——脱敏是安全网，不是保证。
 - **证据质量：** casefile 只存你告诉它的东西。它不验证观察，也从不提升结论的可信度或权威性。
 - **法务：** 面向研究与「你拥有或已获授权分析」的软件。刻意**不提供** DRM/反调试绕过，也不提供复用第三方资产的途径。使用前读 [DISCLAIMER.md](./DISCLAIMER.md)。
 
