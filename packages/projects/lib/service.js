@@ -48,7 +48,12 @@ import {
 import { mountCoordinatorTools } from "./coordinator-tools.js";
 import { runCommand } from "./exec.js";
 import { executeApprovalCore } from "./execute.js";
-import { checkPreapproval } from "./executor.js";
+import {
+  allowedMergeMethodsFromRepo,
+  assessMergePr,
+  checkPreapproval,
+  parseRepoFromRemote,
+} from "./executor.js";
 import { applyFolderDecision, consumeOnceFolderGrant, folderAuthSummary } from "./folder-auth.js";
 import { githubCheckResult, parseGhAuthStatus, parseGhRepoList } from "./github.js";
 import { ARTIFACTS_CONTRACT, refFromArtifactRow, summarizeArtifactRefs } from "./library.js";
@@ -1862,18 +1867,95 @@ export class ProjectsService extends TypertRemoteService {
     // 多目录项目：合并必须在**线程 worktree 所属仓库**里跑（否则会合并错仓库的同号 PR）
     const repoRoot = pickRepoRoot({ worktree: thread.worktree, dirs: project.dirs });
     if (repoRoot === "") return { ok: false, reason: "no-dir" };
-    // 草稿 PR 直接 merge 会被 GitHub 拒（真机踩过：GraphQL "still a draft"），先 pr ready
-    const view = await runGh(
-      ["pr", "view", String(Number(thread.prNumber)), "--json", "isDraft"],
-      repoRoot,
-    );
-    let isDraft = false;
-    try {
-      isDraft = JSON.parse(String(view.stdout ?? "")).isDraft === true;
-    } catch {
-      isDraft = false;
+    const prNumber = Number(thread.prNumber);
+    const viewFields =
+      "isDraft,mergeable,state,statusCheckRollup,reviews,additions,deletions,changedFiles";
+    const readPr = async () => {
+      const gh = await runGh(["pr", "view", String(prNumber), "--json", viewFields], repoRoot);
+      if (gh.code !== 0) return { ok: false, reason: "merge/pr-view-failed" };
+      try {
+        return { ok: true, pr: JSON.parse(String(gh.stdout ?? "")) };
+      } catch {
+        return { ok: false, reason: "merge/pr-view-failed" };
+      }
+    };
+    let view = await readPr();
+    if (!view.ok) {
+      store.appendAudit({
+        action: "pr/merge-refused",
+        projectId: project.id,
+        sessionId,
+        prNumber,
+        reason: view.reason,
+      });
+      store.save();
+      return { ok: false, reason: view.reason };
     }
-    const planned = planMergeSteps({ prNumber: Number(thread.prNumber), isDraft });
+    // 草稿 PR 直接 merge 会被 GitHub 拒（真机踩过：GraphQL "still a draft"），先 pr ready，
+    // 再重新读一次做完整门禁（CI / 批准数 / mergeable / 改动量阈值）
+    if (view.pr?.isDraft === true) {
+      const ready = await runGh(["pr", "ready", String(prNumber)], repoRoot);
+      if (ready.code !== 0) {
+        store.appendAudit({
+          action: "pr/merge-refused",
+          projectId: project.id,
+          sessionId,
+          prNumber,
+          reason: "merge/pr-ready-failed",
+        });
+        store.save();
+        return { ok: false, reason: "merge/pr-ready-failed" };
+      }
+      view = await readPr();
+      if (!view.ok) return { ok: false, reason: view.reason };
+    }
+    // 合并方式：仓库 API 的 allow_squash_merge（拿不到就当未知，拒绝而不是猜）
+    const remote = await runGit(["remote", "get-url", "origin"], repoRoot);
+    const repo = remote.code === 0 ? parseRepoFromRemote(String(remote.stdout ?? "").trim()) : "";
+    let allowedMethods = null;
+    if (repo !== "") {
+      const repoInfo = await runGh(["api", `repos/${repo}`], repoRoot);
+      if (repoInfo.code === 0) {
+        try {
+          allowedMethods = allowedMergeMethodsFromRepo(JSON.parse(String(repoInfo.stdout ?? "")));
+        } catch {
+          allowedMethods = null;
+        }
+      }
+    }
+    let verdict = assessMergePr({
+      pr: view.pr,
+      allowedMethods,
+      minApprovals: Number(project.policy?.merge?.minApprovals ?? 1),
+      maxDiffFiles: Number(project.policy?.merge?.maxDiffFiles ?? 20),
+      maxDiffLines: Number(project.policy?.merge?.maxDiffLines ?? 600),
+    });
+    // GitHub 刚建 PR 时 mergeable 可能还在算：有界重试（与审批执行器同一套语义）
+    for (let attempt = 0; !verdict.ok && attempt < 5; attempt += 1) {
+      if (verdict.reason !== "merge/pr-mergeable-unknown") break;
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      view = await readPr();
+      if (!view.ok) break;
+      verdict = assessMergePr({
+        pr: view.pr,
+        allowedMethods,
+        minApprovals: Number(project.policy?.merge?.minApprovals ?? 1),
+        maxDiffFiles: Number(project.policy?.merge?.maxDiffFiles ?? 20),
+        maxDiffLines: Number(project.policy?.merge?.maxDiffLines ?? 600),
+      });
+    }
+    if (!verdict.ok) {
+      store.appendAudit({
+        action: "pr/merge-refused",
+        projectId: project.id,
+        sessionId,
+        prNumber,
+        reason: verdict.reason,
+      });
+      store.save();
+      return { ok: false, reason: verdict.reason };
+    }
+    const planned = planMergeSteps({ prNumber, isDraft: false });
     if ("error" in planned) return { ok: false, reason: planned.error };
     /** @type {{ code: number, stdout: string, stderr: string }} */
     let gh = { code: 0, stdout: "", stderr: "" };
