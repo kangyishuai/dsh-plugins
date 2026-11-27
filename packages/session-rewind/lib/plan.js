@@ -259,6 +259,35 @@ export function planRewind(events, surfaceNodes, targetSeq) {
 }
 
 /**
+ * 数「用户/助手消息」条数（USIM-U2-20：与回溯面板的 ghost 列表同一口径）。
+ *
+ * `shadowedSeqs` 是 surface 节点；其中包含 system/tool-result 等记录，直接报节点数会让
+ * toast 的「N 条消息」和面板的「N 条消息」不一致。这里只数人可见的消息：
+ * 真人 user/message + 非空 assistant/message（与被遮蔽区间里 ghost 能列出的条目一致）。
+ * @param {any[]} events 会话事件日志（按 seq 连续）
+ * @param {number[]} shadowedSeqs 被 marker 遮蔽的 surface 节点
+ * @returns {number}
+ */
+export function countVisibleMessages(events, shadowedSeqs) {
+  const source = Array.isArray(events) ? events : [];
+  const seqs = Array.isArray(shadowedSeqs) ? shadowedSeqs : [];
+  let count = 0;
+  for (const seq of seqs) {
+    const event = source[seq];
+    if (!isRecord(event)) continue;
+    if (event.type === "user/message" && event.data?.source?.kind === "user") {
+      count += 1;
+      continue;
+    }
+    if (event.type === "assistant/message") {
+      const content = event.data?.message?.content;
+      if (Array.isArray(content) && content.length > 0) count += 1;
+    }
+  }
+  return count;
+}
+
+/**
  * 从日志里还原已经存在的回溯区间（marker 事件）。
  *
  * marker 的 source 约定为 `{ kind: MARKER_SOURCE_KIND, targetSeq: number }`；

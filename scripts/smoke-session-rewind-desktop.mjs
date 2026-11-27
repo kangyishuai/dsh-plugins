@@ -129,6 +129,24 @@ const dialogInfo = (cdp) =>
         return box ? { present: true, checked: box.checked } : { present: false, checked: false };
       })(),
       buttons: [...dlg.querySelectorAll("button")].map((b) => (b.textContent || "").trim()).filter(Boolean),
+      recoverable: (() => {
+        const el = dlg.querySelector("[data-rewind-recoverable]");
+        return el ? (el.textContent || "").replace(/\\s+/g, " ").trim() : "";
+      })(),
+      autofocus: (() => {
+        const el = dlg.querySelector("[data-modal-autofocus]");
+        if (!el) return null;
+        return {
+          label: (el.textContent || "").trim(),
+          primary: (el.className || "").includes("dsh-srw-btn-primary"),
+          focused: document.activeElement === el,
+        };
+      })(),
+      focusInDialog: dlg.contains(document.activeElement),
+      trackingScope: (() => {
+        const el = dlg.querySelector("[data-srw-tracking-scope]");
+        return el ? (el.textContent || "").trim() : "";
+      })(),
     };
   })()`);
 
@@ -151,6 +169,10 @@ const drawerInfo = (cdp) =>
     return {
       tabs: [...root.querySelectorAll(".dsh-srw-tab")].map((t) => (t.textContent || "").trim()),
       text: (root.textContent || "").replace(/\\s+/g, " "),
+      hintPresent: !!root.querySelector(".dsh-srw-drawer-hint"),
+      hasPickMessage: [...root.querySelectorAll("button")].some((b) =>
+        /选择消息回退|Pick a message/iu.test((b.textContent || "").trim()),
+      ),
     };
   })()`);
 
@@ -172,6 +194,63 @@ async function exists(path) {
     return false;
   }
 }
+
+/** 清空 composer（Lexical 需要 execCommand 才删得掉）。 */
+const clearComposer = (/** @type {any} */ cdp) =>
+  cdp.evaluate(`(() => {
+    const el = document.querySelector("[data-composer-input]");
+    if (!el) return false;
+    el.focus();
+    const sel = document.getSelection();
+    if (!sel) return false;
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    return document.execCommand("delete", false) === true;
+  })()`);
+
+/** 发一轮 prompt 并等回合结束（--deep 的三种文件语义都用它）。 */
+const runPrompt = async (/** @type {any} */ cdp, /** @type {string} */ text) => {
+  await clearComposer(cdp);
+  await sleep(200);
+  const typed = await typeIntoComposer(cdp, text);
+  await sleep(300);
+  const sent = await clickSend(cdp);
+  const finished = await waitForTurnEnd(cdp, 180000);
+  return { typed, sent, finished };
+};
+
+/** 点最后一条用户消息的 ↶（--deep 的修改/删除/冲突场景都围绕最新一轮）。 */
+const openRewindOnLastUser = (/** @type {any} */ cdp) =>
+  cdp.evaluate(`(() => {
+    const rows = [...document.querySelectorAll('[data-chat-flow-kind="user"]')];
+    const row = rows[rows.length - 1];
+    if (!row) return "no-user-row";
+    const btn = [...row.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("回退到此处"));
+    if (!btn) return "no-rewind-button";
+    btn.click();
+    return "clicked";
+  })()`);
+
+/** 确认框里选「对话+文件」并执行；返回是否在超时内关闭。 */
+const chooseBothAndConfirm = async (/** @type {any} */ cdp) => {
+  await cdp.evaluate(`(() => {
+    const radio = document.querySelector('.dsh-srw-dialog input[type="radio"][value="both"]');
+    if (radio && !radio.disabled) radio.click();
+  })()`);
+  await sleep(400);
+  const confirmed = await clickDialogButton(cdp, ["开始回退", "Rewind"]);
+  let gone = false;
+  for (let i = 0; i < 40; i += 1) {
+    await sleep(500);
+    if ((await dialogInfo(cdp)) === null) {
+      gone = true;
+      break;
+    }
+  }
+  return confirmed && gone;
+};
 
 /** 输入框里是否还有「停止」按钮（回合仍在跑）。 */
 const isRunning = (/** @type {any} */ cdp) =>
@@ -656,9 +735,10 @@ const main = async () => {
       picked && confirm !== null,
       confirm ? confirm.title : "没有确认框",
     );
+    // B1：新文案是「将截断 N 条上下文记录（撤回 M 条用户/助手消息）」；同时接受旧口径。
     check(
-      "确认框写明影响面与预览",
-      typeof confirm?.text === "string" && /将撤回|This withdraws/u.test(confirm.text),
+      "确认框写明影响面与预览（截断记录 / 撤回消息）",
+      typeof confirm?.text === "string" && /将截断|将撤回|truncates|withdraws/iu.test(confirm.text),
       (confirm?.text ?? "").slice(0, 160),
     );
     check(
@@ -672,6 +752,66 @@ const main = async () => {
       "确认框有「回退后立即重发」且默认不勾选",
       confirm?.resend?.present === true && confirm.resend.checked === false,
       JSON.stringify(confirm?.resend ?? null),
+    );
+    // AUD-REW-06 / ADR 0002：破坏性确认框必须写清「能否恢复」。
+    // B1：默认 chat 模式只有基础行；both（且有 tracked 文件）才追加救援点/回收站。
+    const dialogBothSelected = await cdp.evaluate(`(() => {
+      const radio = document.querySelector('.dsh-srw-dialog input[type="radio"][value="both"]');
+      return radio ? radio.checked : false;
+    })()`);
+    const recoverableHasFileLine =
+      typeof confirm?.recoverable === "string" &&
+      /救援点|rescue|回收站|trash/iu.test(confirm.recoverable);
+    check(
+      "确认框写明「撤回不可撤销、内容留在已撤回页签」（可恢复性基础行）",
+      typeof confirm?.recoverable === "string" && /撤回|withdrawn/iu.test(confirm.recoverable),
+      (confirm?.recoverable ?? "").slice(0, 240),
+    );
+    check(
+      "可恢复性文案按模式分档（chat 不出现文件救援点 / both 必含）",
+      dialogBothSelected === true ? recoverableHasFileLine : !recoverableHasFileLine,
+      JSON.stringify({ dialogBothSelected, recoverable: confirm?.recoverable }),
+    );
+    // AUD-REW-07：主按钮默认聚焦，且焦点陷阱生效。
+    check(
+      "确认框默认聚焦主按钮（data-modal-autofocus）",
+      confirm?.autofocus?.primary === true &&
+        confirm.autofocus.focused === true &&
+        confirm.focusInDialog === true,
+      JSON.stringify(confirm?.autofocus ?? null),
+    );
+    await cdp.evaluate(`(() => {
+      const dlg = ${DIALOG};
+      if (!dlg) return;
+      const nodes = [...dlg.querySelectorAll('button:not([disabled]), input:not([disabled])')];
+      const last = nodes[nodes.length - 1];
+      if (last && typeof last.focus === "function") last.focus();
+    })()`);
+    for (const type of ["keyDown", "keyUp"]) {
+      await cdp.send("Input.dispatchKeyEvent", {
+        type,
+        key: "Tab",
+        code: "Tab",
+        windowsVirtualKeyCode: 9,
+        nativeVirtualKeyCode: 9,
+      });
+    }
+    await sleep(200);
+    const tabTrap = await cdp.evaluate(`(() => {
+      const dlg = ${DIALOG};
+      if (!dlg) return null;
+      return {
+        inside: dlg.contains(document.activeElement),
+        active: (document.activeElement && document.activeElement.textContent || "").trim(),
+      };
+    })()`);
+    check("确认框 Tab 不穿透（焦点在框内环绕）", tabTrap?.inside === true, JSON.stringify(tabTrap));
+    check(
+      "确认框写明文件追踪范围（write/edit/apply_patch；bash/子代理不追踪）",
+      typeof confirm?.trackingScope === "string" &&
+        /write/iu.test(confirm.trackingScope) &&
+        /apply_patch|edit|编辑/iu.test(confirm.trackingScope),
+      (confirm?.trackingScope ?? "").slice(0, 240),
     );
     // 主按钮的底色与文字必须成对翻转：--dsw-alias-brand-primary 是「反色表面色」
     // （浅色 #0f1115、深色 #f9fafb），0.6.1 把它和死白 #fff 配在一起，深色主题下确认按钮
@@ -780,6 +920,42 @@ const main = async () => {
       return root ? (root.textContent || "").replace(/\\s+/g, " ") : "";
     })()`);
     check("救援点页签可渲染", /救援点|rescue/iu.test(rescuesText), rescuesText.slice(0, 120));
+    const trashSection = await cdp.evaluate(`(() => {
+      const root = document.querySelector(".dsh-srw-drawer");
+      const section = root ? root.querySelector("[data-srw-trash]") : null;
+      return { present: !!section, text: section ? (section.textContent || "").replace(/\\s+/g, " ") : "" };
+    })()`);
+    check(
+      "救援点页签里有回收站入口（可恢复/可清空，AUD-REW-08）",
+      trashSection?.present === true && /回收站|Trash/iu.test(trashSection.text ?? ""),
+      JSON.stringify(trashSection).slice(0, 200),
+    );
+    check(
+      "回溯面板提供「选择消息回退」入口（USIM-U2-10）",
+      drawer?.hintPresent === true && drawer.hasPickMessage === true,
+      JSON.stringify({ hint: drawer?.hintPresent, pick: drawer?.hasPickMessage }),
+    );
+    const pickClicked = await cdp.evaluate(`(() => {
+      const root = document.querySelector(".dsh-srw-drawer");
+      const btn = root ? [...root.querySelectorAll("button")].find((b) => /选择消息回退|Pick a message/iu.test((b.textContent || "").trim())) : null;
+      if (!btn) return false;
+      btn.click();
+      return true;
+    })()`);
+    await sleep(1200);
+    const pickDialog = await dialogInfo(cdp);
+    check(
+      "「选择消息回退」关闭面板并打开候选对话框",
+      pickClicked === true &&
+        pickDialog !== null &&
+        /回溯|Rewind/iu.test(pickDialog.title ?? "") &&
+        Array.isArray(pickDialog.rows),
+      pickDialog?.title ?? "no dialog",
+    );
+    if (pickDialog !== null) {
+      await clickDialogButton(cdp, ["取消", "Cancel"]);
+      await sleep(500);
+    }
 
     // ---------- F. 设置 → 会话回溯 分节（偏好 + 诊断） ----------
     // 设置原来在抽屉里，现在独立成设置分节；这里只读地打开它并读诊断文本。
@@ -842,11 +1018,30 @@ const main = async () => {
         settings.text.includes("诊断"),
       (settings?.text ?? "").slice(0, 220),
     );
+    const moreSettings = await cdp.evaluate(`(() => {
+      const details = document.querySelector("[data-srw-settings] details[data-srw-more-settings]");
+      if (!details) return null;
+      const summary = details.querySelector("summary");
+      const before = { open: details.open === true, summary: (summary?.textContent || "").trim() };
+      if (summary) summary.click();
+      return { ...before, expanded: details.open === true };
+    })()`);
     check(
-      "诊断报告只读工具已注册",
+      "低频设置与诊断收进「更多设置」且默认收起（AUD-REW-17）",
+      moreSettings?.open === false && /更多设置|More settings/iu.test(moreSettings.summary ?? ""),
+      JSON.stringify(moreSettings),
+    );
+    await sleep(300);
+    check(
+      "「更多设置」可以展开（里面是每页数量/列表确认/诊断）",
+      moreSettings?.expanded === true,
+      JSON.stringify(moreSettings),
+    );
+    check(
+      "诊断报告只读工具已注册（诊断文案已本地化）",
       settings?.status === "ok" &&
         /只读工具/u.test(settings.text) &&
-        /enabled|disabled by config/u.test(settings.text),
+        /已启用|已关闭|enabled|disabled/u.test(settings.text),
       (settings?.text ?? "").slice(0, 400),
     );
     check(
@@ -1003,7 +1198,17 @@ const main = async () => {
           const radio = document.querySelector('.dsh-srw-dialog input[type="radio"][value="both"]');
           if (radio && !radio.disabled) radio.click();
         })()`);
-        await sleep(400);
+        await sleep(500);
+        // B1 的另一半：切到 both 后，可恢复性文案才追加「救援点/回收站」。
+        const bothModeRecoverable = await cdp.evaluate(`(() => {
+          const el = document.querySelector('.dsh-srw-dialog [data-rewind-recoverable]');
+          return el ? (el.textContent || '').trim() : '';
+        })()`);
+        check(
+          "both 模式的可恢复性文案包含救援点/回收站",
+          /救援点|rescue|回收站|trash/iu.test(bothModeRecoverable),
+          bothModeRecoverable.slice(0, 240),
+        );
         const confirmed = await clickDialogButton(cdp, ["开始回退", "Rewind"]);
         let dialogGone = false;
         for (let i = 0; i < 40; i += 1) {
@@ -1097,6 +1302,122 @@ const main = async () => {
           JSON.stringify({ restoreClicked, restoreConfirmed, restored: restored.slice(0, 40) }),
         );
         await cdp.screenshot(join(SHOTS, "05-deep-restored.png"));
+
+        // ---- AUD-REW-11：--deep 补齐「修改还原 / 删除文件 / 冲突拒绝」三条最危险的文件语义 ----
+        // 1) 修改还原：agent 覆盖已有文件 → 回退 → 内容回到覆盖前（不是「无文件变更」）。
+        const rewriteContent = `rewritten-${Date.now()}`;
+        const rewriteRun = await runPrompt(
+          cdp,
+          `只做一件事：用 write 工具把当前工作区 ${fileName} 的内容覆盖为 ${rewriteContent}。不要做其他操作。`,
+        );
+        let rewrittenBody = "";
+        try {
+          rewrittenBody = (await readFile(filePath, "utf8")).trim();
+        } catch {
+          rewrittenBody = "";
+        }
+        check(
+          "修改还原：agent 覆盖了已存在的文件",
+          rewriteRun.finished && rewrittenBody === rewriteContent,
+          JSON.stringify({ finished: rewriteRun.finished, body: rewrittenBody.slice(0, 48) }),
+        );
+        const modifyOpened = await openRewindOnLastUser(cdp);
+        await sleep(2200);
+        const modifyConfirm = await dialogInfo(cdp);
+        const modifyBothReady = await cdp.evaluate(`(() => {
+          const radio = document.querySelector('.dsh-srw-dialog input[type="radio"][value="both"]');
+          return radio ? !radio.disabled : false;
+        })()`);
+        check(
+          "修改还原：确认框预览可用且写明还原文件",
+          modifyOpened === "clicked" &&
+            modifyBothReady === true &&
+            /将还原|还原 \d|Restore/u.test(modifyConfirm?.text ?? ""),
+          JSON.stringify({ modifyOpened, modifyBothReady }).slice(0, 200),
+        );
+        const modifyExecuted = await chooseBothAndConfirm(cdp);
+        let afterModify = "";
+        try {
+          afterModify = (await readFile(filePath, "utf8")).trim();
+        } catch {
+          afterModify = "";
+        }
+        check(
+          "修改还原：回退后内容回到覆盖前",
+          modifyExecuted && afterModify === content,
+          JSON.stringify({ modifyExecuted, body: afterModify.slice(0, 48) }),
+        );
+
+        // 2) 删除文件：agent 用 apply_patch 删除 → 回退 → 文件按记录重建。
+        const deleteRun = await runPrompt(
+          cdp,
+          `只做一件事：用 apply_patch 工具删除当前工作区的 ${fileName}（*** Delete File）。不要做其他操作。`,
+        );
+        check(
+          "删除文件：agent 删除了测试文件",
+          deleteRun.finished && !(await exists(filePath)),
+          JSON.stringify({ finished: deleteRun.finished, exists: await exists(filePath) }),
+        );
+        await openRewindOnLastUser(cdp);
+        await sleep(2200);
+        const deleteConfirm = await dialogInfo(cdp);
+        check(
+          "删除文件：确认框预览写明会重建被删除的文件",
+          /重建|还原被删除|recreat|Restore/u.test(deleteConfirm?.text ?? ""),
+          (deleteConfirm?.text ?? "").slice(0, 240),
+        );
+        const deleteExecuted = await chooseBothAndConfirm(cdp);
+        let afterDelete = "";
+        try {
+          afterDelete = (await readFile(filePath, "utf8")).trim();
+        } catch {
+          afterDelete = "";
+        }
+        check(
+          "删除文件：回退后文件被重建",
+          deleteExecuted && afterDelete === content,
+          JSON.stringify({ deleteExecuted, body: afterDelete.slice(0, 48) }),
+        );
+
+        // 3) 冲突拒绝：外部把同一文件改成第三种内容 → 文件模式整体拒绝、一个字节都不写。
+        const conflictBase = `conflict-base-${Date.now()}`;
+        const conflictRun = await runPrompt(
+          cdp,
+          `只做一件事：用 write 工具把当前工作区 ${fileName} 的内容覆盖为 ${conflictBase}。不要做其他操作。`,
+        );
+        const externalContent = `external-change-${Date.now()}`;
+        await writeFile(filePath, externalContent, "utf8");
+        await openRewindOnLastUser(cdp);
+        await sleep(2200);
+        const conflictConfirm = await dialogInfo(cdp);
+        const conflictBothDisabled = await cdp.evaluate(`(() => {
+          const radio = document.querySelector('.dsh-srw-dialog input[type="radio"][value="both"]');
+          return radio ? radio.disabled : null;
+        })()`);
+        check(
+          "冲突拒绝：外部改动后文件模式被禁用并列出冲突",
+          conflictRun.finished &&
+            conflictBothDisabled === true &&
+            /冲突|conflict|不一致|differs/iu.test(conflictConfirm?.text ?? ""),
+          JSON.stringify({
+            conflictBothDisabled,
+            text: (conflictConfirm?.text ?? "").slice(0, 240),
+          }),
+        );
+        await clickDialogButton(cdp, ["取消", "Cancel"]);
+        await sleep(700);
+        let conflictFileBody = "";
+        try {
+          conflictFileBody = (await readFile(filePath, "utf8")).trim();
+        } catch {
+          conflictFileBody = "";
+        }
+        check(
+          "冲突拒绝：拒绝后没有写文件（外部内容保持原样）",
+          conflictFileBody === externalContent,
+          JSON.stringify({ body: conflictFileBody.slice(0, 48) }),
+        );
+        await rm(filePath, { force: true }).catch(() => {});
 
         // 时间线里应出现一条「文件恢复」节点
         await openDrawerTab(cdp, "回溯记录");

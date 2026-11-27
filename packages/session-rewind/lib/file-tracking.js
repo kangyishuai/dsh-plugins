@@ -431,6 +431,12 @@ export function installFileTracking(ctx, deps) {
   const anchorCache = new Map();
   /** @type {Function[]} */
   const disposers = [];
+  /**
+   * 已告警过的「未追踪」原因（`sessionId:reason`）：同一会话同一原因只 warn 一次，
+   * 避免 agent 反复写 .git/超大文件时刷屏（AUD-REW-04：不忽略 recordChange 的返回值）。
+   * @type {Set<string>}
+   */
+  const skippedNotices = new Set();
 
   /**
    * 日志失败也不能影响工具。
@@ -445,6 +451,30 @@ export function installFileTracking(ctx, deps) {
         warn(`session-rewind/file-tracking: ${scope}: ${messageOf(error)}`);
     } catch {
       // 日志本身失败就彻底放弃
+    }
+  }
+
+  /**
+   * 记录一次「未追踪」告警：每个会话+原因只 warn 一次（上限 256 条，避免长进程无限增长）。
+   * @param {string} sessionId
+   * @param {string} reason
+   * @param {string} path
+   * @returns {void}
+   */
+  function reportSkipped(sessionId, reason, path) {
+    if (skippedNotices.size >= 256) return;
+    const key = `${sessionId}:${reason}`;
+    if (skippedNotices.has(key)) return;
+    skippedNotices.add(key);
+    try {
+      const warn = isRecord(logger) ? logger.warn : undefined;
+      if (typeof warn === "function") {
+        warn(
+          `session-rewind/file-tracking: not tracking a '${reason}' change in session ${sessionId} (first: ${path})`,
+        );
+      }
+    } catch {
+      // 日志失败不影响工具
     }
   }
 
@@ -574,7 +604,12 @@ export function installFileTracking(ctx, deps) {
       const saved = captureFor(captureRecord, change.path);
       let before = change.before;
       if (before === undefined) before = capturedTextOf(saved);
-      if (before === undefined) continue;
+      // AUD-REW-04：捕获阶段已判定跳过（symlink / 工作区外 / 排除目录 / 不可读…）时不再
+      // 静默 continue —— 把原因传给 recordChange 落一条 skipped entry，预览里可见。
+      const capturedReason =
+        isRecord(saved) && saved.ok === false && typeof saved.reason === "string"
+          ? saved.reason
+          : undefined;
       let after = change.after;
       if (after === undefined) {
         const read = await store.captureBefore(context.cwd, change.path);
@@ -589,7 +624,7 @@ export function installFileTracking(ctx, deps) {
       const existedBefore =
         typeof change.existedBefore === "boolean" ? change.existedBefore : before !== null;
       const mode = isRecord(saved) && typeof saved.mode === "number" ? saved.mode : null;
-      await store.recordChange({
+      const result = await store.recordChange({
         sessionId: context.sessionId,
         cwd: context.cwd,
         anchorSeq,
@@ -600,7 +635,16 @@ export function installFileTracking(ctx, deps) {
         beforeContent: before,
         afterContent: after,
         mode,
+        ...(capturedReason === undefined ? {} : { skipReason: capturedReason }),
       });
+      // 返回值不能忽略（AUD-REW-04）：跳过要有日志，否则「文件模式说没改过」无从排查。
+      if (isRecord(result) && result.ok === false && typeof result.reason === "string") {
+        reportSkipped(
+          context.sessionId,
+          result.reason,
+          typeof result.path === "string" ? result.path : String(change.path),
+        );
+      }
     }
   }
 

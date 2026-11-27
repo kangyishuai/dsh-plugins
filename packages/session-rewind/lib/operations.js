@@ -1,19 +1,15 @@
 // @ts-check
 // 执行层：把一次 Remote 请求拆成「解析会话 → 校验 → 规划 → 追加 marker」的同步逻辑。
+// 注意：`candidatesResponse` / `rewindResponse` / `cutsResponse` 三个 helper 在生产路径里
+// 没有调用方（AUD-REW-10 的死代码），已删除；真正被使用/测试的是 resolveSession、
+// resolveRewindTarget、appendRewindMarker 与 rewind-flow.js 的编排状态机。
 //
 // 这一层刻意不 import 任何 @deepseek-ai/*：宿主相关的只剩两处，
 //   - service.js 里的 `createUserMessage`（构造 marker 消息）；
 //   - service.js 里的 `RemoteError`（把下面的 code 搬到线上）。
 // 其余（解析 sessions/agents、错误码、append 参数）都在这里，可以用假的
 // session/agent 在 node --test 里覆盖全部错误分支。
-import {
-  cutsOf,
-  listCandidatesPage,
-  MARKER_SOURCE_KIND,
-  MARKER_TEXT,
-  messageImages,
-  planRewind,
-} from "./plan.js";
+import { MARKER_SOURCE_KIND, MARKER_TEXT, planRewind } from "./plan.js";
 
 /** RemoteError code 的统一前缀。 */
 export const ERROR_PREFIX = "session-rewind";
@@ -218,109 +214,6 @@ function throwPlanError(planError) {
   const code =
     planError?.code === "not-on-surface" ? ERROR_CODES.notOnSurface : ERROR_CODES.badTarget;
   throw new RewindRequestError(code, String(planError?.message ?? "rewind target is not usable"));
-}
-
-/**
- * `candidates`：surface 上的真人用户消息列表（最新在前）。
- * @param {ServiceDeps} deps
- * @param {any} request `{ sessionId, limit? }`
- * @returns {{sessionId: string, candidates: any[], nextCursor: number | null}}
- */
-export function candidatesResponse(deps, request) {
-  // 只读：运行中的会话也能列候选（客户端据此让用户选择「停止并回退」）。
-  const { session, sessionId } = resolveSession(deps, request?.sessionId, { allowRunning: true });
-  const page = listCandidatesPage(snapshotEventsOf(session), surfaceNodesOf(session), {
-    limit: request?.limit,
-    cursor: request?.cursor,
-    q: request?.q,
-  });
-  const summarize =
-    typeof deps.summarizeFiles === "function" ? deps.summarizeFiles : () => undefined;
-  return {
-    sessionId,
-    candidates: page.candidates.map((candidate) => {
-      const files = summarize(sessionId, candidate.seq);
-      const fileCount =
-        files !== undefined && typeof files.fileCount === "number" ? files.fileCount : 0;
-      return {
-        ...candidate,
-        hasFiles: fileCount > 0,
-        fileCount,
-        reachable: true,
-      };
-    }),
-    nextCursor: page.nextCursor,
-  };
-}
-
-/**
- * `rewind`：追加一条 marker，把目标消息及其后的 surface 节点整体替换掉。
- * @param {ServiceDeps} deps
- * @param {any} request `{ sessionId, targetSeq }`
- * @returns {{targetSeq: number, markerSeq: number, removedCount: number, text: string, target: {text: string, images: any[]}}}
- */
-export function rewindResponse(deps, request) {
-  // 严格模式：这个 helper 代表「append 时会话必须已 idle」。生产路径
-  // （SessionRewindService#executeRewind）会先停下运行中的回合再走到这里。
-  const { session, sessionId } = resolveSession(deps, request?.sessionId);
-  const targetSeq = request?.targetSeq;
-  if (!isEventSeq(targetSeq)) {
-    throw new RewindRequestError(
-      ERROR_CODES.badTarget,
-      `targetSeq must be a non-negative safe integer, got ${String(targetSeq)}`,
-    );
-  }
-  if (typeof session.append !== "function") {
-    throw new RewindRequestError(ERROR_CODES.failed, "session does not expose append()");
-  }
-  const inflight = deps.inflight;
-  if (inflight?.has(sessionId) === true) {
-    throw new RewindRequestError(
-      ERROR_CODES.failed,
-      `a rewind is already in progress for session "${sessionId}"`,
-    );
-  }
-  inflight?.add(sessionId);
-  try {
-    const events = snapshotEventsOf(session);
-    const plan = planRewind(events, surfaceNodesOf(session), targetSeq);
-    if ("error" in plan) throwPlanError(plan.error);
-    const targetEvent = events[targetSeq];
-    const marker = deps.createMarkerMessage(targetSeq, {
-      mode: request?.mode === "both" ? "both" : "chat",
-      ...(typeof request?.auditId === "string" ? { auditId: request.auditId } : {}),
-    });
-    const event = session.append("user/message", marker, buildAppendOptions(plan));
-    if (!isRecord(event) || !isEventSeq(event.seq)) {
-      throw new RewindRequestError(
-        ERROR_CODES.failed,
-        "session.append() did not return an event with a seq",
-      );
-    }
-    return {
-      targetSeq,
-      markerSeq: event.seq,
-      removedCount: plan.shadowedSeqs.length,
-      text: plan.text,
-      target: {
-        text: plan.text,
-        images: targetEvent !== undefined ? messageImages(targetEvent.data) : [],
-      },
-    };
-  } finally {
-    inflight?.delete(sessionId);
-  }
-}
-
-/**
- * `cuts`：日志里已经存在的回溯区间（客户端兜底用）。
- * @param {ServiceDeps} deps
- * @param {any} request `{ sessionId }`
- * @returns {{cuts: import("./plan.js").Cut[]}}
- */
-export function cutsResponse(deps, request) {
-  const { session } = resolveSession(deps, request?.sessionId);
-  return { cuts: cutsOf(snapshotEventsOf(session)) };
 }
 
 /**

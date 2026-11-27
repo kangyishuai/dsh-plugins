@@ -22,13 +22,26 @@ function loadClient() {
   /** @type {any} */
   let captured = null;
 
+  // 保留 props/children：纯函数单测仍用不到，但组件渲染断言（AUD-REW-06/07/08/16/17）需要
+  // 从返回的元素树里找 data-* 锚点与文案。
+  /**
+   * @param {any} type
+   * @param {any} props
+   * @param {...any} children
+   * @returns {any}
+   */
+  const stubCreateElement = (type, props, ...children) => ({ type, props: props || {}, children });
   const reactStub = {
-    createElement: () => ({ type: "stub" }),
+    createElement: stubCreateElement,
     Fragment: "Fragment",
-    cloneElement: () => ({ type: "stub" }),
-    isValidElement: () => false,
+    cloneElement: (/** @type {any} */ element, /** @type {any} */ extra) => ({
+      ...element,
+      props: { ...(element.props || {}), ...extra },
+    }),
+    isValidElement: (/** @type {any} */ value) =>
+      !!value && typeof value === "object" && "type" in value,
     useSyncExternalStore: () => undefined,
-    useState: () => [undefined, () => {}],
+    useState: (/** @type {any} */ initial) => [initial, () => {}],
     useEffect: () => {},
     useCallback: (/** @type {any} */ fn) => fn,
     useRef: () => ({ current: null }),
@@ -756,6 +769,67 @@ describe("dictionaries", () => {
     }
   });
 
+  it("covers the recovery/trash/health/diagnostics keys (AUD-REW-06/08/16/17)", () => {
+    for (const key of [
+      "confirm.recoverable",
+      "confirm.recoverableFiles",
+      "confirm.trackingScope",
+      "confirm.skippedReasonLine",
+      "drawer.hintRewind",
+      "drawer.pickMessage",
+      "health.auditRecordsAtLeast",
+      "skip.reason.too-large",
+      "skip.reason.binary",
+      "skip.reason.symlink",
+      "skip.reason.excluded",
+      "skip.reason.outside-cwd",
+      "skip.reason.not-a-file",
+      "skip.reason.unreadable",
+      "skip.reason.invalid-path",
+      "skip.reason.invalid-cwd",
+      "skip.reason.storage-full",
+      "skip.reason.other",
+      "toast.rewoundSkipped",
+      "trash.title",
+      "trash.empty",
+      "trash.meta",
+      "trash.restore",
+      "trash.confirm",
+      "trash.clear",
+      "trash.clearConfirm",
+      "trash.clearConfirmAction",
+      "trash.clearing",
+      "trash.clearDone",
+      "trash.loadFailed",
+      "toast.trashRestored",
+      "toast.trashPartial",
+      "settings.more",
+      "health.dataRoot",
+      "health.tracking",
+      "health.storage",
+      "health.storageLine",
+      "health.audit",
+      "health.auditRecords",
+      "health.readOnlyTool",
+      "health.enabled",
+      "health.disabled",
+      "health.disabledByConfig",
+      "health.notRegistered",
+      "health.orphans",
+      "health.orphansNone",
+      "health.orphansCount",
+      "health.orphansSkipped",
+      "health.markerShape",
+      "health.markerCuts",
+      "health.sessionCwd",
+      "health.cwdMissing",
+      "health.session",
+    ]) {
+      assert.ok(Object.hasOwn(zh, key), `missing zh ${key}`);
+      assert.ok(Object.hasOwn(en, key), `missing en ${key}`);
+    }
+  });
+
   it("covers the v2 UI keys", () => {
     for (const key of [
       "confirm.summary",
@@ -997,11 +1071,25 @@ function applyHarness(fixtures, options = {}) {
           const name = method.split("/")[1];
           const request = payload?.args?.request;
           calls.push({ name, request });
-          const value = fixtures[name];
+          let value = fixtures[name];
+          // 数组夹具 = 按调用顺序消费（用于「第一次失败、重试成功」这类断言）。
+          if (Array.isArray(value)) {
+            if (!options.queues) options.queues = new Map();
+            const queue = options.queues;
+            if (!queue.has(name)) queue.set(name, value.slice());
+            const entries = queue.get(name);
+            value = entries.length > 1 ? entries.shift() : entries[0];
+          }
           if (value === undefined) {
             return {
               ok: false,
               error: { code: "session-rewind/files-conflict", message: "conflict" },
+            };
+          }
+          if (value && typeof value === "object" && typeof value.__fail === "string") {
+            return {
+              ok: false,
+              error: { code: value.__fail, message: String(value.__message ?? "failed") },
             };
           }
           return { ok: true, value };
@@ -1038,7 +1126,7 @@ function applyHarness(fixtures, options = {}) {
     ),
     "header actions slot was not registered",
   );
-  assert.equal(typeof decorated?.ui?.options, "function", "commandUi.decorate was not called");
+  assert.equal(decorated?.ui?.kind, "action", "commandUi.decorate(action) was not called");
   const overlay = registrations.find((registration) => registration.entry.name === "shell.overlay");
   const element = overlay.component({ t });
   /**
@@ -1131,6 +1219,20 @@ describe("apply() runtime wiring", () => {
       ],
     },
     restoreRescue: { restored: ["a.ts"], failed: [] },
+    trash: {
+      operations: [
+        {
+          id: "trash-1",
+          time: 1000,
+          targetSeq: 9,
+          rescueId: "res-1",
+          totalBytes: 7,
+          paths: [{ path: "n.txt", bytes: 7 }],
+        },
+      ],
+    },
+    restoreTrash: { restored: ["n.txt"], failed: [], safetyRescueId: "res-2" },
+    clearTrash: { dryRun: true, auditId: "trash-1", files: 1, bytes: 7, paths: ["n.txt"] },
     health: {
       ok: true,
       version: 1,
@@ -1222,13 +1324,106 @@ describe("apply() runtime wiring", () => {
     assert.equal(harness.store.getSnapshot().drawer.open, false);
   });
 
-  it("serves the /rewind command decoration with candidates and opens the confirm dialog", async () => {
+  it("回溯面板「选择消息回退」关面板并打开候选对话框（USIM-U2-10）", async () => {
     const harness = applyHarness(fixtures());
-    const options = await harness.decorated.ui.options({ sessionId: "s1" });
-    assert.equal(options.length, 1);
-    assert.equal(options[0].id, "9");
-    assert.match(options[0].detail, /^\d{2}:\d{2}$/);
-    harness.decorated.ui.onSelect({ id: "9" }, { sessionId: "s1" });
+    harness.api.openDrawer("s1", "ghost");
+    await flush();
+    assert.equal(harness.store.getSnapshot().drawer.open, true);
+    harness.api.pickMessageFromDrawer();
+    await flush();
+    const state = harness.store.getSnapshot();
+    assert.equal(state.drawer.open, false);
+    assert.equal(state.mode, "list");
+    assert.equal(state.candidates.length, 1);
+  });
+
+  it("成功 toast 报跳过数，并把「查看」指向回溯记录", async () => {
+    const data = fixtures();
+    data.rewind = {
+      ...data.rewind,
+      files: {
+        restored: ["a.ts"],
+        trashed: [],
+        skipped: [{ path: "big.bin", reason: "too-large" }],
+        failed: [],
+        rescueId: "res-1",
+      },
+    };
+    const harness = applyHarness(data);
+    harness.api.openConfirm(candidate, "s1", "row");
+    await flush();
+    harness.api.doRewind();
+    await flush();
+    const state = harness.store.getSnapshot();
+    assert.ok(state.toast.text.includes("toast.rewoundSkipped"));
+    assert.equal(state.toast.action.labelKey, "toast.view");
+    state.toast.action.onClick();
+    await flush();
+    assert.equal(harness.store.getSnapshot().drawer.tab, "audit");
+  });
+
+  it("toast 与被撤回面板用同一个「用户/助手消息」口径（USIM-U2-20）", async () => {
+    const data = fixtures();
+    data.rewind = { ...data.rewind, removedCount: 4, removedMessageCount: 3 };
+    const harness = applyHarness(data);
+    harness.api.openConfirm(candidate, "s1", "row");
+    await flush();
+    harness.api.doRewind();
+    await flush();
+    const toast = harness.store.getSnapshot().toast;
+    assert.ok(toast.text.includes('"messages":3'), toast.text);
+    assert.ok(toast.text.includes('"n":4'), toast.text);
+  });
+
+  it("恢复点页签加载回收站，并接通恢复/清空（dry-run → 确认）", async () => {
+    const harness = applyHarness(fixtures());
+    harness.api.openDrawer("s1", "rescues");
+    await flush();
+    let drawer = harness.store.getSnapshot().drawer;
+    assert.equal(drawer.rescues.list.length, 1);
+    assert.equal(drawer.rescues.trash.list.length, 1);
+    assert.equal(drawer.rescues.trash.list[0].id, "trash-1");
+
+    harness.api.setPendingTrashRestore("trash-1");
+    harness.api.confirmTrashRestore();
+    await flush();
+    const restoreCall = harness.calls.find(
+      (/** @type {any} */ call) => call.name === "restoreTrash",
+    );
+    assert.deepEqual(restoreCall.request, { sessionId: "s1", auditId: "trash-1" });
+    assert.equal(harness.store.getSnapshot().drawer.rescues.trashPendingId, null);
+
+    harness.api.previewTrashClear("trash-1");
+    await flush();
+    drawer = harness.store.getSnapshot().drawer;
+    assert.equal(drawer.rescues.trashClearId, "trash-1");
+    assert.equal(drawer.rescues.trashClearImpact.files, 1);
+    harness.api.confirmTrashClear();
+    await flush();
+    const clearCalls = harness.calls.filter(
+      (/** @type {any} */ call) => call.name === "clearTrash",
+    );
+    assert.deepEqual(
+      clearCalls.map((/** @type {any} */ call) => call.request.dryRun),
+      [true, false],
+    );
+    assert.equal(harness.store.getSnapshot().drawer.rescues.trashClearId, null);
+    assert.ok(harness.store.getSnapshot().toast);
+  });
+
+  it("bare /rewind 打开插件自己的候选对话框（USIM-U2-26：不再用宿主 popupSelect）", async () => {
+    const harness = applyHarness(fixtures());
+    assert.equal(harness.decorated.ui.kind, "action");
+    harness.decorated.ui.run({ sessionId: "s1" });
+    await flush();
+    const state = harness.store.getSnapshot();
+    // 与 Esc Esc 同一套对话框：有列表模式、搜索与 ↑/↓ 键盘处理（handleOverlayKey）。
+    assert.equal(state.mode, "list");
+    assert.equal(state.candidates.length, 1);
+    assert.equal(state.candidates[0].seq, 9);
+    // 键盘路径：↓ / Enter 由全局 handleOverlayKey 处理，不是宿主下拉。
+    harness.api.move(1);
+    harness.api.pick();
     await flush();
     assert.equal(harness.store.getSnapshot().mode, "confirm");
   });
@@ -1736,3 +1931,648 @@ describe("createRecallCache", () => {
     assert.equal(cache.peek("s1")[0].text, "one");
   });
 });
+
+// ---------------------------------------------------------------------------
+// AUD-REW-06/07/08/16/17：确认框可恢复性、焦点、回收站、诊断文案、设置折叠
+// ---------------------------------------------------------------------------
+
+/**
+ * 展开假 React 元素树：函数组件不会被 vm 里的 createElement 调用，这里手动调用一次，
+ * 才能看到 Btn / ModePicker / FileSummary 等内部结构。
+ * @param {any} node
+ * @param {number} [depth]
+ * @returns {any[]}
+ */
+function expandElements(node, depth = 0) {
+  /** @type {any[]} */
+  const out = [];
+  if (node === null || node === undefined || typeof node !== "object" || depth > 60) return out;
+  if (Array.isArray(node)) {
+    for (const item of node) out.push(...expandElements(item, depth));
+    return out;
+  }
+  if (typeof node.type === "function") {
+    // React 把 h(Comp, props, child) 的子节点放在 props.children；我们的 createElement 替身
+    // 把它们放在 element.children，展开组件时要合并回去。
+    const children =
+      node.children.length === 0
+        ? undefined
+        : node.children.length === 1
+          ? node.children[0]
+          : node.children;
+    out.push(...expandElements(node.type({ ...node.props, children }), depth + 1));
+    return out;
+  }
+  out.push(node);
+  out.push(...expandElements(node.children, depth + 1));
+  return out;
+}
+
+/**
+ * 深度遍历假 React 元素树（loadClient 的 createElement 返回 {type, props, children}）。
+ * @param {any} node
+ * @param {(element: any) => void} visit
+ * @returns {void}
+ */
+function walkElements(node, visit) {
+  for (const element of expandElements(node)) visit(element);
+}
+
+/**
+ * @param {any} node
+ * @returns {any[]}
+ */
+function elementsOf(node) {
+  /** @type {any[]} */
+  const out = [];
+  walkElements(node, (element) => out.push(element));
+  return out;
+}
+
+/** 元素树的纯文本（含字符串/number 子节点与嵌套数组；函数组件先展开）。 */
+/**
+ * @param {any} node
+ * @returns {string}
+ */
+function elementText(node) {
+  if (node === null || node === undefined) return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map((item) => elementText(item)).join("");
+  if (typeof node !== "object") return "";
+  if (typeof node.type === "function") {
+    const children =
+      node.children.length === 0
+        ? undefined
+        : node.children.length === 1
+          ? node.children[0]
+          : node.children;
+    return elementText(node.type({ ...node.props, children }));
+  }
+  return elementText(node.children);
+}
+
+/** 与 applyHarness 一致的最简 t：保留了 key 与参数，便于断言「用了哪个键」。 */
+const tr = (/** @type {any} */ key, /** @type {any} */ params) =>
+  params ? `${key}|${JSON.stringify(params)}` : key;
+
+/** 一个不会执行任何动作的 api 替身。 */
+const noopApi = () => ({
+  setRewindMode: () => {},
+  togglePathList: () => {},
+  setResend: () => {},
+  doRewind: () => {},
+  cancelDialog: () => {},
+  setPendingRescue: () => {},
+  cancelRescue: () => {},
+  confirmRescue: () => {},
+  setPendingTrashRestore: () => {},
+  cancelTrashRestore: () => {},
+  confirmTrashRestore: () => {},
+  previewTrashClear: () => {},
+  cancelTrashClear: () => {},
+  confirmTrashClear: () => {},
+});
+
+/** 归一化后的 preview 夹具。 */
+function previewFixture() {
+  return {
+    target: { seq: 9, time: 1000, preview: "hi", text: "hi", images: [] },
+    chat: { removedCount: 3, tokens: 1234, crossesOpenToolCall: false, reachable: true },
+    stateChanges: [],
+    files: {
+      available: true,
+      tracked: true,
+      totalBytes: 300,
+      restore: [{ path: "a.ts", bytes: 100, deleted: false, reason: "" }],
+      trash: [],
+      skipped: [
+        { path: ".git/config", bytes: 10, reason: "excluded" },
+        { path: "link.txt", bytes: 5, reason: "symlink" },
+        { path: "../outside.txt", bytes: 7, reason: "outside-cwd" },
+        { path: "big.bin", bytes: 9, reason: "too-large" },
+        { path: "big2.bin", bytes: 9, reason: "too-large" },
+      ],
+      conflicts: [],
+    },
+    warnings: [
+      { code: "files-skipped", message: "host english skip warning" },
+      { code: "cwd-missing", message: "keep this warning" },
+    ],
+  };
+}
+
+/** 确认框状态夹具。 */
+function confirmState(/** @type {any} */ overrides = {}) {
+  return {
+    mode: "confirm",
+    origin: "row",
+    sessionId: "s1",
+    target: { seq: 9, time: 1000, preview: "hi", text: "hi" },
+    preview: previewFixture(),
+    previewLoading: false,
+    previewErrorKey: null,
+    previewErrorParams: null,
+    rewindMode: "both",
+    showAllPaths: false,
+    resend: false,
+    busy: false,
+    executing: false,
+    loading: false,
+    errorKey: null,
+    errorParams: null,
+    errorPaths: [],
+    ...overrides,
+  };
+}
+
+describe("confirm dialog helpers (AUD-REW-06/07/16)", () => {
+  it("recoverableHintKeys: 文件模式且追踪到文件时额外说明救援点/回收站", () => {
+    assert.deepEqual(testApi.recoverableHintKeys(previewFixture(), "chat"), [
+      "confirm.recoverable",
+    ]);
+    assert.deepEqual(testApi.recoverableHintKeys(previewFixture(), "both"), [
+      "confirm.recoverable",
+      "confirm.recoverableFiles",
+    ]);
+    const untracked = previewFixture();
+    untracked.files.tracked = false;
+    assert.deepEqual(testApi.recoverableHintKeys(untracked, "both"), ["confirm.recoverable"]);
+    assert.deepEqual(testApi.recoverableHintKeys(null, "both"), ["confirm.recoverable"]);
+  });
+
+  it("skippedReasonSummary: 按原因分组计数并映射 locale 键", () => {
+    const summary = testApi.skippedReasonSummary(previewFixture().files);
+    assert.deepEqual(summary, [
+      { reason: "too-large", key: "skip.reason.too-large", count: 2 },
+      { reason: "excluded", key: "skip.reason.excluded", count: 1 },
+      { reason: "outside-cwd", key: "skip.reason.outside-cwd", count: 1 },
+      { reason: "symlink", key: "skip.reason.symlink", count: 1 },
+    ]);
+    assert.deepEqual(testApi.skippedReasonSummary({ skipped: [{ reason: "weird" }] }), [
+      { reason: "weird", key: "skip.reason.other", count: 1 },
+    ]);
+    assert.deepEqual(testApi.skippedReasonSummary(null), []);
+    assert.equal(testApi.skipReasonKey("binary"), "skip.reason.binary");
+    assert.equal(testApi.skipReasonKey(undefined), "skip.reason.other");
+  });
+
+  it("focusWrapIndex: Tab 在浮层里环绕（AUD-REW-07）", () => {
+    assert.equal(testApi.focusWrapIndex(3, 2, false), 0);
+    assert.equal(testApi.focusWrapIndex(3, 0, true), 2);
+    assert.equal(testApi.focusWrapIndex(3, 1, false), null);
+    assert.equal(testApi.focusWrapIndex(3, 1, true), null);
+    assert.equal(testApi.focusWrapIndex(3, -1, false), 0);
+    assert.equal(testApi.focusWrapIndex(3, -1, true), 2);
+    assert.equal(testApi.focusWrapIndex(0, 0, false), null);
+    assert.equal(testApi.focusWrapIndex(1, 0, false), 0);
+  });
+
+  it("ConfirmBody: 渲染可恢复性一行、按原因报跳过、过滤 host 英文 warning", () => {
+    const tree = testApi.ConfirmBody({ state: confirmState(), api: noopApi(), t: tr });
+    const elements = elementsOf(tree);
+    const recoverable = elements.filter(
+      (element) => element.props["data-rewind-recoverable"] !== undefined,
+    );
+    assert.equal(recoverable.length, 1);
+    const recoverableText = elementText(recoverable[0]);
+    assert.ok(recoverableText.includes("confirm.recoverable"));
+    assert.ok(recoverableText.includes("confirm.recoverableFiles"));
+    const skipped = elements.filter((element) => element.props["data-srw-skipped"] !== undefined);
+    assert.equal(skipped.length, 1);
+    const skippedText = elementText(skipped[0]);
+    assert.ok(skippedText.includes("confirm.skipped"));
+    assert.equal(skipped[0].props["data-srw-skipped"], "5");
+    const reasons = elements
+      .filter((element) => element.props["data-reason"] !== undefined)
+      .map((element) => element.props["data-reason"]);
+    assert.deepEqual(reasons.sort(), ["excluded", "outside-cwd", "symlink", "too-large"]);
+    assert.ok(skippedText.includes("skip.reason.too-large"));
+    const trackingScope = elements.filter(
+      (element) => element.props["data-srw-tracking-scope"] !== undefined,
+    );
+    assert.equal(trackingScope.length, 1);
+    assert.ok(elementText(trackingScope[0]).includes("confirm.trackingScope"));
+    const fullText = elementText(tree);
+    assert.ok(fullText.includes("keep this warning"));
+    assert.equal(fullText.includes("host english skip warning"), false);
+  });
+
+  it("ConfirmBody: 纯 skipped 预览也展示原因与数量（N2 / AUD-REW-04）", () => {
+    const skippedOnly = previewFixture();
+    skippedOnly.files.restore = [];
+    skippedOnly.files.trash = [];
+    const tree = testApi.ConfirmBody({
+      state: confirmState({ preview: skippedOnly, rewindMode: "chat" }),
+      api: noopApi(),
+      t: tr,
+    });
+    const elements = elementsOf(tree);
+    const skipped = elements.filter((element) => element.props["data-srw-skipped"] !== undefined);
+    assert.equal(skipped.length, 1, "skipped-only preview must still render FileSummary");
+    assert.equal(skipped[0].props["data-srw-skipped"], "5");
+    assert.ok(elementText(skipped[0]).includes("confirm.skipped"));
+    const reasons = elements
+      .filter((element) => element.props["data-reason"] !== undefined)
+      .map((element) => element.props["data-reason"]);
+    assert.deepEqual(reasons.sort(), ["excluded", "outside-cwd", "symlink", "too-large"]);
+  });
+
+  it("ConfirmBody: chat 模式不出现文件可恢复性那一段", () => {
+    const tree = testApi.ConfirmBody({
+      state: confirmState({ rewindMode: "chat" }),
+      api: noopApi(),
+      t: tr,
+    });
+    const recoverable = elementsOf(tree).filter(
+      (element) => element.props["data-rewind-recoverable"] !== undefined,
+    );
+    assert.equal(recoverable.length, 1);
+    const text = elementText(recoverable[0]);
+    assert.ok(text.includes("confirm.recoverable"));
+    assert.equal(text.includes("confirm.recoverableFiles"), false);
+  });
+
+  it("RewindDialog: 主按钮默认聚焦，不可执行时回落到取消；列表模式聚焦搜索框", () => {
+    const tree = testApi.RewindDialog({ state: confirmState(), api: noopApi(), t: tr });
+    const buttons = elementsOf(tree).filter((element) => element.type === "button");
+    const primary = buttons.find((button) =>
+      String(button.props.className || "").includes("dsh-srw-btn-primary"),
+    );
+    assert.ok(primary, "primary button not found");
+    assert.equal(primary.props["data-modal-autofocus"], "");
+    const cancel = buttons.find((button) => elementText(button).includes("dialog.cancel"));
+    assert.ok(cancel, "cancel button not found");
+    assert.equal(cancel.props["data-modal-autofocus"], undefined);
+
+    const disabledTree = testApi.RewindDialog({
+      state: confirmState({ executing: true }),
+      api: noopApi(),
+      t: tr,
+    });
+    const disabledButtons = elementsOf(disabledTree).filter((element) => element.type === "button");
+    const disabledCancel = disabledButtons.find((button) =>
+      elementText(button).includes("dialog.cancel"),
+    );
+    assert.ok(disabledCancel);
+    assert.equal(disabledCancel.props["data-modal-autofocus"], "");
+
+    const listTree = testApi.RewindDialog({
+      state: {
+        mode: "list",
+        candidates: [{ seq: 9, index: 1, time: 1000, preview: "hi", text: "hi", hasFiles: false }],
+        selected: 0,
+        listLoading: false,
+        listLoadingOlder: false,
+        listCursor: null,
+        listSearch: "",
+        listErrorKey: null,
+        listErrorParams: null,
+      },
+      api: noopApi(),
+      t: tr,
+    });
+    const search = elementsOf(listTree).find(
+      (element) => element.type === "input" && element.props.type === "search",
+    );
+    assert.ok(search, "search input not found");
+    assert.equal(search.props["data-modal-autofocus"], "");
+  });
+});
+
+describe("recovery points / trash tab (AUD-REW-08)", () => {
+  /** @returns {any} */
+  const trashData = () => ({
+    loading: false,
+    errorKey: null,
+    errorParams: null,
+    list: [],
+    pendingId: null,
+    executingId: null,
+    trash: {
+      loading: false,
+      errorKey: null,
+      errorParams: null,
+      list: [
+        {
+          id: "trash-1",
+          time: 1000,
+          targetSeq: 9,
+          rescueId: "res-1",
+          totalBytes: 7,
+          paths: [{ path: "n.txt", bytes: 7 }],
+        },
+      ],
+    },
+    trashPendingId: null,
+    trashExecutingId: null,
+    trashClearId: null,
+    trashClearImpact: null,
+    trashClearExecuting: false,
+  });
+
+  it("RescuesTab: 回收站并入救援点页签，按操作列出并可恢复/清空", () => {
+    const tree = testApi.RescuesTab({ data: trashData(), api: noopApi(), t: tr });
+    const elements = elementsOf(tree);
+    assert.equal(
+      elements.filter((element) => element.props["data-srw-trash"] !== undefined).length,
+      1,
+    );
+    assert.ok(elementText(tree).includes("trash.title"));
+    assert.ok(elementText(tree).includes("rescues.empty"));
+    const ops = elements.filter((element) => element.props["data-srw-trash-op"] !== undefined);
+    assert.equal(ops.length, 1);
+    const text = elementText(ops[0]);
+    assert.ok(text.includes("trash.restore"));
+    assert.ok(text.includes("trash.clear"));
+    assert.ok(text.includes("trash.meta"));
+  });
+
+  it("RescuesTab: 清空需要先看影响面（ADR 0002）", () => {
+    const data = trashData();
+    data.trashClearId = "trash-1";
+    data.trashClearImpact = { dryRun: true, files: 2, bytes: 2048, paths: ["n.txt", "m.txt"] };
+    const tree = testApi.RescuesTab({ data, api: noopApi(), t: tr });
+    const confirmRows = elementsOf(tree).filter(
+      (element) => element.props["data-srw-trash-clear"] !== undefined,
+    );
+    assert.equal(confirmRows.length, 1);
+    const text = elementText(confirmRows[0]);
+    assert.ok(text.includes("trash.clearConfirm"));
+    assert.ok(text.includes('"n":2'), text);
+    assert.ok(text.includes("trash.clearConfirmAction"));
+  });
+
+  it("normalizeTrash*: RPC 形状退化时不炸", () => {
+    const ops = testApi.normalizeTrashOps({
+      operations: [
+        { id: "t1", totalBytes: 9, paths: [{ path: "a", bytes: 9 }] },
+        { id: 2, paths: ["b"] },
+        { nope: true },
+      ],
+    });
+    assert.equal(ops.length, 2);
+    assert.deepEqual(ops[0].paths, [{ path: "a", bytes: 9 }]);
+    assert.equal(ops[0].totalBytes, 9);
+    assert.deepEqual(ops[1].paths, [{ path: "b", bytes: 0 }]);
+    assert.deepEqual(testApi.normalizeTrashResult(undefined), {
+      restored: [],
+      failed: [],
+      safetyRescueId: null,
+    });
+    assert.deepEqual(testApi.normalizeTrashImpact({ dryRun: true, files: 1, bytes: 2 }), {
+      dryRun: true,
+      auditId: "",
+      files: 1,
+      bytes: 2,
+      paths: [],
+    });
+  });
+});
+
+describe("settings section (AUD-REW-16/17)", () => {
+  it("SettingsTab: 低频设置与诊断收进默认收起的「更多设置」", () => {
+    const prefs = {
+      defaultMode: "chat",
+      pageSize: 100,
+      confirmOnList: true,
+      recallEnabled: true,
+    };
+    const health = {
+      loading: false,
+      errorKey: null,
+      errorParams: null,
+      data: {
+        ok: true,
+        version: 1,
+        dataRoot: "/tmp/d",
+        usage: { bytes: 1, entries: 2, sessions: 3, blobs: 4 },
+        checks: [
+          {
+            name: "data root",
+            nameKey: "health.dataRoot",
+            ok: true,
+            detail: "/tmp/d",
+            detailKey: "",
+            detailParams: {},
+          },
+          {
+            name: "file storage",
+            nameKey: "health.storage",
+            ok: true,
+            detail: "raw english",
+            detailKey: "health.storageLine",
+            detailParams: { bytes: 1, entries: 2, sessions: 3 },
+          },
+        ],
+      },
+    };
+    const tree = testApi.SettingsTab({
+      prefs,
+      health,
+      api: { updatePrefs: () => {}, loadHealth: () => {} },
+      t: tr,
+      onRefreshHealth: () => {},
+    });
+    const elements = elementsOf(tree);
+    const details = elements.filter((element) => element.type === "details");
+    assert.equal(details.length, 1);
+    assert.equal(details[0].props["data-srw-more-settings"], "");
+    assert.equal(details[0].props.open, undefined, "默认必须收起");
+    assert.ok(elementText(details[0]).includes("settings.more"));
+    const text = elementText(tree);
+    // 诊断项标题走 nameKey、detail 走 detailKey（英文界面不再混中文/中文界面不再混英文）。
+    assert.ok(text.includes("health.dataRoot"));
+    assert.ok(text.includes("health.storageLine"));
+    assert.equal(text.includes("raw english"), false);
+    // 首屏保留常用偏好。
+    assert.ok(text.includes("settings.defaultMode"));
+    assert.ok(text.includes("settings.recall"));
+  });
+
+  it("healthCheckLabel/Detail: 缺键时退回 host 的 name/detail", () => {
+    const fallback = { name: "legacy check", detail: "legacy detail" };
+    assert.equal(testApi.healthCheckLabel(fallback, tr), "legacy check");
+    assert.equal(testApi.healthCheckDetail(fallback, tr), "legacy detail");
+    assert.equal(testApi.healthCheckLabel(null, tr), "");
+    assert.equal(testApi.healthCheckDetail(null, tr), "");
+  });
+
+  it("normalizeHealth: 保留 nameKey/detailKey/detailParams", () => {
+    const view = testApi.normalizeHealth({
+      ok: true,
+      checks: [
+        {
+          name: "data root",
+          nameKey: "health.dataRoot",
+          ok: true,
+          detail: "/tmp/d",
+          detailKey: "health.storageLine",
+          detailParams: { bytes: 1, entries: 2, sessions: 3 },
+        },
+      ],
+      usage: {},
+    });
+    assert.equal(view.checks[0].nameKey, "health.dataRoot");
+    assert.equal(view.checks[0].detailKey, "health.storageLine");
+    assert.deepEqual(view.checks[0].detailParams, { bytes: 1, entries: 2, sessions: 3 });
+    // 旧 host（只有 name/detail）也要能渲染。
+    const legacy = testApi.normalizeHealth({ ok: true, checks: [{ name: "old", ok: true }] });
+    assert.equal(legacy.checks[0].nameKey, "");
+    assert.equal(legacy.checks[0].detailKey, "");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// USIM-U3-01：回溯不可持久 —— 重启（宿主重启 + 冷启动）后仍要隐藏被撤回的消息
+// ---------------------------------------------------------------------------
+
+describe("cold-start visibility (USIM-U3-01)", () => {
+  /** 一条假的 inner chat builder，只记录最近一次 replace/apply 的 payload。 @returns {any} */
+  function makeInnerBuilder() {
+    return {
+      empty: undefined,
+      lastReplace: null,
+      lastApply: null,
+      replace(/** @type {any} */ payload) {
+        this.lastReplace = payload;
+        return payload;
+      },
+      apply(/** @type {any} */ payload) {
+        this.lastApply = payload;
+        return payload;
+      },
+      groupInput: () => undefined,
+      publish: () => {},
+    };
+  }
+
+  /** 宿主 chat 节点形状：shadowed 节点仍在（宿主 transcript 用原始事件），但没有 marker 节点。 */
+  function makeNodes() {
+    return [
+      {
+        key: "u:9",
+        kind: "user",
+        data: { seq: 9, source: { kind: "user" } },
+        visibility: "visible",
+      },
+      {
+        key: "a:17",
+        kind: "assistant",
+        data: { seq: 17 },
+        visibility: "visible",
+      },
+      {
+        key: "u:27",
+        kind: "user",
+        data: { seq: 27, source: { kind: "user" } },
+        visibility: "visible",
+      },
+    ];
+  }
+
+  /** @param {any[]} nodes */
+  function visibilityOf(nodes) {
+    /** @type {Record<string, string>} */
+    const out = {};
+    for (const node of nodes) out[node.key] = node.visibility ?? "visible";
+    return out;
+  }
+
+  it("cutsForSession: rebuild 时的 activeSession 优先于创建/记住的 sessionId", () => {
+    const cutsRef = {
+      get: (/** @type {any} */ id) => (id === "s1" ? [{ targetSeq: 9, markerSeq: 21 }] : []),
+    };
+    assert.equal(testApi.resolveCutSession(null, "s1", "s0"), "s1");
+    assert.equal(testApi.resolveCutSession("s0", null, "s2"), "s0");
+    assert.equal(testApi.resolveCutSession(null, null, "s2"), "s2");
+    assert.equal(testApi.resolveCutSession(null, null, null), null);
+    assert.deepEqual(testApi.cutsForSession(null, "s1", null, cutsRef), [
+      { targetSeq: 9, markerSeq: 21 },
+    ]);
+    assert.deepEqual(testApi.cutsForSession("s0", null, null, cutsRef), []);
+    assert.deepEqual(testApi.cutsForSession(null, null, null, cutsRef), []);
+    assert.deepEqual(testApi.cutsForSession("s1", null, null, cutsRef), [
+      { targetSeq: 9, markerSeq: 21 },
+    ]);
+  });
+
+  it("冷启动：builder 先以 null 会话创建，宿主 cuts 到达后（rebuild）隐藏 shadowed 行", () => {
+    const cutStore = testApi.createCutStore();
+    const inner = makeInnerBuilder();
+    const wrapper = new testApi.RewindVisibilityBuilder(inner, cutStore, null);
+    const nodes = makeNodes();
+
+    // ① 冷启动第一次渲染：宿主会话还没 resume、cuts 还没拉到 —— 什么都不知道。
+    wrapper.replace({ nodes, timeline: {} });
+    assert.deepEqual(visibilityOf(inner.lastReplace.nodes), {
+      "u:9": "visible",
+      "a:17": "visible",
+      "u:27": "visible",
+    });
+
+    // ② seedCuts 成功：宿主 cuts 进 store，随后 rebuild 期间 activeSession = 会话 id。
+    cutStore.set("s1", [{ targetSeq: 9, markerSeq: 21 }]);
+    testApi.withActiveSession("s1", () => wrapper.replace({ nodes, timeline: {} }));
+    assert.deepEqual(visibilityOf(inner.lastReplace.nodes), {
+      "u:9": "hidden",
+      "a:17": "hidden",
+      "u:27": "visible",
+    });
+
+    // ③ rebuild 之后的流式 apply（activeSession 已复位）仍要记住会话 id，
+    //    否则 hidden 会被全量替换回 visible。
+    wrapper.apply({ upserts: nodes, timeline: {} });
+    assert.deepEqual(visibilityOf(inner.lastApply.upserts), {
+      "u:9": "hidden",
+      "a:17": "hidden",
+      "u:27": "visible",
+    });
+  });
+
+  it("宿主说没有 cuts 时不隐藏任何行（不误伤）", () => {
+    const cutStore = testApi.createCutStore();
+    const inner = makeInnerBuilder();
+    const wrapper = new testApi.RewindVisibilityBuilder(inner, cutStore, "s1");
+    wrapper.replace({ nodes: makeNodes(), timeline: {} });
+    assert.deepEqual(visibilityOf(inner.lastReplace.nodes), {
+      "u:9": "visible",
+      "a:17": "visible",
+      "u:27": "visible",
+    });
+  });
+
+  it("seedCuts: 冷启动第一次 RPC 失败后会重试，成功后再重建", async () => {
+    const data = fixturesForSeed();
+    const harness = applyHarness(data);
+    harness.api.seedCuts("s1");
+    await flush();
+    // 第一次失败（宿主还没 resume 完），此时还没成功。
+    assert.equal(harness.calls.filter((/** @type {any} */ call) => call.name === "cuts").length, 1);
+    // 等退避重试（300ms 起步）跑完。
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    const cutCalls = harness.calls.filter((/** @type {any} */ call) => call.name === "cuts");
+    assert.ok(cutCalls.length >= 2, `expected a retry, got ${cutCalls.length}`);
+    for (const call of cutCalls) assert.deepEqual(call.request, { sessionId: "s1" });
+  });
+});
+
+/** seedCuts 重试测试用的最小夹具（第一次失败、第二次成功）。 */
+function fixturesForSeed() {
+  return {
+    cuts: [
+      { __fail: "session-rewind/not-found", __message: "session not resumed yet" },
+      { cuts: [{ targetSeq: 9, markerSeq: 21 }] },
+    ],
+    candidates: { sessionId: "s1", candidates: [], nextCursor: null },
+    preview: undefined,
+    rewind: undefined,
+    ghost: { cuts: [], nextCursor: null },
+    audit: { entries: [] },
+    rescues: { rescues: [] },
+    trash: { operations: [] },
+    restoreRescue: { restored: [], failed: [] },
+    restoreTrash: { restored: [], failed: [], safetyRescueId: null },
+    clearTrash: { dryRun: true, files: 0, bytes: 0, paths: [] },
+    health: { ok: true, version: 1, checks: [], usage: {} },
+  };
+}

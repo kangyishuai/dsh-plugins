@@ -52,13 +52,15 @@ window.__ModuleLoader__.load({
       "dialog.previewFailed": "无法获取预览：{message}",
       "dialog.previewUnavailable": "预览不可用，将按「仅回退对话」执行。",
       "button.rewind": "回退到此处",
-      "confirm.summary": "将撤回 {n} 条消息（约 {tokens} token）",
+      "confirm.summary":
+        "将截断 {n} 条上下文记录（撤回 {messages} 条用户/助手消息，约 {tokens} token）",
       "confirm.modeTitle": "回退范围",
       "confirm.modeChat": "仅回退对话",
-      "confirm.modeChatHint": "只截断上下文，不动工作区文件",
+      "confirm.modeChatHint": "只截断模型上下文，不动工作区文件；撤回内容仍可在面板找回",
       "confirm.modeBoth": "回退对话和文件",
-      "confirm.modeBothHint": "截断上下文，并还原工作区文件",
-      "confirm.filesNone": "无文件变更",
+      "confirm.modeBothHint":
+        "截断上下文并改写工作区文件（还原 / 移入回收站）；写入前建救援点，可从面板恢复",
+      "confirm.filesNone": "本轮没有可追踪的文件改动",
       "confirm.filesConflicts": "有 {n} 个文件与预期不一致，无法执行文件回退",
       "confirm.filesUnavailable": "当前无法回退文件",
       "confirm.fileSummary": "将还原 {restored} 个文件、移入回收站 {trashed} 个",
@@ -66,6 +68,23 @@ window.__ModuleLoader__.load({
       "confirm.pathsMore": "展开全部 {n} 个路径",
       "confirm.pathsLess": "收起路径",
       "confirm.skipped": "{n} 个文件被跳过",
+      "confirm.trackingScope":
+        "文件回退只覆盖本会话工作目录内由 write / edit / apply_patch 做的改动；bash、脚本、子代理与工作区外改动不追踪。",
+      "confirm.recoverable": "上下文撤回不可撤销，但内容保留在「已撤回」页签，可复制或放回输入框。",
+      "confirm.recoverableFiles":
+        "文件写入前会自动创建救援点，新建的文件移入插件回收站；二者都能在面板里恢复。",
+      "confirm.skippedReasonLine": "{reason}：{n} 个",
+      "skip.reason.too-large": "超过 8 MiB",
+      "skip.reason.binary": "二进制内容",
+      "skip.reason.symlink": "符号链接",
+      "skip.reason.excluded": "排除目录（.git / node_modules）",
+      "skip.reason.outside-cwd": "工作区外",
+      "skip.reason.not-a-file": "不是普通文件",
+      "skip.reason.unreadable": "不可读",
+      "skip.reason.invalid-path": "路径无效",
+      "skip.reason.invalid-cwd": "工作区无效",
+      "skip.reason.storage-full": "存储已满（暂停捕获）",
+      "skip.reason.other": "其他原因",
       "confirm.conflictsTitle": "冲突文件（前 5 个）",
       "confirm.busy": "当前回合仍在运行：回退时会先停止它，队列中未投递的插话会被丢弃",
       "confirm.settling": "正在停止当前回合…",
@@ -90,9 +109,11 @@ window.__ModuleLoader__.load({
       "toast.done": "已回退到此处，原消息已放回输入框",
       "toast.draft": "已回退；输入框已有内容，未覆盖",
       "toast.noComposer": "已回退，但未找到输入框",
-      "toast.rewound": "已回退 {n} 条消息（约 {tokens} token）",
+      "toast.rewound":
+        "已回退：截断 {n} 条上下文记录（撤回 {messages} 条用户/助手消息，约 {tokens} token）",
       "toast.rewoundFiles": "，还原 {restored} 个文件、移入回收站 {trashed} 个",
       "toast.rewoundFailed": "，{n} 个文件处理失败",
+      "toast.rewoundSkipped": "；{n} 个文件被跳过",
       "toast.resent": "，已重发这条消息",
       "toast.stoppedTurn": "，已停止运行中的回合",
       "toast.draftKept": "；输入框已有内容，未覆盖",
@@ -117,8 +138,11 @@ window.__ModuleLoader__.load({
       "drawer.tab.audit": "回溯记录",
       "drawer.tab.rescues": "救援点",
       "drawer.tab.settings": "设置",
+      "drawer.hintRewind":
+        "要回退到某条消息：直接点消息行右侧的「回退到此处」，或用下面的按钮打开候选列表。",
+      "drawer.pickMessage": "选择消息回退",
       "ghost.empty": "还没有撤回记录",
-      "ghost.cutMeta": "撤回 {n} 条消息",
+      "ghost.cutMeta": "撤回 {n} 条用户/助手消息",
       "ghost.search": "搜索已撤回内容…",
       "ghost.loadOlder": "加载更早",
       "ghost.copy": "复制",
@@ -128,7 +152,7 @@ window.__ModuleLoader__.load({
       "ghost.mode.chat": "仅对话",
       "ghost.mode.both": "对话+文件",
       "audit.empty": "还没有回溯记录",
-      "audit.meta": "{mode} · {n} 条 · 约 {tokens} token",
+      "audit.meta": "{mode} · 撤回 {n} 条用户/助手消息 · 约 {tokens} token",
       "audit.files": "文件：还原 {restored}、回收站 {trashed}、跳过 {skipped}、失败 {failed}",
       "audit.paths": "查看 {n} 个路径",
       "audit.pathsLess": "收起路径",
@@ -144,6 +168,19 @@ window.__ModuleLoader__.load({
       "rescues.completed": "已完成",
       "rescues.incomplete": "未完成",
       "rescues.loadFailed": "无法加载救援点：{message}",
+      "trash.title": "回收站",
+      "trash.empty": "回收站是空的",
+      "trash.meta": "{n} 个文件 · {bytes}",
+      "trash.restore": "恢复这些文件",
+      "trash.confirm": "恢复 {n} 个文件？当前内容会先另存为新的救援点。",
+      "trash.clear": "清空",
+      "trash.clearConfirm": "永久删除 {n} 个文件（{bytes}）？此操作不可撤销；想保留请先恢复。",
+      "trash.clearConfirmAction": "确认永久删除",
+      "trash.clearing": "正在清空…",
+      "trash.clearDone": "已永久删除 {n} 个文件（{bytes}）",
+      "trash.loadFailed": "无法加载回收站：{message}",
+      "toast.trashRestored": "已从回收站恢复 {restored} 个文件",
+      "toast.trashPartial": "已从回收站恢复 {restored} 个文件；{failed} 个失败",
       "settings.defaultMode": "默认回退范围",
       "settings.pageSize": "候选每页数量",
       "settings.confirmOnList": "从候选列表选择时先确认",
@@ -162,6 +199,29 @@ window.__ModuleLoader__.load({
       "settings.usage": "占用 {bytes} · {entries} 条记录 · {sessions} 个会话 · {blobs} 个内容块",
       "settings.dataRoot": "数据目录",
       "settings.version": "版本",
+      "settings.more": "更多设置",
+      "health.dataRoot": "数据根",
+      "health.tracking": "文件追踪",
+      "health.storage": "文件存储",
+      "health.storageLine": "{bytes} 字节 / {entries} 条记录 / {sessions} 个会话",
+      "health.audit": "审计日志",
+      "health.auditRecords": "可读 {count} 条记录",
+      "health.auditRecordsAtLeast": "可读至少 {count} 条记录（已达读取上限）",
+      "health.readOnlyTool": "只读工具",
+      "health.enabled": "已启用",
+      "health.disabled": "配置里已关闭",
+      "health.disabledByConfig": "配置里已关闭",
+      "health.notRegistered": "未注册",
+      "health.orphans": "孤儿数据",
+      "health.orphansNone": "没有孤儿；保留 {kept} 个未知条目",
+      "health.orphansCount": "{count} 个目录 · {bytes} 字节；保留 {kept} 个未知条目",
+      "health.orphansSkipped":
+        "无法枚举存活会话（{workspaces} 个 workspace 不可读、{unknownLayout} 个布局未知），已跳过孤儿清理；保留 {kept} 个未知条目",
+      "health.markerShape": "会话 marker 形状",
+      "health.markerCuts": "{count} 个回溯区间",
+      "health.sessionCwd": "会话工作目录",
+      "health.cwdMissing": "缺失",
+      "health.session": "会话检查",
       "error.busy": "请先停止当前回合（Esc）再回溯",
       "error.notFound": "会话不存在",
       "error.inert": "子代理会话不支持回溯",
@@ -199,13 +259,16 @@ window.__ModuleLoader__.load({
       "dialog.previewFailed": "Could not fetch the preview: {message}",
       "dialog.previewUnavailable": "Preview unavailable; this will rewind the conversation only.",
       "button.rewind": "Rewind to here",
-      "confirm.summary": "This withdraws {n} message(s) (about {tokens} tokens).",
+      "confirm.summary":
+        "This truncates {n} context record(s) ({messages} user/assistant message(s), about {tokens} tokens).",
       "confirm.modeTitle": "Scope",
       "confirm.modeChat": "Rewind conversation only",
-      "confirm.modeChatHint": "Truncates context; workspace files stay untouched",
+      "confirm.modeChatHint":
+        "Truncates the model context only; workspace files stay untouched. Withdrawn content stays in the panel.",
       "confirm.modeBoth": "Rewind conversation and files",
-      "confirm.modeBothHint": "Truncates context and restores workspace files",
-      "confirm.filesNone": "No file changes",
+      "confirm.modeBothHint":
+        "Truncates context and rewrites workspace files (restore / move to trash); a rescue point is created first and can be restored from the panel.",
+      "confirm.filesNone": "No trackable file changes in this rewind",
       "confirm.filesConflicts":
         "{n} file(s) differ from the expected state; file rewind is unavailable",
       "confirm.filesUnavailable": "File rewind is unavailable",
@@ -214,6 +277,24 @@ window.__ModuleLoader__.load({
       "confirm.pathsMore": "Show all {n} paths",
       "confirm.pathsLess": "Hide paths",
       "confirm.skipped": "{n} file(s) skipped",
+      "confirm.trackingScope":
+        "File rewind only covers changes made inside this session's working directory by write / edit / apply_patch; bash, scripts, subagent edits and changes outside the workspace are not tracked.",
+      "confirm.recoverable":
+        "The context cut cannot be undone, but the withdrawn content stays in the Withdrawn tab — copy it or put it back in the composer.",
+      "confirm.recoverableFiles":
+        "A rescue point is created before any file write, and newly created files go to the plugin trash; both can be restored from the panel.",
+      "confirm.skippedReasonLine": "{reason}: {n}",
+      "skip.reason.too-large": "over 8 MiB",
+      "skip.reason.binary": "binary content",
+      "skip.reason.symlink": "symbolic link",
+      "skip.reason.excluded": "excluded directory (.git / node_modules)",
+      "skip.reason.outside-cwd": "outside the workspace",
+      "skip.reason.not-a-file": "not a regular file",
+      "skip.reason.unreadable": "unreadable",
+      "skip.reason.invalid-path": "invalid path",
+      "skip.reason.invalid-cwd": "invalid workspace",
+      "skip.reason.storage-full": "storage full (capture paused)",
+      "skip.reason.other": "other reason",
       "confirm.conflictsTitle": "Conflicting files (first 5)",
       "confirm.busy":
         "The turn is still running: rewinding stops it first and drops any queued steering messages.",
@@ -242,9 +323,11 @@ window.__ModuleLoader__.load({
       "toast.done": "Rewound. The original message is back in the composer.",
       "toast.draft": "Rewound. The composer already had content, so it was kept.",
       "toast.noComposer": "Rewound, but no composer was found.",
-      "toast.rewound": "Rewound {n} message(s) (about {tokens} tokens)",
+      "toast.rewound":
+        "Rewound: truncated {n} context record(s) (withdrew {messages} user/assistant message(s), about {tokens} tokens)",
       "toast.rewoundFiles": "; restored {restored} file(s), trashed {trashed}",
       "toast.rewoundFailed": "; {n} file(s) failed",
+      "toast.rewoundSkipped": "; {n} file(s) skipped",
       "toast.draftKept": "; the composer already had content, so it was kept",
       "toast.noComposerSuffix": "; no composer was found",
       "toast.view": "View",
@@ -267,8 +350,11 @@ window.__ModuleLoader__.load({
       "drawer.tab.audit": "History",
       "drawer.tab.rescues": "Rescue points",
       "drawer.tab.settings": "Settings",
+      "drawer.hintRewind":
+        'To rewind to a message, click "Rewind to here" on its row, or use the button below to open the candidate list.',
+      "drawer.pickMessage": "Pick a message to rewind",
       "ghost.empty": "No withdrawn messages yet",
-      "ghost.cutMeta": "{n} message(s) withdrawn",
+      "ghost.cutMeta": "{n} user/assistant message(s) withdrawn",
       "ghost.search": "Search withdrawn messages…",
       "ghost.loadOlder": "Load older",
       "ghost.copy": "Copy",
@@ -278,7 +364,7 @@ window.__ModuleLoader__.load({
       "ghost.mode.chat": "Conversation",
       "ghost.mode.both": "Conversation + files",
       "audit.empty": "No rewind history yet",
-      "audit.meta": "{mode} · {n} message(s) · about {tokens} tokens",
+      "audit.meta": "{mode} · withdrew {n} user/assistant message(s) · about {tokens} tokens",
       "audit.files":
         "Files: {restored} restored, {trashed} trashed, {skipped} skipped, {failed} failed",
       "audit.paths": "Show {n} path(s)",
@@ -296,6 +382,21 @@ window.__ModuleLoader__.load({
       "rescues.completed": "Complete",
       "rescues.incomplete": "Incomplete",
       "rescues.loadFailed": "Could not load rescue points: {message}",
+      "trash.title": "Trash",
+      "trash.empty": "The trash is empty",
+      "trash.meta": "{n} file(s) · {bytes}",
+      "trash.restore": "Restore these files",
+      "trash.confirm":
+        "Restore {n} file(s)? The current content is saved as a new rescue point first.",
+      "trash.clear": "Empty",
+      "trash.clearConfirm":
+        "Permanently delete {n} file(s) ({bytes})? This cannot be undone; restore them first if you want to keep them.",
+      "trash.clearConfirmAction": "Delete permanently",
+      "trash.clearing": "Emptying…",
+      "trash.clearDone": "Permanently deleted {n} file(s) ({bytes})",
+      "trash.loadFailed": "Could not load the trash: {message}",
+      "toast.trashRestored": "Restored {restored} file(s) from the trash",
+      "toast.trashPartial": "Restored {restored} file(s) from the trash; {failed} failed",
       "settings.defaultMode": "Default scope",
       "settings.pageSize": "Candidates per page",
       "settings.confirmOnList": "Confirm before executing from the list",
@@ -315,6 +416,29 @@ window.__ModuleLoader__.load({
       "settings.usage": "{bytes} used · {entries} entries · {sessions} sessions · {blobs} blobs",
       "settings.dataRoot": "Data root",
       "settings.version": "Version",
+      "settings.more": "More settings",
+      "health.dataRoot": "Data root",
+      "health.tracking": "File tracking",
+      "health.storage": "File storage",
+      "health.storageLine": "{bytes} bytes / {entries} entries / {sessions} sessions",
+      "health.audit": "Audit log",
+      "health.auditRecords": "{count} record(s) readable",
+      "health.auditRecordsAtLeast": "at least {count} record(s) readable (read limit reached)",
+      "health.readOnlyTool": "Read-only tool",
+      "health.enabled": "enabled",
+      "health.disabled": "disabled in config",
+      "health.disabledByConfig": "disabled by config",
+      "health.notRegistered": "not registered",
+      "health.orphans": "Orphan data",
+      "health.orphansNone": "none; kept {kept} unknown item(s)",
+      "health.orphansCount": "{count} dir(s) · {bytes} bytes; kept {kept} unknown item(s)",
+      "health.orphansSkipped":
+        "cannot enumerate live sessions ({workspaces} unreadable workspace(s), {unknownLayout} unknown layout(s)); orphan cleanup was skipped; kept {kept} unknown item(s)",
+      "health.markerShape": "Session marker shape",
+      "health.markerCuts": "{count} cut(s)",
+      "health.sessionCwd": "Session working directory",
+      "health.cwdMissing": "missing",
+      "health.session": "Session check",
       "error.busy": "Stop the current turn first (Esc), then rewind.",
       "error.notFound": "Session not found.",
       "error.inert": "Subagent sessions cannot be rewound.",
@@ -462,6 +586,41 @@ window.__ModuleLoader__.load({
       if (!node) return node;
       if (node.visibility === "hidden") return node;
       return Object.assign({}, node, { visibility: "hidden" });
+    }
+
+    /**
+     * 解析一个 chat builder 当前应该绑定到哪个会话（USIM-U3-01）。
+     *
+     * 冷启动（宿主重启）时 view builder 可能在「当前会话未知」时创建（`initialSessionId`
+     * 为 null）；之后 seedCuts 触发的 rebuild 会把 `activeSessionId` 设为正确会话，所以优先用
+     * rebuild 时的会话 id，其次用已经记住的 id，最后回落到创建时的 id。
+     * @param {string | null} rememberedSessionId
+     * @param {string | null} activeSessionId
+     * @param {string | null} initialSessionId
+     * @returns {string | null}
+     */
+    function resolveCutSession(rememberedSessionId, activeSessionId, initialSessionId) {
+      let candidates = [activeSessionId, rememberedSessionId, initialSessionId];
+      for (let i = 0; i < candidates.length; i += 1) {
+        let value = candidates[i];
+        if (typeof value === "string" && value !== "") return value;
+      }
+      return null;
+    }
+
+    /**
+     * 取某个 chat builder 应该用的宿主 cuts；返回空数组表示「此刻还不知道」。
+     * @param {string | null} rememberedSessionId
+     * @param {string | null} activeSessionId
+     * @param {string | null} initialSessionId
+     * @param {any} cutsRef
+     * @returns {any[]}
+     */
+    function cutsForSession(rememberedSessionId, activeSessionId, initialSessionId, cutsRef) {
+      let sessionId = resolveCutSession(rememberedSessionId, activeSessionId, initialSessionId);
+      if (sessionId === null || !cutsRef || typeof cutsRef.get !== "function") return [];
+      let list = cutsRef.get(sessionId);
+      return Array.isArray(list) ? list : [];
     }
 
     /** cut 集合签名，用于判断是否需要全量重建。 */
@@ -986,6 +1145,12 @@ window.__ModuleLoader__.load({
         },
         chat: {
           removedCount: typeof chat.removedCount === "number" ? chat.removedCount : 0,
+          removedMessageCount:
+            typeof chat.removedMessageCount === "number"
+              ? chat.removedMessageCount
+              : typeof chat.removedCount === "number"
+                ? chat.removedCount
+                : 0,
           tokens: typeof chat.tokens === "number" ? chat.tokens : 0,
           crossesOpenToolCall: chat.crossesOpenToolCall === true,
           reachable: chat.reachable !== false,
@@ -1065,6 +1230,164 @@ window.__ModuleLoader__.load({
           ? details.files.failed
           : [];
       return normalizePathList(raw).map((item) => item.path);
+    }
+
+    // ------------------------------------------------------------------
+    // AUD-REW-06/07/08/16：确认框可恢复性 / 焦点陷阱 / 跳过原因 / 诊断文案（纯函数）
+    // ------------------------------------------------------------------
+
+    /** 已知的跳过原因 → locale 键（AUD-REW-04）。 */
+    /** @type {Record<string, string>} */
+    let SKIP_REASON_KEYS = Object.freeze({
+      "too-large": "skip.reason.too-large",
+      binary: "skip.reason.binary",
+      symlink: "skip.reason.symlink",
+      excluded: "skip.reason.excluded",
+      "outside-cwd": "skip.reason.outside-cwd",
+      "not-a-file": "skip.reason.not-a-file",
+      unreadable: "skip.reason.unreadable",
+      "invalid-path": "skip.reason.invalid-path",
+      "invalid-cwd": "skip.reason.invalid-cwd",
+      "storage-full": "skip.reason.storage-full",
+    });
+
+    /** 一条跳过原因的文案键（未知原因落到 other）。 */
+    function skipReasonKey(/** @type {any} */ reason) {
+      return typeof reason === "string" && SKIP_REASON_KEYS[reason] !== undefined
+        ? SKIP_REASON_KEYS[reason]
+        : "skip.reason.other";
+    }
+
+    /**
+     * 按原因汇总被跳过的文件（AUD-REW-04：预览展示原因与数量，而不是一句「未追踪」）。
+     * @param {any} files normalizeFiles 的结果
+     * @returns {Array<{reason: string, key: string, count: number}>}
+     */
+    function skippedReasonSummary(files) {
+      let list = files && Array.isArray(files.skipped) ? files.skipped : [];
+      /** @type {Map<string, number>} */
+      let counts = new Map();
+      for (let i = 0; i < list.length; i += 1) {
+        let reason =
+          typeof list[i].reason === "string" && list[i].reason !== "" ? list[i].reason : "other";
+        counts.set(reason, (counts.get(reason) ?? 0) + 1);
+      }
+      return [...counts.entries()]
+        .map(([reason, count]) => ({ reason: reason, key: skipReasonKey(reason), count: count }))
+        .sort((left, right) => right.count - left.count || (left.reason < right.reason ? -1 : 1));
+    }
+
+    /**
+     * 确认框的「可恢复」说明（AUD-REW-06 / ADR 0002）：消息永远可找回；文件模式额外说明
+     * 救援点与回收站。返回 locale 键数组（渲染成一行里的多段）。
+     * @param {any} preview
+     * @param {any} mode
+     * @returns {string[]}
+     */
+    function recoverableHintKeys(preview, mode) {
+      let keys = ["confirm.recoverable"];
+      if (mode === "both" && preview?.files?.tracked === true)
+        keys.push("confirm.recoverableFiles");
+      return keys;
+    }
+
+    /** 模态里可聚焦的元素选择器（焦点陷阱用；与宿主 Modal 的约定保持一致）。 */
+    let FOCUSABLE_SELECTOR =
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
+
+    /**
+     * 焦点陷阱的「下一个目标」：在首/尾或焦点跑出容器时环绕（AUD-REW-07）。
+     * @param {number} total 可聚焦元素数
+     * @param {number} current 当前焦点下标（-1 = 不在容器里）
+     * @param {boolean} shiftKey
+     * @returns {number | null} 需要强制聚焦的下标；null 表示交给浏览器默认行为
+     */
+    function focusWrapIndex(total, current, shiftKey) {
+      if (!Number.isSafeInteger(total) || total <= 0) return null;
+      if (current === -1) return shiftKey ? total - 1 : 0;
+      if (shiftKey && current === 0) return total - 1;
+      if (!shiftKey && current === total - 1) return 0;
+      return null;
+    }
+
+    /**
+     * 诊断项标题：有 nameKey 就一律走 locale（host 与 client 同一个包版本，键集一致）；
+     * 没有 nameKey（旧 host）时退回英文 name（AUD-REW-16）。
+     */
+    function healthCheckLabel(/** @type {any} */ check, /** @type {any} */ t) {
+      if (check && typeof check.nameKey === "string" && check.nameKey !== "") {
+        return t(check.nameKey);
+      }
+      return check && typeof check.name === "string" ? check.name : "";
+    }
+
+    /** 诊断项 detail：有 detailKey 走 locale + params；否则用 host 的 detail（路径/统计）。 */
+    function healthCheckDetail(/** @type {any} */ check, /** @type {any} */ t) {
+      if (check && typeof check.detailKey === "string" && check.detailKey !== "") {
+        return t(check.detailKey, check.detailParams || {});
+      }
+      return check && typeof check.detail === "string" ? check.detail : "";
+    }
+
+    /** `sessionRewind/trash` 响应 → 回收站操作数组（AUD-REW-08）。 */
+    function normalizeTrashOps(/** @type {any} */ value) {
+      let source = value && typeof value === "object" ? value : {};
+      /** @type {any[]} */
+      let out = [];
+      if (!Array.isArray(source.operations)) return out;
+      for (let i = 0; i < source.operations.length; i += 1) {
+        let item = source.operations[i];
+        if (!item || typeof item !== "object") continue;
+        let id =
+          typeof item.id === "string"
+            ? item.id
+            : typeof item.id === "number"
+              ? String(item.id)
+              : "";
+        if (id === "") continue;
+        let paths = normalizePathList(item.paths).map((entry) => ({
+          path: entry.path,
+          bytes: entry.bytes,
+        }));
+        let totalBytes =
+          typeof item.totalBytes === "number"
+            ? item.totalBytes
+            : paths.reduce(
+                (/** @type {number} */ sum, /** @type {any} */ entry) => sum + entry.bytes,
+                0,
+              );
+        out.push({
+          id: id,
+          time: typeof item.time === "number" ? item.time : null,
+          targetSeq: typeof item.targetSeq === "number" ? item.targetSeq : null,
+          rescueId: typeof item.rescueId === "string" ? item.rescueId : null,
+          totalBytes: totalBytes,
+          paths: paths,
+        });
+      }
+      return out;
+    }
+
+    /** `sessionRewind/restoreTrash` 响应 → { restored, failed, safetyRescueId }。 */
+    function normalizeTrashResult(/** @type {any} */ value) {
+      let source = value && typeof value === "object" ? value : {};
+      return {
+        restored: normalizePathList(source.restored).map((item) => item.path),
+        failed: normalizePathList(source.failed),
+        safetyRescueId: typeof source.safetyRescueId === "string" ? source.safetyRescueId : null,
+      };
+    }
+
+    /** `sessionRewind/clearTrash` 响应 → 影响面（dryRun 与正式清空同一形状）。 */
+    function normalizeTrashImpact(/** @type {any} */ value) {
+      let source = value && typeof value === "object" ? value : {};
+      return {
+        dryRun: source.dryRun === true,
+        auditId: typeof source.auditId === "string" ? source.auditId : "",
+        files: typeof source.files === "number" ? source.files : 0,
+        bytes: typeof source.bytes === "number" ? source.bytes : 0,
+        paths: normalizePathList(source.paths).map((item) => item.path),
+      };
     }
 
     /**
@@ -1240,6 +1563,12 @@ window.__ModuleLoader__.load({
         markerSeq: typeof entry.markerSeq === "number" ? entry.markerSeq : null,
         mode: entry.mode === "both" ? "both" : "chat",
         removedCount: typeof entry.removedCount === "number" ? entry.removedCount : 0,
+        removedMessageCount:
+          typeof entry.removedMessageCount === "number"
+            ? entry.removedMessageCount
+            : typeof entry.removedCount === "number"
+              ? entry.removedCount
+              : 0,
         tokens: typeof entry.tokens === "number" ? entry.tokens : 0,
         files: filesReceiptOf(entry.files),
         rescueId: typeof entry.rescueId === "string" ? entry.rescueId : null,
@@ -1336,8 +1665,14 @@ window.__ModuleLoader__.load({
           if (typeof check.name !== "string") continue;
           checks.push({
             name: check.name,
+            nameKey: typeof check.nameKey === "string" ? check.nameKey : "",
             ok: check.ok === true,
             detail: typeof check.detail === "string" ? check.detail : "",
+            detailKey: typeof check.detailKey === "string" ? check.detailKey : "",
+            detailParams:
+              check.detailParams && typeof check.detailParams === "object"
+                ? check.detailParams
+                : {},
           });
         }
       }
@@ -1424,6 +1759,12 @@ window.__ModuleLoader__.load({
         targetSeq: targetSeq,
         markerSeq: typeof source.markerSeq === "number" ? source.markerSeq : targetSeq,
         removedCount: typeof source.removedCount === "number" ? source.removedCount : 0,
+        removedMessageCount:
+          typeof source.removedMessageCount === "number"
+            ? source.removedMessageCount
+            : typeof source.removedCount === "number"
+              ? source.removedCount
+              : 0,
         tokens: typeof source.tokens === "number" ? source.tokens : 0,
         text: text,
         images: imageRefsOf(source),
@@ -1464,7 +1805,10 @@ window.__ModuleLoader__.load({
       constructor(inner, cutsRef, sessionId) {
         this.inner = inner;
         this.cutsRef = cutsRef;
-        this.sessionId = typeof sessionId === "string" ? sessionId : null;
+        this.initialSessionId = typeof sessionId === "string" ? sessionId : null;
+        // 一旦在 rebuild 期间观察到会话 id 就记住：之后流式 apply 没有 activeSession 时
+        // 仍能用宿主 cuts 兜底（否则 apply 会把 hidden 全量替换回 visible）。
+        this.sessionId = this.initialSessionId;
         /** @type {Map<string, any>} */
         this.originals = new Map();
         /** @type {Map<string, any>} */
@@ -1496,12 +1840,9 @@ window.__ModuleLoader__.load({
       }
 
       refreshCuts() {
+        this.sessionId = resolveCutSession(this.sessionId, activeSession, this.initialSessionId);
         let marker = collectCuts(Array.from(this.originals.values()));
-        /** @type {any[]} */
-        let fallback = [];
-        if (this.sessionId && this.cutsRef && typeof this.cutsRef.get === "function") {
-          fallback = this.cutsRef.get(this.sessionId) || [];
-        }
+        let fallback = cutsForSession(this.sessionId, null, null, this.cutsRef);
         this.cuts = mergeCuts(marker, fallback);
         this.cutSignature = signatureOfCuts(this.cuts);
       }
@@ -1969,6 +2310,8 @@ window.__ModuleLoader__.load({
           disabled: props.disabled,
           onClick: props.onClick,
           title: props.title,
+          // AUD-REW-07：宿主的 [data-modal-autofocus] 约定（本插件的浮层自管焦点）。
+          "data-modal-autofocus": props.autofocus === true ? "" : undefined,
         },
         props.children,
       );
@@ -2138,11 +2481,25 @@ window.__ModuleLoader__.load({
           : null,
         h("div", { className: "dsh-srw-paths" }, rows),
         more,
-        files.skipped.length > 0 && !expanded
+        files.skipped.length > 0
           ? h(
               "div",
-              { className: "dsh-srw-dim dsh-srw-skipped" },
-              t("confirm.skipped", { n: files.skipped.length }),
+              {
+                className: "dsh-srw-dim dsh-srw-skipped",
+                "data-srw-skipped": String(files.skipped.length),
+              },
+              h("div", null, t("confirm.skipped", { n: files.skipped.length })),
+              skippedReasonSummary(files).map((item) =>
+                h(
+                  "div",
+                  {
+                    key: `skip:${item.reason}`,
+                    className: "dsh-srw-skip-reason",
+                    "data-reason": item.reason,
+                  },
+                  t("confirm.skippedReasonLine", { reason: t(item.key), n: item.count }),
+                ),
+              ),
             )
           : null,
       );
@@ -2207,6 +2564,7 @@ window.__ModuleLoader__.load({
             { key: "sum", className: "dsh-srw-summary" },
             t("confirm.summary", {
               n: preview.chat.removedCount,
+              messages: preview.chat.removedMessageCount,
               tokens: formatCount(preview.chat.tokens),
             }),
           ),
@@ -2245,10 +2603,22 @@ window.__ModuleLoader__.load({
             fileState: fileModeState(preview),
             onChange: api.setRewindMode,
           }),
+          // USIM-U2-03 / U3-08：写清「文件回退只覆盖哪些改动」，避免把「无文件变更」读成
+          // 「文件没动过」。
+          h(
+            "div",
+            {
+              key: "tracking-scope",
+              className: "dsh-srw-option-hint",
+              "data-srw-tracking-scope": "",
+            },
+            t("confirm.trackingScope"),
+          ),
         );
         if (
           preview.files.tracked &&
-          preview.files.restore.length + preview.files.trash.length > 0
+          (preview.files.restore.length + preview.files.trash.length > 0 ||
+            preview.files.skipped.length > 0)
         ) {
           blocks.push(
             h(FileSummary, {
@@ -2260,12 +2630,16 @@ window.__ModuleLoader__.load({
             }),
           );
         }
-        if (preview.warnings.length > 0) {
+        // files-skipped 的 host 文案是英文兜底；有结构化 skipped 时改由 FileSummary 本地化展示。
+        let warnings = preview.warnings.filter(
+          (/** @type {any} */ warning) => warning.code !== "files-skipped",
+        );
+        if (warnings.length > 0) {
           blocks.push(
             h(
               "div",
               { key: "warn", className: "dsh-srw-warn-list" },
-              preview.warnings.map((/** @type {any} */ warning, /** @type {any} */ index) =>
+              warnings.map((/** @type {any} */ warning, /** @type {any} */ index) =>
                 h(
                   "div",
                   { key: `${warning.code}:${index}`, className: "dsh-srw-warn" },
@@ -2288,6 +2662,21 @@ window.__ModuleLoader__.load({
           );
         }
       }
+
+      // AUD-REW-06 / ADR 0002：破坏性确认框必须写清「能否恢复」。
+      blocks.push(
+        h(
+          "div",
+          {
+            key: "recoverable",
+            className: "dsh-srw-recoverable",
+            "data-rewind-recoverable": "true",
+          },
+          recoverableHintKeys(preview, state.rewindMode).map((key) =>
+            h("div", { key: key, className: "dsh-srw-recoverable-line" }, t(key)),
+          ),
+        ),
+      );
 
       // 「回退后立即重发」：仅对话模式提供（文件模式先还原文件，语义不同）。
       if (state.rewindMode !== "both" && state.previewLoading !== true) {
@@ -2342,6 +2731,7 @@ window.__ModuleLoader__.load({
       let search = h("input", {
         type: "search",
         className: "dsh-srw-search",
+        "data-modal-autofocus": "",
         placeholder: t("list.search"),
         value: state.listSearch || "",
         "aria-label": t("list.search"),
@@ -2441,11 +2831,16 @@ window.__ModuleLoader__.load({
         footer = h(
           Fragment,
           null,
-          h(Btn, { onClick: () => api.cancelDialog() }, t("dialog.cancel")),
+          h(
+            Btn,
+            { autofocus: disabled === true, onClick: () => api.cancelDialog() },
+            t("dialog.cancel"),
+          ),
           h(
             Btn,
             {
               primary: true,
+              autofocus: disabled !== true,
               disabled: disabled,
               onClick: () => api.doRewind(),
             },
@@ -2653,7 +3048,7 @@ window.__ModuleLoader__.load({
               })
             : t("audit.meta", {
                 mode: t(modeLabelKey(entry.mode)),
-                n: entry.removedCount,
+                n: entry.removedMessageCount,
                 tokens: formatCount(entry.tokens),
               });
           return h(
@@ -2730,103 +3125,289 @@ window.__ModuleLoader__.load({
       );
     }
 
-    /** 救援点 tab：列表 + 二次确认 + restoreRescue。 */
+    /**
+     * 恢复点 tab（AUD-REW-08）：救援点 + 回收站两个分节。
+     *
+     * 页签数量保持 3（conventions §7：面板页签 ≤3），回收站并入救援点页签；两个分节都走
+     * 「二次确认 + 影响面」的内联确认，清空回收站额外先 dry-run 拿影响面（ADR 0002）。
+     */
     function RescuesTab(/** @type {any} */ props) {
       let data = props.data;
       let api = props.api;
       let t = props.t;
+      let trash = data.trash || {
+        loading: false,
+        errorKey: null,
+        errorParams: null,
+        list: [],
+      };
+
+      let rescuesBody;
       if (data.loading && data.list.length === 0) {
-        return h("div", { className: "dsh-srw-dim" }, t("dialog.loading"));
-      }
-      if (data.errorKey) {
-        return h(
+        rescuesBody = h("div", { className: "dsh-srw-dim" }, t("dialog.loading"));
+      } else if (data.errorKey) {
+        rescuesBody = h(
           "div",
           { className: "dsh-srw-error" },
           t("rescues.loadFailed", { message: t(data.errorKey, data.errorParams || {}) }),
         );
-      }
-      if (data.list.length === 0) {
-        return h("div", { className: "dsh-srw-dim" }, t("rescues.empty"));
-      }
-      return h(
-        "div",
-        { className: "dsh-srw-cuts" },
-        data.list.map((/** @type {any} */ rescue) => {
-          let pending = data.pendingId === rescue.id;
-          let executing = data.executingId === rescue.id;
-          return h(
-            "div",
-            { key: rescue.id, className: "dsh-srw-cut" },
-            h(
+      } else if (data.list.length === 0) {
+        rescuesBody = h("div", { className: "dsh-srw-dim" }, t("rescues.empty"));
+      } else {
+        rescuesBody = h(
+          "div",
+          { className: "dsh-srw-cuts" },
+          data.list.map((/** @type {any} */ rescue) => {
+            let pending = data.pendingId === rescue.id;
+            let executing = data.executingId === rescue.id;
+            return h(
               "div",
-              { className: "dsh-srw-cut-head" },
-              h("span", { className: "dsh-srw-strong" }, formatDateTime(rescue.time) || rescue.id),
+              { key: rescue.id, className: "dsh-srw-cut", "data-srw-rescue": rescue.id },
               h(
-                "span",
-                { className: "dsh-srw-badge" },
-                rescue.completed ? t("rescues.completed") : t("rescues.incomplete"),
-              ),
-              h(
-                "span",
-                { className: "dsh-srw-time" },
-                t("rescues.meta", {
-                  seq: rescue.targetSeq === null ? "?" : rescue.targetSeq,
-                  n: rescue.paths.length,
-                }),
-              ),
-            ),
-            h(
-              "div",
-              { className: "dsh-srw-paths" },
-              rescue.paths.slice(0, 5).map((/** @type {any} */ item) =>
+                "div",
+                { className: "dsh-srw-cut-head" },
                 h(
-                  "div",
-                  {
-                    key: item.path,
-                    className: "dsh-srw-path",
-                    "data-kind": item.existed ? "restore" : "trash",
-                  },
-                  h("span", { className: "dsh-srw-path-name", title: item.path }, item.path),
-                  h("span", { className: "dsh-srw-path-bytes" }, formatBytes(item.bytes)),
+                  "span",
+                  { className: "dsh-srw-strong" },
+                  formatDateTime(rescue.time) || rescue.id,
+                ),
+                h(
+                  "span",
+                  { className: "dsh-srw-badge" },
+                  rescue.completed ? t("rescues.completed") : t("rescues.incomplete"),
+                ),
+                h(
+                  "span",
+                  { className: "dsh-srw-time" },
+                  t("rescues.meta", {
+                    seq: rescue.targetSeq === null ? "?" : rescue.targetSeq,
+                    n: rescue.paths.length,
+                  }),
                 ),
               ),
-            ),
-            pending
-              ? h(
+              h(
+                "div",
+                { className: "dsh-srw-paths" },
+                rescue.paths.slice(0, 5).map((/** @type {any} */ item) =>
+                  h(
+                    "div",
+                    {
+                      key: item.path,
+                      className: "dsh-srw-path",
+                      "data-kind": item.existed ? "restore" : "trash",
+                    },
+                    h("span", { className: "dsh-srw-path-name", title: item.path }, item.path),
+                    h("span", { className: "dsh-srw-path-bytes" }, formatBytes(item.bytes)),
+                  ),
+                ),
+              ),
+              pending
+                ? h(
+                    "div",
+                    { className: "dsh-srw-confirm-row" },
+                    h(
+                      "div",
+                      { className: "dsh-srw-warn" },
+                      t("rescues.confirm", { n: rescue.paths.length }),
+                    ),
+                    h(
+                      "div",
+                      { className: "dsh-srw-item-actions" },
+                      h(Btn, { small: true, onClick: api.cancelRescue }, t("rescues.cancel")),
+                      h(
+                        Btn,
+                        {
+                          small: true,
+                          primary: true,
+                          disabled: executing,
+                          onClick: api.confirmRescue,
+                        },
+                        executing ? t("rescues.restoring") : t("rescues.restore"),
+                      ),
+                    ),
+                  )
+                : h(
+                    "div",
+                    { className: "dsh-srw-item-actions" },
+                    h(
+                      LinkBtn,
+                      { disabled: executing, onClick: () => api.setPendingRescue(rescue.id) },
+                      executing ? t("rescues.restoring") : t("rescues.restore"),
+                    ),
+                  ),
+            );
+          }),
+        );
+      }
+
+      let trashBody;
+      if (trash.loading && trash.list.length === 0) {
+        trashBody = h("div", { className: "dsh-srw-dim" }, t("dialog.loading"));
+      } else if (trash.errorKey) {
+        trashBody = h(
+          "div",
+          { className: "dsh-srw-error" },
+          t("trash.loadFailed", { message: t(trash.errorKey, trash.errorParams || {}) }),
+        );
+      } else if (trash.list.length === 0) {
+        trashBody = h("div", { className: "dsh-srw-dim" }, t("trash.empty"));
+      } else {
+        trashBody = h(
+          "div",
+          { className: "dsh-srw-cuts" },
+          trash.list.map((/** @type {any} */ op) => {
+            let restoring = data.trashPendingId === op.id;
+            let executing = data.trashExecutingId === op.id;
+            let clearing = data.trashClearId === op.id;
+            let clearExecuting = data.trashClearExecuting === true;
+            let impact = clearing ? data.trashClearImpact : null;
+            /** @type {any[]} */
+            let actions = [];
+            if (restoring) {
+              actions.push(
+                h(
                   "div",
                   { className: "dsh-srw-confirm-row" },
                   h(
                     "div",
                     { className: "dsh-srw-warn" },
-                    t("rescues.confirm", { n: rescue.paths.length }),
+                    t("trash.confirm", { n: op.paths.length }),
                   ),
                   h(
                     "div",
                     { className: "dsh-srw-item-actions" },
-                    h(Btn, { small: true, onClick: api.cancelRescue }, t("rescues.cancel")),
+                    h(Btn, { small: true, onClick: api.cancelTrashRestore }, t("rescues.cancel")),
                     h(
                       Btn,
                       {
                         small: true,
                         primary: true,
                         disabled: executing,
-                        onClick: api.confirmRescue,
+                        onClick: api.confirmTrashRestore,
                       },
-                      executing ? t("rescues.restoring") : t("rescues.restore"),
+                      executing ? t("rescues.restoring") : t("trash.restore"),
                     ),
                   ),
-                )
-              : h(
+                ),
+              );
+            } else if (clearing) {
+              if (impact === null) {
+                actions.push(
+                  h(
+                    "div",
+                    { className: "dsh-srw-confirm-row" },
+                    h("div", { className: "dsh-srw-dim" }, t("dialog.loading")),
+                    h(
+                      "div",
+                      { className: "dsh-srw-item-actions" },
+                      h(Btn, { small: true, onClick: api.cancelTrashClear }, t("rescues.cancel")),
+                    ),
+                  ),
+                );
+              } else {
+                actions.push(
+                  h(
+                    "div",
+                    { className: "dsh-srw-confirm-row", "data-srw-trash-clear": "" },
+                    h(
+                      "div",
+                      { className: "dsh-srw-warn" },
+                      t("trash.clearConfirm", {
+                        n: impact.files,
+                        bytes: formatBytes(impact.bytes),
+                      }),
+                    ),
+                    h(
+                      "div",
+                      { className: "dsh-srw-item-actions" },
+                      h(Btn, { small: true, onClick: api.cancelTrashClear }, t("rescues.cancel")),
+                      h(
+                        Btn,
+                        {
+                          small: true,
+                          primary: true,
+                          disabled: clearExecuting,
+                          onClick: api.confirmTrashClear,
+                        },
+                        clearExecuting ? t("trash.clearing") : t("trash.clearConfirmAction"),
+                      ),
+                    ),
+                  ),
+                );
+              }
+            } else {
+              actions.push(
+                h(
                   "div",
                   { className: "dsh-srw-item-actions" },
                   h(
                     LinkBtn,
-                    { disabled: executing, onClick: () => api.setPendingRescue(rescue.id) },
-                    executing ? t("rescues.restoring") : t("rescues.restore"),
+                    { disabled: executing, onClick: () => api.setPendingTrashRestore(op.id) },
+                    executing ? t("rescues.restoring") : t("trash.restore"),
+                  ),
+                  h(
+                    LinkBtn,
+                    { disabled: executing, onClick: () => api.previewTrashClear(op.id) },
+                    t("trash.clear"),
                   ),
                 ),
-          );
-        }),
+              );
+            }
+            return h(
+              "div",
+              {
+                key: op.id,
+                className: "dsh-srw-cut",
+                "data-srw-trash-op": op.id,
+              },
+              h(
+                "div",
+                { className: "dsh-srw-cut-head" },
+                h("span", { className: "dsh-srw-strong" }, formatDateTime(op.time) || op.id),
+                h(
+                  "span",
+                  { className: "dsh-srw-time" },
+                  t("trash.meta", {
+                    n: op.paths.length,
+                    bytes: formatBytes(op.totalBytes),
+                  }),
+                ),
+              ),
+              h(
+                "div",
+                { className: "dsh-srw-paths" },
+                op.paths
+                  .slice(0, 5)
+                  .map((/** @type {any} */ item) =>
+                    h(
+                      "div",
+                      { key: item.path, className: "dsh-srw-path", "data-kind": "trash" },
+                      h("span", { className: "dsh-srw-path-name", title: item.path }, item.path),
+                      h("span", { className: "dsh-srw-path-bytes" }, formatBytes(item.bytes)),
+                    ),
+                  ),
+              ),
+              actions,
+            );
+          }),
+        );
+      }
+
+      return h(
+        "div",
+        { className: "dsh-srw-tab-body" },
+        h(
+          "div",
+          { className: "dsh-srw-group" },
+          h("div", { className: "dsh-srw-group-title" }, t("drawer.tab.rescues")),
+          rescuesBody,
+        ),
+        h(
+          "div",
+          { className: "dsh-srw-group", "data-srw-trash": "" },
+          h("div", { className: "dsh-srw-group-title" }, t("trash.title")),
+          trashBody,
+        ),
       );
     }
 
@@ -2981,14 +3562,19 @@ window.__ModuleLoader__.load({
               h(
                 "div",
                 {
-                  key: `${check.name}:${index}`,
+                  key: `${check.nameKey || check.name}:${index}`,
                   className: "dsh-srw-check-row",
                   "data-ok": check.ok ? "true" : "false",
+                  "data-check": check.nameKey || check.name,
                 },
                 h("span", { className: "dsh-srw-check-mark" }, check.ok ? "✓" : "✗"),
-                h("span", { className: "dsh-srw-check-name" }, check.name),
-                check.detail
-                  ? h("span", { className: "dsh-srw-dim dsh-srw-check-detail" }, check.detail)
+                h("span", { className: "dsh-srw-check-name" }, healthCheckLabel(check, t)),
+                healthCheckDetail(check, t) !== ""
+                  ? h(
+                      "span",
+                      { className: "dsh-srw-dim dsh-srw-check-detail" },
+                      healthCheckDetail(check, t),
+                    )
                   : null,
               ),
             ),
@@ -3008,27 +3594,33 @@ window.__ModuleLoader__.load({
           modeRow,
           modeRowBoth,
         ),
-        pageRow,
-        confirmRow,
         recallRow,
         // 「已保存」提示来自抽屉时代的 store；分节里没有这个状态，恒不显示。
         props.saved === true
           ? h("div", { className: "dsh-srw-dim dsh-srw-saved" }, t("settings.saved"))
           : null,
+        // AUD-REW-17 / conventions §7.2：首屏只留常用偏好，低频项与诊断收进默认收起的「更多设置」。
         h(
-          "div",
-          { className: "dsh-srw-group dsh-srw-health-group" },
+          "details",
+          { className: "dsh-srw-more", "data-srw-more-settings": "" },
+          h("summary", { className: "dsh-srw-more-summary" }, t("settings.more")),
+          pageRow,
+          confirmRow,
           h(
             "div",
-            { className: "dsh-srw-group-title" },
-            h("span", null, t("settings.healthTitle")),
+            { className: "dsh-srw-group dsh-srw-health-group" },
             h(
-              LinkBtn,
-              { onClick: props.onRefreshHealth || api.loadHealth },
-              t("settings.healthRefresh"),
+              "div",
+              { className: "dsh-srw-group-title" },
+              h("span", null, t("settings.healthTitle")),
+              h(
+                LinkBtn,
+                { onClick: props.onRefreshHealth || api.loadHealth },
+                t("settings.healthRefresh"),
+              ),
             ),
+            healthBlock,
           ),
-          healthBlock,
         ),
       );
     }
@@ -3115,6 +3707,12 @@ window.__ModuleLoader__.load({
           ),
           h(
             "div",
+            { className: "dsh-srw-drawer-hint" },
+            h("span", { className: "dsh-srw-dim" }, t("drawer.hintRewind")),
+            h(LinkBtn, { onClick: api.pickMessageFromDrawer }, t("drawer.pickMessage")),
+          ),
+          h(
+            "div",
             { className: "dsh-srw-tabs", role: "tablist" },
             DRAWER_TABS.map((/** @type {any} */ name) =>
               h(
@@ -3125,6 +3723,7 @@ window.__ModuleLoader__.load({
                   role: "tab",
                   className: "dsh-srw-tab",
                   "data-active": tab === name ? "true" : undefined,
+                  "data-modal-autofocus": tab === name ? "" : undefined,
                   "aria-selected": tab === name ? "true" : "false",
                   onClick: () => api.setDrawerTab(name),
                 },
@@ -3204,6 +3803,58 @@ window.__ModuleLoader__.load({
         );
         return () => clearTimeout(timer);
       }, [state.toast]);
+
+      // AUD-REW-07：浮层自管焦点（宿主的 useModalLayer 只服务它自己的 Modal 组件）。
+      // 打开时聚焦 [data-modal-autofocus]（不可执行时是「取消」），Tab 在浮层内环绕，
+      // 关闭时把焦点还给打开它的元素（↶ 按钮 / 面板入口）。
+      let restoreFocusRef = React.useRef(null);
+      React.useEffect(() => {
+        let doc = typeof document === "undefined" ? null : document;
+        if (!doc) return undefined;
+        let hostOf = () => doc.querySelector(".dsh-srw-dialog, .dsh-srw-drawer");
+        if (!overlayOpen) {
+          /** @type {any} */
+          let previous = restoreFocusRef.current;
+          restoreFocusRef.current = null;
+          if (previous && typeof previous.focus === "function" && doc.contains(previous)) {
+            previous.focus();
+          }
+          return undefined;
+        }
+        let host = hostOf();
+        if (!host) return undefined;
+        if (!restoreFocusRef.current) restoreFocusRef.current = doc.activeElement;
+        let timer = setTimeout(() => {
+          let current = hostOf();
+          if (!current) return;
+          /** @type {any} */
+          let target =
+            current.querySelector("[data-modal-autofocus]") ||
+            current.querySelector(FOCUSABLE_SELECTOR);
+          if (target && typeof target.focus === "function") target.focus();
+        }, 0);
+        let onKey = (/** @type {any} */ event) => {
+          if (event.key !== "Tab") return;
+          let current = hostOf();
+          if (!current) return;
+          /** @type {any[]} */
+          let nodes = [...current.querySelectorAll(FOCUSABLE_SELECTOR)].filter(
+            (/** @type {any} */ el) => el.offsetParent !== null || el === doc.activeElement,
+          );
+          if (nodes.length === 0) return;
+          let index = nodes.indexOf(doc.activeElement);
+          let wrap = focusWrapIndex(nodes.length, index, event.shiftKey === true);
+          if (wrap !== null) {
+            event.preventDefault();
+            if (typeof nodes[wrap].focus === "function") nodes[wrap].focus();
+          }
+        };
+        doc.addEventListener("keydown", onKey, true);
+        return () => {
+          clearTimeout(timer);
+          doc.removeEventListener("keydown", onKey, true);
+        };
+      }, [overlayOpen, state.mode, state.drawer?.open, state.drawer?.tab]);
 
       let dialog = state.mode ? h(RewindDialog, { state: state, api: api, t: props.t }) : null;
       let drawer = h(RewindDrawer, { state: state, api: api, t: props.t });
@@ -3445,6 +4096,14 @@ window.__ModuleLoader__.load({
           ".dsh-srw-break{word-break:break-all;}",
           ".dsh-srw-saved{padding-top:0;}",
           ".dsh-srw-skipped{padding-top:0;}",
+          ".dsh-srw-skip-reason{font-size:12px;color:var(--dsw-alias-label-tertiary,GrayText);}",
+          ".dsh-srw-recoverable{margin-top:2px;padding:6px 8px;border-radius:6px;background:var(--dsw-alias-bg-layer-1,rgba(127,127,127,.08));}",
+          ".dsh-srw-recoverable-line{font-size:12px;line-height:1.45;color:var(--dsw-alias-label-secondary,GrayText);}",
+          ".dsh-srw-drawer-hint{display:flex;gap:10px;align-items:baseline;justify-content:space-between;flex-wrap:wrap;padding:0 2px 6px;font-size:12px;}",
+          ".dsh-srw-more{margin-top:6px;padding-top:4px;border-top:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.25));}",
+          ".dsh-srw-more-summary{cursor:pointer;font-size:13px;color:var(--dsw-alias-label-secondary,GrayText);}",
+          ".dsh-srw-more > .dsh-srw-setting{margin-top:8px;}",
+          ".dsh-srw-tab-body > .dsh-srw-group + .dsh-srw-group{margin-top:12px;}",
         ].join("\n");
         document.head.appendChild(style);
         return () => style.remove();
@@ -3506,6 +4165,13 @@ window.__ModuleLoader__.load({
             list: [],
             pendingId: null,
             executingId: null,
+            // AUD-REW-08：回收站并入救援点页签（页签数保持 3）。
+            trash: { loading: false, errorKey: null, errorParams: null, list: [] },
+            trashPendingId: null,
+            trashExecutingId: null,
+            trashClearId: null,
+            trashClearImpact: null,
+            trashClearExecuting: false,
           }),
           settings: Object.assign(emptyTabState(), {
             prefs: prefs,
@@ -4299,8 +4965,6 @@ window.__ModuleLoader__.load({
       let ghostSearchTimer = null;
       /** @type {any} */
       let prefsSavedTimer = null;
-      /** `/rewind` 命令装饰最近一次列出的候选（onSelect 用它回查时间/预览）。 @type {any[]} */
-      let commandCandidates = [];
 
       /**
        * 执行一次回溯；成功/失败都回到 store（失败在有对话框时留在对话框里展示）。
@@ -4367,6 +5031,7 @@ window.__ModuleLoader__.load({
         broadcastCut(sessionId, summary);
         let text = t("toast.rewound", {
           n: summary.removedCount,
+          messages: summary.removedMessageCount,
           tokens: formatCount(summary.tokens),
         });
         if (summary.files) {
@@ -4376,6 +5041,9 @@ window.__ModuleLoader__.load({
           });
           if (summary.files.failed.length > 0) {
             text += t("toast.rewoundFailed", { n: summary.files.failed.length });
+          }
+          if (summary.files.skipped.length > 0) {
+            text += t("toast.rewoundSkipped", { n: summary.files.skipped.length });
           }
         }
         if (summary.cancelledTurn) text += t("toast.stoppedTurn");
@@ -4402,11 +5070,16 @@ window.__ModuleLoader__.load({
           errorParams: null,
           errorPaths: [],
         });
+        // AUD-REW-20：失败/跳过时「查看」直接打开回溯记录（带完整清单），否则看已撤回。
+        let viewTab =
+          summary.files && (summary.files.failed.length > 0 || summary.files.skipped.length > 0)
+            ? "audit"
+            : "ghost";
         showToast({
           text: text,
           action: {
             labelKey: "toast.view",
-            onClick: () => openDrawer(sessionId, "ghost"),
+            onClick: () => openDrawer(sessionId, viewTab),
           },
         });
         if (summary.images.length > 0) restoreImages(sessionId, summary.images);
@@ -4483,12 +5156,29 @@ window.__ModuleLoader__.load({
             }),
           };
         });
+        // 面板打开时宿主会话一定已就绪：顺手再种一次 cuts，修复冷启动时的可见性。
+        seedCuts(sessionId);
         loadDrawerTab(sessionId, nextTab, false);
+      }
+
+      /** 面板里「选择消息回退」：关闭抽屉并打开候选列表（USIM-U2-10：抽屉会盖住行内 ↶）。 */
+      function pickMessageFromDrawer() {
+        let sessionId = store.getSnapshot().drawer?.sessionId;
+        closeDrawer();
+        if (typeof sessionId === "string" && sessionId !== "") openList(sessionId);
       }
 
       function closeDrawer() {
         patchDrawer(null, { open: false, sessionId: null });
-        patchDrawer("rescues", { pendingId: null, executingId: null });
+        patchDrawer("rescues", {
+          pendingId: null,
+          executingId: null,
+          trashPendingId: null,
+          trashExecutingId: null,
+          trashClearId: null,
+          trashClearImpact: null,
+          trashClearExecuting: false,
+        });
       }
 
       function setDrawerTab(/** @type {any} */ tab) {
@@ -4611,9 +5301,12 @@ window.__ModuleLoader__.load({
         });
       }
 
-      /** 救援点列表。 */
+      /** 恢复点 tab 数据：救援点 + 回收站（AUD-REW-08）。 */
       function loadRescues(/** @type {any} */ sessionId) {
         patchDrawer("rescues", { loading: true });
+        patchDrawer("rescues", (/** @type {any} */ state) => ({
+          trash: Object.assign({}, state.trash, { loading: true }),
+        }));
         call("rescues", { sessionId: sessionId })
           .then((/** @type {any} */ value) => {
             patchDrawer("rescues", {
@@ -4625,6 +5318,23 @@ window.__ModuleLoader__.load({
           })
           .catch((/** @type {any} */ error) => {
             patchDrawer("rescues", Object.assign({}, errorStateOf(error), { loading: false }));
+          });
+        call("trash", { sessionId: sessionId })
+          .then((/** @type {any} */ value) => {
+            patchDrawer("rescues", () => ({
+              trash: {
+                loading: false,
+                errorKey: null,
+                errorParams: null,
+                list: normalizeTrashOps(value),
+              },
+            }));
+          })
+          .catch((/** @type {any} */ error) => {
+            let failure = errorStateOf(error);
+            patchDrawer("rescues", (/** @type {any} */ state) => ({
+              trash: Object.assign({}, state.trash, failure, { loading: false }),
+            }));
           });
       }
 
@@ -4662,6 +5372,115 @@ window.__ModuleLoader__.load({
             patchDrawer("rescues", { executingId: null });
             let failure = errorStateOf(error);
             showToastKey(failure.errorKey, failure.errorParams);
+          });
+      }
+
+      /** 回收站：进入「恢复这一批」的二次确认。 */
+      function setPendingTrashRestore(/** @type {any} */ id) {
+        patchDrawer("rescues", {
+          trashPendingId: typeof id === "string" ? id : null,
+          trashClearId: null,
+          trashClearImpact: null,
+        });
+      }
+
+      function cancelTrashRestore() {
+        patchDrawer("rescues", { trashPendingId: null });
+      }
+
+      /** 从回收站恢复（宿主先建 rescue-of-rescue，再写回）。 */
+      function confirmTrashRestore() {
+        let drawer = store.getSnapshot().drawer;
+        let sessionId = drawer?.sessionId;
+        let auditId = drawer?.rescues?.trashPendingId ?? null;
+        if (!sessionId || !auditId) return;
+        patchDrawer("rescues", { trashExecutingId: auditId });
+        call("restoreTrash", { sessionId: sessionId, auditId: auditId })
+          .then((/** @type {any} */ value) => {
+            let result = normalizeTrashResult(value);
+            patchDrawer("rescues", { trashPendingId: null, trashExecutingId: null });
+            if (result.failed.length > 0) {
+              showToastKey("toast.trashPartial", {
+                restored: result.restored.length,
+                failed: result.failed.length,
+              });
+            } else {
+              showToastKey("toast.trashRestored", { restored: result.restored.length });
+            }
+            loadRescues(sessionId);
+            loadAudit(sessionId);
+          })
+          .catch((/** @type {any} */ error) => {
+            patchDrawer("rescues", { trashExecutingId: null });
+            let failure = errorStateOf(error);
+            showToastKey(failure.errorKey, failure.errorParams);
+          });
+      }
+
+      /** 清空回收站第一步：dry-run 拿影响面（ADR 0002：数量/字节/能否恢复）。 */
+      function previewTrashClear(/** @type {any} */ id) {
+        let sessionId = store.getSnapshot().drawer?.sessionId;
+        if (!sessionId || typeof id !== "string") return;
+        patchDrawer("rescues", {
+          trashClearId: id,
+          trashClearImpact: null,
+          trashPendingId: null,
+          trashClearExecuting: false,
+        });
+        call("clearTrash", { sessionId: sessionId, auditId: id, dryRun: true })
+          .then((/** @type {any} */ value) => {
+            let impact = normalizeTrashImpact(value);
+            patchDrawer("rescues", (/** @type {any} */ state) =>
+              state.trashClearId === id ? { trashClearImpact: impact } : {},
+            );
+          })
+          .catch((/** @type {any} */ error) => {
+            patchDrawer("rescues", {
+              trashClearId: null,
+              trashClearImpact: null,
+              trashClearExecuting: false,
+            });
+            let failure = errorStateOf(error);
+            showToastKey(failure.errorKey, failure.errorParams);
+          });
+      }
+
+      function cancelTrashClear() {
+        patchDrawer("rescues", {
+          trashClearId: null,
+          trashClearImpact: null,
+          trashClearExecuting: false,
+        });
+      }
+
+      /** 清空回收站第二步：确认后永久删除（审计由宿主写 `trash-clear`）。 */
+      function confirmTrashClear() {
+        let drawer = store.getSnapshot().drawer;
+        let sessionId = drawer?.sessionId;
+        let auditId = drawer?.rescues?.trashClearId ?? null;
+        let impact = drawer?.rescues?.trashClearImpact ?? null;
+        if (!sessionId || !auditId || !impact) return;
+        patchDrawer("rescues", { trashClearExecuting: true });
+        call("clearTrash", { sessionId: sessionId, auditId: auditId, dryRun: false })
+          .then((/** @type {any} */ value) => {
+            let cleared = normalizeTrashImpact(value);
+            patchDrawer("rescues", {
+              trashClearId: null,
+              trashClearImpact: null,
+              trashClearExecuting: false,
+            });
+            showToastKey("trash.clearDone", {
+              n: cleared.files,
+              bytes: formatBytes(cleared.bytes),
+            });
+            loadRescues(sessionId);
+            loadAudit(sessionId);
+          })
+          .catch((/** @type {any} */ error) => {
+            patchDrawer("rescues", { trashClearExecuting: false });
+            let failure = errorStateOf(error);
+            showToastKey(failure.errorKey, failure.errorParams);
+            loadRescues(sessionId);
           });
       }
 
@@ -4920,15 +5739,37 @@ window.__ModuleLoader__.load({
         };
       }
 
+      /** 每会话正在进行的重试次数（避免并发重复计时）。 @type {Map<string, number>} */
+      let seedCutRetries = new Map();
+
+      /**
+       * 拉宿主的 cuts 并重建 chat（可见性兜底，USIM-U3-01）。
+       *
+       * 冷启动/宿主重启时，客户端选会话与宿主 resume 会话是并发的：第一次 `cuts` RPC 可能
+       * 在会话就绪前失败，而旧实现一次失败就静默放弃，于是「重启后已撤回的消息重新可见，
+       * 面板却仍标已撤回」。这里做有限次退避重试（约 5s），成功后立刻重建。
+       * @param {any} sessionId
+       * @returns {Promise<void>}
+       */
       function seedCuts(/** @type {any} */ sessionId) {
+        let attempt = seedCutRetries.get(sessionId) ?? 0;
         return call("cuts", { sessionId: sessionId })
           .then((/** @type {any} */ value) => {
+            seedCutRetries.delete(sessionId);
             let list = value && Array.isArray(value.cuts) ? value.cuts : [];
             cutStore.set(sessionId, list);
             rebuildSessionById(sessionId);
           })
           .catch(() => {
-            /* 静默 */
+            let next = attempt + 1;
+            if (next > 5 || typeof sessionId !== "string") return;
+            seedCutRetries.set(sessionId, next);
+            setTimeout(
+              () => {
+                seedCuts(sessionId);
+              },
+              Math.min(300 * next, 1500),
+            );
           });
       }
 
@@ -4954,6 +5795,7 @@ window.__ModuleLoader__.load({
         clearToast: clearToast,
         openDrawer: openDrawer,
         closeDrawer: closeDrawer,
+        pickMessageFromDrawer: pickMessageFromDrawer,
         setDrawerTab: setDrawerTab,
         refreshDrawer: refreshDrawer,
         searchGhost: searchGhost,
@@ -4970,6 +5812,12 @@ window.__ModuleLoader__.load({
         setPendingRescue: setPendingRescue,
         cancelRescue: cancelRescue,
         confirmRescue: confirmRescue,
+        setPendingTrashRestore: setPendingTrashRestore,
+        cancelTrashRestore: cancelTrashRestore,
+        confirmTrashRestore: confirmTrashRestore,
+        previewTrashClear: previewTrashClear,
+        cancelTrashClear: cancelTrashClear,
+        confirmTrashClear: confirmTrashClear,
       };
 
       // ---- 安装各层 ----
@@ -5136,52 +5984,30 @@ window.__ModuleLoader__.load({
         "session-rewind: settings section",
       );
 
-      // /rewind 命令装饰：宿主 popupSelect 列出候选，选中后打开确认框。
-      // 参数形式 /rewind @<seq> [chat|both] 由 host 命令直接执行，这里不实现。
-      // 必须等 commandUi 服务就绪（它不一定在 apply 时已挂载），否则装饰会被静默跳过。
+      // /rewind 命令装饰：裸 `/rewind` 直接打开本插件自己的候选对话框。
+      //
+      // USIM-U2-26：宿主 popupSelect 下拉在本插件这条路径上实测键盘导航失效
+      // （↑/↓ 不移动、Enter 无反应，只有鼠标点候选才行），而宿主自己的 `/` 命令菜单是好的。
+      // 改用宿主支持的 `ui.kind:"action"`：不渲染宿主下拉，直接打开与 Esc Esc 完全同一套
+      // 候选对话框——它自带 ↑/↓、Enter、Esc 与搜索，且只列会话消息（不会混入输入历史）。
+      // 参数形式 /rewind @<seq> [chat|both] 仍由 host 命令直接执行（见 service.handleRewindCommand）。
       const installCommandDecoration = (/** @type {any} */ scope, /** @type {any} */ commandUi) => {
         scope.effect(
           () =>
             commandUi.decorate({
               name: "rewind",
               // DSH 的 decoration 在菜单/直接回车时都会先问 available；缺了它这一步会抛错，
-              // 表现为「/rewind 回车没有任何反应」。候选是否为空交给 options 返回空列表。
+              // 表现为「/rewind 回车没有任何反应」。
               available: (/** @type {any} */ session) =>
                 Boolean(session && typeof session.sessionId === "string"),
               ui: {
-                kind: "popupSelect",
-                options: (/** @type {any} */ session) => {
+                kind: "action",
+                run: (/** @type {any} */ session) => {
                   let sessionId =
                     session && typeof session.sessionId === "string"
                       ? session.sessionId
                       : undefined;
-                  if (!sessionId) return Promise.resolve([]);
-                  return call(
-                    "candidates",
-                    Object.assign({ sessionId: sessionId }, pageParamsOf(prefs, null, "")),
-                  )
-                    .then((/** @type {any} */ value) => {
-                      let page = normalizeCandidatePage(value);
-                      commandCandidates = page.candidates;
-                      return page.candidates.map((/** @type {any} */ candidate) => ({
-                        id: String(candidate.seq),
-                        label: candidate.preview || candidate.text || String(candidate.seq),
-                        detail: formatClock(candidate.time),
-                      }));
-                    })
-                    .catch(() => []);
-                },
-                onSelect: (/** @type {any} */ option, /** @type {any} */ session) => {
-                  let sessionId =
-                    session && typeof session.sessionId === "string"
-                      ? session.sessionId
-                      : undefined;
-                  let seq = option ? Number(option.id) : NaN;
-                  if (!sessionId || !Number.isFinite(seq)) return;
-                  let candidate = commandCandidates.find(
-                    (/** @type {any} */ item) => item.seq === seq,
-                  );
-                  if (candidate) openConfirm(candidate, sessionId, "command");
+                  if (sessionId) openList(sessionId);
                 },
               },
             }),
@@ -5260,6 +6086,9 @@ window.__ModuleLoader__.load({
         normalizeRescuePaths: normalizeRescuePaths,
         normalizeRescues: normalizeRescues,
         normalizeRescueResult: normalizeRescueResult,
+        normalizeTrashOps: normalizeTrashOps,
+        normalizeTrashResult: normalizeTrashResult,
+        normalizeTrashImpact: normalizeTrashImpact,
         normalizeHealth: normalizeHealth,
         normalizeImages: normalizeImages,
         imageRefsOf: imageRefsOf,
@@ -5268,6 +6097,37 @@ window.__ModuleLoader__.load({
         rewindSummaryOf: rewindSummaryOf,
         normalizeTab: normalizeTab,
         modeLabelKey: modeLabelKey,
+        // AUD-REW-06/07/16/17：可恢复性、焦点陷阱、诊断文案、跳过原因
+        recoverableHintKeys: recoverableHintKeys,
+        skippedReasonSummary: skippedReasonSummary,
+        skipReasonKey: skipReasonKey,
+        focusWrapIndex: focusWrapIndex,
+        FOCUSABLE_SELECTOR: FOCUSABLE_SELECTOR,
+        // USIM-U3-01：冷启动/重启后的可见性兜底（builder 动态解析会话 + cuts 重试）
+        resolveCutSession: resolveCutSession,
+        cutsForSession: cutsForSession,
+        RewindVisibilityBuilder: RewindVisibilityBuilder,
+        createCutStore: createCutStore,
+        withActiveSession: (
+          /** @type {string | null} */ sessionId,
+          /** @type {() => any} */ fn,
+        ) => {
+          let previous = activeSession;
+          activeSession = typeof sessionId === "string" ? sessionId : null;
+          try {
+            return fn();
+          } finally {
+            activeSession = previous;
+          }
+        },
+        healthCheckLabel: healthCheckLabel,
+        healthCheckDetail: healthCheckDetail,
+        // 组件出口（仅测试用：vm 里用假 React 渲染断言，宿主运行时不需要）
+        ConfirmBody: ConfirmBody,
+        RewindDialog: RewindDialog,
+        RescuesTab: RescuesTab,
+        SettingsTab: SettingsTab,
+        Btn: Btn,
         // v3：输入历史召回（非破坏性）
         RECALL_LIMIT: RECALL_LIMIT,
         CARET_LINE_RATIO: CARET_LINE_RATIO,
