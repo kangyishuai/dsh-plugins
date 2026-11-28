@@ -61,7 +61,9 @@ function withDay(entry) {
 }
 
 /**
- * @param {{ home: string, logger?: DSH.Logger }} options
+ * @param {{ home: string, logger?: DSH.Logger, clock?: () => number }} options
+ *   `clock` 只给单测注入（把「现在」钉在固定时刻，避免凌晨/中午跑 CI 时
+ *   同一条 hourStamps 断言随本地时钟翻红）；生产不传，等价于 Date.now。
  * @returns {{
  *   record: (entry: LedgerEntry) => Promise<void>,
  *   counters: (sessionId: string, now?: number) => SessionCounters,
@@ -76,6 +78,8 @@ function withDay(entry) {
  * }}
  */
 export function createLedger(options) {
+  /** 可注入时钟（毫秒）。生产走真实时间；单测用它把 hourStamps 的窗口钉住。 */
+  const clock = typeof options.clock === "function" ? options.clock : () => Date.now();
   const dir = join(options.home, LEDGER_DIR);
   const path = join(dir, LEDGER_FILE);
   /** @type {Map<string, SessionCounters>} */
@@ -98,7 +102,7 @@ export function createLedger(options) {
    * @param {number} [now]
    * @returns {SessionCounters}
    */
-  const counters = (sessionId, now = Date.now()) => {
+  const counters = (sessionId, now = clock()) => {
     const today = dayKey(new Date(now));
     let current = countersBySession.get(sessionId);
     if (current === undefined) {
@@ -134,8 +138,9 @@ export function createLedger(options) {
       const start = Math.max(0, info.size - LEDGER_MAX_BYTES);
       const text = await readFile(path, "utf8");
       const tail = start > 0 ? text.slice(text.lastIndexOf("\n", start) + 1) : text;
-      const today = dayKey();
-      const hourAgo = Date.now() - 60 * 60 * 1000;
+      const restoredAt = clock();
+      const today = dayKey(new Date(restoredAt));
+      const hourAgo = restoredAt - 60 * 60 * 1000;
       for (const line of tail.split("\n")) {
         if (line.trim() === "") continue;
         /** @type {any} */
