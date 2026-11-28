@@ -115,7 +115,16 @@ export function createActions(options) {
   const loadPointers = () => {
     if (pointersLoaded) return;
     pointersLoaded = true;
-    const value = store.readJson(pointerFile);
+    /** @type {any} */
+    let value;
+    try {
+      value = store.readJson(pointerFile);
+    } catch (error) {
+      // 更高版本的指针文件（降级场景）或坏文件：指针只是加速提示，读不了就按「没有」处理，
+      // 不能让所有省略 projectId 的工具调用一起失败（复审 F7）。
+      store.logger.warn?.(`casefile: 会话指针读不了（按无指针处理）：${String(error)}`);
+      return;
+    }
     const pointers = value?.pointers;
     if (pointers == null || typeof pointers !== "object") return;
     for (const [sessionId, projectId] of Object.entries(pointers)) {
@@ -133,7 +142,13 @@ export function createActions(options) {
     for (const key of keys.slice(0, Math.max(0, keys.length - MAX_POINTERS))) {
       delete pointers[key];
     }
-    store.writeJson(pointerFile, { version: 1, updatedAt: nowIso(), pointers });
+    // 落盘只影响「重启后还能 recall」；写失败（只读数据根/磁盘写满）只告警，
+    // 不拖垮 remember 及调用它的工具动作（复审 F6）。
+    try {
+      store.writeJson(pointerFile, { version: 1, updatedAt: nowIso(), pointers });
+    } catch (error) {
+      store.logger.warn?.(`casefile: 会话指针落盘失败（仅本次进程内有效）：${String(error)}`);
+    }
   };
   // checker 需要固定形状的 runner；外层 runner 更宽松，这里做一次归一。
   const checkerRunner =

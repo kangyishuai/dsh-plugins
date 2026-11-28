@@ -6,7 +6,7 @@
 // 原因：remember() 只在 open（=新建）时调用，open 对已有项目直接 project-exists，
 // 而指针是进程内 Map，重启即丢。
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -136,4 +136,37 @@ test("指针超过 200 上限时按 LRU 淘汰：刚用过的会话不会被挤�
   assert.equal(restarted.actions.recall(session("s-200")), "demo", "最新会话应在");
   assert.equal(restarted.actions.recall(session("s-1")), undefined, "最久没用的会话应被淘汰");
   assert.equal(restarted.actions.recall(session("s-first")), undefined);
+});
+
+test("只读数据根：bookkeeping 写失败不拖垮纯读动作（F6）", async () => {
+  const root = tempRoot();
+  const { actions } = makeActions(root);
+  await actions.openProject({ title: "Demo" }, session("s1"));
+  // 模拟「数据根挂只读 / 磁盘写满」：last-opened 与 session-pointers 都写不进去。
+  chmodSync(root, 0o555);
+  try {
+    const got = await actions.detail("demo");
+    assert.equal(got.project.id, "demo", "读项目本身必须照常工作");
+    assert.doesNotThrow(() => actions.remember(session("s2"), "demo"));
+  } finally {
+    chmodSync(root, 0o755);
+  }
+});
+
+test("指针文件版本高于本插件时 recall 不抛错（F7：降级场景仍能读项目）", async () => {
+  const root = tempRoot();
+  const first = makeActions(root);
+  await first.actions.openProject({ title: "Demo" }, session("s1"));
+  // 用更高版本的 casefile 写过指针文件后再降级：readJson 会抛 read-only-newer。
+  writeFileSync(
+    join(root, "session-pointers.json"),
+    JSON.stringify({ version: 99, pointers: { s1: "demo" } }),
+    "utf8",
+  );
+  const { actions } = makeActions(root);
+  assert.doesNotThrow(() => actions.recall(session("s1")));
+  assert.equal(actions.recall(session("s1")), undefined, "读不了的指针按「没有」处理");
+  // 降级不能让后续显式调用也失效：remember 之后本进程仍能 recall。
+  actions.remember(session("s1"), "demo");
+  assert.equal(actions.recall(session("s1")), "demo");
 });
