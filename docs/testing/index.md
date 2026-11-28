@@ -137,6 +137,7 @@ tarball 的 HTTP 状态），可见后 `gh run rerun <run-id> --failed` 即可�
   workflow 现在会对比线上内容与本次构建，不一致只告警不失败（npm 才是权威）。
 - **首次发布会有延迟**：2026-11-15 实测，registry 约 **5 分 21 秒**才可见、jsDelivr 的 `latest` 约 **9 分钟**（第二次 purge 后才 200）。后续发版仍要等 registry，但 CDN 已经认识这个包，通常快得多。
 - **灾备 URL**：如果 jsDelivr 不可达，可以把 `build/index.json` 放到任意 https 直链（GitHub raw 对现成文件不跳转，实测 `cache-control: max-age=300`）临时顶上；宿主要求 URL **不带 query/fragment** 且**不跟随重定向**。
+- **发现页的图标来自索引条目的 `icon` 字段**：`scripts/build-index.mjs` 目前不写这个字段，所以发现页卡片用面板默认图标；插件包自己的 `icon.svg` 只在「已安装」生效（2026-11-28 实测）。
 - **不写 `engines.dsh`**：发现页因此不会按版本过滤；兼容性以各插件 README 的表格为准。
 
 ## 4. 2026-11-28 全插件体检/修复后的当前计数
@@ -156,3 +157,15 @@ tarball 的 HTTP 状态），可见后 `gh run rerun <run-id> --failed` 即可�
 | session-rewind | **280**               | **35 PASS**（含确认框默认聚焦） | **63/63 PASS**                 |
 
 基线命令：`pnpm verify`（lint/typecheck/check/check:docs/check:public/全部单测）+ `pnpm probe:runtime`（**100 项**，见 [runtime §23](../runtime/0.2.2-rc.5.md#23-2026-11-28-第二轮实测能力挂载时序导航调度契约与命令回执)）。
+
+### 插件身份（meta/icon）实测（2026-11-28）
+
+「插件 → 已安装」的标题、描述与图标现在由插件包自己提供：`locale/en.json`、`locale/zh.json` 根对象的 `meta.title` / `meta.description`
+（英文 title + 一句英文短描述，中文 title + `scripts/index-meta.json` 的 `descriptionZh`），以及 `package.json` 顶层的 `icon`。
+8 个插件在 DSH 0.2.2-rc.5 的隔离桌面实例实测：中文标题、中文短描述、8 个互不相同的图标全部渲染（U1-01/U1-19）。
+
+两个易错点（同一次实测确认）：
+
+- 宿主要通过 Node 的模块解析器读 `locale/en.json`，所以包的 `exports` 必须显式导出 `./locale/en.json` / `./locale/zh.json`；
+  只放进 `files` 不够——解析不到时会静默回退成 npm 包名 + `package.json` 的英文长描述。
+- 顶层 `package.json` 的 `icon` 优先于 `./icon` 导出，解析时不走 exports；图标只需留在包目录内并加入 `files`。
