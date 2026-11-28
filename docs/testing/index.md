@@ -187,12 +187,12 @@ tarball 的 HTTP 状态），可见后 `gh run rerun <run-id> --failed` 即可�
 | 插件           | 单测（`node --test`） | 桌面只读回归（2026-11-28 23:0x gate:all 复跑） | web 冒烟（2026-11-28 23:0x gate:all 复跑） |
 | -------------- | --------------------- | ---------------------------------------------- | ------------------------------------------ |
 | advisor        | **244**               | 27 PASS / 0 SKIP                               | **16/16 PASS**                             |
-| artifacts      | **100**               | 4 PASS                                         | **12/12 PASS**                             |
+| artifacts      | **101**               | 4 PASS                                         | **12/12 PASS**                             |
 | btw            | **125**               | 16 PASS / 2 SKIP                               | **24 PASS / 3 SKIP**（默认段）             |
-| casefile       | **283**               | 31 PASS / 1 SKIP                               | **69/69 PASS**                             |
-| next-step      | **253**               | 21 PASS / 4 SKIP                               | **74 PASS / 0 SKIP**                       |
+| casefile       | **285**               | 31 PASS / 1 SKIP                               | **69/69 PASS**                             |
+| next-step      | **277**               | 21 PASS / 4 SKIP                               | **74 PASS / 0 SKIP**                       |
 | projects       | **839**               | 24 PASS / 1 SKIP                               | **271 PASS / 1 SKIP**                      |
-| session-delete | **138**               | 20 PASS / 2 SKIP                               | **32 PASS / 1 SKIP**                       |
+| session-delete | **141**               | 20 PASS / 2 SKIP                               | **32 PASS / 1 SKIP**                       |
 | session-rewind | **300**               | **35 PASS**（含确认框默认聚焦）                | **63/63 PASS**                             |
 
 基线命令：`pnpm verify`（lint/typecheck/check/check:docs/check:public/全部单测）+ `pnpm probe:runtime`（**100 项**，见 [runtime §23](../runtime/0.2.2-rc.5.md#23-2026-11-28-第二轮实测能力挂载时序导航调度契约与命令回执)）。
