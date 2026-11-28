@@ -197,7 +197,9 @@ pnpm verify                          # 仓库门禁（含单测、规范、文�
 | 设置 v3            | `cardThreshold` 只认三值（非法回落 `could`）、`telemetry` 只认布尔、预算默认 **60**；迁移只改「恰好等于旧默认值」的字段：v1 的 30 → 60、v2 的 120 → 60，显式 `schemaVersion:2/3` 的 30 / 45 / 120（非旧默认值）不动；读取不凭空建文件。                                                                                                                                                                                                                             |
 | 客户端纯函数       | 只对最后一轮渲染可交互卡；有 decision 即只读并回显被点那一粒（`decision.index` → `label`）；ghost 显示条件（ghost 开、草稿空、无附件/`@`/`/`、`phase === "plain"`、空闲）；草稿非空时胶囊禁用；`⌘↵` 只在「输入干净 + 空闲 + 卡片可交互」时接管；关闭总开关时依赖设置项不渲染。                                                                                                                                                                                      |
 | 旧卡折叠           | `test/client-card-collapse.test.js`：`state="readonly"` 的卡必须折叠成一行（`data-next-step-collapsed`，只有摘要首句、无提问/胶囊/✕，完整摘要在 `title`）；可交互卡与已决策卡不折叠；`firstSentenceOf` 的截断/压空白/上限。                                                                                                                                                                                                                                         |
+| 预算升级可观测     | `test/diagnostics-budget-escalations.test.js`：真实 `client.js` 的 `diagnosticsText()` 必须渲染「预算升级：N 次」（老宿主缺字段按 0、脏值不显示 NaN），行序在计数摘要之后；中英文案（内联字典 + `locale/*.json`）一致；`countBudgetEscalation` 口径 = 每次生成最多 +1。                                                                                                                                                                                             |
 | i18n 键集 parity   | `test/locale-parity.test.js`：`client.js` 内联 zh/en 字典与 `locale/{zh,en}.json` 键集一一对应；`error.aborted` 这类漏键会直接红（AUD-NS-07）。                                                                                                                                                                                                                                                                                                                     |
+| 生成编排（恢复链） | `test/generation-recovery.test.js`：`lib/generation-recovery.js` 的注入式编排用**脚本化 fake model** 钉住五条路径（首轮空→升级预算重试成功 / 升级后仍空→JSON-only 修复 / 首轮畸形→直接修复 / 升级后畸形→按真实输出修复 / 三次全败），断言预算序列、重发请求与原请求等价、修复请求带对话与真实畸形输出、失败诊断的最后实际 finish/usage/预算、预算上限；`failureDetailOf` 保持 `json:empty` 口径（报告分桶依赖它）。                                                 |
 | 生成失败反馈与超时 | `test/generate-status.test.js`：宿主侧「每会话最近一次生成」记录（成功/失败归一、detail 截断、FIFO、空 id）。`test/client-retry-feedback.test.js`（迷你 hooks 驱动真实 client）：手动失败 → loading 结束 + 一行原因 + 「重试」+ 详情可展开；自动生成失败/刷新后靠 `generateState` 显示同一套反馈；RPC 挂起 → 客户端超时、**先 `cancelGenerate` 再**显示「生成超时，可重试」；`inflight` 进入等待态轮询后台状态；旧宿主缺 `generateState` 时静默降级（USIM-U2-04）。 |
 | 卡片 ⌘↵ 登记时序   | `test/client-card-shortcut.test.js`（迷你 hooks 运行时驱动**真实 client 源码**）：尾部先挂载、卡片晚到后 `⌘↵` 仍须被接管（一粒 / 两粒胶囊都覆盖）；草稿非空 / 未揭示 / 已决策一律透传。回归哨兵：卡片是投影晚到的，登记 effect 漏了可见性就永远登记不上（点击正常、快捷键静默失效）。**别按胶囊数量归因**：0.4.0 上晚到的**一粒**卡片同样不接管。                                                                                                                   |
 
@@ -817,5 +819,106 @@ ls ~/.dsh/next-step/report-*.md
   `{"budget":500,"finish":"max-tokens","usage":{"outputTokens":500},"textLen":0,"blocks":["reasoning"]}`
   把同一请求预算升到 3000 后：`{"budget":3000,"finish":"stop","outputTokens":735,"textLen":473}`，卡片正常生成。
 - 修复：`lib/generation-budget.js`（`escalatedTokenBudget`/`recoveryFor`/`emptyOutputSummary`）——空输出走「原请求 + 预算升级（≥3000，封顶 4000）」重试；仍空才带 transcript 要求只输出 JSON；非空格式错误仍走修复请求。`settings.maxTokens` 默认 500 → **2000**（只是上限，卡片本身不会变长）。失败日志带 `finish/outputTokens/maxTokens` 诊断，用户可见 detail 保持 `json:empty` 以兼容报告分桶。
-- 验证：`packages/next-step` **253 pass / 0 fail**（新增预算策略单测；后续补默认值/上限锁）；真实隔离实例用旧 `maxTokens: 500` 设置生成卡片成功（无 schema error）；默认 2000 同样成功。
+- 验证：`packages/next-step` **277 pass / 0 fail**（新增预算策略单测；后续补默认值/上限锁）；真实隔离实例用旧 `maxTokens: 500` 设置生成卡片成功（无 schema error）；默认 2000 同样成功。
 - 复审补充（2026-11-28）：恢复最多两次（空→预算升级；仍空/畸形→带对话只输出 JSON），`recovery`/`cand.parse` 记录最终实际路径；失败诊断用最后一次实际预算（可能 > 设置值）。
+
+## 生成编排契约测试（2026-11-28，fake model）
+
+空输出恢复链（首次 → 空输出升级预算重试 → 仍失败才带对话要求只输出 JSON）原来整个长在
+`service.js` 的 `generate()` 里。而 `service.js` import 宿主的 `@deepseek-ai/*`（`dsh-llm` /
+`dsh-session` / `dsh-typert-protocol`），`node --test` **加载不了**——于是这段状态机只能靠真机碰运气：
+要花额度，还得恰好遇到「推理模型把预算全用在推理块上」的模型。2026-11-28 把编排抽成 host-free、
+可注入的 `lib/generation-recovery.js`，service 只剩接线。
+
+### 模块契约
+
+```js
+runWithRecovery({
+  callModel,
+  messages,
+  transcript,
+  buildRepairMessages,
+  parse,
+  baseMaxTokens,
+  warn,
+});
+// callModel(messages, budget) => Promise<{ text, finish, usage, budget? }>
+// => { raw, parsed, recovery: "none"|"retry"|"repair", escalated, lastFinish, lastUsage, lastBudget, calls }
+```
+
+- `recovery`：`none`＝一次成功；`retry`＝升级预算重试成功；`repair`＝走到了「带对话修格式」那一步
+  （失败时也记最后尝试的那一步）。
+- `escalated`：是否真的用**升级后的预算**发过请求——诊断计数器 `budgetEscalations` 只看这一位。
+- `lastFinish` / `lastUsage` / `lastBudget`：**最后一次实际**补全的 finish / usage / 预算；
+  `failureSummaryOf(outcome)` 就是 service 失败日志里那段 `finish=… outputTokens=… maxTokens=…`。
+- `failureDetailOf(parsed)`：写进 `lastError` / error 事件的 detail；空输出保持 `json:empty`
+  （`report.js` 的 `schemaDetailBucket` 按它分桶），诊断数字只进日志、不进用户可见 detail。
+- `candidateRecoveryFields(recovery, escalated)`：turn 事件 `cand` 里的 `parse`（口径不变：
+  `ok` / `retried` / `repaired`）+ 仅在升级过时出现的 `esc: true`。
+- `callModel` 抛错（超时/取消/宿主 llm 失败）**原样上抛**，不重试、不吞错——中止归类仍由
+  `generateCardFor` 的 `catch` 负责。
+
+### fake-model 序列覆盖了哪些路径（`test/generation-recovery.test.js`，14 项）
+
+| 脚本序列（fake model 依次返回）          | 断言的关键不变量                                                                                                                                                |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `合法 JSON`                              | `recovery:"none"`、`calls:1`、不发第二条请求、零 warn                                                                                                           |
+| `""`（finish=max-tokens）→ `合法 JSON`   | 第二次预算 = `escalatedTokenBudget(base)`；`recovery:"retry"`、`escalated:true`；**重发的 messages 与原请求逐字段相等**；warn 带 finish/outputTokens/升级后预算 |
+| `""` → `""` → `合法 JSON`                | `calls:3`、`recovery:"repair"`；第三次请求是 `buildRepairMessage`（带 transcript +「请只输出修正后的 JSON 对象」+「（空）」），预算沿用升级值                   |
+| `畸形 JSON` → `合法 JSON`                | `recovery:"repair"`、**`escalated:false`**、预算保持设置值；修复请求回贴真实畸形输出                                                                            |
+| `""` → `畸形 JSON`（非空）→ `合法 JSON`  | 修复请求回贴**真实畸形输出**、不出现「（空）」；问题描述用重试那一次的 `problem`（`options`），不沿用首轮的 `json:empty`                                        |
+| `""` → `""` → `""`                       | `parsed.suggestion === null`、`failureDetailOf === "json:empty"`、`failureSummaryOf` = 最后实际预算/finish/outputTokens                                         |
+| base=4000 的升级                         | 升级预算仍是 **4000**（`escalatedTokenBudget` 上限），不会 ×4 到 16000                                                                                          |
+| `""` → 抛错                              | `runWithRecovery` 原样 reject、`calls:2`（不会再发修复请求）                                                                                                    |
+| 自定义 parse 报失败但 `problem === null` | 不做恢复、`calls:1`（与旧 service 的 `problem !== null` 条件一致）                                                                                              |
+
+messages / 修复请求 / 解析用的是 `prompt.js` 的**真实**实现（`buildMessages` / `buildRepairMessage` /
+`parseSuggestion`），fake 只替换「模型返回什么」，所以文案与解析口径不会在测试里被复制一份。
+
+跑法：
+
+```bash
+cd packages/next-step && node --test test/generation-recovery.test.js
+cd packages/next-step && node --test          # 全包 253 → 274
+```
+
+**仍然只有真机能验的部分**（写在这里，免得把单测当全覆盖）：`llm.prepareCall` + `stream` 的真实块
+归约（`BlockAssembler`、`usage` chunk、`finish.kind`）、`AbortController` 超时/取消的时序、
+`createUserMessage` 的宿主消息形状、落地校验（`isGroundedIn`）、`events.jsonl` 写入与
+`cand.esc` 落盘。这些的观测点见 §7.4 与下文「预算升级计数」。
+
+## 预算升级计数（2026-11-28，可观测性）
+
+「空输出 → 升级预算重试」会**多花 token**（预算从设置值升到 `escalatedTokenBudget`，落 [3000, 4000]），
+但以前这件事只在 host.log 的 warn 里留痕：设置页诊断只显示 generated / failed / skipped，看不出
+「这张卡是升级救回来的」。现在有三个观测点：
+
+| 观测点         | 位置                                                                                                   | 口径                                                                                                                                                                                 |
+| -------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 诊断计数       | `service.js` 的 `counters.budgetEscalations`，`nextStep/diagnostics` 的 `stats` 直接带出               | **每次 generate 最多 +1**（升级后仍空再修复也只算一次）；判定在 `countBudgetEscalation`，单测在 `test/generation-recovery.test.js`                                                   |
+| 设置页诊断文本 | 「诊断」块第二行「预算升级：N 次」/ `Budget escalations: N`；纯函数 `client.js` 的 `diagnosticsText()` | 老宿主（`stats` 没有该字段）按 **0** 显示；脏值不显示 `NaN`/`undefined`。文案键 `settings.budgetEscalations` 在两份内联字典与 `locale/{zh,en}.json` 都有（`locale-parity` 会拦漏键） |
+| 事件（持久化） | `events.jsonl` 的 `turn` 事件 `cand.esc: true`                                                         | **只在升级过时出现**；`parse:"retried"` 本身隐含升级，但 `parse:"repaired"` 分不出「首轮畸形直接修」与「升级后仍空再修」，`esc` 补这一位。旧报表只读已知字段，不受影响               |
+
+单测：`test/diagnostics-budget-escalations.test.js`（6 项，vm 沙箱里跑**真实 client.js**，断言
+`diagnosticsText` 的行序/兜底/中英文案/接线参数）。计数口径的用例在 `test/generation-recovery.test.js`
+的 `countBudgetEscalation`。
+
+### 怎么用 setting 500 复现
+
+默认 `maxTokens` 已提到 **2000**（升级后一次推理 + 出卡够用），所以想看到升级要人为压小预算：
+
+1. 造一个能吃到空输出的场景：用隔离 `DSH_HOME`（见 §0），把会话模型换成推理较长的模型；
+2. 改 `<DSH_HOME>/next-step.settings.json`，把 `maxTokens` 压到 **500**（合法区间 128–4000），
+   不必重启——设置文件 1 秒内自动生效（`currentSettings()` 的 TTL 缓存）；
+3. 完成一轮能触发出卡的回合，然后看三个地方：
+   - 设置页「诊断」第二行「预算升级：1 次」（连续触发就继续 +1）；
+   - `events.jsonl` 里该回合的 `cand.parse:"retried"` + `cand.esc:true`（升级后仍空再修复的回合是
+     `parse:"repaired"` + `esc:true`）；
+   - host.log 里两条 warn：`empty output (finish=max-tokens outputTokens=500 maxTokens=500),
+     retrying with maxTokens=3000` → `retry with maxTokens=3000 …`。
+4. 反例：`maxTokens: 2000` 且模型正常出卡时，诊断里这一行应保持 0，`cand` 里不应出现 `esc` 键。
+
+**未验证 / 风险**：计数与 `esc` 的落盘只在单测与静态核对里验过，本机真机还没有触发过升级
+（需要推理模型 + 小预算同时成立）；`report.js` 尚未消费 `esc`（保持旧报表口径，等有 3–5 天数据
+再决定要不要单列指标）。桌面回归 `pnpm smoke:next-step-desktop --require --deep` 与 web 冒烟
+`pnpm smoke:next-step` 是这层的真机兜底，发版前必跑。

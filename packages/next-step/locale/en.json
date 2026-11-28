@@ -37,6 +37,7 @@
     "settings.diagnostics": "Diagnostics",
     "settings.refresh": "Refresh",
     "settings.stats": "Generated {generated} ({hidden} hidden) · failed {failed} · aborted {aborted} · skipped {skipped} · in flight {inflight}",
+    "settings.budgetEscalations": "Budget escalations: {count}",
     "settings.lastError": "Last error: {message}",
     "settings.noError": "No errors",
     "settings.paused": "Paused; resumes in about {time}",

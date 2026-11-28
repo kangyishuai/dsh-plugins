@@ -73,6 +73,36 @@ test("构造器：turn 事件带 feat 与 gate，没有 cand 时不出现该键"
   assert.deepEqual(withCand.cand, { value: "could", shown: true, opts: [] });
 });
 
+test("构造器：cand 原样透传（含新增的 esc 布尔，旧报表只读已知字段）", () => {
+  // `esc: true` = 这次生成动用过「空输出 → 升级预算」。它只在升级过的回合出现，
+  // 与 `parse`/`shown`/`opts` 并列写进 cand；事件层不做字段白名单，旧报表因此不受影响。
+  const cand = {
+    value: "must",
+    shown: true,
+    latencyMs: 1234,
+    model: "zhinao/deepseek-v4.1-flash",
+    opts: [{ stance: "verify", label: "跑一遍 pnpm verify", len: 15, concrete: true }],
+    summaryChars: 30,
+    questionChars: 12,
+    hasGhost: false,
+    parse: "repaired",
+    esc: true,
+    usage: { outputTokens: 735 },
+  };
+  const event = turnEvent({
+    at: 1000,
+    sid: "abcd1234",
+    turn: 4,
+    tier: "could",
+    feat: { answerChars: 900, toolCalls: 2 },
+    gate: "ok",
+    cand,
+  });
+  assert.deepEqual(event.cand, cand, "cand 必须原样落盘（新增字段不需要改 events.js）");
+  assert.equal(event.cand.esc, true);
+  assert.equal(event.cand.parse, "repaired", "parse 口径不变");
+});
+
 test("构造器：可选字段不出现时不留 undefined 键", () => {
   const action = actionEvent({
     at: 1,

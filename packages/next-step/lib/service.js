@@ -49,7 +49,13 @@ import {
 import { createFollowupTracker } from "./followup.js";
 import { cheapSkipReason } from "./gates.js";
 import { createGenerateStatus } from "./generate-status.js";
-import { emptyOutputSummary, recoveryFor } from "./generation-budget.js";
+import {
+  candidateRecoveryFields,
+  countBudgetEscalation,
+  failureDetailOf,
+  failureSummaryOf,
+  runWithRecovery,
+} from "./generation-recovery.js";
 import { createInflightRegistry, inflightBlocksGenerateNow } from "./inflight.js";
 import { nextStepProjection } from "./projection.js";
 import {
@@ -238,16 +244,6 @@ function answerStatsOf(session) {
 }
 
 /**
- * 恢复路径 → 事件里的 `parse` 字段（报表按它分组对比）。
- * @param {"none" | "retry" | "repair"} recovery
- * @returns {"ok" | "retried" | "repaired"}
- */
-function parseKindOf(recovery) {
-  if (recovery === "retry") return "retried";
-  return recovery === "repair" ? "repaired" : "ok";
-}
-
-/**
  * 本轮要发给模型的对话材料（一次算好，闸、请求、落地校验共用同一份）。
  *
  * 两个口径，别混用：
@@ -295,6 +291,7 @@ export class NextStepService extends TypertRemoteService {
      * @type {{
      *   generated: number, hidden: number, superseded: number, failed: number, aborted: number,
      *   skipped: number, acted: number, dismissed: number, revealed: number, impressions: number,
+     *   budgetEscalations: number,
      * }}
      */
     this.counters = {
@@ -314,6 +311,9 @@ export class NextStepService extends TypertRemoteService {
       dismissed: 0,
       revealed: 0,
       impressions: 0,
+      // 走了「空输出 → 升级预算重试」的生成次数（每次生成最多 +1；升级后仍空再修复也只算一次）。
+      // 真机观测点：这个数字持续增长说明推理模型一直把默认预算吃光，该调大设置里的 maxTokens。
+      budgetEscalations: 0,
     };
     /** 最近一次失败原因（诊断面板用）。 */
     this.lastError = "";
@@ -759,8 +759,9 @@ export class NextStepService extends TypertRemoteService {
             questionChars: card.question.length,
             hasGhost: card.nextPrompt !== undefined,
             // 三种恢复路径都记下来：ok（一次成功）/ retried（空输出重采样）/
-            // repaired（带对话修格式）—— 复盘时这三种的输出分布完全不同
-            parse: parseKindOf(result.recovery),
+            // repaired（带对话修格式）—— 复盘时这三种的输出分布完全不同。
+            // 升级过预算的回合额外带 `esc: true`（口径与单测见 generation-recovery.js）。
+            ...candidateRecoveryFields(result.recovery, result.escalated),
             ...(result.usage === undefined ? {} : { usage: result.usage }),
           },
         }),
@@ -877,11 +878,11 @@ export class NextStepService extends TypertRemoteService {
   }
 
   /**
-   * 一次额外补全：prepareCall + stream → 宽容解析 → （必要时）重采样或带对话修复 → 落地校验。
+   * 一次额外补全：prepareCall + stream → 宽容解析 → （必要时）升级预算重试 / 带对话修复 → 落地校验。
    *
    * 四种结局，全部显式返回（不再用 null 一锅端）：
    * - `{ ok: true, suggestion, … }`
-   * - `{ ok: false, failure: "schema" }`      两次输出都不合格（原因已写进 lastError）
+   * - `{ ok: false, failure: "schema" }`      三次输出都不合格（原因已写进 lastError）
    * - `{ ok: false, failure: "ungrounded" }`  结构合格，但卡片里没有任何对象能在这段对话里找到
    *
    * 两条硬规则（见 docs/adr/0023）：
@@ -889,12 +890,16 @@ export class NextStepService extends TypertRemoteService {
    *    信息，它的唯一出路是把它写成一张卡（「这一轮没有拿到任何对话内容…」）——历史 95 条垃圾卡
    *    全部来自这里；
    * 2. **修复请求必须带同一段对话**：修复是「改格式」，不是「重新想象内容」，没有原料就只能编。
+   *
+   * 恢复链本身（何时重发、预算用哪个、修复请求带什么）在 `generation-recovery.js`：那是 host-free
+   * 的注入式编排，`test/generation-recovery.test.js` 用脚本化 fake model 把每条路径钉住；这里只做
+   * 「真实 callModel（prepareCall + stream）+ 计数 + 记日志」的接线。
    * @param {any} session
    * @param {any} settings
    * @param {AbortSignal} signal
    * @param {{ transcript: string, material: string }} context
    * @returns {Promise<
-   *   | { ok: true, suggestion: NonNullable<ReturnType<typeof parseSuggestion>["suggestion"]>, route: string, latencyMs: number, repaired: boolean, recovery: "none" | "retry" | "repair", usage?: any }
+   *   | { ok: true, suggestion: NonNullable<ReturnType<typeof parseSuggestion>["suggestion"]>, route: string, latencyMs: number, repaired: boolean, recovery: "none" | "retry" | "repair", escalated: boolean, usage?: any }
    *   | { ok: false, failure: "schema" | "ungrounded", detail?: string }
    * >}
    */
@@ -908,33 +913,22 @@ export class NextStepService extends TypertRemoteService {
     const locale = this.localeName();
     const system = buildSystemPrompt({ locale });
     const transcript = context.transcript;
-    /** @type {any} */
-    let usage;
-    /** 最近一次补全的结束原因（用于空输出诊断，不进用户可见 detail）。 @type {string | null} */
-    let lastFinish = null;
-    /** 最近一次补全的 usage。 @type {any} */
-    let lastUsage = null;
-    /** 最近一次补全实际使用的预算（失败诊断用；可能高于设置值）。 */
-    let lastBudget = maxTokens;
-    /** 是否走了「带对话的修格式」调用（决定 recovery 语义）。 */
-    let usedRepair = false;
+
     const startedAt = Date.now();
 
     /**
-     * 跑一次补全，返回文本。
+     * 跑一次补全（真实宿主调用），返回文本 + finish / usage / 实际预算。
      * @param {{ role: string, content: any[] }[]} messages
-     * @returns {Promise<string>}
+     * @param {number} [budget]
+     * @returns {Promise<{ text: string, finish: string | null, usage: any, budget: number }>}
      */
     const run = async (messages, budget = maxTokens) => {
       /**
        * @param {boolean} withReasoning
        * @param {number} [attemptBudget]
-       * @returns {Promise<string>}
+       * @returns {Promise<{ text: string, finish: string | null, usage: any, budget: number }>}
        */
       const attempt = async (withReasoning, attemptBudget = budget) => {
-        lastFinish = null;
-        lastUsage = null;
-        lastBudget = attemptBudget;
         const call = await llm.prepareCall(
           {
             provider: route.provider,
@@ -947,6 +941,8 @@ export class NextStepService extends TypertRemoteService {
           (controls) => ({ ...controls }),
         );
         const assembler = new BlockAssembler();
+        /** 这一次调用的 usage（不要沿用上一次调用的值）。 @type {any} */
+        let usage = null;
         for await (const chunk of call.stream({
           ...call.config,
           messages: messages.map((message) =>
@@ -969,13 +965,17 @@ export class NextStepService extends TypertRemoteService {
           throw new Error(`model finished with error: ${finish.failure?.message ?? "unknown"}`);
         }
         if (finish?.kind === "aborted") throw new Error("model call was aborted");
-        lastFinish = typeof finish?.kind === "string" ? finish.kind : null;
-        lastUsage = usage ?? null;
         let text = "";
         for (const block of assembler.blocks()) {
           if (block?.type === "text" && typeof block.text === "string") text += block.text;
         }
-        return text;
+        return {
+          text,
+          finish: typeof finish?.kind === "string" ? finish.kind : null,
+          usage,
+          // 回报**实际**预算：provider 不支持 reasoningEffort=off 时下面会抬高它，失败诊断要如实。
+          budget: attemptBudget,
+        };
       };
       try {
         return await attempt(true);
@@ -989,95 +989,31 @@ export class NextStepService extends TypertRemoteService {
       }
     };
 
-    const messages = buildMessages({ transcript, locale });
-    let raw = await run(messages);
-    let parsed = parseSuggestion(raw);
-    /** @type {"none" | "retry" | "repair"} */
-    let recovery = "none";
-    if (parsed.suggestion === null && parsed.problem !== null) {
-      const problem = parsed.problem;
-      const plan = recoveryFor({ raw, baseMaxTokens: maxTokens, problem });
-      recovery = plan.plan === "escalate" ? "retry" : "repair";
-      const summary = emptyOutputSummary({
-        finish: lastFinish,
-        usage: lastUsage,
-        budget: maxTokens,
-      });
-      this.warn(
-        `model output did not match the card schema (${parsed.problem.kind}: ${parsed.problem.detail}), ${
-          plan.plan === "escalate"
-            ? `empty output (${summary}), retrying with maxTokens=${plan.budget}`
-            : "repairing with the transcript"
-        }`,
-      );
-      // 空输出：可能是推理模型把 maxTokens 全用在推理块上（finish=max-tokens、textLen=0）。
-      // 原样重发只会再空一次——升级预算重发同一个请求；仍空才带对话要求「只输出 JSON」。
-      if (plan.plan === "escalate") {
-        raw = await run(messages, plan.budget);
-        parsed = parseSuggestion(raw);
-        if (parsed.suggestion === null) {
-          usedRepair = true;
-          if (raw.trim() === "") {
-            this.warn(
-              `retry with maxTokens=${plan.budget} still empty (${emptyOutputSummary({
-                finish: lastFinish,
-                usage: lastUsage,
-                budget: plan.budget,
-              })}), asking for JSON-only repair`,
-            );
-            raw = await run(
-              buildRepairMessage({ transcript, raw: "", problem: "json", detail: "empty output" }),
-              plan.budget,
-            );
-          } else {
-            // 重试回来有内容但格式错：按真实输出修格式（不要丢掉模型写的畸形输出）。
-            this.warn(
-              `retry with maxTokens=${plan.budget} returned malformed output (${problem.kind}: ${problem.detail}), repairing with the transcript`,
-            );
-            raw = await run(
-              buildRepairMessage({
-                transcript,
-                raw,
-                problem: problem.kind,
-                detail: problem.detail,
-              }),
-              plan.budget,
-            );
-          }
-          parsed = parseSuggestion(raw);
-        }
-      } else {
-        // 有内容但格式不对：带同一段对话再要一次，只要求它修格式。
-        raw = await run(
-          buildRepairMessage({
-            transcript,
-            raw,
-            problem: problem.kind,
-            // 把「上一次 label 到底几字」带进修复请求：模型数不准自己的字数
-            detail: problem.detail,
-          }),
-          plan.budget,
-        );
-        parsed = parseSuggestion(raw);
-      }
-    }
-    if (usedRepair && parsed.suggestion !== null) recovery = "repair";
+    // 首次 → 空输出升级预算重试 → 仍失败才带对话 JSON-only 修复（编排见 generation-recovery.js）。
+    const outcome = await runWithRecovery({
+      callModel: run,
+      messages: buildMessages({ transcript, locale }),
+      transcript,
+      buildRepairMessages: buildRepairMessage,
+      parse: parseSuggestion,
+      baseMaxTokens: maxTokens,
+      warn: (/** @type {string} */ message) => this.warn(message),
+      // 诊断计数：真正发起升级预算请求时 +1（中途超时/取消也算；预算已是上限时不涨预算、不计）。
+      onEscalate: () => countBudgetEscalation(this.counters, { escalated: true }),
+    });
+    const parsed = outcome.parsed;
+    const recovery = outcome.recovery;
     if (parsed.suggestion === null) {
-      const detail =
-        parsed.problem === null ? "unknown" : `${parsed.problem.kind}:${parsed.problem.detail}`;
+      const detail = failureDetailOf(parsed);
       this.counters.failed += 1;
       this.lastError = `model output did not match the card schema (${detail})`;
       this.markFailure(this.lastError);
       this.warn(
-        `model output did not match the card schema: ${detail} (${emptyOutputSummary({
-          finish: lastFinish,
-          usage: lastUsage,
-          budget: lastBudget,
-        })})`,
+        `model output did not match the card schema: ${detail} (${failureSummaryOf(outcome)})`,
       );
       return { ok: false, failure: "schema" };
     }
-    if (parsed.detail !== "") {
+    if (typeof parsed.detail === "string" && parsed.detail !== "") {
       // 宽容解析里被容忍的问题（截断/丢弃单条），留在日志里便于复盘提示词
       this.warn(`card normalized with tolerated problems: ${parsed.detail}`);
     }
@@ -1095,7 +1031,8 @@ export class NextStepService extends TypertRemoteService {
       latencyMs: Date.now() - startedAt,
       repaired: recovery === "repair",
       recovery,
-      ...(usage === undefined ? {} : { usage }),
+      escalated: outcome.escalated,
+      ...(outcome.lastUsage == null ? {} : { usage: outcome.lastUsage }),
     };
   }
 
