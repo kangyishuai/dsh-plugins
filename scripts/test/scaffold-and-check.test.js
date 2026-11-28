@@ -22,6 +22,79 @@ test("模板生成的插件能通过全部检查", () => {
   assert.deepEqual(checkRepo(root), []);
 });
 
+test("模板产物自带插件身份三件套，不依赖 0.0.0 豁免", () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "dsh-plugins-identity-template-"));
+  try {
+    mkdirSync(join(repoRoot, "packages"));
+    const dir = scaffold({ root: repoRoot, name: "hello-world", description: "Hello" });
+
+    // package.json：顶层 icon、files 白名单、locale 通配导出
+    const pkgPath = join(dir, "package.json");
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+    assert.equal(pkg.icon, "icon.svg");
+    assert.ok(pkg.files.includes("icon.svg"), "files 必须带上 icon.svg");
+    assert.equal(pkg.exports["./locale/*.json"], "./locale/*.json");
+
+    // locale 根 meta：英文是 sentence-case 占位，中文是独立的「待替换」占位。
+    // 两种语言分别断言：如果 zh 复用英文，中文界面的「已安装」仍会显示英文描述。
+    /** @param {string} lang */
+    const locale = (lang) => JSON.parse(readFileSync(join(dir, `locale/${lang}.json`), "utf8"));
+    const en = locale("en");
+    const zh = locale("zh");
+    assert.equal(en.meta.title, "Hello world");
+    assert.equal(en.meta.description, "Hello");
+    assert.equal(zh.meta.title, "插件标题（待替换）");
+    assert.equal(zh.meta.description, "一句话说明这个插件做什么（待替换）");
+    assert.notEqual(zh.meta.description, en.meta.description, "zh 不能直接复用英文描述");
+
+    // 图标：宿主可解码的 36×36 SVG，只含 artwork 允许的自包含几何
+    const icon = readFileSync(join(dir, "icon.svg"), "utf8");
+    assert.match(icon, /<svg[^>]*width="36"[^>]*height="36"[^>]*viewBox="0 0 36 36"/u);
+    for (const tag of ["text", "script", "style", "image", "foreignObject"]) {
+      assert.doesNotMatch(icon, new RegExp(`<${tag}[\\s/>]`, "u"), `icon 不应含 <${tag}>`);
+    }
+
+    // 把版本抬离 0.0.0 并登记索引源，让 identityEnforced 真正生效：
+    // 证明模板产物本身就能过强制检查，而不是靠 0.0.0 门闩放行。
+    pkg.version = "1.0.0";
+    writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+    mkdirSync(join(repoRoot, "scripts"), { recursive: true });
+    writeFileSync(
+      join(repoRoot, "scripts/index-meta.json"),
+      JSON.stringify(
+        {
+          title: { en: "Test index", zh: "测试索引" },
+          description: { en: "Test index.", zh: "测试索引。" },
+          categories: { tools: { title: { en: "Tools", zh: "工具" } } },
+          plugins: {
+            "@kangyishuai/dsh-hello-world": {
+              category: "tools",
+              title: { en: "Hello world", zh: zh.meta.title },
+              descriptionZh: zh.meta.description,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+    assert.deepEqual(checkRepo(repoRoot), []);
+
+    // 反证：删掉模板的 meta 后同一条强制检查确实报错，证明上面的全绿不是空转。
+    delete zh.meta;
+    writeFileSync(join(dir, "locale/zh.json"), JSON.stringify(zh, null, 2));
+    assert.match(
+      checkRepo(repoRoot)
+        .filter((issue) => issue.level === "error")
+        .map((issue) => issue.message)
+        .join("\n"),
+      /locale\/zh\.json 缺少非空的 meta\.title/,
+    );
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("拒绝非法名与 dsh- 前缀", () => {
   assert.throws(() => scaffold({ root, name: "Bad_Name" }), /kebab-case/);
   assert.throws(() => scaffold({ root, name: "dsh-foo" }), /dsh-/);
