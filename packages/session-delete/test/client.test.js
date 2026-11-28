@@ -182,7 +182,9 @@ describe("dialog presentation helpers", () => {
     );
     assert.equal(
       impactLine({ sizeBytes: 2048, live: true, children: [{ id: "a" }] }, t),
-      "约 2.0 KB · 1 个子会话 · 正在运行，会先停止",
+      // O2：plan.live 是「会话在本机注册（已打开）」，不等于侧栏的「回合在跑」。
+      // 原来写「正在运行」会和侧栏的「空闲」直接冲突，改成只陈述真实后果。
+      "约 2.0 KB · 1 个子会话 · 本机已打开，会先关闭",
     );
   });
 
