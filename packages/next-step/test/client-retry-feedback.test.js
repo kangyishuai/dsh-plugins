@@ -11,6 +11,12 @@
 // 2. 自动生成失败/刷新后 → `generateState` 查到最近一次失败 → 同样显示「重试 + 原因」（不再静默）；
 // 3. RPC 挂起 → 客户端超时结束 loading，**先取消服务端在途生成**再显示「生成超时，可重试」；
 // 4. `inflight` 回执不再是一句永久文案 → 进入等待态轮询 `generateState`，后台失败后转为可重试错误。
+//
+// 时序：client 内部的 grace / 轮询 / 客户端超时都走 `setTimeout` + `Date.now()`（线上 2.5s / 2s /
+// 30–60s，这里缩短成 5ms / 10ms / 40ms）。这些用例**不再用真实 sleep 猜时序**——并行全仓测试时
+// 40ms 窗口会被调度抖动吃掉，把 `error.schema` 判成 `error.timeout`；`sleep(4)` 也可能实际睡几百
+// 毫秒，把「loading」断言拖成「error」。现在装一个测试侧假时钟手动推进（见 `installClock`），断言
+// 一律「等到目标相位」（`waitPhase`），不再依赖「睡多久才够」。
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -20,7 +26,6 @@ import { fileURLToPath } from "node:url";
 const CLIENT = join(dirname(fileURLToPath(import.meta.url)), "..", "lib", "client.js");
 const SESSION = "session-1";
 const TURN = 3;
-const sleep = (/** @type {number} */ ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** 迷你 hooks 运行时（与既有 client 单测同一套路：useState/useRef/useEffect/useLayoutEffect/useCallback）。 */
 function createHooks() {
@@ -170,12 +175,154 @@ function createHooks() {
   };
 }
 
-/** 等真实定时器 + flush：组件里的 grace/轮询/超时都走真实 setTimeout（测试把 TIMINGS 缩短）。 */
-/** @param {any} hooks */
-async function pump(hooks, /** @type {number} */ ms = 6, /** @type {number} */ times = 2) {
-  for (let i = 0; i < times; i += 1) {
-    await sleep(ms);
-    hooks.flush();
+/**
+ * 受控假时钟：接管本进程的 `setTimeout` / `clearTimeout` / `Date.now`，由测试手动推进。
+ *
+ * 为什么需要：client 半用 `setTimeout` + `Date.now()` 表达 grace、`generateState` 轮询和客户端
+ * 超时。真实定时器在**并行全仓测试**（8 包并发、机器负载高）下会被调度抖动吃掉，40ms 窗口里两次
+ * 10ms 轮询还没跑完就判成超时（复审报告里的 `error.timeout` ≠ `error.schema`）。改成假时钟后时序
+ * 完全确定，也不需要「睡多久才够」的经验值；Node 22/24 都能跑，且不引入任何依赖。
+ *
+ * 只替换全局函数，`restore()` 原样还回去（每个用例的 finally 里调用）。
+ * @returns {{ advance: (ms: number, flush: () => void) => Promise<void>, restore: () => void }}
+ */
+function installClock() {
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  const realDateNow = Date.now;
+  let now = 1_000_000;
+  let nextId = 1;
+  let sequence = 0;
+  /** @type {Map<number, { id: number, at: number, sequence: number, run: Function, args: any[] }>} */
+  const timers = new Map();
+
+  /**
+   * @param {Function} fn
+   * @param {number} [ms]
+   * @param {...any} args
+   * @returns {number}
+   */
+  function fakeSetTimeout(fn, ms = 0, ...args) {
+    const id = nextId++;
+    timers.set(id, {
+      id,
+      at: now + Math.max(0, Number(ms) || 0),
+      sequence: sequence++,
+      run: fn,
+      args,
+    });
+    return id;
+  }
+
+  /** @param {any} id */
+  function fakeClearTimeout(id) {
+    timers.delete(Number(id));
+  }
+
+  Object.defineProperty(globalThis, "setTimeout", {
+    configurable: true,
+    writable: true,
+    value: fakeSetTimeout,
+  });
+  Object.defineProperty(globalThis, "clearTimeout", {
+    configurable: true,
+    writable: true,
+    value: fakeClearTimeout,
+  });
+  Object.defineProperty(Date, "now", {
+    configurable: true,
+    writable: true,
+    value: () => now,
+  });
+
+  /** 跑完微任务队列：一次 await 就会清空当前队列，多来几轮兜住链式 then。 */
+  async function drain() {
+    for (let i = 0; i < 8; i += 1) await Promise.resolve();
+  }
+
+  /** drain 微任务 + 重渲染（重渲染才会跑 effect、注册下一次定时器）。 @param {() => void} flush */
+  async function settle(flush) {
+    await drain();
+    flush();
+    await drain();
+  }
+
+  /**
+   * 触发所有到期时间 ≤ target 的定时器（按 at、注册顺序），每次触发后 drain + flush，
+   * 让「轮询 → promise → setState → 重渲染 → 下一次 setTimeout」的链条一步步接上。
+   * @param {number} target @param {() => void} flush
+   */
+  async function fireDue(target, flush) {
+    for (;;) {
+      await settle(flush);
+      /** @type {any} */
+      let next = null;
+      for (const timer of timers.values()) {
+        if (timer.at > target) continue;
+        if (
+          next === null ||
+          timer.at < next.at ||
+          (timer.at === next.at && timer.sequence < next.sequence)
+        ) {
+          next = timer;
+        }
+      }
+      if (next === null) return;
+      now = Math.max(now, next.at);
+      timers.delete(next.id);
+      next.run(...next.args);
+    }
+  }
+
+  return {
+    /**
+     * 把假时间往前推 ms 毫秒，并跑完期间到期的所有定时器。
+     * @param {number} ms @param {() => void} flush
+     */
+    async advance(ms, flush) {
+      const target = now + ms;
+      await fireDue(target, flush);
+      now = target;
+      // flush 里可能又排了 0ms 定时器：再收一遍（client 里没有 0ms，防御性处理）。
+      await fireDue(target, flush);
+    },
+    restore() {
+      Object.defineProperty(globalThis, "setTimeout", {
+        configurable: true,
+        writable: true,
+        value: realSetTimeout,
+      });
+      Object.defineProperty(globalThis, "clearTimeout", {
+        configurable: true,
+        writable: true,
+        value: realClearTimeout,
+      });
+      Object.defineProperty(Date, "now", {
+        configurable: true,
+        writable: true,
+        value: realDateNow,
+      });
+      timers.clear();
+    },
+  };
+}
+
+/**
+ * 确定性地等到条件成立：每次推进 step 假毫秒（默认 1ms）并 flush，直到 predicate 为真。
+ * 超过 maxMs 假毫秒仍不成立时返回 false，交给调用方的断言报错（不会无限等）。
+ * @param {ReturnType<typeof installClock>} clock
+ * @param {any} hooks
+ * @param {() => boolean} predicate
+ * @param {{ step?: number, maxMs?: number }} [options]
+ * @returns {Promise<boolean>}
+ */
+async function waitFor(clock, hooks, predicate, options = {}) {
+  const step = options.step ?? 1;
+  const maxMs = options.maxMs ?? 200;
+  for (let elapsed = 0; ; elapsed += step) {
+    if (predicate()) return true;
+    if (elapsed >= maxMs) return false;
+    await clock.advance(step, hooks.flush);
   }
 }
 
@@ -277,15 +424,22 @@ function bootPlugin(hooks) {
   }
 }
 
-/** 改短补生成/轮询/超时时序（线上默认 2.5s / 2s / 30–60s，测试里不能真等）。 */
-/** @param {any} __test */
-function shortTimings(__test) {
+/**
+ * 改短补生成/轮询/超时时序（线上默认 2.5s / 2s / 30–60s）。这里的毫秒是**假时钟**推进的毫秒，
+ * 不是真实等待；overrides 给单条用例放宽某个窗口（例如「要证明后台失败、不是客户端超时」的用例）。
+ * @param {any} __test
+ * @param {Record<string, number>} [overrides]
+ */
+function shortTimings(__test, overrides = {}) {
   const defaults = { ...__test.timings };
-  __test.timings.retryGraceMs = 5;
-  __test.timings.pollIntervalMs = 10;
-  __test.timings.clientTimeoutMarginMs = 0;
-  __test.timings.clientTimeoutFloorMs = 40;
-  __test.timings.clientTimeoutCeilMs = 40;
+  Object.assign(__test.timings, {
+    retryGraceMs: 5,
+    pollIntervalMs: 10,
+    clientTimeoutMarginMs: 0,
+    clientTimeoutFloorMs: 40,
+    clientTimeoutCeilMs: 40,
+    ...overrides,
+  });
   return () => Object.assign(__test.timings, defaults);
 }
 
@@ -383,17 +537,36 @@ function textOf(element) {
 const retrySectionOf = (tree) =>
   findElement(tree, (node) => node.props?.["data-next-step-retry"] !== undefined);
 
+/** 补生成 section 当前的 phase（还没渲染出来时是 undefined）。 @param {any} fiber */
+const retryPhaseOf = (fiber) =>
+  retrySectionOf(fiber.element)?.props?.["data-next-step-retry-phase"];
+
 /**
- * 挂载组件并等到 grace 放行（补生成入口出现）。
- * @param {any} hooks @param {any} plugin @param {any} api
+ * 等到补生成 section 进入指定 phase（假时钟推进，最多等 maxMs 假毫秒）。
+ * @param {ReturnType<typeof installClock>} clock
+ * @param {any} hooks
+ * @param {any} fiber
+ * @param {string} phase
+ * @param {number} [maxMs]
  */
-async function mountRetry(hooks, plugin, api) {
+async function waitPhase(clock, hooks, fiber, phase, maxMs = 200) {
+  await waitFor(clock, hooks, () => retryPhaseOf(fiber) === phase, { maxMs });
+  assert.equal(retryPhaseOf(fiber), phase, `补生成的状态应该到「${phase}」`);
+}
+
+/**
+ * 挂载组件并等到 grace 放行（补生成入口出现）。时间由假时钟推进，不依赖真实 sleep。
+ * @param {ReturnType<typeof installClock>} clock @param {any} hooks @param {any} plugin @param {any} api
+ */
+async function mountRetry(clock, hooks, plugin, api) {
   const fiber = hooks.mount(plugin.Component, propsOf(api));
-  await pump(hooks, 6, 3);
+  await waitFor(clock, hooks, () => retrySectionOf(fiber.element) !== undefined);
+  assert.ok(retrySectionOf(fiber.element) !== undefined, "grace 过后应该出现补生成入口");
   return fiber;
 }
 
 test("手动生成失败：loading 结束 + 一行原因 + 详情可展开 + 按钮变「重试」", async () => {
+  const clock = installClock();
   const hooks = createHooks();
   const plugin = bootPlugin(hooks);
   const restoreTimings = shortTimings(plugin.__test);
@@ -406,7 +579,7 @@ test("手动生成失败：loading 结束 + 一行原因 + 详情可展开 + 按
       new Promise((resolve) => {
         pending = resolve;
       });
-    fiber = await mountRetry(hooks, plugin, api);
+    fiber = await mountRetry(clock, hooks, plugin, api);
     let section = retrySectionOf(fiber.element);
     assert.ok(section !== undefined, "没有卡时应该出现补生成入口");
     assert.equal(section.props["data-next-step-retry-phase"], "idle");
@@ -418,7 +591,7 @@ test("手动生成失败：loading 结束 + 一行原因 + 详情可展开 + 按
     const button = () =>
       findElement(fiber.element, (n) => n.props?.["data-next-step-generate"] !== undefined);
     button().props.onClick();
-    await pump(hooks, 4, 1);
+    await clock.advance(0, hooks.flush);
     section = retrySectionOf(fiber.element);
     assert.equal(section.props["data-next-step-retry-phase"], "loading", "点击后进入 loading");
     assert.equal(button().props.disabled, true, "loading 时按钮不可再点");
@@ -429,7 +602,7 @@ test("手动生成失败：loading 结束 + 一行原因 + 详情可展开 + 按
       reason: "schema",
       detail: "model output did not match the card schema (json:empty)",
     });
-    await pump(hooks, 4, 1);
+    await waitPhase(clock, hooks, fiber, "error");
     section = retrySectionOf(fiber.element);
     assert.equal(section.props["data-next-step-retry-phase"], "error", "失败后 loading 必须结束");
     assert.equal(button().props.disabled, false, "失败后按钮可重试");
@@ -454,7 +627,7 @@ test("手动生成失败：loading 结束 + 一行原因 + 详情可展开 + 按
       "详情默认收起",
     );
     toggle.props.onClick();
-    await pump(hooks, 4, 1);
+    await clock.advance(0, hooks.flush);
     const detail = findElement(
       fiber.element,
       (n) => n.props?.["data-next-step-retry-detail"] !== undefined,
@@ -469,10 +642,12 @@ test("手动生成失败：loading 结束 + 一行原因 + 详情可展开 + 按
     if (fiber !== null) hooks.unmount(fiber);
     restoreTimings();
     plugin.restore();
+    clock.restore();
   }
 });
 
 test("自动生成失败（刷新后也一样）：状态查询直接显示「重试 + 原因」，不再静默恢复原状", async () => {
+  const clock = installClock();
   const hooks = createHooks();
   const plugin = bootPlugin(hooks);
   const restoreTimings = shortTimings(plugin.__test);
@@ -487,7 +662,8 @@ test("自动生成失败（刷新后也一样）：状态查询直接显示「�
         turn: null,
         last: { turn: TURN, ok: false, reason: "schema", detail: "json:empty", at: 1 },
       });
-    fiber = await mountRetry(hooks, plugin, api);
+    fiber = await mountRetry(clock, hooks, plugin, api);
+    await waitPhase(clock, hooks, fiber, "error");
     const section = retrySectionOf(fiber.element);
     assert.equal(section.props["data-next-step-retry-phase"], "error");
     assert.equal(
@@ -512,10 +688,12 @@ test("自动生成失败（刷新后也一样）：状态查询直接显示「�
     if (fiber !== null) hooks.unmount(fiber);
     restoreTimings();
     plugin.restore();
+    clock.restore();
   }
 });
 
 test("RPC 挂起：客户端超时结束 loading、先取消服务端在途生成、显示「生成超时，可重试」", async () => {
+  const clock = installClock();
   const hooks = createHooks();
   const plugin = bootPlugin(hooks);
   const restoreTimings = shortTimings(plugin.__test);
@@ -524,15 +702,15 @@ test("RPC 挂起：客户端超时结束 loading、先取消服务端在途生�
   let fiber = null;
   try {
     behavior.generate = () => new Promise(() => {}); // 永不 settle：模拟 RPC 挂起
-    fiber = await mountRetry(hooks, plugin, api);
+    fiber = await mountRetry(clock, hooks, plugin, api);
     const button = () =>
       findElement(fiber.element, (n) => n.props?.["data-next-step-generate"] !== undefined);
     button().props.onClick();
-    await pump(hooks, 4, 1);
+    await clock.advance(0, hooks.flush);
     assert.equal(retrySectionOf(fiber.element).props["data-next-step-retry-phase"], "loading");
 
-    // 超过客户端超时（timings 已缩短到 40ms）：loading 必须结束，且**先取消服务端生成**。
-    await pump(hooks, 30, 2);
+    // 假时钟推进到客户端超时（timings 已缩短到 40ms）：loading 必须结束，且**先取消服务端生成**。
+    await waitPhase(clock, hooks, fiber, "error");
     const section = retrySectionOf(fiber.element);
     assert.equal(section.props["data-next-step-retry-phase"], "error", "超时后不能继续 loading");
     assert.equal(button().props.disabled, false, "超时后按钮可重试");
@@ -555,13 +733,20 @@ test("RPC 挂起：客户端超时结束 loading、先取消服务端在途生�
     if (fiber !== null) hooks.unmount(fiber);
     restoreTimings();
     plugin.restore();
+    clock.restore();
   }
 });
 
 test("挂载时仍有一笔在途生成：直接进入等待态，后台失败后转为可重试错误", async () => {
+  const clock = installClock();
   const hooks = createHooks();
   const plugin = bootPlugin(hooks);
-  const restoreTimings = shortTimings(plugin.__test);
+  // 这条与下一条要证明「后台失败 → error.schema」而不是客户端超时：把客户端超时窗口放大到 5s
+  // （假时钟只推进 ~25ms）。双保险：即使进程真的被并行负载挂起几百毫秒，也不会误判成 error.timeout。
+  const restoreTimings = shortTimings(plugin.__test, {
+    clientTimeoutFloorMs: 5000,
+    clientTimeoutCeilMs: 5000,
+  });
   const { api, behavior, calls } = fakeApi();
   /** @type {any} */
   let fiber = null;
@@ -578,7 +763,8 @@ test("挂载时仍有一笔在途生成：直接进入等待态，后台失败�
         last: { turn: TURN, ok: false, reason: "schema", detail: "json:empty", at: 1 },
       });
     };
-    fiber = await mountRetry(hooks, plugin, api);
+    fiber = await mountRetry(clock, hooks, plugin, api);
+    await waitPhase(clock, hooks, fiber, "waiting");
     const section = () => retrySectionOf(fiber.element);
     assert.equal(section().props["data-next-step-retry-phase"], "waiting");
     assert.ok(
@@ -589,7 +775,7 @@ test("挂载时仍有一笔在途生成：直接进入等待态，后台失败�
       findElement(fiber.element, (n) => n.props?.["data-next-step-generate"] !== undefined);
     assert.equal(button().props.disabled, true, "等待态按钮禁用（避免再撞一次 inflight）");
 
-    await pump(hooks, 30, 2);
+    await waitPhase(clock, hooks, fiber, "error");
     assert.equal(
       section().props["data-next-step-retry-phase"],
       "error",
@@ -612,13 +798,19 @@ test("挂载时仍有一笔在途生成：直接进入等待态，后台失败�
     if (fiber !== null) hooks.unmount(fiber);
     restoreTimings();
     plugin.restore();
+    clock.restore();
   }
 });
 
 test("手动点生成遇到 inflight：不显示永久「正在生成」，转等待态并在后台失败后给原因", async () => {
+  const clock = installClock();
   const hooks = createHooks();
   const plugin = bootPlugin(hooks);
-  const restoreTimings = shortTimings(plugin.__test);
+  // 同「挂载时在途」：把客户端超时窗口放大到 5s，保证终态来自后台失败（error.schema）而非超时。
+  const restoreTimings = shortTimings(plugin.__test, {
+    clientTimeoutFloorMs: 5000,
+    clientTimeoutCeilMs: 5000,
+  });
   const { api, behavior } = fakeApi();
   /** @type {any} */
   let fiber = null;
@@ -640,17 +832,17 @@ test("手动点生成遇到 inflight：不显示永久「正在生成」，转�
         last: { turn: TURN, ok: false, reason: "schema", detail: "json:empty", at: 1 },
       });
     };
-    fiber = await mountRetry(hooks, plugin, api);
+    fiber = await mountRetry(clock, hooks, plugin, api);
     const section = () => retrySectionOf(fiber.element);
     assert.equal(section().props["data-next-step-retry-phase"], "idle");
     const button = () =>
       findElement(fiber.element, (n) => n.props?.["data-next-step-generate"] !== undefined);
     button().props.onClick();
-    await pump(hooks, 4, 1);
+    await clock.advance(0, hooks.flush);
     // RPC 回执是 inflight：不能停在一句「正在生成，请稍候」，也不能当失败 —— 进入等待态。
     assert.equal(section().props["data-next-step-retry-phase"], "waiting");
     assert.equal(button().props.disabled, true);
-    await pump(hooks, 30, 2);
+    await waitPhase(clock, hooks, fiber, "error");
     assert.equal(section().props["data-next-step-retry-phase"], "error");
     assert.equal(textOf(button()), "retry.retry");
     const alert = findElement(
@@ -665,10 +857,12 @@ test("手动点生成遇到 inflight：不显示永久「正在生成」，转�
     if (fiber !== null) hooks.unmount(fiber);
     restoreTimings();
     plugin.restore();
+    clock.restore();
   }
 });
 
 test("旧宿主 / 状态查询不可用：不阻塞首生成按钮（静默降级）", async () => {
+  const clock = installClock();
   const hooks = createHooks();
   const plugin = bootPlugin(hooks);
   const restoreTimings = shortTimings(plugin.__test);
@@ -677,7 +871,7 @@ test("旧宿主 / 状态查询不可用：不阻塞首生成按钮（静默降�
   let fiber = null;
   try {
     delete (/** @type {any} */ (api).generateState);
-    fiber = await mountRetry(hooks, plugin, api);
+    fiber = await mountRetry(clock, hooks, plugin, api);
     const section = retrySectionOf(fiber.element);
     assert.equal(section.props["data-next-step-retry-phase"], "idle");
     assert.equal(
@@ -693,10 +887,12 @@ test("旧宿主 / 状态查询不可用：不阻塞首生成按钮（静默降�
     if (fiber !== null) hooks.unmount(fiber);
     restoreTimings();
     plugin.restore();
+    clock.restore();
   }
 });
 
 test("换轮次后上一轮的失败状态不会串到新一轮（组件实例可能被复用）", async () => {
+  const clock = installClock();
   const hooks = createHooks();
   const plugin = bootPlugin(hooks);
   const restoreTimings = shortTimings(plugin.__test);
@@ -711,14 +907,15 @@ test("换轮次后上一轮的失败状态不会串到新一轮（组件实例�
         turn: null,
         last: { turn: TURN, ok: false, reason: "schema", detail: "json:empty", at: 1 },
       });
-    fiber = await mountRetry(hooks, plugin, api);
+    fiber = await mountRetry(clock, hooks, plugin, api);
+    await waitPhase(clock, hooks, fiber, "error");
     const section = () => retrySectionOf(fiber.element);
     assert.equal(section().props["data-next-step-retry-phase"], "error");
     // 新一轮开始：状态查询对新回合没有失败记录 / 没有在途生成 → 必须回到 idle，不能带着上一轮的原因。
     behavior.generateState = () =>
       Promise.resolve({ ok: true, inflight: false, turn: null, last: null });
     hooks.update(fiber, propsOf(api, TURN + 1));
-    await pump(hooks, 6, 2);
+    await waitPhase(clock, hooks, fiber, "idle");
     assert.equal(section().props["data-next-step-retry-phase"], "idle");
     assert.equal(
       findElement(fiber.element, (n) => n.props?.["data-next-step-retry-error"] !== undefined),
@@ -729,6 +926,7 @@ test("换轮次后上一轮的失败状态不会串到新一轮（组件实例�
     if (fiber !== null) hooks.unmount(fiber);
     restoreTimings();
     plugin.restore();
+    clock.restore();
   }
 });
 
