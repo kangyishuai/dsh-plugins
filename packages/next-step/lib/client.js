@@ -45,6 +45,8 @@ window.__ModuleLoader__.load({
       clientTimeoutMarginMs: 5000,
       clientTimeoutFloorMs: 30000,
       clientTimeoutCeilMs: 60000,
+      // 设置分节「已保存」短暂态保留时长（[plugin-conventions §7.2.6]）；单测把它改短。
+      settingsSaveResetMs: 2500,
     };
 
     /** 失败详情（服务端 detail）的展示上限：不把一整段模型/宿主错误塞进 UI。 */
@@ -133,6 +135,9 @@ window.__ModuleLoader__.load({
       "settings.generateHint":
         "没有自动出卡时，最新回答下方会出现「生成下一步建议」，点一下即可补一张。",
       "settings.updateFailed": "保存失败",
+      "settings.saved": "已保存",
+      "settings.saving": "保存中…",
+      "settings.retry": "重试",
       "settings.version": "版本 {version} · 构建 {hash}",
     };
 
@@ -219,6 +224,9 @@ window.__ModuleLoader__.load({
       "settings.generateHint":
         "When no card appears, a “Generate a next-step card” button shows under the latest answer.",
       "settings.updateFailed": "Could not save",
+      "settings.saved": "Saved",
+      "settings.saving": "Saving…",
+      "settings.retry": "Retry",
       "settings.version": "Version {version} · build {hash}",
     };
 
@@ -376,6 +384,9 @@ window.__ModuleLoader__.load({
 .ns_setInput{width:64px;height:26px;border-radius:8px;border:1px solid var(--dsw-alias-border-l3,#3a3a3a);background:transparent;color:var(--dsw-alias-label-primary,#e8e8e8);font-size:12px;padding:0 8px;}
 .ns_diag{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8a8a8a);white-space:pre-wrap;overflow-wrap:anywhere;}
 .ns_setError{font-size:12px;color:var(--dsw-alias-label-primary,#e8e8e8);}
+.ns_setSave{display:flex;gap:8px;align-items:center;margin-top:8px;padding-top:6px;border-top:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.25));font-size:12px;color:var(--dsw-alias-label-tertiary,#8a8a8a);}
+.ns_setSave[data-state="saved"] .ns_setSaveText{color:var(--dsw-alias-state-success-primary,#2f9e63);}
+.ns_setSave[data-state="error"]{color:var(--dsw-alias-state-error-primary,#d9534f);}
 `;
 
     // ------------------------------------------------------------------
@@ -1831,9 +1842,19 @@ window.__ModuleLoader__.load({
       let statsState = React.useState(/** @type {any} */ (null));
       let stats = statsState[0];
       let setStats = statsState[1];
-      let errorState = React.useState("");
-      let errorKey = errorState[0];
-      let setErrorKey = errorState[1];
+      /**
+       * 保存状态（[plugin-conventions §7.2.6]）：设置项都是自动保存，改完必须能确认
+       * 「已保存 / 保存失败（原因）」，失败还能重试。state: clean | saving | saved | error。
+       */
+      let saveStateHook = React.useState({
+        state: "clean",
+        errorText: "",
+        retryable: false,
+      });
+      let saveState = saveStateHook[0];
+      let setSaveState = saveStateHook[1];
+      let saveTimerRef = React.useRef(/** @type {any} */ (null));
+      let lastPatchRef = React.useRef(/** @type {any} */ (null));
       let busyState = React.useState("");
       let busy = busyState[0];
       let setBusy = busyState[1];
@@ -1883,20 +1904,49 @@ window.__ModuleLoader__.load({
         refresh();
       }, [refresh]);
 
+      /** 保存成功：短暂显示「已保存」，之后回落「· 已保存」。 */
+      let markSettingsSaved = () => {
+        if (saveTimerRef.current !== null) clearTimeout(saveTimerRef.current);
+        setSaveState({ state: "saved", errorText: "", retryable: false });
+        saveTimerRef.current = setTimeout(() => {
+          saveTimerRef.current = null;
+          setSaveState({ state: "clean", errorText: "", retryable: false });
+        }, TIMINGS.settingsSaveResetMs);
+      };
+
+      /**
+       * 自动保存一档设置：写盘结果如实反映到状态行；失败保留最后一次 patch，可重试。
+       * @param {any} value
+       * @param {string} label
+       */
       let patch = (/** @type {any} */ value, /** @type {string} */ label) => {
         if (!api || typeof api.updateSettings !== "function") {
-          setErrorKey("settings.updateFailed");
+          setSaveState({
+            state: "error",
+            errorText: t("settings.updateFailed"),
+            retryable: false,
+          });
           return;
         }
         setBusy(label);
-        setErrorKey("");
+        setSaveState({ state: "saving", errorText: "", retryable: false });
+        lastPatchRef.current = { value: value, label: label };
         Promise.resolve(api.updateSettings(value))
           .then((result) => {
             setBusy("");
             if (result?.ok !== true) {
-              setErrorKey("settings.updateFailed");
+              let reason =
+                typeof result?.error?.message === "string" && result.error.message !== ""
+                  ? `：${result.error.message}`
+                  : "";
+              setSaveState({
+                state: "error",
+                errorText: `${t("settings.updateFailed")}${reason}`,
+                retryable: true,
+              });
               return;
             }
+            markSettingsSaved();
             if (result.settings) setSettings(result.settings);
             if (typeof api.diagnostics === "function") {
               Promise.resolve(api.diagnostics())
@@ -1906,10 +1956,22 @@ window.__ModuleLoader__.load({
                 .catch(() => undefined);
             }
           })
-          .catch(() => {
+          .catch((reason) => {
             setBusy("");
-            setErrorKey("settings.updateFailed");
+            let detail = reason && typeof reason.message === "string" ? `：${reason.message}` : "";
+            setSaveState({
+              state: "error",
+              errorText: `${t("settings.updateFailed")}${detail}`,
+              retryable: true,
+            });
           });
+      };
+
+      /** 重试最后一次没保存成功的改动。 */
+      let retryPatch = () => {
+        let last = lastPatchRef.current;
+        if (last === null) return;
+        patch(last.value, last.label);
       };
 
       if (settings === null) {
@@ -2276,9 +2338,45 @@ window.__ModuleLoader__.load({
           );
         }
       }
-      if (errorKey !== "") {
-        rows.push(h("div", { className: "ns_setError", key: "error", role: "alert" }, t(errorKey)));
-      }
+      // 保存状态行固定在本分节底部（[plugin-conventions §7.2.6]）：
+      // 开关/分档都是自动保存，改完必须能确认「已保存」，失败给原因并可重试。
+      let saveText =
+        saveState.state === "error"
+          ? saveState.errorText || t("settings.updateFailed")
+          : saveState.state === "saved"
+            ? t("settings.saved")
+            : saveState.state === "saving"
+              ? t("settings.saving")
+              : `· ${t("settings.saved")}`;
+      rows.push(
+        h(
+          "div",
+          {
+            className: "ns_setSave",
+            key: "save-status",
+            "data-next-step-settings-status": saveState.state,
+            "data-state": saveState.state,
+            role: "status",
+            "aria-live": "polite",
+          },
+          [
+            h("span", { key: "text", className: "ns_setSaveText" }, saveText),
+            saveState.state === "error" && saveState.retryable === true
+              ? h(
+                  "button",
+                  {
+                    key: "retry",
+                    type: "button",
+                    className: "ns_setBtn",
+                    "data-next-step-settings-retry": "",
+                    onClick: retryPatch,
+                  },
+                  t("settings.retry"),
+                )
+              : null,
+          ],
+        ),
+      );
       return h("div", { className: "ns_settings", "data-next-step-settings": "" }, rows);
     }
 
