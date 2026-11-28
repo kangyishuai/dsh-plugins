@@ -832,6 +832,7 @@
     "settings.saveUnsaved": "有未保存更改",
     "settings.saveFailed": "保存失败",
     "settings.saveFailedDetail": "保存失败：{reason}",
-    "settings.saveRetry": "重试"
+    "settings.saveRetry": "重试",
+    "settings.saveProjectChanged": "项目已切换，请重新保存"
   }
 }

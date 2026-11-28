@@ -832,6 +832,7 @@
     "settings.saveUnsaved": "Unsaved changes",
     "settings.saveFailed": "Save failed",
     "settings.saveFailedDetail": "Save failed: {reason}",
-    "settings.saveRetry": "Retry"
+    "settings.saveRetry": "Retry",
+    "settings.saveProjectChanged": "The project changed — save again"
   }
 }

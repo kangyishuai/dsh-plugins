@@ -196,10 +196,10 @@ function installGlobals() {
 }
 
 /** 一份项目夹具（settings 组件只读 fields，不需要完整形状）。 */
-function projectFixture() {
+function projectFixture(id = "p1", name = "P1") {
   return {
-    id: "p1",
-    name: "P1",
+    id,
+    name,
     policy: {
       autonomy: "L1",
       persona: "",
@@ -271,7 +271,10 @@ function bootSettings(hooks) {
               });
             }
             if (name === "listProjects") {
-              return Promise.resolve({ ok: true, value: [projectFixture()] });
+              return Promise.resolve({
+                ok: true,
+                value: [projectFixture("p1", "P1"), projectFixture("p2", "P2")],
+              });
             }
             if (name === "uiState") {
               return Promise.resolve({
@@ -518,6 +521,106 @@ test("projects 设置：预算保存失败显示「保存失败：原因」，�
     retry.props.onClick();
     await pump(hooks);
     assert.equal(statusOf(fiber).props["data-state"], "saved");
+  } finally {
+    booted.timing.resetMs = previous;
+    booted.browser.restore();
+  }
+});
+
+/** 切到另一个项目（Debug 分区的项目策略下拉）。 @param {any} fiber @param {string} projectId */
+function switchPolicyProject(fiber, projectId) {
+  const debugNav = findElement(
+    fiber.element,
+    (element) => element?.props?.["data-projects-settings-nav-item"] === "debug",
+  );
+  assert.ok(debugNav, "找不到 Debug 分区按钮");
+  debugNav.props.onClick();
+  const select = findElement(
+    fiber.element,
+    (element) => element?.props?.["data-projects-policy-project"] !== undefined,
+  );
+  assert.ok(select, "找不到项目策略下拉");
+  select.props.onChange({ target: { value: projectId } });
+}
+
+test("projects 设置：策略自动保存失败后切项目 → 旧 pending 作废，不会写错项目", async () => {
+  const hooks = createHooks();
+  const booted = bootSettings(hooks);
+  const previous = booted.timing.resetMs;
+  booted.timing.resetMs = 300;
+  try {
+    const fiber = hooks.mount(booted.Component, Object.assign({}, booted.inject));
+    await pump(hooks);
+
+    // 对项目 A 拨 autoRetry → 保存失败
+    booted.behavior.updateProject = () => Promise.reject(new Error("host down"));
+    autoRetryCheckbox(fiber).props.onChange({ target: { checked: true } });
+    await pump(hooks);
+    assert.equal(statusOf(fiber).props["data-state"], "error");
+    const staleRetry = retryOf(fiber);
+    assert.ok(staleRetry, "失败时必须给出重试入口");
+
+    // 切到项目 B：旧 pending（含重试闭包）作废，状态行回落并提示「项目已切换」
+    switchPolicyProject(fiber, "p2");
+    hooks.flush();
+    assert.equal(statusOf(fiber).props["data-state"], "clean");
+    assert.match(textOf(statusOf(fiber)), /settings\.saveProjectChanged/u);
+    assert.equal(retryOf(fiber), undefined, "切项目后不应再把旧失败的重试按钮摆出来");
+
+    // 用切项目前的旧 handler 强行重试：也不许产生对 B 的写调用
+    booted.behavior.updateProject = () => Promise.resolve(projectFixture("p2", "P2"));
+    staleRetry.props.onClick();
+    await pump(hooks);
+    const writes = booted.calls.filter(
+      (call) => call.method === "updateProject" && call.request?.id === "p2",
+    );
+    assert.equal(writes.length, 0, "切项目后重试绝不能把旧 patch 写到新项目");
+  } finally {
+    booted.timing.resetMs = previous;
+    booted.browser.restore();
+  }
+});
+
+test("projects 设置：预算保存失败后切项目 → 旧草稿/重试作废，不会写错项目", async () => {
+  const hooks = createHooks();
+  const booted = bootSettings(hooks);
+  const previous = booted.timing.resetMs;
+  booted.timing.resetMs = 300;
+  try {
+    const fiber = hooks.mount(booted.Component, Object.assign({}, booted.inject));
+    await pump(hooks);
+    budgetInput(fiber, "dailyTokens").props.onChange({ target: { value: "999" } });
+    hooks.flush();
+
+    booted.behavior.setBudget = () => Promise.reject(new Error("disk full"));
+    budgetSaveButton(fiber).props.onClick();
+    await pump(hooks);
+    assert.equal(statusOf(fiber).props["data-state"], "error");
+    const staleRetry = retryOf(fiber);
+    assert.ok(staleRetry, "失败时必须给出重试入口");
+
+    switchPolicyProject(fiber, "p2");
+    hooks.flush();
+    assert.equal(statusOf(fiber).props["data-state"], "clean");
+    assert.match(textOf(statusOf(fiber)), /settings\.saveProjectChanged/u);
+
+    // 旧 handler 不能把 A 的预算写进 B；切项目后草稿也被清掉
+    booted.behavior.setBudget = () =>
+      Promise.resolve({ budget: projectFixture("p2", "P2").budget });
+    staleRetry.props.onClick();
+    await pump(hooks);
+    const budgetWrites = booted.calls.filter((call) => call.method === "setBudget");
+    assert.equal(budgetWrites.length, 1, "失败那次之后不应再有新的 setBudget 调用");
+    assert.equal(budgetWrites[0].request?.projectId, "p1", "第一次（也是唯一一次）写的是项目 A");
+    // 回到 General 才能看到预算按钮：切项目后草稿已清空 → 按钮重新 disabled
+    const generalNav = findElement(
+      fiber.element,
+      (element) => element?.props?.["data-projects-settings-nav-item"] === "general",
+    );
+    assert.ok(generalNav, "找不到 General 分区按钮");
+    generalNav.props.onClick();
+    hooks.flush();
+    assert.equal(budgetSaveButton(fiber).props.disabled, true, "切项目后预算草稿已清空");
   } finally {
     booted.timing.resetMs = previous;
     booted.browser.restore();
