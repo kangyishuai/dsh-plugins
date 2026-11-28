@@ -1,5 +1,15 @@
 # @kangyishuai/dsh-advisor
 
+## 0.6.3
+
+### Patch Changes
+
+- [#352](https://github.com/kangyishuai/dsh-plugins/pull/352) [`5a9bc5b`](https://github.com/kangyishuai/dsh-plugins/commit/5a9bc5bb606cfda427fabded5e0113b3d4fed4bd) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 审计（2026-11-28）P2/P3 修复：钱与预算层改为**原子追加 + 串行写队列**（usage/advice/decisions 不再「读全文 + 覆盖写」，工作区预算池的读-改-写不再丢更新），账本行记录**本地日键**并在重启时恢复会话/小时计数；`timeoutMs` 改为插件侧**硬超时**（到点 abort、提前返回 `timeout`、不落账），日预算/工作区池在发送前把**本次预估花费**算进去且两个闸统一为「已达上限即拒绝」。
+  
+  决策日志现在能真正回填三种下场（`accepted` / `user-typed-other` / `no-action`，并过滤宿主注入的 `user/message`），`/advisor report` 会显示可追踪分母；脱敏补上小写键名、JWT 与裸 `Bearer` token；client 内嵌字典与 `LOCALE_EXTRA` 的 30 个重复键已去重。残余风险（硬超时是插件侧执行、`/advisor` 在空白会话不可见、决策日志只记主会话）已写进 README「副作用、限制与风险」。
+
+- [#371](https://github.com/kangyishuai/dsh-plugins/pull/371) [`c02cae9`](https://github.com/kangyishuai/dsh-plugins/commit/c02cae9c61758fa52cebc6b5e4ed6f12cd8e979f) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 用户模拟审计（2026-11-28）的 advisor 交互修复：`/advisor status|doctor|on` 等命令回执现在**第一行就是用户实际敲的命令行**（宿主通用命令卡片只显示命令名、单行省略号截断，多行输出要点第二层折叠），并新增插件自己的命令卡片（`conversation.chat.commandview` 的 `advisor` 渲染器）显示原始命令行 + 完整多行输出、不省略；宿主会在本地命令执行成功后广播 `command/executed`，插件据此把多行输出放进右下角的**命令回执面板**（常驻到手动关闭，空白会话里也能看到）。设置页首屏的「模式」行新增**生效状态徽标**：保存的 `mode` 只是偏好，`advisory` 但没选模型时显示「已关闭：未选择顾问模型」，`/advisor status` 与 `/advisor doctor` 同样分开报「模式」（保存值）和「生效」（真实状态）；`/advisor on` 在未配置模型时不再偷偷把保存的 `mode` 改成 `advisory`。工具结果不再把「顾问已关闭 / 未配置 / shadow」这类内部开关状态交给主模型，改成中性跳过并明确要求模型不要把它写进给用户的回复。斜杠菜单里的命令描述改为中英双语（host 半自己读 `locale/*.json` 的 `host` 段，宿主没有 locale 服务），并统一了用户可见文案里的繁体字「徵询」→「征询」。
+
 ## 0.6.2
 
 ### Patch Changes
