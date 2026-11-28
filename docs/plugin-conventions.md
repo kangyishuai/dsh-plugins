@@ -136,6 +136,14 @@ packages/<name>/
 
 `--deep` 的工作区前置不用每次手点桌面 UI：`node scripts/register-test-workspace.mjs --home <DSH_HOME> --path <目录>` 幂等注册（写前备份 `workspace.json`、原子写、按 realpath 去重；默认拒绝 live home，真实桌面版加 `--allow-live`，且要先退出桌面版再注册、注册完再启动）。细节与 `--dry-run` 见 [testing/session-rewind.md](testing/session-rewind.md) §2.6.1。
 
+**发版前 / nightly 的批量门禁**：`pnpm gate:all --deep --workspace <目录>`（建议同时带 `--idle-session <空闲会话标题>`）。批量门禁对 `--deep` 用**显式白名单**（`scripts/gate-all.mjs` 的 `DEEP_GATE_PLUGINS`，当前只有 session-rewind）：白名单外的插件不传 `--deep` 并逐条打印说明。next-step / btw 的桌面脚本虽然**也支持** `--deep`，但一个会真发模型请求并点胶囊（破坏性播种）、一个不接 `--workspace` 且写真实数据根 `~/.dsh/btw`，副作用与前置不同，仍需 `pnpm gate <plugin> --deep …` 单独跑；新插件要纳入批量 deep 必须先人工改白名单并补测试（不做「扫脚本自动发现」）。
+
+- `--deep` 的前置是同一件事：目录先注册成桌面工作区（命令见上一段；live 根加 `--allow-live`，先退出桌面版再注册、注册完再启动）。
+- 门禁**不会**自动写宿主注册表：`--deep` 缺 `--workspace`、`--workspace` 目录不存在、或目录没注册成工作区时，打印可整行复制的 `register-test-workspace.mjs` 命令后以退出码 2 失败；**目录在仓库内则直接失败且不打印注册命令**（冒烟脚本自己也拒绝仓库内 workspace，注册了也不会过，换仓库外专用目录即可）；`--dry-run --deep` 也同样只读校验一遍。
+- 汇总里 deep 一列显示 `N PASS / M SKIP / K FAIL`，并复用 `desktopGateVerdict()` 判「缺计数行 / 全 SKIP」的假绿；**SKIP 的已知来源是宿主关闭 `apply_patch`（2026-11-28 单插件校准 59 PASS / 3 SKIP / 0 FAIL）——这几条 SKIP 本身不算失败，其它 FAIL 照计**，宿主打开后会转成 PASS。deep 阶段只跑一次，不随 `--repeat` 重复。
+- **诚实边界**：批量 `gate:all --deep` **尚未端到端真机验证**（当前只有 dry-run / 单测 / 失败分支 + 单插件 deep 校准）；首次 nightly 必须人工跑一次 `pnpm gate:all --deep --workspace <目录> --idle-session <空闲会话标题>` 并留证（预期 59 PASS / 3 SKIP / 0 FAIL，失败留截图），在此之前不要当成已验证。
+- nightly 手动步骤：退出桌面版并注册测试工作区 → 带 `9222` 调试端口启动桌面版 → `pnpm gate:all --deep --workspace <目录> --idle-session <空闲会话标题>` → 看汇总的 deep 计数行。**不新增 GitHub Actions workflow**：`--deep` 需要真机 + 模型凭据，CI 仍只跑 `pnpm gate:all --dry-run`（结构检查；带 `--deep` 时只读校验工作区）。批量门禁不透传 `--sidebar-workspace`：专用测试工作区**不要改名**，否则 deep 找不到侧栏工作区。
+
 为什么必须做：client 半大量依赖宿主**私有 seam**（slot、`extraActions`、`views` 接管、`commandUi.decorate`…），
 这些没有类型、没有契约，单测和 web 冒烟都覆盖不到**真实 Electron 渲染进程**里的行为。
 
@@ -218,6 +226,10 @@ PASS btw 门禁全绿（4 步，24s）        ← 假的
 open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1
 pnpm gate session-rewind
 ```
+
+八插件一起跑用 `pnpm gate:all`：只读门禁 `pnpm gate:all --idle-session <空闲会话标题>`；发版前 / nightly 加深
+session-rewind 的桌面 `--deep` 用 `pnpm gate:all --deep --workspace <目录> --idle-session <空闲会话标题>`
+（前置与白名单见上一条「批量门禁」段）。
 
 细节与坑见 [docs/testing/session-rewind.md](testing/session-rewind.md)（Esc Esc 会打断当前会话、
 挑选「候选可达」的会话、紧跟 web 冒烟后要等页面可交互等）。双击 `Esc` / `↑` `↓` 这类**手势**断言

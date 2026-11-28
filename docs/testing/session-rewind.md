@@ -69,6 +69,33 @@ pnpm gate session-rewind --deep --workspace ~/Workspace/dsh-rewind-ui-smoke
 
 只有显式 `--skip-desktop` 才跳过桌面端，且结束时会明确打印「门禁不完整」。
 
+八插件一起跑用 `pnpm gate:all`（verify / 体检只跑一次，桌面步骤前自动切空闲会话）：
+
+```bash
+# 默认：八插件的只读门禁（与以前完全一致，不带任何 deep 行为）
+pnpm gate:all --idle-session "<空闲会话标题的子串>"
+
+# 发版前 / nightly：再加深 session-rewind 的桌面 --deep（需要已注册的专用工作区，见 §2.6.1）
+pnpm gate:all --deep --workspace ~/Workspace/dsh-rewind-ui-smoke \
+  --idle-session "<空闲会话标题的子串>"
+```
+
+- `--deep` 只对**白名单**里的插件（当前只有 session-rewind）在桌面阶段追加 `--deep`，其余插件不传并逐条打印
+  说明。next-step / btw 的桌面脚本**也支持** `--deep`，但一个会真发模型请求并点胶囊、一个不接 `--workspace`
+  且写真实数据根 `~/.dsh/btw`，副作用和前置不同，故意没有纳入批量门禁——仍用
+  `pnpm gate next-step --deep --workspace <目录>` / `pnpm gate btw --deep` 单独跑。
+- 批量门禁**不会**替你写宿主数据根（AGENTS.md 硬性约定）：`--deep` 缺 `--workspace`、`--workspace` 目录不存在、
+  或目录**没注册成桌面工作区**时，打印可整行复制的 `node scripts/register-test-workspace.mjs …` 命令后失败
+  （退出码 2）。**目录在仓库内则直接失败、不打印注册命令**——冒烟脚本自己也拒绝仓库内 workspace，注册了也不会
+  过；换一个仓库外的专用目录（如 `~/Workspace/dsh-rewind-ui-smoke`）再跑。带 `--dry-run` 时同样只读校验一遍。
+- 汇总里 deep 一列**预期**为 `59 PASS / 3 SKIP / 0 FAIL`（沿用单插件 deep 校准；批量路径首次真机跑之前
+  只能当预期值），**3 SKIP 是宿主关闭 `apply_patch` 的已知环境分支，这几条 SKIP 本身不算失败**（其它 FAIL 照计；
+  见 §2.6），宿主打开后这几条会转成 PASS。deep 阶段只跑一次，不随 `--repeat` 重复（真实模型调用不做幂等自检）。
+- **诚实边界**：批量 `--deep` 这条路径**尚未端到端真机验证**——本轮只验证了 dry-run / 参数与注册前置失败分支 /
+  汇总判定（单测），加上既有的**单插件** deep 校准；首次 nightly 必须人工跑一次并留证（见下文 nightly 步骤）。
+- 自动化范围不变：CI 只跑 `pnpm gate:all --dry-run`（无 GUI / 无模型），`--deep` 的 nightly 手动步骤见
+  [plugin-conventions §6.1](../plugin-conventions.md#61-桌面端自动化测试是硬性要求) 与上面的示例。
+
 ## 1.55 CI 里跑什么（每次 PR）
 
 CI 无法跑 GUI（没有 ego-browser / 桌面版），所以只跑**确定性**的三件事：
@@ -260,9 +287,14 @@ pnpm smoke:session-rewind
    `session/workspace-attach-failed: its cwd resolves to '/private/tmp/...'`），界面**静默停在
    旧会话**上。脚本因此对 `--workspace` 做 `realpath` 再用它做文件断言。
 3. **模型凭据可用**（要发 4~5 轮真实请求，花额度）；会话标题、回复文案都不参与断言。
-4. 工作区标题默认取目录名；用户改过名时用 `--sidebar-workspace <标题>` 指定。
+4. 工作区标题默认取目录名；用户改过名时用 `--sidebar-workspace <标题>` 指定（批量 `pnpm gate:all --deep`
+   不透传该参数，所以专用测试工作区**不要改名**，否则批量 deep 会找不到侧栏工作区而必红）。
 5. 每次跑会在侧栏留下一个新的测试会话（不自动删），测试文件会清理；截图写到
    `/tmp/dsh-session-rewind-desktop-shots/`（含真实会话内容，不要提交）。
+
+批量门禁 `pnpm gate:all --deep --workspace <目录>` 复用同一套前置，但它只做**只读**检测：目录没注册时
+打印第 1 条里的注册命令后失败，**不会**替用户写 `~/.dsh/storages/workspace.json`；`--deep` 也只追加给
+白名单里的插件（当前只有 session-rewind），其它插件的桌面阶段保持只读。
 
 删除文件还原、重复回溯、写入侧 symlink 拒绝、恢复侧大小上限、空目录收回、跳过原因可见等
 安全护栏仍由上面的单测覆盖（含 `apply_patch` 的解析分支）；`--deep` 需要真模型额度 + 专用工作区，
@@ -375,8 +407,27 @@ pnpm smoke:session-rewind-desktop -- --require --recall --deep \
 
 
 **是否值得纳入门禁**：值得，但要按「默认段必备、深链段可选」分级——默认段 35 项全绿且只读、成本
-秒级，适合 `pnpm gate` 每次跑；`--deep` 要模型额度 + 已注册专用工作区，建议发版前或 nightly 跑，
-并把「3 条删除断言 SKIP」视为已知环境结论（不是失败）。
+秒级，适合 `pnpm gate` / `pnpm gate:all` 每次跑；`--deep` 要模型额度 + 已注册专用工作区，建议发版前或
+nightly 跑，并把「3 条删除断言 SKIP」视为已知环境结论（不是失败）。
+
+nightly 的手动步骤（已接入 `pnpm gate:all`，**不新增 GitHub Actions workflow**——deep 需要真机 + 模型凭据）：
+
+1. 注册测试工作区（live 数据根要先**退出桌面版**再注册）：`node scripts/register-test-workspace.mjs --home ~/.dsh --path ~/Workspace/dsh-rewind-ui-smoke --allow-live`；
+2. 带调试端口启动桌面版：`open -a "DeepSeek Harness" --args --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1`；
+3. 跑批量门禁：`pnpm gate:all --deep --workspace ~/Workspace/dsh-rewind-ui-smoke --idle-session "<空闲会话标题的子串>"`；
+4. 看汇总里 deep 行的 `N PASS / M SKIP / K FAIL`：有 FAIL 才判红，`3 SKIP`（宿主关闭 `apply_patch`）不算失败。
+
+**本路径尚未端到端真机验证**：`pnpm gate:all --deep` 目前只有 dry-run / 单测 / 失败分支的验证，加上单插件
+`pnpm gate session-rewind --deep` 的既有校准。**首次 nightly 请人工按上面 4 步真跑一次，把汇总计数（预期
+59 PASS / 3 SKIP / 0 FAIL）与任何失败截图留在 `notes/`（私有）**，再把结论回填到本节；在那之前不要把它当成
+「已真机验证」。
+
+批量门禁的前置校验是**只读**的：`--deep` 忘了 `--workspace`、目录不存在、或目录没注册时，会打印上面第 1 步的
+可复制命令后失败，不会替用户写 `~/.dsh/storages/workspace.json`；**目录在仓库内则不打印注册命令**（注册了也
+不会过，冒烟脚本同样拒绝仓库内 workspace），换一个仓库外的专用目录即可。
+
+另：批量门禁目前**不透传** `--sidebar-workspace`。deep 默认按目录名在侧栏找工作区，所以测试工作区**不要改名**；
+改过名就只能单独跑 `pnpm gate session-rewind --deep --workspace <目录> --sidebar-workspace <标题>`。
 
 `--recall` 追加的 7 项（合计 42 项）：找到可召回的会话 → 输入框已聚焦且草稿为空 → 空草稿按 `↑`
 召回最新一条 → 召回的文本确实来自会话里的某条用户消息 → 再按 `↑` 换一条（只有 1 条历史时
