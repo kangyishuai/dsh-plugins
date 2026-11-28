@@ -201,6 +201,16 @@ pnpm verify                          # 仓库门禁（含单测、规范、文�
 | 生成失败反馈与超时 | `test/generate-status.test.js`：宿主侧「每会话最近一次生成」记录（成功/失败归一、detail 截断、FIFO、空 id）。`test/client-retry-feedback.test.js`（迷你 hooks 驱动真实 client）：手动失败 → loading 结束 + 一行原因 + 「重试」+ 详情可展开；自动生成失败/刷新后靠 `generateState` 显示同一套反馈；RPC 挂起 → 客户端超时、**先 `cancelGenerate` 再**显示「生成超时，可重试」；`inflight` 进入等待态轮询后台状态；旧宿主缺 `generateState` 时静默降级（USIM-U2-04）。 |
 | 卡片 ⌘↵ 登记时序   | `test/client-card-shortcut.test.js`（迷你 hooks 运行时驱动**真实 client 源码**）：尾部先挂载、卡片晚到后 `⌘↵` 仍须被接管（一粒 / 两粒胶囊都覆盖）；草稿非空 / 未揭示 / 已决策一律透传。回归哨兵：卡片是投影晚到的，登记 effect 漏了可见性就永远登记不上（点击正常、快捷键静默失效）。**别按胶囊数量归因**：0.4.0 上晚到的**一粒**卡片同样不接管。                                                                                                                   |
 
+**时序用例用假时钟，不要用 `sleep` 猜时序**：`test/client-retry-feedback.test.js` 里的 grace /
+`generateState` 轮询 / 客户端超时都走 `setTimeout` + `Date.now()`（线上 2.5s / 2s / 30–60s，测试缩短成
+5ms / 10ms / 40ms）。该文件用测试侧 `installClock()` 接管 `setTimeout` / `clearTimeout` / `Date.now`，
+由 `waitPhase()` 一步一步推进假时间并断言「等到目标相位」，**没有真实 sleep**。原因是 2026-11-28 复审
+记录的已知 flake：并行全仓测试（`pnpm verify` 里 8 包并发、机器负载高）时真实定时器会被调度抖动吃掉——
+40ms 窗口里两次 10ms 轮询还没跑完就判成 `error.timeout`（期望 `error.schema`），`sleep(4)` 也可能实际
+睡几百毫秒，把「loading」断言拖成「error」；单包顺序跑则一直是绿的。假时钟下这些用例的时序完全确定
+（整文件单跑从 ~430ms 降到 ~60ms），并在断言「后台失败 → `error.schema`」的两条用例里把客户端超时窗口
+另放大到 5s 作双保险。新增时序用例请沿用 `installClock()` + `waitPhase()`，不要退回 `sleep(ms)`。
+
 **没覆盖**：真实宿主槽位、真实 Electron 渲染进程、真实的 `setDraft` → `submit` 时序。所以下面两层不能省。
 （`test/client-card-shortcut.test.js` 已经用迷你 hooks 运行时贴近了「投影晚到 + 重渲染」的时序，但仍不是真实 React 与真实槽位。）
 
