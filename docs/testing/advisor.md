@@ -645,10 +645,14 @@ pnpm smoke:advisor-desktop --require --advice
 缺陷：命令回执固定 `right:24px;bottom:24px`；1280×820 有会话时回执高 204px，composer 在
 y=700–736、发送按钮 y=748–782，回执把两者盖住（overlap y=36，证据脚本 `/tmp/advisor-receipt-overlap2.mjs`）。
 
-修法：渲染时量 `[data-composer-input]` 顶部，`bottom = innerHeight - composerTop + 12`（无 composer
+修法：渲染时量 `[data-composer-input]` 顶部，`bottom = innerHeight - composerTop + 16`（无 composer
 回退 24px），窗口 resize / composer 变高时重算；回执 `max-height` 按可用空间收缩，避免顶出视口。
 纯函数 `toastBottomOffset` / `toastMaxHeight` / `toastBodyMaxHeight` 由 `test/client.test.js` 锁定，
 桌面冒烟新增「回执 rect 与 composer/发送按钮无重叠」的几何断言。
+
+> 常量演进：最初的 `gap=12` 是从**输入框顶部**算的，而 composer 卡片自身在输入框上方还有约 8px
+> 内边距/边框，视觉上回执离卡片只剩 4px（复审 P3，见下面「复审 N：视觉间距」）。现在 `gap=16`，
+> 视觉间距 8px。下面两张表是 `gap=12` 时代的真机记录（数字保留作历史对照）。
 
 **真机记录（隔离实例 CDP 9410，`pnpm pack` 后 `dsh plugin add file:<tgz>` 替换安装并重启）**：
 
@@ -665,7 +669,7 @@ y=700–736、发送按钮 y=748–782，回执把两者盖住（overlap y=36，
 `maxHeight` 收缩（矮窗口不向上顶出视口）。注意它依赖宿主 DOM 锚点 `[data-composer-input]`，
 事实已记入 [runtime §23.9](../runtime/0.2.2-rc.5.md)。
 
-**真机记录（隔离实例 CDP 9410，`pnpm pack` 替换安装后重启）**：
+**真机记录（隔离实例 CDP 9410，`pnpm pack` 替换安装后重启；`gap=12` 时代）**：
 
 | 场景                                 | 结果                                                               | 截图/证据                                            |
 | ------------------------------------ | ------------------------------------------------------------------ | ---------------------------------------------------- |
@@ -674,3 +678,28 @@ y=700–736、发送按钮 y=748–782，回执把两者盖住（overlap y=36，
 | 切回会话（composer 回来后 ≤1s 复核） | `style.bottom=132px`、回执 bottom=688、与 composer/send 重叠均为 0 | `/tmp/dsh-sim-rel/shots/nits2-advisor-recovered.png` |
 
 轻提示 maxHeight 未在真机单独触发（无低成本触发入口）；与回执共用 `toastMaxHeight` 单测路径。
+
+### 复审 N：回执与 composer 卡片的视觉间距 4px → 8px（2026-11-28，P3）
+
+复审（`notes/audit/2026-11-28/reviews/user-visible-nits.md` §3.1(c)/§5.2）指出：路径量的是
+`[data-composer-input]` 顶部，但宿主 composer 卡片（`[data-composer-card]`）的顶部比输入框还高约 8px
+（卡片内边距/边框，0.2.2-rc.5 实测），所以 `gap=12` 时回执底边到**卡片上沿**实际只有 4px，看起来贴着
+输入框；composer 变高时同样只剩 4px。
+
+修法：`TOAST_LAYOUT.gap` 12 → 16（换算关系 = 目标视觉间距 8px + 卡片内边距 8px），不动测量锚点
+（仍是 runtime §23.9 记录的 `[data-composer-input]`），不改回退 24px / resize / ResizeObserver 路径。
+单测（`packages/advisor/test/client.test.js`）：
+
+```bash
+cd packages/advisor && node --test
+# 244 pass / 0 fail（38 suites）
+```
+
+- `sits one gap above the composer input, leaving 8px to the composer card`：1280×820、输入框 top=700
+  → `bottom=136`，回执底边 y=684，卡片顶 y=692，**视觉间距 8px**（旧实现是 4px）。
+- `keeps the gap/clamp invariants across viewports`：7 个视口高 × 8 个 composer top 扫一遍，
+  `bottom ≥ 24`、`bottom + maxHeight + edge(8) == viewportHeight`（复审 §5.14(f) 的不变量）。
+- 原有「无 composer 回退 24px」「矮窗口上界 `H−128`」「maxHeight/正文收缩」断言全部保留并按新常量更新
+  期望值（132→136、680→676；正文上限仍 344）。
+
+真机数字未重拍（本批用单测锁几何；隔离实例截图见上一节，其 `bottom=688` 是 `gap=12` 的历史记录）。

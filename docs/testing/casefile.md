@@ -268,3 +268,15 @@ cordis.patch.yml` 末尾加 `- id: locale / name: "@deepseek-ai/dsh-client-local
 | 场景                   | 结果                                                                                                                   | 截图                                                   |
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
 | 两个项目（binary/web） | 概览卡 `2 projects · obligations 0/0 closed · open unknowns: 0`，tag `Web / URL × 1`、`Binary × 1`；无中文、无原始枚举 | `/tmp/dsh-sim-rel/shots/nits-casefile-overview-en.png` |
+
+### 复审 p/q：概览卡渲染条件与 0/0 文案（2026-11-28）
+
+- **p（渲染条件）**：概览卡原来仍以 `overview?.summary`（服务端字段）为渲染条件，但 A5 之后 UI 已不再
+  渲染 summary。改为 `hasOverviewFacts(overview)`：`projects / obligations.pass,total / openUnknowns`
+  任一存在，或 `byKind` 非空才渲染，避免宿主不返回 summary 时整卡消失。`test/client-ux.test.js`
+  新增渲染断言：无 summary 但有结构化字段 → 卡片出现且三行摘要齐全；空对象 `{}` → 卡片不渲染。
+- **q（0/0 文案）**：`obligations 0/0 closed` / `义务 0/0 已关闭` 在无义务时读着怪。`total === 0` 时
+  改用 `overview.obligationsZero`：中文「义务：已关闭 0 / 共 0」、英文 `obligations: 0 of 0 closed`；
+  total>0 时保持原文案。中英两套渲染断言都在 `test/client-ux.test.js`。
+- 上一节「真机记录」里截图是修复前（`gap`/`0/0` 旧形态）的历史记录；本轮改动由 vm 渲染单测锁定，
+  未重拍真机截图（隔离实例里的真实数据仍可复用同一套断言路径）。

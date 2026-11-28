@@ -1302,3 +1302,13 @@ projectId 丢弃，不会污染状态行或写错项目。
 - 真机记录（隔离实例 CDP 9410，tarball 替换安装后重启；MutationObserver 采样 create 按钮）：
   `创建/disabled=false` → **`正在创建…/disabled=true`** → `创建/disabled=false`，
   完整序列在 `/tmp/dsh-sim-rel/shots/nits2-b1-routine-creating.json`。
+
+### 复审 P3 注释/实现对齐：`routineDraftAfterCreate` 的「无结果」分支（2026-11-28）
+
+复审（`user-visible-nits` §3.4/§5.8(j)）：函数注释承诺「失败 / **无结果**保留输入」，实现却只挡
+`{ok:false}`，`null/undefined` 会走清空分支。补上 `if (!result || result.ok === false) return draft;`
+并加断言（`test/client-nits.test.js`：`null` / `undefined` 都保留名字、指令与频率）。生产路径上该分支
+不可达（`call()` 会把 `ok:false` 变抛错、`createRoutine` 永远返回对象），属于「让实现与注释一致」的防御。
+
+同批复审提到的状态行注释已过期：Debug 分区底部状态行的注释只写「预算（显式保存）与策略（自动保存）」，
+而通知开关（N1 修复后）也走同一行；注释已补成「预算 / 策略开关 / 通知开关」。纯注释，无行为变化。
