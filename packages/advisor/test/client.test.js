@@ -310,7 +310,11 @@ describe("injected styles: theme tokens", () => {
   });
 
   it("uses the host warning text token for warning copy", () => {
-    for (const selector of [".dsh-advisor-dirty", ".dsh-advisor-turn-warn"]) {
+    for (const selector of [
+      ".dsh-advisor-dirty",
+      '.dsh-advisor-save-status[data-state="dirty"]',
+      ".dsh-advisor-turn-warn",
+    ]) {
       const rule = css()
         .split("}")
         .find((/** @type {string} */ chunk) => chunk.trim().startsWith(selector));

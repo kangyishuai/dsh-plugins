@@ -3407,7 +3407,9 @@ window.__ModuleLoader__.load({
           statusState === "saving"
             ? t("settings.saving")
             : statusState === "error"
-              ? t("settings.error.save")
+              ? error !== null && typeof error.text === "string" && error.text !== ""
+                ? error.text
+                : t("settings.error.save")
               : statusState === "dirty"
                 ? t("settings.dirty")
                 : statusState === "saved"
@@ -3442,8 +3444,14 @@ window.__ModuleLoader__.load({
           h(
             "span",
             {
-              className: "dsh-advisor-save-status",
+              // 旧锚点 `data-advisor-dirty` 保留（§7.8「新锚点附加、不删旧锚点」），
+              // 语义不变：只有 dirty 时存在；同时挂新锚点与新 class 供 §7.2.6 使用。
+              className:
+                statusState === "dirty"
+                  ? "dsh-advisor-save-status dsh-advisor-dirty"
+                  : "dsh-advisor-save-status",
               "data-advisor-settings-status": statusState,
+              "data-advisor-dirty": statusState === "dirty" ? "" : undefined,
               "data-state": statusState,
               key: "status",
               role: "status",

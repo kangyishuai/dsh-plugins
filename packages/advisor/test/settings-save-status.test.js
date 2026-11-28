@@ -374,6 +374,11 @@ test("advisor 设置：clean 时保存按钮禁用、状态显示「已保存」
     assert.equal(status.props["data-state"], "clean");
     assert.equal(status.props.role, "status");
     assert.match(textOf(status), /settings\.saved/u);
+    assert.equal(
+      status.props["data-advisor-dirty"],
+      undefined,
+      "clean 时旧锚点 data-advisor-dirty 不应存在（按旧语义只在 dirty 时出现）",
+    );
     const save = saveButtonOf(fiber);
     assert.ok(save, "缺少 data-advisor-settings-save 锚点");
     assert.equal(save.props.disabled, true, "无改动时保存按钮必须 disabled");
@@ -401,6 +406,9 @@ test("advisor 设置：改动后 dirty、保存按钮启用；保存成功转 sa
     hooks.flush();
     assert.equal(statusOf(fiber).props["data-state"], "dirty");
     assert.match(textOf(statusOf(fiber)), /settings\.dirty/u);
+    // 旧锚点保留（§7.8 只增不删）：dirty 时按旧语义存在，且仍是 host warning 文案载体。
+    assert.equal(statusOf(fiber).props["data-advisor-dirty"], "");
+    assert.match(String(statusOf(fiber).props.className), /dsh-advisor-dirty/u);
     assert.equal(saveButtonOf(fiber).props.disabled, false);
 
     saveButtonOf(fiber).props.onClick();
@@ -439,6 +447,7 @@ test("advisor 设置：保存失败显示「保存失败」与原因横幅，按
     saveButtonOf(fiber).props.onClick();
     await pump(hooks);
     assert.equal(statusOf(fiber).props["data-state"], "error");
+    // 原因进状态行（与其他 6 个插件一致）；单测 t 是 key 恒等，故断言模板 key 前缀。
     assert.match(textOf(statusOf(fiber)), /settings\.error\.save/u);
     const banner = findElement(
       fiber.element,
