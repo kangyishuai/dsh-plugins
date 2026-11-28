@@ -1,4 +1,8 @@
 {
+  "meta": {
+    "title": "Casefile",
+    "description": "Evidence-first workbench for REA: turn observations into citable evidence, handoff-ready spec packs and recomputable acceptance checks. Open the Casefile page in the sidebar or Settings → Casefile."
+  },
   "casefile": {
     "title": "Casefile: evidence-first workbench for REA",
     "description": "Turn REA observations into citable evidence, handoff-ready spec packs, and recomputable acceptance.",
