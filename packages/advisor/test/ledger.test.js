@@ -140,7 +140,11 @@ describe("usage 账本：启动恢复（AUD-ADV-04 / 05）", () => {
 
   it("恢复会话调用数与最近一小时时间戳（重启不再清零）", async () => {
     const home = await tempDir("advisor-ledger");
-    const now = Date.now();
+    // 不依赖真实时钟：把「现在」钉在本地今天中午，否则在 UTC 00:0x 跑 CI 时
+    // -2h 的条目会落到昨天，dayCostUsd 的期望值随时段变化而随机变红（2026-11-28 CI 实测）。
+    const noon = new Date();
+    noon.setHours(12, 0, 0, 0);
+    const now = noon.getTime();
     await seed(home, [
       entry({ at: new Date(now - 5_000).toISOString(), costUsd: 0.1, sessionId: "s1" }),
       entry({ at: new Date(now - 10 * 60_000).toISOString(), costUsd: 0.2, sessionId: "s1" }),
