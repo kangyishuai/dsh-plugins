@@ -1,4 +1,8 @@
 {
+  "meta": {
+    "title": "工件",
+    "description": "把会话产出变成可看、可改、可回溯的本地工件：模型用 artifact 工具发布自包含页面，时间线只留一行摘要，右栏沙箱面板原地刷新，每个版本各留一份文件。"
+  },
   "artifacts": {
     "title": "Local deliverable pages for DSH sessions: publish, preview live, keep versions"
   }
