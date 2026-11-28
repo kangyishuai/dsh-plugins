@@ -1,4 +1,8 @@
 {
+  "meta": {
+    "title": "btw Side Questions",
+    "description": "Read-only side questions that do not interrupt the main task: type /btw <question> and the answer opens in the right sidebar, outside the conversation history."
+  },
   "btw": {
     "title": "Read-only side questions that do not interrupt the main task",
     "command": {
