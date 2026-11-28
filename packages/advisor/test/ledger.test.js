@@ -150,7 +150,9 @@ describe("usage 账本：启动恢复（AUD-ADV-04 / 05）", () => {
       entry({ at: new Date(now - 10 * 60_000).toISOString(), costUsd: 0.2, sessionId: "s1" }),
       entry({ at: new Date(now - 2 * 60 * 60_000).toISOString(), costUsd: 0.3, sessionId: "s1" }),
     ]);
-    const ledger = createLedger({ home });
+    // 注入同一个时钟：ensureLoaded 的「最近一小时」与 counters 用同一个 now，
+    // 否则这条断言会随本地时段（比如中午 12:50 之后）翻红。
+    const ledger = createLedger({ home, clock: () => now });
     await ledger.ready();
     const counters = ledger.counters("s1", now);
     assert.equal(counters.sessionCalls, 3, "会话级计数必须跨重启保留");
