@@ -164,8 +164,15 @@ tarball 的 HTTP 状态），可见后 `gh run rerun <run-id> --failed` 即可�
 （英文 title + 一句英文短描述，中文 title + `scripts/index-meta.json` 的 `descriptionZh`），以及 `package.json` 顶层的 `icon`。
 8 个插件在 DSH 0.2.2-rc.5 的隔离桌面实例实测：中文标题、中文短描述、8 个互不相同的图标全部渲染（U1-01/U1-19）。
 
-两个易错点（同一次实测确认）：
+两个易错点（同一次实测确认，宿主源码路径与结论见 [runtime §23.8](../runtime/0.2.2-rc.5.md#238-插件身份locale-meta-经-exports-解析顶层-icon-不走-exports2026-11-28-实测)）：
 
-- 宿主要通过 Node 的模块解析器读 `locale/en.json`，所以包的 `exports` 必须显式导出 `./locale/en.json` / `./locale/zh.json`；
-  只放进 `files` 不够——解析不到时会静默回退成 npm 包名 + `package.json` 的英文长描述。
+- 宿主要通过 Node 的模块解析器读 `locale/en.json`，所以 locale 文件必须能被 `exports` 解析：逐文件显式或
+  `./locale/*.json` 通配都行（官方带 `locale/` 的 269 个包全部用通配）；只放进 `files` 不够，解析不到会静默回退成
+  npm 包名 + `package.json` 的英文长描述。`dictionariesOf()` 会遍历 locale 目录里**每一个** `.json`，新增语言文件
+  漏进 exports 时宿主直接返回 `{error}`，连 title/description/icon 整套都会丢——本仓库 8 包因此改用通配。
 - 顶层 `package.json` 的 `icon` 优先于 `./icon` 导出，解析时不走 exports；图标只需留在包目录内并加入 `files`。
+
+`scripts/check-plugins.mjs` 现在机械检查这几条：exports 通配按包内文件 glob 匹配（至少命中 1 个）、locale 目录
+每个 `.json` 都被 exports 覆盖、正式插件（已登记索引源且版本非 `0.0.0`）的 `locale/{en,zh}.json` 必须有非空
+`meta.title`/`meta.description`、中文身份与 `scripts/index-meta.json` 的 `title.zh`/`descriptionZh` 一致（`descriptionZh`
+超过 200 字符时要求截断成它的前缀）、顶层 `icon` 存在且进 `files`、≤256 KiB、文件头是 SVG/PNG/JPEG/WebP。
