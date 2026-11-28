@@ -826,6 +826,12 @@
     "detail.nameSeparator": ", ",
     "detail.collapseSaveFailed": "Could not save the collapsed state; it will reset next time ({reason})",
     "settings.budgetEdit": "Edit budget",
-    "settings.realtimeCiHintDisabled": "Not implemented: only 30–90s polling exists today, so this switch would start nothing (disabled)."
+    "settings.realtimeCiHintDisabled": "Not implemented: only 30–90s polling exists today, so this switch would start nothing (disabled).",
+    "settings.saveSaved": "Saved",
+    "settings.saveSaving": "Saving…",
+    "settings.saveUnsaved": "Unsaved changes",
+    "settings.saveFailed": "Save failed",
+    "settings.saveFailedDetail": "Save failed: {reason}",
+    "settings.saveRetry": "Retry"
   }
 }
