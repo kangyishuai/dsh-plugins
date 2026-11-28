@@ -380,6 +380,9 @@ window.__ModuleLoader__.load({
               display: "flex",
               alignItems: "center",
               gap: "6px",
+              // 窄窗口/窄右栏下类型筛选会溢出视口（USIM-U3-12）：允许换行，不把按钮推出屏幕。
+              flexWrap: "wrap",
+              rowGap: "6px",
               padding: "6px 12px",
               borderBottom: "1px solid rgba(128,128,128,0.18)",
               fontSize: "12px",
