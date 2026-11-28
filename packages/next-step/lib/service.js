@@ -49,6 +49,7 @@ import {
 import { createFollowupTracker } from "./followup.js";
 import { cheapSkipReason } from "./gates.js";
 import { createGenerateStatus } from "./generate-status.js";
+import { emptyOutputSummary, recoveryFor } from "./generation-budget.js";
 import { createInflightRegistry, inflightBlocksGenerateNow } from "./inflight.js";
 import { nextStepProjection } from "./projection.js";
 import {
@@ -61,7 +62,6 @@ import {
   isGroundedIn,
   MATERIAL_CLIP,
   parseSuggestion,
-  recoveryPlan,
   renderTranscript,
   textOf,
 } from "./prompt.js";
@@ -910,6 +910,10 @@ export class NextStepService extends TypertRemoteService {
     const transcript = context.transcript;
     /** @type {any} */
     let usage;
+    /** 最近一次补全的结束原因（用于空输出诊断，不进用户可见 detail）。 @type {string | null} */
+    let lastFinish = null;
+    /** 最近一次补全的 usage。 @type {any} */
+    let lastUsage = null;
     const startedAt = Date.now();
 
     /**
@@ -917,17 +921,18 @@ export class NextStepService extends TypertRemoteService {
      * @param {{ role: string, content: any[] }[]} messages
      * @returns {Promise<string>}
      */
-    const run = async (messages) => {
+    const run = async (messages, budget = maxTokens) => {
       /**
        * @param {boolean} withReasoning
+       * @param {number} [attemptBudget]
        * @returns {Promise<string>}
        */
-      const attempt = async (withReasoning) => {
+      const attempt = async (withReasoning, attemptBudget = budget) => {
         const call = await llm.prepareCall(
           {
             provider: route.provider,
             model: route.model,
-            maxTokens,
+            maxTokens: attemptBudget,
             ...(withReasoning ? { reasoningEffort: "off" } : {}),
           },
           signal,
@@ -957,6 +962,8 @@ export class NextStepService extends TypertRemoteService {
           throw new Error(`model finished with error: ${finish.failure?.message ?? "unknown"}`);
         }
         if (finish?.kind === "aborted") throw new Error("model call was aborted");
+        lastFinish = typeof finish?.kind === "string" ? finish.kind : null;
+        lastUsage = usage ?? null;
         let text = "";
         for (const block of assembler.blocks()) {
           if (block?.type === "text" && typeof block.text === "string") text += block.text;
@@ -968,7 +975,8 @@ export class NextStepService extends TypertRemoteService {
       } catch (error) {
         const code = /** @type {any} */ (error)?.code;
         if (code === "UNSUPPORTED_REASONING_EFFORT" || code === "INVALID_MODEL_REASONING") {
-          return attempt(false);
+          // 不支持 reasoningEffort=off 时，推理会重新打开；给推理留出预算，避免文本块为 0。
+          return attempt(false, Math.min(4000, Math.max(budget, 2000)));
         }
         throw error;
       }
@@ -980,26 +988,53 @@ export class NextStepService extends TypertRemoteService {
     /** @type {"none" | "retry" | "repair"} */
     let recovery = "none";
     if (parsed.suggestion === null && parsed.problem !== null) {
-      const plan = recoveryPlan({ raw, problem: parsed.problem });
-      recovery = plan;
+      const plan = recoveryFor({ raw, baseMaxTokens: maxTokens, problem: parsed.problem });
+      recovery = plan.plan === "escalate" ? "retry" : "repair";
+      const summary = emptyOutputSummary({
+        finish: lastFinish,
+        usage: lastUsage,
+        budget: maxTokens,
+      });
       this.warn(
-        `model output did not match the card schema (${parsed.problem.kind}: ${parsed.problem.detail}), ${plan === "retry" ? "resending the same request" : "repairing with the transcript"}`,
+        `model output did not match the card schema (${parsed.problem.kind}: ${parsed.problem.detail}), ${
+          plan.plan === "escalate"
+            ? `empty output (${summary}), retrying with maxTokens=${plan.budget}`
+            : "repairing with the transcript"
+        }`,
       );
-      // 空输出：重发**同一个请求**。拿空字符串去「修格式」等于让模型凭空写一张卡。
-      // 有内容但格式不对：带同一段对话再要一次，只要求它修格式。
-      raw =
-        plan === "retry"
-          ? await run(messages)
-          : await run(
-              buildRepairMessage({
-                transcript,
-                raw,
-                problem: parsed.problem.kind,
-                // 把「上一次 label 到底几字」带进修复请求：模型数不准自己的字数
-                detail: parsed.problem.detail,
-              }),
-            );
-      parsed = parseSuggestion(raw);
+      // 空输出：可能是推理模型把 maxTokens 全用在推理块上（finish=max-tokens、textLen=0）。
+      // 原样重发只会再空一次——升级预算重发同一个请求；仍空才带对话要求「只输出 JSON」。
+      if (plan.plan === "escalate") {
+        raw = await run(messages, plan.budget);
+        parsed = parseSuggestion(raw);
+        if (parsed.suggestion === null) {
+          this.warn(
+            `retry with maxTokens=${plan.budget} still empty (${emptyOutputSummary({
+              finish: lastFinish,
+              usage: lastUsage,
+              budget: plan.budget,
+            })}), asking for JSON-only repair`,
+          );
+          raw = await run(
+            buildRepairMessage({ transcript, raw: "", problem: "json", detail: "empty output" }),
+            plan.budget,
+          );
+          parsed = parseSuggestion(raw);
+        }
+      } else {
+        // 有内容但格式不对：带同一段对话再要一次，只要求它修格式。
+        raw = await run(
+          buildRepairMessage({
+            transcript,
+            raw,
+            problem: parsed.problem.kind,
+            // 把「上一次 label 到底几字」带进修复请求：模型数不准自己的字数
+            detail: parsed.problem.detail,
+          }),
+          plan.budget,
+        );
+        parsed = parseSuggestion(raw);
+      }
     }
     if (parsed.suggestion === null) {
       const detail =
@@ -1007,7 +1042,13 @@ export class NextStepService extends TypertRemoteService {
       this.counters.failed += 1;
       this.lastError = `model output did not match the card schema (${detail})`;
       this.markFailure(this.lastError);
-      this.warn(`model output did not match the card schema: ${detail}`);
+      this.warn(
+        `model output did not match the card schema: ${detail} (${emptyOutputSummary({
+          finish: lastFinish,
+          usage: lastUsage,
+          budget: maxTokens,
+        })})`,
+      );
       return { ok: false, failure: "schema" };
     }
     if (parsed.detail !== "") {
