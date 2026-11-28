@@ -202,6 +202,8 @@ await page.evaluate(`(() => { ... })()`);
 
 **第三轮复审补修（2026-11-28）**：`listTrash` 对更高版本/不可读的 `project.json` 降级为「元数据未知」（不再整表 `read-only-newer` 报错）并补 version 99 的 list/restore 测试；恢复失败审计写入失败只告警、不顶掉原始错误；README 把「任意带扩展名路径」收窄为「绝对路径 + 1–8 字符扩展名」；删除 Config 表里不存在的 `redactOnExport`；报告脱敏强断言去掉永远为真的空断言；`purge` dry-run 字段改 `trashRoot`（与 drop 的 `previewTrashPath` 分开）。N7 的回滚分支与 N8 的 actor 口径仍按 F12/F14 记录延后。
 
+**P3 收尾（2026-11-28）**：`markLastOpened` 与 `session-pointers.json` 落盘改为「尽力而为」——数据根只读/磁盘写满时只告警，`case_project get` 这类纯读动作不再跟着失败（F6）；指针文件版本高于本插件（降级场景）时按「无指针」处理，不再让所有省略 `projectId` 的工具调用整片失败（F7）。两条都有单测（`test/session-pointer.test.js`：只读数据根 / `version: 99` 指针）。
+
 ## 2026-11-28 用户模拟 UX 修复批次（非技术用户实测，0.9.1）
 
 这一批只改 client 半文案/表单行为 + README，接口契约不变（`case_project` 的 drop 说明新增「必须用户明确同意」，属于描述收紧）。全部先红后绿：新增 `test/client-ux.test.js`，用 vm 把**真实的 `lib/client.js`** 渲染成树再断言（React shim + 假宿主 ctx），覆盖：
