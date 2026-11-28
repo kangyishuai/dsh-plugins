@@ -13858,7 +13858,10 @@ window.__ModuleLoader__.load({
      * @returns {any}
      */
     function routineDraftAfterCreate(draft, result) {
-      if (result && result.ok === false) return draft;
+      // 失败（宿主明确 {ok:false}）与无结果（null/undefined）都保留输入；只有拿到结果对象
+      // 且没有被标失败时才清空。实际 `createRoutine` 永远返回对象、`call()` 又把 ok:false
+      // 变抛错，所以「无结果」分支当前不可达——留着是为了让实现与注释一致，不静默清空。
+      if (!result || result.ok === false) return draft;
       return defaultRoutineDraft();
     }
 
@@ -17015,7 +17018,7 @@ window.__ModuleLoader__.load({
               : debugPanel,
       );
       // 统一保存状态行，固定在分节底部（[plugin-conventions §7.2.6]）：
-      // 预算（显式保存）与策略（自动保存）都在这一行给结果；失败可重试。
+      // 预算（显式保存）、策略开关与通知开关（自动保存）都在这一行给结果；失败可重试。
       var saveUiState =
         saveView.state === "saving"
           ? "saving"

@@ -517,6 +517,10 @@ test("O4：默认草稿 + 成功清空 / 失败保留", () => {
     // 失败：原样保留，用户不用重填。
     assert.equal(api.routineDraftAfterCreate(filled, { ok: false }).name, "每日巡检");
     assert.equal(api.routineDraftAfterCreate(filled, { ok: false }).frequency, "weekly");
+    // 无结果（null/undefined）：注释承诺「失败 / 无结果保留输入」，实现必须一致。
+    assert.equal(api.routineDraftAfterCreate(filled, null).name, "每日巡检");
+    assert.equal(api.routineDraftAfterCreate(filled, undefined).instructions, "检查昨天的构建");
+    assert.equal(api.routineDraftAfterCreate(filled, undefined).frequency, "weekly");
   } finally {
     browser.restore();
   }
