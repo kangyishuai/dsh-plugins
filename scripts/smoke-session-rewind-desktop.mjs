@@ -12,13 +12,22 @@
 // 默认只读：只切会话、开/关对话框与面板、点取消；**不回溯、不写文件、不发模型请求**，因此可以
 // 直接跑在真实 profile 上。端口可用 --port 或 DSH_CDP_PORT 覆盖（默认 9222）。
 //
-// `--deep --workspace <专用测试目录>`：额外跑**文件模式端到端**（在该目录的会话里发一次模型请求，
-// 让它写一个文件、然后回溯并还原）。硬前置只有一条：
-//   必须显式给 `--workspace`，且它必须存在、不在本仓库内。
-// 脚本会**自己**在该工作区点「新建会话」并断言会话为空，不依赖调用者先手工开好会话，
-// 也不依赖前面段落「切回某个会话」——侧栏行在折叠分组里时点击不生效，那会让模型在没有该
-// 工作区权限的会话里跑，写出的文件落到**脚本 cwd（本仓库）**，而断言只表现为「文件不存在」。
-// 脚本绝不会退而求其次去用工作区里别的会话（可能是有价值的真实内容）。
+// `--deep --workspace <专用测试目录>`：额外跑**文件模式端到端**（在该目录的会话里发模型请求，
+// 让它用 write 写文件、然后回溯、救援点恢复、修改还原、冲突拒绝）。前置有两条：
+//   1) `--workspace` 指向一个**已注册成桌面工作区**的目录（桌面「工作区 → 添加工作区」选一次；
+//      这是唯一的人工步骤，脚本只读侧栏、不写宿主注册表）。标题默认取目录名，改过名用
+//      `--sidebar-workspace` 指定。**macOS 的 /tmp 是 /private/tmp 的软链**：要按真实路径注册，
+//      否则会话建得出来却「附不到工作区」，界面静默停在旧会话上；
+//   2) 模型凭据可用（要发真请求、花额度）。
+// 脚本会**自己**在该工作区点「新建会话」并断言四个终态：会话 id 变了、会话为空、输入框可编辑、
+// 工作区选择器显示该工作区。不依赖调用者先手工开好会话，也不依赖前面段落「切回某个会话」——
+// 侧栏行在折叠分组里时点击不生效，那会让模型在没有该工作区权限的会话里跑，写出的文件落到
+// **脚本 cwd（本仓库）**，而断言只表现为「文件不存在」。脚本绝不会退而求其次用工作区里别的会话。
+// 校准要点（2026-11-28）：文件断言**轮询文件系统**、不依赖模型回复文案；每轮 prompt 用真实
+// ⌘A/⌫ 清空输入框（回溯会把撤回的消息回填进来，`execCommand("delete")` 改得动 DOM、清不掉
+// Lexical 的编辑器状态）；断言「确实用了 write」看的是工具卡的 `data-tool`。
+// 宿主 0.2.2-rc.5 的四个 agent 预设都把 `tool-fs.applyPatch` 设为 false，桌面默认没有
+// apply_patch，所以「删除文件」三条断言在默认组合里按环境分支 SKIP（宿主流行值，不是插件缺陷）。
 //   pnpm smoke:session-rewind-desktop --require --deep --workspace ~/Workspace/dsh-rewind-ui-smoke
 //
 // 三条踩过的坑：
@@ -34,7 +43,7 @@
 // 它会往输入框里写草稿、并在结束时清空；**不发送、不回溯、不写会话日志**。
 //   pnpm smoke:session-rewind-desktop --require --recall
 // 找不到合格会话就判失败（而不是随手点开别人的会话）。
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { parseArgs } from "node:util";
@@ -111,7 +120,9 @@ async function pressEscape(cdp, key, vk) {
   }
 }
 
-const DIALOG = `[...document.querySelectorAll('[role="dialog"][aria-modal="true"]')].find((d) => (d.className || "").includes("dsh-srw"))`;
+// 注意：回溯抽屉（.dsh-srw-drawer）也是 role="dialog"[aria-modal="true"]，但它铺满窗口、
+// 会吃掉输入框的点击，所以确认框必须按 .dsh-srw-dialog 精确匹配，否则「打开确认框」会拿到抽屉。
+const DIALOG = `[...document.querySelectorAll('[role="dialog"][aria-modal="true"]')].find((d) => (d.className || "").includes("dsh-srw-dialog"))`;
 
 /** @param {any} cdp */
 const dialogInfo = (cdp) =>
@@ -195,30 +206,167 @@ async function exists(path) {
   }
 }
 
-/** 清空 composer（Lexical 需要 execCommand 才删得掉）。 */
-const clearComposer = (/** @type {any} */ cdp) =>
+/** 输入框在屏幕上的中心点（真实鼠标点击用）。 */
+const composerCentre = (/** @type {any} */ cdp) =>
   cdp.evaluate(`(() => {
     const el = document.querySelector("[data-composer-input]");
-    if (!el) return false;
-    el.focus();
-    const sel = document.getSelection();
-    if (!sel) return false;
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    sel.removeAllRanges();
-    sel.addRange(range);
-    return document.execCommand("delete", false) === true;
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return null;
+    return { x: rect.x + rect.width / 2, y: rect.y + Math.min(rect.height / 2, 24) };
   })()`);
 
-/** 发一轮 prompt 并等回合结束（--deep 的三种文件语义都用它）。 */
-const runPrompt = async (/** @type {any} */ cdp, /** @type {string} */ text) => {
-  await clearComposer(cdp);
-  await sleep(200);
-  const typed = await typeIntoComposer(cdp, text);
-  await sleep(300);
-  const sent = await clickSend(cdp);
-  const finished = await waitForTurnEnd(cdp, 180000);
-  return { typed, sent, finished };
+/** 真实鼠标点击一个坐标（渲染进程里派发，和用户点一样）。 */
+async function clickPoint(/** @type {any} */ cdp, /** @type {{x: number, y: number}} */ point) {
+  for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) {
+    await cdp.send("Input.dispatchMouseEvent", {
+      type,
+      x: point.x,
+      y: point.y,
+      button: type === "mouseMoved" ? "none" : "left",
+      clickCount: 1,
+    });
+  }
+}
+
+/** 聚焦输入框：先真点一下；被面板遮住时退回程序化 focus，最后都要求 activeElement 是输入框。 */
+async function focusComposer(/** @type {any} */ cdp) {
+  const point = await composerCentre(cdp);
+  if (point === null) return false;
+  await clickPoint(cdp, point);
+  await sleep(120);
+  const state = await cdp.evaluate(`(() => {
+    const el = document.querySelector("[data-composer-input]");
+    if (!el) return { ready: false };
+    if (document.activeElement !== el) el.focus();
+    return {
+      ready: document.activeElement === el && el.getAttribute("contenteditable") === "true",
+      active: document.activeElement ? String(document.activeElement.tagName) : null,
+    };
+  })()`);
+  return state?.ready === true;
+}
+
+/** 发一次真实按键（`modifiers` 4 = Meta/⌘）。 */
+async function pressCombo(
+  /** @type {any} */ cdp,
+  /** @type {string} */ key,
+  /** @type {string} */ code,
+  /** @type {number} */ vk,
+  /** @type {number} */ modifiers = 0,
+) {
+  for (const type of ["keyDown", "keyUp"]) {
+    await cdp.send("Input.dispatchKeyEvent", {
+      type,
+      key,
+      code,
+      windowsVirtualKeyCode: vk,
+      nativeVirtualKeyCode: 0,
+      modifiers,
+    });
+  }
+}
+
+/**
+ * 清空 composer。
+ *
+ * **不能用 `document.execCommand("delete")`**：它改得动 DOM，却改不动 Lexical 的编辑器状态，
+ * 于是下一轮 insertText 会追加在旧草稿后面。2026-11-28 实测：回溯把撤回的消息回填进输入框后，
+ * 旧写法清不掉，之后每一轮 prompt 都叠成「旧任务 + 新任务」发给模型——模型于是反复执行旧任务，
+ * 表现为「覆盖没发生 / 删除没发生」。真实 ⌘A → ⌫ 才清得干净。
+ */
+async function clearComposer(/** @type {any} */ cdp) {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    if (!(await focusComposer(cdp))) return false;
+    await pressCombo(cdp, "a", "KeyA", 65, 4);
+    await sleep(110);
+    await pressCombo(cdp, "Backspace", "Backspace", 8);
+    await sleep(220);
+    const text = await composerText(cdp);
+    if (typeof text === "string" && text.trim() === "") return true;
+  }
+  return false;
+}
+
+/** 打字并确认真的进了输入框（CDP 的原生 insertText 才走 Lexical 的输入管线）。 */
+async function typeIntoComposerStrict(/** @type {any} */ cdp, /** @type {string} */ text) {
+  const probe = text.slice(0, Math.min(16, text.length));
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (!(await focusComposer(cdp))) return false;
+    await cdp.send("Input.insertText", { text });
+    await sleep(260);
+    const current = await composerText(cdp);
+    if (typeof current === "string" && current.includes(probe)) return true;
+    await clearComposer(cdp);
+  }
+  return false;
+}
+
+/** 点发送，并确认用户行真的多了一条（断言界面状态，不信按钮回调）。 */
+async function sendComposer(/** @type {any} */ cdp, /** @type {number} */ timeoutMs = 20000) {
+  const count = () =>
+    cdp.evaluate(`document.querySelectorAll('[data-chat-flow-kind="user"]').length`);
+  const before = await count();
+  const clicked = await cdp.evaluate(`(() => {
+    const btn = [...document.querySelectorAll("button")].find((b) =>
+      /发送消息|Send/.test((b.getAttribute("aria-label") || "") + " " + (b.getAttribute("title") || "")));
+    if (!btn || btn.disabled) return false;
+    btn.click();
+    return true;
+  })()`);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await sleep(250);
+    const now = await count();
+    if (typeof now === "number" && now > before) return { clicked, delivered: true };
+  }
+  return { clicked, delivered: false };
+}
+
+/**
+ * 当前会话界面里的工具卡（宿主用 `data-tool` 标出工具名）。
+ * @param {any} cdp
+ * @returns {Promise<{tool: string, state: string}[]>}
+ */
+const toolCards = (cdp) =>
+  cdp.evaluate(`(() => [...document.querySelectorAll("[data-tool]")].map((el) => ({
+    tool: el.getAttribute("data-tool") || "",
+    state: el.getAttribute("data-state") || "",
+  })))()`);
+
+/** 轮询文件状态：`expected` 是内容；传 `null` 表示「应当不存在」。 */
+async function waitForFileState(
+  /** @type {string} */ filePath,
+  /** @type {string | null} */ expected,
+  /** @type {number} */ timeoutMs = 60000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (expected === null) {
+      if (!(await exists(filePath))) return true;
+    } else {
+      try {
+        if ((await readFile(filePath, "utf8")).trim() === expected) return true;
+      } catch {
+        /* 文件还没出现，继续等 */
+      }
+    }
+    await sleep(400);
+  }
+  return false;
+}
+
+/** 发一轮 prompt：清空 → 打字 → 发送 → 等回合结束，并带回本轮工具卡。 */
+const runPrompt = async (
+  /** @type {any} */ cdp,
+  /** @type {string} */ text,
+  /** @type {number} */ timeoutMs = 300000,
+) => {
+  const cleared = await clearComposer(cdp);
+  const typed = cleared && (await typeIntoComposerStrict(cdp, text));
+  const send = await sendComposer(cdp);
+  const finished = send.delivered ? await waitForTurnEnd(cdp, timeoutMs) : false;
+  return { cleared, typed, sent: send.delivered, finished, tools: await toolCards(cdp) };
 };
 
 /** 点最后一条用户消息的 ↶（--deep 的修改/删除/冲突场景都围绕最新一轮）。 */
@@ -233,6 +381,55 @@ const openRewindOnLastUser = (/** @type {any} */ cdp) =>
     return "clicked";
   })()`);
 
+/** 点 ↶ 并轮询确认框出现；刚发完一轮时焦点还差一拍，允许重试一次。 */
+async function openRewindDialog(/** @type {any} */ cdp, /** @type {number} */ timeoutMs = 12000) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const clicked = await openRewindOnLastUser(cdp);
+    if (clicked !== "clicked") return clicked;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if ((await dialogInfo(cdp)) !== null) return "clicked";
+      await sleep(300);
+    }
+  }
+  return "no-dialog";
+}
+
+/** 等「对话+文件」单选可用：文件变更记录异步落库，可能晚一两拍。 */
+async function waitForBothRadio(/** @type {any} */ cdp, /** @type {number} */ timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const ready = await cdp.evaluate(`(() => {
+      const radio = document.querySelector('.dsh-srw-dialog input[type="radio"][value="both"]');
+      return radio ? !radio.disabled : null;
+    })()`);
+    if (ready === true) return true;
+    await sleep(300);
+  }
+  return false;
+}
+
+/**
+ * 等确认框正文出现指定文案：影响面是**异步**算的，刚点开时正文可能还是
+ * 「正在计算影响面…」，这时断言预览文案会假红。
+ */
+async function waitForDialogText(
+  /** @type {any} */ cdp,
+  /** @type {string} */ pattern,
+  /** @type {number} */ timeoutMs = 15000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  const re = new RegExp(pattern, "u");
+  let text = "";
+  while (Date.now() < deadline) {
+    const info = await dialogInfo(cdp);
+    text = typeof info?.text === "string" ? info.text : "";
+    if (re.test(text)) return { matched: true, info, text };
+    await sleep(300);
+  }
+  return { matched: false, info: null, text };
+}
+
 /** 确认框里选「对话+文件」并执行；返回是否在超时内关闭。 */
 const chooseBothAndConfirm = async (/** @type {any} */ cdp) => {
   await cdp.evaluate(`(() => {
@@ -242,8 +439,8 @@ const chooseBothAndConfirm = async (/** @type {any} */ cdp) => {
   await sleep(400);
   const confirmed = await clickDialogButton(cdp, ["开始回退", "Rewind"]);
   let gone = false;
-  for (let i = 0; i < 40; i += 1) {
-    await sleep(500);
+  for (let i = 0; i < 60; i += 1) {
+    await sleep(300);
     if ((await dialogInfo(cdp)) === null) {
       gone = true;
       break;
@@ -251,6 +448,154 @@ const chooseBothAndConfirm = async (/** @type {any} */ cdp) => {
   }
   return confirmed && gone;
 };
+
+/** 等 toast 出现并返回文本（toast 与回退结果同时落，慢机器会晚一拍）。 */
+async function waitForToast(/** @type {any} */ cdp, /** @type {number} */ timeoutMs = 8000) {
+  const deadline = Date.now() + timeoutMs;
+  let text = "";
+  while (Date.now() < deadline) {
+    text = await cdp.evaluate(
+      `(() => { const el = document.querySelector(".dsh-srw-toast"); return el ? (el.textContent || "").trim() : ""; })()`,
+    );
+    if (typeof text === "string" && text !== "") return text;
+    await sleep(300);
+  }
+  return typeof text === "string" ? text : "";
+}
+
+/** 打开回溯抽屉（幂等）。 */
+async function openDrawer(/** @type {any} */ cdp, /** @type {number} */ timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const state = await cdp.evaluate(`(() => {
+      if (document.querySelector(".dsh-srw-drawer")) return "open";
+      const btn = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("回溯面板"));
+      if (!btn) return "no-button";
+      btn.click();
+      return "clicked";
+    })()`);
+    if (state === "open") return true;
+    await sleep(500);
+  }
+  return false;
+}
+
+/**
+ * 关闭回溯抽屉。抽屉是铺满窗口的 \`role="dialog"\` aside：开着的时候它会挡住输入框的点击，
+ * 后续还要在会话里发 prompt，必须先关（2026-11-28 实测：不关的话输入框点不进去，
+ * 打字落空、发送按钮一直是 disabled）。
+ */
+async function closeDrawer(/** @type {any} */ cdp, /** @type {number} */ timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const state = await cdp.evaluate(`(() => {
+      const root = document.querySelector(".dsh-srw-drawer");
+      if (!root) return "closed";
+      const btn = [...root.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === "关闭");
+      if (!btn) return "no-button";
+      btn.click();
+      return "clicked";
+    })()`);
+    if (state === "closed") return true;
+    await sleep(400);
+  }
+  return false;
+}
+
+/** 在抽屉里按文本正则找按钮并点击（抽屉内容异步渲染，先轮询出现）。 */
+async function clickDrawerButton(
+  /** @type {any} */ cdp,
+  /** @type {string} */ pattern,
+  /** @type {number} */ timeoutMs = 10000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const result = await cdp.evaluate(`(() => {
+      const root = document.querySelector(".dsh-srw-drawer");
+      if (!root) return "no-drawer";
+      const re = new RegExp(${JSON.stringify(pattern)}, "iu");
+      const btn = [...root.querySelectorAll("button")].find((b) => re.test((b.textContent || "").trim()));
+      if (!btn) return "no-button";
+      btn.click();
+      return "clicked";
+    })()`);
+    if (result === "clicked") return "clicked";
+    await sleep(400);
+  }
+  return "no-button";
+}
+
+/**
+ * 找侧栏里的工作区行：展开所有折叠分组后按标题精确匹配。
+ * 标题默认是目录名（宿主按目录名自动起名）；用户改过名时用 `--sidebar-workspace` 指定。
+ */
+async function waitForWorkspaceRow(
+  /** @type {any} */ cdp,
+  /** @type {string} */ title,
+  /** @type {number} */ timeoutMs = 15000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  /** @type {string[]} */
+  let labels = [];
+  while (Date.now() < deadline) {
+    const state = await cdp
+      .evaluate(`(() => {
+        const rows = [...document.querySelectorAll('[data-row-key^="workspace:"]')];
+        for (const row of rows) {
+          if (row.getAttribute("aria-expanded") === "false") row.click();
+        }
+        return { labels: rows.map((row) => (row.textContent || "").trim()) };
+      })()`)
+      .catch(() => null);
+    if (state !== null && Array.isArray(state.labels)) {
+      labels = state.labels;
+      if (labels.includes(title)) return { found: true, detail: "" };
+    }
+    await sleep(500);
+  }
+  return {
+    found: false,
+    detail: labels.length === 0 ? "侧栏里没有任何工作区" : `侧栏工作区：${labels.join(" / ")}`,
+  };
+}
+
+/**
+ * 等「绑定该工作区的空白会话」就绪：会话 id 变了、0 条用户消息、输入框可编辑。
+ * 只点按钮不算数——宿主可能建了会话却附不上工作区（cwd 真实路径不一致时会这样），
+ * 那时界面仍停在旧会话上，必须按终态重试而不是静默继续。
+ */
+async function waitForFreshSession(
+  /** @type {any} */ cdp,
+  /** @type {string | null} */ previousSessionId,
+  /** @type {number} */ timeoutMs = 25000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  /** @type {any} */
+  let detail = {};
+  while (Date.now() < deadline) {
+    detail = await cdp
+      .evaluate(`(() => {
+        const root = document.querySelector("[data-conversation-session]");
+        const composer = document.querySelector("[data-composer-input]");
+        const ws = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "") === "选择工作区");
+        return {
+          session: root ? root.getAttribute("data-conversation-session") : null,
+          phase: root ? root.getAttribute("data-content-phase") : null,
+          userRows: document.querySelectorAll('[data-chat-flow-kind="user"]').length,
+          editable: composer ? composer.getAttribute("contenteditable") === "true" : false,
+          workspace: ws ? (ws.textContent || "").trim() : "",
+        };
+      })()`)
+      .catch(() => ({}));
+    const changed =
+      typeof detail.session === "string" &&
+      detail.session !== null &&
+      detail.session !== previousSessionId;
+    if (changed && detail.userRows === 0 && detail.editable === true) return { ok: true, detail };
+    await sleep(400);
+  }
+  return { ok: false, detail };
+}
 
 /** 输入框里是否还有「停止」按钮（回合仍在跑）。 */
 const isRunning = (/** @type {any} */ cdp) =>
@@ -273,52 +618,6 @@ async function waitForTurnEnd(cdp, timeoutMs) {
   }
   return false;
 }
-
-/**
- * 等输入框**可编辑**。新建会话后宿主可能先要求「选择一个工作区开始」，
- * 此时输入框存在但 contenteditable=false，光看存在性会误判为就绪。
- */
-async function waitForComposer(/** @type {any} */ cdp, /** @type {number} */ timeoutMs = 15000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const state = await cdp.evaluate(`(() => {
-      const el = document.querySelector("[data-composer-input]");
-      if (!el) return { ready: false, needsWorkspace: false };
-      const rect = el.getBoundingClientRect();
-      const editable = el.getAttribute("contenteditable") === "true";
-      const placeholder = el.getAttribute("data-placeholder") || el.getAttribute("aria-placeholder") || "";
-      return {
-        ready: editable && rect.width > 0 && rect.height > 0,
-        needsWorkspace: !editable && String(placeholder).includes("选择一个工作区"),
-      };
-    })()`);
-    if (state?.ready === true) return true;
-    if (state?.needsWorkspace === true) return false;
-    await sleep(400);
-  }
-  return false;
-}
-
-/** 往 composer 里打字（Lexical 需要 execCommand 才进得去）。 */
-const typeIntoComposer = (/** @type {any} */ cdp, /** @type {string} */ text) =>
-  cdp.evaluate(`(() => {
-    const el = document.querySelector("[data-composer-input]");
-    if (!el) return false;
-    el.focus();
-    try { return document.execCommand("insertText", false, ${JSON.stringify(text)}); } catch (_error) {
-      el.textContent = ${JSON.stringify(text)};
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-      return true;
-    }
-  })()`);
-
-const clickSend = (/** @type {any} */ cdp) =>
-  cdp.evaluate(`(() => {
-    const btn = [...document.querySelectorAll("button")].find((b) => /发送消息|Send/.test((b.getAttribute("aria-label") || "") + " " + (b.getAttribute("title") || "")));
-    if (!btn || btn.disabled) return false;
-    btn.click();
-    return true;
-  })()`);
 
 const composerText = (/** @type {any} */ cdp) =>
   cdp.evaluate(
@@ -361,13 +660,20 @@ const main = async () => {
   });
   // 容忍 `pnpm <script> -- --require`：多余的 `--` 会被当成位置参数，这里忽略它。
   const port = Number(values.port ?? process.env.DSH_CDP_PORT ?? 9222);
-  /** @type {{name: string, ok: boolean, detail: string}[]} */
+  /** @type {{name: string, ok: boolean, skipped: boolean, detail: string}[]} */
   const checks = [];
   const check = (
     /** @type {string} */ name,
     /** @type {boolean} */ ok,
     /** @type {string} */ detail = "",
-  ) => checks.push({ name, ok, detail });
+  ) => checks.push({ name, ok, detail, skipped: false });
+  /**
+   * 环境分支：确实无法验证时不伪装成 PASS，也不把「宿主没这个工具」报成插件红。
+   * 门禁认可 SKIP（只要有 PASS），理由写进 detail 供复核。
+   * @param {string} name
+   * @param {string} detail
+   */
+  const skip = (name, detail) => checks.push({ name, ok: true, detail, skipped: true });
 
   /** @type {Awaited<ReturnType<typeof connect>> | undefined} */
   let cdp;
@@ -1075,378 +1381,426 @@ const main = async () => {
     }
 
     // ---------- H. --deep：文件模式端到端（新建会话 → 写文件 → 回溯 → 还原） ----------
+    // 前置由脚本自己建立，不依赖调用者先手工开好会话、也不依赖上一段「切回原会话」：
+    //   1) `--workspace` 必须是**已注册成桌面工作区**的专用目录。这是唯一的人工前置
+    //      （桌面「工作区 → 添加工作区」选一次），脚本只读侧栏、不写宿主注册表；
+    //   2) 在那个工作区的分组里点「新建会话」（幂等：桌面上已有多少会话、停在哪个会话都不影响，
+    //      每次都得到一个绑定该工作区的空白会话）；
+    //   3) 模型只被告知**绝对路径**，文件断言轮询文件系统，不依赖模型回复文案。
+    // macOS 的 /tmp 是 /private/tmp 的软链：宿主按**真实路径**绑定会话 cwd，用软链路径注册
+    // 工作区会让「新建会话」建成功、附不上去（界面报「无法附到工作区」），所以路径一律先 realpath。
     if (values.deep === true) {
-      const workspacePath = values.workspace;
       const fileName = "rewind-desktop-smoke.txt";
-      const filePath = workspacePath === undefined ? "" : join(workspacePath, fileName);
-      // 每次跑用唯一内容：否则重复运行时 write 是幂等的（beforeHash === afterHash），
-      // 文件引擎正确地认为「没有变化」，文件模式也就理所当然地不可用。
-      const content = `hello-rewind-desktop-${Date.now()}`;
-      const prompt =
-        `只做一件事：用 write 工具在当前工作区创建 ${fileName}，内容为 ${content}。` +
-        "不要做其他任何操作，完成后回复一句简短确认。";
-
-      // 安全闸：必须显式给出一个已存在的专用目录，且不能是仓库所在目录。
+      const workspaceArg = typeof values.workspace === "string" ? values.workspace : "";
+      let repoReal = process.cwd();
+      try {
+        repoReal = await realpath(process.cwd());
+      } catch {
+        /* 保留原样 */
+      }
+      let workspaceReal = "";
       let workspaceOk = false;
-      let workspaceDetail = "缺少 --workspace";
-      if (typeof workspacePath === "string" && workspacePath !== "") {
+      let workspaceDetail = "缺少 --workspace（需要已注册成桌面工作区的专用目录）";
+      if (workspaceArg !== "") {
         try {
-          const info = await stat(workspacePath);
-          const repo = process.cwd();
-          workspaceOk = info.isDirectory() && !workspacePath.startsWith(repo);
-          workspaceDetail = workspaceOk ? "" : `不是目录，或位于仓库内（${repo}）`;
+          const info = await stat(workspaceArg);
+          workspaceReal = await realpath(workspaceArg);
+          const insideRepo = workspaceReal === repoReal || workspaceReal.startsWith(`${repoReal}/`);
+          workspaceOk = info.isDirectory() && !insideRepo;
+          workspaceDetail = workspaceOk ? workspaceReal : `不是目录，或位于仓库内（${repoReal}）`;
         } catch {
-          workspaceDetail = `目录不存在：${workspacePath}`;
+          workspaceReal = "";
+          workspaceDetail = `目录不存在：${workspaceArg}`;
         }
       }
-      check("--deep 提供了可用的专用测试工作区", workspaceOk, workspaceDetail);
+      check("--deep 提供了可用的专用测试工作区（按真实路径）", workspaceOk, workspaceDetail);
 
-      const workspaceTitle = typeof workspacePath === "string" ? basename(workspacePath) : "";
-
-      if (workspaceOk && typeof workspacePath === "string") {
-        // 干净起点：上一次跑留下的同名文件会变成「已存在」而不是「新建」，语义不同。
+      if (workspaceOk) {
+        const customTitle =
+          typeof values["sidebar-workspace"] === "string" ? values["sidebar-workspace"].trim() : "";
+        const workspaceTitle = customTitle === "" ? basename(workspaceReal) : customTitle;
+        const filePath = join(workspaceReal, fileName);
+        // 幂等起点：上次崩溃留下的同名文件会让「新建」变成「覆盖」，语义不同。
         await rm(filePath, { force: true }).catch(() => {});
         check("测试文件在开始前不存在（保证是新建语义）", !(await exists(filePath)), filePath);
-        // 显式在测试工作区里开一个新会话：靠 section G「切回原会话」不够可靠（行可能在折叠分组里，
-        // 点击不生效时仍停在上一个会话），而 H 段必须在**绑定该工作区**的会话里跑，否则模型没有
-        // 写文件的权限、断言会以「文件不存在」的形式失败，看起来像插件 bug。
-        const opened = await cdp.evaluate(`(() => {
-          const title = ${JSON.stringify(workspaceTitle)};
-          const btn = [...document.querySelectorAll("button")].find((b) => {
-            const label = b.getAttribute("aria-label") || "";
-            return label.includes("中新建会话") && label.includes(title);
-          });
-          if (!btn) return "no-button";
-          btn.click();
-          return "clicked";
-        })()`);
-        await sleep(2500);
-        const fresh = await cdp.evaluate(`(() => {
-          const root = document.querySelector("[data-conversation-session]");
-          return {
-            session: root ? root.getAttribute("data-conversation-session") : null,
-            userRows: document.querySelectorAll('[data-chat-flow-kind="user"]').length,
-          };
-        })()`);
-        check(
-          "在测试工作区里打开一个新会话（H 段的前置）",
-          opened === "clicked" && fresh.userRows === 0,
-          JSON.stringify({ opened, ...fresh }),
-        );
 
-        // 上一步已经在测试工作区里新建了空会话；这里只确认输入框真的可编辑。
-        const ready = await waitForComposer(cdp, 4000);
+        // 工作区必须是宿主**注册过**的：会话 cwd 来自工作区而 screen 上的工作区选择器，
+        // 不是来自 prompt。缺了它「在 X 中新建会话」按钮根本不存在（旧版脚本会以 no-button
+        // 静默失败，然后模型在别的会话里跑，文件永远不出现）。
+        const workspaceRow = await waitForWorkspaceRow(cdp, workspaceTitle, 15000);
         check(
-          "当前会话输入框可编辑（已绑定测试工作区）",
-          ready,
-          ready
+          `专用工作区「${workspaceTitle}」已注册为桌面工作区（侧栏可见）`,
+          workspaceRow.found,
+          workspaceRow.found
             ? ""
-            : `「${workspaceTitle}」的新会话输入框不可编辑；检查该工作区是否仍可写、或先手动开一个会话再重跑 --deep`,
+            : `${workspaceRow.detail}；先在桌面「工作区 → 添加工作区」选择 ${workspaceReal}（一次性），` +
+                "或用 --sidebar-workspace 指定工作区标题",
         );
 
-        const typed = await typeIntoComposer(cdp, prompt);
-        await sleep(300);
-        const sent = await clickSend(cdp);
-        check(
-          "发送「创建测试文件」的请求",
-          typed !== false && sent === true,
-          JSON.stringify({ typed, sent }),
-        );
+        if (workspaceRow.found) {
+          const previousSession = await cdp.evaluate(`(() => {
+            const root = document.querySelector("[data-conversation-session]");
+            return root ? root.getAttribute("data-conversation-session") : null;
+          })()`);
+          /** 点侧栏工作区行上的「新建会话」（aria-label 里带工作区标题）。 */
+          const openNewSession = () =>
+            cdp.evaluate(`(() => {
+              const title = ${JSON.stringify(workspaceTitle)};
+              const btn = [...document.querySelectorAll("button")].find((b) => {
+                const label = b.getAttribute("aria-label") || "";
+                return label.includes(title) && /新建会话|New session/u.test(label);
+              });
+              if (!btn) return "no-button";
+              btn.click();
+              return "clicked";
+            })()`);
+          let opened = await openNewSession();
+          let fresh = await waitForFreshSession(cdp, previousSession, 25000);
+          if (!fresh.ok && opened === "clicked") {
+            // 慢机器上第一次点击可能落在分组展开动画里；重试一次仍要求同样的终态。
+            await sleep(1200);
+            opened = await openNewSession();
+            fresh = await waitForFreshSession(cdp, previousSession, 25000);
+          }
+          check(
+            "在测试工作区里打开一个新会话（H 段的前置）",
+            fresh.ok,
+            JSON.stringify({ opened, ...fresh.detail }).slice(0, 420),
+          );
+          await cdp.screenshot(join(SHOTS, "03-deep-fresh-session.png"));
+          check(
+            "新会话的输入框可编辑（空白会话）",
+            fresh.detail?.editable === true && fresh.detail?.userRows === 0,
+            JSON.stringify({ editable: fresh.detail?.editable, userRows: fresh.detail?.userRows }),
+          );
+          // cwd 绑定证明：输入框下方的工作区选择器显示的就是这个工作区。
+          check(
+            "新会话绑定到专用工作区（工作区选择器显示该工作区）",
+            typeof fresh.detail?.workspace === "string" &&
+              fresh.detail.workspace.includes(workspaceTitle),
+            JSON.stringify(fresh.detail?.workspace ?? ""),
+          );
 
-        const finished = await waitForTurnEnd(cdp, 180000);
-        let fileBody = "";
-        try {
-          fileBody = (await readFile(filePath, "utf8")).trim();
-        } catch {
-          fileBody = "";
-        }
-        check(
-          "agent 确实用 write 创建了测试文件",
-          finished && fileBody === content,
-          JSON.stringify({ finished, fileBody: fileBody.slice(0, 40) }),
-        );
+          if (fresh.ok) {
+            // ---- 1) 新建文件（write create） ----
+            const content = `hello-rewind-desktop-${Date.now()}`;
+            const createPrompt =
+              `只做一件事：用 write 工具在目录 ${workspaceReal} 下创建文件 ${fileName}，内容为 ${content}。` +
+              "不要用 bash，不要做其他操作；这是本轮唯一任务。完成后只回复一句简短确认。";
+            const createRun = await runPrompt(cdp, createPrompt, 300000);
+            check(
+              "发送「创建测试文件」的请求",
+              createRun.typed && createRun.sent,
+              JSON.stringify({
+                cleared: createRun.cleared,
+                typed: createRun.typed,
+                sent: createRun.sent,
+              }),
+            );
+            const created = await waitForFileState(filePath, content, 120000);
+            const createTools = createRun.tools.map((card) => `${card.tool}:${card.state}`);
+            check(
+              "agent 确实用 write 创建了测试文件",
+              createRun.finished &&
+                created &&
+                createRun.tools.some((card) => card.tool === "write"),
+              JSON.stringify({ finished: createRun.finished, created, tools: createTools }).slice(
+                0,
+                420,
+              ),
+            );
+            await cdp.screenshot(join(SHOTS, "04-deep-file-created.png"));
 
-        // 点这条用户消息的 ↶ → 确认框（文件模式应该可用）
-        const rewound = await cdp.evaluate(`(() => {
-          const row = document.querySelector('[data-chat-flow-kind="user"]');
-          if (!row) return "no-user-row";
-          const btn = [...row.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("回退到此处"));
-          if (!btn) return "no-rewind-button";
-          btn.click();
-          return "clicked";
-        })()`);
-        await sleep(2200);
-        const deepConfirm = await dialogInfo(cdp);
-        const bothReady = await cdp.evaluate(`(() => {
-          const radio = document.querySelector('.dsh-srw-dialog input[type="radio"][value="both"]');
-          return radio ? !radio.disabled : false;
-        })()`);
-        check(
-          "文件模式在确认框里可用（有文件变更）",
-          rewound === "clicked" && bothReady === true,
-          JSON.stringify({ rewound, bothReady }),
-        );
-        check(
-          "确认框预览写明文件动作",
-          typeof deepConfirm?.text === "string" &&
-            /将还原|还原 \d|移入回收站|Restore/u.test(deepConfirm.text),
-          (deepConfirm?.text ?? "").slice(0, 200),
-        );
+            // ---- 2) 回溯（对话+文件）：文件进回收站、输入框回填 ----
+            const rewound = await openRewindDialog(cdp);
+            // 影响面是异步算的：点开时正文可能还是「正在计算影响面…」，要等文件动作出现。
+            const deepPreview = await waitForDialogText(
+              cdp,
+              "将还原|还原 \\d|移入回收站|Restore",
+              15000,
+            );
+            const bothReady = await waitForBothRadio(cdp, 10000);
+            check(
+              "文件模式在确认框里可用（有文件变更）",
+              rewound === "clicked" && bothReady,
+              JSON.stringify({ rewound, bothReady }),
+            );
+            check(
+              "确认框预览写明文件动作",
+              rewound === "clicked" && deepPreview.matched,
+              (deepPreview.text ?? "").slice(0, 240),
+            );
 
-        // 选「对话+文件」并执行
-        await cdp.evaluate(`(() => {
-          const radio = document.querySelector('.dsh-srw-dialog input[type="radio"][value="both"]');
-          if (radio && !radio.disabled) radio.click();
-        })()`);
-        await sleep(500);
-        // B1 的另一半：切到 both 后，可恢复性文案才追加「救援点/回收站」。
-        const bothModeRecoverable = await cdp.evaluate(`(() => {
-          const el = document.querySelector('.dsh-srw-dialog [data-rewind-recoverable]');
-          return el ? (el.textContent || '').trim() : '';
-        })()`);
-        check(
-          "both 模式的可恢复性文案包含救援点/回收站",
-          /救援点|rescue|回收站|trash/iu.test(bothModeRecoverable),
-          bothModeRecoverable.slice(0, 240),
-        );
-        const confirmed = await clickDialogButton(cdp, ["开始回退", "Rewind"]);
-        let dialogGone = false;
-        for (let i = 0; i < 40; i += 1) {
-          await sleep(500);
-          if ((await dialogInfo(cdp)) === null) {
-            dialogGone = true;
-            break;
+            // 选「对话+文件」并执行
+            await cdp.evaluate(`(() => {
+              const radio = document.querySelector('.dsh-srw-dialog input[type="radio"][value="both"]');
+              if (radio && !radio.disabled) radio.click();
+            })()`);
+            await sleep(500);
+            // B1 的另一半：切到 both 后，可恢复性文案才追加「救援点/回收站」。
+            const bothModeRecoverable = await cdp.evaluate(`(() => {
+              const el = document.querySelector('.dsh-srw-dialog [data-rewind-recoverable]');
+              return el ? (el.textContent || '').trim() : '';
+            })()`);
+            check(
+              "both 模式的可恢复性文案包含救援点/回收站",
+              /救援点|rescue|回收站|trash/iu.test(bothModeRecoverable),
+              bothModeRecoverable.slice(0, 240),
+            );
+            const confirmed = await clickDialogButton(cdp, ["开始回退", "Rewind"]);
+            let dialogGone = false;
+            for (let i = 0; i < 60; i += 1) {
+              await sleep(300);
+              if ((await dialogInfo(cdp)) === null) {
+                dialogGone = true;
+                break;
+              }
+            }
+            check(
+              "确认后对话框关闭",
+              confirmed && dialogGone,
+              JSON.stringify({ confirmed, dialogGone }),
+            );
+            const movedToTrash = await waitForFileState(filePath, null, 20000);
+            check(
+              "文件被移入插件回收站（工作区里已不存在）",
+              movedToTrash,
+              movedToTrash ? "" : "文件仍在工作区",
+            );
+            const toast = await waitForToast(cdp, 8000);
+            check(
+              "toast 报告撤回与文件结果",
+              /回退|Rewound/u.test(toast) && /回收站|trash/u.test(toast),
+              toast.slice(0, 200),
+            );
+            let refilled = "";
+            for (let i = 0; i < 30; i += 1) {
+              refilled = (await composerText(cdp)) ?? "";
+              if (refilled.trim() !== "" && refilled.includes(fileName)) break;
+              await sleep(300);
+            }
+            check(
+              "输入框回填被撤回的消息文本",
+              refilled.trim() !== "" && refilled.includes(fileName),
+              refilled.slice(0, 120),
+            );
+            // 清掉回填的草稿（下一轮 prompt 自己也会清，这里清是为了面板操作时输入框是空的）。
+            await clearComposer(cdp);
+
+            // ---- 3) 救援点恢复：面板 → 救援点 → 恢复 ----
+            await openDrawer(cdp);
+            await sleep(600);
+            await openDrawerTab(cdp, "救援点");
+            await sleep(600);
+            const restoreClicked = await clickDrawerButton(cdp, "恢复这些文件|Restore", 12000);
+            let restoredOk = await waitForFileState(filePath, content, 25000);
+            let restoreConfirmed = "";
+            if (!restoredOk) {
+              restoreConfirmed = await clickDrawerButton(cdp, "恢复这些文件|Restore", 8000);
+              restoredOk = await waitForFileState(filePath, content, 40000);
+            }
+            // 抽屉铺满窗口、会吃掉输入框的点击：后面还要发 prompt，先关掉。
+            const drawerClosed = await closeDrawer(cdp);
+            check(
+              "从救援点恢复后文件内容回到工作区",
+              (restoreClicked === "clicked" || restoreConfirmed === "clicked") &&
+                restoredOk &&
+                drawerClosed,
+              JSON.stringify({
+                restoreClicked,
+                restoreConfirmed,
+                restored: restoredOk,
+                drawerClosed,
+              }),
+            );
+            await cdp.screenshot(join(SHOTS, "05-deep-restored.png"));
+
+            // ---- 4) 修改还原：覆盖已有文件 → 回退 → 内容回到覆盖前 ----
+            const rewriteContent = `rewritten-${Date.now()}`;
+            const rewriteRun = await runPrompt(
+              cdp,
+              `只做一件事：用 write 工具把文件 ${filePath} 的内容覆盖为 ${rewriteContent}。` +
+                "不要用 bash，不要做其他操作；这是本轮唯一任务。",
+              300000,
+            );
+            const rewrittenOk = await waitForFileState(filePath, rewriteContent, 120000);
+            const rewriteTools = rewriteRun.tools.map((card) => card.tool);
+            check(
+              "修改还原：agent 覆盖了已存在的文件",
+              rewriteRun.finished && rewrittenOk && rewriteTools.includes("write"),
+              JSON.stringify({
+                cleared: rewriteRun.cleared,
+                typed: rewriteRun.typed,
+                sent: rewriteRun.sent,
+                finished: rewriteRun.finished,
+                overwritten: rewrittenOk,
+                tools: rewriteTools,
+              }).slice(0, 360),
+            );
+            const modifyOpened = await openRewindDialog(cdp);
+            const modifyBothReady = await waitForBothRadio(cdp, 10000);
+            const modifyPreview = await waitForDialogText(cdp, "将还原|还原 \\d|Restore", 15000);
+            check(
+              "修改还原：确认框预览可用且写明还原文件",
+              modifyOpened === "clicked" && modifyBothReady && modifyPreview.matched,
+              JSON.stringify({
+                modifyOpened,
+                modifyBothReady,
+                text: (modifyPreview.text ?? "").slice(0, 160),
+              }).slice(0, 320),
+            );
+            const modifyExecuted = await chooseBothAndConfirm(cdp);
+            const modifyRestored = await waitForFileState(filePath, content, 60000);
+            check(
+              "修改还原：回退后内容回到覆盖前",
+              modifyExecuted && modifyRestored,
+              JSON.stringify({ modifyExecuted, restored: modifyRestored }),
+            );
+
+            // ---- 5) 删除文件 → 回退重建 ----
+            // DSH 0.2.2-rc.5 的**所有** agent 预设在 preset 里把 tool-fs 的 `applyPatch` 设为
+            // false（宿主源码 + `--dump-config` 双证据），桌面默认没有 apply_patch 工具；而插件
+            // 只追踪 write/edit/apply_patch，所以「删除」在这个组合里无法由受追踪工具驱动。
+            // 这里仍然发删除指令：宿主以后打开 applyPatch 时这段会真的跑；跑不起来就按**环境分支**
+            // 记 SKIP（不改成假绿，也不把「宿主没这个工具」报成插件红）。
+            const deletePrompt =
+              `只做一件事：用 apply_patch 工具删除文件 ${filePath}。补丁形状如下（这是本轮唯一任务，不要用 bash）：\n` +
+              `*** Begin Patch\n*** Delete File: ${filePath}\n*** End Patch\n完成后只回复一句简短确认。`;
+            const deleteRun = await runPrompt(cdp, deletePrompt, 300000);
+            const deleted = await waitForFileState(filePath, null, 60000);
+            const deleteTools = deleteRun.tools.map((card) => `${card.tool}:${card.state}`);
+            const usedApplyPatch = deleteRun.tools.some((card) => card.tool === "apply_patch");
+            if (usedApplyPatch && deleted) {
+              await cdp.screenshot(join(SHOTS, "06-deep-deleted.png"));
+              check(
+                "删除文件：agent 用 apply_patch 删除了测试文件",
+                deleted,
+                JSON.stringify({ deleted, tools: deleteTools }),
+              );
+              const deleteOpened = await openRewindDialog(cdp);
+              const deletePreview = await waitForDialogText(
+                cdp,
+                "重建|还原被删除|recreat|Restore",
+                15000,
+              );
+              check(
+                "删除文件：确认框预览写明会重建被删除的文件",
+                deleteOpened === "clicked" && deletePreview.matched,
+                (deletePreview.text ?? "").slice(0, 240),
+              );
+              const deleteExecuted = await chooseBothAndConfirm(cdp);
+              const recreated = await waitForFileState(filePath, content, 60000);
+              check(
+                "删除文件：回退后文件被重建",
+                deleteExecuted && recreated,
+                JSON.stringify({ deleteExecuted, recreated }),
+              );
+            } else {
+              const reason =
+                "宿主未注册 apply_patch（0.2.2-rc.5 的 standard/ptc/minimal/cordis 四个预设都把 " +
+                "tool-fs.applyPatch 设为 false；插件只追踪 write/edit/apply_patch，bash/脚本不追踪），" +
+                `删除语义无法由受追踪工具驱动；本轮工具卡：${deleteTools.join(",") || "无"}，` +
+                `文件${deleted ? "已消失（非受追踪删除）" : "仍在"}`;
+              skip("删除文件：agent 用 apply_patch 删除了测试文件", reason);
+              skip("删除文件：确认框预览写明会重建被删除的文件", reason);
+              skip("删除文件：回退后文件被重建", reason);
+              // 非受追踪删除（例如模型改用 bash）会把文件弄丢，补回来给后面的冲突场景当基线。
+              if (deleted) await writeFile(filePath, content, "utf8").catch(() => {});
+            }
+
+            // ---- 6) 冲突拒绝：外部改动后文件模式整体禁用、一个字节都不写 ----
+            const conflictBase = `conflict-base-${Date.now()}`;
+            const conflictRun = await runPrompt(
+              cdp,
+              `只做一件事：用 write 工具把文件 ${filePath} 的内容覆盖为 ${conflictBase}。` +
+                "不要用 bash，不要做其他操作；这是本轮唯一任务。",
+              300000,
+            );
+            const conflictApplied = await waitForFileState(filePath, conflictBase, 120000);
+            const externalContent = `external-change-${Date.now()}`;
+            await writeFile(filePath, externalContent, "utf8");
+            const conflictOpened = await openRewindDialog(cdp);
+            const conflictPreview = await waitForDialogText(
+              cdp,
+              "冲突|conflict|不一致|differs",
+              15000,
+            );
+            /** @type {boolean | null} */
+            let conflictBothDisabled = null;
+            for (let i = 0; i < 30; i += 1) {
+              conflictBothDisabled = await cdp.evaluate(`(() => {
+                const radio = document.querySelector('.dsh-srw-dialog input[type="radio"][value="both"]');
+                return radio ? radio.disabled : null;
+              })()`);
+              if (conflictBothDisabled === true) break;
+              await sleep(300);
+            }
+            check(
+              "冲突拒绝：外部改动后文件模式被禁用并列出冲突",
+              conflictOpened === "clicked" &&
+                conflictRun.finished &&
+                conflictApplied &&
+                conflictPreview.matched &&
+                conflictBothDisabled === true,
+              JSON.stringify({
+                finished: conflictRun.finished,
+                applied: conflictApplied,
+                conflictBothDisabled,
+                text: (conflictPreview.text ?? "").slice(0, 200),
+              }).slice(0, 460),
+            );
+            await clickDialogButton(cdp, ["取消", "Cancel"]);
+            await sleep(700);
+            let conflictFileBody = "";
+            try {
+              conflictFileBody = (await readFile(filePath, "utf8")).trim();
+            } catch {
+              conflictFileBody = "";
+            }
+            check(
+              "冲突拒绝：拒绝后没有写文件（外部内容保持原样）",
+              conflictFileBody === externalContent,
+              JSON.stringify({ body: conflictFileBody.slice(0, 48) }),
+            );
+            await rm(filePath, { force: true }).catch(() => {});
+
+            // ---- 7) 时间线里应出现「文件恢复」节点（救援点恢复留下的） ----
+            await openDrawer(cdp);
+            await sleep(400);
+            await openDrawerTab(cdp, "回溯记录");
+            let timelineKinds = null;
+            for (let i = 0; i < 30; i += 1) {
+              await sleep(400);
+              timelineKinds = await cdp.evaluate(`(() => {
+                const root = document.querySelector(".dsh-srw-timeline");
+                return root ? [...root.querySelectorAll(".dsh-srw-tl-node")].map((n) => n.getAttribute("data-kind")) : null;
+              })()`);
+              if (Array.isArray(timelineKinds) && timelineKinds.includes("rescue-restore")) break;
+            }
+            check(
+              "时间线里出现文件恢复节点",
+              Array.isArray(timelineKinds) && timelineKinds.includes("rescue-restore"),
+              JSON.stringify(timelineKinds),
+            );
+            await cdp.evaluate(`(() => {
+              const root = document.querySelector(".dsh-srw-drawer");
+              const btn = root ? [...root.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === "关闭") : null;
+              if (btn) btn.click();
+            })()`);
+            await sleep(400);
+            await cdp.screenshot(join(SHOTS, "07-deep-final.png"));
+            // 收尾：删掉测试文件，别把垃圾留在工作区。
+            await rm(filePath, { force: true }).catch(() => {});
+            check("测试文件已清理", !(await exists(filePath)), filePath);
+            // 防回归：会话没绑定测试工作区时，模型的 write 会落到**脚本自身 cwd**（本仓库）里。
+            // 那会在仓库根留下一个未跟踪的测试文件，并在断言里表现为「文件不存在」。
+            check(
+              "测试文件没有漏到仓库目录",
+              !(await exists(join(process.cwd(), fileName))),
+              join(process.cwd(), fileName),
+            );
           }
         }
-        let afterBody = "exists";
-        try {
-          await stat(filePath);
-        } catch {
-          afterBody = "";
-        }
-        check(
-          "确认后对话框关闭",
-          confirmed && dialogGone,
-          JSON.stringify({ confirmed, dialogGone }),
-        );
-        check(
-          "文件被移入插件回收站（工作区里已不存在）",
-          afterBody === "",
-          afterBody === "" ? "" : "文件仍在",
-        );
-
-        const toast = await cdp.evaluate(
-          `(() => { const el = document.querySelector(".dsh-srw-toast"); return el ? (el.textContent || "").trim() : ""; })()`,
-        );
-        check(
-          "toast 报告撤回与文件结果",
-          /回退|Rewound/u.test(toast) && /回收站|trash/u.test(toast),
-          toast.slice(0, 160),
-        );
-        const refilled = await composerText(cdp);
-        check(
-          "输入框回填被撤回的消息文本",
-          refilled.trim().length > 0 && refilled.includes("rewind-desktop-smoke"),
-          refilled.slice(0, 80),
-        );
-
-        // 清掉回填的草稿，避免影响后续面板操作
-        await cdp.evaluate(`(() => {
-          const el = document.querySelector("[data-composer-input]");
-          if (!el) return;
-          el.focus();
-          const sel = document.getSelection();
-          if (!sel) return;
-          const range = document.createRange();
-          range.selectNodeContents(el);
-          sel.removeAllRanges();
-          sel.addRange(range);
-          document.execCommand("delete", false);
-        })()`);
-
-        // 救援点恢复：面板 → 救援点 → 恢复 → 确认
-        await cdp.evaluate(`(() => {
-          const btn = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").includes("回溯面板"));
-          if (btn) btn.click();
-        })()`);
-        await sleep(900);
-        await openDrawerTab(cdp, "救援点");
-        await sleep(1200);
-        const restoreClicked = await cdp.evaluate(`(() => {
-          const root = document.querySelector(".dsh-srw-drawer");
-          if (!root) return "no-drawer";
-          const btn = [...root.querySelectorAll("button")].find((b) => /恢复这些文件|Restore/u.test((b.textContent || "").trim()));
-          if (!btn) return "no-restore-button";
-          btn.click();
-          return "clicked";
-        })()`);
-        await sleep(900);
-        const restoreConfirmed = await cdp.evaluate(`(() => {
-          const root = document.querySelector(".dsh-srw-drawer");
-          if (!root) return "no-drawer";
-          const btn = [...root.querySelectorAll("button")].find((b) => /恢复这些文件|Restore/u.test((b.textContent || "").trim()));
-          if (!btn) return "no-confirm-button";
-          btn.click();
-          return "clicked";
-        })()`);
-        await sleep(2200);
-        let restored = "";
-        try {
-          restored = (await readFile(filePath, "utf8")).trim();
-        } catch {
-          restored = "";
-        }
-        check(
-          "从救援点恢复后文件内容回到工作区",
-          (restoreClicked === "clicked" || restoreConfirmed === "clicked") && restored === content,
-          JSON.stringify({ restoreClicked, restoreConfirmed, restored: restored.slice(0, 40) }),
-        );
-        await cdp.screenshot(join(SHOTS, "05-deep-restored.png"));
-
-        // ---- AUD-REW-11：--deep 补齐「修改还原 / 删除文件 / 冲突拒绝」三条最危险的文件语义 ----
-        // 1) 修改还原：agent 覆盖已有文件 → 回退 → 内容回到覆盖前（不是「无文件变更」）。
-        const rewriteContent = `rewritten-${Date.now()}`;
-        const rewriteRun = await runPrompt(
-          cdp,
-          `只做一件事：用 write 工具把当前工作区 ${fileName} 的内容覆盖为 ${rewriteContent}。不要做其他操作。`,
-        );
-        let rewrittenBody = "";
-        try {
-          rewrittenBody = (await readFile(filePath, "utf8")).trim();
-        } catch {
-          rewrittenBody = "";
-        }
-        check(
-          "修改还原：agent 覆盖了已存在的文件",
-          rewriteRun.finished && rewrittenBody === rewriteContent,
-          JSON.stringify({ finished: rewriteRun.finished, body: rewrittenBody.slice(0, 48) }),
-        );
-        const modifyOpened = await openRewindOnLastUser(cdp);
-        await sleep(2200);
-        const modifyConfirm = await dialogInfo(cdp);
-        const modifyBothReady = await cdp.evaluate(`(() => {
-          const radio = document.querySelector('.dsh-srw-dialog input[type="radio"][value="both"]');
-          return radio ? !radio.disabled : false;
-        })()`);
-        check(
-          "修改还原：确认框预览可用且写明还原文件",
-          modifyOpened === "clicked" &&
-            modifyBothReady === true &&
-            /将还原|还原 \d|Restore/u.test(modifyConfirm?.text ?? ""),
-          JSON.stringify({ modifyOpened, modifyBothReady }).slice(0, 200),
-        );
-        const modifyExecuted = await chooseBothAndConfirm(cdp);
-        let afterModify = "";
-        try {
-          afterModify = (await readFile(filePath, "utf8")).trim();
-        } catch {
-          afterModify = "";
-        }
-        check(
-          "修改还原：回退后内容回到覆盖前",
-          modifyExecuted && afterModify === content,
-          JSON.stringify({ modifyExecuted, body: afterModify.slice(0, 48) }),
-        );
-
-        // 2) 删除文件：agent 用 apply_patch 删除 → 回退 → 文件按记录重建。
-        const deleteRun = await runPrompt(
-          cdp,
-          `只做一件事：用 apply_patch 工具删除当前工作区的 ${fileName}（*** Delete File）。不要做其他操作。`,
-        );
-        check(
-          "删除文件：agent 删除了测试文件",
-          deleteRun.finished && !(await exists(filePath)),
-          JSON.stringify({ finished: deleteRun.finished, exists: await exists(filePath) }),
-        );
-        await openRewindOnLastUser(cdp);
-        await sleep(2200);
-        const deleteConfirm = await dialogInfo(cdp);
-        check(
-          "删除文件：确认框预览写明会重建被删除的文件",
-          /重建|还原被删除|recreat|Restore/u.test(deleteConfirm?.text ?? ""),
-          (deleteConfirm?.text ?? "").slice(0, 240),
-        );
-        const deleteExecuted = await chooseBothAndConfirm(cdp);
-        let afterDelete = "";
-        try {
-          afterDelete = (await readFile(filePath, "utf8")).trim();
-        } catch {
-          afterDelete = "";
-        }
-        check(
-          "删除文件：回退后文件被重建",
-          deleteExecuted && afterDelete === content,
-          JSON.stringify({ deleteExecuted, body: afterDelete.slice(0, 48) }),
-        );
-
-        // 3) 冲突拒绝：外部把同一文件改成第三种内容 → 文件模式整体拒绝、一个字节都不写。
-        const conflictBase = `conflict-base-${Date.now()}`;
-        const conflictRun = await runPrompt(
-          cdp,
-          `只做一件事：用 write 工具把当前工作区 ${fileName} 的内容覆盖为 ${conflictBase}。不要做其他操作。`,
-        );
-        const externalContent = `external-change-${Date.now()}`;
-        await writeFile(filePath, externalContent, "utf8");
-        await openRewindOnLastUser(cdp);
-        await sleep(2200);
-        const conflictConfirm = await dialogInfo(cdp);
-        const conflictBothDisabled = await cdp.evaluate(`(() => {
-          const radio = document.querySelector('.dsh-srw-dialog input[type="radio"][value="both"]');
-          return radio ? radio.disabled : null;
-        })()`);
-        check(
-          "冲突拒绝：外部改动后文件模式被禁用并列出冲突",
-          conflictRun.finished &&
-            conflictBothDisabled === true &&
-            /冲突|conflict|不一致|differs/iu.test(conflictConfirm?.text ?? ""),
-          JSON.stringify({
-            conflictBothDisabled,
-            text: (conflictConfirm?.text ?? "").slice(0, 240),
-          }),
-        );
-        await clickDialogButton(cdp, ["取消", "Cancel"]);
-        await sleep(700);
-        let conflictFileBody = "";
-        try {
-          conflictFileBody = (await readFile(filePath, "utf8")).trim();
-        } catch {
-          conflictFileBody = "";
-        }
-        check(
-          "冲突拒绝：拒绝后没有写文件（外部内容保持原样）",
-          conflictFileBody === externalContent,
-          JSON.stringify({ body: conflictFileBody.slice(0, 48) }),
-        );
-        await rm(filePath, { force: true }).catch(() => {});
-
-        // 时间线里应出现一条「文件恢复」节点
-        await openDrawerTab(cdp, "回溯记录");
-        await sleep(1200);
-        const timelineKinds = await cdp.evaluate(`(() => {
-          const root = document.querySelector(".dsh-srw-timeline");
-          return root ? [...root.querySelectorAll(".dsh-srw-tl-node")].map((n) => n.getAttribute("data-kind")) : null;
-        })()`);
-        check(
-          "时间线里出现文件恢复节点",
-          Array.isArray(timelineKinds) && timelineKinds.includes("rescue-restore"),
-          JSON.stringify(timelineKinds),
-        );
-        await cdp.evaluate(`(() => {
-          const root = document.querySelector(".dsh-srw-drawer");
-          const btn = root ? [...root.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === "关闭") : null;
-          if (btn) btn.click();
-        })()`);
-        await sleep(400);
-        // 收尾：删掉测试文件，别把垃圾留在工作区。
-        await rm(filePath, { force: true }).catch(() => {});
-        check("测试文件已清理", !(await exists(filePath)), filePath);
-        // 防回归：会话没绑定测试工作区时，模型的 write 会落到**脚本自身 cwd**（本仓库）里。
-        // 那会在仓库根留下一个未跟踪的测试文件，并在断言里表现为「文件不存在」。
-        check(
-          "测试文件没有漏到仓库目录",
-          !(await exists(join(process.cwd(), fileName))),
-          join(process.cwd(), fileName),
-        );
       }
     }
   } catch (error) {
@@ -1456,19 +1810,26 @@ const main = async () => {
   }
 
   let failed = 0;
+  let skipped = 0;
   for (const item of checks) {
-    console.log((item.ok ? "PASS " : "FAIL ") + item.name + (item.ok ? "" : ` :: ${item.detail}`));
-    if (!item.ok) failed += 1;
+    const label = item.skipped === true ? "SKIP " : item.ok ? "PASS " : "FAIL ";
+    const detail = item.detail === "" ? "" : ` :: ${item.detail}`;
+    console.log(label + item.name + detail);
+    if (item.skipped === true) skipped += 1;
+    else if (!item.ok) failed += 1;
   }
   console.log(`截图目录：${SHOTS}`);
   if (failed > 0) {
     console.error(`FAIL ${failed} 项桌面回归断言失败`);
     process.exitCode = 1;
   } else {
-    console.log(`PASS 全部 ${checks.length} 项桌面回归断言通过`);
+    console.log(
+      `PASS 全部 ${checks.length - skipped} 项桌面回归断言通过` +
+        (skipped > 0 ? `（另有 ${skipped} 项按环境分支 SKIP，理由见上）` : ""),
+    );
   }
   // 门禁靠这一行判定「跑过但一条断言都没执行」（见 docs/plugin-conventions.md §6.1）。
-  console.log(`${checks.length - failed} PASS / 0 SKIP / ${failed} FAIL`);
+  console.log(`${checks.length - skipped - failed} PASS / ${skipped} SKIP / ${failed} FAIL`);
 };
 
 await main();
