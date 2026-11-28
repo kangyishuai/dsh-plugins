@@ -16,11 +16,12 @@
 packages/<name>/
 ├── package.json          # 必须声明 dsh.bundle / dsh.client
 ├── cordis.patch.yml      # bundle patch：往 profile 里 insert 一行
+├── icon.svg              # 插件图标：36×36、透明背景、无文字；模板自带占位图，发布前替换
 ├── lib/
 │   ├── index.js          # host 半（Node，可用 ctx 服务）
 │   └── client.js         # client 半（浏览器 classic script，可选）
 ├── locale/
-│   ├── zh.json
+│   ├── zh.json           # 根对象 meta.title / meta.description = 插件身份
 │   └── en.json
 ├── test/                 # node --test；不进发布包
 ├── README.md             # 英文
@@ -28,22 +29,26 @@ packages/<name>/
 └── LICENSE               # 脚手架从根目录复制（npm pack 不会带上根目录的文件）
 ```
 
+`locale/{zh,en}.json` 根对象的 `meta.title` / `meta.description`（宿主不激活插件时读的标题与短描述）、`package.json` 顶层 `icon`、以及能被 Node 解析到的 locale `exports`，合起来就是「插件身份三件套」。**模板已经自带这三样**——发布前替换 `icon.svg` 与中英文文案，别让新插件又回到「显示包名 + 英文长描述 + 通用图标」（U1-01/U1-19）。
+
 `pnpm check` 会检查下面这些规则，CI 也会跑。
 
 ### package.json 关键字段
 
-| 字段                   | 要求                                   | 原因                                                                    |
-| ---------------------- | -------------------------------------- | ----------------------------------------------------------------------- |
-| `name`                 | `@kangyishuai/dsh-<目录名>`            | 裸名已被社区大量占用                                                    |
-| `type`                 | `"module"`                             |                                                                         |
-| `files`                | 白名单，列出的文件必须存在             | 控制发布内容                                                            |
-| `publishConfig.access` | `"public"`                             | scoped 包默认按私有发布，会失败                                         |
-| `repository`           | `url` + `directory: "packages/<name>"` | npm provenance 需要和仓库对应                                           |
-| `dsh.bundle.patch`     | 指向 `./cordis.patch.yml`              | `dsh plugin add` 据此自动接线，**不要手改 profile 的 cordis.patch.yml** |
-| `dsh.client.platform`  | `"web"`                                | 桌面版和 Web 都是 web client                                            |
-| `dsh.client.inject`    | 依赖的宿主 client 包                   | 决定加载顺序                                                            |
-| 依赖                   | **不能**出现 `@deepseek-ai/*`          | 运行时由宿主提供                                                        |
-| `engines.dsh`          | 先不写                                 | 见第 4 节                                                               |
+| 字段                   | 要求                                          | 原因                                                                                             |
+| ---------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `name`                 | `@kangyishuai/dsh-<目录名>`                   | 裸名已被社区大量占用                                                                             |
+| `type`                 | `"module"`                                    |                                                                                                  |
+| `files`                | 白名单，列出的文件必须存在                    | 控制发布内容                                                                                     |
+| `icon`                 | 顶层 `"icon": "icon.svg"`，且必须进 `files`   | 「插件 → 已安装」的图标来源；宿主读顶层字段、不走 `exports`，没它就用通用图标                    |
+| `exports`              | 必须含 `"./locale/*.json": "./locale/*.json"` | 宿主用 Node 解析器读 locale；漏了会静默回退成包名 + 英文长描述，漏一个语言文件会丢整套 meta/icon |
+| `publishConfig.access` | `"public"`                                    | scoped 包默认按私有发布，会失败                                                                  |
+| `repository`           | `url` + `directory: "packages/<name>"`        | npm provenance 需要和仓库对应                                                                    |
+| `dsh.bundle.patch`     | 指向 `./cordis.patch.yml`                     | `dsh plugin add` 据此自动接线，**不要手改 profile 的 cordis.patch.yml**                          |
+| `dsh.client.platform`  | `"web"`                                       | 桌面版和 Web 都是 web client                                                                     |
+| `dsh.client.inject`    | 依赖的宿主 client 包                          | 决定加载顺序                                                                                     |
+| 依赖                   | **不能**出现 `@deepseek-ai/*`                 | 运行时由宿主提供                                                                                 |
+| `engines.dsh`          | 先不写                                        | 见第 4 节                                                                                        |
 
 ### cordis.patch.yml
 
