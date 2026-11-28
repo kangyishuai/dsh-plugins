@@ -9,6 +9,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
+import { remoteFailureOf } from "../lib/operations.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const clientPath = path.join(here, "..", "lib", "client.js");
@@ -1110,13 +1111,15 @@ function applyHarness(fixtures, options = {}) {
             };
           }
           if (value && typeof value === "object" && typeof value.__fail === "string") {
+            // 与生产 service.js 用同一条映射：remoteFailureOf 的 {code,message,details}
+            // 就是 gateway 透传后的线缆形状（复审 B1：不再手写「已拆包」的 details）。
             return {
               ok: false,
-              error: {
+              error: remoteFailureOf({
                 code: value.__fail,
                 message: String(value.__message ?? "failed"),
                 details: value.__details,
-              },
+              }),
             };
           }
           return { ok: true, value };
@@ -2475,6 +2478,87 @@ describe("recovery points / trash tab (AUD-REW-08)", () => {
       bytes: 2,
       paths: [],
     });
+  });
+});
+
+describe("B1 契约：service → gateway → client 的 details 形状", () => {
+  /** 宿主 0.2.2-rc.5 `dsh-typert-protocol` 的 RemoteError 构造签名：(code, message, details, options)。 */
+  class HostRemoteError extends Error {
+    /**
+     * @param {string} code @param {string} message @param {any} details
+     */
+    constructor(code, message, details) {
+      super(message);
+      this.code = code;
+      this.details = details;
+      this.isDSHRemoteError = true;
+    }
+  }
+
+  /** 宿主 gateway `rpcFailure()` 的原文形状：details 原样透传。 @param {any} remote */
+  function gatewayRpcFailure(remote) {
+    return {
+      ok: false,
+      error: { code: remote.code, message: remote.message, details: remote.details },
+    };
+  }
+
+  /** 客户端 `call()` 把 error 分支抄成 Error（client.js 的 call 映射）。 @param {any} wire */
+  function clientErrorOf(wire) {
+    const error = /** @type {any} */ (new Error(wire.error.message));
+    error.code = wire.error.code;
+    error.details = wire.error.details;
+    return error;
+  }
+
+  /** 模拟 service：内部错误 → remoteFailureOf → 宿主 RemoteError → gateway。 @param {any} internal */
+  function wireOf(internal) {
+    const failure = remoteFailureOf(internal);
+    return gatewayRpcFailure(new HostRemoteError(failure.code, failure.message, failure.details));
+  }
+
+  it("部分恢复失败（restoreTrash）：客户端 trashPartialOf 拿到 restored/failed 数量", () => {
+    const files = {
+      restored: ["n.txt"],
+      failed: [{ path: "m.txt", reason: "destination already exists" }],
+      safetyRescueId: "res-2",
+    };
+    const internal = /** @type {any} */ (
+      new Error("some files could not be restored from the trash")
+    );
+    internal.code = "session-rewind/files-failed";
+    internal.details = { files };
+    const wire = wireOf(internal);
+    assert.deepEqual(wire.error, {
+      code: "session-rewind/files-failed",
+      message: "some files could not be restored from the trash",
+      details: { files },
+    });
+    const clientError = clientErrorOf(wire);
+    assert.deepEqual(testApi.trashPartialOf(clientError), { restored: 1, failed: 1 });
+    // 同源收益：失败路径列表也能读到（此前同样被 {details} 包死）。
+    assert.deepEqual(testApi.failedPathsOf(clientError.details), ["m.txt"]);
+    // 反例：若 service 又包一层 {details}，客户端必须读不到（防止回归）。
+    assert.equal(testApi.trashPartialOf({ details: { details: { files } } }), null);
+  });
+
+  it("文件冲突（rewind both）：客户端 conflictPathsOf 拿到冲突路径", () => {
+    const conflicts = [{ path: "a.ts" }, { path: "b.ts" }];
+    const internal = /** @type {any} */ (new Error("files differ from the expected state"));
+    internal.code = "session-rewind/files-conflict";
+    internal.details = { conflicts };
+    const wire = wireOf(internal);
+    const clientError = clientErrorOf(wire);
+    assert.deepEqual(testApi.conflictPathsOf(clientError.details), ["a.ts", "b.ts"]);
+    assert.deepEqual(testApi.conflictPathsOf({ details: { conflicts } }), []);
+  });
+
+  it("无 details 的 files-failed 仍走通用错误（不伪造部分结果）", () => {
+    const internal = /** @type {any} */ (new Error("partial failure without payload"));
+    internal.code = "session-rewind/files-failed";
+    const wire = wireOf(internal);
+    assert.equal(wire.error.details, null);
+    assert.equal(testApi.trashPartialOf(clientErrorOf(wire)), null);
   });
 });
 

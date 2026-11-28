@@ -6333,6 +6333,7 @@ window.__ModuleLoader__.load({
         healthCheckLabel: healthCheckLabel,
         healthCheckDetail: healthCheckDetail,
         // 组件出口（仅测试用：vm 里用假 React 渲染断言，宿主运行时不需要）
+        RewindOverlay: RewindOverlay,
         ConfirmBody: ConfirmBody,
         RewindDialog: RewindDialog,
         AuditTab: AuditTab,

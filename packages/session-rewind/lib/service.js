@@ -31,6 +31,7 @@ import {
   createMarkerMessageInput,
   ERROR_CODES,
   RewindRequestError,
+  remoteFailureOf,
   resolveRewindTarget,
   sessionEvents,
 } from "./operations.js";
@@ -109,19 +110,10 @@ function serviceOf(ctx, name) {
  */
 function rethrowRemote(error) {
   if (error instanceof RemoteError) throw error;
-  const code = /** @type {any} */ (error)?.code;
-  if (typeof code === "string" && code.startsWith("session-rewind/")) {
-    throw new RemoteError(code, error instanceof Error ? error.message : String(error), {
-      details: /** @type {any} */ (error).details ?? null,
-    });
-  }
-  if (error instanceof RewindRequestError) {
-    throw new RemoteError(/** @type {any} */ (error).code, error.message, {
-      details: /** @type {any} */ (error).details ?? null,
-    });
-  }
-  const message = error instanceof Error ? error.message : String(error);
-  throw new RemoteError(ERROR_CODES.failed, message);
+  // 宿主 RemoteError 的第三参就是 details（gateway 原样透传）。`remoteFailureOf` 把它平铺，
+  // 不再包 `{details: …}` —— 否则客户端的 `error.details.files` 永远读不到（复审 B1）。
+  const failure = remoteFailureOf(error);
+  throw new RemoteError(failure.code, failure.message, failure.details);
 }
 
 /**
