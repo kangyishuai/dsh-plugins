@@ -13977,6 +13977,7 @@ window.__ModuleLoader__.load({
       );
     }
 
+    /** @param {any} props */
     function RoutinesView(props) {
       const api = props.api;
       const t = props.t;

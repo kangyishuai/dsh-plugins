@@ -96,6 +96,7 @@ function createHooks() {
       const fiber = current;
       const slot = index++;
       if (!(slot in fiber.hooks)) {
+        /** @type {any} */
         const hook = {
           kind: "state",
           value: typeof initial === "function" ? initial() : initial,
@@ -156,7 +157,8 @@ function createHooks() {
       flush();
       return fiber;
     },
-    /** 外部换 props 并同步渲染一次（模拟父组件重渲染）。 */
+    /** 外部换 props 并同步渲染一次（模拟父组件重渲染）。
+     * @param {any} fiber @param {any} props */
     update(fiber, props) {
       fiber.props = props;
       dirty.add(fiber);
@@ -217,7 +219,8 @@ function installGlobals() {
   };
 }
 
-/** 载入真实 client 源码，拿到 exports.__test。 */
+/** 载入真实 client 源码，拿到 exports.__test。
+ * @param {any} hooks */
 function loadClient(hooks) {
   const browser = installGlobals();
   try {
