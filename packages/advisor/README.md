@@ -68,7 +68,7 @@ Settings live in one JSON file, `<DSH_HOME>/advisor.settings.json` (`DSH_HOME` d
 - **Advanced** (folded by default): call limits, workspace limits, CNY-per-USD rate, prices (including cache read/write), output/input caps, advice-item cap, allowlist, auto-review, file reading, shadow dedupe, sent-content recording. The heading shows “Defaults” or “N changed”.
 - **Status & diagnostics** (folded by default): calls/tokens/cost, last result/skip reason, send preview, diagnostics, settings and ledger paths.
 
-The “?” next to an advanced field expands an inline help block (click or activate with the keyboard) with the description, default/range and technical key; hover is only a supplement. Click **Save** to apply changes to the next consultation.
+The “?” next to an advanced field expands an inline help block (click or activate with the keyboard) with the description, default/range and technical key; hover is only a supplement. Click **Save** to apply changes to the next consultation (the button is disabled with no pending edits; the status line at the bottom of the section says **Saved** / **Unsaved changes**, and on failure it shows the reason with a retry).
 
 Money fields accept decimals: budgets up to 2, unit prices up to 4.
 
