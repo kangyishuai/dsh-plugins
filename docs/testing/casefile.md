@@ -280,3 +280,8 @@ cordis.patch.yml` 末尾加 `- id: locale / name: "@deepseek-ai/dsh-client-local
   total>0 时保持原文案。中英两套渲染断言都在 `test/client-ux.test.js`。
 - 上一节「真机记录」里截图是修复前（`obligations 0/0 closed` 旧形态）的历史记录；本轮改动由 vm 渲染单测锁定，
   未重拍真机截图（隔离实例里的真实数据仍可复用同一套断言路径）。
+
+### 2026-11-28 发布后复测（0.9.2）
+
+- 隔离实例（CDP 9419，有项目数据）：`node scripts/smoke-casefile-desktop.mjs --port 9419 --require` → **31 PASS / 1 SKIP / 0 FAIL**（SKIP=「有项目时空态引导不可见」的数据分支）。
+- 脚本修复：`clickTextScoped` 只点可点击元素（危险区父级 `div` 的 textContent 与按钮相同，按文档序会先命中不可点的父级）；危险操作前先展开 `<details>`；账号菜单改为等待 `[role="menu"]` + 重试（Radix 菜单要求窗口在前台，连续冒烟时会偶发不展开）。

@@ -710,3 +710,8 @@ cd packages/advisor && node --test
 
 > 该实例用 worktree 构建覆盖 profile 里的发布版后再启动；属于「本批代码」的真机几何，不是上一节 `gap=12`
 > 的历史记录。上一节两张 `bottom=688 / 间距 12` 的表保留作历史对照。
+
+### 2026-11-28 发布后复测（0.6.5）
+
+- 在「项目」面板直接起跑（composer 不存在）时，脚本会先尝试切回聊天会话并在日志打印诊断：`node scripts/smoke-advisor-desktop.mjs --port 9419 --require` → **25 PASS / 2 SKIP / 0 FAIL**（SKIP=未选 provider、无顾问记录）。
+- 修复点：视角自愈（点击侧栏会话行/新建会话并等 composer），避免紧随其它 GUI 冒烟时把「无 composer」误判成产品故障。
