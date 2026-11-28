@@ -1312,3 +1312,7 @@ projectId 丢弃，不会污染状态行或写错项目。
 
 同批复审提到的状态行注释已过期：Debug 分区底部状态行的注释只写「预算（显式保存）与策略（自动保存）」，
 而通知开关（N1 修复后）也走同一行；注释已补成「预算 / 策略开关 / 通知开关」。纯注释，无行为变化。
+
+### 2026-11-28 gate 复跑：Routine 删除确认
+
+- O3 起删除改为两步（确认框 → 真正删除），web 冒烟同步：点 `[data-projects-routine-delete]` 后等 `[data-projects-routine-delete-dialog]` 出现、点 `[data-projects-routine-delete-confirm]`，再断言行消失（`pnpm smoke:projects` 271 PASS / 1 SKIP / 0 FAIL）。
