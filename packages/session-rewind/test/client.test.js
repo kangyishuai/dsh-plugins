@@ -1495,6 +1495,62 @@ describe("apply() runtime wiring", () => {
     assert.equal(state.toast.key, "error.storageUnavailable");
   });
 
+  // 复审 N3：`restoreRescue` 的服务端部分失败同样是「抛错 + details.files」，和
+  // `restoreTrash` 一样要报「已恢复 N / M 失败」并刷新列表，别用通用错误盖掉已恢复数量。
+  it("restoreRescue 部分失败：报「已恢复/失败」数量并刷新列表（复审 N3）", async () => {
+    const data = fixtures();
+    data.restoreRescue = {
+      __fail: "session-rewind/files-failed",
+      __message: "some files could not be restored from the rescue point",
+      __details: {
+        files: {
+          restored: ["a.ts"],
+          failed: [{ path: "b.ts", reason: "destination already exists" }],
+        },
+      },
+    };
+    const harness = applyHarness(data);
+    harness.api.openDrawer("s1", "rescues");
+    await flush();
+    /** @param {string} name @returns {number} */
+    const countCalls = (name) =>
+      harness.calls.filter((/** @type {any} */ call) => call.name === name).length;
+    const rescuesBefore = countCalls("rescues");
+    const auditBefore = countCalls("audit");
+
+    harness.api.setPendingRescue("res-1");
+    harness.api.confirmRescue();
+    await flush();
+
+    const state = harness.store.getSnapshot();
+    assert.equal(state.drawer.rescues.pendingId, null, "部分失败后确认行要收起");
+    assert.equal(state.drawer.rescues.executingId, null);
+    assert.ok(state.toast, "必须有 toast");
+    assert.equal(
+      state.toast.key,
+      "toast.rescuePartial",
+      `应报部分成功而不是通用错误：${JSON.stringify(state.toast)}`,
+    );
+    assert.deepEqual(state.toast.params, { restored: 1, failed: 1 });
+    assert.equal(countCalls("rescues"), rescuesBefore + 1, "部分失败后要刷新救援点列表");
+    assert.equal(countCalls("audit"), auditBefore + 1, "部分失败后要刷新审计列表");
+  });
+
+  it("restoreRescue 通用失败（无 details）仍报错误码", async () => {
+    const data = fixtures();
+    data.restoreRescue = { __fail: "session-rewind/rescue-not-found" };
+    const harness = applyHarness(data);
+    harness.api.openDrawer("s1", "rescues");
+    await flush();
+    harness.api.setPendingRescue("res-1");
+    harness.api.confirmRescue();
+    await flush();
+    const state = harness.store.getSnapshot();
+    assert.equal(state.toast.key, "error.rescueNotFound");
+    assert.equal(state.drawer.rescues.executingId, null);
+    assert.equal(state.drawer.rescues.pendingId, "res-1", "通用失败保留确认行，等用户重试或取消");
+  });
+
   it("bare /rewind 打开插件自己的候选对话框（USIM-U2-26：不再用宿主 popupSelect）", async () => {
     const harness = applyHarness(fixtures());
     assert.equal(harness.decorated.ui.kind, "action");
@@ -2596,6 +2652,133 @@ describe("回溯记录 tab：新旧审计行口径（N11）", () => {
     assert.ok(text.includes("audit.meta|"), `新行仍用 audit.meta：${text}`);
     assert.ok(text.includes('"n":4'), `新行应显示用户/助手消息数 4：${text}`);
     assert.doesNotMatch(text, /audit\.metaLegacy/u, text);
+  });
+});
+
+// 复审 N1（file-mode 审计行，pre-existing）：回收站/救援点的文件动作行没有
+// `removedMessageCount`，但动作是 `trash-restore` / `trash-clear`，不能按「对话」口径渲染成
+// 「对话 · 撤回 0 条上下文记录 · 约 0 token」。这几条断言锁住「按动作类型显示」的口径。
+describe("回溯记录 tab：文件动作审计行口径（N1）", () => {
+  /** @param {any[]} entries */
+  const auditData = (entries) => ({
+    loading: false,
+    errorKey: null,
+    errorParams: null,
+    entries,
+    expanded: {},
+  });
+
+  /** 按 `data-kind` 找时间线节点的渲染树。 @param {any} tree @param {string} kind */
+  const nodeOf = (tree, kind) =>
+    elementsOf(tree).find(
+      (element) =>
+        String(element.props.className || "").includes("dsh-srw-tl-node") &&
+        element.props["data-kind"] === kind,
+    );
+
+  it("trash-restore / trash-clear 行按动作显示徽章与文件口径，不再标成「对话」", () => {
+    const entries = testApi.normalizeAuditEntries({
+      entries: [
+        {
+          id: "restore",
+          time: 300,
+          action: "trash-restore",
+          mode: "files",
+          trashId: "tc-1",
+          removedCount: null,
+          files: {
+            restored: ["a.txt"],
+            trashed: [],
+            skipped: [],
+            failed: [{ path: "b.txt", reason: "destination already exists" }],
+            rescueId: "res-2",
+          },
+        },
+        {
+          id: "clear",
+          time: 200,
+          action: "trash-clear",
+          mode: "files",
+          trashId: "tc-2",
+          removedCount: null,
+          files: { restored: [], trashed: [], skipped: [], failed: [], cleared: 2 },
+          bytes: 2048,
+          paths: ["m.txt", "n.txt"],
+        },
+        { id: "chat", time: 100, mode: "chat", removedCount: 9, tokens: 12 },
+      ],
+    });
+    assert.deepEqual(
+      entries.map((/** @type {any} */ entry) => [entry.id, entry.kind]),
+      [
+        ["restore", "trash-restore"],
+        ["clear", "trash-clear"],
+        ["chat", "chat"],
+      ],
+      "文件动作不能被归一化成 chat",
+    );
+    const clear = entries.find((/** @type {any} */ entry) => entry.id === "clear");
+    assert.equal(clear.files.cleared, 2, "清空行的文件回执要保留 cleared 数");
+    assert.equal(clear.bytes, 2048);
+    assert.deepEqual(clear.paths, ["m.txt", "n.txt"]);
+
+    const tree = testApi.AuditTab({ data: auditData(entries), api: noopApi(), t: tr });
+    const restoreText = elementText(nodeOf(tree, "trash-restore"));
+    assert.ok(
+      restoreText.includes("timeline.kindTrashRestore"),
+      `恢复行徽章要用「回收站恢复」：${restoreText}`,
+    );
+    assert.ok(
+      restoreText.includes("timeline.trashRestoreMeta"),
+      `恢复行要用文件动作口径：${restoreText}`,
+    );
+    assert.ok(restoreText.includes('"restored":1'), `恢复行应显示真实恢复数：${restoreText}`);
+    assert.doesNotMatch(
+      restoreText,
+      /ghost\.mode\.chat/u,
+      `恢复行不能标成「对话」：${restoreText}`,
+    );
+    assert.doesNotMatch(
+      restoreText,
+      /audit\.meta/u,
+      `恢复行不能显示对话的撤回条数：${restoreText}`,
+    );
+
+    const clearText = elementText(nodeOf(tree, "trash-clear"));
+    assert.ok(
+      clearText.includes("timeline.kindTrashClear"),
+      `清空行徽章要用「清空回收站」：${clearText}`,
+    );
+    assert.ok(
+      clearText.includes("timeline.trashClearMeta"),
+      `清空行要用「永久删除 N 个文件 · 字节」口径：${clearText}`,
+    );
+    assert.ok(clearText.includes('"cleared":2'), clearText);
+    assert.ok(clearText.includes('"bytes":"2 KB"'), clearText);
+    // 清空行的 restored/trashed 恒为 0，渲染「文件：还原 0、回收站 0…」只会误导；用 meta 表达。
+    assert.doesNotMatch(clearText, /audit\.files/u, `清空行不渲染文件四态零值：${clearText}`);
+    // 清空行可展开看被永久删除的路径（新行已有顶层 paths）。
+    assert.ok(clearText.includes("audit.paths"), `清空行应能展开路径：${clearText}`);
+
+    // 回归：普通对话行仍然是「对话」+ 中性节点口径。
+    const chatText = elementText(nodeOf(tree, "chat"));
+    assert.ok(chatText.includes("ghost.mode.chat"), chatText);
+    assert.ok(chatText.includes("audit.metaLegacy"), chatText);
+  });
+
+  it("缺文件回执的旧文件动作行仍按动作显示徽章，不炸也不回落对话口径", () => {
+    const entry = testApi.normalizeAuditEntries({
+      entries: [{ id: "legacy-clear", time: 100, action: "trash-clear", mode: "files" }],
+    })[0];
+    assert.equal(entry.kind, "trash-clear");
+    assert.equal(entry.files, null, "没有文件回执时保持 null（渲染层要能兜住）");
+    const tree = testApi.AuditTab({ data: auditData([entry]), api: noopApi(), t: tr });
+    const text = elementText(nodeOf(tree, "trash-clear"));
+    assert.ok(text.includes("timeline.kindTrashClear"), text);
+    assert.ok(text.includes("timeline.trashClearMeta"), text);
+    assert.ok(text.includes('"cleared":0'), text);
+    assert.doesNotMatch(text, /ghost\.mode\.chat/u, text);
+    assert.doesNotMatch(text, /audit\.meta/u, text);
   });
 });
 

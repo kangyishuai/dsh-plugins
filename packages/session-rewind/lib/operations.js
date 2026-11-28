@@ -56,6 +56,27 @@ export function remoteFailureOf(error) {
 }
 
 /**
+ * `collectGarbage()` 的 fail-closed 结果 → 一条带会话 id 的 warn 文本（复审 N2）。
+ *
+ * N10 让「任一会话 entries 读不出来」时本次 GC 一个 blob 都不删，但 service 原来只报数量：
+ * 运维看到 warn 也不知道该修哪个会话。`unreadableSessions` 里本来就有 `sessionId`，这里把
+ * 它们拼进日志（没有 id 的异常条目只计入数量，不拼空串）。
+ * @param {any} result collectGarbage 的返回值
+ * @returns {string}
+ */
+export function gcSkippedWarning(result) {
+  const sessions = Array.isArray(result?.unreadableSessions) ? result.unreadableSessions : [];
+  /** @type {string[]} */
+  const ids = [];
+  for (const item of sessions) {
+    const sessionId = item?.sessionId;
+    if (typeof sessionId === "string" && sessionId !== "") ids.push(sessionId);
+  }
+  const suffix = ids.length > 0 ? `: ${ids.join(", ")}` : "";
+  return `session-rewind: skipped blob GC because file entries are unreadable for ${sessions.length} session(s)${suffix}`;
+}
+
+/**
  * 一次请求失败：`code` 已经是线上的完整 code（`session-rewind/...`）。
  * service.js 会把它原样转成 `RemoteError`。
  */
