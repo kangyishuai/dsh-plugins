@@ -1201,3 +1201,19 @@ document body because the docked composer contains them**"，而浮层原本就�
 | 无改动                   | `data-state=clean`、「· 已保存」，保存按钮 disabled | `/tmp/dsh-sim-rel/shots/settings-btw-clean.png` |
 | 改「主对话显示完整答案」 | `data-state=dirty`、「有未保存更改」                | `/tmp/dsh-sim-rel/shots/settings-btw-dirty.png` |
 | 点保存后                 | `data-state=saved`、「已保存」                      | `/tmp/dsh-sim-rel/shots/settings-btw-saved.png` |
+
+### B7 toast 键盘不可达（2026-11-28）
+
+缺陷：`/btw` 执行回执是 `div + onClick`，键盘无法聚焦/触发。修法：`role="button"` + `tabIndex=0` +
+Enter/Space 触发（`preventDefault`），并加 `:focus-visible` 聚焦环；点击开面板的既有行为与容器样式不变。
+
+断言分两层：`test/client.test.js` 的 vm 用例锁 **role/tabIndex/键处理（Enter/Space 触发、Tab 不触发）**、
+「触发后 toast 收起且面板打开」以及 CSS 里存在 `:focus-visible` 规则串；**「聚焦后 computed outline=2px」
+与「真实键盘 Enter」是下面真机 CDP 证据，不是 vm 单测**（vm 渲染没有真实样式与键盘事件）。
+
+**真机记录（隔离实例 CDP 9410，`CDP Input.dispatchKeyEvent`）**：
+
+| 场景                            | 结果                                                                        | 截图                                                 |
+| ------------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `/btw` 进行中（toast 常驻）     | `.dsh-btw-toast` role=button、tabIndex=0；聚焦后 computed outline 2px solid | `/tmp/dsh-sim-rel/shots/nits-btw-toast.png`          |
+| 聚焦后真实 Enter（非 el.click） | toast 消失、右侧旁问面板打开（`[data-btw-panel]` 出现，含进行中的线程）     | `/tmp/dsh-sim-rel/shots/nits-btw-toast-keyboard.png` |

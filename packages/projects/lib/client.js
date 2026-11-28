@@ -547,6 +547,14 @@ window.__ModuleLoader__.load({
       "routines.disable": "停用",
       "routines.switch": "切换",
       "routines.delete": "删除",
+      "routines.freqUnknown": "频率未知",
+      "routines.deleteNoSchedule": "手动档（无宿主定时任务）",
+      "routines.deleteSchedule": "宿主任务 {scheduleId}",
+      "routines.deleteDelivering": "正在自动投递",
+      "routines.deleteNotDelivering": "不会自动投递",
+      "routines.deleteRecovery": "删除后不可恢复（宿主任务与历史一起移除，审计保留）",
+      "routines.deleteRecoveryManual": "删除后不可恢复（本地记录与历史一起移除，审计保留）",
+      "routines.deleteConfirmTitle": "删除这条定时任务？",
       "routines.save": "保存",
       "routines.update": "更新",
       "detail.cancel": "取消",
@@ -1293,6 +1301,16 @@ window.__ModuleLoader__.load({
       "routines.disable": "Disable",
       "routines.switch": "Switch",
       "routines.delete": "Delete",
+      "routines.freqUnknown": "unknown frequency",
+      "routines.deleteNoSchedule": "manual (no host schedule)",
+      "routines.deleteSchedule": "host schedule {scheduleId}",
+      "routines.deleteDelivering": "auto-delivering",
+      "routines.deleteNotDelivering": "not auto-delivering",
+      "routines.deleteRecovery":
+        "not recoverable (host schedule and history are removed; the audit log stays)",
+      "routines.deleteRecoveryManual":
+        "not recoverable (local record and history are removed; the audit log stays)",
+      "routines.deleteConfirmTitle": "Delete this routine?",
       "routines.save": "Save",
       "routines.update": "Update",
       "detail.cancel": "Cancel",
@@ -4212,6 +4230,13 @@ window.__ModuleLoader__.load({
         );
       }, [api, setFirstRun]);
 
+      // O1（发版后真机）：列表页删除项目后，回收站区块还显示「空的」，整页刷新才对。
+      // PanelTrash 自己持有 entries；这里加一个 epoch，删除成功后让回收站重新走自己的
+      // load 路径，而不是重置整个面板。
+      var trashEpochState = useState(0);
+      var trashEpoch = trashEpochState[0];
+      var setTrashEpoch = trashEpochState[1];
+
       var refresh = useCallback(() => {
         setView((/** @type {any} */ prev) => ({
           loading: true,
@@ -4343,6 +4368,8 @@ window.__ModuleLoader__.load({
           () => {
             setRowDelete({ project: null, impact: null, busy: false, error: "" });
             pushToast(text(t, "panel.toastDeleted", { name: project.name }));
+            // 删除成功 → 项目进了回收站：回收站区块立即重载（O1）。
+            setTrashEpoch((/** @type {any} */ prev) => prev + 1);
             void refresh();
           },
           (error) =>
@@ -4352,7 +4379,7 @@ window.__ModuleLoader__.load({
               error: String(error?.message ?? error),
             })),
         );
-      }, [api, pushToast, refresh, rowDelete, setRowDelete, t]);
+      }, [api, pushToast, refresh, rowDelete, setRowDelete, setTrashEpoch, t]);
 
       var submitCreate = useCallback(() => {
         var value = String(createForm.name ?? "").trim();
@@ -4919,7 +4946,15 @@ window.__ModuleLoader__.load({
                   )
                 : h("div", { style: styles.list, "data-projects-list": "" }, visible.map(row)),
           // 一个项目都没有时，详情页进不去——回收站必须在面板这层有出口，否则恢复入口自锁
-          selectedProject ? null : h(PanelTrash, { api: api, t: t, onChanged: refresh }),
+          selectedProject
+            ? null
+            : h(PanelTrash, {
+                api: api,
+                t: t,
+                onChanged: refresh,
+                // O1：删除项目后回收站立即重载（0 是初始值，变化即重新 load）。
+                reloadToken: trashEpoch,
+              }),
         ),
         selectedProject
           ? h(ProjectDetailSafe, {
@@ -5204,9 +5239,12 @@ window.__ModuleLoader__.load({
             })),
         );
       }, [api, setState]);
+      // O1：挂载时加载一次；父级删除项目后通过 reloadToken 通知回收站重载，
+      // 复用同一个 load 路径，不重置整个面板。
+      const reloadToken = props.reloadToken;
       useEffect(() => {
-        if (!state.loaded) load();
-      }, [load, state.loaded]);
+        load();
+      }, [load, reloadToken]);
       const restore = useCallback(
         (/** @type {any} */ entry) => {
           call(api.ctx, "restoreTrash", { entryId: entry.entryId }).then(
@@ -13797,19 +13835,175 @@ window.__ModuleLoader__.load({
     // 数据全部来自 host `routinesView`（宿主 schedule 的状态 + 本地记录），
     // 面板不自己算 cron、也不自己记「上次跑没跑」。
     /** @param {any} props */
-    function RoutinesView(props) {
-      const api = props.api;
-      const t = props.t;
-      const project = props.project;
-      const [view, setView] = useState(null);
-      const [draft, setDraft] = useState({
+    /**
+     * Routine 新建表单的默认值。O4：成功创建后回到这里；失败保持用户输入。
+     * @returns {{ name: string, instructions: string, frequency: string, time: string, weekday: number, dayOfMonth: number }}
+     */
+    function defaultRoutineDraft() {
+      return {
         name: "",
         instructions: "",
         frequency: "daily",
         time: "09:00",
         weekday: 1,
         dayOfMonth: 1,
-      });
+      };
+    }
+
+    /**
+     * 创建 routine 的结果 → 下一次表单草稿。
+     * 只有「确定成功」才清空（O4：成功后表单还留着，用户很容易再点一次建出重复任务）；
+     * 失败 / 无结果保留输入，不让人白填一遍。
+     * @param {any} draft @param {any} result
+     * @returns {any}
+     */
+    function routineDraftAfterCreate(draft, result) {
+      if (result && result.ok === false) return draft;
+      return defaultRoutineDraft();
+    }
+
+    /**
+     * O3 删除确认框的一行影响面：名字 / 频率 / 宿主任务 / 是否在自动投递 / 可恢复性。
+     * 由纯函数拼装，单测直接锁住这几项事实，不在渲染里临时拼字符串。
+     * @param {any} routine @param {any} t
+     * @returns {string}
+     */
+    function routineDeleteImpact(routine, t) {
+      const item = routine && typeof routine === "object" ? routine : {};
+      const parts = [];
+      const name = String(item.name || item.id || "");
+      if (name !== "") parts.push(name);
+      const frequency = String(item.frequency || "");
+      parts.push(
+        frequency === "" ? text(t, "routines.freqUnknown") : text(t, `routines.freq.${frequency}`),
+      );
+      const scheduleId = String(item.scheduleId || "");
+      parts.push(
+        scheduleId === ""
+          ? text(t, "routines.deleteNoSchedule")
+          : text(t, "routines.deleteSchedule", { scheduleId: scheduleId }),
+      );
+      const status = String(item.status?.status || item.hostStatus || "");
+      parts.push(
+        status === "active"
+          ? text(t, "routines.deleteDelivering")
+          : text(t, "routines.deleteNotDelivering"),
+      );
+      // 手动档没有宿主定时任务：措辞不能再写「宿主任务与历史一起移除」。
+      parts.push(
+        scheduleId === ""
+          ? text(t, "routines.deleteRecoveryManual")
+          : text(t, "routines.deleteRecovery"),
+      );
+      return parts.join(" · ");
+    }
+
+    /**
+     * O3：确认框能否关闭。
+     * busy 时忽略 Esc（取消按钮也已 disabled）：避免「框关了但删除还在跑」的错觉。
+     * @param {{ busy?: boolean } | null} target
+     * @returns {boolean}
+     */
+    function routineDeleteCloseAllowed(target) {
+      return target === null || target === undefined || target.busy !== true;
+    }
+
+    /**
+     * O3：Routine 删除确认框（破坏性操作，ADR 0002）。
+     * 默认聚焦、Esc、Tab 环、焦点归还由调用方的 `useModalLayer` 统一接管；
+     * 这里只负责一行影响面 + 两个按钮。无 hooks，方便单测直接调用渲染。
+     * @param {{ t: any, routine: any, busy?: boolean, error?: string,
+     *   onCancel: () => void, onConfirm: () => void }} props
+     * @returns {any}
+     */
+    function RoutineDeleteDialog(props) {
+      const t = props.t;
+      const routine = props.routine || {};
+      return h(
+        "div",
+        { style: styles.backdrop, "data-projects-routine-delete-panel": String(routine.id ?? "") },
+        h(
+          "div",
+          {
+            role: "alertdialog",
+            "aria-modal": "true",
+            "aria-labelledby": "projects-routine-delete-title",
+            "aria-describedby": "projects-routine-delete-impact",
+            "data-projects-routine-delete-dialog": "",
+            style: { ...styles.dialog, maxWidth: "460px" },
+          },
+          h(
+            "div",
+            { style: styles.dialogHead },
+            h(
+              "span",
+              { id: "projects-routine-delete-title", style: styles.dialogTitle },
+              text(t, "routines.deleteConfirmTitle"),
+            ),
+          ),
+          h(
+            "span",
+            {
+              id: "projects-routine-delete-impact",
+              style: { fontSize: "13px", color: T.text, wordBreak: "break-word" },
+              "data-projects-routine-delete-impact": "",
+            },
+            routineDeleteImpact(routine, t),
+          ),
+          props.error
+            ? h(
+                "span",
+                {
+                  style: { ...styles.meta, color: T.danger, wordBreak: "break-word" },
+                  "data-projects-routine-delete-error": "",
+                },
+                String(props.error),
+              )
+            : null,
+          h(
+            "div",
+            {
+              style: { display: "flex", gap: "8px", justifyContent: "flex-end", marginTop: "10px" },
+            },
+            h(
+              "button",
+              {
+                type: "button",
+                style: styles.secondaryButton,
+                "data-projects-routine-delete-cancel": "",
+                disabled: props.busy === true,
+                onClick: () => props.onCancel(),
+              },
+              text(t, "detail.deleteCancel"),
+            ),
+            h(
+              "button",
+              {
+                type: "button",
+                style: { ...styles.secondaryButton, borderColor: T.danger, color: T.danger },
+                // 约定 §7.4.2：破坏性主按钮默认聚焦，回车即执行
+                "data-modal-autofocus": "",
+                "data-projects-danger": "",
+                "data-projects-routine-delete-confirm": "",
+                disabled: props.busy === true,
+                onClick: () => props.onConfirm(),
+              },
+              props.busy === true ? text(t, "detail.deleting") : text(t, "routines.delete"),
+            ),
+          ),
+        ),
+      );
+    }
+
+    /** @param {any} props */
+    function RoutinesView(props) {
+      const api = props.api;
+      const t = props.t;
+      const project = props.project;
+      const [view, setView] = useState(null);
+      const [draft, setDraft] = useState(defaultRoutineDraft());
+      // O3：删除 routine 会撤掉宿主定时任务并丢历史（不可恢复），先进确认框。
+      const [deleteTarget, setDeleteTarget] = useState(null);
       const [busy, setBusy] = useState("");
       const [message, setMessage] = useState({ text: "", ok: null });
       const [history, setHistory] = useState({ routineId: "", rows: [], retention: null });
@@ -13838,10 +14032,59 @@ window.__ModuleLoader__.load({
         }, 5000);
         return () => clearInterval(timer);
       }, [load]);
+      // O3：删除确认框的 Esc / 默认聚焦 / Tab 环 / 焦点归还（ADR 0002 §确认框）。
+      useModalLayer({
+        open: deleteTarget !== null,
+        selector: "[data-projects-routine-delete-dialog]",
+        // busy 时 Esc 不关框（与取消按钮一致），避免「框关了但删除继续」的错觉。
+        onClose: () => {
+          if (routineDeleteCloseAllowed(deleteTarget)) setDeleteTarget(null);
+        },
+      });
+      const confirmDeleteRoutine = () => {
+        const target = deleteTarget;
+        if (target === null || target.busy === true) return;
+        const routine = target.routine || {};
+        setDeleteTarget((/** @type {any} */ prev) => ({ ...prev, busy: true, error: "" }));
+        call(api.ctx, "deleteRoutine", { projectId: project.id, routineId: routine.id }).then(
+          (/** @type {any} */ result) => {
+            setDeleteTarget(null);
+            const failed = result && result.ok === false;
+            report(
+              failed
+                ? String(result.reason) ||
+                    text(t, "routines.actionFailed", { label: text(t, "routines.delete") })
+                : text(t, "routines.actionDone", { label: text(t, "routines.delete") }),
+              !failed,
+            );
+            load();
+          },
+          (/** @type {any} */ error) =>
+            setDeleteTarget((/** @type {any} */ prev) =>
+              prev === null
+                ? prev
+                : { ...prev, busy: false, error: String(error?.message ?? error).slice(0, 200) },
+            ),
+        );
+      };
       const report = (/** @type {any} */ textValue, /** @type {any} */ ok) =>
         setMessage({ text: textValue, ok });
-      const runAction = (/** @type {any} */ label, /** @type {any} */ promise) => {
-        setBusy(label);
+      /**
+       * 跑一条 routine 动作。
+       *
+       * B1（复审）：busy 状态与展示文案必须分离——busy 判等用稳定 key（如 `"create"`），
+       * 提示里用本地化 label。以前 busy 里塞本地化文本、按钮判等仍用 `"create"`，
+       * 导致「正在创建…」永远不显示。
+       * @param {any} label 成功/失败提示里的动作名（本地化文案）
+       * @param {any} promise
+       * @param {string} [busyKey] 稳定 busy key（默认用 label；需要判等时显式传）
+       */
+      const runAction = (
+        /** @type {any} */ label,
+        /** @type {any} */ promise,
+        /** @type {string} */ busyKey,
+      ) => {
+        setBusy(busyKey === undefined ? label : busyKey);
         report("", null);
         promise.then(
           (/** @type {any} */ result) => {
@@ -14030,7 +14273,7 @@ window.__ModuleLoader__.load({
                 "data-projects-routine-create": "",
                 onClick: () =>
                   runAction(
-                    "create",
+                    text(t, "routines.create"),
                     call(api.ctx, "createRoutine", {
                       projectId: project.id,
                       // 宿主网关按**参数名**包：方法与 `(projectId, input)` 对应，
@@ -14043,7 +14286,13 @@ window.__ModuleLoader__.load({
                         weekday: draft.weekday,
                         dayOfMonth: draft.dayOfMonth,
                       },
+                    }).then((/** @type {any} */ result) => {
+                      // O4：成功才清空（失败保留用户输入）。
+                      setDraft((/** @type {any} */ prev) => routineDraftAfterCreate(prev, result));
+                      return result;
                     }),
+                    // B1：busy 用稳定 key，按钮文案才能按 `busy === "create"` 显示「正在创建…」。
+                    "create",
                   ),
               },
               busy === "create" ? text(t, "routines.creating") : text(t, "routines.create"),
@@ -14390,14 +14639,8 @@ window.__ModuleLoader__.load({
                         style: { ...smallButton, color: T.danger },
                         disabled: busy !== "",
                         "data-projects-routine-delete": routine.id,
-                        onClick: () =>
-                          runAction(
-                            "delete",
-                            call(api.ctx, "deleteRoutine", {
-                              projectId: project.id,
-                              routineId: routine.id,
-                            }),
-                          ),
+                        // O3：不再直接删——先开确认框，确认后才调 RPC。
+                        onClick: () => setDeleteTarget({ routine, busy: false, error: "" }),
                       },
                       text(t, "routines.delete"),
                     ),
@@ -14445,6 +14688,20 @@ window.__ModuleLoader__.load({
               ),
             ),
         h(RemindersPanel, { api: api, t: props.t, project: project }),
+        deleteTarget === null
+          ? null
+          : h(
+              "div",
+              { key: "routine-delete-layer" },
+              h(RoutineDeleteDialog, {
+                t: t,
+                routine: deleteTarget.routine,
+                busy: deleteTarget.busy === true,
+                error: deleteTarget.error || "",
+                onCancel: () => setDeleteTarget(null),
+                onConfirm: confirmDeleteRoutine,
+              }),
+            ),
       );
     }
 
@@ -18537,6 +18794,18 @@ window.__ModuleLoader__.load({
       libraryFilesPartialNote,
       modalFocusables,
       parseArtifactBlocks,
+      // O3/O4：Routine 删除确认框与新建表单的纯逻辑
+      defaultRoutineDraft,
+      routineDraftAfterCreate,
+      routineDeleteImpact,
+      routineDeleteCloseAllowed,
+      RoutineDeleteDialog,
+      // B1 行为测试要驱动真实 RoutinesView（创建中按钮文案）
+      RoutinesView,
+      // O1：回收站重载路径（删除项目后即时刷新）
+      PanelTrash,
+      // 单测用真实中文文案（不复制一份字典，避免与线上漂移）
+      zh: ZH,
       tabListKeyDown,
       useModalLayer,
     };

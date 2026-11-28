@@ -315,6 +315,25 @@ async function pump(hooks, times = 3) {
   }
 }
 
+/**
+ * 轮询等待状态行变成某个 state。
+ * 并行跑全部包测试时事件循环会被抢，固定 sleep 的窗口会抖动；
+ * 这里改成「等到期望状态或超时」，再断言，避免随机红。
+ * @param {any} hooks @param {any} fiber @param {string} state @param {number} [timeoutMs]
+ */
+async function waitStatus(hooks, fiber, state, timeoutMs = 8000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    hooks.flush();
+    const status = statusOf(fiber);
+    if (status?.props?.["data-state"] === state) return status;
+    await sleep(50);
+  }
+  const status = statusOf(fiber);
+  assert.equal(status?.props?.["data-state"], state, `状态行没有在 ${timeoutMs}ms 内变成 ${state}`);
+  return status;
+}
+
 /** 假 api：settings 返回初始值；updateSettings 按用例替换。 */
 function fakeApi(options = {}) {
   /** @type {{ method: string, request: any }[]} */
@@ -378,7 +397,8 @@ test("btw 设置：改动后 dirty（未保存更改），保存按钮启用；�
   const { api, calls } = fakeApi();
   const booted = bootSettings(hooks, api);
   const previous = booted.__test.settingsSaveTiming.resetMs;
-  booted.__test.settingsSaveTiming.resetMs = 300;
+  // 保存后的「已保存」窗口要比并行测试的调度抖动更宽；回落用轮询等待。
+  booted.__test.settingsSaveTiming.resetMs = 4000;
   try {
     const fiber = hooks.mount(booted.Component, booted.props);
     await pump(hooks);
@@ -398,17 +418,15 @@ test("btw 设置：改动后 dirty（未保存更改），保存按钮启用；�
     // 保存成功 → saved
     saveButtonOf(fiber).props.onClick();
     await pump(hooks);
-    assert.equal(statusOf(fiber).props["data-state"], "saved");
-    assert.match(textOf(statusOf(fiber)), /settings\.saved/u);
+    const savedStatus = await waitStatus(hooks, fiber, "saved", 4000);
+    assert.match(textOf(savedStatus), /settings\.saved/u);
     assert.deepEqual(calls.filter((call) => call.method === "updateSettings").length, 1);
     const savedCall = calls.find((call) => call.method === "updateSettings");
     assert.ok(savedCall, "应当发出一次 updateSettings");
     assert.equal(savedCall.request.allowedTools, "read, grep");
 
     // 短暂态回落后仍是「· 已保存」，按钮重新禁用
-    await sleep(360);
-    hooks.flush();
-    assert.equal(statusOf(fiber).props["data-state"], "clean");
+    await waitStatus(hooks, fiber, "clean", 8000);
     assert.equal(saveButtonOf(fiber).props.disabled, true);
   } finally {
     booted.__test.settingsSaveTiming.resetMs = previous;
@@ -420,7 +438,7 @@ test("btw 设置：保存失败显示原因且可重试（按钮仍启用），�
   const { api, behavior } = fakeApi();
   const booted = bootSettings(hooks, api);
   const previous = booted.__test.settingsSaveTiming.resetMs;
-  booted.__test.settingsSaveTiming.resetMs = 300;
+  booted.__test.settingsSaveTiming.resetMs = 4000;
   try {
     const fiber = hooks.mount(booted.Component, booted.props);
     await pump(hooks);
@@ -450,7 +468,7 @@ test("btw 设置：保存失败显示原因且可重试（按钮仍启用），�
       });
     saveButtonOf(fiber).props.onClick();
     await pump(hooks);
-    assert.equal(statusOf(fiber).props["data-state"], "saved");
+    await waitStatus(hooks, fiber, "saved", 4000);
   } finally {
     booted.__test.settingsSaveTiming.resetMs = previous;
   }

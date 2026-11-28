@@ -322,10 +322,43 @@ const ADVISOR_CMD_SURFACE = `(() => {
     state: String(el.getAttribute('data-state') || ''),
     text: (el.textContent || '').trim().slice(0, 4000),
   };
+  // 几何探针（发版后真机 bug：回执固定在右下角，盖住 composer 与发送按钮）。
+  const rect = (el) => {
+    if (el === null) return null;
+    const r = el.getBoundingClientRect();
+    return {
+      x: Math.round(r.x), y: Math.round(r.y),
+      w: Math.round(r.width), h: Math.round(r.height),
+      right: Math.round(r.right), bottom: Math.round(r.bottom), top: Math.round(r.top),
+    };
+  };
+  const overlap = (a, b) => {
+    if (a === null || b === null) return null;
+    return {
+      x: Math.max(0, Math.min(a.right, b.right) - Math.max(a.x, b.x)),
+      y: Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.y, b.y)),
+    };
+  };
+  const receiptEl = document.querySelector('[data-advisor-receipt]');
+  const composerEl = document.querySelector(${JSON.stringify(COMPOSER)});
+  const sendEl = [...document.querySelectorAll('button')].find((button) => {
+    const label = String(button.getAttribute('aria-label') || '') + ' ' +
+      String(button.getAttribute('title') || '');
+    return /发送|send/i.test(label);
+  }) || null;
+  const receiptRect = rect(receiptEl);
   return {
     cards: cards.length,
     last: cards.length === 0 ? null : read(cards[cards.length - 1]),
-    receipt: read(document.querySelector('[data-advisor-receipt]')),
+    receipt: read(receiptEl),
+    geometry: receiptRect === null ? null : {
+      receipt: receiptRect,
+      composer: rect(composerEl),
+      send: rect(sendEl),
+      overlapComposer: overlap(receiptRect, rect(composerEl)),
+      overlapSend: overlap(receiptRect, rect(sendEl)),
+      viewport: { w: window.innerWidth, h: window.innerHeight },
+    },
   };
 })()`;
 
@@ -1523,6 +1556,26 @@ const main = async () => {
         statusReceipt.ok,
         JSON.stringify({ receipt: statusReceipt.value?.receipt ?? null }),
       );
+      // 真机 bug 回归：回执必须贴在 composer **上方**，不能盖住输入区和发送按钮。
+      {
+        const geometry = statusReceipt.value?.geometry ?? null;
+        const composer = geometry?.composer ?? null;
+        const overlapComposer = geometry?.overlapComposer ?? null;
+        const overlapSend = geometry?.overlapSend ?? null;
+        /** @param {any} value */
+        const noOverlap = (value) => value === null || value.x === 0 || value.y === 0;
+        check(
+          "/advisor status 回执不遮挡输入框/发送按钮（DOM 几何）",
+          statusReceipt.ok &&
+            geometry !== null &&
+            geometry.receipt.top >= 0 &&
+            composer !== null &&
+            noOverlap(overlapComposer) &&
+            noOverlap(overlapSend) &&
+            (composer === null || geometry.receipt.bottom <= composer.y + 1),
+          JSON.stringify({ geometry }),
+        );
+      }
       if (statusReceipt.ok) {
         console.log(
           `      receipt: ${String(statusReceipt.value?.receipt?.text ?? "")

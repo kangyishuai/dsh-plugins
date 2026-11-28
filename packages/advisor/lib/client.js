@@ -34,6 +34,29 @@ window.__ModuleLoader__.load({
     /** 轻量提示停留时间；到点后把自己清掉。 */
     let TOAST_MS = 4000;
     /**
+     * toast / 命令回执的定位常量（见 `toastBottomOffset`）。
+     *
+     * 真机 bug（发版后 1280×820）：toast 原来固定 `bottom:24px`，正好盖住 composer 的
+     * 输入区（y=700–736）和发送按钮（y=748–782），回执一出现就点不到发送。改成贴着
+     * composer 上沿摆放；窗口太矮时收缩回执，而不是整块顶出视口。
+     */
+    const TOAST_LAYOUT = {
+      /** 量不到 composer 时的回退底距（与 CSS 的 bottom:24px 一致）。 */
+      baseBottom: 24,
+      /** 回执底边与 composer 顶部的间距。 */
+      gap: 12,
+      /** 距视口上沿的最小留白。 */
+      edge: 8,
+      /** 窗口很矮时至少给回执留的可见高度（更矮就只能少遮一点算一点）。 */
+      minVisible: 120,
+      /** 回执头部 + 内边距预留（算正文可用高度用）。 */
+      headReserve: 48,
+      /** 正文高度下限，避免矮窗口里正文被压成一条线。 */
+      bodyFloor: 60,
+      /** 正文最大高度占视口的比例（与 CSS 的 42vh 一致）。 */
+      bodyViewportRatio: 0.42,
+    };
+    /**
      * 设置分节「已保存」短暂态保留时长（ms）。生产 2500；单测通过
      * `__test.settingsSaveTiming.resetMs` 改短（[plugin-conventions §7.2.6]）。
      */
@@ -388,6 +411,99 @@ window.__ModuleLoader__.load({
      */
     function asString(value) {
       return typeof value === "string" ? value : "";
+    }
+
+    /**
+     * @param {any} value
+     * @returns {number | null}
+     */
+    function finiteNumberOrNull(value) {
+      return typeof value === "number" && Number.isFinite(value) ? value : null;
+    }
+
+    /**
+     * toast / 命令回执的底部偏移（px，从视口底边算）。
+     *
+     * 目标是放在 composer **上方**：`bottom = viewportHeight - composerTop + gap`，
+     * 这样回执底边与输入框顶部隔开 gap，不再压住输入区和发送按钮。
+     * - 没有 composer（或量不到）→ 回退 `baseBottom`（24px，与 CSS 一致）。
+     * - 窗口很矮时右下界用 `minVisible` 兜住：宁可少量重叠，也不让整块回执顶出视口。
+     * @param {{ composerTop?: any, viewportHeight?: any }} [input]
+     * @returns {number}
+     */
+    function toastBottomOffset(input) {
+      let viewportHeight = finiteNumberOrNull(input?.viewportHeight);
+      let composerTop = finiteNumberOrNull(input?.composerTop);
+      let base = TOAST_LAYOUT.baseBottom;
+      if (viewportHeight === null || viewportHeight <= 0 || composerTop === null) return base;
+      let target = viewportHeight - composerTop + TOAST_LAYOUT.gap;
+      let upper = Math.max(base, viewportHeight - TOAST_LAYOUT.minVisible - TOAST_LAYOUT.edge);
+      return Math.round(Math.max(base, Math.min(target, upper)));
+    }
+
+    /**
+     * 回执整块的可用高度（px）：视口顶部留白到回执底边之间。
+     * 量不到视口时返回 null，让 CSS 的 `42vh` 继续生效。
+     * @param {{ bottom?: any, viewportHeight?: any }} [input]
+     * @returns {number | null}
+     */
+    function toastMaxHeight(input) {
+      let viewportHeight = finiteNumberOrNull(input?.viewportHeight);
+      let bottom = finiteNumberOrNull(input?.bottom);
+      if (viewportHeight === null || viewportHeight <= 0 || bottom === null) return null;
+      return Math.max(0, Math.round(viewportHeight - bottom - TOAST_LAYOUT.edge));
+    }
+
+    /**
+     * 回执正文的可用高度（px）：取「整块可用高度减头部预留」与「视口 42%」里的较小者。
+     * 返回 null 时沿用 CSS 的 `max-height:42vh`。
+     * @param {{ bottom?: any, viewportHeight?: any }} [input]
+     * @returns {number | null}
+     */
+    function toastBodyMaxHeight(input) {
+      let viewportHeight = finiteNumberOrNull(input?.viewportHeight);
+      let sectionMax = toastMaxHeight(input);
+      if (viewportHeight === null || viewportHeight <= 0 || sectionMax === null) return null;
+      let viewportCap = Math.floor(viewportHeight * TOAST_LAYOUT.bodyViewportRatio);
+      let sectionCap = sectionMax - TOAST_LAYOUT.headReserve;
+      return Math.max(TOAST_LAYOUT.bodyFloor, Math.min(viewportCap, sectionCap));
+    }
+
+    /**
+     * 渲染期量一次 composer 顶部与视口高度，得到回执定位。
+     * 只做一次 `querySelector` + 一次 `getBoundingClientRect`，代价可忽略；在渲染期调用
+     * 是为了 toast 出现的那一帧就到位（放到 effect 里会先按回退值闪一帧再跳）。
+     * @returns {{ bottom: number, maxHeight: number | null, bodyMaxHeight: number | null, viewportHeight: number }}
+     */
+    function measureToastLayout() {
+      let composerTop = null;
+      let viewportHeight = 0;
+      try {
+        if (typeof document !== "undefined" && typeof document.querySelector === "function") {
+          let composer = document.querySelector("[data-composer-input]");
+          if (composer && typeof composer.getBoundingClientRect === "function") {
+            composerTop = composer.getBoundingClientRect().top;
+          }
+        }
+      } catch (_error) {
+        composerTop = null;
+      }
+      try {
+        if (typeof window !== "undefined" && typeof window.innerHeight === "number") {
+          viewportHeight = window.innerHeight;
+        } else if (typeof document !== "undefined" && document.documentElement) {
+          viewportHeight = Number(document.documentElement.clientHeight) || 0;
+        }
+      } catch (_error) {
+        viewportHeight = 0;
+      }
+      let bottom = toastBottomOffset({ composerTop: composerTop, viewportHeight: viewportHeight });
+      return {
+        bottom: bottom,
+        maxHeight: toastMaxHeight({ bottom: bottom, viewportHeight: viewportHeight }),
+        bodyMaxHeight: toastBodyMaxHeight({ bottom: bottom, viewportHeight: viewportHeight }),
+        viewportHeight: viewportHeight,
+      };
     }
 
     /**
@@ -1493,6 +1609,9 @@ window.__ModuleLoader__.load({
       let toast = React.useSyncExternalStore(props.store.subscribe, props.store.getSnapshot);
       let entryId = toast ? toast.id : null;
       let receipt = toast !== null && toast.mode === "receipt";
+      // 渲染前先量一次几何：hooks 里的「位置同步」effect 要拿当前的 bottom 当基线，
+      // 且回执出现的那一帧就用真实 composer 位置，避免先闪一下回退位。
+      let layout = toast ? measureToastLayout() : null;
       let shownState = React.useState(false);
       let shown = shownState[0];
       let setShown = shownState[1];
@@ -1520,7 +1639,110 @@ window.__ModuleLoader__.load({
         };
       }, [entryId, props.store, receipt]);
 
-      if (!toast) return null;
+      // 位置：回执/轻提示的底距由 composer 顶部决定。回执常驻且要能选文本，
+      // 所以这里不依赖单一事件，而是：
+      //   1) 出现时立刻同步一次——回执出现的那一帧 composer 可能还没挂上（切视图/首屏）；
+      //   2) 每 1s 复核一次——切视图后 composer 消失/回来、换了 DOM 节点都能重新量到；
+      //   3) resize + ResizeObserver 让窗口缩放/多行输入立即跟手。
+      // sync 只在「算出来的 bottom 变了」时 bump，不产生空重渲染。
+      let layoutTickState = React.useState(0);
+      let bumpLayoutTick = layoutTickState[1];
+      React.useEffect(() => {
+        if (entryId === null) return undefined;
+        let disposed = false;
+        // 基线 = 本次渲染已经应用的 bottom；sync 只在几何变化时触发重渲染。
+        let lastBottom = layout === null ? 24 : layout.bottom;
+        /** @type {any} */
+        let observedComposer = null;
+        /** @type {any} */
+        let observer = null;
+        let bump = () => {
+          bumpLayoutTick(function nextTick(/** @type {number} */ count) {
+            return count + 1;
+          });
+        };
+        /** @returns {any} 当前 composer 节点（没有就 null）。 */
+        function readComposer() {
+          try {
+            if (typeof document !== "undefined" && typeof document.querySelector === "function") {
+              let node = document.querySelector("[data-composer-input]");
+              return node && typeof node.getBoundingClientRect === "function" ? node : null;
+            }
+          } catch (_error) {
+            /* 量不到就当没有 */
+          }
+          return null;
+        }
+        /** 把 ResizeObserver 重新挂到当前 composer（节点会随视图切换变化）。 */
+        function observe(/** @type {any} */ node) {
+          if (node === observedComposer) return;
+          if (observer !== null && typeof observer.disconnect === "function") observer.disconnect();
+          observedComposer = node;
+          if (node === null || typeof ResizeObserver !== "function") return;
+          try {
+            observer = new ResizeObserver(() => sync());
+            observer.observe(node);
+          } catch (_error) {
+            observer = null;
+          }
+        }
+        /** 量一次几何；bottom 变了才重渲染。 */
+        function sync() {
+          if (disposed) return;
+          let composer = readComposer();
+          observe(composer);
+          let composerTop = null;
+          let viewportHeight = 0;
+          try {
+            composerTop = composer === null ? null : composer.getBoundingClientRect().top;
+          } catch (_error) {
+            composerTop = null;
+          }
+          try {
+            viewportHeight =
+              typeof window !== "undefined" && typeof window.innerHeight === "number"
+                ? window.innerHeight
+                : 0;
+          } catch (_error) {
+            viewportHeight = 0;
+          }
+          let next = toastBottomOffset({
+            composerTop: composerTop,
+            viewportHeight: viewportHeight,
+          });
+          if (next === lastBottom) return;
+          lastBottom = next;
+          bump();
+        }
+        sync();
+        let timer = null;
+        try {
+          timer = setInterval(sync, 1000);
+        } catch (_error) {
+          timer = null;
+        }
+        try {
+          if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+            window.addEventListener("resize", sync);
+          }
+        } catch (_error) {
+          /* ignore */
+        }
+        return () => {
+          disposed = true;
+          if (timer !== null) clearInterval(timer);
+          try {
+            if (typeof window !== "undefined" && typeof window.removeEventListener === "function") {
+              window.removeEventListener("resize", sync);
+            }
+          } catch (_error) {
+            /* ignore */
+          }
+          if (observer !== null && typeof observer.disconnect === "function") observer.disconnect();
+        };
+      }, [entryId, bumpLayoutTick]);
+
+      if (!toast || layout === null) return null;
       let tone = toast.tone === "error" ? "error" : toast.tone === "ok" ? "ok" : "info";
       let color =
         tone === "error"
@@ -1540,6 +1762,10 @@ window.__ModuleLoader__.load({
             "data-tone": tone,
             style: {
               borderLeft: `3px solid ${color}`,
+              // 贴 composer 上沿；可用高度不够时整块收缩（正文再按 42vh 收缩一次）。
+              bottom: `${layout.bottom}px`,
+              maxHeight: layout.maxHeight === null ? undefined : `${layout.maxHeight}px`,
+              overflow: "hidden",
               opacity: shown ? 1 : 0,
               transform: shown ? "translateY(0)" : "translateY(8px)",
             },
@@ -1564,7 +1790,15 @@ window.__ModuleLoader__.load({
           ),
           h(
             "pre",
-            { className: "dsh-advisor-receipt-body", key: "body", "data-advisor-receipt-body": "" },
+            {
+              className: "dsh-advisor-receipt-body",
+              key: "body",
+              "data-advisor-receipt-body": "",
+              style:
+                layout.bodyMaxHeight === null
+                  ? undefined
+                  : { maxHeight: `${layout.bodyMaxHeight}px` },
+            },
             asString(toast.message),
           ),
         );
@@ -1582,6 +1816,11 @@ window.__ModuleLoader__.load({
           },
           style: {
             borderLeft: `3px solid ${color}`,
+            // 轻提示同样贴 composer 上沿，避免压住输入区；矮窗口里也按可用空间收缩，
+            // 不然一条长提示会向上顶出视口（与回执同一套 clamp）。
+            bottom: `${layout.bottom}px`,
+            maxHeight: layout.maxHeight === null ? undefined : `${layout.maxHeight}px`,
+            overflow: "auto",
             opacity: shown ? 1 : 0,
             transform: shown ? "translateY(0)" : "translateY(8px)",
           },
@@ -4997,6 +5236,10 @@ window.__ModuleLoader__.load({
         normalizeCandidates: normalizeCandidates,
         interpretSetModel: interpretSetModel,
         clampInt: clampInt,
+        // 命令回执/轻提示定位（发版后真机 bug：固定在右下角会盖住 composer 与发送按钮）。
+        toastBottomOffset: toastBottomOffset,
+        toastMaxHeight: toastMaxHeight,
+        toastBodyMaxHeight: toastBodyMaxHeight,
         clampFloat: clampFloat,
         clampMoney: clampMoney,
         formatMoneyInput: formatMoneyInput,

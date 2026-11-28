@@ -453,3 +453,67 @@ describe("effective advisor state (saved vs in effect)", () => {
     assert.equal(api.effectiveState({ mode: "nope", provider: 3, model: 4 }).effective, "off");
   });
 });
+
+// ---------------------------------------------------------------------------
+// 回执/轻提示定位（发版后真机 bug：固定在 bottom:24px 会盖住 composer 与发送按钮）
+//
+// 真机证据：1280×820、有会话时 `.dsh-advisor-toast.dsh-advisor-receipt` 高 204px、
+// composer y=700–736、send y=748–782，回执与输入区重叠 y=36。
+// 这里锁死纯函数的几何约定，真正的「不回退/不重叠」由桌面冒烟与真机截图复核。
+// ---------------------------------------------------------------------------
+
+describe("toast/receipt placement above the composer", () => {
+  it("falls back to 24px when there is no composer or no viewport", () => {
+    assert.equal(api.toastBottomOffset(), 24);
+    assert.equal(api.toastBottomOffset({}), 24);
+    assert.equal(api.toastBottomOffset({ composerTop: null, viewportHeight: 820 }), 24);
+    assert.equal(api.toastBottomOffset({ composerTop: 700, viewportHeight: 0 }), 24);
+    assert.equal(api.toastBottomOffset({ composerTop: 700, viewportHeight: NaN }), 24);
+    assert.equal(api.toastBottomOffset({ composerTop: undefined, viewportHeight: 820 }), 24);
+  });
+
+  it("sits one gap above the composer top", () => {
+    // 真机 1280×820：composer top=700 → 820-700+12=132，回执底边落在 y=688。
+    assert.equal(api.toastBottomOffset({ composerTop: 700, viewportHeight: 820 }), 132);
+    assert.equal(api.toastBottomOffset({ composerTop: 780, viewportHeight: 820 }), 52);
+  });
+
+  it("clamps low so a composer near the bottom does not push the toast off-screen", () => {
+    // composer 顶在视口下方 / 贴底：算出来是负数或 0，仍保留 24px 底距。
+    assert.equal(api.toastBottomOffset({ composerTop: 900, viewportHeight: 820 }), 24);
+    assert.equal(api.toastBottomOffset({ composerTop: 820, viewportHeight: 820 }), 24);
+  });
+
+  it("clamps high so a very short window keeps some receipt visible", () => {
+    // 上界 = 视口高 - minVisible(120) - 留白(8)，820 时是 692。
+    assert.equal(api.toastBottomOffset({ composerTop: 100, viewportHeight: 820 }), 692);
+    // 200 高的窗口 + composer 在 150：natural 62 < 上界 72，按 natural 走。
+    assert.equal(api.toastBottomOffset({ composerTop: 150, viewportHeight: 200 }), 62);
+    // 150 高的窗口：上界被 baseBottom 兜到 24。
+    assert.equal(api.toastBottomOffset({ composerTop: 100, viewportHeight: 150 }), 24);
+  });
+
+  it("computes the receipt max-height from the space above the composer", () => {
+    assert.equal(api.toastMaxHeight({ bottom: 132, viewportHeight: 820 }), 680);
+    assert.equal(api.toastMaxHeight({ bottom: 24, viewportHeight: 820 }), 788);
+    assert.equal(api.toastMaxHeight({ bottom: 300, viewportHeight: 400 }), 92);
+    assert.equal(api.toastMaxHeight({ bottom: 400, viewportHeight: 400 }), 0);
+    assert.equal(api.toastMaxHeight({}), null);
+    assert.equal(api.toastMaxHeight({ bottom: 132, viewportHeight: 0 }), null);
+  });
+
+  it("shrinks the receipt body but never below the readable floor", () => {
+    // 820 高、composer top=700 → 整块 680，正文上限 = min(42vh=344, 680-48=632) = 344。
+    assert.equal(api.toastBodyMaxHeight({ bottom: 132, viewportHeight: 820 }), 344);
+    // 矮窗口：整块可用 92 → 正文被压到 floor 60（宁可略超出也不成一像素线）。
+    assert.equal(api.toastBodyMaxHeight({ bottom: 300, viewportHeight: 400 }), 60);
+    assert.equal(api.toastBodyMaxHeight({}), null);
+  });
+
+  it("keeps the stylesheet's fallback bottom and interactive pointer behaviour", () => {
+    const css = api.clientCss();
+    assert.match(css, /\.dsh-advisor-toast\{[^}]*position:fixed[^}]*bottom:24px/u);
+    // 回执要能选文本 / 点关闭：不能被 pointer-events:none 关掉。
+    assert.doesNotMatch(css, /\.dsh-advisor-toast\{[^}]*pointer-events:none/u);
+  });
+});
