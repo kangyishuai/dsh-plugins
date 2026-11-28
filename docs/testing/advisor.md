@@ -715,3 +715,7 @@ cd packages/advisor && node --test
 
 - 在「项目」面板直接起跑（composer 不存在）时，脚本会先尝试切回聊天会话并在日志打印诊断：`node scripts/smoke-advisor-desktop.mjs --port 9419 --require` → **25 PASS / 2 SKIP / 0 FAIL**（SKIP=未选 provider、无顾问记录）。
 - 修复点：视角自愈（点击侧栏会话行/新建会话并等 composer），避免紧随其它 GUI 冒烟时把「无 composer」误判成产品故障。
+
+### 2026-11-28 gate 复跑：活跃会话下视角自愈
+
+- 在活跃会话（回合进行中/有草稿）里跑桌面只读时，脚本会挑一个有用户消息的空闲历史会话（命令卡片 DOM 只在历史会话渲染）；没有则新建空白会话。实测 live 9222 有活跃回合时 `27 PASS / 0 SKIP / 0 FAIL`。
