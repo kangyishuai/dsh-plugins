@@ -2,6 +2,7 @@
   "name": "@kangyishuai/dsh-projects",
   "version": "0.11.0",
   "description": "Project-level context for DeepSeek Harness: group sessions into projects, inject instructions and memory, run isolated parallel threads, and coordinate them with an optional auditable coordinator.",
+  "icon": "icon.svg",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -21,12 +22,15 @@
   "exports": {
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
+    "./locale/en.json": "./locale/en.json",
+    "./locale/zh.json": "./locale/zh.json",
     "./package.json": "./package.json"
   },
   "files": [
     "cordis.patch.yml",
     "lib",
     "locale",
+    "icon.svg",
     "README.md",
     "README.zh-CN.md",
     "LICENSE"
