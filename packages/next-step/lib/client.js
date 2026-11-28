@@ -127,6 +127,7 @@ window.__ModuleLoader__.load({
       "error.hidden": "这张建议当前没有显示",
       "settings.stats":
         "已生成 {generated}（未显示 {hidden}） · 失败 {failed} · 已中止 {aborted} · 跳过 {skipped} · 在途 {inflight}",
+      "settings.budgetEscalations": "预算升级：{count} 次",
       "settings.lastError": "最近错误：{message}",
       "settings.noError": "无错误",
       "settings.paused": "已暂停，约 {time} 后恢复",
@@ -216,6 +217,7 @@ window.__ModuleLoader__.load({
       "error.hidden": "This suggestion is not shown right now",
       "settings.stats":
         "Generated {generated} ({hidden} hidden) · failed {failed} · aborted {aborted} · skipped {skipped} · in flight {inflight}",
+      "settings.budgetEscalations": "Budget escalations: {count}",
       "settings.lastError": "Last error: {message}",
       "settings.noError": "No errors",
       "settings.paused": "Paused; resumes in about {time}",
@@ -1819,6 +1821,76 @@ window.__ModuleLoader__.load({
     // ------------------------------------------------------------------
 
     /**
+     * 诊断文本（设置页「诊断」块）。**纯函数**：`stats` 来自 `nextStep/diagnostics` 的 `stats`，
+     * `t` 是宿主注入的文案函数。抽出来是为了让「每一行是否存在 / 计数口径」能在 `node --test`
+     * 里用真实 client 源码钉住（`test/diagnostics-budget-escalations.test.js`），不必渲染 React。
+     *
+     * 行序（排障时的阅读顺序）：计数摘要 → **预算升级次数** → 最近错误 → 最近跳过 → 版本/提示词
+     * → 采集文件。预算升级行放在计数旁边：它解释「为什么这次生成多花了 token」，和 failed /
+     * skipped 属于同一层信息。
+     * @param {any} stats diagnostics() 返回的 stats（缺字段按 0 / 空处理，不崩）
+     * @param {(key: string, params?: Record<string, unknown>) => string} t 文案函数
+     * @returns {string} 多行文本（放进 `white-space: pre-wrap` 的块）
+     */
+    function diagnosticsText(stats, t) {
+      let text = t("settings.stats", {
+        generated: String(stats.generated || 0),
+        hidden: String(stats.hidden || 0),
+        failed: String(stats.failed || 0),
+        aborted: String(stats.aborted || 0),
+        skipped: String(stats.skipped || 0),
+        inflight: String(stats.inflight || 0),
+      });
+      // 空输出预算升级的次数：老宿主没有这个字段时按 0 显示（不显示成 undefined / NaN / 字符串）。
+      let escalations = Number(stats.budgetEscalations);
+      text += `\n${t("settings.budgetEscalations", {
+        count: String(
+          Number.isFinite(escalations) && escalations > 0 ? Math.round(escalations) : 0,
+        ),
+      })}`;
+      let lastError = typeof stats.lastError === "string" ? stats.lastError : "";
+      text +=
+        "\n" +
+        (lastError === ""
+          ? t("settings.noError")
+          : t("settings.lastError", { message: lastError }));
+      // 「最近为什么没出卡」：模型判断不需要 / 排队 / 暂停 / 预算，都写在这里。
+      let lastSkip = stats.lastSkip;
+      if (
+        lastSkip &&
+        typeof lastSkip === "object" &&
+        typeof lastSkip.reason === "string" &&
+        lastSkip.reason !== ""
+      ) {
+        text += `\n${t("settings.lastSkip", {
+          kind: typeof lastSkip.kind === "string" ? lastSkip.kind : "",
+          reason: lastSkip.reason,
+        })}`;
+      }
+      if (typeof stats.version === "string" && stats.version !== "") {
+        let buildHash = typeof stats.buildHash === "string" ? stats.buildHash.slice(0, 8) : "";
+        text += `\n${t("settings.version", { version: stats.version, hash: buildHash })}`;
+        if (typeof stats.promptVersion === "number") {
+          text += `\n${t("settings.promptVersion", {
+            version: String(stats.promptVersion),
+            scheme: typeof stats.scheme === "string" ? stats.scheme : "—",
+          })}`;
+        }
+      }
+      let telemetry = stats.telemetry;
+      if (telemetry && typeof telemetry === "object") {
+        text += `\n${t("settings.telemetryStats", {
+          events: String(telemetry.lines || 0),
+          size: formatBytes(telemetry.bytes || 0),
+        })}`;
+        if (typeof telemetry.path === "string" && telemetry.path !== "") {
+          text += `\n${telemetry.path}`;
+        }
+      }
+      return text;
+    }
+
+    /**
      * 设置页 → 通用 里的「下一步建议」行：总开关、两个面、暂停、预算与诊断。
      * `settings.general.item` 是无 owner props 的 list 槽，数据全部由 api 自取。
      * @param {any} props
@@ -2052,56 +2124,7 @@ window.__ModuleLoader__.load({
         ? Math.max(1, Math.round((settings.pauseUntil - Date.now()) / 60000))
         : 0;
 
-      let diagText = "";
-      if (stats !== null) {
-        diagText = t("settings.stats", {
-          generated: String(stats.generated || 0),
-          hidden: String(stats.hidden || 0),
-          failed: String(stats.failed || 0),
-          aborted: String(stats.aborted || 0),
-          skipped: String(stats.skipped || 0),
-          inflight: String(stats.inflight || 0),
-        });
-        let lastError = typeof stats.lastError === "string" ? stats.lastError : "";
-        diagText +=
-          "\n" +
-          (lastError === ""
-            ? t("settings.noError")
-            : t("settings.lastError", { message: lastError }));
-        // 「最近为什么没出卡」：模型判断不需要 / 排队 / 暂停 / 预算，都写在这里。
-        let lastSkip = stats.lastSkip;
-        if (
-          lastSkip &&
-          typeof lastSkip === "object" &&
-          typeof lastSkip.reason === "string" &&
-          lastSkip.reason !== ""
-        ) {
-          diagText += `\n${t("settings.lastSkip", {
-            kind: typeof lastSkip.kind === "string" ? lastSkip.kind : "",
-            reason: lastSkip.reason,
-          })}`;
-        }
-        if (typeof stats.version === "string" && stats.version !== "") {
-          let buildHash = typeof stats.buildHash === "string" ? stats.buildHash.slice(0, 8) : "";
-          diagText += `\n${t("settings.version", { version: stats.version, hash: buildHash })}`;
-          if (typeof stats.promptVersion === "number") {
-            diagText += `\n${t("settings.promptVersion", {
-              version: String(stats.promptVersion),
-              scheme: typeof stats.scheme === "string" ? stats.scheme : "—",
-            })}`;
-          }
-        }
-        let telemetry = stats.telemetry;
-        if (telemetry && typeof telemetry === "object") {
-          diagText += `\n${t("settings.telemetryStats", {
-            events: String(telemetry.lines || 0),
-            size: formatBytes(telemetry.bytes || 0),
-          })}`;
-          if (typeof telemetry.path === "string" && telemetry.path !== "") {
-            diagText += `\n${telemetry.path}`;
-          }
-        }
-      }
+      let diagText = stats === null ? "" : diagnosticsText(stats, t);
 
       /** 回顾块：4 个数字 + 「生成报告」。样本不足时明写，不让人看一堆 0% 乱猜。 */
       let reviewRows = [];
@@ -2658,6 +2681,8 @@ window.__ModuleLoader__.load({
       en: en,
       firstSentenceOf: firstSentenceOf,
       FOLDED_SUMMARY_CHARS: FOLDED_SUMMARY_CHARS,
+      // 预算升级可观测：诊断文本的纯函数（真实 client 源码，`test/diagnostics-budget-escalations.test.js` 驱动）
+      diagnosticsText: diagnosticsText,
       // USIM-U2-04：失败展示与客户端超时的纯逻辑 + 时序表（测试可改 TIMINGS 把 2.5s/30s 缩短）。
       retryFailureOf: retryFailureOf,
       retryTimeoutOf: retryTimeoutOf,
