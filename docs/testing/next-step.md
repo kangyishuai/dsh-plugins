@@ -817,5 +817,5 @@ ls ~/.dsh/next-step/report-*.md
   `{"budget":500,"finish":"max-tokens","usage":{"outputTokens":500},"textLen":0,"blocks":["reasoning"]}`
   把同一请求预算升到 3000 后：`{"budget":3000,"finish":"stop","outputTokens":735,"textLen":473}`，卡片正常生成。
 - 修复：`lib/generation-budget.js`（`escalatedTokenBudget`/`recoveryFor`/`emptyOutputSummary`）——空输出走「原请求 + 预算升级（≥3000，封顶 4000）」重试；仍空才带 transcript 要求只输出 JSON；非空格式错误仍走修复请求。`settings.maxTokens` 默认 500 → **2000**（只是上限，卡片本身不会变长）。失败日志带 `finish/outputTokens/maxTokens` 诊断，用户可见 detail 保持 `json:empty` 以兼容报告分桶。
-- 验证：`packages/next-step` **252 pass / 0 fail**（新增预算策略单测；后续补默认值/上限锁）；真实隔离实例用旧 `maxTokens: 500` 设置生成卡片成功（无 schema error）；默认 2000 同样成功。
+- 验证：`packages/next-step` **253 pass / 0 fail**（新增预算策略单测；后续补默认值/上限锁）；真实隔离实例用旧 `maxTokens: 500` 设置生成卡片成功（无 schema error）；默认 2000 同样成功。
 - 复审补充（2026-11-28）：恢复最多两次（空→预算升级；仍空/畸形→带对话只输出 JSON），`recovery`/`cand.parse` 记录最终实际路径；失败诊断用最后一次实际预算（可能 > 设置值）。
