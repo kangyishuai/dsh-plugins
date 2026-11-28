@@ -200,6 +200,8 @@
     "settings.nav": "Session rewind",
     "settings.saveFailed": "Save failed",
     "settings.saveFailedStorage": "Local storage is unavailable — changes apply only to this window",
-    "settings.retry": "Retry"
+    "settings.retry": "Retry",
+    "error.trashNotFound": "Trash record not found (it may have been restored or cleared).",
+    "audit.metaLegacy": "{mode} · withdrew {n} context record(s) · about {tokens} tokens"
   }
 }

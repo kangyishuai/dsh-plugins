@@ -119,6 +119,7 @@ test("ERROR_CODES 与设计约定的完整 code 一致", () => {
     filesRescueFailed: "session-rewind/files-rescue-failed",
     filesFailed: "session-rewind/files-failed",
     rescueNotFound: "session-rewind/rescue-not-found",
+    trashNotFound: "session-rewind/trash-not-found",
     storageUnavailable: "session-rewind/storage-unavailable",
   });
   const error = new RewindRequestError(ERROR_CODES.busy, "boom");

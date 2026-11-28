@@ -27,6 +27,8 @@ export const ERROR_CODES = Object.freeze({
   filesRescueFailed: `${ERROR_PREFIX}/files-rescue-failed`,
   filesFailed: `${ERROR_PREFIX}/files-failed`,
   rescueNotFound: `${ERROR_PREFIX}/rescue-not-found`,
+  // 回收站操作 id 不存在（并发恢复/清理后过期）。与 files.js 的 FILE_ERROR_CODES 同名。
+  trashNotFound: `${ERROR_PREFIX}/trash-not-found`,
   storageUnavailable: `${ERROR_PREFIX}/storage-unavailable`,
 });
 

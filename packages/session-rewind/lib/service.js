@@ -343,6 +343,16 @@ export class SessionRewindService extends TypertRemoteService {
   async collectBlobs() {
     try {
       const result = await this.store.collectGarbage();
+      if (result.skipped === "entries-unreadable") {
+        // fail-closed（复审 N10）：entries 读失败时不猜引用关系，本次一个 blob 都不删。
+        const unreadable = Array.isArray(result.unreadableSessions)
+          ? result.unreadableSessions.length
+          : 0;
+        this.ctx?.logger?.warn?.(
+          `session-rewind: skipped blob GC because file entries are unreadable for ${unreadable} session(s)`,
+        );
+        return;
+      }
       if (result.removedBlobs > 0) {
         this.ctx?.logger?.info?.(
           `session-rewind: removed ${result.removedBlobs} unreferenced blob(s) (${result.bytesFreed} bytes)`,

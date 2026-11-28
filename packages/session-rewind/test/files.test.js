@@ -1871,6 +1871,26 @@ test("clearTrash: dryRun 只报影响面，确认后才永久删除（AUD-REW-08
   await rm(root, { recursive: true, force: true });
 });
 
+test("回收站: 不存在的操作 id 用 trash-not-found，而不是 files-failed（复审 N4）", async () => {
+  const { root, cwd, store } = await makeStore();
+  await assert.rejects(
+    () => store.restoreTrash({ sessionId: "s", cwd, auditId: "missing-trash" }),
+    (error) => {
+      assert.equal(/** @type {any} */ (error).code, FILE_ERROR_CODES.trashNotFound);
+      assert.match(String(/** @type {any} */ (error).message), /missing-trash/u);
+      return true;
+    },
+  );
+  await assert.rejects(
+    () => store.clearTrash({ sessionId: "s", auditId: "missing-trash" }),
+    (error) => {
+      assert.equal(/** @type {any} */ (error).code, FILE_ERROR_CODES.trashNotFound);
+      return true;
+    },
+  );
+  await rm(root, { recursive: true, force: true });
+});
+
 test("collectGarbage: 清掉无引用 blob，保留有引用内容（AUD-REW-24）", async () => {
   const { root, cwd, store } = await makeStore();
   const home = store.home;
@@ -1896,6 +1916,39 @@ test("collectGarbage: 清掉无引用 blob，保留有引用内容（AUD-REW-24�
   assert.ok(gc.bytesFreed > 0);
   await assert.rejects(() => defaultFs.stat(orphan), /ENOENT/u);
   assert.ok((await readFile(referenced)).length > 0);
+  await rm(root, { recursive: true, force: true });
+});
+
+test("collectGarbage: entries 读失败时 fail-closed，不删任何 blob（复审 N10）", async () => {
+  const { root, cwd, store } = await makeStore();
+  const home = store.home;
+  await store.recordChange({
+    sessionId: "s",
+    cwd,
+    anchorSeq: 1,
+    tool: "write",
+    callId: "c-1",
+    path: "a.txt",
+    beforeContent: null,
+    afterContent: "kept",
+  });
+  const orphanDir = path.join(home, "blobs", "ff");
+  await mkdir(orphanDir, { recursive: true });
+  const orphan = path.join(orphanDir, `${"0".repeat(62)}ff`);
+  await writeFile(orphan, "garbage");
+  // 把 entries.jsonl 换成目录：stat 成功、readFile 报 EISDIR → readEntries 抛错。
+  const entriesFile = path.join(home, "sessions", "s", "entries.jsonl");
+  await rm(entriesFile, { force: true });
+  await mkdir(entriesFile, { recursive: true });
+
+  const gc = await store.collectGarbage();
+  assert.equal(gc.removedBlobs, 0, "读不到 entries 时不能把 blob 当无引用删除");
+  assert.equal(gc.bytesFreed, 0);
+  assert.equal(gc.skipped, "entries-unreadable");
+  const unreadable = gc.unreadableSessions ?? [];
+  assert.equal(unreadable.length, 1);
+  assert.equal(unreadable[0].sessionId, "s");
+  assert.ok((await readFile(orphan)).length > 0, "fail-closed：孤儿 blob 也保留，宁可下次再清");
   await rm(root, { recursive: true, force: true });
 });
 

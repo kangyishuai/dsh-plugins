@@ -200,6 +200,8 @@
     "settings.nav": "会话回溯",
     "settings.saveFailed": "保存失败",
     "settings.saveFailedStorage": "本地存储不可用，改动只在本次打开期间有效",
-    "settings.retry": "重试"
+    "settings.retry": "重试",
+    "error.trashNotFound": "回收站记录不存在（可能已被恢复或清理）",
+    "audit.metaLegacy": "{mode} · 撤回 {n} 条上下文记录 · 约 {tokens} token"
   }
 }
