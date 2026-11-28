@@ -758,3 +758,24 @@ ls ~/.dsh/next-step/report-*.md
   （`service.js` 依赖 `@deepseek-ai/*`，加载不了），本轮只做静态核对 + 纯记录层单测。发版门禁需要补齐：
   web 冒烟新增两条断言（没出卡时 `data-next-step-retry-phase === "error"`、按钮文案不再是「正在生成」），
   以及「自动生成失败后刷新仍显示重试」的桌面手工路径。
+
+## 设置保存状态（USIM-U1-10，2026-11-28）
+
+设置分节统一加了「保存状态」行与稳定锚点（[plugin-conventions §7.2.6](../plugin-conventions.md#72-设置页)）。
+本节记录**桌面只读断言**（按约定只写不跑；真机证据见下面的 2026-11-28 记录）与单测覆盖位置。
+
+**单测（每次提交都跑）**：`test/settings-save-status.test.js` —— 用迷你 hooks 运行时驱动
+`lib/client.js` 里的真实组件，不复制实现。
+
+**桌面只读断言**（不拨开关）：
+
+1. 设置 → 下一步建议：`[data-next-step-settings]` 存在。
+2. `[data-next-step-settings-status]` 的 `data-state` 为 `clean`，文本含「已保存」。
+3. 该分节没有显式保存按钮（改即存）。
+
+**真机记录（同上）**：
+
+| 场景                     | 结果                             | 截图                                                    |
+| ------------------------ | -------------------------------- | ------------------------------------------------------- |
+| 无改动                   | `data-state=clean`、「· 已保存」 | `/tmp/dsh-sim-rel/shots/settings-next-step-clean.png`   |
+| 拨「回答下方的决策卡」后 | `data-state=saved`、「已保存」   | `/tmp/dsh-sim-rel/shots/settings-next-step-changed.png` |

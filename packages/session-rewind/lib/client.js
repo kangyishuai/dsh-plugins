@@ -189,6 +189,9 @@ window.__ModuleLoader__.load({
       "settings.recallHint":
         "空草稿（或光标在第一行）按 ↑ 召回上一条已发送消息，↓ 前进、到底恢复你原来的草稿；只填草稿，不回溯、不发送。",
       "settings.saved": "已保存",
+      "settings.saveFailed": "保存失败",
+      "settings.saveFailedStorage": "本地存储不可用，改动只在本次打开期间有效",
+      "settings.retry": "重试",
       "settings.nav": "会话回溯",
       "settings.healthTitle": "诊断",
       "settings.healthRefresh": "刷新",
@@ -406,6 +409,10 @@ window.__ModuleLoader__.load({
       "settings.recallHint":
         "In an empty draft (or with the caret on the first line) ↑ recalls the last prompt you sent, ↓ walks forward and restores your own draft at the bottom; it only fills the draft — never rewinds, never sends.",
       "settings.saved": "Saved",
+      "settings.saveFailed": "Save failed",
+      "settings.saveFailedStorage":
+        "Local storage is unavailable — changes apply only to this window",
+      "settings.retry": "Retry",
       "settings.nav": "Session rewind",
       "settings.healthTitle": "Diagnostics",
       "settings.healthRefresh": "Refresh",
@@ -781,6 +788,12 @@ window.__ModuleLoader__.load({
     /** 候选每页数量的合法范围。 */
     let PAGE_SIZE_MIN = 20;
     let PAGE_SIZE_MAX = 500;
+
+    /**
+     * 设置分节「已保存」短暂态保留时长（ms）。生产 2500；单测通过
+     * `__test.settingsSaveTiming.resetMs` 改短（[plugin-conventions §7.2.6]）。
+     */
+    let SETTINGS_SAVE_TIMING = { resetMs: 2500 };
 
     /** 抽屉的四个 tab（顺序即渲染顺序）。 */
     // 设置已迁到独立设置分节（设置 → 会话回溯），抽屉只保留会话级数据。
@@ -3633,7 +3646,7 @@ window.__ModuleLoader__.load({
      * 设置分节依赖：settings.section 的注册方式与其它槽位不同（宿主直接渲染组件、
      * 不经过 inject 合并 props），所以依赖在 apply() 里挂到模块级，组件自己取。
      */
-    /** @type {{ prefsStore?: any, healthStore?: any, api?: any, t?: any } | null} */
+    /** @type {{ prefsStore?: any, healthStore?: any, saveStore?: any, api?: any, t?: any } | null} */
     let settingsSectionDeps = null;
 
     function RewindSettingsSection() {
@@ -3645,11 +3658,51 @@ window.__ModuleLoader__.load({
       // 注意：本文件的 useStore 直接返回快照值（不像 session-delete 返回数组）。
       let prefs = useStore(deps.prefsStore);
       let health = useStore(deps.healthStore);
+      let saveStatus = useStore(deps.saveStore);
       let api = deps.api;
       let t = deps.t;
       React.useEffect(() => {
         api.loadSettingsHealth();
       }, []);
+      // 保存状态行（[plugin-conventions §7.2.6]）：自动保存的偏好也要能确认「已保存 / 失败可重试」。
+      // 放在分节底部、SettingsTab 之后：与显式保存插件的动作条位置一致。
+      let saveView = saveStatus || { state: "clean", errorKey: null, retryable: false };
+      let saveState =
+        saveView.state === "error" ? "error" : saveView.state === "saved" ? "saved" : "clean";
+      let saveText =
+        saveState === "error"
+          ? `${t("settings.saveFailed")}${saveView.errorKey ? `：${t(saveView.errorKey)}` : ""}`
+          : saveState === "saved"
+            ? t("settings.saved")
+            : `· ${t("settings.saved")}`;
+      let saveStatusNode = h(
+        "div",
+        {
+          className: "dsh-srw-settings-save",
+          "data-session-rewind-settings-status": saveState,
+          "data-state": saveState,
+          role: "status",
+          "aria-live": "polite",
+        },
+        [
+          h("span", { key: "text", className: "dsh-srw-settings-save-text" }, saveText),
+          saveState === "error" && saveView.retryable === true
+            ? h(
+                "button",
+                {
+                  key: "retry",
+                  type: "button",
+                  className: "dsh-srw-link",
+                  "data-session-rewind-settings-retry": "",
+                  onClick: () => {
+                    if (typeof api.retryPrefs === "function") api.retryPrefs();
+                  },
+                },
+                t("settings.retry"),
+              )
+            : null,
+        ],
+      );
       return h(
         "div",
         { className: "dsh-srw-settings-page", "data-srw-settings": "" },
@@ -3660,6 +3713,7 @@ window.__ModuleLoader__.load({
           t: t,
           onRefreshHealth: () => api.loadSettingsHealth(),
         }),
+        saveStatusNode,
       );
     }
 
@@ -4106,6 +4160,9 @@ window.__ModuleLoader__.load({
           ".dsh-srw-check-detail{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
           ".dsh-srw-break{word-break:break-all;}",
           ".dsh-srw-saved{padding-top:0;}",
+          ".dsh-srw-settings-save{display:flex;gap:10px;align-items:center;margin-top:10px;padding-top:8px;border-top:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.25));font-size:12px;color:var(--dsw-alias-label-tertiary,GrayText);}",
+          '.dsh-srw-settings-save[data-state="saved"] .dsh-srw-settings-save-text{color:var(--dsw-alias-state-success-primary,#2f9e63);}',
+          '.dsh-srw-settings-save[data-state="error"]{color:var(--dsw-alias-state-error-primary,#d9534f);}',
           ".dsh-srw-skipped{padding-top:0;}",
           ".dsh-srw-skip-reason{font-size:12px;color:var(--dsw-alias-label-tertiary,GrayText);}",
           ".dsh-srw-recoverable{margin-top:2px;padding:6px 8px;border-radius:6px;background:var(--dsw-alias-bg-layer-1,rgba(127,127,127,.08));}",
@@ -4136,14 +4193,21 @@ window.__ModuleLoader__.load({
         }
       }
 
-      /** 写客户端偏好（写不进去只影响持久化，不影响本次会话）。 */
+      /**
+       * 写客户端偏好（写不进去只影响持久化，不影响本次会话）。
+       * @param {any} next
+       * @returns {boolean} 是否真的落进 localStorage（false = 只在内存里）
+       */
       function writePrefs(/** @type {any} */ next) {
         try {
-          if (window.localStorage)
+          if (window.localStorage) {
             window.localStorage.setItem(PREF_STORAGE_KEY, JSON.stringify(next));
+            return true;
+          }
         } catch (_error) {
-          /* 存储不可用时只保存在内存里 */
+          /* 存储不可用（隐私模式/配额满）：下面的状态行会如实告诉用户 */
         }
+        return false;
       }
 
       let prefs = readPrefs();
@@ -4155,6 +4219,20 @@ window.__ModuleLoader__.load({
         errorParams: null,
         data: null,
       });
+      /**
+       * 设置分节保存状态（[plugin-conventions §7.2.6]）：自动保存也要看得见结果。
+       * state: clean | saved | error；error 时保留最后一次 patch，重试按钮可再写一次。
+       * @type {any}
+       */
+      let settingsSaveStore = createStore({
+        state: "clean",
+        errorKey: null,
+        retryable: false,
+      });
+      /** @type {any} */
+      let settingsSaveTimer = null;
+      /** @type {any} */
+      let lastPrefsPatch = null;
 
       function emptyTabState() {
         return { loading: false, errorKey: null, errorParams: null };
@@ -5548,10 +5626,35 @@ window.__ModuleLoader__.load({
           });
       }
 
+      /**
+       * 设置分节保存状态：成功 → 短暂 saved 再回落 clean；失败 → error + 可重试。
+       * @param {boolean} persisted
+       */
+      function markPrefsSaveResult(persisted) {
+        if (settingsSaveTimer !== null) {
+          clearTimeout(settingsSaveTimer);
+          settingsSaveTimer = null;
+        }
+        if (persisted) {
+          settingsSaveStore.set({ state: "saved", errorKey: null, retryable: false });
+          settingsSaveTimer = setTimeout(() => {
+            settingsSaveTimer = null;
+            settingsSaveStore.set({ state: "clean", errorKey: null, retryable: false });
+          }, SETTINGS_SAVE_TIMING.resetMs);
+          return;
+        }
+        settingsSaveStore.set({
+          state: "error",
+          errorKey: "settings.saveFailedStorage",
+          retryable: true,
+        });
+      }
+
       /** 设置项：写入 localStorage 并立刻生效。 */
       function updatePrefs(/** @type {any} */ partial) {
+        lastPrefsPatch = partial;
         prefs = sanitizePrefs(Object.assign({}, prefs, partial));
-        writePrefs(prefs);
+        let persisted = writePrefs(prefs);
         prefsStore.set(prefs);
         patchDrawer("settings", { prefs: prefs, saved: true });
         if (prefsSavedTimer !== null) clearTimeout(prefsSavedTimer);
@@ -5559,6 +5662,13 @@ window.__ModuleLoader__.load({
           prefsSavedTimer = null;
           patchDrawer("settings", { saved: false });
         }, 2000);
+        markPrefsSaveResult(persisted);
+      }
+
+      /** 重试最后一次没落盘的偏好改动（存储恢复后可用）。 */
+      function retryPrefs() {
+        if (lastPrefsPatch === null) return;
+        updatePrefs(lastPrefsPatch);
       }
 
       /** 复制文本到剪贴板（best-effort）。 */
@@ -5819,7 +5929,9 @@ window.__ModuleLoader__.load({
         loadSettingsHealth: loadSettingsHealth,
         prefsStore: prefsStore,
         settingsHealthStore: settingsHealthStore,
+        settingsSaveStore: settingsSaveStore,
         updatePrefs: updatePrefs,
+        retryPrefs: retryPrefs,
         setPendingRescue: setPendingRescue,
         cancelRescue: cancelRescue,
         confirmRescue: confirmRescue,
@@ -5972,6 +6084,7 @@ window.__ModuleLoader__.load({
       settingsSectionDeps = {
         prefsStore: prefsStore,
         healthStore: settingsHealthStore,
+        saveStore: settingsSaveStore,
         api: api,
         t: t,
       };
@@ -6066,6 +6179,8 @@ window.__ModuleLoader__.load({
         PREF_STORAGE_KEY: PREF_STORAGE_KEY,
         PAGE_SIZE_MIN: PAGE_SIZE_MIN,
         PAGE_SIZE_MAX: PAGE_SIZE_MAX,
+        // 单测把「已保存」短暂态改短，避免真等 2.5s（生产值不变）。
+        settingsSaveTiming: SETTINGS_SAVE_TIMING,
         DRAWER_TABS: DRAWER_TABS,
         clampInt: clampInt,
         sanitizePrefs: sanitizePrefs,

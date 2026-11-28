@@ -1236,3 +1236,38 @@ stale not-found/conflict）、`trash.test.js`（+2 影响面披露）、`service
 不启 ego-browser，避免与并行冒烟抢 TaskSpace）复现 `model-unavailable` 与 `project-paused` 两条；
 改后同一探针 16/16 通过（含「恢复项目后被按住的 routine 放开成 active、显式停用的保持 paused」），`pnpm smoke:projects` 回到 **270 PASS / 0 SKIP / 0 FAIL**，
 `node --test` 809 条 0 fail。
+
+## 设置保存状态（USIM-U1-10，2026-11-28）
+
+设置分节统一加了「保存状态」行与稳定锚点（[plugin-conventions §7.2.6](../plugin-conventions.md#72-设置页)）。
+本节记录**桌面只读断言**（按约定只写不跑；真机证据见下面的 2026-11-28 记录）与单测覆盖位置。
+
+**单测（每次提交都跑）**：`test/settings-save-status.test.js` —— 用迷你 hooks 运行时驱动
+`lib/client.js` 里的真实组件，不复制实现。
+
+**桌面只读断言**（不改预算、不点保存）：
+
+1. 设置 → 项目：`[data-projects-settings]` 存在。
+2. `[data-projects-settings-status]` 的 `data-state` 为 `clean`，文本含「已保存」。
+3. 打开「更多设置」后 `[data-projects-settings-save]`（预算按钮，与 `[data-projects-budget-save]` 同一按钮）
+   `disabled === true`。
+4. 策略开关（`[data-projects-auto-retry]` 等）是自动保存，回归里不点。
+
+该分节混用两种保存方式：预算走显式「保存预算」，策略开关（含通知开关）改即存；两者都汇总到同一行状态。
+预算保存成功仍会写一条「预算已保存：{summary}」回执到 `[data-projects-settings-b3-result]`
+（`pnpm smoke:projects` 有断言，不能删）；状态行与回执并存，回执说明「保存了什么」。
+
+**切项目的行为（B2 复审后）**：保存失败后切到另一个项目，旧的 pending（重试载荷、预算草稿、错误态）
+一律作废，状态行提示「项目已切换，请重新保存」；重试/迟到响应都绑定保存时的 projectId，
+单测覆盖「切项目后旧 retry handler 不会写到新项目」。
+
+**已知（自动保存非串行）**：同一项目连续快速修改时最终以最后一次成功的写为准；过期响应按保存序号 +
+projectId 丢弃，不会污染状态行或写错项目。
+
+**真机记录（同上；先在隔离实例里建了一个 `settings-demo` 项目，否则预算保存没有落点）**：
+
+| 场景                     | 结果                                                | 截图                                                 |
+| ------------------------ | --------------------------------------------------- | ---------------------------------------------------- |
+| 无改动                   | `data-state=clean`、「· 已保存」，预算保存 disabled | `/tmp/dsh-sim-rel/shots/settings-projects-clean.png` |
+| 改「每天最多多少 token」 | `data-state=dirty`、「有未保存更改」                | `/tmp/dsh-sim-rel/shots/settings-projects-dirty.png` |
+| 点「保存预算」后         | `data-state=saved`、「已保存」，按钮重新 disabled   | `/tmp/dsh-sim-rel/shots/settings-projects-saved.png` |

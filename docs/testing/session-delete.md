@@ -475,3 +475,26 @@ DSH_AGENT_TOOL_PATCH=/tmp/model-overlay.yml ZHINAO_API_KEY=<key> pnpm smoke:agen
 2. **宿主内部契约**：`detachEntered`/`storageDomain`/`session-stop` 在真实宿主上只验证过「删除后刷新不复活」，没验证失败分支。
 3. **Windows**：`EBUSY` 重试、命名信号量路径未测（当前只在 macOS 上验证）。
 4. **多窗口/多 profile 并发**：审计与 journal 的并发写未在真实多窗口下压测。
+
+## 设置保存状态（USIM-U1-10，2026-11-28）
+
+设置分节统一加了「保存状态」行与稳定锚点（[plugin-conventions §7.2.6](../plugin-conventions.md#72-设置页)）。
+本节记录**桌面只读断言**（按约定只写不跑；真机证据见下面的 2026-11-28 记录）与单测覆盖位置。
+
+**单测（每次提交都跑）**：`test/settings-save-status.test.js` —— 用迷你 hooks 运行时驱动
+`lib/client.js` 里的真实组件，不复制实现。
+
+**桌面只读断言**（不点开关、不改值）：
+
+1. 设置 → 会话回收站：`[data-session-delete-settings]` 存在。
+2. `[data-session-delete-settings-status]` 的 `data-state` 为 `clean`，文本含「已保存」。
+3. 该分节没有显式保存按钮（保存是改即存），断言不存在 `[data-session-delete-settings-save]`。
+
+自动保存的失败路径（`setPrefs` reject）由单测用假 RPC 覆盖，桌面回归不制造写盘失败。
+
+**真机记录（同上）**：
+
+| 场景                       | 结果                                                       | 截图                                                         |
+| -------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------ |
+| 无改动                     | `data-state=clean`、「· 已保存」                           | `/tmp/dsh-sim-rel/shots/settings-session-delete-clean.png`   |
+| 拨「记住同时删除子会话」后 | `data-state=saved`、绿色「已保存」（约 2.5s 后回落 clean） | `/tmp/dsh-sim-rel/shots/settings-session-delete-changed.png` |

@@ -34,6 +34,11 @@ window.__ModuleLoader__.load({
     /** 轻量提示停留时间；到点后把自己清掉。 */
     let TOAST_MS = 4000;
     /**
+     * 设置分节「已保存」短暂态保留时长（ms）。生产 2500；单测通过
+     * `__test.settingsSaveTiming.resetMs` 改短（[plugin-conventions §7.2.6]）。
+     */
+    const SETTINGS_SAVE_TIMING = { resetMs: 2500 };
+    /**
      * 顾问线缓存：同一个 sessionId 的 in-flight Promise 与结果（带时间戳）。
      * 失败不进缓存（下一次挂载可以重试），页面刷新时整体失效；切会话是新的 key。
      * **必须带 TTL**：影子/答后建议在回合结束后才落盘，永久缓存会让顾问线永不出现。
@@ -322,6 +327,11 @@ window.__ModuleLoader__.load({
       ".dsh-advisor-off{display:flex;flex-direction:column;gap:4px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.28));border-radius:8px;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base,Canvas));}",
       ".dsh-advisor-off-title{font-weight:600;}",
       ".dsh-advisor-dirty{font-size:12px;color:var(--dsw-alias-state-warn-label,var(--dsw-alias-state-warn-primary));}",
+      // 统一保存状态（§7.2.6）：clean/dirty/saving/saved/error 都有可见文案与配色。
+      ".dsh-advisor-save-status{font-size:12px;color:var(--dsw-alias-label-secondary);}",
+      '.dsh-advisor-save-status[data-state="dirty"]{color:var(--dsw-alias-state-warn-label,var(--dsw-alias-state-warn-primary));}',
+      '.dsh-advisor-save-status[data-state="saved"]{color:var(--dsw-alias-state-success-primary);}',
+      '.dsh-advisor-save-status[data-state="error"]{color:var(--dsw-alias-state-error-primary);}',
       ".dsh-advisor-disclosure{display:flex;flex-direction:column;gap:4px;}",
       ".dsh-advisor-disclosure-toggle{display:flex;align-items:center;gap:6px;width:100%;padding:4px 0;border:0;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer;}",
       ".dsh-advisor-disclosure-toggle:hover{color:var(--dsw-alias-label-primary,CanvasText);}",
@@ -2011,6 +2021,20 @@ window.__ModuleLoader__.load({
       let busyState = React.useState("");
       let busy = busyState[0];
       let setBusy = busyState[1];
+      /**
+       * 保存状态（[plugin-conventions §7.2.6]）：saved 是 2.5s 短暂态，之后回落 clean
+       * （仍显示「· 已保存」）；error 一直留到下一次保存成功。详细原因由错误横幅给。
+       */
+      let saveStatusState = React.useState("clean");
+      let saveStatus = saveStatusState[0];
+      let setSaveStatus = saveStatusState[1];
+      let saveTimer = React.useRef(/** @type {any} */ (null));
+      React.useEffect(
+        () => () => {
+          if (saveTimer.current !== null) clearTimeout(saveTimer.current);
+        },
+        [],
+      );
       /** 「预览会发什么」的返回正文；空串表示还没预览。 */
       let previewState = React.useState("");
       let previewText = previewState[0];
@@ -2358,11 +2382,13 @@ window.__ModuleLoader__.load({
         }
         if (!api || typeof api.updateSettings !== "function") {
           setError({ text: t("settings.error.unreachable"), retry: "save" });
+          setSaveStatus("error");
           return;
         }
         setBusy("save");
         setError(null);
         setNotice("");
+        setSaveStatus("saving");
         invoke(api.updateSettings, patch).then(
           function onSaved(raw) {
             setBusy("");
@@ -2376,6 +2402,7 @@ window.__ModuleLoader__.load({
                   raw === undefined ? t("settings.error.unreachable") : t("settings.error.save");
               }
               setError({ text: message, retry: "save" });
+              setSaveStatus("error");
               return;
             }
             let settings = normalizeSettingsView(
@@ -2394,13 +2421,20 @@ window.__ModuleLoader__.load({
             );
             setDraft(settings);
             setTexts(textsOf(settings));
-            setNotice(t("settings.saved"));
+            // 「已保存」只由统一状态行说一次（§7.2.6 / §7.6.3），不再重复 notice/toast。
+            setNotice("");
+            setSaveStatus("saved");
+            if (saveTimer.current !== null) clearTimeout(saveTimer.current);
+            saveTimer.current = setTimeout(() => {
+              saveTimer.current = null;
+              setSaveStatus("clean");
+            }, SETTINGS_SAVE_TIMING.resetMs);
             clearErrorFor("save");
-            if (api && typeof api.notify === "function") api.notify(t("settings.saved"), "ok");
           },
           function onSaveFailed() {
             setBusy("");
             setError({ text: t("settings.error.unreachable"), retry: "save" });
+            setSaveStatus("error");
           },
         );
       }
@@ -3323,7 +3357,6 @@ window.__ModuleLoader__.load({
       /** off 时的紧凑卡片：只解释状态、给配置入口，不铺开任何设置。 @returns {any} */
       function offNotice() {
         let configured = draft.provider !== "" && draft.model !== "";
-        let dirty = isDirty();
         return h("div", { className: "dsh-advisor-off", "data-advisor-off": "", key: "off" }, [
           h("div", { className: "dsh-advisor-off-title", key: "title" }, t("settings.off.title")),
           h(
@@ -3335,9 +3368,6 @@ window.__ModuleLoader__.load({
                   .replace("{model}", draft.model)
               : t("settings.off.unconfigured"),
           ),
-          dirty
-            ? h("div", { className: "dsh-advisor-dirty", key: "dirty" }, t("settings.dirty"))
-            : null,
           h("div", { className: "dsh-advisor-actions", key: "actions" }, [
             h(
               "button",
@@ -3356,15 +3386,43 @@ window.__ModuleLoader__.load({
         ]);
       }
 
-      /** 保存 / 重新加载 / 未保存提示。 @param {boolean} dirty @returns {any} */
+      /**
+       * 保存动作条：固定在分节底部（§7.2.5），无改动时保存 disabled；右侧永远有一行
+       * 保存状态（§7.2.6）：clean「· 已保存」/ dirty「有未保存更改」/ saving / saved / error。
+       * @param {boolean} dirty
+       * @returns {any}
+       */
       function actionBar(dirty) {
+        let statusState =
+          busy === "save"
+            ? "saving"
+            : saveStatus === "error" || (error !== null && error.retry === "save")
+              ? "error"
+              : dirty
+                ? "dirty"
+                : saveStatus === "saved"
+                  ? "saved"
+                  : "clean";
+        let statusText =
+          statusState === "saving"
+            ? t("settings.saving")
+            : statusState === "error"
+              ? error !== null && typeof error.text === "string" && error.text !== ""
+                ? error.text
+                : t("settings.error.save")
+              : statusState === "dirty"
+                ? t("settings.dirty")
+                : statusState === "saved"
+                  ? t("settings.saved")
+                  : `· ${t("settings.saved")}`;
         return h("div", { className: "dsh-advisor-actions", key: "actions" }, [
           h(
             "button",
             {
               className: "dsh-advisor-btn dsh-advisor-btn--primary",
               "data-advisor-save": "",
-              disabled: busy === "save" || busy === "load",
+              "data-advisor-settings-save": "",
+              disabled: busy === "save" || busy === "load" || dirty !== true,
               key: "save",
               onClick: save,
               type: "button",
@@ -3383,13 +3441,24 @@ window.__ModuleLoader__.load({
             },
             t("settings.reload"),
           ),
-          dirty
-            ? h(
-                "span",
-                { className: "dsh-advisor-dirty", "data-advisor-dirty": "", key: "dirty" },
-                t("settings.dirty"),
-              )
-            : null,
+          h(
+            "span",
+            {
+              // 旧锚点 `data-advisor-dirty` 保留（§7.8「新锚点附加、不删旧锚点」），
+              // 语义不变：只有 dirty 时存在；同时挂新锚点与新 class 供 §7.2.6 使用。
+              className:
+                statusState === "dirty"
+                  ? "dsh-advisor-save-status dsh-advisor-dirty"
+                  : "dsh-advisor-save-status",
+              "data-advisor-settings-status": statusState,
+              "data-advisor-dirty": statusState === "dirty" ? "" : undefined,
+              "data-state": statusState,
+              key: "status",
+              role: "status",
+              "aria-live": "polite",
+            },
+            statusText,
+          ),
         ]);
       }
 
@@ -4956,6 +5025,8 @@ window.__ModuleLoader__.load({
         isAdviceTurnReady: isAdviceTurnReady,
         // 注入的样式表文本：给「只用宿主真实存在的主题 token」这条回归用例读。
         clientCss: () => CSS,
+        // 单测把「已保存」短暂态改短，避免真等 2.5s（生产值不变）。
+        settingsSaveTiming: SETTINGS_SAVE_TIMING,
       }),
     });
 

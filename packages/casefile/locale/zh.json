@@ -39,6 +39,7 @@
     "trash.purge": "清空回收站",
     "trash.purgePreview": "将硬删 {count} 个条目（{bytes}，不可恢复）；{skipped} 个来历不明的条目会保留。",
     "trash.purgeConfirm": "确认清空",
-    "trash.cancel": "取消"
+    "trash.cancel": "取消",
+    "settings.readOnlyStatus": "诊断信息 · 无可保存设置"
   }
 }

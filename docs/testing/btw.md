@@ -1179,3 +1179,25 @@ document body because the docked composer contains them**"，而浮层原本就�
 - 顺手把上表写错的计数改真（`notice.test.js` 6 项、`client.test.js` 10 项、总数 121 / +18；冒烟实际是
   默认段 +3、`--deep` +2、改写 1 条）。本轮 follow-up 后 `client.test.js` 13 项（B1 行为 2 条 + 防漂移
   1 条），btw 包内 **121 pass / 0 fail**。
+
+## 设置保存状态（USIM-U1-10，2026-11-28）
+
+设置分节统一加了「保存状态」行与稳定锚点（[plugin-conventions §7.2.6](../plugin-conventions.md#72-设置页)）。
+本节记录**桌面只读断言**（按约定只写不跑；真机证据见下面的 2026-11-28 记录）与单测覆盖位置。
+
+**单测（每次提交都跑）**：`test/settings-save-status.test.js` —— 用迷你 hooks 运行时驱动
+`lib/client.js` 里的真实组件，不复制实现。
+
+**桌面只读断言**（不改值、不点保存）：
+
+1. 设置 → 旁问：`[data-btw-settings]` 存在。
+2. `[data-btw-settings-status]` 的 `data-state` 为 `clean`，文本含「已保存」。
+3. `[data-btw-settings-save]` `disabled === true`（无改动不能点）。
+
+**真机记录（同上）**：
+
+| 场景                     | 结果                                                | 截图                                            |
+| ------------------------ | --------------------------------------------------- | ----------------------------------------------- |
+| 无改动                   | `data-state=clean`、「· 已保存」，保存按钮 disabled | `/tmp/dsh-sim-rel/shots/settings-btw-clean.png` |
+| 改「主对话显示完整答案」 | `data-state=dirty`、「有未保存更改」                | `/tmp/dsh-sim-rel/shots/settings-btw-dirty.png` |
+| 点保存后                 | `data-state=saved`、「已保存」                      | `/tmp/dsh-sim-rel/shots/settings-btw-saved.png` |

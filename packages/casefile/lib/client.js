@@ -168,6 +168,7 @@ window.__ModuleLoader__.load({
       "settings.reaDetailOk": "检测结果：找到 {count} 个 mcp__rea__* 工具。",
       "settings.reaOk": "已接入（{count} 个工具）",
       "settings.hint": "项目数据只在本机；规格包默认脱敏，但分享前请自己过一遍。",
+      "settings.readOnlyStatus": "诊断信息 · 无可保存设置",
       "nav.title": "案卷",
       "auth.owned": "自有",
       "auth.authorized": "已授权",
@@ -340,6 +341,7 @@ window.__ModuleLoader__.load({
       "settings.reaOk": "Connected ({count} tools)",
       "settings.hint":
         "Project data stays local; spec packs are redacted by default but review them before sharing.",
+      "settings.readOnlyStatus": "Diagnostics · nothing to save",
       "nav.title": "Casefile",
       "auth.owned": "owned",
       "auth.authorized": "authorized",
@@ -2022,6 +2024,19 @@ window.__ModuleLoader__.load({
           "div",
           { className: "cf-muted", style: { marginTop: 6, fontSize: 11 } },
           text(t, "settings.hint"),
+        ),
+        // 只读分节的保存状态（[plugin-conventions §7.2.6]）：如实说明「没有可保存的设置」，
+        // 不伪造「已保存」，也避免用户找不到保存按钮时怀疑改动没生效。
+        h(
+          "div",
+          {
+            className: "cf-muted",
+            style: { marginTop: 8, paddingTop: 6, borderTop: "1px solid rgba(128,128,128,.25)" },
+            "data-casefile-settings-status": "readonly",
+            "data-state": "readonly",
+            role: "status",
+          },
+          text(t, "settings.readOnlyStatus"),
         ),
       );
     }

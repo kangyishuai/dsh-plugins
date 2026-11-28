@@ -453,3 +453,24 @@ pnpm smoke:session-rewind-desktop -- --require --recall --deep \
 
 设置从抽屉第 4 个页签迁到独立分节「设置 → 会话回溯」；抽屉只剩会话级数据（已撤回 / 回溯记录 / 救援点）。
 回溯记录与救援点依赖当前会话，**没有**搬进全局设置页。
+
+## 设置保存状态（USIM-U1-10，2026-11-28）
+
+设置分节统一加了「保存状态」行与稳定锚点（[plugin-conventions §7.2.6](../plugin-conventions.md#72-设置页)）。
+本节记录**桌面只读断言**（按约定只写不跑；真机证据见下面的 2026-11-28 记录）与单测覆盖位置。
+
+**单测（每次提交都跑）**：`test/settings-save-status.test.js` —— 用迷你 hooks 运行时驱动
+`lib/client.js` 里的真实组件，不复制实现。
+
+**桌面只读断言**（不点单选/开关）：
+
+1. 设置 → 会话回溯：`[data-srw-settings]` 存在。
+2. `[data-session-rewind-settings-status]` 的 `data-state` 为 `clean`，文本含「已保存」。
+3. 该分节没有显式保存按钮（偏好写 localStorage，改即存）。
+
+**真机记录（同上）**：
+
+| 场景               | 结果                             | 截图                                                         |
+| ------------------ | -------------------------------- | ------------------------------------------------------------ |
+| 无改动             | `data-state=clean`、「· 已保存」 | `/tmp/dsh-sim-rel/shots/settings-session-rewind-clean.png`   |
+| 切换默认回退范围后 | `data-state=saved`、「已保存」   | `/tmp/dsh-sim-rel/shots/settings-session-rewind-changed.png` |

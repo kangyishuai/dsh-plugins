@@ -144,3 +144,10 @@ pnpm verify
 - 工具上下文里的 `exec.agent.id` / `exec.callId` 是否仍按当前字段名提供（归属与来源靠它们）。
 - `window.__dshArtifactsOpenTab` 仍在（冒烟 §1.3 依赖它）。
 - 主题 token 快照（`pnpm tokens:host:check`）——面板用的是内联中性色，暂不依赖 token，但封面/iframe 主题后续会用到。
+
+## 设置保存状态（USIM-U1-10，2026-11-28）：N/A
+
+本插件**没有 `settings.section`**（只注册右栏工具页签 `sidebar.right.pane.tab` 与工具行
+`tool.call.toolview`），也没有用户可保存的设置：唯一的持久化是「最近打开过的工件 id」
+（`localStorage`，用于刷新后恢复页签），不是设置项。所以本轮「统一保存状态」不改 artifacts，
+也不发版；盘点表里记为 N/A。

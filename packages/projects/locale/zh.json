@@ -826,6 +826,13 @@
     "detail.nameSeparator": "、",
     "detail.collapseSaveFailed": "折叠状态没能保存：下次打开会恢复原状（{reason}）",
     "settings.budgetEdit": "改预算",
-    "settings.realtimeCiHintDisabled": "未实现：当前只有 30–90s 轮询，这个开关不会启动任何东西（已禁用）。"
+    "settings.realtimeCiHintDisabled": "未实现：当前只有 30–90s 轮询，这个开关不会启动任何东西（已禁用）。",
+    "settings.saveSaved": "已保存",
+    "settings.saveSaving": "保存中…",
+    "settings.saveUnsaved": "有未保存更改",
+    "settings.saveFailed": "保存失败",
+    "settings.saveFailedDetail": "保存失败：{reason}",
+    "settings.saveRetry": "重试",
+    "settings.saveProjectChanged": "项目已切换，请重新保存"
   }
 }

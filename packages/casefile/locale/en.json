@@ -39,6 +39,7 @@
     "trash.purge": "Empty trash",
     "trash.purgePreview": "Permanently deletes {count} entries ({bytes}); {skipped} unknown entries are kept.",
     "trash.purgeConfirm": "Empty it",
-    "trash.cancel": "Cancel"
+    "trash.cancel": "Cancel",
+    "settings.readOnlyStatus": "Diagnostics · nothing to save"
   }
 }

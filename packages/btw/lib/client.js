@@ -48,6 +48,11 @@ window.__ModuleLoader__.load({
     const NOTICE_FIRST_DELAY_MS = 300;
     /** 自动开面板后等多久检查 tab 是否真的渲染出来（宿主右栏在空白会话里可能拒绝 per-session tab）。 */
     const REVEAL_FALLBACK_MS = 700;
+    /**
+     * 设置分节「已保存」短暂态保留时长（ms）。生产 2500；单测通过 `__test.settingsSaveTiming`
+     * 改短（[plugin-conventions §7.2.6]：保存结果必须在界面上看得见）。
+     */
+    const SETTINGS_SAVE_TIMING = { resetMs: 2500 };
 
     const zh = {
       button: "旁问",
@@ -116,7 +121,10 @@ window.__ModuleLoader__.load({
       "settings.more": "更多设置",
       "settings.save": "保存",
       "settings.saved": "已保存",
+      "settings.saving": "保存中…",
+      "settings.unsaved": "有未保存更改",
       "settings.failed": "保存失败",
+      "settings.failedReason": "保存失败：宿主没有返回结果，可重试",
       "settings.mode": "模式",
       "settings.readOnly": "只读",
       "settings.echo": "主对话显示完整答案",
@@ -198,7 +206,10 @@ window.__ModuleLoader__.load({
       "settings.more": "More settings",
       "settings.save": "Save",
       "settings.saved": "Saved",
+      "settings.saving": "Saving…",
+      "settings.unsaved": "Unsaved changes",
       "settings.failed": "Save failed",
+      "settings.failedReason": "Save failed: the host returned nothing — retry",
       "settings.mode": "Mode",
       "settings.readOnly": "read-only",
       "settings.echo": "Show full answer in the conversation",
@@ -292,6 +303,11 @@ window.__ModuleLoader__.load({
       ".dsh-btw-select{flex:1 1 auto;min-width:0;height:28px;padding:0 6px;border-radius:var(--dsw-radius-sm,6px);border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));background:var(--dsw-alias-bg-base,Canvas);color:var(--dsw-alias-label-primary,CanvasText);font:inherit;font-size:11.5px;}",
       ".dsh-btw-input{flex:1 1 auto;min-width:0;resize:vertical;min-height:48px;padding:6px 8px;border-radius:var(--dsw-radius-sm,6px);border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));background:var(--dsw-alias-bg-base,Canvas);color:var(--dsw-alias-label-primary,CanvasText);font:inherit;}",
       ".dsh-btw-setrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:6px 0;}",
+      // 设置保存状态（§7.2.6）：clean/dirty/saving/saved/error 五态都有可见文案与颜色。
+      ".dsh-btw-save-status{font-size:11.5px;color:var(--dsw-alias-label-tertiary,GrayText);}",
+      '.dsh-btw-save-status[data-state="saved"]{color:var(--dsw-alias-state-success-primary,#2f9e63);}',
+      '.dsh-btw-save-status[data-state="dirty"]{color:var(--dsw-alias-state-warn-primary,#b8860b);}',
+      '.dsh-btw-save-status[data-state="error"]{color:var(--dsw-alias-state-error-primary,#d9534f);}',
       ".dsh-btw-setlabel{min-width:0;color:var(--dsw-alias-label-secondary,GrayText);}",
     ].join("");
 
@@ -2266,7 +2282,11 @@ window.__ModuleLoader__.load({
         const [echo, setEcho] = React.useState(true);
         const [bounded, setBounded] = React.useState(false);
         const [saving, setSaving] = React.useState(false);
-        const [notice, setNotice] = React.useState("");
+        // 保存状态（[plugin-conventions §7.2.6]）：clean / dirty / saving / saved / error
+        // 五态都必须在界面上看得见。saved 是短暂态，2.5s 后回落 clean；error 一直留到下次保存成功。
+        const [saveState, setSaveState] = React.useState("clean");
+        const [saveError, setSaveError] = React.useState("");
+        const saveTimer = React.useRef(/** @type {any} */ (null));
         const [expanded, setExpanded] = React.useState(false);
 
         const hydrate = React.useCallback((/** @type {any} */ value) => {
@@ -2284,6 +2304,12 @@ window.__ModuleLoader__.load({
           Promise.resolve(call()).then((value) => hydrate(value));
         }, [api, hydrate]);
 
+        React.useEffect(() => {
+          return () => {
+            if (saveTimer.current !== null) clearTimeout(saveTimer.current);
+          };
+        }, []);
+
         const dirty =
           loaded !== null &&
           (tools !== (loaded.allowedTools ?? []).join(", ") ||
@@ -2291,12 +2317,25 @@ window.__ModuleLoader__.load({
             echo !== (loaded.echoAnswer !== false) ||
             bounded !== (loaded.boundedContext === true));
 
+        /** saved 的短暂态由定时器回落；其余态由派生值决定。 */
+        const statusState =
+          saving || saveState === "saving"
+            ? "saving"
+            : saveState === "error"
+              ? "error"
+              : dirty
+                ? "dirty"
+                : saveState === "saved"
+                  ? "saved"
+                  : "clean";
+
         const save = async () => {
           const call =
             api && typeof api.updateSettings === "function" ? api.updateSettings : undefined;
           if (!call || saving) return;
           setSaving(true);
-          setNotice("");
+          setSaveState("saving");
+          setSaveError("");
           const next = await Promise.resolve(
             call({
               allowedTools: tools,
@@ -2308,9 +2347,15 @@ window.__ModuleLoader__.load({
           setSaving(false);
           if (next && typeof next === "object") {
             hydrate(next);
-            setNotice(t("settings.saved"));
+            setSaveState("saved");
+            if (saveTimer.current !== null) clearTimeout(saveTimer.current);
+            saveTimer.current = setTimeout(() => {
+              saveTimer.current = null;
+              setSaveState("clean");
+            }, SETTINGS_SAVE_TIMING.resetMs);
           } else {
-            setNotice(t("settings.failed"));
+            setSaveState("error");
+            setSaveError(t("settings.failedReason"));
           }
         };
 
@@ -2326,6 +2371,17 @@ window.__ModuleLoader__.load({
             control,
             hint === "" ? null : h("div", { className: "dsh-btw-meta" }, hint),
           );
+
+        const statusText =
+          statusState === "saving"
+            ? t("settings.saving")
+            : statusState === "error"
+              ? saveError || t("settings.failed")
+              : statusState === "dirty"
+                ? t("settings.unsaved")
+                : statusState === "saved"
+                  ? t("settings.saved")
+                  : `· ${t("settings.saved")}`;
 
         return h(
           "div",
@@ -2378,18 +2434,6 @@ window.__ModuleLoader__.load({
               },
               t("settings.more"),
             ),
-            h(
-              "button",
-              {
-                type: "button",
-                className: "dsh-btw-btn",
-                "data-btw-settings-save": "true",
-                disabled: !dirty || saving,
-                onClick: () => void save(),
-              },
-              t("settings.save"),
-            ),
-            notice === "" ? null : notice,
           ),
           expanded
             ? h(
@@ -2433,6 +2477,33 @@ window.__ModuleLoader__.load({
                 h("div", { className: "dsh-btw-meta" }, t("settings.toolsHint")),
               )
             : null,
+          // 保存动作条固定在本分节底部（§7.2.5）：无改动时禁用，右侧永远有一行保存状态（§7.2.6）。
+          h(
+            "div",
+            { className: "dsh-btw-setrow", "data-btw-settings-savebar": "true" },
+            h(
+              "button",
+              {
+                type: "button",
+                className: "dsh-btw-btn",
+                "data-btw-settings-save": "true",
+                disabled: dirty !== true || saving,
+                onClick: () => void save(),
+              },
+              t("settings.save"),
+            ),
+            h(
+              "span",
+              {
+                className: "dsh-btw-save-status",
+                "data-btw-settings-status": statusState,
+                "data-state": statusState,
+                role: "status",
+                "aria-live": "polite",
+              },
+              statusText,
+            ),
+          ),
         );
       }
 
@@ -2528,6 +2599,8 @@ window.__ModuleLoader__.load({
       planNotice,
       noticeAction,
       composeNoticeToast,
+      // 单测把「已保存」短暂态改短，避免真等 2.5s（生产值不变）。
+      settingsSaveTiming: SETTINGS_SAVE_TIMING,
     };
 
     return module.exports;

@@ -611,3 +611,31 @@ pnpm smoke:advisor-desktop --require --advice
 6. `resolveModelInfo` 返回的 `reasoning.efforts` / `context.contextWindow` 形状不变，
    且 `UNSUPPORTED_REASONING_EFFORT` 仍是**抛错**而不是 clamp（否则 effort 降级逻辑可以简化）；
 7. `LlmModelInfo` 仍然**没有价格字段**（有的话金额就不用用户填单价了）。
+
+## 设置保存状态（USIM-U1-10，2026-11-28）
+
+设置分节统一加了「保存状态」行与稳定锚点（[plugin-conventions §7.2.6](../plugin-conventions.md#72-设置页)）。
+本节记录**桌面只读断言**（按约定只写不跑；真机证据见下面的 2026-11-28 记录）与单测覆盖位置。
+
+**单测（每次提交都跑）**：`test/settings-save-status.test.js` —— 用迷你 hooks 运行时驱动
+`lib/client.js` 里的真实组件，不复制实现。
+
+**桌面只读断言**（不修改任何值、不点保存）：
+
+1. 打开 设置 → 顾问：`[data-advisor-settings]` 存在且 `[data-advisor-error]` 不存在。
+2. `[data-advisor-settings-status]` 存在，`data-state="clean"`，文本含「已保存」；
+   clean 时旧锚点 `[data-advisor-dirty]` 必须不存在。
+3. （dirty 态才有的旧锚点）改动后 `[data-advisor-dirty]` 存在且带 `data-advisor-dirty=""`——
+   这是 `main` 上既有锚点，按 §7.8「新锚点附加、不删旧锚点」保留，桌面回归仍可用它定位未保存态。
+4. `[data-advisor-settings-save]`（与既有 `[data-advisor-save]` 同一按钮）`disabled === true`。
+5. 关闭对话框后断言它消失（与既有回归一致）。
+
+失败态：状态行文本必须是「保存失败：原因」（原因与该分节顶部 `[data-advisor-error]` 横幅同源）。
+
+**真机记录（2026-11-28，隔离实例 CDP 9410，`dsh plugin add file:<tgz>` 替换安装后重启）**：
+
+| 场景     | 结果                                                                | 截图                                                |
+| -------- | ------------------------------------------------------------------- | --------------------------------------------------- |
+| 无改动   | `data-state=clean`、「· 已保存」，保存按钮 `disabled`（opacity .6） | `/tmp/dsh-sim-rel/shots/settings-advisor-clean.png` |
+| 改模式后 | `data-state=dirty`、「有未保存的改动」，保存按钮可点                | `/tmp/dsh-sim-rel/shots/settings-advisor-dirty.png` |
+| 点保存后 | `data-state=saved`、绿色「已保存」                                  | `/tmp/dsh-sim-rel/shots/settings-advisor-saved.png` |

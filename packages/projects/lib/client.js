@@ -54,6 +54,13 @@ window.__ModuleLoader__.load({
         "线程以失败结束时，60 秒后自动再发一句「继续」；累计最多 2 次（不因中间恢复清零）。这不是「用量恢复续跑」。",
       "settings.budgetSave": "保存预算",
       "settings.budgetSavedSummary": "预算已保存：{summary}",
+      "settings.saveSaved": "已保存",
+      "settings.saveSaving": "保存中…",
+      "settings.saveUnsaved": "有未保存更改",
+      "settings.saveFailed": "保存失败",
+      "settings.saveFailedDetail": "保存失败：{reason}",
+      "settings.saveRetry": "重试",
+      "settings.saveProjectChanged": "项目已切换，请重新保存",
       "settings.budgetUnlimited": "不限",
       "settings.memoryTitle": "记忆与指令",
       "settings.memoryInstructions": "指令 {used}/{limit}「更新于 {updated}」",
@@ -1490,6 +1497,13 @@ window.__ModuleLoader__.load({
         'When a thread ends failed, it re-sends "continue" after 60s; at most 2 tries per thread, never reset. Not the same as resuming after a usage limit.',
       "settings.budgetSave": "Save budget",
       "settings.budgetSavedSummary": "Budget saved: {summary}",
+      "settings.saveSaved": "Saved",
+      "settings.saveSaving": "Saving…",
+      "settings.saveUnsaved": "Unsaved changes",
+      "settings.saveFailed": "Save failed",
+      "settings.saveFailedDetail": "Save failed: {reason}",
+      "settings.saveRetry": "Retry",
+      "settings.saveProjectChanged": "The project changed — save again",
       "settings.budgetUnlimited": "unlimited",
       "settings.memoryTitle": "Memory and instructions",
       "settings.memoryInstructions": "Instructions {used}/{limit} · updated {updated}",
@@ -1906,6 +1920,12 @@ window.__ModuleLoader__.load({
      * 产物查看器(40) 会被 popover(70) 盖住。统一从这里取档，别再写裸数字。
      * panel < sticky < notice < popover < viewer < drawer < modal < toast。
      */
+    /**
+     * 设置分节「已保存」短暂态保留时长（ms）。生产 2500；单测通过
+     * `__test.settingsSaveTiming.resetMs` 改短（[plugin-conventions §7.2.6]）。
+     */
+    var SETTINGS_SAVE_TIMING = { resetMs: 2500 };
+
     var Z = {
       panel: 2,
       sticky: 3,
@@ -15373,23 +15393,106 @@ window.__ModuleLoader__.load({
         reload();
       }, [reload]);
 
+      /**
+       * 统一保存状态（[plugin-conventions §7.2.6]）：预算（显式保存）、策略开关与通知开关
+       * （自动保存）共用同一行状态；error 保留最后一次动作（kind = budget | policy | notify）
+       * 以便重试。重试严格绑定**保存时的 projectId**：切项目后旧 pending 一律作废并提示。
+       */
+      var saveViewHook = useState({
+        state: "clean",
+        errorText: "",
+        retryable: false,
+        kind: "",
+        /** 切项目后作废旧 pending 的一次性提示（clean 态显示）。 */
+        hintText: "",
+      });
+      var saveView = saveViewHook[0];
+      var setSaveView = saveViewHook[1];
+      var saveTimerRef = useRef(/** @type {any} */ (null));
+      /** 最后一次失败的「策略」patch：{ projectId, patch }。 */
+      var lastPolicyPatchRef = useRef(/** @type {any} */ (null));
+      /** 最后一次失败的「预算」patch：{ projectId, patch }（整份 patch，不含表单可达值）。 */
+      var lastBudgetPatchRef = useRef(/** @type {any} */ (null));
+      /** 最后一次失败的「通知开关」：{ projectId, prefs }。 */
+      var lastNotifyPrefsRef = useRef(/** @type {any} */ (null));
+      /** 有未完成的失败保存（用于切项目时提示，而不是静默清掉）。 */
+      var savePendingRef = useRef(false);
+      /** 当前选中项目 id 的最新值（异步回调里判断「响应是否已过期」）。 */
+      var selectedIdRef = useRef("");
+      /** 保存序号：只让最后一次保存的结果更新状态行（防并发/过期响应覆盖）。 */
+      var saveSeqRef = useRef(0);
+
+      /** 保存成功：短暂显示「已保存」，之后回落「· 已保存」。 */
+      var markSettingsSaved = useCallback(() => {
+        if (saveTimerRef.current !== null) clearTimeout(saveTimerRef.current);
+        savePendingRef.current = false;
+        setSaveView({ state: "saved", errorText: "", retryable: false, kind: "", hintText: "" });
+        saveTimerRef.current = setTimeout(() => {
+          saveTimerRef.current = null;
+          setSaveView({ state: "clean", errorText: "", retryable: false, kind: "", hintText: "" });
+        }, SETTINGS_SAVE_TIMING.resetMs);
+      }, [setSaveView]);
+
+      /**
+       * 保存某项目的策略 patch。projectId 显式传入（不读「当前选中」），
+       * 保证重试/迟到响应都不会写到别的项目上。
+       * @param {string} projectId
+       * @param {any} patch
+       */
+      var savePolicyPatch = useCallback(
+        (/** @type {string} */ projectId, /** @type {any} */ patch) => {
+          var selected = view.projects.find(
+            (/** @type {any} */ project) => project.id === projectId,
+          );
+          if (!selected) {
+            savePendingRef.current = false;
+            setSaveView({
+              state: "clean",
+              errorText: "",
+              retryable: false,
+              kind: "",
+              hintText: text(t, "settings.saveProjectChanged"),
+            });
+            return;
+          }
+          var nextPolicy = { ...selected.policy, ...patch };
+          lastPolicyPatchRef.current = { projectId: projectId, patch: patch };
+          savePendingRef.current = true;
+          saveSeqRef.current += 1;
+          var seq = saveSeqRef.current;
+          setSaveView({ state: "saving", errorText: "", retryable: false, kind: "policy" });
+          call(api.ctx, "updateProject", { id: projectId, patch: { policy: nextPolicy } }).then(
+            () => {
+              // 过期响应（期间又保存过 / 已切项目）：不覆盖当前状态。
+              if (seq !== saveSeqRef.current || selectedIdRef.current !== projectId) return;
+              markSettingsSaved();
+              reload();
+            },
+            (error) => {
+              if (seq !== saveSeqRef.current || selectedIdRef.current !== projectId) return;
+              setSaveView({
+                state: "error",
+                errorText: text(t, "settings.saveFailedDetail", {
+                  reason: String(error?.message ?? error).slice(0, 160),
+                }),
+                retryable: true,
+                kind: "policy",
+              });
+            },
+          );
+        },
+        [api, markSettingsSaved, reload, setSaveView, t, view.projects],
+      );
+
       var applyPolicy = useCallback(
         (/** @type {any} */ patch) => {
           var selected = view.projects.find(
             (/** @type {any} */ project) => project.id === view.selectedId,
           );
           if (!selected) return;
-          var nextPolicy = { ...selected.policy, ...patch };
-          call(api.ctx, "updateProject", { id: selected.id, patch: { policy: nextPolicy } }).then(
-            () => reload(),
-            (error) =>
-              setView((/** @type {any} */ prev) => ({
-                ...prev,
-                error: String(error?.message ?? error),
-              })),
-          );
+          savePolicyPatch(String(selected.id), patch);
         },
-        [api, reload, setView, view.projects, view.selectedId],
+        [savePolicyPatch, view.projects, view.selectedId],
       );
 
       var describe = view.describe;
@@ -15414,6 +15517,29 @@ window.__ModuleLoader__.load({
         view.projects[0] ||
         null;
       var selectedForB3Id = selectedForB3 ? String(selectedForB3.id) : "";
+      selectedIdRef.current = selectedForB3Id;
+      /**
+       * 切项目：旧项目的失败 pending（重试载荷）、预算草稿与 error 态全部作废。
+       * 有 pending 时在状态行留一句「项目已切换，请重新保存」，不静默清掉。
+       */
+      useEffect(() => {
+        lastPolicyPatchRef.current = null;
+        lastBudgetPatchRef.current = null;
+        lastNotifyPrefsRef.current = null;
+        if (savePendingRef.current) {
+          savePendingRef.current = false;
+          setSaveView({
+            state: "clean",
+            errorText: "",
+            retryable: false,
+            kind: "",
+            hintText: text(t, "settings.saveProjectChanged"),
+          });
+        }
+        setB3((/** @type {any} */ prev) =>
+          prev.draft === null && prev.busy === "" ? prev : { ...prev, draft: null, busy: "" },
+        );
+      }, [selectedForB3Id]);
       var loadB3 = useCallback(() => {
         if (selectedForB3Id === "") return;
         Promise.all([
@@ -15450,41 +15576,121 @@ window.__ModuleLoader__.load({
             ? ""
             : String(stored);
       });
+      /** 预算表单是否有未保存改动（与已存值比较；空 = 不限）。 */
+      var budgetDirty = /** @type {boolean} */ (false);
+      if (b3.draft) {
+        budgetKeys.forEach((/** @type {any} */ key) => {
+          if (!Object.hasOwn(b3.draft, key)) return;
+          var storedBudget = selectedForB3?.budget ? selectedForB3.budget[key] : null;
+          var storedText =
+            storedBudget === null || storedBudget === undefined ? "" : String(storedBudget);
+          if (String(b3.draft[key] === "" ? "" : b3.draft[key]).trim() !== storedText.trim()) {
+            budgetDirty = true;
+          }
+        });
+      }
       var setDraft = (/** @type {any} */ key, /** @type {any} */ value) => {
         setB3((/** @type {any} */ prev) => ({
           ...prev,
           draft: { ...(prev.draft || {}), [key]: value },
         }));
       };
+      /**
+       * 显式保存预算：无改动时按钮 disabled（§7.2.5）；结果统一进状态行（§7.2.6），
+       * 失败保留草稿与原因，可重试。
+       */
+      /**
+       * 保存某项目的预算 patch。projectId 显式传入；成功时恢复既有「预算已保存：{summary}」
+       * 回执（`data-projects-settings-b3-result`，smoke-projects 有断言），同时更新统一状态行。
+       * @param {string} projectId
+       * @param {Record<string, any>} patch
+       */
+      var saveBudgetPatch = (projectId, patch) => {
+        savePendingRef.current = true;
+        lastBudgetPatchRef.current = { projectId: projectId, patch: patch };
+        saveSeqRef.current += 1;
+        var seq = saveSeqRef.current;
+        setB3((/** @type {any} */ prev) => ({ ...prev, busy: "budget" }));
+        setSaveView({ state: "saving", errorText: "", retryable: false, kind: "budget" });
+        call(api.ctx, "setBudget", { projectId: projectId, budget: patch }).then(
+          (/** @type {any} */ result) => {
+            if (seq !== saveSeqRef.current || selectedIdRef.current !== projectId) return;
+            setB3((/** @type {any} */ prev) => ({
+              ...prev,
+              busy: "",
+              draft: null,
+              // AUD-projects-ui-08：保存提示回显人话摘要（smoke 断言读这个节点）。
+              message: text(t, "settings.budgetSavedSummary", {
+                summary: budgetSummaryParts(t, result?.budget || patch, budgetKeys).join(" · "),
+              }),
+            }));
+            markSettingsSaved();
+            reload();
+          },
+          (/** @type {any} */ error) => {
+            if (seq !== saveSeqRef.current || selectedIdRef.current !== projectId) return;
+            setB3((/** @type {any} */ prev) => ({ ...prev, busy: "" }));
+            setSaveView({
+              state: "error",
+              errorText: text(t, "settings.saveFailedDetail", {
+                reason: String(error?.message ? error.message : error).slice(0, 160),
+              }),
+              retryable: true,
+              kind: "budget",
+            });
+          },
+        );
+      };
+
       var saveBudget = () => {
-        if (!selectedForB3) return;
+        if (!selectedForB3 || budgetDirty !== true) return;
         var patch = /** @type {Record<string, any>} */ ({});
         budgetKeys.forEach((/** @type {any} */ key) => {
           var raw = String(budgetValues[key] === "" ? "" : budgetValues[key]).trim();
           patch[key] = raw === "" ? null : Number(raw);
         });
-        setB3((/** @type {any} */ prev) => ({ ...prev, busy: "budget", message: "" }));
-        call(api.ctx, "setBudget", { projectId: selectedForB3.id, budget: patch }).then(
-          (/** @type {any} */ result) => {
-            setB3((/** @type {any} */ prev) => ({
-              ...prev,
-              busy: "",
-              draft: null,
-              // AUD-projects-ui-08：保存提示回显人话摘要，不再把原始 JSON 丢给用户。
-              message: text(t, "settings.budgetSavedSummary", {
-                summary: budgetSummaryParts(t, result?.budget || patch, budgetKeys).join(" · "),
-              }),
-            }));
-            reload();
-          },
-          (/** @type {any} */ error) => {
-            setB3((/** @type {any} */ prev) => ({
-              ...prev,
-              busy: "",
-              message: String(error?.message ? error.message : error).slice(0, 160),
-            }));
-          },
-        );
+        saveBudgetPatch(String(selectedForB3.id), patch);
+      };
+
+      /**
+       * 重试最后一次保存失败的预算 / 策略 / 通知开关改动。
+       * 严格校验「当前选中项目 === 失败时的项目」：切项目后旧 pending 已作废，
+       * 这里再兜一道，绝不把上一次的 patch 写到另一个项目上。
+       */
+      var retrySettingsSave = () => {
+        var pending =
+          saveView.kind === "budget"
+            ? lastBudgetPatchRef.current
+            : saveView.kind === "notify"
+              ? lastNotifyPrefsRef.current
+              : lastPolicyPatchRef.current;
+        if (pending === null || pending === undefined) {
+          setSaveView({
+            state: "clean",
+            errorText: "",
+            retryable: false,
+            kind: "",
+            hintText: text(t, "settings.saveProjectChanged"),
+          });
+          return;
+        }
+        if (pending.projectId !== selectedIdRef.current) {
+          lastPolicyPatchRef.current = null;
+          lastBudgetPatchRef.current = null;
+          lastNotifyPrefsRef.current = null;
+          savePendingRef.current = false;
+          setSaveView({
+            state: "clean",
+            errorText: "",
+            retryable: false,
+            kind: "",
+            hintText: text(t, "settings.saveProjectChanged"),
+          });
+          return;
+        }
+        if (saveView.kind === "budget") saveBudgetPatch(pending.projectId, pending.patch);
+        else if (saveView.kind === "notify") saveNotifyPrefs(pending.projectId, pending.prefs);
+        else savePolicyPatch(pending.projectId, pending.patch);
       };
       var b3Message =
         b3.message === ""
@@ -15536,8 +15742,14 @@ window.__ModuleLoader__.load({
             "button",
             {
               type: "button",
-              style: styles.button,
+              style: {
+                ...styles.button,
+                opacity: budgetDirty === true && b3.busy !== "budget" ? 1 : 0.5,
+                cursor: budgetDirty === true && b3.busy !== "budget" ? "pointer" : "not-allowed",
+              },
               "data-projects-budget-save": "",
+              "data-projects-settings-save": "",
+              disabled: budgetDirty !== true || b3.busy === "budget",
               onClick: saveBudget,
             },
             text(t, "settings.budgetSave"),
@@ -15790,6 +16002,37 @@ window.__ModuleLoader__.load({
         if (!failed && !waiting && !completed) return "none";
         return "custom";
       })();
+      /**
+       * 保存某项目的通知开关。走统一状态行（§7.2.6），失败保留 pending 可重试；
+       * 不再只往 b3.message 写一句（那会和状态行形成两套反馈）。
+       * @param {string} projectId
+       * @param {Record<string, any>} prefs
+       */
+      var saveNotifyPrefs = (projectId, prefs) => {
+        savePendingRef.current = true;
+        lastNotifyPrefsRef.current = { projectId: projectId, prefs: prefs };
+        saveSeqRef.current += 1;
+        var seq = saveSeqRef.current;
+        setSaveView({ state: "saving", errorText: "", retryable: false, kind: "notify" });
+        call(api.ctx, "setNotifyPrefs", { projectId: projectId, prefs: prefs }).then(
+          () => {
+            if (seq !== saveSeqRef.current || selectedIdRef.current !== projectId) return;
+            markSettingsSaved();
+            reload();
+          },
+          (/** @type {any} */ error) => {
+            if (seq !== saveSeqRef.current || selectedIdRef.current !== projectId) return;
+            setSaveView({
+              state: "error",
+              errorText: text(t, "settings.saveFailedDetail", {
+                reason: String(error?.message ? error.message : error).slice(0, 160),
+              }),
+              retryable: true,
+              kind: "notify",
+            });
+          },
+        );
+      };
       var setNotifyTier = (/** @type {any} */ tier) => {
         if (!selectedForB3) return;
         var prefs =
@@ -15800,40 +16043,13 @@ window.__ModuleLoader__.load({
               : tier === "waiting"
                 ? { failed: false, "waiting-user": true, completed: false }
                 : { failed: false, "waiting-user": false, completed: false };
-        call(api.ctx, "setNotifyPrefs", { projectId: selectedForB3.id, prefs: prefs }).then(
-          () => {
-            setB3((/** @type {any} */ prev) => ({
-              ...prev,
-              message: text(t, "settings.notifySaved"),
-            }));
-            reload();
-          },
-          (/** @type {any} */ error) =>
-            setB3((/** @type {any} */ prev) => ({
-              ...prev,
-              message: String(error?.message ? error.message : error).slice(0, 160),
-            })),
-        );
+        saveNotifyPrefs(String(selectedForB3.id), prefs);
       };
       var setNotifyPref = (/** @type {any} */ key, /** @type {any} */ value) => {
         if (!selectedForB3) return;
-        var patch = /** @type {Record<string, any>} */ ({});
-        patch[key] = value;
-        call(api.ctx, "setNotifyPrefs", { projectId: selectedForB3.id, prefs: patch }).then(
-          () => {
-            setB3((/** @type {any} */ prev) => ({
-              ...prev,
-              message: text(t, "settings.notifySaved"),
-            }));
-            reload();
-          },
-          (/** @type {any} */ error) => {
-            setB3((/** @type {any} */ prev) => ({
-              ...prev,
-              message: String(error?.message ? error.message : error).slice(0, 160),
-            }));
-          },
-        );
+        var prefs = /** @type {Record<string, any>} */ ({});
+        prefs[key] = value;
+        saveNotifyPrefs(String(selectedForB3.id), prefs);
       };
       var notifyRow = h(
         "div",
@@ -16541,6 +16757,65 @@ window.__ModuleLoader__.load({
               ? usagePanel
               : debugPanel,
       );
+      // 统一保存状态行，固定在分节底部（[plugin-conventions §7.2.6]）：
+      // 预算（显式保存）与策略（自动保存）都在这一行给结果；失败可重试。
+      var saveUiState =
+        saveView.state === "saving"
+          ? "saving"
+          : saveView.state === "error"
+            ? "error"
+            : budgetDirty === true
+              ? "dirty"
+              : saveView.state === "saved"
+                ? "saved"
+                : "clean";
+      var saveUiText =
+        saveUiState === "saving"
+          ? text(t, "settings.saveSaving")
+          : saveUiState === "error"
+            ? saveView.errorText || text(t, "settings.saveFailed")
+            : saveUiState === "dirty"
+              ? text(t, "settings.saveUnsaved")
+              : saveUiState === "saved"
+                ? text(t, "settings.saveSaved")
+                : saveView.hintText
+                  ? saveView.hintText
+                  : `\u00b7 ${text(t, "settings.saveSaved")}`;
+      var settingsSaveRow = h(
+        "div",
+        {
+          style: {
+            display: "flex",
+            gap: "8px",
+            alignItems: "center",
+            marginTop: "8px",
+            paddingTop: "6px",
+            borderTop: `1px solid ${T.borderSoft}`,
+            fontSize: "12px",
+            color: saveUiState === "error" ? T.danger : T.dim,
+          },
+          "data-projects-settings-status": saveUiState,
+          "data-state": saveUiState,
+          role: "status",
+          "aria-live": "polite",
+        },
+        [
+          h("span", { key: "text", style: { minWidth: 0, overflowWrap: "anywhere" } }, saveUiText),
+          saveUiState === "error" && saveView.retryable === true
+            ? h(
+                "button",
+                {
+                  key: "retry",
+                  type: "button",
+                  style: styles.secondaryButton,
+                  "data-projects-settings-retry": "",
+                  onClick: retrySettingsSave,
+                },
+                text(t, "settings.saveRetry"),
+              )
+            : null,
+        ],
+      );
       var sectionNav = h(
         "div",
         {
@@ -16586,6 +16861,7 @@ window.__ModuleLoader__.load({
         ),
         sectionNav,
         sectionPanel,
+        settingsSaveRow,
         // USIM-U1-07：重开协调者会话的二次确认（会丢掉当前回复）。
         restartPending !== ""
           ? h(
@@ -18251,6 +18527,8 @@ window.__ModuleLoader__.load({
     // client 半是 classic script、不能 import，纯函数只能这样被测到。
     exports.__test = {
       Z_INDEX: Z,
+      // 单测把「已保存」短暂态改短，避免真等 2.5s（生产值不变）。
+      settingsSaveTiming: SETTINGS_SAVE_TIMING,
       budgetSummaryLine,
       budgetSummaryParts,
       composerKeyIntent,
