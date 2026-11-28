@@ -1609,6 +1609,9 @@ window.__ModuleLoader__.load({
       let toast = React.useSyncExternalStore(props.store.subscribe, props.store.getSnapshot);
       let entryId = toast ? toast.id : null;
       let receipt = toast !== null && toast.mode === "receipt";
+      // 渲染前先量一次几何：hooks 里的「位置同步」effect 要拿当前的 bottom 当基线，
+      // 且回执出现的那一帧就用真实 composer 位置，避免先闪一下回退位。
+      let layout = toast ? measureToastLayout() : null;
       let shownState = React.useState(false);
       let shown = shownState[0];
       let setShown = shownState[1];
@@ -1636,47 +1639,110 @@ window.__ModuleLoader__.load({
         };
       }, [entryId, props.store, receipt]);
 
-      // 位置：窗口 resize 或 composer 变高（多行输入）时重新渲染一次，重新量顶部。
-      // 回执常驻且要能点关闭/选文本，所以只在「会改变几何」的事件上跟新，不轮询。
+      // 位置：回执/轻提示的底距由 composer 顶部决定。回执常驻且要能选文本，
+      // 所以这里不依赖单一事件，而是：
+      //   1) 出现时立刻同步一次——回执出现的那一帧 composer 可能还没挂上（切视图/首屏）；
+      //   2) 每 1s 复核一次——切视图后 composer 消失/回来、换了 DOM 节点都能重新量到；
+      //   3) resize + ResizeObserver 让窗口缩放/多行输入立即跟手。
+      // sync 只在「算出来的 bottom 变了」时 bump，不产生空重渲染。
       let layoutTickState = React.useState(0);
       let bumpLayoutTick = layoutTickState[1];
       React.useEffect(() => {
         if (entryId === null) return undefined;
+        let disposed = false;
+        // 基线 = 本次渲染已经应用的 bottom；sync 只在几何变化时触发重渲染。
+        let lastBottom = layout === null ? 24 : layout.bottom;
+        /** @type {any} */
+        let observedComposer = null;
+        /** @type {any} */
+        let observer = null;
         let bump = () => {
           bumpLayoutTick(function nextTick(/** @type {number} */ count) {
             return count + 1;
           });
         };
-        let observer = null;
+        /** @returns {any} 当前 composer 节点（没有就 null）。 */
+        function readComposer() {
+          try {
+            if (typeof document !== "undefined" && typeof document.querySelector === "function") {
+              let node = document.querySelector("[data-composer-input]");
+              return node && typeof node.getBoundingClientRect === "function" ? node : null;
+            }
+          } catch (_error) {
+            /* 量不到就当没有 */
+          }
+          return null;
+        }
+        /** 把 ResizeObserver 重新挂到当前 composer（节点会随视图切换变化）。 */
+        function observe(/** @type {any} */ node) {
+          if (node === observedComposer) return;
+          if (observer !== null && typeof observer.disconnect === "function") observer.disconnect();
+          observedComposer = node;
+          if (node === null || typeof ResizeObserver !== "function") return;
+          try {
+            observer = new ResizeObserver(() => sync());
+            observer.observe(node);
+          } catch (_error) {
+            observer = null;
+          }
+        }
+        /** 量一次几何；bottom 变了才重渲染。 */
+        function sync() {
+          if (disposed) return;
+          let composer = readComposer();
+          observe(composer);
+          let composerTop = null;
+          let viewportHeight = 0;
+          try {
+            composerTop = composer === null ? null : composer.getBoundingClientRect().top;
+          } catch (_error) {
+            composerTop = null;
+          }
+          try {
+            viewportHeight =
+              typeof window !== "undefined" && typeof window.innerHeight === "number"
+                ? window.innerHeight
+                : 0;
+          } catch (_error) {
+            viewportHeight = 0;
+          }
+          let next = toastBottomOffset({
+            composerTop: composerTop,
+            viewportHeight: viewportHeight,
+          });
+          if (next === lastBottom) return;
+          lastBottom = next;
+          bump();
+        }
+        sync();
+        let timer = null;
+        try {
+          timer = setInterval(sync, 1000);
+        } catch (_error) {
+          timer = null;
+        }
         try {
           if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
-            window.addEventListener("resize", bump);
-          }
-          let composer =
-            typeof document !== "undefined" && typeof document.querySelector === "function"
-              ? document.querySelector("[data-composer-input]")
-              : null;
-          if (composer && typeof ResizeObserver === "function") {
-            observer = new ResizeObserver(bump);
-            observer.observe(composer);
+            window.addEventListener("resize", sync);
           }
         } catch (_error) {
-          /* 量不到几何就不跟新：至少保持 CSS 回退位置 */
+          /* ignore */
         }
         return () => {
+          disposed = true;
+          if (timer !== null) clearInterval(timer);
           try {
             if (typeof window !== "undefined" && typeof window.removeEventListener === "function") {
-              window.removeEventListener("resize", bump);
+              window.removeEventListener("resize", sync);
             }
           } catch (_error) {
             /* ignore */
           }
-          if (observer && typeof observer.disconnect === "function") observer.disconnect();
+          if (observer !== null && typeof observer.disconnect === "function") observer.disconnect();
         };
       }, [entryId, bumpLayoutTick]);
 
-      if (!toast) return null;
-      let layout = measureToastLayout();
+      if (!toast || layout === null) return null;
       let tone = toast.tone === "error" ? "error" : toast.tone === "ok" ? "ok" : "info";
       let color =
         tone === "error"
@@ -1750,8 +1816,11 @@ window.__ModuleLoader__.load({
           },
           style: {
             borderLeft: `3px solid ${color}`,
-            // 轻提示同样贴 composer 上沿，避免压住输入区。
+            // 轻提示同样贴 composer 上沿，避免压住输入区；矮窗口里也按可用空间收缩，
+            // 不然一条长提示会向上顶出视口（与回执同一套 clamp）。
             bottom: `${layout.bottom}px`,
+            maxHeight: layout.maxHeight === null ? undefined : `${layout.maxHeight}px`,
+            overflow: "auto",
             opacity: shown ? 1 : 0,
             transform: shown ? "translateY(0)" : "translateY(8px)",
           },
