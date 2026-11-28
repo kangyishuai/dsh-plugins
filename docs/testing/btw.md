@@ -1206,7 +1206,10 @@ document body because the docked composer contains them**"，而浮层原本就�
 
 缺陷：`/btw` 执行回执是 `div + onClick`，键盘无法聚焦/触发。修法：`role="button"` + `tabIndex=0` +
 Enter/Space 触发（`preventDefault`），并加 `:focus-visible` 聚焦环；点击开面板的既有行为与容器样式不变。
-`test/client.test.js` 新增 vm 用例：断言 role/tabIndex、聚焦后 outline=2px、真实 Enter 触发后 toast 收起且面板打开。
+
+断言分两层：`test/client.test.js` 的 vm 用例锁 **role/tabIndex/键处理（Enter/Space 触发、Tab 不触发）**、
+「触发后 toast 收起且面板打开」以及 CSS 里存在 `:focus-visible` 规则串；**「聚焦后 computed outline=2px」
+与「真实键盘 Enter」是下面真机 CDP 证据，不是 vm 单测**（vm 渲染没有真实样式与键盘事件）。
 
 **真机记录（隔离实例 CDP 9410，`CDP Input.dispatchKeyEvent`）**：
 
