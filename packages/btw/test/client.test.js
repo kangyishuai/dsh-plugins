@@ -26,9 +26,16 @@ function loadModule() {
   /** @type {any} */
   let captured = null;
   const reactStub = {
-    createElement: () => ({ type: "stub" }),
+    // 渲染断言的测试要看到 props（B7 的 toast 语义只能从真实 createElement 树读）。
+    createElement: (/** @type {any} */ type, /** @type {any} */ props, ...children) => ({
+      type,
+      props: { ...(props || {}) },
+      children,
+    }),
     Fragment: "Fragment",
-    useSyncExternalStore: () => undefined,
+    // 与 React 一致：初次渲染取快照（toast 单测据此拿到当前 toast）。
+    useSyncExternalStore: (/** @type {any} */ _subscribe, /** @type {any} */ getSnapshot) =>
+      getSnapshot(),
     useState: (/** @type {any} */ initial) => [initial, () => {}],
     useEffect: () => {},
     useCallback: (/** @type {any} */ fn) => fn,
@@ -472,4 +479,45 @@ test("client 接线：转正草稿按行数预算（不回归 0.6.1 的修复）
   const source = readFileSync(clientPath, "utf8");
   assert.ok(source.includes("fitDraftToLines(full"), "promote 必须用 fitDraftToLines");
   assert.ok(source.includes("promotedShort"));
+});
+
+test("client toast 键盘可达（复审 B7）：role=button / tabIndex=0 / Enter 与 Space 都能开面板", () => {
+  const { ctx } = makeCtx();
+  assert.doesNotThrow(() => module.apply(ctx));
+  const hooks = pure.hooks;
+  assert.ok(hooks?.toastStore && hooks?.BtwToast, "apply 后要导出 toast 的运行时句柄");
+
+  // 完成态 toast
+  hooks.toastStore.show("ok", "done", 0);
+  const tree = hooks.BtwToast();
+  assert.ok(tree, "有 toast 时必须渲染");
+  assert.equal(tree.props.role, "button", "toast 必须用按钮语义（div + onClick 键盘不可达）");
+  assert.equal(tree.props.tabIndex, 0, "toast 必须能被 Tab 聚焦");
+  assert.equal(tree.props.className, "dsh-btw-toast", "既有 toast 样式不能变");
+  assert.equal(tree.props["data-btw-toast"], "ok");
+
+  // Enter = 点击：收起 toast 并打开面板
+  let prevented = false;
+  tree.props.onKeyDown({
+    key: "Enter",
+    preventDefault: () => {
+      prevented = true;
+    },
+  });
+  assert.equal(prevented, true, "Enter 要 preventDefault，避免触发默认行为");
+  assert.equal(hooks.toastStore.get(), null, "触发后 toast 收起");
+  assert.equal(hooks.store.get().open, true, "Enter 必须打开旁问面板");
+
+  // 其它键不触发；Space 触发（两个键都是按钮语义的一部分）
+  hooks.toastStore.show("error", "boom", 0);
+  const tree2 = hooks.BtwToast();
+  tree2.props.onKeyDown({ key: "Tab", preventDefault: () => {} });
+  assert.notEqual(hooks.toastStore.get(), null, "非 Enter/Space 键不能收起 toast");
+  tree2.props.onKeyDown({ key: " ", preventDefault: () => {} });
+  assert.equal(hooks.toastStore.get(), null, "Space 也要触发");
+  assert.equal(hooks.store.get().open, true);
+  // 容器既有样式与抓取锚点仍在（冒烟与桌面回归靠它们定位）
+  const source = readFileSync(clientPath, "utf8");
+  assert.ok(source.includes(".dsh-btw-toast:focus-visible{"), "键盘聚焦要有可见环");
+  assert.ok(source.includes('"data-btw-toast": tone'), "data-btw-toast 锚点不能丢");
 });

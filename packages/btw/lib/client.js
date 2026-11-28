@@ -265,6 +265,8 @@ window.__ModuleLoader__.load({
       ".dsh-btw-toast-tray{position:fixed;top:56px;left:50%;transform:translateX(-50%);z-index:2147482001;display:flex;flex-direction:column;align-items:center;gap:6px;max-width:min(560px,calc(100vw - 32px));pointer-events:none;}",
       ".dsh-btw-toast{display:flex;align-items:flex-start;gap:8px;max-width:100%;padding:8px 12px;border-radius:10px;background:var(--dsw-alias-toast-bg,var(--dsw-alias-bg-layer-2,Canvas));color:var(--dsw-alias-toast-label,CanvasText);border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));box-shadow:0 10px 30px rgba(0,0,0,.28);font-size:12.5px;line-height:1.5;pointer-events:auto;cursor:pointer;}",
       ".dsh-btw-toast:hover{filter:brightness(1.06);}",
+      // B7（复审）：toast 是 keyboard-reachable 的按钮，键盘聚焦要有可见环。
+      ".dsh-btw-toast:focus-visible{outline:2px solid var(--dsw-alias-label-primary-bluish,#2f6fed);outline-offset:2px;}",
       ".dsh-btw-toast-mark{flex:none;font-weight:600;line-height:1.4;}",
       ".dsh-btw-toast-text{flex:1 1 auto;min-width:0;word-break:break-word;white-space:pre-wrap;}",
       ".dsh-btw-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px;}",
@@ -2124,16 +2126,26 @@ window.__ModuleLoader__.load({
             : tone === "ok"
               ? "var(--dsw-alias-state-success-primary,#2f9e63)"
               : "var(--dsw-alias-label-secondary,GrayText)";
+        const activate = () => {
+          toastStore.dismiss();
+          revealPanel();
+        };
         return h(
           "div",
           {
             className: "dsh-btw-toast",
             "data-btw-toast": tone,
-            role: "status",
+            // B7（复审）：原来是 div + onClick，键盘完全不可达。改成按钮语义：
+            // role=button + tabIndex=0 + Enter/Space 触发；点击开面板的既有行为不变。
+            role: "button",
+            tabIndex: 0,
             title: t("notice.open"),
-            onClick: () => {
-              toastStore.dismiss();
-              revealPanel();
+            onClick: activate,
+            onKeyDown: (/** @type {any} */ event) => {
+              const key = String(event?.key ?? "");
+              if (key !== "Enter" && key !== " " && key !== "Spacebar") return;
+              if (typeof event.preventDefault === "function") event.preventDefault();
+              activate();
             },
           },
           tone === "info"
@@ -2579,6 +2591,9 @@ window.__ModuleLoader__.load({
         exports.__test.hooks = {
           store,
           revealPanel,
+          // B7：toast 的键盘语义只能靠渲染真实组件验证，导出运行时句柄给 vm 单测。
+          toastStore,
+          BtwToast,
           /** @param {boolean} ready */
           setTabReady: (ready) => {
             tabReady = ready === true;
