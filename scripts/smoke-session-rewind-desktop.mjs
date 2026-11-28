@@ -47,6 +47,7 @@ import { mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { parseArgs } from "node:util";
+import { deepDeleteVerdict } from "./lib/deep-delete-gate.mjs";
 
 const SHOTS = join(tmpdir(), "dsh-session-rewind-desktop-shots");
 const sleep = (/** @type {number} */ ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -1670,13 +1671,15 @@ const main = async () => {
             const deleted = await waitForFileState(filePath, null, 60000);
             const deleteTools = deleteRun.tools.map((card) => `${card.tool}:${card.state}`);
             const usedApplyPatch = deleteRun.tools.some((card) => card.tool === "apply_patch");
-            if (usedApplyPatch && deleted) {
+            // N1：三种情形分开判（纯函数 + 单测锁住）——
+            //   run ：调了 apply_patch 且文件消失 → 继续断言重建；
+            //   fail：调了 apply_patch 但文件还在 → 真失败（不能记成宿主没这个工具）；
+            //   skip：压根没调 apply_patch → 环境分支，理由从当轮工具卡推导。
+            const deleteVerdict = deepDeleteVerdict({ usedApplyPatch, deleted });
+            const deleteFacts = JSON.stringify({ deleted, tools: deleteTools }).slice(0, 360);
+            if (deleteVerdict === "run") {
               await cdp.screenshot(join(SHOTS, "06-deep-deleted.png"));
-              check(
-                "删除文件：agent 用 apply_patch 删除了测试文件",
-                deleted,
-                JSON.stringify({ deleted, tools: deleteTools }),
-              );
+              check("删除文件：agent 用 apply_patch 删除了测试文件", deleted, deleteFacts);
               const deleteOpened = await openRewindDialog(cdp);
               const deletePreview = await waitForDialogText(
                 cdp,
@@ -1695,12 +1698,22 @@ const main = async () => {
                 deleteExecuted && recreated,
                 JSON.stringify({ deleteExecuted, recreated }),
               );
-            } else {
+            } else if (deleteVerdict === "fail") {
+              // 工具调了却没删掉：这是真失败，不是宿主能力分支；后两条重建断言按前置失败记 FAIL。
+              check("删除文件：agent 用 apply_patch 删除了测试文件", false, deleteFacts);
               const reason =
-                "宿主未注册 apply_patch（0.2.2-rc.5 的 standard/ptc/minimal/cordis 四个预设都把 " +
-                "tool-fs.applyPatch 设为 false；插件只追踪 write/edit/apply_patch，bash/脚本不追踪），" +
-                `删除语义无法由受追踪工具驱动；本轮工具卡：${deleteTools.join(",") || "无"}，` +
-                `文件${deleted ? "已消失（非受追踪删除）" : "仍在"}`;
+                `apply_patch 已调用但文件仍在（当轮工具卡：${deleteTools.join(",") || "无"}）；` +
+                "后两条重建断言未执行（前置失败：删除没发生）";
+              check("删除文件：确认框预览写明会重建被删除的文件", false, reason);
+              check("删除文件：回退后文件被重建", false, reason);
+            } else {
+              // 环境分支：当轮根本没调 apply_patch（宿主预设没注册该工具，或模型改用 bash）。
+              // 理由从工具卡推导，不写死具体版本/预设。
+              const reason =
+                `本轮未调用 apply_patch（当轮工具卡：${deleteTools.join(",") || "无"}；` +
+                `文件${deleted ? "已被非受追踪工具删除" : "仍在"}）。` +
+                "插件只追踪 write/edit/apply_patch，bash/脚本/子代理的删除不追踪；" +
+                "apply_patch 是否注册由桌面 profile 的 agent 预设配置决定。";
               skip("删除文件：agent 用 apply_patch 删除了测试文件", reason);
               skip("删除文件：确认框预览写明会重建被删除的文件", reason);
               skip("删除文件：回退后文件被重建", reason);
