@@ -27,8 +27,7 @@
   "exports": {
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
-    "./locale/en.json": "./locale/en.json",
-    "./locale/zh.json": "./locale/zh.json",
+    "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
   },
   "files": [
