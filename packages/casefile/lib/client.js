@@ -53,6 +53,9 @@ window.__ModuleLoader__.load({
       "kind.game": "游戏",
       "kind.artifact": "产物文件",
       "kind.other": "其他",
+      "overview.projects": "{count} 个项目",
+      "overview.obligations": "义务 {pass}/{total} 已关闭",
+      "overview.unknowns": "未解决未知项 {count}",
       "scope.all": "全部范围",
       "scope.selected": "选定范围",
       "authOption.owned": "自有：自己的软件",
@@ -218,6 +221,9 @@ window.__ModuleLoader__.load({
       "kind.game": "Game",
       "kind.artifact": "Artifact",
       "kind.other": "Other",
+      "overview.projects": "{count} projects",
+      "overview.obligations": "obligations {pass}/{total} closed",
+      "overview.unknowns": "open unknowns: {count}",
       "scope.all": "All scope",
       "scope.selected": "Selected scope",
       "authOption.owned": "Owned: my own software",
@@ -429,6 +435,34 @@ window.__ModuleLoader__.load({
       var known = /** @type {Record<string, string[]>} */ (VOCAB)[group] || [];
       if (raw !== "" && known.indexOf(raw) >= 0) return text(t, group + "." + raw);
       return raw;
+    }
+
+    /**
+     * 跨项目总览的一行摘要（按当前语言组装）。
+     *
+     * A5（复审）：服务端 `overview.summary` 是硬编码中文
+     * （如「3 个项目（binary×2 web×1）· 义务 4/7 已关闭 · 未解决未知项 2」），
+     * 英文界面会直接露出来。这里只用结构化字段 + locale 组装；枚举（kind）走 vocab。
+     * @param {any} t
+     * @param {any} overview
+     * @returns {string}
+     */
+    function overviewLine(t, overview) {
+      if (!overview || typeof overview !== "object") return "";
+      var parts = [];
+      var projects = Number(overview.projects);
+      if (Number.isFinite(projects)) parts.push(text(t, "overview.projects", { count: projects }));
+      var obligations = overview.obligations || {};
+      var pass = Number(obligations.pass);
+      var total = Number(obligations.total);
+      if (Number.isFinite(pass) && Number.isFinite(total)) {
+        parts.push(text(t, "overview.obligations", { pass: pass, total: total }));
+      }
+      var openUnknowns = Number(overview.openUnknowns);
+      if (Number.isFinite(openUnknowns)) {
+        parts.push(text(t, "overview.unknowns", { count: openUnknowns }));
+      }
+      return parts.join(" · ");
     }
 
     /**
@@ -1692,14 +1726,15 @@ window.__ModuleLoader__.load({
                     "data-casefile-overview": "1",
                     style: { display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" },
                   },
-                  h("span", null, overview.summary),
+                  // A5：不渲染服务端的中文 summary；用结构化字段 + vocab 本地化。
+                  h("span", null, overviewLine(t, overview)),
                   Object.entries(overview.byKind || {})
                     .sort((a, b) => b[1] - a[1])
                     .map((entry) =>
                       h(
                         "span",
                         { key: entry[0], className: "cf-tag" },
-                        `${entry[0]} × ${entry[1]}`,
+                        `${vocab(t, "kind", entry[0])} × ${entry[1]}`,
                       ),
                     ),
                 )

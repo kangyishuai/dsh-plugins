@@ -489,6 +489,10 @@ function loadClient() {
     shim,
     ctx,
     t,
+    /** 运行时字典（zh/en）：渲染断言用真实文案，不在这里再抄一份。 */
+    dicts() {
+      return dictionaries;
+    },
     /** @param {any} next */
     setRpc(next) {
       rpc = next;
@@ -1060,4 +1064,44 @@ test("USIM-U3-11 README 双语都有「卸载后残留 + 手工清理」说明",
     assert.match(section, /trash|回收站/iu, `${name} 要说明回收站去留`);
     assert.match(section, /remove|delete|删除|清理/iu, `${name} 要给手工清理方式`);
   }
+});
+
+// ---------- A5（复审）：概览卡的 kind 与 summary 必须跟随界面语言 ----------
+
+test("A5：概览卡按 vocab 映射 kind，summary 用 locale 组装而不是服务端中文", async () => {
+  const client = loadClient();
+  const overview = {
+    projects: 2,
+    byKind: { binary: 1, web: 1 },
+    obligations: { pass: 3, total: 5 },
+    openUnknowns: 1,
+    // 服务端真实返回的就是这句中文；UI 不能再直接渲染它。
+    summary: "2 个项目（binary×1 web×1）· 义务 3/5 已关闭 · 未解决未知项 1",
+  };
+  client.setRpc(makeRpc({ listProjects: () => [PROJECT], overview: () => overview }));
+
+  // 中文界面：kind 走 vocab，原始枚举值不能出现在标签里。
+  const zhView = client.mount("main");
+  await pump(zhView);
+  const zhText = textContent(findData(zhView.session.tree, "data-casefile-overview"));
+  assert.match(zhText, /2 个项目/u, `中文 summary 缺项目数：${zhText}`);
+  assert.match(zhText, /义务 3\/5 已关闭/u, `中文 summary 缺义务进度：${zhText}`);
+  assert.match(zhText, /未解决未知项 1/u, `中文 summary 缺未知项：${zhText}`);
+  assert.match(zhText, /可执行文件 × 1/u, `kind 没走 vocab：${zhText}`);
+  assert.match(zhText, /网页 \/ URL × 1/u, `kind 没走 vocab：${zhText}`);
+  assert.doesNotMatch(zhText, /binary ×/u, "原始 kind 枚举不能出现在界面上");
+
+  // 英文界面：summary 不能是服务端那句中文，kind 也要英文。
+  const dicts = client.dicts();
+  const enT = (/** @type {string} */ key) => dicts.en?.[key] ?? key;
+  const enView = client.mount("main", { t: enT });
+  await pump(enView);
+  const enText = textContent(findData(enView.session.tree, "data-casefile-overview"));
+  assert.match(enText, /2 projects/u, `英文 summary 缺项目数：${enText}`);
+  assert.match(enText, /obligations 3\/5 closed/u, `英文 summary 缺义务进度：${enText}`);
+  assert.match(enText, /open unknowns: 1/u, `英文 summary 缺未知项：${enText}`);
+  assert.match(enText, /Binary × 1/u, `英文 kind 没映射：${enText}`);
+  assert.match(enText, /Web \/ URL × 1/u, `英文 kind 没映射：${enText}`);
+  assert.doesNotMatch(enText, /个项目|义务|未解决/u, `英文界面混入中文：${enText}`);
+  assert.doesNotMatch(enText, /binary ×/u, "原始 kind 枚举不能出现在界面上");
 });
