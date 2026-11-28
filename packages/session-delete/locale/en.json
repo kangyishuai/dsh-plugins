@@ -1,4 +1,8 @@
 {
+  "meta": {
+    "title": "Session Delete",
+    "description": "Real session deletion: trash by default, a plan before you delete, an audit log and a receipt for leftovers. Open it from the session menu, or Settings → Session trash."
+  },
   "sessionDelete": {
     "batch.done": "Done: {ok}/{total} succeeded",
     "batch.failed": "{n} failed; kept selected",

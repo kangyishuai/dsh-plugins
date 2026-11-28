@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36" fill="none">
+  <title>Session delete</title>
+  <!-- A trash can: deletion moves a session to the trash first. -->
+  <path d="M7.8 11.2h20.4" stroke="#D0544C" stroke-width="2.6" stroke-linecap="round"/>
+  <path d="M14.4 11.2V8.9a1.9 1.9 0 0 1 1.9-1.9h3.4a1.9 1.9 0 0 1 1.9 1.9v2.3" stroke="#D0544C" stroke-width="2.4" stroke-linecap="round"/>
+  <path d="M10.1 14.4 11.2 27a2.6 2.6 0 0 0 2.6 2.4h8.4a2.6 2.6 0 0 0 2.6-2.4l1.1-12.6" stroke="#D0544C" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M15.2 18.4l.5 7.2M20.8 18.4l-.5 7.2" stroke="#D0544C" stroke-width="2.2" stroke-linecap="round"/>
+</svg>
