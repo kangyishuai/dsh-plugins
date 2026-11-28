@@ -1179,7 +1179,6 @@ const main = async () => {
       }
       return { status: "no-target" };
     })()`,
-      true,
     );
     if (chatView && chatView.status !== "already") {
       console.log(
