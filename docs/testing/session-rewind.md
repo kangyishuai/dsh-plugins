@@ -59,7 +59,7 @@ pnpm gate session-rewind --deep --workspace ~/Workspace/dsh-rewind-ui-smoke
 
 按「便宜的先跑」排序，任何一步失败立刻停并给出下一步提示：
 
-1. `pnpm verify`（lint + 类型 + 规范 + 公开边界 + 295 单测）
+1. `pnpm verify`（lint + 类型 + 规范 + 公开边界 + 300 单测）
 2. `pnpm probe:runtime`（宿主包/API/slot/私有 seam，99 项）
 3. `pnpm smoke:session-rewind`（临时 DSH_HOME 的 web 端到端，约 62 项；本批新增 10 条：可恢复性 / 默认聚焦 / Tab 环绕 / 回收站入口 / 更多设置 / 命令 both 确认 / 跟踪范围 / 面板「选择消息回退」/ 命令候选键盘路径 / 诊断审计计数）
 4. 桌面只读回归（35 项，**永远带 `--require`**：没开调试端口就是失败，不是跳过）
@@ -623,3 +623,47 @@ pnpm smoke:session-rewind-desktop -- --require --recall --deep \
 操作；过期响应在 projects/rewind 等有保存序号或状态行兜底，但**跨插件同名竞态未统一修**。这是设置保存
 状态复审 N6 点名的「旧行为 + 新话术放大误导」，本批按任务要求**不改生产逻辑**，记录在
 [`docs/testing/projects.md`](projects.md) 的「已知（自动保存非串行）」与本节；后续单独立项处理。
+
+## 复审 p3-nits 收口（2026-11-28，`notes/audit/2026-11-28/reviews/p3-nits.md` N1–N4）
+
+非阻塞 follow-up 四条；N1/N2/N3 有用户可见行为变化，N4 只收紧测试。**包内单测**：`cd
+packages/session-rewind && node --test` → **300 pass / 0 fail**（31 suites，本批 +5：N1 2 条 +
+N2 1 条 + N3 2 条；overlay 接线 1 条重写）。
+
+### N1 file-mode 审计行口径
+
+- 缺陷（pre-existing）：`trash-restore` / `trash-clear` 审计行没有 `removedMessageCount`，
+  `normalizeAuditEntry` 按 `mode` 归一化成 `chat`，时间线显示成「对话 · 撤回 0 条上下文记录 · 约 0 token」。
+- 修法：`kind` 直接取文件动作（`rescue-restore` / `trash-restore` / `trash-clear`）；`filesReceiptOf` 保留
+  `files.cleared`，`normalizeAuditEntry` 保留顶层 `bytes` / `paths`。AuditTab 按 kind 换徽章
+  （`timeline.kindTrashRestore` / `timeline.kindTrashClear`）与 meta（`timeline.trashRestoreMeta` /
+  `timeline.trashClearMeta`）；`trash-clear` 不再渲染恒 0 的 `audit.files` 四态行，改为可展开的顶层
+  `paths`（`data-kind=trash`）。中英客户端字典 + `locale/*.json` 各补 4 键（199→203，zh/en 键集仍一致）。
+- 单测：`回溯记录 tab：文件动作审计行口径（N1）` 两条——真实 `AuditTab` 渲染断言 kind/徽章/meta/路径、
+  恢复行与清空行都不出现 `ghost.mode.chat` / `audit.meta`；缺文件回执的旧行兜底不炸；普通对话行回归不变。
+
+### N2 启动 GC skip warn 带 sessionId
+
+- 修法：warn 文本抽成 host-free `operations.gcSkippedWarning(result)`（列出 `unreadableSessions` 的
+  sessionId，没有 id 的异常条目只计数），`service.collectBlobs` 直接用它；README 中英补「有一个会话的
+  entries 读不出来时本次 GC 整体跳过、修复前 blob 保留」的运维含义。
+- 单测：`gcSkippedWarning：entries 读不出来的 warn 带会话 id（复审 N2）`（2 个 id、空/异常形状不抛）。
+
+### N3 `restoreRescue` 部分失败 toast
+
+- 缺陷：`confirmRescue` 的 catch 只报通用错误；B1 修好后 `error.details.files` 已可读，但没接。
+- 修法：与 `confirmTrashRestore` 同款——`trashPartialOf(error)` 命中部分结果时收起确认行、
+  `toast.rescuePartial` 报真实 restored/failed、刷新救援点与审计列表；通用错误（如 `rescue-not-found`）
+  仍按错误码提示并保留确认行。service 的 `.then` partial 分支保留为契约兜底（生产走抛错，已加注释）。
+- 单测：`restoreRescue 部分失败：报「已恢复/失败」数量并刷新列表（复审 N3）`（toast 参数 1/1、
+  `rescues`/`audit` 各多一次加载）、`restoreRescue 通用失败（无 details）仍报错误码`。
+
+### N4 overlay 接线测试收紧（只改测试）
+
+- 旧 fake 宿主手工设定「谁带 autofocus」；现在 fake document 从**真实渲染树**推导：`RewindOverlay`
+  渲染 → `flattenTree` + 真实选择器匹配（`.dsh-srw-drawer`、`[data-srw-trash-clear] [data-modal-autofocus]`、
+  `FOCUSABLE_SELECTOR` 里的 `button:not([disabled])` 等），页签 / 内联确认行 / 主按钮 / 取消全部由
+  `RewindDrawer` + `RescuesTab` 真实产出；状态夹具补一条回收站操作（否则真实组件不渲染内联确认行）。
+- mutation 实测：① effect 回旧 `querySelector("[data-modal-autofocus]") || FOCUSABLE` → 红
+  （`inline-primary` 变 `drawer-tab`）；② 去掉 `trashClear*` deps → 红；③ 真实组件主按钮不再带
+  `autofocus` → 红（旧手工宿主下这条 mutation 是绿的，这正是收紧的意义）。
