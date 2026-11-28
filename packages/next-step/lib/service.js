@@ -914,6 +914,10 @@ export class NextStepService extends TypertRemoteService {
     let lastFinish = null;
     /** 最近一次补全的 usage。 @type {any} */
     let lastUsage = null;
+    /** 最近一次补全实际使用的预算（失败诊断用；可能高于设置值）。 */
+    let lastBudget = maxTokens;
+    /** 是否走了「带对话的修格式」调用（决定 recovery 语义）。 */
+    let usedRepair = false;
     const startedAt = Date.now();
 
     /**
@@ -928,6 +932,9 @@ export class NextStepService extends TypertRemoteService {
        * @returns {Promise<string>}
        */
       const attempt = async (withReasoning, attemptBudget = budget) => {
+        lastFinish = null;
+        lastUsage = null;
+        lastBudget = attemptBudget;
         const call = await llm.prepareCall(
           {
             provider: route.provider,
@@ -988,7 +995,8 @@ export class NextStepService extends TypertRemoteService {
     /** @type {"none" | "retry" | "repair"} */
     let recovery = "none";
     if (parsed.suggestion === null && parsed.problem !== null) {
-      const plan = recoveryFor({ raw, baseMaxTokens: maxTokens, problem: parsed.problem });
+      const problem = parsed.problem;
+      const plan = recoveryFor({ raw, baseMaxTokens: maxTokens, problem });
       recovery = plan.plan === "escalate" ? "retry" : "repair";
       const summary = emptyOutputSummary({
         finish: lastFinish,
@@ -1008,17 +1016,34 @@ export class NextStepService extends TypertRemoteService {
         raw = await run(messages, plan.budget);
         parsed = parseSuggestion(raw);
         if (parsed.suggestion === null) {
-          this.warn(
-            `retry with maxTokens=${plan.budget} still empty (${emptyOutputSummary({
-              finish: lastFinish,
-              usage: lastUsage,
-              budget: plan.budget,
-            })}), asking for JSON-only repair`,
-          );
-          raw = await run(
-            buildRepairMessage({ transcript, raw: "", problem: "json", detail: "empty output" }),
-            plan.budget,
-          );
+          usedRepair = true;
+          if (raw.trim() === "") {
+            this.warn(
+              `retry with maxTokens=${plan.budget} still empty (${emptyOutputSummary({
+                finish: lastFinish,
+                usage: lastUsage,
+                budget: plan.budget,
+              })}), asking for JSON-only repair`,
+            );
+            raw = await run(
+              buildRepairMessage({ transcript, raw: "", problem: "json", detail: "empty output" }),
+              plan.budget,
+            );
+          } else {
+            // 重试回来有内容但格式错：按真实输出修格式（不要丢掉模型写的畸形输出）。
+            this.warn(
+              `retry with maxTokens=${plan.budget} returned malformed output (${problem.kind}: ${problem.detail}), repairing with the transcript`,
+            );
+            raw = await run(
+              buildRepairMessage({
+                transcript,
+                raw,
+                problem: problem.kind,
+                detail: problem.detail,
+              }),
+              plan.budget,
+            );
+          }
           parsed = parseSuggestion(raw);
         }
       } else {
@@ -1027,15 +1052,16 @@ export class NextStepService extends TypertRemoteService {
           buildRepairMessage({
             transcript,
             raw,
-            problem: parsed.problem.kind,
+            problem: problem.kind,
             // 把「上一次 label 到底几字」带进修复请求：模型数不准自己的字数
-            detail: parsed.problem.detail,
+            detail: problem.detail,
           }),
           plan.budget,
         );
         parsed = parseSuggestion(raw);
       }
     }
+    if (usedRepair && parsed.suggestion !== null) recovery = "repair";
     if (parsed.suggestion === null) {
       const detail =
         parsed.problem === null ? "unknown" : `${parsed.problem.kind}:${parsed.problem.detail}`;
@@ -1046,7 +1072,7 @@ export class NextStepService extends TypertRemoteService {
         `model output did not match the card schema: ${detail} (${emptyOutputSummary({
           finish: lastFinish,
           usage: lastUsage,
-          budget: maxTokens,
+          budget: lastBudget,
         })})`,
       );
       return { ok: false, failure: "schema" };

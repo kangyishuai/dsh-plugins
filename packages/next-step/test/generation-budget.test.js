@@ -4,18 +4,26 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  ESCALATED_TOKENS_CAP,
   ESCALATED_TOKENS_FLOOR,
   emptyOutputSummary,
   escalatedTokenBudget,
   recoveryFor,
 } from "../lib/generation-budget.js";
+import { DEFAULT_SETTINGS } from "../lib/settings.js";
+
+test("默认预算 2000（空输出升级后一次推理+出卡足够）", () => {
+  assert.equal(DEFAULT_SETTINGS.maxTokens, 2000);
+  assert.equal(escalatedTokenBudget(DEFAULT_SETTINGS.maxTokens), 4000);
+});
 
 test("escalatedTokenBudget：小预算放大到 3000，大预算封顶 4000", () => {
   assert.equal(escalatedTokenBudget(500), 3000);
   assert.equal(escalatedTokenBudget(128), ESCALATED_TOKENS_FLOOR);
   assert.equal(escalatedTokenBudget(1000), 4000);
-  assert.equal(escalatedTokenBudget(4000), ESCALATED_TOKENS_CAP);
+  assert.equal(escalatedTokenBudget(4000), 4000);
+  // 倍率是 4：999×4=3996 不到上限，必须保持倍率结果（别把 CAP 写进公式）
+  assert.equal(escalatedTokenBudget(999), 3996);
+  assert.equal(escalatedTokenBudget(200), 3000);
   // 脏设置不崩，回落到下限
   for (const bad of [0, -1, Number.NaN, "x", null, undefined]) {
     assert.equal(escalatedTokenBudget(bad), ESCALATED_TOKENS_FLOOR, String(bad));
