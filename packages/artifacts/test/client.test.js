@@ -349,3 +349,40 @@ test("B1：CSP meta 注入在任何不可信字节之前；sandbox 去掉 allow-
   assert.match(frame.srcDoc, /Content-Security-Policy/u);
   assert.ok(frame.srcDoc.includes("<style>body{color:red}</style>"));
 });
+
+/** 在节点树里按锚点找节点（空态提示行）。 @param {any} node @param {string} anchor @returns {any} */
+function findAnchor(node, anchor) {
+  if (node === null || node === undefined || typeof node !== "object") return undefined;
+  if (node?.props?.[anchor] !== undefined) return node;
+  const children = node?.props?.children;
+  for (const child of Array.isArray(children) ? children : [children]) {
+    const hit = findAnchor(child, anchor);
+    if (hit !== undefined) return hit;
+  }
+  return undefined;
+}
+
+test("U1-20：工件库空态解释「工件是什么、怎么发布」", async () => {
+  const client = await loadClient();
+  const Library = client.__test.ArtifactLibrary;
+  assert.equal(typeof Library, "function", "ArtifactLibrary must be testable from __test");
+  const rpc = async () => ({ ok: true, artifacts: [], summary: { count: 0, bytes: 0 } });
+  const open = () => {};
+
+  // 全部工件：既有空态文案保留，并多一行「工件是什么 + 怎么发布」的解释。
+  const all = Library({ rpc, open, projectId: "" });
+  assert.ok(findAnchor(all, "data-dsh-artifact-empty"), "既有空态锚点不能删");
+  assert.match(textOf(all), /还没有工件/u);
+  const allHint = findAnchor(all, "data-dsh-artifact-empty-hint");
+  assert.ok(allHint, "空态要有解释下一步的提示行");
+  assert.match(textOf(allHint), /artifact/u);
+  assert.match(textOf(allHint), /发布一个/u);
+
+  // 项目范围：提示同一件事，但落点是「这个项目」。
+  const scoped = Library({ rpc, open, projectId: "demo" });
+  assert.match(textOf(scoped), /这个项目还没有产物/u);
+  const scopedHint = findAnchor(scoped, "data-dsh-artifact-empty-hint");
+  assert.ok(scopedHint, "项目范围的空态也要解释");
+  assert.match(textOf(scopedHint), /这个项目/u);
+  assert.match(textOf(scopedHint), /artifact/u);
+});

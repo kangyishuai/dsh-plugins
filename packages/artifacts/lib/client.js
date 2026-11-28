@@ -452,7 +452,28 @@ window.__ModuleLoader__.load({
                 "data-dsh-artifact-empty": "1",
                 style: { padding: "16px 12px", fontSize: "12px", opacity: 0.65 },
               },
-              error === "" ? (projectId === "" ? "还没有工件。" : "这个项目还没有产物。") : "",
+              // 空态不能只报「没有」：工件是什么、怎么让 AI 发布一个（USIM-U1-20），否则第一次
+              // 打开右栏的普通用户无从下手——入口本来就在右上角图标后面。
+              error === ""
+                ? [
+                    h(
+                      "div",
+                      { key: "empty" },
+                      projectId === "" ? "还没有工件。" : "这个项目还没有产物。",
+                    ),
+                    h(
+                      "div",
+                      {
+                        key: "hint",
+                        "data-dsh-artifact-empty-hint": "1",
+                        style: { marginTop: "6px", lineHeight: 1.6, opacity: 0.9 },
+                      },
+                      projectId === ""
+                        ? "工件是 AI 发布、可在右栏预览的文件（html / markdown / json / csv / 图片）：让 AI 用 artifact 工具发布一个试试。"
+                        : "让 AI 在这个项目里用 artifact 工具发布一个，就会出现在这里。",
+                    ),
+                  ]
+                : "",
             )
           : h(
               "div",
@@ -1085,7 +1106,7 @@ window.__ModuleLoader__.load({
 
     exports.inject = ["slots", "locale", "connection", "sidebarRightTabs", "sidebarRight"];
     exports.apply = apply;
-    // 单测入口（test/client.test.js 用 node:vm 执行真实源码）：只暴露纯函数与行组件。
+    // 单测入口（test/client.test.js 用 node:vm 执行真实源码）：只暴露纯函数、行组件与库视图。
     // 仅测试用、生产无副作用：不挂 window 全局、不暴露服务/数据，宿主只消费 inject/apply；
     // 若将来要求发布包零测试面，可改为 debug 开关挂载（复审 F13，目前接受这点体积/暴露面）。
     exports.__test = {
@@ -1099,6 +1120,7 @@ window.__ModuleLoader__.load({
       withPanelCsp,
       htmlFrameProps,
       ArtifactRow,
+      ArtifactLibrary,
     };
     return module.exports;
   },
