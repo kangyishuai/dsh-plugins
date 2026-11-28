@@ -1,5 +1,51 @@
 # @kangyishuai/dsh-session-delete
 
+## 0.6.1
+
+### Patch Changes
+
+- [#380](https://github.com/kangyishuai/dsh-plugins/pull/380) [`483e815`](https://github.com/kangyishuai/dsh-plugins/commit/483e8151a7867aff613bfa967b5cba0fa2787f8d) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 插件身份（U1-01/U1-19）：8 个包在 `locale/en.json`、`locale/zh.json` 根对象新增 `meta.title` / `meta.description`（英文短描述 + `scripts/index-meta.json` 的中文描述），并用 `"./locale/*.json": "./locale/*.json"` 通配把 locale 目录加进 `exports`（宿主经 Node 解析器读 locale，通配能覆盖未来新增语言，漏文件会让整套 meta/icon 丢失），让「插件 → 已安装」不再只显示 npm 包名 + 英文长描述；每个包新增自绘 `icon.svg`（36×36、透明背景、无文字），在 `package.json` 顶层 `icon` 声明并加入 `files`，8 个插件的图标互不相同。`scripts/check-plugins.mjs` 新增对应机械检查（exports 通配/覆盖、locale 身份与索引源一致、icon 存在/白名单/体积/文件头）。已在 DSH 0.2.2-rc.5 隔离桌面实例实测（暗色主题、中文界面），并用真实 `readPluginMeta()` 复核 8/8 无 error。
+
+- [#382](https://github.com/kangyishuai/dsh-plugins/pull/382) [`95ec48e`](https://github.com/kangyishuai/dsh-plugins/commit/95ec48e24132a310e70928fa4ea5d1c76d887487) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 设置分节的保存方式与反馈统一（用户模拟 U1-10）：
+  
+  - 每个设置分节固定一行保存状态（`data-<plugin>-settings-status`，`data-state` = `clean` / `dirty` / `saving` / `saved` / `error` / `readonly`），中英双语。
+  - 显式保存（advisor / btw / projects 预算）：无改动时保存按钮禁用并显示「已保存」；有改动显示「有未保存更改」；失败显示「保存失败：原因」，按钮仍可重试。
+  - 自动保存（session-delete / session-rewind / next-step / projects 策略开关）：落盘后短暂显示「已保存」再回落「· 已保存」；失败显示原因并给可点的重试入口（`data-<plugin>-settings-retry`）。
+  - casefile 的诊断分节明确标为只读（「无可保存设置」），不再让人找不到保存按钮。
+  - `artifacts` 没有 `settings.section`（只提供右栏工具页签），本次不涉及、不发版。
+  - projects 额外保留既有「预算已保存：{summary}」回执（`data-projects-settings-b3-result`，`pnpm smoke:projects`
+    有断言），与统一状态行并存；通知开关也改走状态行，不再各自一套反馈。
+  - 保存失败后的重试/迟到响应严格绑定**保存时的 projectId**：切换项目会作废旧 pending（草稿/错误态/重试），
+    状态行提示「项目已切换，请重新保存」，不会把上一次的 patch 写到另一个项目上。
+  - advisor 保留旧锚点 `data-advisor-dirty`（dirty 时出现，语义不变），错误原因也进状态行。
+  - 已知（不做）：自动保存**不是串行队列**——同一项目连续快速修改时，最终以最后一次成功的写为准；
+    过期响应按保存序号 + projectId 丢弃，不会污染状态行或写错项目。
+  - 存储与 RPC 契约未改，只改界面反馈与按钮可用性；每包新增 `test/settings-save-status.test.js`（node:vm 驱动真实 client 组件）。
+
+- [#383](https://github.com/kangyishuai/dsh-plugins/pull/383) [`ca82d56`](https://github.com/kangyishuai/dsh-plugins/commit/ca82d5697132a2a7b5abb3e0cd53cfeac9ce1d0e) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 发版后真机复审发现的一组用户可见缺陷：
+  
+  - **advisor（P2，遮挡输入区）**：命令回执/轻提示原来固定在 `right:24px;bottom:24px`，1280×820 有会话时
+    回执盖住 composer（y=700–736）与发送按钮（y=748–782）。改为渲染时测量 `[data-composer-input]` 顶部、
+    `bottom = innerHeight - composerTop + 12`（无 composer 回退 24px），resize / composer 变高时重算；
+    回执 `max-height` 按可用空间收缩，避免顶出视口。纯函数（`toastBottomOffset` 等）有单测，桌面冒烟新增
+    「回执与 composer/发送按钮无重叠」几何断言。
+  - **projects（O1/O3/O4）**：① 列表页删除项目后回收站区块不即时刷新（仍显示「回收站是空的」直到整页刷新）——
+    删除成功 bump `trashEpoch`，回收站按 `reloadToken` 复用既有 `listTrash` 路径重载；② Routine 删除没有确认框
+    （会撤掉宿主定时任务并丢历史，违反 ADR 0002）——新增一行影响面（routines 名/频率/宿主 scheduleId/投递状态/
+    不可恢复性）、默认聚焦主按钮、Esc/取消，确认后才执行；③ Routine 创建成功后表单不清空、容易重复建——
+    成功清空名字/指令并把频率/时间回默认，失败保留输入。
+  - **casefile（A5）**：概览卡渲染服务端中文 summary 与原始 kind 枚举（`binary × 1`）。改为按结构化字段 +
+    locale 组装摘要，kind 走本包既有 `vocab` 中英映射；补 i18n parity 与真实页面渲染测试（中英两套断言）。
+  - **btw（B7）**：`/btw` 执行回执是 `div + onClick`，键盘不可达。改为 `role="button"` + `tabIndex=0` +
+    Enter/Space 触发、默认聚焦环样式；点击开面板的既有行为与 toast 样式不变。
+  - **session-delete（O2，真机复审归到 projects 条目但代码在本包）**：删除确认框写「正在运行，会先停止」，
+    但侧栏同一会话显示「空闲」——`plan.live` 实为「会话已在本机宿主进程注册」而非「回合在跑」。影响面改述为
+    「本机已打开，会先关闭」（英文 `open in this window; closed first`），不再声称正在运行；确认时 digest
+    校验继续拦截预览后变化。
+  
+  另修正两条与本次改动无关、但会让 `pnpm verify` 随本地时段/并行负载随机变红的既有计时用例
+  （advisor 账本恢复注入可测时钟、btw 设置保存态改状态轮询），生产行为不变。
+
 ## 0.6.0
 
 ### Minor Changes

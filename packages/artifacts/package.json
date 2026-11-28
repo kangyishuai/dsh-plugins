@@ -1,6 +1,6 @@
 {
   "name": "@kangyishuai/dsh-artifacts",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Local deliverable pages for DSH sessions: publish, preview live, keep versions",
   "icon": "icon.svg",
   "keywords": [
