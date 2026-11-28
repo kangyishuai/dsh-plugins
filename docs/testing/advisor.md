@@ -623,9 +623,14 @@ pnpm smoke:advisor-desktop --require --advice
 **桌面只读断言**（不修改任何值、不点保存）：
 
 1. 打开 设置 → 顾问：`[data-advisor-settings]` 存在且 `[data-advisor-error]` 不存在。
-2. `[data-advisor-settings-status]` 存在，`data-state="clean"`，文本含「已保存」。
-3. `[data-advisor-settings-save]`（与既有 `[data-advisor-save]` 同一按钮）`disabled === true`。
-4. 关闭对话框后断言它消失（与既有回归一致）。
+2. `[data-advisor-settings-status]` 存在，`data-state="clean"`，文本含「已保存」；
+   clean 时旧锚点 `[data-advisor-dirty]` 必须不存在。
+3. （dirty 态才有的旧锚点）改动后 `[data-advisor-dirty]` 存在且带 `data-advisor-dirty=""`——
+   这是 `main` 上既有锚点，按 §7.8「新锚点附加、不删旧锚点」保留，桌面回归仍可用它定位未保存态。
+4. `[data-advisor-settings-save]`（与既有 `[data-advisor-save]` 同一按钮）`disabled === true`。
+5. 关闭对话框后断言它消失（与既有回归一致）。
+
+失败态：状态行文本必须是「保存失败：原因」（原因与该分节顶部 `[data-advisor-error]` 横幅同源）。
 
 **真机记录（2026-11-28，隔离实例 CDP 9410，`dsh plugin add file:<tgz>` 替换安装后重启）**：
 
