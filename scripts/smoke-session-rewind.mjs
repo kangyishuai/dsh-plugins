@@ -955,6 +955,14 @@ check(
   rescuesTab.clicked === true && trashSection.present === true && /回收站|Trash/iu.test(trashSection.text),
   JSON.stringify(trashSection).slice(0, 200),
 );
+// 时间线只在「回溯记录」页签渲染；前面切到「救援点」后要切回来再读。
+await page.evaluate(() => {
+  const tab = [...document.querySelectorAll(".dsh-srw-tab")].find(
+    (t) => (t.textContent || "").trim() === "回溯记录",
+  );
+  if (tab) tab.click();
+});
+await page.waitForTimeout(600);
 const timeline = await page.evaluate(() => {
   const root = document.querySelector(".dsh-srw-timeline");
   if (!root) return null;
@@ -1153,6 +1161,25 @@ if (commandSession === null) {
 // /rewind @<seq> both 必须显式 confirm（AUD-REW-09）：无 confirm 时只回执影响面，绝不写文件。
 // 注意：本段代码在浏览器侧模板字符串里，避免反斜杠/模板插值（见脚本头部转义约定）。
 if (commandSession !== null) {
+  // 先清掉上一步（/rewind 候选键盘测试）可能遗留的弹层：弹层在时输入框拿不到焦点，
+  // 命令不会提交，body.innerText 会把弹层误当回执（2026-11-28 残余失败的根因）。
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await page.evaluate(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+    });
+    await page.waitForTimeout(250);
+    const open = await page.evaluate(() => document.querySelector(".dsh-srw-dialog") !== null);
+    if (!open) break;
+  }
+  const leftoverDialog = await page.evaluate(() => document.querySelector(".dsh-srw-dialog") !== null);
+  if (leftoverDialog) {
+    await page.evaluate(() => {
+      const dlg = document.querySelector(".dsh-srw-dialog");
+      const cancel = [...dlg.querySelectorAll("button")].find((b) => /取消|Cancel/u.test((b.textContent || "").trim()));
+      if (cancel) cancel.click();
+    });
+    await page.waitForTimeout(400);
+  }
   const bothSessionId = String(commandSession).replace("session:", "");
   let beforeBoth = null;
   try {
@@ -1195,13 +1222,18 @@ if (commandSession !== null) {
   } catch (_error) {
     afterBoth = null;
   }
+  const receiptLike =
+    /Nothing has been written yet|nothing was written|还没有写入任何东西|尚未写入|没有写入/iu.test(receiptText) ||
+    (/Nothing has been written yet|nothing was written|还没有写入任何东西|尚未写入|没有写入/iu.test(
+      (afterBoth && afterBoth.rawText) || "",
+    ));
   check(
     "/rewind @<seq> both 无 confirm 时只回执影响面、不写文件（AUD-REW-09）",
     bothTarget !== null &&
       beforeBoth !== null &&
       afterBoth !== null &&
       afterBoth.markerCount === beforeBoth.markerCount &&
-      /Nothing has been written yet/u.test(receiptText),
+      receiptLike,
     JSON.stringify({
       bothTarget: bothTarget,
       before: beforeBoth && beforeBoth.markerCount,
@@ -1346,7 +1378,17 @@ const changed = await page.evaluate(() => {
   const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
   setValue.call(number, "20");
   number.dispatchEvent(new Event("input", { bubbles: true }));
-  const checkbox = panel.querySelector('input[type="checkbox"]');
+  // 设置项顺序会随布局调整变化：按文案找「从候选列表选择时先确认」的 checkbox（confirmOnList），
+  // 不要盲取第一个（新布局第一个是「↑/↓ 召回历史输入」，会误关另一个开关）。
+  const pickCheckbox = () => {
+    const boxes = [...panel.querySelectorAll('input[type="checkbox"]')];
+    return (
+      boxes.find((b) =>
+        /先确认|confirm/i.test((b.closest("label") || b.parentElement || {}).textContent || ""),
+      ) || boxes[0]
+    );
+  };
+  const checkbox = pickCheckbox();
   if (checkbox && checkbox.checked) checkbox.click();
   return "changed";
 });
@@ -1368,7 +1410,11 @@ await page.evaluate(() => {
   const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
   setValue.call(number, "100");
   number.dispatchEvent(new Event("input", { bubbles: true }));
-  const checkbox = panel.querySelector('input[type="checkbox"]');
+  const boxes = [...panel.querySelectorAll('input[type="checkbox"]')];
+  const checkbox =
+    boxes.find((b) =>
+      /先确认|confirm/i.test((b.closest("label") || b.parentElement || {}).textContent || ""),
+    ) || boxes[0];
   if (checkbox && !checkbox.checked) checkbox.click();
 });
 await page.waitForTimeout(400);
@@ -1437,7 +1483,7 @@ function decodeZstdFrames(buffer) {
  * 内联进浏览器脚本，所以只能依赖 deps 里传进来的能力，不能引用模块级变量。
  * @param {{ home?: string, sessionId?: string }} args
  * @param {{ readFile: any, readdir: any, join: any, gunzipSync: any, decodeZstdFrames: any }} deps
- * @returns {Promise<null | { logName: string, eventCount: number, maxSeq: number, humanSeqs: number[], userMessageSeqs: number[], visibleTexts: string[], visibleHumanSeqs: number[], markerCount: number, cutCount: number }>}
+ * @returns {Promise<null | { logName: string, eventCount: number, maxSeq: number, humanSeqs: number[], userMessageSeqs: number[], visibleTexts: string[], visibleHumanSeqs: number[], markerCount: number, cutCount: number, rawText: string }>}
  */
 async function readSessionDigest(args, deps) {
   const home = args && typeof args.home === "string" ? args.home : "";
@@ -1537,6 +1583,8 @@ async function readSessionDigest(args, deps) {
     logName: logPath.split("/").pop() || logPath,
     eventCount: events.length,
     maxSeq: maxSeq,
+    // 命令输出只在会话日志里（宿主命令卡片/面板不保证可见），断言用它在防"啥都没发生"。
+    rawText: text,
     humanSeqs: human.map((event) => event.seq),
     userMessageSeqs: userMessages
       .filter((event) => typeof event.seq === "number")

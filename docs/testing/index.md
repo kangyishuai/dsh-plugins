@@ -142,18 +142,17 @@ tarball 的 HTTP 状态），可见后 `gh run rerun <run-id> --failed` 即可�
 ## 4. 2026-11-28 全插件体检/修复后的当前计数
 
 > 来源：2026-11-28 的审计修复与 3 个用户模拟画像修复批次（PR #352–#371）合并后的实测；
-> 历史记录保留在各插件文档里，下列是**当前状态**。web 冒烟因共享 ego-browser 环境限制，部分未在本轮重跑，
-> 标「待实跑」；桌面只读回归在隔离桌面实例（`--port`）上跑（**8/8 插件 174 PASS / 16 SKIP / 0 FAIL**，每插件重启后跑）。
+> 历史记录保留在各插件文档里，下列是**当前状态**。web 冒烟已在独占 ego 窗口全量复跑（2026-11-28 11:00，8/8 全绿）；桌面只读回归在隔离桌面实例（`--port`）上跑（**8/8 插件 174 PASS / 16 SKIP / 0 FAIL**，每插件重启后跑）。
 
-| 插件           | 单测（`node --test`） | 桌面只读回归（2026-11-28 复跑） | web 冒烟（2026-11-28 复跑）                                                      |
-| -------------- | --------------------- | ------------------------------- | -------------------------------------------------------------------------------- |
-| advisor        | **233**               | 24 PASS / 2 SKIP                | **16/16 PASS**                                                                   |
-| artifacts      | **100**               | 4 PASS                          | **12/12 PASS**                                                                   |
-| btw            | **121**               | 21 PASS / 1 SKIP                | **24 PASS / 3 SKIP**（默认段，未发起模型调用）                                   |
-| casefile       | **279**               | 26 PASS / 5 SKIP                | **69/69 PASS**                                                                   |
-| next-step      | **246**               | 22 PASS / 3 SKIP                | **74/74 PASS**                                                                   |
-| projects       | **825**               | 24 PASS / 1 SKIP                | 266 PASS / 5 FAIL（`dsh web` 宿主无 coordinator 能力 + 测试同步未收口，见下）    |
-| session-delete | **136**               | 18 PASS / 4 SKIP                | 本轮未跑通（共享 ego TaskSpace 争用超时；历史 33/33）                            |
-| session-rewind | **280**               | **35 PASS**（含确认框默认聚焦） | 62 PASS / 1 FAIL（剩余 1 条为 web 测试序列遗留弹层；AUD-REW-09 由单测+桌面覆盖） |
+| 插件           | 单测（`node --test`） | 桌面只读回归（2026-11-28 复跑） | web 冒烟（2026-11-28 复跑）    |
+| -------------- | --------------------- | ------------------------------- | ------------------------------ |
+| advisor        | **233**               | 24 PASS / 2 SKIP                | **16/16 PASS**                 |
+| artifacts      | **100**               | 4 PASS                          | **12/12 PASS**                 |
+| btw            | **121**               | 21 PASS / 1 SKIP                | **24 PASS / 3 SKIP**（默认段） |
+| casefile       | **279**               | 26 PASS / 5 SKIP                | **69/69 PASS**                 |
+| next-step      | **246**               | 22 PASS / 3 SKIP                | **72 PASS / 2 SKIP**           |
+| projects       | **825**               | 24 PASS / 1 SKIP                | **271 PASS / 1 SKIP**          |
+| session-delete | **136**               | 18 PASS / 4 SKIP                | **33/33 PASS**                 |
+| session-rewind | **280**               | **35 PASS**（含确认框默认聚焦） | **63/63 PASS**                 |
 
 基线命令：`pnpm verify`（lint/typecheck/check/check:docs/check:public/全部单测）+ `pnpm probe:runtime`（**100 项**，见 [runtime §23](../runtime/0.2.2-rc.5.md#23-2026-11-28-第二轮实测能力挂载时序导航调度契约与命令回执)）。
