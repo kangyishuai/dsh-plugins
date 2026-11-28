@@ -1,5 +1,22 @@
 # @kangyishuai/dsh-casefile
 
+## 0.9.0
+
+### Minor Changes
+
+- [#358](https://github.com/kangyishuai/dsh-plugins/pull/358) [`5506115`](https://github.com/kangyishuai/dsh-plugins/commit/5506115dee9af5b17ea46645bc77a8a72dff28a9) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 安全与契约修复（AUD-CASEFILE 簇）：`case_project` 新增 `trash` / `restore` / `purge` 三个回收站动作与 `dryRun` 参数（`drop` 增加 dry-run、影响面与数据根审计，`purge` 硬删需显式 `confirm`），工作台新增回收站入口；`report` 新增 `redact` 选项并默认脱敏（与规格包/bundle 共用脱敏，报告页脚标注脱敏状态；脱敏范围扩展到通用系统根路径、`~/`、带扩展名的绝对路径与 AIza/JWT/私钥块等 token 形态）。回收站恢复会先校验条目里的 `project.json`（坏条目——包括版本高于本插件的条目——保留在回收站并写失败审计）；回收站列表对不可读/更高版本的条目降级为「元数据未知」而不是整表报错；`drop` 的 dry-run 返回 `previewTrashPath`（预览路径，实际落点会重新取时间戳），`purge` 的 dry-run 返回 `trashRoot`。`case_project` 的 action 枚举补齐 `autonomy`/`bundle`/`trash`/`restore`/`purge`；`case_evidence.input.kind` 改为枚举且未知种类落 `other` 并记 `kindRaw`；`open` 可打开已有项目，任何显式 `projectId` 调用都会建立可持久化的会话指针；新增 `maxArtifactBytes`（默认 64 MiB）与「先校验后归档」；`settings.section` order 改为 96。
+
+### Patch Changes
+
+- [#375](https://github.com/kangyishuai/dsh-plugins/pull/375) [`a8b7b2f`](https://github.com/kangyishuai/dsh-plugins/commit/a8b7b2fcb717b8f41ab7e237398e003f0267d49a) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 复审 follow-up（2026-11-28 `batch-ui-1` A1–A4/A6）：
+  
+  - **审计来源可区分**：危险操作（drop / restore / purge / restore-failed）不再把所有审计行硬编码成 `actor:"user"`。`case_project` 工具路径显式记 `actor:"agent"` 并带上会话 `sessionId`，回收站 UI（Remote）显式记 `actor:"user"`，直接调用的脚本没传来源则如实记 `unknown`——`audit.jsonl` 现在能回答「这次 drop 是用户点的还是模型自己决定的」。
+  - **危险操作可访问性**：展开「危险操作」时焦点进主按钮；dry-run 影响面出现时焦点移到「取消」（以前焦点掉到 `document.body`），预览卡带 `role="alert"` + `aria-live="polite"`；取消后焦点还回入口。vm 测试驱动真实 `client.js` 断言三条焦点路径。
+  - **文档**：双语 README 的卸载残留清单补 `builder-sessions.jsonl`，数据布局树与卸载清单对齐。
+  - **冒烟诚实性**：桌面只读脚本新增「危险操作默认收起（`details.open === false`）」断言；空 profile 上 4 条危险操作断言由「记 PASS」改为 SKIP 并计数，不再假绿。
+
+- [#365](https://github.com/kangyishuai/dsh-plugins/pull/365) [`c1d8c1b`](https://github.com/kangyishuai/dsh-plugins/commit/c1d8c1b9a771ea2b435e1bd1b92074efa366d5a5) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 工作台 UX 修复（用户模拟审计 USIM-U1-04/05/16、U2-16、U3-07/11）：空态改成「是什么 / 适合谁 / 第一步」的人话引导，工具名收进「给开发者 / AI 的说明」折叠；设置里 REA 未接入改为可选/不可用说明而不是红色错误；新建项目表单补齐标签与必填校验（失焦/提交高亮 + 可读错误、提交中禁用、失败提示）；「运行」tab 重复的空态文案去重；自主性悬浮提示改人话并保留 L0–L3 副标题；项目详情页新增默认收起的「危险操作 → 移入回收站」（先 dry-run 影响面再显式确认），`case_project drop` 的工具描述要求「用户明确同意、不得自行调用」；双语 README 新增「卸载后残留 / Uninstall」与手工清理说明。
+
 ## 0.8.1
 
 ### Patch Changes

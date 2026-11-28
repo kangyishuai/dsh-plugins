@@ -1,5 +1,16 @@
 # @kangyishuai/dsh-session-delete
 
+## 0.6.0
+
+### Minor Changes
+
+- [#355](https://github.com/kangyishuai/dsh-plugins/pull/355) [`1a41a76`](https://github.com/kangyishuai/dsh-plugins/commit/1a41a7692ea4deff1b10837fc8783d9a2ece51cc) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 修复审计发现的恢复、对账与可观测性缺口：启动时扫 journal 未完成记录，按落盘事实补完或回滚并写 `recover` 审计（此前只写 intent、界面却声称「重启后自愈」）；恢复回执与界面如实报告引用/置顶/校验结果（新增 `refs`/`checks`/`partial`，`meta.pinned` 真正落盘）；删除已移动但收尾失败时写 `partial` 回执并以 `session-delete/partial` 区分；plan 阶段与 agent 工具的拒绝进制审计；跨卷回退改为逐项校验后才删源；复活守卫真的再移一次。设置页体检改为按需运行并缓存结果（打开设置不再扫全库），toast 撤销失败常驻提示；关键节点补稳定的 `data-sdel-*` 锚点。新增界面行为，故按 minor 发布。
+
+### Patch Changes
+
+- [#368](https://github.com/kangyishuai/dsh-plugins/pull/368) [`4ffd91a`](https://github.com/kangyishuai/dsh-plugins/commit/4ffd91afea4df0051b77109ff52c08aa47570c49) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 恢复/删除后的可用性与可解释性（用户模拟 U2/U3，含独立复审跟进）：恢复成功后自动重新打开会话并刷新界面（不再停在「会话不可用」）；恢复失败逐项列出引用名与下一步动作，回执可展开、审计写清单，并新增「重试未通过的引用」（恢复时也会先自动重试一次）；宿主接口缺失改记「跳过」，不再假报失败；宿主服务晚挂载时能力探测会自动跟上（删除仍走归档/停止闸门，恢复能挂回工作区）；删除当前会话后自动切到下一个会话或新会话页并提示可恢复；恢复成功后回收站面板自动关闭。
+  批量恢复改为只刷新一次、不逐条跳转会话；旧版本写的恢复回执（缺少恢复前引用快照）会被拒绝重检而不是假报「全部恢复」，解除归档/置顶失败也会给出中文下一步。
+
 ## 0.5.0
 
 ### Minor Changes

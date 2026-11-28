@@ -1,5 +1,23 @@
 # @kangyishuai/dsh-btw
 
+## 0.6.4
+
+### Patch Changes
+
+- [#375](https://github.com/kangyishuai/dsh-plugins/pull/375) [`a8b7b2f`](https://github.com/kangyishuai/dsh-plugins/commit/a8b7b2fcb717b8f41ab7e237398e003f0267d49a) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 复审 follow-up（2026-11-28 `batch-ui-2` B1/B2/B4）：
+  
+  - **回退抽屉真正可达**：新增显式 `drawerFallback` 状态。右侧栏服务在、但 `openTab` 抛错或打开后 700 ms 仍没有 `[data-btw-panel]` 时，浮层抽屉现在真的会渲染（以前 `BtwDrawer` 在 `tabReady` 时直接返回 null，降级分支是死代码，用户只看到一条 toast）；再次成功 `openTab` 会清掉标记并收起抽屉，避免 tab 与抽屉同时在场。抽屉渲染判定抽成纯函数并用 `__test` 钩子驱动真实 `apply()` 的行为测试覆盖三条路径。
+  - **IME 判据补齐**：`shouldSubmitOnKey` 增加 `nativeEvent.isComposing`、`which === 229`、`key === "Process"` 与 composition ref 四条判据（对齐 projects 的 `isImeConfirmKey`），两个输入框都接 `onCompositionStart/End`；React 合成事件不暴露 `isComposing` 时不再误发送。
+  - 双语 README 写清面板降级形态；`docs/testing/btw.md` 的单测计数改真（notice 6、client 10、总数 118，冒烟默认段 +3 / `--deep` +2 / 改写 1 条）。
+
+- [#357](https://github.com/kangyishuai/dsh-plugins/pull/357) [`e7fcfee`](https://github.com/kangyishuai/dsh-plugins/commit/e7fcfee15769972c01686baf8b8325191cca2e19) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 修复审计（2026-11-28）里的 btw 问题：设置页的「每会话保留条数」（`historyLimit`，1–200）之前可改可存但服务端全部硬编码 50，现在每条历史读写路径都按它生效（降低上限后旧记录立即不再展示，并在下一次旁问落盘时裁掉）；只读 guard 改为**只**挂在旁问子代理自己的作用域上，删掉会落到宿主全局层、在旁问运行期间拒绝所有会话工具调用的插件 ctx 兜底（取不到子会话 ctx 时降级为「不挂 + warn」，只读只剩提示词约束）；同一会话并发的旁问历史写入改为按文件串行化，不再互相覆盖丢记录；bounded 模式只在真正命中阈值时才读父会话事件（不再每次旁问都无条件物化整段事件数组），digest 为空退回 full fork 时写 warn 不再静默；`observeUsage` 与追问队列按最近使用加界并在旁问结束时清理子会话条目；设置分节 `order` 改为 95，避免与 projects/casefile 同序抢占；README 补上卸载残留说明与 guard 作用域的真实表述。
+
+- [#370](https://github.com/kangyishuai/dsh-plugins/pull/370) [`a27c3ff`](https://github.com/kangyishuai/dsh-plugins/commit/a27c3ff38af608893848321c3dbde273af7366b1) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 旁问 UX 修复（2026-11-28 用户模拟 USIM-U2-06 / U2-13 / U2-18）：空白/首启会话里 `/btw` 回车后不再「什么都没发生」——host 半记一条**内存回执**（`btw/notice`，不落盘、不触发模型调用），client 半轮询后画顶部 toast（已提交 → 完成带耗时与答案预览 / 失败带原因，点击可打开面板；面板已在显示答案时提示直接收起），空白会话里还会自动打开右侧栏「旁问」tab（右栏没渲染时回退浮层抽屉）。
+  
+  面板里两个输入框统一为 **Enter 发送、Shift+Enter 换行**（输入法组字中不发送）并给出提示，线程内发送按钮由「追问」改为「发送」，不再和线程头的「追问 / 取消追问」开关重名；live 卡片存在时状态条也不再吞掉失败提示。
+  
+  「转正」草稿去重：末答只作为「结论」出现一次，关键细节只保留追问的问题与和结论不同的较早答案；面板首次打开的空态改为解释「旁问是只读、不打断、不进历史」。顺带补齐 client 英文字典缺失的 `settings.bounded*` 两个键。
+
 ## 0.6.3
 
 ### Patch Changes

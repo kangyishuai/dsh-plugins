@@ -1,5 +1,19 @@
 # @kangyishuai/dsh-next-step
 
+## 0.5.0
+
+### Minor Changes
+
+- [#354](https://github.com/kangyishuai/dsh-plugins/pull/354) [`7d07c33`](https://github.com/kangyishuai/dsh-plugins/commit/7d07c3369982d2df26d8bda4a3fcc9cf90f7bf07) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 本批审计（AUD-NS-01…08）的行为修复：下一轮开始时不再取消在途生成，而是让它跑完并把候选以 `shown:false` 落库（**这不是省钱改动**：跑完会比中止多付输出 token；换来的是接近完成的调用不再被丢弃、诊断与报表里记为 `superseded`；该候选不进对话流、不占 `maxCardsPerSession`、不进曝光、不可揭示）；更早轮次、未决策的卡默认折叠成一行「更早的一轮 · 摘要首句」，`maxCardsPerSession` 默认从 120 降到 60（旧设置文件里恰好等于 120 的值随 v3 迁移更新，你自己设的其它数字不动）。复盘报表的「第几条」分母改成该位置被展示的次数（`second-option-useless` 判读第一次真正可达），`closeFollowup` 接线（下一轮结束 / TTL 15 分钟 / 会话级上限 32 都结算 `typed:false`），非 completed 的回合也会落 `gate:"turn-error"` 事件（不再在进入闸之前被丢掉）。`error.aborted` 补进两份 locale 文件并新增内联字典 ↔ locale 文件的键集 parity 测试，README 隐私段补充「胶囊文案会原样记录」。
+
+### Patch Changes
+
+- [#369](https://github.com/kangyishuai/dsh-plugins/pull/369) [`ce891fa`](https://github.com/kangyishuai/dsh-plugins/commit/ce891faab4df498ba3eb37f2e127f832c8c05ae9) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 生成失败现在会在补生成入口给出可见、可操作的反馈（USIM-U2-04）：按钮变成「重试」+ 一行原因摘要，「查看详情」展开服务端技术原因（`json:empty`、模型错误、超时秒数等）；自动生成失败（含整页刷新后）也会显示，不再静默恢复原状；`inflight` 回执不再是一句永久的「正在生成」，而是等待态轮询后台状态。新增客户端兜底超时（默认 30 秒、最多 60 秒）：超时先取消服务端在途生成，再显示「生成超时，可重试」。宿主新增只读的 `nextStep/generateState` 与 `nextStep/cancelGenerate` 两个 Remote（不写会话日志、不写决策），默认仍只读。
+  
+  限制：`generateState` 的「最近一次失败」记在**进程内**；宿主进程重启后该记录丢失，刷新页面（同进程）仍可见，重启 DSH 后不再显示历史失败（按钮回到首生成态）。
+
+- [#359](https://github.com/kangyishuai/dsh-plugins/pull/359) [`2513267`](https://github.com/kangyishuai/dsh-plugins/commit/2513267ae60b20c608f685d421678e8e5a8de788) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 复盘报表把 `schema` 失败拆成「模型返回空文本」（`json:empty`）与「非空格式失败」：`schemaShare` 只算后者，新增 `emptyShare`，判读新增 `empty-generations`（空输出属 provider / 输出长度问题，不是「解析要放宽」；同一请求重发实测只救回 2/81）。补生成不再被已 superseded 的在途生成挡住（异回合 / 已被取代时先取消再生成），旧卡折叠首句补上英文句号切句。
+
 ## 0.4.3
 
 ### Patch Changes

@@ -1,5 +1,91 @@
 # @kangyishuai/dsh-projects
 
+## 0.11.0
+
+### Minor Changes
+
+- [#361](https://github.com/kangyishuai/dsh-plugins/pull/361) [`6ba7c60`](https://github.com/kangyishuai/dsh-plugins/commit/6ba7c60c5e524c1abc01e4ad55eeae884d4610ff) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 核心/后端安全修复（2026-11-28 审计 AUD-PROJ-01…30）：
+  
+  - **无目录项目的会话 cwd 不再落在插件数据根**：协调者 / routine 投递 / `schedule` 提醒统一改用
+    `<dataRoot>/workspaces/<id>`，数据根（`projects.json`、`trash/`、其它项目记忆）不再交给
+    `danger-full-access` 的 agent，也不再出现在宿主 Workspace 列表里。
+  - **暂停/归档/删除真的会停宿主定时任务**：`pauseProject` / `archiveProject` / `unarchiveProject` /
+    `deleteProject` 会暂停、恢复或删除对应的 routines 与 `schedule` 提醒，并且用的是宿主真实契约
+    （`SchedulePatch.active: boolean`，不是会被静默忽略的 `status`）；暂停/归档项目下新建的自动档
+    routine 采用**建但按住**——宿主条目建成 `paused`（可停用/可删除/可回读，恢复项目时由对账放开），
+    `schedule` 档一次性提醒仍直接拒绝新建；**删除先做完所有校验（在跑线程等）再动宿主定时**，
+    删除影响面会写明「会删除 N 条宿主定时任务」，条目停不掉时拒绝删除并提示去宿主 Automation
+    页面处理。
+  - **`policy.repoGrants` 可以撤销了**（显式空列表会落盘，不再回落旧授权）；`repoGrants` /
+    `preapprove` / `pr.tier` 的变更都会写 `project/policy-changed` 审计。
+  - **`budget.weeklyTokens` 成为真正的预算字段**：设置页有输入框、读盘不丢、建线程与自动暂停两处执行；
+    token 用量桶改按**本地日期**（与日/周闸同口径）。
+  - **PR 四档可在设置里选择**，`auto-merge` 档在 CI 通过后把合并**排进审批队列**（不再落到重复开
+    PR、也不再永远不会合并），PR 卡新增「继续 PR 流程」按钮把这个决策真正变得可达（还需项目的 `autoMerge` 危险开关同时打开，
+    否则如实返回 `merge/danger-off`）；合并审批必须命中本项目线程记录的 PR 号，否则
+    `merge/pr-not-ours`，不再回落 `dirs[0]`。
+  - **审批卡片显示纯文本影响面**（PR 号 / 仓库 / 分支 / 目录 / 变更键），批准与执行前能看到影响范围。
+  - **预授权（`preapprove`）终于有界面入口**，并明示「勾上即自动执行、不可逆动作没有二次确认」。
+  - **没配协调者的项目不再产生唤醒噪音**：线程结束时不再构造信封、不调模型，`wake/skipped` 审计
+    从「每个 `turn/end` 一条」改为「同项目 + 同理由每 6 小时一条」；项目详情的协调者卡片会明确写出
+    「未配置协调者，线程结束不会唤醒任何会话」。
+  - 一并修掉：审批队列上限与分页、超时占位回收、删项目清 token 桶（恢复时放回）、恢复校验 manifest id、
+    记忆去重改为块级精确匹配、线程 worktree 建成功但建会话失败时回滚、线程序号不复用旧分支名、
+    协调器 `project_thread_message` 校验会话归属、项目默认模型不可用时界面提示、token 入账合并写盘。
+  - **独立复审修正**：`Routines` 的启停开关同样改用宿主 `active` 契约（它从 0.10.x 起其实从未生效）；
+    宿主没有 `schedule` 服务时「无可停」不再把项目卡成不可删；`detail.noDirHint` 文案改为
+    「项目专用工作区（workspaces/&lt;id&gt;）」；删除影响面披露宿主定时数量。
+  
+  回归修正（2026-11-28 复审后测试暴露）：① 项目默认模型/协调者默认模型允许「手填目录外的 provider + 部署特有
+  effort」，不再因为 provider 不在可用目录里把整条写入清空（AUD-PROJ-24 的校验只拒绝「provider 在目录里但模型不在」）；
+  ② 暂停/归档项目下新建自动档 routine 由「硬拒绝」改为「建但按住」，修复「建完看不到行、没有可回读状态」的死锁，
+  同时仍然不会到点投递。
+
+- [#367](https://github.com/kangyishuai/dsh-plugins/pull/367) [`8424b21`](https://github.com/kangyishuai/dsh-plugins/commit/8424b217e8a05c67525917a1a8f097149d50f74b) Thanks [@kangyishuai](https://github.com/kangyishuai)! - UI/UX 修复批次（2026-11-28 审计 + 用户模拟）：
+  
+  - **中文输入法**：composer 在 composition 期间按 Enter 不再误发送半截输入（`isComposing`/nativeEvent/keyCode 229/合成期标记四重守卫）。
+  - **i18n**：编译期硬编码中文（提醒面板、权限收窄卡、详情、Routines、调试标题等）全部进 locale 双语字典；新增内联字典 ↔ locale 文件 parity 守卫测试。
+  - **设置分节**：首屏收敛为摘要 3 行 + 「更多设置」默认收起（conventions §7.2）；未实现功能明确标注不可用。
+  - **可访问性**：产物查看器/行删除确认/首启引导补 dialog 语义、Esc 关闭、焦点进入与归还、Tab 焦点陷阱；提醒表单内联卡片不再声明 aria-modal。
+  - **Library 文件面**：服务端 `files.partial` 展示为「部分目录未列出（预算用尽，已列出 N/M）」；折叠写盘失败不再静默。
+  - **提醒/错误可读性**：预算标签用中文语义标签（不再显示原始 JS 键名），保存提示回显摘要；英文界面标题统一。
+  - **用户模拟修复**：项目详情首屏术语人话化；「实时 CI/PR（未实现）」开关禁用；「重开协调者/建协调者」加确认与成本提示；「使用已有文件夹」绝对路径不再静默失效；原始配置键当标签、调试标题中英混排等清理。
+  - 仍在 defer：部分 P3（产物查看器无冒烟、追踪属性命名空间、z-index 统一、`<details>` 指示等），见 `docs/testing/projects.md` 记录。
+
+### Patch Changes
+
+- [#375](https://github.com/kangyishuai/dsh-plugins/pull/375) [`a8b7b2f`](https://github.com/kangyishuai/dsh-plugins/commit/a8b7b2fcb717b8f41ab7e237398e003f0267d49a) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 复审 follow-up（2026-11-28 `batch-ui-2` A2/A3/A4/A10）：
+  
+  - **IME 守卫补全**：除 composer 外，其余 8 个「Enter 即提交」的输入框（新建项目名 / 新目录 / 新仓库、Library 搜索、线程 steer、记忆追加、route 派单、详情加目录）统一复用 `isImeConfirmKey`，中文输入法上词不再误触发提交（steer / route 会真的发消息 / 起协调者回合）。
+  - **目录超限 toast**：`detail.dirLimit` 补上 `used` 占位符参数，不再渲染裸 `已加 {used} 个`。
+  - 双语 README 单测数更新（825）并新增「卸载后残留 / What remains after uninstall」一节：数据根（`projects.json` / `trash/` / `workspaces/<id>/`）、仓库同级的 `.dsh-worktrees/`、宿主 workspace 绑定的残留与手工清理方式。
+
+- [#363](https://github.com/kangyishuai/dsh-plugins/pull/363) [`2941761`](https://github.com/kangyishuai/dsh-plugins/commit/2941761bc5388a5e2a5abaa50e22f8d6280772b6) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 修复 2026-11-28 审计修复批次自己引入的两处回归（web 冒烟 `pnpm smoke:projects` 从 270 PASS
+  掉到 262 PASS / 8 FAIL）：
+  
+  - **手填部署特有的 `reasoningEffort` 又被挡在门外（F42 回归）**：`AUD-PROJ-24` 在
+    `setThreadDefaults` 写入口按模型目录硬校验，而宿主目录只列「当前部署可用」的 provider。
+    于是「手填一个目录外的 `provider/model` + 部署特有 effort（`max`/`xhigh`/`off`）」整条写入被
+    判成 `model/unavailable` 拒掉（UI 回读是空串，审计里也没有三次写入）。现在
+    `checkCatalogChoice()` 先判** provider 权威性**：目录里根本没有这个 provider →
+    `checked:false / provider-unknown`（无法判断就不拦，符合「目录拿不到不校验」的既有口径）；
+    provider 在目录里而模型不在 → 仍然拒绝（`AUD-PROJ-24` 的原意：换 provider 后默认模型失效）。
+    effort 没有、也不该有白名单，原样保存（`max` / `xhigh` / `off` 回读一致）。
+  - **暂停项目下建不了自动档 routine（Routines 回归）**：`AUD-PROJ-02` 原先在
+    `createRoutine` / `updateRoutine` 里对暂停/归档项目**硬拒绝**，结果是「建完之后列表里没有行、
+    也没有可回读的状态」——静默死锁，还会连带打掉 History / 停用 / 删除 / 落盘一串断言。
+    现在改成**建但按住**：宿主条目照常建出来，紧接着发 `patch.active:false`（`holdSchedulePaused()`）
+    并回读 `status:'paused'`，按不住就撤掉条目并如实失败；本地记录 `enabled` 仍是 `true`
+    （可停用/可删除/可回读），`resumeProject` 的宿主对账会把它放开，用户显式停用的保持停用。
+    花钱的路径仍然被堵住：`paused` 条目不会到点投递。同一批也补上了**「停用 → 启用」这条绕过路径**：
+    暂停/归档项目里点「启用」只写本地 `enabled`，宿主条目强制留在 `paused`（回执带 `heldPaused`），
+    项目恢复时才真正放开——否则点两下开关就把项目暂停绕过去了。`schedule` 档一次性提醒保持原来的
+    拒绝新建（按住再恢复时 `at` 时点大概率已过期，宿主会以 `not_future` 拒掉）。
+  
+  顺带：`model/defaults-checked` 审计补 `reason` 字段（区分 `provider-unknown` / `catalog-unavailable`）；
+  `pnpm smoke:projects` 的浏览器脚本修了一处**模板内正则转义**（`/workspaces\/<id>/` 在模板字符串里
+  少了反斜杠，生成的 `browser.mjs` 直接语法错误、冒烟 INFRA 失败）。
+
 ## 0.10.11
 
 ### Patch Changes
