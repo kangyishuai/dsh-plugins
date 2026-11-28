@@ -67,6 +67,9 @@ export const FILE_ERROR_CODES = Object.freeze({
   rescueFailed: "session-rewind/files-rescue-failed",
   failed: "session-rewind/files-failed",
   rescueNotFound: "session-rewind/rescue-not-found",
+  // 回收站操作 id 不存在（并发恢复/清理后过期）。单独一个 code，客户端才能显示
+  // 「记录不存在」而不是误导性的「部分文件处理失败」（复审 N4）。
+  trashNotFound: "session-rewind/trash-not-found",
   storage: "session-rewind/storage-unavailable",
 });
 
@@ -2155,7 +2158,7 @@ export function createFileStore(input = {}) {
     const manifest = await readJson(path.join(dir, "manifest.json"));
     if (!isRecord(manifest)) {
       throw new FileStoreError(
-        FILE_ERROR_CODES.failed,
+        FILE_ERROR_CODES.trashNotFound,
         `trash operation "${auditId}" was not found`,
       );
     }
@@ -2250,7 +2253,7 @@ export function createFileStore(input = {}) {
     const manifest = await readJson(path.join(dir, "manifest.json"));
     if (!isRecord(manifest)) {
       throw new FileStoreError(
-        FILE_ERROR_CODES.failed,
+        FILE_ERROR_CODES.trashNotFound,
         `trash operation "${auditId}" was not found`,
       );
     }
@@ -2455,23 +2458,39 @@ export function createFileStore(input = {}) {
 
   /**
    * 未被任何 entry / rescue manifest / trash manifest 引用的 blob 清掉。
-   * @returns {Promise<{removedBlobs: number, bytesFreed: number}>}
+   *
+   * **fail-closed**（复审 N10）：任一会话的 entries 读不出来时，无法确定它的 blob 是否仍被
+   * 引用，本次 GC 直接跳过（不删任何 blob），并在结果里报 `skipped`。以前把读失败当空数组，
+   * 会把该会话的 blob 当「无引用」删掉，丢可回溯的文件内容。
+   * @returns {Promise<{removedBlobs: number, bytesFreed: number, skipped?: string, unreadableSessions?: Array<{sessionId: string, reason: string}>}>}
    */
   async function collectGarbage() {
     /** @type {Set<string>} */
     const referenced = new Set();
+    /** @type {Array<{sessionId: string, reason: string}>} */
+    const unreadableSessions = [];
     for (const sessionId of await listSubdirs(path.join(home, "sessions"))) {
       /** @type {FileEntry[]} */
       let entries = [];
       try {
         entries = await readEntries(sessionId);
-      } catch {
-        entries = [];
+      } catch (error) {
+        unreadableSessions.push({ sessionId, reason: messageOf(error) });
+        continue;
       }
       for (const entry of entries) {
         if (typeof entry.beforeHash === "string") referenced.add(hexOf(entry.beforeHash));
         if (typeof entry.afterHash === "string") referenced.add(hexOf(entry.afterHash));
       }
+    }
+    if (unreadableSessions.length > 0) {
+      // 还没删任何东西：直接返回跳过，保留全部 blob（安全网优先）。
+      return {
+        removedBlobs: 0,
+        bytesFreed: 0,
+        skipped: "entries-unreadable",
+        unreadableSessions,
+      };
     }
     /** @type {Array<{root: string, kind: string}>} */
     const manifestRoots = [
@@ -2544,6 +2563,8 @@ export function createFileStore(input = {}) {
       const gc = await collectGarbage();
       freed += gc.bytesFreed;
       if (gc.removedBlobs > 0) continue;
+      // entries 读不出来时不能继续动 anchor 数据（会再次读 entries 并抛错）：保留现状。
+      if (gc.skipped === "entries-unreadable") break;
       const removed = await oldestAnchorGroup();
       if (!removed) break;
     }

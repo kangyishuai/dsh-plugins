@@ -27,8 +27,33 @@ export const ERROR_CODES = Object.freeze({
   filesRescueFailed: `${ERROR_PREFIX}/files-rescue-failed`,
   filesFailed: `${ERROR_PREFIX}/files-failed`,
   rescueNotFound: `${ERROR_PREFIX}/rescue-not-found`,
+  // 回收站操作 id 不存在（并发恢复/清理后过期）。与 files.js 的 FILE_ERROR_CODES 同名。
+  trashNotFound: `${ERROR_PREFIX}/trash-not-found`,
   storageUnavailable: `${ERROR_PREFIX}/storage-unavailable`,
 });
+
+/**
+ * 内部错误 → 线缆上的失败三元组（code / message / details）。
+ *
+ * **宿主契约（0.2.2-rc.5，复审 B1）**：`@deepseek-ai/dsh-typert-protocol` 的
+ * `RemoteError` 构造签名是 `(code, message, details, options)` —— **第三参就是 details**；
+ * gateway 的 `rpcFailure()` 原样透传 `details: remote.details`，客户端 `call()` 再把
+ * `result.error.details` 抄到 `error.details`。所以这里必须把 details 平铺返回，
+ * 不能再包一层 `{details: …}`（否则客户端拿到 `error.details = {details:{…}}`，
+ * `trashPartialOf` / `conflictPathsOf` / `failedPathsOf` 全部读不到）。
+ *
+ * 只在 `session-rewind/*` 前缀的 code 上透传 details；其它错误按通用 `failed` 收口。
+ * @param {unknown} error
+ * @returns {{ code: string, message: string, details: any }}
+ */
+export function remoteFailureOf(error) {
+  const code = /** @type {any} */ (error)?.code;
+  const message = error instanceof Error ? error.message : String(error);
+  if (typeof code === "string" && code.startsWith(`${ERROR_PREFIX}/`)) {
+    return { code, message, details: /** @type {any} */ (error).details ?? null };
+  }
+  return { code: ERROR_CODES.failed, message, details: null };
+}
 
 /**
  * 一次请求失败：`code` 已经是线上的完整 code（`session-rewind/...`）。

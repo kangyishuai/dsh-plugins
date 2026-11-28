@@ -153,6 +153,7 @@ window.__ModuleLoader__.load({
       "ghost.mode.both": "对话+文件",
       "audit.empty": "还没有回溯记录",
       "audit.meta": "{mode} · 撤回 {n} 条用户/助手消息 · 约 {tokens} token",
+      "audit.metaLegacy": "{mode} · 撤回 {n} 条上下文记录 · 约 {tokens} token",
       "audit.files": "文件：还原 {restored}、回收站 {trashed}、跳过 {skipped}、失败 {failed}",
       "audit.paths": "查看 {n} 个路径",
       "audit.pathsLess": "收起路径",
@@ -236,6 +237,7 @@ window.__ModuleLoader__.load({
       "error.filesRescueFailed": "创建救援点失败，未做任何修改",
       "error.filesFailed": "部分文件处理失败",
       "error.rescueNotFound": "救援点不存在",
+      "error.trashNotFound": "回收站记录不存在（可能已被恢复或清理）",
       "error.storageUnavailable": "存储不可用",
       "error.configInvalid": "配置无效",
       "error.generic": "操作失败：{message}",
@@ -368,6 +370,7 @@ window.__ModuleLoader__.load({
       "ghost.mode.both": "Conversation + files",
       "audit.empty": "No rewind history yet",
       "audit.meta": "{mode} · withdrew {n} user/assistant message(s) · about {tokens} tokens",
+      "audit.metaLegacy": "{mode} · withdrew {n} context record(s) · about {tokens} tokens",
       "audit.files":
         "Files: {restored} restored, {trashed} trashed, {skipped} skipped, {failed} failed",
       "audit.paths": "Show {n} path(s)",
@@ -458,6 +461,7 @@ window.__ModuleLoader__.load({
       "error.filesRescueFailed": "Could not create the rescue point; nothing was changed.",
       "error.filesFailed": "Some files could not be processed.",
       "error.rescueNotFound": "Rescue point not found.",
+      "error.trashNotFound": "Trash record not found (it may have been restored or cleared).",
       "error.storageUnavailable": "Storage unavailable.",
       "error.configInvalid": "Invalid configuration.",
       "error.generic": "Operation failed: {message}",
@@ -696,6 +700,8 @@ window.__ModuleLoader__.load({
           return "error.filesFailed";
         case "rescue-not-found":
           return "error.rescueNotFound";
+        case "trash-not-found":
+          return "error.trashNotFound";
         case "storage-unavailable":
           return "error.storageUnavailable";
         case "config-invalid":
@@ -705,6 +711,24 @@ window.__ModuleLoader__.load({
         default:
           return "error.generic";
       }
+    }
+
+    /**
+     * 从 `restoreTrash` 的部分失败错误里取出「已恢复 / 失败」数量。
+     *
+     * 服务端在部分文件恢复失败时抛 `files-failed`，把完整结果放在
+     * `error.details.files = { restored, failed, safetyRescueId }`（service.js / files.js）。
+     * 客户端原来在 catch 里只报通用错误、且不刷新列表，丢掉了「已恢复 N 个」（复审 N4）。
+     * @param {any} error
+     * @returns {{ restored: number, failed: number } | null}
+     */
+    function trashPartialOf(/** @type {any} */ error) {
+      let files = error && typeof error === "object" ? error.details?.files : null;
+      if (!files || typeof files !== "object") return null;
+      let restored = Array.isArray(files.restored) ? files.restored.length : 0;
+      let failed = Array.isArray(files.failed) ? files.failed.length : 0;
+      if (restored === 0 && failed === 0) return null;
+      return { restored: restored, failed: failed };
     }
 
     /** 双击（Esc Esc）状态机：同一会话、在 intervalMs 内的第二次按返回 true。 */
@@ -1576,6 +1600,10 @@ window.__ModuleLoader__.load({
         markerSeq: typeof entry.markerSeq === "number" ? entry.markerSeq : null,
         mode: entry.mode === "both" ? "both" : "chat",
         removedCount: typeof entry.removedCount === "number" ? entry.removedCount : 0,
+        // 0.7.0 及更早的 audit 行只有 removedCount（节点数），没有用户/助手消息口径的
+        // removedMessageCount。渲染时要据此换中性文案，不能把节点数标成「用户/助手消息」
+        // （复审 N11）。
+        removedMessageCountKnown: typeof entry.removedMessageCount === "number",
         removedMessageCount:
           typeof entry.removedMessageCount === "number"
             ? entry.removedMessageCount
@@ -2311,6 +2339,30 @@ window.__ModuleLoader__.load({
     // ------------------------------------------------------------------
     // 浮层 UI（候选列表 / 确认框 / 回溯抽屉 / toast）
     // ------------------------------------------------------------------
+
+    /**
+     * 抽屉回收站「清空」内联确认行的焦点选择范围。
+     *
+     * 抽屉页签按钮本身带 `data-modal-autofocus`，抽屉里 `querySelector` 会先命中的是页签，
+     * 所以内联确认出现时要在确认行范围内优先找主按钮（复审 N3）。
+     */
+    const INLINE_CONFIRM_FOCUS_SELECTOR = "[data-srw-trash-clear] [data-modal-autofocus]";
+
+    /**
+     * 浮层打开/状态变化时该聚焦哪个节点：内联确认行优先，其次常规 `data-modal-autofocus`
+     * （对话框主按钮 / 抽屉当前页签），最后任意可聚焦元素。
+     * @param {any} host 浮层根节点（document 兼容的 querySelector 即可）
+     * @returns {any}
+     */
+    function pickOverlayFocusTarget(host) {
+      return (
+        (host && typeof host.querySelector === "function"
+          ? host.querySelector(INLINE_CONFIRM_FOCUS_SELECTOR) ||
+            host.querySelector("[data-modal-autofocus]") ||
+            host.querySelector(FOCUSABLE_SELECTOR)
+          : null) || null
+      );
+    }
 
     function Btn(/** @type {any} */ props) {
       let className = props.primary ? "dsh-srw-btn dsh-srw-btn-primary" : "dsh-srw-btn";
@@ -3059,11 +3111,19 @@ window.__ModuleLoader__.load({
                 restored: files ? files.restored.length : 0,
                 id: entry.rescueId || "",
               })
-            : t("audit.meta", {
-                mode: t(modeLabelKey(entry.mode)),
-                n: entry.removedMessageCount,
-                tokens: formatCount(entry.tokens),
-              });
+            : entry.removedMessageCountKnown === true
+              ? t("audit.meta", {
+                  mode: t(modeLabelKey(entry.mode)),
+                  n: entry.removedMessageCount,
+                  tokens: formatCount(entry.tokens),
+                })
+              : // 历史 audit 行（0.7.0 及以前）没有 removedMessageCount：只有节点数，
+                // 用中性口径「上下文记录」，避免和 ghost 面板的「用户/助手消息」混淆。
+                t("audit.metaLegacy", {
+                  mode: t(modeLabelKey(entry.mode)),
+                  n: entry.removedCount,
+                  tokens: formatCount(entry.tokens),
+                });
           return h(
             "div",
             {
@@ -3333,12 +3393,23 @@ window.__ModuleLoader__.load({
                     h(
                       "div",
                       { className: "dsh-srw-item-actions" },
-                      h(Btn, { small: true, onClick: api.cancelTrashClear }, t("rescues.cancel")),
+                      // N3（ADR 0002 / §7.4.2）：不可恢复操作默认聚焦主按钮（回车即执行）；
+                      // 执行中主按钮 disabled，焦点回落「取消」。
+                      h(
+                        Btn,
+                        {
+                          small: true,
+                          autofocus: clearExecuting === true,
+                          onClick: api.cancelTrashClear,
+                        },
+                        t("rescues.cancel"),
+                      ),
                       h(
                         Btn,
                         {
                           small: true,
                           primary: true,
+                          autofocus: clearExecuting !== true,
                           disabled: clearExecuting,
                           onClick: api.confirmTrashClear,
                         },
@@ -3882,9 +3953,7 @@ window.__ModuleLoader__.load({
           let current = hostOf();
           if (!current) return;
           /** @type {any} */
-          let target =
-            current.querySelector("[data-modal-autofocus]") ||
-            current.querySelector(FOCUSABLE_SELECTOR);
+          let target = pickOverlayFocusTarget(current);
           if (target && typeof target.focus === "function") target.focus();
         }, 0);
         let onKey = (/** @type {any} */ event) => {
@@ -3919,6 +3988,10 @@ window.__ModuleLoader__.load({
         state.previewLoading,
         state.executing,
         state.loading,
+        // N3：回收站内联「清空」确认出现/加载出影响面/进入执行时，重新决定焦点落在哪。
+        state.drawer?.rescues?.trashClearId,
+        state.drawer?.rescues?.trashClearImpact,
+        state.drawer?.rescues?.trashClearExecuting,
       ]);
 
       let dialog = state.mode ? h(RewindDialog, { state: state, api: api, t: props.t }) : null;
@@ -5500,6 +5573,16 @@ window.__ModuleLoader__.load({
             loadAudit(sessionId);
           })
           .catch((/** @type {any} */ error) => {
+            let partial = trashPartialOf(error);
+            if (partial !== null) {
+              // 部分成功：服务端已经把 restored/failed 放进 details；按真实数量提示并刷新，
+              // 不要用通用错误盖掉「已恢复了几个」。
+              patchDrawer("rescues", { trashPendingId: null, trashExecutingId: null });
+              showToastKey("toast.trashPartial", partial);
+              loadRescues(sessionId);
+              loadAudit(sessionId);
+              return;
+            }
             patchDrawer("rescues", { trashExecutingId: null });
             let failure = errorStateOf(error);
             showToastKey(failure.errorKey, failure.errorParams);
@@ -6174,6 +6257,7 @@ window.__ModuleLoader__.load({
         previewOf: previewOf,
         relativeOf: relativeOf,
         errorTextKey: errorTextKey,
+        trashPartialOf: trashPartialOf,
         // v2：偏好 / 预览 / 候选分页 / 抽屉数据 / 图片回填
         PREF_DEFAULTS: PREF_DEFAULTS,
         PREF_STORAGE_KEY: PREF_STORAGE_KEY,
@@ -6249,11 +6333,15 @@ window.__ModuleLoader__.load({
         healthCheckLabel: healthCheckLabel,
         healthCheckDetail: healthCheckDetail,
         // 组件出口（仅测试用：vm 里用假 React 渲染断言，宿主运行时不需要）
+        RewindOverlay: RewindOverlay,
         ConfirmBody: ConfirmBody,
         RewindDialog: RewindDialog,
+        AuditTab: AuditTab,
         RescuesTab: RescuesTab,
         SettingsTab: SettingsTab,
         Btn: Btn,
+        pickOverlayFocusTarget: pickOverlayFocusTarget,
+        INLINE_CONFIRM_FOCUS_SELECTOR: INLINE_CONFIRM_FOCUS_SELECTOR,
         // v3：输入历史召回（非破坏性）
         RECALL_LIMIT: RECALL_LIMIT,
         CARET_LINE_RATIO: CARET_LINE_RATIO,

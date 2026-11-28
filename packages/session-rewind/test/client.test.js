@@ -9,6 +9,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
+import { remoteFailureOf } from "../lib/operations.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const clientPath = path.join(here, "..", "lib", "client.js");
@@ -745,11 +746,34 @@ describe("v2 error codes", () => {
     );
     assert.equal(testApi.errorTextKey("session-rewind/files-failed"), "error.filesFailed");
     assert.equal(testApi.errorTextKey("session-rewind/rescue-not-found"), "error.rescueNotFound");
+    assert.equal(testApi.errorTextKey("session-rewind/trash-not-found"), "error.trashNotFound");
     assert.equal(
       testApi.errorTextKey("session-rewind/storage-unavailable"),
       "error.storageUnavailable",
     );
     assert.equal(testApi.errorTextKey("session-rewind/config-invalid"), "error.configInvalid");
+  });
+
+  it("trashPartialOf: 只认服务端 details.files 的部分恢复结果（N4）", () => {
+    assert.equal(testApi.trashPartialOf(null), null);
+    assert.equal(testApi.trashPartialOf(new Error("boom")), null);
+    assert.equal(testApi.trashPartialOf({ code: "session-rewind/files-failed" }), null);
+    assert.equal(testApi.trashPartialOf({ details: {} }), null);
+    assert.equal(
+      testApi.trashPartialOf({ details: { files: { restored: [], failed: [] } } }),
+      null,
+    );
+    assert.deepEqual(
+      testApi.trashPartialOf({
+        details: { files: { restored: ["a", "b"], failed: [{ path: "c", reason: "x" }] } },
+      }),
+      { restored: 2, failed: 1 },
+    );
+    // 只有失败、没有恢复成功也算部分失败：要报 0/1 而不是通用错误。
+    assert.deepEqual(
+      testApi.trashPartialOf({ details: { files: { restored: [], failed: [{ path: "c" }] } } }),
+      { restored: 0, failed: 1 },
+    );
   });
 });
 
@@ -1087,9 +1111,15 @@ function applyHarness(fixtures, options = {}) {
             };
           }
           if (value && typeof value === "object" && typeof value.__fail === "string") {
+            // 与生产 service.js 用同一条映射：remoteFailureOf 的 {code,message,details}
+            // 就是 gateway 透传后的线缆形状（复审 B1：不再手写「已拆包」的 details）。
             return {
               ok: false,
-              error: { code: value.__fail, message: String(value.__message ?? "failed") },
+              error: remoteFailureOf({
+                code: value.__fail,
+                message: String(value.__message ?? "failed"),
+                details: value.__details,
+              }),
             };
           }
           return { ok: true, value };
@@ -1409,6 +1439,60 @@ describe("apply() runtime wiring", () => {
     );
     assert.equal(harness.store.getSnapshot().drawer.rescues.trashClearId, null);
     assert.ok(harness.store.getSnapshot().toast);
+  });
+
+  it("restoreTrash 部分失败：报「已恢复/失败」数量并刷新列表（复审 N4）", async () => {
+    const data = fixtures();
+    data.restoreTrash = {
+      __fail: "session-rewind/files-failed",
+      __message: "some files could not be restored from the trash",
+      __details: {
+        files: {
+          restored: ["n.txt"],
+          failed: [{ path: "m.txt", reason: "destination already exists" }],
+          safetyRescueId: "res-2",
+        },
+      },
+    };
+    const harness = applyHarness(data);
+    harness.api.openDrawer("s1", "rescues");
+    await flush();
+    /** @param {string} name */
+    /** @param {string} name @returns {number} */
+    const countCalls = (name) =>
+      harness.calls.filter((/** @type {any} */ call) => call.name === name).length;
+    const rescuesBefore = countCalls("rescues");
+    const auditBefore = countCalls("audit");
+
+    harness.api.setPendingTrashRestore("trash-1");
+    harness.api.confirmTrashRestore();
+    await flush();
+
+    const state = harness.store.getSnapshot();
+    assert.equal(state.drawer.rescues.trashPendingId, null, "部分失败后确认行要收起");
+    assert.equal(state.drawer.rescues.trashExecutingId, null);
+    assert.ok(state.toast, "必须有 toast");
+    assert.equal(
+      state.toast.key,
+      "toast.trashPartial",
+      `应报部分成功而不是通用错误：${JSON.stringify(state.toast)}`,
+    );
+    assert.deepEqual(state.toast.params, { restored: 1, failed: 1 });
+    assert.equal(countCalls("rescues"), rescuesBefore + 1, "部分失败后要刷新回收站列表");
+    assert.equal(countCalls("audit"), auditBefore + 1, "部分失败后要刷新审计列表");
+  });
+
+  it("restoreTrash 通用失败（无 details）仍报错误码", async () => {
+    const data = fixtures();
+    data.restoreTrash = { __fail: "session-rewind/storage-unavailable" };
+    const harness = applyHarness(data);
+    harness.api.openDrawer("s1", "rescues");
+    await flush();
+    harness.api.setPendingTrashRestore("trash-1");
+    harness.api.confirmTrashRestore();
+    await flush();
+    const state = harness.store.getSnapshot();
+    assert.equal(state.toast.key, "error.storageUnavailable");
   });
 
   it("bare /rewind 打开插件自己的候选对话框（USIM-U2-26：不再用宿主 popupSelect）", async () => {
@@ -2127,6 +2211,38 @@ describe("confirm dialog helpers (AUD-REW-06/07/16)", () => {
     assert.equal(testApi.focusWrapIndex(1, 0, false), 0);
   });
 
+  it("pickOverlayFocusTarget: 内联清空确认优先于抽屉页签（N3）", () => {
+    // 抽屉页签也带 data-modal-autofocus；内联确认出现时必须先命中确认行里的主按钮。
+    /** @param {Record<string, any>} found */
+    const hostFor = (found) => {
+      /** @type {string[]} */
+      const queried = [];
+      return {
+        queried,
+        querySelector(/** @type {string} */ selector) {
+          queried.push(selector);
+          return Object.hasOwn(found, selector) ? found[selector] : null;
+        },
+      };
+    };
+    const inline = hostFor({
+      [testApi.INLINE_CONFIRM_FOCUS_SELECTOR]: "inline-primary",
+      "[data-modal-autofocus]": "tab",
+    });
+    assert.equal(testApi.pickOverlayFocusTarget(inline), "inline-primary");
+    assert.equal(inline.queried[0], testApi.INLINE_CONFIRM_FOCUS_SELECTOR);
+
+    const drawerOnly = hostFor({
+      "[data-modal-autofocus]": "tab",
+      [testApi.FOCUSABLE_SELECTOR]: "x",
+    });
+    assert.equal(testApi.pickOverlayFocusTarget(drawerOnly), "tab");
+
+    const empty = hostFor({});
+    assert.equal(testApi.pickOverlayFocusTarget(empty), null);
+    assert.equal(testApi.pickOverlayFocusTarget(null), null);
+  });
+
   it("ConfirmBody: 渲染可恢复性一行、按原因报跳过、过滤 host 英文 warning", () => {
     const tree = testApi.ConfirmBody({ state: confirmState(), api: noopApi(), t: tr });
     const elements = elementsOf(tree);
@@ -2300,6 +2416,42 @@ describe("recovery points / trash tab (AUD-REW-08)", () => {
     assert.ok(text.includes("trash.clearConfirm"));
     assert.ok(text.includes('"n":2'), text);
     assert.ok(text.includes("trash.clearConfirmAction"));
+
+    // N3：不可恢复操作默认聚焦主按钮（ADR 0002 / §7.4.2），「取消」不抢焦点。
+    const buttons = elementsOf(confirmRows[0]).filter((element) => element.type === "button");
+    const primary = buttons.filter((element) =>
+      String(element.props.className).includes("dsh-srw-btn-primary"),
+    );
+    assert.equal(primary.length, 1);
+    assert.equal(
+      primary[0].props["data-modal-autofocus"],
+      "",
+      "内联「确认永久删除」必须带 data-modal-autofocus",
+    );
+    const cancel = buttons.filter(
+      (element) => !String(element.props.className).includes("primary"),
+    );
+    assert.equal(cancel.length, 1);
+    assert.equal(cancel[0].props["data-modal-autofocus"], undefined, "空闲态焦点不应在「取消」上");
+
+    // 执行中主按钮 disabled：焦点回落「取消」。
+    data.trashClearExecuting = true;
+    const executingTree = testApi.RescuesTab({ data, api: noopApi(), t: tr });
+    const executingRow = elementsOf(executingTree).filter(
+      (element) => element.props["data-srw-trash-clear"] !== undefined,
+    )[0];
+    const executingButtons = elementsOf(executingRow).filter(
+      (element) => element.type === "button",
+    );
+    const executingPrimary = executingButtons.filter((element) =>
+      String(element.props.className).includes("dsh-srw-btn-primary"),
+    )[0];
+    const executingCancel = executingButtons.filter(
+      (element) => !String(element.props.className).includes("primary"),
+    )[0];
+    assert.equal(executingPrimary.props.disabled, true);
+    assert.equal(executingPrimary.props["data-modal-autofocus"], undefined);
+    assert.equal(executingCancel.props["data-modal-autofocus"], "", "执行中焦点应回落「取消」");
   });
 
   it("normalizeTrash*: RPC 形状退化时不炸", () => {
@@ -2326,6 +2478,124 @@ describe("recovery points / trash tab (AUD-REW-08)", () => {
       bytes: 2,
       paths: [],
     });
+  });
+});
+
+describe("B1 契约：service → gateway → client 的 details 形状", () => {
+  /** 宿主 0.2.2-rc.5 `dsh-typert-protocol` 的 RemoteError 构造签名：(code, message, details, options)。 */
+  class HostRemoteError extends Error {
+    /**
+     * @param {string} code @param {string} message @param {any} details
+     */
+    constructor(code, message, details) {
+      super(message);
+      this.code = code;
+      this.details = details;
+      this.isDSHRemoteError = true;
+    }
+  }
+
+  /** 宿主 gateway `rpcFailure()` 的原文形状：details 原样透传。 @param {any} remote */
+  function gatewayRpcFailure(remote) {
+    return {
+      ok: false,
+      error: { code: remote.code, message: remote.message, details: remote.details },
+    };
+  }
+
+  /** 客户端 `call()` 把 error 分支抄成 Error（client.js 的 call 映射）。 @param {any} wire */
+  function clientErrorOf(wire) {
+    const error = /** @type {any} */ (new Error(wire.error.message));
+    error.code = wire.error.code;
+    error.details = wire.error.details;
+    return error;
+  }
+
+  /** 模拟 service：内部错误 → remoteFailureOf → 宿主 RemoteError → gateway。 @param {any} internal */
+  function wireOf(internal) {
+    const failure = remoteFailureOf(internal);
+    return gatewayRpcFailure(new HostRemoteError(failure.code, failure.message, failure.details));
+  }
+
+  it("部分恢复失败（restoreTrash）：客户端 trashPartialOf 拿到 restored/failed 数量", () => {
+    const files = {
+      restored: ["n.txt"],
+      failed: [{ path: "m.txt", reason: "destination already exists" }],
+      safetyRescueId: "res-2",
+    };
+    const internal = /** @type {any} */ (
+      new Error("some files could not be restored from the trash")
+    );
+    internal.code = "session-rewind/files-failed";
+    internal.details = { files };
+    const wire = wireOf(internal);
+    assert.deepEqual(wire.error, {
+      code: "session-rewind/files-failed",
+      message: "some files could not be restored from the trash",
+      details: { files },
+    });
+    const clientError = clientErrorOf(wire);
+    assert.deepEqual(testApi.trashPartialOf(clientError), { restored: 1, failed: 1 });
+    // 同源收益：失败路径列表也能读到（此前同样被 {details} 包死）。
+    assert.deepEqual(testApi.failedPathsOf(clientError.details), ["m.txt"]);
+    // 反例：若 service 又包一层 {details}，客户端必须读不到（防止回归）。
+    assert.equal(testApi.trashPartialOf({ details: { details: { files } } }), null);
+  });
+
+  it("文件冲突（rewind both）：客户端 conflictPathsOf 拿到冲突路径", () => {
+    const conflicts = [{ path: "a.ts" }, { path: "b.ts" }];
+    const internal = /** @type {any} */ (new Error("files differ from the expected state"));
+    internal.code = "session-rewind/files-conflict";
+    internal.details = { conflicts };
+    const wire = wireOf(internal);
+    const clientError = clientErrorOf(wire);
+    assert.deepEqual(testApi.conflictPathsOf(clientError.details), ["a.ts", "b.ts"]);
+    assert.deepEqual(testApi.conflictPathsOf({ details: { conflicts } }), []);
+  });
+
+  it("无 details 的 files-failed 仍走通用错误（不伪造部分结果）", () => {
+    const internal = /** @type {any} */ (new Error("partial failure without payload"));
+    internal.code = "session-rewind/files-failed";
+    const wire = wireOf(internal);
+    assert.equal(wire.error.details, null);
+    assert.equal(testApi.trashPartialOf(clientErrorOf(wire)), null);
+  });
+});
+
+describe("回溯记录 tab：新旧审计行口径（N11）", () => {
+  /** @param {any[]} entries */
+  const auditData = (entries) => ({
+    loading: false,
+    errorKey: null,
+    errorParams: null,
+    entries,
+    expanded: {},
+  });
+
+  it("历史 audit 行（0.7.0 及以前）没有 removedMessageCount 时用中性「上下文记录」", () => {
+    const legacy = testApi.normalizeAuditEntries({
+      entries: [{ id: "old", time: 100, mode: "chat", removedCount: 9, tokens: 12 }],
+    })[0];
+    assert.equal(legacy.removedMessageCountKnown, false);
+    const tree = testApi.AuditTab({ data: auditData([legacy]), api: noopApi(), t: tr });
+    const text = elementText(tree);
+    assert.ok(text.includes("audit.metaLegacy"), `历史行要用中性口径：${text}`);
+    assert.ok(text.includes('"n":9'), `历史行应显示节点数 9：${text}`);
+    assert.doesNotMatch(text, /audit\.meta\|/u, `历史行不能标成「用户/助手消息」：${text}`);
+  });
+
+  it("新 audit 行（有 removedMessageCount）仍用「用户/助手消息」并显示新口径", () => {
+    const fresh = testApi.normalizeAuditEntries({
+      entries: [
+        { id: "new", time: 100, mode: "chat", removedCount: 9, removedMessageCount: 4, tokens: 12 },
+      ],
+    })[0];
+    assert.equal(fresh.removedMessageCountKnown, true);
+    const tree = testApi.AuditTab({ data: auditData([fresh]), api: noopApi(), t: tr });
+    const text = elementText(tree);
+    assert.ok(text.includes("audit.meta|"), `新行仍用 audit.meta：${text}`);
+    assert.ok(text.includes('"n":4'), `新行应显示用户/助手消息数 4：${text}`);
+    assert.doesNotMatch(text, /audit\.metaLegacy/u, text);
   });
 });
 

@@ -13,6 +13,7 @@ import {
   ERROR_CODES,
   ERROR_PREFIX,
   RewindRequestError,
+  remoteFailureOf,
   resolveSession,
 } from "../lib/operations.js";
 import { MARKER_SOURCE_KIND, MARKER_TEXT } from "../lib/plan.js";
@@ -119,12 +120,42 @@ test("ERROR_CODES 与设计约定的完整 code 一致", () => {
     filesRescueFailed: "session-rewind/files-rescue-failed",
     filesFailed: "session-rewind/files-failed",
     rescueNotFound: "session-rewind/rescue-not-found",
+    trashNotFound: "session-rewind/trash-not-found",
     storageUnavailable: "session-rewind/storage-unavailable",
   });
   const error = new RewindRequestError(ERROR_CODES.busy, "boom");
   assert.ok(error instanceof Error);
   assert.equal(error.name, "RewindRequestError");
   assert.equal(error.code, "session-rewind/busy");
+});
+
+test("remoteFailureOf：details 平铺，不包 {details}（复审 B1 契约）", () => {
+  const details = { files: { restored: ["n.txt"], failed: [{ path: "m.txt" }] } };
+  const internal = new RewindRequestError(
+    ERROR_CODES.filesFailed,
+    "some files could not be recovered",
+  );
+  /** @type {any} */ (internal).details = details;
+  const failure = remoteFailureOf(internal);
+  assert.equal(failure.code, "session-rewind/files-failed");
+  assert.equal(failure.message, "some files could not be recovered");
+  // 关键：details 是原对象、平铺传给宿主 RemoteError 的第三参；不能出现 details.details。
+  assert.equal(failure.details, details);
+  assert.equal(/** @type {any} */ (failure.details).details, undefined);
+
+  // 非 session-rewind 前缀 → 通用 failed + details null（不把未知内部字段漏到线上）。
+  assert.deepEqual(remoteFailureOf(new Error("boom")), {
+    code: "session-rewind/failed",
+    message: "boom",
+    details: null,
+  });
+  assert.deepEqual(remoteFailureOf("oops"), {
+    code: "session-rewind/failed",
+    message: "oops",
+    details: null,
+  });
+  // 有前缀但没 details → null（客户端读到 undefined 不应崩）。
+  assert.equal(remoteFailureOf({ code: "session-rewind/files-conflict" }).details, null);
 });
 
 test("createMarkerMessageInput 是固定文本 + 生产者身份", () => {

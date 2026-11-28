@@ -59,7 +59,7 @@ pnpm gate session-rewind --deep --workspace ~/Workspace/dsh-rewind-ui-smoke
 
 按「便宜的先跑」排序，任何一步失败立刻停并给出下一步提示：
 
-1. `pnpm verify`（lint + 类型 + 规范 + 公开边界 + 277 单测）
+1. `pnpm verify`（lint + 类型 + 规范 + 公开边界 + 295 单测）
 2. `pnpm probe:runtime`（宿主包/API/slot/私有 seam，99 项）
 3. `pnpm smoke:session-rewind`（临时 DSH_HOME 的 web 端到端，约 62 项；本批新增 10 条：可恢复性 / 默认聚焦 / Tab 环绕 / 回收站入口 / 更多设置 / 命令 both 确认 / 跟踪范围 / 面板「选择消息回退」/ 命令候选键盘路径 / 诊断审计计数）
 4. 桌面只读回归（35 项，**永远带 `--require`**：没开调试端口就是失败，不是跳过）
@@ -543,3 +543,83 @@ pnpm smoke:session-rewind-desktop -- --require --recall --deep \
 | ------------------ | -------------------------------- | ------------------------------------------------------------ |
 | 无改动             | `data-state=clean`、「· 已保存」 | `/tmp/dsh-sim-rel/shots/settings-session-rewind-clean.png`   |
 | 切换默认回退范围后 | `data-state=saved`、「已保存」   | `/tmp/dsh-sim-rel/shots/settings-session-rewind-changed.png` |
+
+## 复审 P3 收口（2026-11-28，`notes/audit/2026-11-28/reviews/rewind-3.md` N3/N4/N10/N11）
+
+本批只做复审点名且用户可见/低风险可验证的四条，均带单测；不改生产逻辑语义的地方在各项里注明。
+
+**包内单测**：`cd packages/session-rewind && node --test` → **295 pass / 0 fail**（30 suites；
+上一轮 277；本批 +18 = 四条主体 13 条 + B1 线路契约 4 条 + N3 接线 1 条）。
+
+### N3 回收站「清空」内联二次确认的默认聚焦
+
+- 缺陷：内联确认（`[data-srw-trash-clear]` 的「取消 / 确认永久删除」）没有默认聚焦；点「清空」后原
+  按钮卸载，焦点掉到 body。主确认框有 `data-modal-autofocus`，但这处不是 modal，且抽屉页签本身也带
+  `data-modal-autofocus`，直接加属性会被页签抢走。
+- 修法（ADR 0002 / conventions §7.4.2：不可恢复主按钮默认聚焦、回车即执行；执行中主按钮 disabled
+  时回落「取消」）：确认行主按钮在非执行态带 `data-modal-autofocus`，执行态该属性移到「取消」；
+  `OverlayHost` 的焦点 effect 增加回收站清空状态依赖，并新增 `pickOverlayFocusTarget`：
+  优先 `[data-srw-trash-clear] [data-modal-autofocus]`（内联确认），其次常规 `[data-modal-autofocus]`
+  （对话框主按钮 / 抽屉当前页签），最后任意可聚焦元素。
+- 单测：`RescuesTab: 清空需要先看影响面（ADR 0002）` 断言空闲态只有主按钮带 autofocus、执行态只有
+  「取消」带；`pickOverlayFocusTarget: 内联清空确认优先于抽屉页签（N3）` 断言选择器优先级。
+- **effect 接线测试（B1 复审 P3-2）**：`test/overlay-focus.test.js` 用 fake hooks（真跑 `useEffect`
+  deps/cleanup）+ fake `document` 驱动**真实的 `RewindOverlay`**，逐步验证「打开抽屉→页签、清空确认
+  加载中→页签、影响面到达→内联主按钮、执行中→取消、确认行收起→页签」。mutation 验证：
+  ① 把 effect 改回旧的 `querySelector("[data-modal-autofocus]") || FOCUSABLE`（复审 M4）→ 该测试红
+  （`inline-primary` 变成 `drawer-tab`）；② 去掉新增的 `trashClear*` deps → 该测试红（第 2 步起 effect
+  不再重跑）。恢复后 122 pass（client 121 + overlay 1）。
+- 真机焦点路径未在本轮重跑桌面冒烟（脚本断言在 `scripts/`，本批不动共享脚本）；vm 已覆盖 effect 接线，
+  既有桌面只读回归的「确认框默认聚焦主按钮」断言（`smoke-session-rewind-desktop.mjs:1084`）仍覆盖对话框
+  那一条。
+
+### N4 回收站错误码语义 + 不可达的 partial toast
+
+- （a）不存在的 trash id：`files.js` 的 `restoreTrash` / `clearTrash` 原来抛 `files-failed`，客户端显示
+  「部分文件处理失败」。新增 `FILE_ERROR_CODES.trashNotFound = "session-rewind/trash-not-found"` +
+  `error.trashNotFound` 中英文案（「回收站记录不存在（可能已被恢复或清理）」）；
+  `test/files.test.js`「不存在的操作 id 用 trash-not-found」断言两种操作都抛新 code 且 message 带 id。
+- （b）部分恢复失败：服务端抛 `files-failed` 时把完整结果放在 `error.details.files`；客户端 catch 只报
+  通用错误，`toast.trashPartial`（已恢复 N / M 失败）永远走不到。新增纯函数 `trashPartialOf(error)`，
+  `confirmTrashRestore` 的 catch 命中部分结果时收起确认行、按真实数量 toast 并刷新回收站/审计列表；
+  其它错误仍按错误码显示。单测：`trashPartialOf` 单元（无 details / 空数组 / 只失败 / 部分成功）+
+  `restoreTrash 部分失败：报「已恢复/失败」数量并刷新列表`（RPC 桩改用生产同一条 `remoteFailureOf`
+  映射生成线缆形状，断言 toast 参数与 `rescues`/`audit` 各多一次加载）+ 通用错误仍走错误码。
+- **（b）的线缆形状修复（B1 复审）**：只加客户端分支时 toast 在生产**仍不可达**——本插件
+  `rethrowRemote` 原来写 `new RemoteError(code, msg, { details: error.details })`，但 rc.5 宿主的
+  `RemoteError` 构造签名是 `(code, message, details, options)`（第三参就是 details），gateway
+  `rpcFailure()` 原样透传 → 客户端拿到的是 `error.details = { details: { files } }`，
+  `trashPartialOf` 恒 `null`。修法：把映射抽成 `operations.js` 的 host-free `remoteFailureOf(error)`
+  （details 平铺、不包层），`service.js` 的 `rethrowRemote` 用它构造 `RemoteError`。
+  契约测试覆盖**全链路**（`test/client.test.js` 的「B1 契约：service → gateway → client 的 details 形状」）：
+  内部错误 → `remoteFailureOf` → 宿主同签名 `RemoteError` → gateway `rpcFailure` 形状 → 客户端
+  `call()` 映射 → 真实 `trashPartialOf` / `failedPathsOf` / `conflictPathsOf`；
+  另加 `test/operations.test.js` 的 `remoteFailureOf` 单测（断�� `details` 与原对象同引用、无
+  `details.details`）。mutation：把 `remoteFailureOf` 改回 `{ details: x }` 包装 → **5 条测试红**
+  （契约 3 条 + operations 1 条 + N4 集成 1 条）。修好后部分恢复 toast 与冲突路径展示才真正可达。
+
+### N10 启动 GC 对 entries 读失败 fail-closed
+
+- 缺陷：`collectGarbage` 把 `readEntries` 失败当空数组，该会话的 before/after hash 不进引用集合，
+  启动维护会把它的 blob 当「无引用」删掉（丢可回溯内容）。
+- 修法：收集失败的 session；只要有一个读失败就**本次 GC 完全不删 blob**，返回
+  `{removedBlobs: 0, bytesFreed: 0, skipped: "entries-unreadable", unreadableSessions}`；
+  `service.collectBlobs` 记 warn 并跳过审计；`enforceSoftCap` 遇到 skipped 停止继续删 anchor 数据。
+- 单测：`collectGarbage: entries 读失败时 fail-closed，不删任何 blob（复审 N10）`（把 `entries.jsonl`
+  换成目录造 EISDIR，断言 skipped、0 删除、孤儿 blob 仍在）。
+
+### N11 历史 audit 行的「撤回 N 条用户/助手消息」口径
+
+- 缺陷：0.7.0 及以前的 audit 行没有 `removedMessageCount`，`normalizeAuditEntry` 回落到节点数
+  `removedCount`，History 页签却标「用户/助手消息」，与 ghost 面板数字不一致。
+- 修法：新增 `removedMessageCountKnown` 标记；AuditTab 在缺字段时用中性文案 `audit.metaLegacy`
+  （中「撤回 {n} 条上下文记录」/ 英 `withdrew {n} context record(s)`），新行仍用 `audit.meta`。
+- 单测：`回溯记录 tab：新旧审计行口径（N11）` 两个用例分别断言历史行用 `audit.metaLegacy` 显示节点数 9、
+  不出现 `audit.meta|`；新行用 `audit.meta` 显示消息数 4。
+
+### 已知竞态（非本批引入，如实记录）
+
+设置自动保存（各插件）不做串行化/去抖：快速连续修改时可能多个 RPC 在途、最终落盘值不一定是最后一次
+操作；过期响应在 projects/rewind 等有保存序号或状态行兜底，但**跨插件同名竞态未统一修**。这是设置保存
+状态复审 N6 点名的「旧行为 + 新话术放大误导」，本批按任务要求**不改生产逻辑**，记录在
+[`docs/testing/projects.md`](projects.md) 的「已知（自动保存非串行）」与本节；后续单独立项处理。

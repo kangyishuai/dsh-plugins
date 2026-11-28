@@ -472,10 +472,28 @@ describe("toast/receipt placement above the composer", () => {
     assert.equal(api.toastBottomOffset({ composerTop: undefined, viewportHeight: 820 }), 24);
   });
 
-  it("sits one gap above the composer top", () => {
-    // 真机 1280×820：composer top=700 → 820-700+12=132，回执底边落在 y=688。
-    assert.equal(api.toastBottomOffset({ composerTop: 700, viewportHeight: 820 }), 132);
-    assert.equal(api.toastBottomOffset({ composerTop: 780, viewportHeight: 820 }), 52);
+  it("sits one gap above the composer input, leaving 8px to the composer card", () => {
+    // 真机 1280×820：composer 输入框 top=700 → 820-700+16=136，回执底边落在 y=684。
+    assert.equal(api.toastBottomOffset({ composerTop: 700, viewportHeight: 820 }), 136);
+    assert.equal(api.toastBottomOffset({ composerTop: 780, viewportHeight: 820 }), 56);
+    // 视觉间距（复审 nit）：宿主 composer 卡片顶比输入框顶高 8px（内边距/边框），
+    // 回执底边 → 卡片顶 = 684 → 692 = 8px，而不是原 gap=12 时的 4px。
+    const cardTop = 700 - 8;
+    const receiptBottom = 820 - api.toastBottomOffset({ composerTop: 700, viewportHeight: 820 });
+    assert.equal(cardTop - receiptBottom, 8);
+  });
+
+  it("keeps the gap/clamp invariants across viewports (no receipt pushed off-screen)", () => {
+    // 复审建议 (f)：离散值之外再扫一遍不变量：底距 >= 回退值、整块高 + 底距 + 留白 = 视口。
+    for (const viewportHeight of [150, 260, 320, 480, 700, 820, 1200]) {
+      for (const composerTop of [60, 100, 150, 240, 360, 580, 700, viewportHeight]) {
+        const bottom = api.toastBottomOffset({ composerTop, viewportHeight });
+        assert.ok(bottom >= 24, `bottom=${bottom} < 24 at ${composerTop}/${viewportHeight}`);
+        const maxHeight = api.toastMaxHeight({ bottom, viewportHeight });
+        assert.ok(maxHeight !== null);
+        assert.equal(bottom + maxHeight + 8, viewportHeight);
+      }
+    }
   });
 
   it("clamps low so a composer near the bottom does not push the toast off-screen", () => {
@@ -487,24 +505,24 @@ describe("toast/receipt placement above the composer", () => {
   it("clamps high so a very short window keeps some receipt visible", () => {
     // 上界 = 视口高 - minVisible(120) - 留白(8)，820 时是 692。
     assert.equal(api.toastBottomOffset({ composerTop: 100, viewportHeight: 820 }), 692);
-    // 200 高的窗口 + composer 在 150：natural 62 < 上界 72，按 natural 走。
-    assert.equal(api.toastBottomOffset({ composerTop: 150, viewportHeight: 200 }), 62);
+    // 200 高的窗口 + composer 在 150：natural 66 < 上界 72，按 natural 走。
+    assert.equal(api.toastBottomOffset({ composerTop: 150, viewportHeight: 200 }), 66);
     // 150 高的窗口：上界被 baseBottom 兜到 24。
     assert.equal(api.toastBottomOffset({ composerTop: 100, viewportHeight: 150 }), 24);
   });
 
   it("computes the receipt max-height from the space above the composer", () => {
-    assert.equal(api.toastMaxHeight({ bottom: 132, viewportHeight: 820 }), 680);
+    assert.equal(api.toastMaxHeight({ bottom: 136, viewportHeight: 820 }), 676);
     assert.equal(api.toastMaxHeight({ bottom: 24, viewportHeight: 820 }), 788);
     assert.equal(api.toastMaxHeight({ bottom: 300, viewportHeight: 400 }), 92);
     assert.equal(api.toastMaxHeight({ bottom: 400, viewportHeight: 400 }), 0);
     assert.equal(api.toastMaxHeight({}), null);
-    assert.equal(api.toastMaxHeight({ bottom: 132, viewportHeight: 0 }), null);
+    assert.equal(api.toastMaxHeight({ bottom: 136, viewportHeight: 0 }), null);
   });
 
   it("shrinks the receipt body but never below the readable floor", () => {
-    // 820 高、composer top=700 → 整块 680，正文上限 = min(42vh=344, 680-48=632) = 344。
-    assert.equal(api.toastBodyMaxHeight({ bottom: 132, viewportHeight: 820 }), 344);
+    // 820 高、composer 输入框 top=700 → 整块 676，正文上限 = min(42vh=344, 676-48=628) = 344。
+    assert.equal(api.toastBodyMaxHeight({ bottom: 136, viewportHeight: 820 }), 344);
     // 矮窗口：整块可用 92 → 正文被压到 floor 60（宁可略超出也不成一像素线）。
     assert.equal(api.toastBodyMaxHeight({ bottom: 300, viewportHeight: 400 }), 60);
     assert.equal(api.toastBodyMaxHeight({}), null);

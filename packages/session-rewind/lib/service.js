@@ -31,6 +31,7 @@ import {
   createMarkerMessageInput,
   ERROR_CODES,
   RewindRequestError,
+  remoteFailureOf,
   resolveRewindTarget,
   sessionEvents,
 } from "./operations.js";
@@ -109,19 +110,10 @@ function serviceOf(ctx, name) {
  */
 function rethrowRemote(error) {
   if (error instanceof RemoteError) throw error;
-  const code = /** @type {any} */ (error)?.code;
-  if (typeof code === "string" && code.startsWith("session-rewind/")) {
-    throw new RemoteError(code, error instanceof Error ? error.message : String(error), {
-      details: /** @type {any} */ (error).details ?? null,
-    });
-  }
-  if (error instanceof RewindRequestError) {
-    throw new RemoteError(/** @type {any} */ (error).code, error.message, {
-      details: /** @type {any} */ (error).details ?? null,
-    });
-  }
-  const message = error instanceof Error ? error.message : String(error);
-  throw new RemoteError(ERROR_CODES.failed, message);
+  // 宿主 RemoteError 的第三参就是 details（gateway 原样透传）。`remoteFailureOf` 把它平铺，
+  // 不再包 `{details: …}` —— 否则客户端的 `error.details.files` 永远读不到（复审 B1）。
+  const failure = remoteFailureOf(error);
+  throw new RemoteError(failure.code, failure.message, failure.details);
 }
 
 /**
@@ -343,6 +335,16 @@ export class SessionRewindService extends TypertRemoteService {
   async collectBlobs() {
     try {
       const result = await this.store.collectGarbage();
+      if (result.skipped === "entries-unreadable") {
+        // fail-closed（复审 N10）：entries 读失败时不猜引用关系，本次一个 blob 都不删。
+        const unreadable = Array.isArray(result.unreadableSessions)
+          ? result.unreadableSessions.length
+          : 0;
+        this.ctx?.logger?.warn?.(
+          `session-rewind: skipped blob GC because file entries are unreadable for ${unreadable} session(s)`,
+        );
+        return;
+      }
       if (result.removedBlobs > 0) {
         this.ctx?.logger?.info?.(
           `session-rewind: removed ${result.removedBlobs} unreferenced blob(s) (${result.bytesFreed} bytes)`,
