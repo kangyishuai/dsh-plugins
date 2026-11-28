@@ -179,21 +179,21 @@ tarball 的 HTTP 状态），可见后 `gh run rerun <run-id> --failed` 即可�
 - **发现页的图标来自索引条目的 `icon` 字段**（不是包内 `icon.svg`）：生成器已内置 8 个图标（data URL，源文件合计 5 412 B），发版后由 `index.yml` 重建索引才在用户端生效；`icon` 在格式里是可选字段，别人的索引条目没带图标时宿主回退通用图形。详见上文「发现页图标」小节。
 - **不写 `engines.dsh`**：发现页因此不会按版本过滤；兼容性以各插件 README 的表格为准。
 
-## 4. 2026-11-28 全插件体检/修复后的当前计数
+## 4. 2026-11-28 全插件体检/修复后的当前计数（18:00 复核）
 
 > 来源：2026-11-28 的审计修复与 3 个用户模拟画像修复批次（PR #352–#371）合并后的实测；
 > 历史记录保留在各插件文档里，下列是**当前状态**。web 冒烟已在独占 ego 窗口全量复跑（2026-11-28 11:00，8/8 全绿）；桌面只读回归在隔离桌面实例（`--port`）上跑（**8/8 插件 174 PASS / 16 SKIP / 0 FAIL**，每插件重启后跑）。
 
 | 插件           | 单测（`node --test`） | 桌面只读回归（2026-11-28 复跑） | web 冒烟（2026-11-28 复跑）    |
 | -------------- | --------------------- | ------------------------------- | ------------------------------ |
-| advisor        | **233**               | 24 PASS / 2 SKIP                | **16/16 PASS**                 |
+| advisor        | **244**               | 24 PASS / 2 SKIP                | **16/16 PASS**                 |
 | artifacts      | **100**               | 4 PASS                          | **12/12 PASS**                 |
-| btw            | **121**               | 21 PASS / 1 SKIP                | **24 PASS / 3 SKIP**（默认段） |
-| casefile       | **279**               | 26 PASS / 5 SKIP                | **69/69 PASS**                 |
-| next-step      | **246**               | 22 PASS / 3 SKIP                | **72 PASS / 2 SKIP**           |
-| projects       | **825**               | 24 PASS / 1 SKIP                | **271 PASS / 1 SKIP**          |
-| session-delete | **136**               | 18 PASS / 4 SKIP                | **33/33 PASS**                 |
-| session-rewind | **280**               | **35 PASS**（含确认框默认聚焦） | **63/63 PASS**                 |
+| btw            | **125**               | 21 PASS / 1 SKIP                | **24 PASS / 3 SKIP**（默认段） |
+| casefile       | **283**               | 26 PASS / 5 SKIP                | **69/69 PASS**                 |
+| next-step      | **248**               | 22 PASS / 3 SKIP                | **72 PASS / 2 SKIP**           |
+| projects       | **839**               | 24 PASS / 1 SKIP                | **271 PASS / 1 SKIP**          |
+| session-delete | **138**               | 18 PASS / 4 SKIP                | **33/33 PASS**                 |
+| session-rewind | **295**               | **35 PASS**（含确认框默认聚焦） | **63/63 PASS**                 |
 
 基线命令：`pnpm verify`（lint/typecheck/check/check:docs/check:public/全部单测）+ `pnpm probe:runtime`（**100 项**，见 [runtime §23](../runtime/0.2.2-rc.5.md#23-2026-11-28-第二轮实测能力挂载时序导航调度契约与命令回执)）。
 
