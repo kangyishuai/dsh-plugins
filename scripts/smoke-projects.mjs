@@ -4227,6 +4227,23 @@ const page = (await task.pages())[0] ?? (await task.newPage());
       button.click();
       return "clicked";
     });
+    // O3（2026-11-28）起删除是两步：先弹确认框（默认聚焦主按钮），再点确认真正删除。
+    const deleteDialog = await waitUntil(
+      () =>
+        page.evaluate(() => {
+          const dialog = document.querySelector("[data-projects-routine-delete-dialog]");
+          if (!dialog) return "";
+          const confirm = dialog.querySelector("[data-projects-routine-delete-confirm]");
+          return confirm && !confirm.disabled ? "open" : "open-no-confirm";
+        }),
+      5000,
+    );
+    const confirmed = await page.evaluate(() => {
+      const button = document.querySelector("[data-projects-routine-delete-confirm]");
+      if (!button) return "no-button";
+      button.click();
+      return "clicked";
+    });
     const deletedGone = await waitUntil(
       () =>
         page.evaluate(() => {
@@ -4235,7 +4252,11 @@ const page = (await task.pages())[0] ?? (await task.newPage());
         }),
       15000,
     );
-    add("Routines 可删除（宿主条目 + 本地记录一起走）", deleted === "clicked" && deletedGone === "gone", String(deleted));
+    add(
+      "Routines 可删除（宿主条目 + 本地记录一起走）",
+      deleted === "clicked" && deleteDialog === "open" && confirmed === "clicked" && deletedGone === "gone",
+      JSON.stringify({ deleted, deleteDialog, confirmed }),
+    );
 
     // —— F30 提醒：对话框 + 双模式 + timer 真到点（1.2s）+ toast ——
     const remindersIntro = await page.evaluate(() => ({

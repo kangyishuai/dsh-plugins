@@ -1138,24 +1138,49 @@ const main = async () => {
     // ---------- A. 页面与插件加载 ----------
     // 紧接着别的 GUI 冒烟（projects/artifacts 等）跑时，界面可能停在项目/设置等非会话视图，
     // composer=null 会让后面的「输入框可编辑」直接 FAIL——那不是产品问题。先回到聊天会话再断言。
-    const chatView = await cdp.evaluate(`(() => {
-      const hasComposer = () =>
-        Boolean(document.querySelector('[contenteditable="true"]') || document.querySelector('[data-composer-input]'));
-      if (hasComposer()) return { status: "already" };
-      const row = document.querySelector('[data-row-key^="session:"]');
-      if (row) {
-        row.click();
-        return { status: "clicked-session", key: row.getAttribute("data-row-key") };
+    const chatView = await cdp.evaluate(
+      `(async () => {
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const composerOf = () =>
+        document.querySelector('[contenteditable="true"]') || document.querySelector('[data-composer-input]');
+      const running = () =>
+        [...document.querySelectorAll("button")].some((button) => {
+          const label = button.getAttribute("aria-label") || "";
+          const title = button.getAttribute("title") || "";
+          return /停止|Stop/i.test(label + " " + title);
+        });
+      const draftText = () => {
+        const el = composerOf();
+        return el ? String(el.innerText || el.value || "").trim() : "";
+      };
+      const userMessages = () => document.querySelectorAll('[data-chat-flow-kind="user"]').length;
+      // 可断言的历史会话：有至少一条用户消息（命令卡片只在这种会话里渲染）、空闲、草稿空。
+      const good = () => Boolean(composerOf()) && !running() && draftText() === "" && userMessages() > 0;
+      if (good()) return { status: "already" };
+      const rows = Array.from(document.querySelectorAll('[data-row-key^="session:"]')).filter(
+        (row) => (row.textContent || "").trim() !== "新会话" && (row.textContent || "").trim() !== "",
+      );
+      // 优先历史会话（有用户消息的会话才有 /advisor 命令卡片 DOM）；点击后等导航/渲染落定。
+      for (let i = 0; i < Math.min(rows.length, 6); i += 1) {
+        rows[i].click();
+        await sleep(900);
+        if (good()) {
+          return { status: "clicked-session", key: rows[i].getAttribute("data-row-key"), userMessages: userMessages() };
+        }
       }
-      const btn = Array.from(document.querySelectorAll("button")).find(
+      // 没有可用历史会话（全新 profile）才新建空白会话；此时卡片断言会按数据分支处理。
+      const newBtn = Array.from(document.querySelectorAll("button")).find(
         (node) => (node.getAttribute("aria-label") || "") === "新建会话",
       );
-      if (btn) {
-        btn.click();
-        return { status: "clicked-new-session" };
+      if (newBtn) {
+        newBtn.click();
+        await sleep(900);
+        return { status: "clicked-new-session", userMessages: userMessages() };
       }
       return { status: "no-target" };
-    })()`);
+    })()`,
+      true,
+    );
     if (chatView && chatView.status !== "already") {
       console.log(
         `      诊断：初始视图无 composer（${JSON.stringify(chatView)}），已尝试切回聊天会话。`,
