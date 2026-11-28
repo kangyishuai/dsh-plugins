@@ -36,7 +36,7 @@ TODO：列出读写的每个文件、每个破坏性操作。没有就写「无�
 - `locale/en.json` / `locale/zh.json` —— 根对象的 `meta.title` 与 `meta.description`；英文侧 `pnpm new` 已按目录名和描述参数生成 sentence case 占位，`zh.json` 里是中文「待替换」占位，发布前换成真实中文文案。
 - `package.json` —— 顶层 `icon`、`files`（必须列上 `icon.svg`）与 `"./locale/*.json"` 导出要一起保留。宿主解析不到 locale 文件时会静默回退成 npm 包名 + 英文长描述。
 
-改完在 `scripts/index-meta.json` 里登记（见 AGENTS.md）；版本离开 `0.0.0` 后 `pnpm check` 就会强制检查这些身份字段。
+改完按 AGENTS.md 的开发流程登记（第 6 条）：根目录**两份**插件清单（`README.md`、`README.zh-CN.md`）各加一行，并在 `scripts/index-meta.json` 里加条目——三处漏任何一处 `pnpm check` 都会报错；`index-meta.json` 里的中文 `title` / `descriptionZh` 必须与 `locale/zh.json` 的 `meta` 用**同一份文案**（否则 `pnpm check` 会报「索引与已安装插件不一致」）。版本离开 `0.0.0` 后，`pnpm check` 还会强制检查上面的身份字段。
 
 ## License
 

@@ -19,6 +19,24 @@ test("模板生成的插件能通过全部检查", () => {
   assert.equal(pkg.repository.directory, "packages/hello-world");
   assert.match(readFileSync(join(dir, "locale/zh.json"), "utf8"), /"helloWorld"/);
   assert.doesNotMatch(readFileSync(join(dir, "lib/client.js"), "utf8"), /__NAME__/);
+  // README 的标题/描述占位必须是生成器支持的写法（`__X__` 或 Markdown 粗体 `**X**`——
+  // `__NAME__` 在 Markdown 里就是粗体语法，biome 会把它规范化成 `**NAME**`，所以生成器
+  // 两种都认）。2026-11-28 复审 N1：旧版只替换 `__X__`，新插件 README 首行会原样留 `**NAME**`。
+  for (const readme of ["README.md", "README.zh-CN.md"]) {
+    const text = readFileSync(join(dir, readme), "utf8");
+    assert.doesNotMatch(
+      text,
+      /\*\*NAME\*\*|\*\*DESCRIPTION\*\*/,
+      `${readme} 不能残留 markdown 粗体占位 **NAME** / **DESCRIPTION**`,
+    );
+    assert.doesNotMatch(
+      text,
+      /__(?:NAME|DESCRIPTION|TITLE|CAMEL)__/,
+      `${readme} 不能残留 __X__ 占位`,
+    );
+    assert.match(text, /^# @kangyishuai\/dsh-hello-world$/mu, `${readme} 的 H1 应是生成后的包名`);
+    assert.match(text, /^> Hello$/mu, `${readme} 的引用行应是生成后的描述`);
+  }
   assert.deepEqual(checkRepo(root), []);
 });
 
