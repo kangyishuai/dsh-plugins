@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36" fill="none">
+  <title>Artifacts</title>
+  <!-- An isometric cube: a published artifact is one self-contained object with three visible faces. -->
+  <path d="M18 5.8 28 11.4 18 17 8 11.4Z" fill="#48CBBB"/>
+  <path d="M8 11.4 18 17v11.4L8 22.8Z" fill="#1E9E90"/>
+  <path d="M28 11.4 18 17v11.4l10-5.6Z" fill="#14776E"/>
+</svg>

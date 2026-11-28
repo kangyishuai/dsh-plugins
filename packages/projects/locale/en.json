@@ -1,4 +1,8 @@
 {
+  "meta": {
+    "title": "Projects",
+    "description": "Projects as a first-class context unit: session membership, project instructions and memory, isolated parallel threads, an optional coordinator and a cost cap. Manage them on the Projects page."
+  },
   "projects": {
     "title": "Projects",
     "panel.title": "Projects",

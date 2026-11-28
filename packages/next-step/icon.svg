@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36" fill="none">
+  <title>Next step</title>
+  <!-- Rising steps under a forward arrow: one concrete next step at a time. -->
+  <path d="M7.2 8.6h17.4" stroke="#2F6FEB" stroke-width="2.6" stroke-linecap="round"/>
+  <path d="M24.6 5.3 28.4 8.6 24.6 11.9Z" fill="#2F6FEB"/>
+  <rect x="7.2" y="22.4" width="6.4" height="6.6" rx="1.5" fill="#8CBBFA"/>
+  <rect x="14.8" y="18.4" width="6.4" height="10.6" rx="1.5" fill="#4B8EF0"/>
+  <rect x="22.4" y="14.4" width="6.4" height="14.6" rx="1.5" fill="#2F6FEB"/>
+</svg>

@@ -1,4 +1,8 @@
 {
+  "meta": {
+    "title": "顾问",
+    "description": "按需第二意见：主模型自己决定何时咨询一个单独配置的顾问模型，只给建议，从不放行或执行。"
+  },
   "advisor": {
     "title": "让主模型在关键时刻咨询一个更强的顾问模型",
     "notReady.label": "顾问尚未就绪 · 打开 /advisor doctor",

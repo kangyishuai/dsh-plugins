@@ -1,4 +1,8 @@
 {
+  "meta": {
+    "title": "Session Rewind",
+    "description": "In-place conversation rewind: withdraw everything after a chosen user message, optionally restore the files those turns changed, and put it back in the composer. Esc Esc or the ↶ button opens it."
+  },
   "sessionRewind": {
     "shortcut.rewind": "Rewind",
     "dialog.title": "Rewind",

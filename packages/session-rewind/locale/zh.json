@@ -1,4 +1,8 @@
 {
+  "meta": {
+    "title": "会话回滚",
+    "description": "就地回滚对话：撤回目标消息之后的内容，可恢复那些轮次改过的文件，并把消息放回输入框。"
+  },
   "sessionRewind": {
     "shortcut.rewind": "回溯",
     "dialog.title": "回溯",

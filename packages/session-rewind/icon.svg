@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36" fill="none">
+  <title>Session rewind</title>
+  <!-- A U-turn arrow above a timeline: the conversation goes back to an earlier message. -->
+  <path d="M24.6 21.6V12.6a5.6 5.6 0 0 0-11.2 0v5.2" stroke="#4E7A96" stroke-width="2.6" stroke-linecap="round"/>
+  <path d="M10.2 17.4 13.4 21 16.6 17.4Z" fill="#4E7A96"/>
+  <circle cx="9.4" cy="27.4" r="1.6" fill="#4E7A96"/>
+  <circle cx="18" cy="27.4" r="2" fill="#4E7A96"/>
+  <circle cx="26.6" cy="27.4" r="1.6" fill="#4E7A96"/>
+</svg>

@@ -2,8 +2,8 @@
 // @ts-check
 // 用法：pnpm check
 // 把 docs/plugin-conventions.md 里的硬性规则变成机器检查。error 让命令失败，warn 只提示。
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { extname, isAbsolute, join } from "node:path";
 import { readSnapshot } from "./host-tokens.mjs";
 import { isMain, listPluginDirs, PREFIX, REPO_ROOT, readJson, toCamel } from "./lib/repo.mjs";
 
@@ -26,6 +26,111 @@ function listJsFiles(dir) {
     else if (entry.isFile() && entry.name.endsWith(".js")) out.push(full);
   }
   return out;
+}
+
+/** 宿主接受作为插件图标的扩展名（`dsh-app-boot` 的 `ICON_MEDIA_TYPES`）。 */
+const ICON_EXTENSIONS = new Set([".svg", ".png", ".jpg", ".jpeg", ".webp"]);
+/** 宿主接受的插件图标体积上限（256 KiB）。 */
+const MAX_ICON_BYTES = 256 * 1024;
+/** 判断文件头时最多读这么多字节（WebP 需要前 12 字节；SVG 只看开头有没有 `<svg`）。 */
+const ICON_HEAD_BYTES = 1024;
+
+/**
+ * 把 Node exports pattern 转成正则：`*` 在宿主/Node 的 exports 子路径里按前缀后缀匹配，
+ * 可以含 `/`，因此等价成 `.*`。
+ * @param {string} target
+ * @returns {RegExp}
+ */
+function exportPatternToRegExp(target) {
+  const escaped = target
+    .split("*")
+    .map((part) => part.replace(/[.+^${}()|[\]\\]/g, "\\$&"))
+    .join(".*");
+  return new RegExp(`^${escaped}$`, "u");
+}
+
+/**
+ * 列出插件目录内的普通文件（POSIX 相对路径）。跳过 node_modules 与点目录：它们是依赖/缓存，
+ * 不是包内容。
+ * @param {string} dir
+ * @param {string} [prefix]
+ * @returns {string[]}
+ */
+function listPackageFiles(dir, prefix = "") {
+  /** @type {string[]} */
+  const files = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+    const rel = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+    if (entry.isDirectory()) files.push(...listPackageFiles(join(dir, entry.name), rel));
+    else if (entry.isFile()) files.push(rel);
+  }
+  return files;
+}
+
+/**
+ * 解析一个 exports 目标命中的包内文件。
+ * 字面量目标按文件存在判断；含 `*` 的 exports pattern 按包内文件做 glob 匹配（至少命中 1 个），
+ * 不能用 `existsSync` 直接查通配字符串。
+ * @param {string} base 插件目录绝对路径
+ * @param {string} target exports 的字符串值
+ * @param {string[]} packageFiles 包内相对文件（POSIX）
+ * @returns {string[]} 命中的包内相对路径；空数组表示目标不合法
+ */
+function matchedExportFiles(base, target, packageFiles) {
+  if (!target.includes("*")) {
+    const file = join(base, target);
+    return existsSync(file) && statSync(file).isFile() ? [target.replace(/^\.\//, "")] : [];
+  }
+  const pattern = exportPatternToRegExp(target.startsWith("./") ? target : `./${target}`);
+  return packageFiles
+    .map((file) => `./${file}`)
+    .filter((file) => pattern.test(file))
+    .map((file) => file.slice(2));
+}
+
+/**
+ * 图标文件头嗅探：宿主把 `icon` 交给浏览器按图片解码，坏文件会静默回退默认图。
+ * @param {Buffer} head 文件前若干字节
+ * @param {string} ext 小写扩展名（含点）
+ * @returns {boolean}
+ */
+function hasIconSignature(head, ext) {
+  if (ext === ".svg") {
+    const text = head
+      .toString("utf8")
+      .replace(/^\uFEFF/u, "")
+      .trimStart();
+    return (
+      text.startsWith("<svg") ||
+      (text.startsWith("<?xml") && text.includes("<svg")) ||
+      (text.startsWith("<!--") && text.includes("<svg"))
+    );
+  }
+  if (ext === ".png") {
+    return (
+      head.length >= 8 &&
+      head[0] === 0x89 &&
+      head[1] === 0x50 &&
+      head[2] === 0x4e &&
+      head[3] === 0x47 &&
+      head[4] === 0x0d &&
+      head[5] === 0x0a &&
+      head[6] === 0x1a &&
+      head[7] === 0x0a
+    );
+  }
+  if (ext === ".jpg" || ext === ".jpeg") {
+    return head.length >= 3 && head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff;
+  }
+  if (ext === ".webp") {
+    return (
+      head.length >= 12 &&
+      head.toString("latin1", 0, 4) === "RIFF" &&
+      head.toString("latin1", 8, 12) === "WEBP"
+    );
+  }
+  return false;
 }
 
 /**
@@ -86,6 +191,10 @@ export function checkRepo(root = REPO_ROOT) {
   const settingsOrderOwners = new Map();
   // 宿主主题 token 快照（CI 里没有 DSH 可查，所以用提交在仓库里的那份）。
   const hostTokens = new Set(readSnapshot().tokens);
+  // 插件身份（meta/icon）只在登记进索引源的正式插件上强制：模板/脚手架生成的临时插件由
+  // `build-index --check` 的登记检查兜底，否则 `pnpm new` 刚建好、还没登记时 `pnpm check` 会红。
+  const indexMetaPath = join(root, "scripts/index-meta.json");
+  const indexMeta = existsSync(indexMetaPath) ? readJson(indexMetaPath) : undefined;
 
   for (const dir of listPluginDirs(root)) {
     const base = join(root, "packages", dir);
@@ -99,6 +208,11 @@ export function checkRepo(root = REPO_ROOT) {
     }
     const pkg = readJson(join(base, "package.json"));
     const expectedName = `${PREFIX}${dir}`;
+    // 插件身份（locale meta / 顶层 icon）只在「登记进索引源的正式版本插件」上强制：
+    // 模板/脚手架生成的 0.0.0 临时插件由 build-index 的登记检查兜底，F3 补模板之前
+    // 不因此让 `pnpm new` 的 check 变红；首个 changeset 版本号离开 0.0.0 后开始强制。
+    const registered = indexMeta?.plugins?.[expectedName];
+    const identityEnforced = Boolean(registered) && pkg.version !== "0.0.0";
 
     // 命名与元信息
     if (pkg.name !== expectedName) report("error", `包名应为 ${expectedName}，实际 ${pkg.name}`);
@@ -122,9 +236,38 @@ export function checkRepo(root = REPO_ROOT) {
       if (!has(entry)) report("error", `files 中的 ${entry} 不存在`);
     }
     if (pkg.main && !has(pkg.main)) report("error", `main 指向的 ${pkg.main} 不存在`);
+    // exports：字面量按文件存在判断；`./locale/*.json` 这类 Node exports pattern 按包内文件
+    // 做 glob 匹配。宿主用 Node 的模块解析器读 locale，通配与逐文件显式都能被解析。
+    const packageFiles = listPackageFiles(base);
+    /** @type {Map<string, string[]>} */
+    const exportMatches = new Map();
     for (const [key, target] of Object.entries(pkg.exports ?? {})) {
-      if (typeof target === "string" && !has(target))
-        report("error", `exports["${key}"] 指向的 ${target} 不存在`);
+      if (typeof target !== "string") continue;
+      const matches = matchedExportFiles(base, target, packageFiles);
+      exportMatches.set(key, matches);
+      if (matches.length === 0) {
+        report(
+          "error",
+          target.includes("*")
+            ? `exports["${key}"] 的通配 ${target} 没有匹配到任何文件`
+            : `exports["${key}"] 指向的 ${target} 不存在`,
+        );
+      }
+    }
+    // locale 目录里的每个 .json 都必须能被某个 exports 子路径解析到：宿主的 dictionariesOf()
+    // 会遍历整个目录逐个解析，只要漏掉一个就返回 {error}，连带 title/description/icon 全丢。
+    const localeDir = join(base, "locale");
+    if (identityEnforced && existsSync(localeDir)) {
+      for (const entry of readdirSync(localeDir, { withFileTypes: true })) {
+        if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+        const rel = `locale/${entry.name}`;
+        if (![...exportMatches.values()].some((matches) => matches.includes(rel))) {
+          report(
+            "error",
+            `locale/${entry.name} 未被 exports 覆盖（宿主解析失败会丢整套 meta/icon）`,
+          );
+        }
+      }
     }
 
     // 不把宿主包当依赖、不写 DSH 版本约束（AGENTS.md 硬性约定 3）
@@ -299,6 +442,101 @@ export function checkRepo(root = REPO_ROOT) {
         for (const k of enKeys) if (!zhKeys.has(k)) report("error", `locale/zh.json 缺少 ${k}`);
         const ns = toCamel(dir);
         if (!(ns in zh)) report("warn", `locale 顶层命名空间建议为 ${ns}`);
+      }
+    }
+
+    // 插件身份：locale 根对象 `meta` 与 package.json 顶层 `icon` 是「插件 → 已安装/详情」的
+    // 标题、描述和图标来源（宿主不激活插件就读它们）。只在登记进索引源的正式版本插件上强制
+    // （上面的 identityEnforced），模板/脚手架生成的 0.0.0 临时插件由 build-index 兜底。
+    if (identityEnforced && registered) {
+      for (const lang of ["en", "zh"]) {
+        const localeFile = join(base, `locale/${lang}.json`);
+        if (!existsSync(localeFile)) continue; // 上面的 locale 配对检查已经报错
+        const meta = readJson(localeFile).meta;
+        for (const field of ["title", "description"]) {
+          const value = meta?.[field];
+          if (typeof value !== "string" || value.trim() === "") {
+            report(
+              "error",
+              `locale/${lang}.json 缺少非空的 meta.${field}（宿主直接读它当插件身份）`,
+            );
+          }
+        }
+      }
+      // 中文身份有 index-meta.json 与 locale/zh.json 两个来源，不一致会让「已安装」与「发现」漂移。
+      const zhMeta = existsSync(zhPath) ? readJson(zhPath).meta : undefined;
+      const zhTitle = registered.title?.zh;
+      const zhDescription = registered.descriptionZh;
+      if (zhMeta && typeof zhTitle === "string" && zhMeta.title !== zhTitle) {
+        report(
+          "error",
+          "locale/zh.json 的 meta.title 与 scripts/index-meta.json 的 title.zh 不一致",
+        );
+      }
+      if (zhMeta && typeof zhDescription === "string") {
+        const description = zhMeta.description;
+        if (zhDescription.length <= 200) {
+          if (description !== zhDescription) {
+            report(
+              "error",
+              "locale/zh.json 的 meta.description 与 scripts/index-meta.json 的 descriptionZh 不一致",
+            );
+          }
+        } else if (
+          typeof description !== "string" ||
+          description.length > 200 ||
+          !zhDescription.startsWith(description)
+        ) {
+          report(
+            "error",
+            "scripts/index-meta.json 的 descriptionZh 超过 200 字符时必须截断成它的前缀（≤200）",
+          );
+        }
+      }
+    }
+
+    // 图标：必须存在于包目录内、进 files 白名单、≤256 KiB，且文件头是宿主接受的图片格式。
+    if (pkg.icon !== undefined) {
+      const icon = pkg.icon;
+      if (typeof icon !== "string" || icon.trim() === "") {
+        report("error", "package.json 的 icon 必须是非空相对路径");
+      } else if (
+        isAbsolute(icon) ||
+        /^[A-Za-z][A-Za-z\d+.-]*:/u.test(icon) ||
+        icon.split("/").includes("..")
+      ) {
+        report("error", `package.json 的 icon「${icon}」必须是包目录内的相对路径`);
+      } else {
+        const iconRel = icon.replace(/^\.\//, "");
+        const iconPath = join(base, iconRel);
+        const ext = extname(iconRel).toLowerCase();
+        const iconStat = existsSync(iconPath) ? statSync(iconPath) : undefined;
+        if (!ICON_EXTENSIONS.has(ext)) {
+          report(
+            "error",
+            `icon「${iconRel}」的扩展名必须是 ${[...ICON_EXTENSIONS].join("/")}（宿主只接受这四种）`,
+          );
+        } else if (iconStat === undefined) {
+          report("error", `icon 指向的 ${iconRel} 不存在`);
+        } else if (!iconStat.isFile()) {
+          report("error", `icon 指向的 ${iconRel} 必须是普通文件`);
+        } else {
+          if (iconStat.size > MAX_ICON_BYTES) {
+            report("error", `icon ${iconRel} 超过宿主上限 256 KiB`);
+          }
+          const head = readFileSync(iconPath).subarray(0, ICON_HEAD_BYTES);
+          if (!hasIconSignature(head, ext)) {
+            report("error", `icon ${iconRel} 不是合法的 ${ext} 文件头（宿主解码失败会回退默认图）`);
+          }
+        }
+        const listed = /** @type {unknown[]} */ (pkg.files ?? []).some((entry) => {
+          if (typeof entry !== "string") return false;
+          const clean = entry.replace(/^\.\//, "");
+          return (
+            clean === "." || clean === "" || clean === iconRel || iconRel.startsWith(`${clean}/`)
+          );
+        });
+        if (!listed) report("error", `icon ${iconRel} 不在 files 白名单里（npm pack 不会带上它）`);
       }
     }
   }

@@ -1,4 +1,8 @@
 {
+  "meta": {
+    "title": "Artifacts",
+    "description": "Local artifact pages: the model publishes a self-contained page, a compact row appears in the timeline, and the page refreshes in place in the right sidebar's Artifacts panel. Nothing is uploaded."
+  },
   "artifacts": {
     "title": "Local deliverable pages for DSH sessions: publish, preview live, keep versions"
   }
