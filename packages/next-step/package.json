@@ -2,6 +2,7 @@
   "name": "@kangyishuai/dsh-next-step",
   "version": "0.5.0",
   "description": "Next-step decision card under each completed answer, plus an optional greyed-out next-prompt hint in the composer",
+  "icon": "icon.svg",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -25,12 +26,15 @@
   "exports": {
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
+    "./locale/en.json": "./locale/en.json",
+    "./locale/zh.json": "./locale/zh.json",
     "./package.json": "./package.json"
   },
   "files": [
     "cordis.patch.yml",
     "lib",
     "locale",
+    "icon.svg",
     "README.md",
     "README.zh-CN.md",
     "LICENSE"

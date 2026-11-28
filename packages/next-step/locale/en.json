@@ -1,4 +1,8 @@
 {
+  "meta": {
+    "title": "Next Step",
+    "description": "A next-step decision card under a completed answer: the state, the open question and 1–2 clickable proposals; click one to send it. Settings → Next Step sets how often cards appear."
+  },
   "nextStep": {
     "card.aria": "Next-step suggestion",
     "card.expired": "Earlier turn",

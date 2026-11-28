@@ -1,4 +1,8 @@
 {
+  "meta": {
+    "title": "下一步",
+    "description": "值得继续时给一张决策卡：现状、待定问题、1–2 个互斥下一步，点一下按原文发送。"
+  },
   "nextStep": {
     "card.aria": "下一步建议",
     "card.expired": "更早的一轮",
