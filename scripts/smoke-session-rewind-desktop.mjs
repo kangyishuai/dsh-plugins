@@ -17,9 +17,9 @@
 //   1) `--workspace` 指向一个**已注册成桌面工作区**的目录。手点一次桌面「工作区 → 添加工作区」
 //      可以，但更省事的是 helper（幂等、写前备份、默认拒绝 live home）：
 //        node scripts/register-test-workspace.mjs --home <DSH_HOME> --path <目录>
-//      真实桌面版的 DSH_HOME 是 ~/.dsh，要额外加 --allow-live；注册要在桌面版启动前完成
-//      （或注册后重启），细节见 docs/testing/session-rewind.md §2.6.1。脚本自己只读侧栏、
-//      不写宿主注册表。标题默认取目录名，改过名用 `--sidebar-workspace` 指定。
+//      真实桌面版的 DSH_HOME 是 ~/.dsh，要额外加 --allow-live；时序是**先退出桌面版 → 注册 →
+//      再启动**（运行中注册可能被宿主内存态写回），细节见 docs/testing/session-rewind.md §2.6.1。
+//      脚本自己只读侧栏、不写宿主注册表。标题默认取目录名，改过名用 `--sidebar-workspace` 指定。
 //      **macOS 的 /tmp 是 /private/tmp 的软链**：要按真实路径注册（helper 会对 --path 做
 //      realpath），否则会话建得出来却「附不到工作区」，界面静默停在旧会话上；
 //   2) 模型凭据可用（要发真请求、花额度）。
@@ -52,6 +52,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { parseArgs } from "node:util";
 import { deepDeleteVerdict } from "./lib/deep-delete-gate.mjs";
+import { unregisteredWorkspaceHint } from "./lib/workspace-register.mjs";
 
 const SHOTS = join(tmpdir(), "dsh-session-rewind-desktop-shots");
 const sleep = (/** @type {number} */ ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -1439,10 +1440,10 @@ const main = async () => {
           workspaceRow.found,
           workspaceRow.found
             ? ""
-            : `${workspaceRow.detail}；先把这个目录注册成桌面工作区（一次性）：\n` +
-                `  node scripts/register-test-workspace.mjs --home <DSH_HOME> --path ${workspaceReal}` +
-                "（真实桌面版加 --allow-live；注册后重启桌面版）\n" +
-                "也可以在桌面「工作区 → 添加工作区」手动选择该目录；用 --sidebar-workspace 指定工作区标题",
+            : unregisteredWorkspaceHint({
+                detail: workspaceRow.detail,
+                workspaceReal,
+              }),
         );
 
         if (workspaceRow.found) {

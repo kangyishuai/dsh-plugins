@@ -12,8 +12,8 @@
 // - 默认拒绝 `$HOME/.dsh` 及其子目录（真实桌面版的数据根），必须显式 `--allow-live`；
 // - 支持 dry-run：只算不写。
 //
-// 宿主在启动时把 workspace.json 读进内存，运行中可能再写回；所以注册要在桌面版
-// 启动前完成，或注册后重启桌面版（文档里写明）。
+// 宿主在启动时把 workspace.json 读进内存，运行中/退出时可能再写回；所以 live 实例的
+// 时序是「先退出桌面版 → 注册 → 再启动」（文档里写明）。
 import { randomUUID } from "node:crypto";
 import {
   copyFileSync,
@@ -186,6 +186,21 @@ function validateWorkspaceStore(parsed, file) {
     refuse("根不是对象");
   }
   const store = /** @type {any} */ (parsed);
+  // 宿主存储格式带 `unit` 版本号，helper 只认识 `workspace/2`。别的版本说明宿主改过布局，
+  // 按旧形状追加条目可能写出宿主读不懂的存储——拒绝改写（不备份、不写盘），等人同步 helper。
+  if (store.unit !== undefined) {
+    if (
+      store.unit === null ||
+      typeof store.unit !== "object" ||
+      Array.isArray(store.unit) ||
+      store.unit.name !== WORKSPACE_UNIT.name ||
+      store.unit.version !== WORKSPACE_UNIT.version
+    ) {
+      refuse(
+        `unit 是 ${JSON.stringify(store.unit) ?? String(store.unit)}，只认识 {"name":"workspace","version":2}`,
+      );
+    }
+  }
   if (
     store.global === undefined ||
     store.global === null ||
@@ -311,6 +326,20 @@ export function registerTestWorkspace(options) {
   const target = normalizeWorkspacePath(targetPath);
   const requestedTitle = typeof rawTitle === "string" ? rawTitle.trim() : "";
   const title = requestedTitle === "" ? basename(target) : requestedTitle;
+  // `storages/` 如果是符号链接，原子写会落到 home 之外（realpath 逃出）——和「默认拒绝
+  // live home」同一防御面，直接拒绝（不备份、不写盘）。
+  let storagesStat;
+  try {
+    storagesStat = lstatSync(join(homeReal, "storages"));
+  } catch {
+    storagesStat = undefined;
+  }
+  if (storagesStat?.isSymbolicLink()) {
+    throw new WorkspaceRegisterError(
+      `${join(homeReal, "storages")} 是符号链接：拒绝写入（工作区存储必须真的在 home 目录下）`,
+      "state",
+    );
+  }
   const storeFile = join(homeReal, "storages", "workspace.json");
 
   let targetStat;
@@ -392,4 +421,22 @@ export function registerTestWorkspace(options) {
     dryRun: false,
     written: true,
   };
+}
+
+/**
+ * 桌面 `--deep` 冒烟「工作区未注册」的失败提示。
+ *
+ * 提示里的命令要能**整行复制直接执行**：`--path` 后面只能跟路径，中文括注必须换行并写成
+ * shell 注释（`#`），否则复制整行会把「路径（真实桌面版加…）」当成路径参数，helper 直接报
+ * `--path 不存在`（2026-11-28 复审 P2）。
+ * @param {{ detail: string, workspaceReal: string }} options
+ * @returns {string}
+ */
+export function unregisteredWorkspaceHint({ detail, workspaceReal }) {
+  return (
+    `${detail}；先把这个目录注册成桌面工作区（一次性）：\n` +
+    `  node scripts/register-test-workspace.mjs --home <DSH_HOME> --path ${workspaceReal}\n` +
+    "  # 真实桌面版（数据根 ~/.dsh）需再加 --allow-live；先退出桌面版再注册、注册完再启动\n" +
+    "也可以在桌面「工作区 → 添加工作区」手动选择该目录；用 --sidebar-workspace 指定工作区标题"
+  );
 }

@@ -23,6 +23,7 @@ import {
   emptyWorkspaceStore,
   isLiveHome,
   registerTestWorkspace,
+  unregisteredWorkspaceHint,
   WORKSPACE_UNIT,
   WorkspaceRegisterError,
 } from "../lib/workspace-register.mjs";
@@ -346,4 +347,81 @@ test("CLI：默认标题取目录名，输出可解析的 JSON 摘要；--title 
   const usage = runCli(["--home", home]);
   assert.equal(usage.status, 1);
   assert.match(usage.stderr, /用法/u);
+});
+
+test("--deep 未注册提示：命令行可整行复制，中文括注不紧贴 --path", () => {
+  const hint = unregisteredWorkspaceHint({
+    detail: "侧栏缺少工作区行",
+    workspaceReal: "/tmp/ws",
+  });
+  const lines = hint.split("\n");
+  // 命令单独一行，`--path` 的实参到路径为止（复制整行不会把中文括注带进去）。
+  assert.equal(
+    lines[1],
+    "  node scripts/register-test-workspace.mjs --home <DSH_HOME> --path /tmp/ws",
+  );
+  // 括注在下一行，且是 shell 注释：整段贴进终端时第二行不会污染命令。
+  assert.match(lines[2], /^\s*#/u);
+  assert.doesNotMatch(hint, /--path [^\n]*（/u, "中文括注不能紧贴在 --path 的实参后面");
+  assert.equal(hint.split("\n").length, 4);
+  assert.ok(hint.endsWith("用 --sidebar-workspace 指定工作区标题"));
+});
+
+test("unit 版本未知（version=3 / name 不是 workspace / 非对象）拒绝改写，不备份不写盘", () => {
+  const root = makeRoot();
+  const home = makeHome(root);
+  const workspace = makeWorkspace(root);
+  mkdirSync(join(home, "storages"), { recursive: true });
+
+  for (const unit of [
+    { name: "workspace", version: 3 },
+    { name: "something-else", version: 2 },
+    null,
+    3,
+  ]) {
+    const store = { ...emptyWorkspaceStore(), unit };
+    const text = `${JSON.stringify(store, null, 2)}\n`;
+    writeFileSync(storeFile(home), text);
+    assert.throws(
+      () => registerTestWorkspace({ home, path: workspace }),
+      (error) =>
+        error instanceof WorkspaceRegisterError &&
+        error.code === "state" &&
+        /unit 是/u.test(error.message),
+    );
+    assert.equal(readFileSync(storeFile(home), "utf8"), text, "拒绝时原文件必须原样");
+    assert.deepEqual(readdirSync(join(home, "storages")), ["workspace.json"], "拒绝时不留备份");
+  }
+});
+
+test("缺 unit 的旧存储会补上 workspace/2（不误拒）", () => {
+  const root = makeRoot();
+  const home = makeHome(root);
+  const workspace = makeWorkspace(root);
+  mkdirSync(join(home, "storages"), { recursive: true });
+  const store = emptyWorkspaceStore();
+  delete (/** @type {any} */ (store).unit);
+  writeFileSync(storeFile(home), `${JSON.stringify(store, null, 2)}\n`);
+
+  const summary = registerTestWorkspace({ home, path: workspace });
+  assert.equal(summary.written, true);
+  assert.deepEqual(readStore(home).unit, { name: "workspace", version: 2 });
+});
+
+test("storages/ 是符号链接时拒绝写入（写盘目标不能逃出 home）", () => {
+  const root = makeRoot();
+  const home = makeHome(root);
+  const workspace = makeWorkspace(root);
+  const outside = join(root, "outside");
+  mkdirSync(outside, { recursive: true });
+  symlinkSync(outside, join(home, "storages"), "dir");
+
+  assert.throws(
+    () => registerTestWorkspace({ home, path: workspace }),
+    (error) =>
+      error instanceof WorkspaceRegisterError &&
+      error.code === "state" &&
+      /storages 是符号链接/u.test(error.message),
+  );
+  assert.deepEqual(readdirSync(outside), [], "不能把 workspace.json 写到 home 外面");
 });
