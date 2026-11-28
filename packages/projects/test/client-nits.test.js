@@ -164,6 +164,21 @@ function createHooks() {
       dirty.add(fiber);
       flush();
     },
+    /** 卸载：跑所有 effect cleanup（清 interval / listener），避免测试漏定时器。
+     * @param {any} fiber */
+    unmount(fiber) {
+      fiber.mounted = false;
+      dirty.delete(fiber);
+      for (const hook of fiber.hooks) {
+        if (hook && hook.kind === "effect" && typeof hook.cleanup === "function") {
+          try {
+            hook.cleanup();
+          } catch {
+            /* 清理失败不影响断言 */
+          }
+        }
+      }
+    },
     flush,
   };
 }
@@ -303,6 +318,9 @@ test("O3：删除影响面一行包含名字/频率/宿主任务/投递状态/�
     assert.match(manual, /r3/u);
     assert.match(manual, /手动档（无宿主定时任务）/u);
     assert.match(manual, /不会自动投递/u);
+    // 手动档没有宿主任务：措辞不能写「宿主任务与历史一起移除」。
+    assert.match(manual, /本地记录与历史一起移除/u);
+    assert.doesNotMatch(manual, /宿主任务与历史一起移除/u);
   } finally {
     browser.restore();
   }
@@ -519,4 +537,101 @@ test("O4：创建 handler 在成功后应用重置（源码接线守卫）", () 
   );
   assert.match(deleteButton, /setDeleteTarget\(/u);
   assert.doesNotMatch(deleteButton, /deleteRoutine\(/u, "删除按钮不能直接删，必须先确认");
+});
+
+/* ------------------------------------------------------------------ */
+/* B1（复审阻塞）：创建 Routine 期间按钮必须显示「正在创建…」            */
+/* ------------------------------------------------------------------ */
+
+test("B1：创建 routine 时按钮文案是「正在创建…」（busy 用稳定 key，显示与判等分离）", async () => {
+  const hooks = createHooks();
+  const { api, browser } = loadClient(hooks);
+  /** @type {any} */
+  let fiber = null;
+  try {
+    const t = makeT(api);
+    // createRoutine 一直 pending：把「创建中」这一帧钉住，便于断言文案。
+    const pending = new Promise(() => {});
+    const fakeApi = {
+      ctx: {
+        connection: {
+          rpc: {
+            /** @param {string} _channel @param {string} method */
+            call: (_channel, method) => {
+              if (method === "projects/routinesView") {
+                return Promise.resolve({
+                  ok: true,
+                  value: {
+                    available: true,
+                    routines: [],
+                    costHint: "",
+                    timeZone: "Asia/Shanghai",
+                    projectDir: "/tmp/p1",
+                  },
+                });
+              }
+              if (method === "projects/createRoutine") return pending;
+              return Promise.resolve({ ok: true, value: null });
+            },
+          },
+        },
+      },
+    };
+    fiber = hooks.mount(api.RoutinesView, {
+      api: fakeApi,
+      t,
+      project: { id: "p1" },
+    });
+    await sleep(10);
+    hooks.flush();
+    /** @returns {any} */
+    const createButton = () =>
+      collect(fiber.element).find(
+        (node) => node.props && node.props["data-projects-routine-create"] !== undefined,
+      );
+    const idle = createButton();
+    assert.ok(idle, "找不到创建按钮");
+    assert.equal(String(idle.props.children), "创建");
+    assert.equal(idle.props.disabled, false);
+
+    idle.props.onClick();
+    await sleep(10);
+    hooks.flush();
+    const busy = createButton();
+    assert.ok(busy, "点击后创建按钮消失");
+    // B1 回归点：以前 busy 里塞本地化文本、判等仍用 "create"，这里会一直是「创建」。
+    assert.equal(
+      String(busy.props.children),
+      "正在创建…",
+      "创建期间按钮文案必须是 routines.creating（不是一直「创建」）",
+    );
+    assert.equal(busy.props.disabled, true, "创建期间按钮必须 disabled");
+  } finally {
+    // 断言失败也要清 interval，否则 test runner 会挂着等定时器。
+    if (fiber !== null) hooks.unmount(fiber);
+    browser.restore();
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/* O3 复审补充：busy 时忽略 Esc（框不能关着但删除继续）                  */
+/* ------------------------------------------------------------------ */
+
+test("O3：busy 时不允许关闭确认框（Esc 与取消按钮行为一致）", () => {
+  const hooks = createHooks();
+  const { api, browser } = loadClient(hooks);
+  try {
+    assert.equal(api.routineDeleteCloseAllowed(null), true);
+    assert.equal(api.routineDeleteCloseAllowed({ busy: false }), true);
+    assert.equal(api.routineDeleteCloseAllowed({ busy: true }), false);
+    // 接线：onClose 经过这个守卫（源码守卫；真实 Esc 由 useModalLayer 统一接管）。
+    const source = readFileSync(CLIENT, "utf8");
+    const layer = source.slice(
+      source.indexOf('selector: "[data-projects-routine-delete-dialog]"'),
+      source.indexOf('selector: "[data-projects-routine-delete-dialog]"') + 400,
+    );
+    assert.match(layer, /routineDeleteCloseAllowed\(deleteTarget\)/u);
+  } finally {
+    browser.restore();
+  }
 });

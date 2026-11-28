@@ -553,6 +553,7 @@ window.__ModuleLoader__.load({
       "routines.deleteDelivering": "正在自动投递",
       "routines.deleteNotDelivering": "不会自动投递",
       "routines.deleteRecovery": "删除后不可恢复（宿主任务与历史一起移除，审计保留）",
+      "routines.deleteRecoveryManual": "删除后不可恢复（本地记录与历史一起移除，审计保留）",
       "routines.deleteConfirmTitle": "删除这条定时任务？",
       "routines.save": "保存",
       "routines.update": "更新",
@@ -1307,6 +1308,8 @@ window.__ModuleLoader__.load({
       "routines.deleteNotDelivering": "not auto-delivering",
       "routines.deleteRecovery":
         "not recoverable (host schedule and history are removed; the audit log stays)",
+      "routines.deleteRecoveryManual":
+        "not recoverable (local record and history are removed; the audit log stays)",
       "routines.deleteConfirmTitle": "Delete this routine?",
       "routines.save": "Save",
       "routines.update": "Update",
@@ -13886,8 +13889,23 @@ window.__ModuleLoader__.load({
           ? text(t, "routines.deleteDelivering")
           : text(t, "routines.deleteNotDelivering"),
       );
-      parts.push(text(t, "routines.deleteRecovery"));
+      // 手动档没有宿主定时任务：措辞不能再写「宿主任务与历史一起移除」。
+      parts.push(
+        scheduleId === ""
+          ? text(t, "routines.deleteRecoveryManual")
+          : text(t, "routines.deleteRecovery"),
+      );
       return parts.join(" · ");
+    }
+
+    /**
+     * O3：确认框能否关闭。
+     * busy 时忽略 Esc（取消按钮也已 disabled）：避免「框关了但删除还在跑」的错觉。
+     * @param {{ busy?: boolean } | null} target
+     * @returns {boolean}
+     */
+    function routineDeleteCloseAllowed(target) {
+      return target === null || target === undefined || target.busy !== true;
     }
 
     /**
@@ -14018,7 +14036,10 @@ window.__ModuleLoader__.load({
       useModalLayer({
         open: deleteTarget !== null,
         selector: "[data-projects-routine-delete-dialog]",
-        onClose: () => setDeleteTarget(null),
+        // busy 时 Esc 不关框（与取消按钮一致），避免「框关了但删除继续」的错觉。
+        onClose: () => {
+          if (routineDeleteCloseAllowed(deleteTarget)) setDeleteTarget(null);
+        },
       });
       const confirmDeleteRoutine = () => {
         const target = deleteTarget;
@@ -14048,8 +14069,22 @@ window.__ModuleLoader__.load({
       };
       const report = (/** @type {any} */ textValue, /** @type {any} */ ok) =>
         setMessage({ text: textValue, ok });
-      const runAction = (/** @type {any} */ label, /** @type {any} */ promise) => {
-        setBusy(label);
+      /**
+       * 跑一条 routine 动作。
+       *
+       * B1（复审）：busy 状态与展示文案必须分离——busy 判等用稳定 key（如 `"create"`），
+       * 提示里用本地化 label。以前 busy 里塞本地化文本、按钮判等仍用 `"create"`，
+       * 导致「正在创建…」永远不显示。
+       * @param {any} label 成功/失败提示里的动作名（本地化文案）
+       * @param {any} promise
+       * @param {string} [busyKey] 稳定 busy key（默认用 label；需要判等时显式传）
+       */
+      const runAction = (
+        /** @type {any} */ label,
+        /** @type {any} */ promise,
+        /** @type {string} */ busyKey,
+      ) => {
+        setBusy(busyKey === undefined ? label : busyKey);
         report("", null);
         promise.then(
           (/** @type {any} */ result) => {
@@ -14256,6 +14291,8 @@ window.__ModuleLoader__.load({
                       setDraft((/** @type {any} */ prev) => routineDraftAfterCreate(prev, result));
                       return result;
                     }),
+                    // B1：busy 用稳定 key，按钮文案才能按 `busy === "create"` 显示「正在创建…」。
+                    "create",
                   ),
               },
               busy === "create" ? text(t, "routines.creating") : text(t, "routines.create"),
@@ -18761,7 +18798,10 @@ window.__ModuleLoader__.load({
       defaultRoutineDraft,
       routineDraftAfterCreate,
       routineDeleteImpact,
+      routineDeleteCloseAllowed,
       RoutineDeleteDialog,
+      // B1 行为测试要驱动真实 RoutinesView（创建中按钮文案）
+      RoutinesView,
       // O1：回收站重载路径（删除项目后即时刷新）
       PanelTrash,
       // 单测用真实中文文案（不复制一份字典，避免与线上漂移）

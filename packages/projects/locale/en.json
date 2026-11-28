@@ -703,6 +703,7 @@
     "routines.deleteDelivering": "auto-delivering",
     "routines.deleteNotDelivering": "not auto-delivering",
     "routines.deleteRecovery": "not recoverable (host schedule and history are removed; the audit log stays)",
+    "routines.deleteRecoveryManual": "not recoverable (local record and history are removed; the audit log stays)",
     "routines.deleteConfirmTitle": "Delete this routine?",
     "routines.save": "Save",
     "routines.update": "Update",
