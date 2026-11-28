@@ -110,7 +110,7 @@ dsh plugin --profile desktop add /tmp/kangyishuai-dsh-session-rewind-*.tgz
 | `rescues/<session>/<rescueId>/` | 还原前的救援点                |
 | `audit.jsonl`                   | 每次回溯一行（只追加）        |
 
-启动时会自动清理已删除会话的残留数据（entries/trash/救援点），并清一次没有任何 entry/manifest 引用的 blob（写 `gc-blobs` 审计记录；`gcOnStartup: false` 可关闭）；审计日志保留。清理只在能**安全枚举**存活会话时才执行：先把这个 dry-run 计划写进审计，再执行；如果一个存活会话都枚举不到、会话存储不是 `sessions/<workspace>/<session-id>/` 这种已知布局（包括「部分/混合布局」——某个非空 workspace 里一个能识别的会话目录都没有，或混进了不像会话目录的条目）、或有 workspace 不可读，都跳过清理并记 warning——绝不把「不知道」当成「全部都是孤儿」；不认识的插件条目一律保留不删（记 warning，枚举失败时诊断里列出数量）。保留策略：每会话最近 20 个消息锚点、最近 5 份救援点、最近 20 次回收站操作（30 天）、blobs/trash/rescues 合计 1 GiB 软上限。超限时按「旧回收站 → 旧救援点 → 无引用 blob → 最旧锚点」清理；仍超限则停止新捕获并在诊断里告警（不删有引用的数据）。卸载保留数据。数据根可用插件配置 `dataRoot` 覆盖。恢复侧的读取与捕获侧共用同一个 8 MiB 单文件上限：被追踪文件在外部长到超限时报 `too-large`，不会整块读进内存。
+启动时会自动清理已删除会话的残留数据（entries/trash/救援点），并清一次没有任何 entry/manifest 引用的 blob（写 `gc-blobs` 审计记录；`gcOnStartup: false` 可关闭）；审计日志保留。清理只在能**安全枚举**存活会话时才执行：先把这个 dry-run 计划写进审计，再执行；如果一个存活会话都枚举不到、会话存储不是 `sessions/<workspace>/<session-id>/` 这种已知布局（包括「部分/混合布局」——某个非空 workspace 里一个能识别的会话目录都没有，或混进了不像会话目录的条目）、或有 workspace 不可读，都跳过清理并记 warning——blob 回收同样 fail-closed：只要有一个会话的 entries 读不出来，本次一个 blob 都不删，warning 里列出受影响的会话 id，直到 entries 修复前这些 blob 都保留。绝不把「不知道」当成「全部都是孤儿」；不认识的插件条目一律保留不删（记 warning，枚举失败时诊断里列出数量）。保留策略：每会话最近 20 个消息锚点、最近 5 份救援点、最近 20 次回收站操作（30 天）、blobs/trash/rescues 合计 1 GiB 软上限。超限时按「旧回收站 → 旧救援点 → 无引用 blob → 最旧锚点」清理；仍超限则停止新捕获并在诊断里告警（不删有引用的数据）。卸载保留数据。数据根可用插件配置 `dataRoot` 覆盖。恢复侧的读取与捕获侧共用同一个 8 MiB 单文件上限：被追踪文件在外部长到超限时报 `too-large`，不会整块读进内存。
 
 ## 副作用与风险
 

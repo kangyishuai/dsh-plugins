@@ -106,6 +106,10 @@ window.__ModuleLoader__.load({
       "state.separator": "、",
       "timeline.kindRescue": "文件恢复",
       "timeline.rescueMeta": "从救援点恢复 {restored} 个文件 · {id}",
+      "timeline.kindTrashRestore": "回收站恢复",
+      "timeline.trashRestoreMeta": "从回收站恢复 {restored} 个文件",
+      "timeline.kindTrashClear": "清空回收站",
+      "timeline.trashClearMeta": "永久删除 {cleared} 个文件 · {bytes}",
       "toast.done": "已回退到此处，原消息已放回输入框",
       "toast.draft": "已回退；输入框已有内容，未覆盖",
       "toast.noComposer": "已回退，但未找到输入框",
@@ -323,6 +327,10 @@ window.__ModuleLoader__.load({
       "state.separator": ", ",
       "timeline.kindRescue": "File restore",
       "timeline.rescueMeta": "Restored {restored} file(s) from rescue {id}",
+      "timeline.kindTrashRestore": "Trash restore",
+      "timeline.trashRestoreMeta": "Restored {restored} file(s) from the trash",
+      "timeline.kindTrashClear": "Trash cleared",
+      "timeline.trashClearMeta": "Permanently deleted {cleared} file(s) · {bytes}",
       "toast.stoppedTurn": ", and the running turn was stopped",
       "toast.resent": ", and the message was sent again",
       "toast.done": "Rewound. The original message is back in the composer.",
@@ -1576,6 +1584,8 @@ window.__ModuleLoader__.load({
         skipped: normalizePathList(value.skipped),
         failed: normalizePathList(value.failed),
         rescueId: typeof value.rescueId === "string" ? value.rescueId : null,
+        // `trash-clear` 的审计行把「永久删除几个文件」放在 files.cleared（数字，不是路径数组）。
+        cleared: typeof value.cleared === "number" && value.cleared >= 0 ? value.cleared : 0,
       };
     }
 
@@ -1589,8 +1599,16 @@ window.__ModuleLoader__.load({
             ? String(entry.id)
             : "";
       let action = typeof entry.action === "string" ? entry.action : "";
+      // 文件动作（复审 N1）：`rescue-restore` / `trash-restore` / `trash-clear` 这几类行没有
+      // `removedMessageCount`（甚至没有 removedCount），动作也不是对话回溯。若按 `mode` 归一化成
+      // chat，时间线会显示「对话 · 撤回 0 条上下文记录 · 约 0 token」——把动作本身作为 kind，
+      // 渲染层据此换文件口径的徽章/meta。
       let kind =
-        action === "rescue-restore" ? "rescue-restore" : entry.mode === "both" ? "both" : "chat";
+        action === "rescue-restore" || action === "trash-restore" || action === "trash-clear"
+          ? action
+          : entry.mode === "both"
+            ? "both"
+            : "chat";
       return {
         id: id,
         action: action,
@@ -1613,6 +1631,9 @@ window.__ModuleLoader__.load({
         tokens: typeof entry.tokens === "number" ? entry.tokens : 0,
         files: filesReceiptOf(entry.files),
         rescueId: typeof entry.rescueId === "string" ? entry.rescueId : null,
+        // `trash-clear` 行把影响面放在顶层：bytes（实际占用）与 paths（被永久删除的路径）。
+        bytes: typeof entry.bytes === "number" && entry.bytes >= 0 ? entry.bytes : 0,
+        paths: normalizePathList(entry.paths).map((item) => item.path),
       };
     }
 
@@ -3083,7 +3104,10 @@ window.__ModuleLoader__.load({
         data.entries.map((/** @type {any} */ entry) => {
           let expanded = data.expanded && data.expanded[entry.id] === true;
           let files = entry.files;
-          let isRescueRestore = entry.kind === "rescue-restore";
+          let kind = entry.kind;
+          let isRescueRestore = kind === "rescue-restore";
+          let isTrashRestore = kind === "trash-restore";
+          let isTrashClear = kind === "trash-clear";
           /** @type {any[]} */
           let pathGroups = [];
           if (files) {
@@ -3101,35 +3125,58 @@ window.__ModuleLoader__.load({
                 paths: files.failed.map((/** @type {any} */ item) => item.path),
               });
           }
+          // 清空回收站的行把被永久删除的路径放在顶层 paths（files 里只有 cleared 计数）。
+          if (isTrashClear && Array.isArray(entry.paths) && entry.paths.length > 0)
+            pathGroups.push({ kind: "trash", paths: entry.paths });
           let pathCount = pathGroups.reduce(
             (/** @type {any} */ sum, /** @type {any} */ group) => sum + group.paths.length,
             0,
           );
-          let badge = isRescueRestore ? t("timeline.kindRescue") : t(modeLabelKey(entry.mode));
-          let meta = isRescueRestore
-            ? t("timeline.rescueMeta", {
-                restored: files ? files.restored.length : 0,
-                id: entry.rescueId || "",
-              })
-            : entry.removedMessageCountKnown === true
-              ? t("audit.meta", {
-                  mode: t(modeLabelKey(entry.mode)),
-                  n: entry.removedMessageCount,
-                  tokens: formatCount(entry.tokens),
-                })
-              : // 历史 audit 行（0.7.0 及以前）没有 removedMessageCount：只有节点数，
-                // 用中性口径「上下文记录」，避免和 ghost 面板的「用户/助手消息」混淆。
-                t("audit.metaLegacy", {
-                  mode: t(modeLabelKey(entry.mode)),
-                  n: entry.removedCount,
-                  tokens: formatCount(entry.tokens),
-                });
+          // 复审 N1：文件动作行按动作显示徽章（不再标成「对话」），meta 用文件口径。
+          let badge = isRescueRestore
+            ? t("timeline.kindRescue")
+            : isTrashRestore
+              ? t("timeline.kindTrashRestore")
+              : isTrashClear
+                ? t("timeline.kindTrashClear")
+                : t(modeLabelKey(entry.mode));
+          let meta;
+          if (isRescueRestore) {
+            meta = t("timeline.rescueMeta", {
+              restored: files ? files.restored.length : 0,
+              id: entry.rescueId || "",
+            });
+          } else if (isTrashRestore) {
+            // 恢复失败/跳过的明细由下面的 audit.files 行给出，这里只报恢复成功数。
+            meta = t("timeline.trashRestoreMeta", {
+              restored: files ? files.restored.length : 0,
+            });
+          } else if (isTrashClear) {
+            meta = t("timeline.trashClearMeta", {
+              cleared: files ? files.cleared : 0,
+              bytes: formatBytes(entry.bytes),
+            });
+          } else if (entry.removedMessageCountKnown === true) {
+            meta = t("audit.meta", {
+              mode: t(modeLabelKey(entry.mode)),
+              n: entry.removedMessageCount,
+              tokens: formatCount(entry.tokens),
+            });
+          } else {
+            // 历史 audit 行（0.7.0 及以前）没有 removedMessageCount：只有节点数，
+            // 用中性口径「上下文记录」，避免和 ghost 面板的「用户/助手消息」混淆。
+            meta = t("audit.metaLegacy", {
+              mode: t(modeLabelKey(entry.mode)),
+              n: entry.removedCount,
+              tokens: formatCount(entry.tokens),
+            });
+          }
           return h(
             "div",
             {
               key: entry.id,
               className: "dsh-srw-tl-node",
-              "data-kind": isRescueRestore ? "rescue-restore" : entry.mode,
+              "data-kind": kind,
             },
             h("span", { className: "dsh-srw-tl-dot", "aria-hidden": "true" }),
             h(
@@ -3142,7 +3189,7 @@ window.__ModuleLoader__.load({
                 h("span", { className: "dsh-srw-badge" }, badge),
               ),
               h("div", { className: "dsh-srw-time" }, meta),
-              files
+              files && !isTrashClear
                 ? h(
                     "div",
                     { className: "dsh-srw-audit-files" },
@@ -5520,6 +5567,8 @@ window.__ModuleLoader__.load({
             let result = normalizeRescueResult(value);
             patchDrawer("rescues", { pendingId: null, executingId: null });
             if (result.failed.length > 0) {
+              // 契约兜底：宿主若改成「部分失败也返回结果」，这里同样按真实数量提示。
+              // 生产里 service 部分失败是抛 files-failed（见下面的 catch），走 catch 分支。
               showToastKey("toast.rescuePartial", {
                 restored: result.restored.length,
                 failed: result.failed.length,
@@ -5531,6 +5580,17 @@ window.__ModuleLoader__.load({
             loadAudit(sessionId);
           })
           .catch((/** @type {any} */ error) => {
+            let partial = trashPartialOf(error);
+            if (partial !== null) {
+              // 部分成功（复审 N3）：service 在部分文件恢复失败时抛 files-failed，完整结果放在
+              // `error.details.files`（B1 修好后 details 已平铺可达）。与 confirmTrashRestore 同款：
+              // 收起确认行、按真实数量提示、刷新救援点与审计列表，不要用通用错误盖掉「已恢复了几个」。
+              patchDrawer("rescues", { pendingId: null, executingId: null });
+              showToastKey("toast.rescuePartial", partial);
+              loadRescues(sessionId);
+              loadAudit(sessionId);
+              return;
+            }
             patchDrawer("rescues", { executingId: null });
             let failure = errorStateOf(error);
             showToastKey(failure.errorKey, failure.errorParams);

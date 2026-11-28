@@ -12,6 +12,7 @@ import {
   createMarkerMessageInput,
   ERROR_CODES,
   ERROR_PREFIX,
+  gcSkippedWarning,
   RewindRequestError,
   remoteFailureOf,
   resolveSession,
@@ -156,6 +157,33 @@ test("remoteFailureOf：details 平铺，不包 {details}（复审 B1 契约）"
   });
   // 有前缀但没 details → null（客户端读到 undefined 不应崩）。
   assert.equal(remoteFailureOf({ code: "session-rewind/files-conflict" }).details, null);
+});
+
+test("gcSkippedWarning：entries 读不出来的 warn 带会话 id（复审 N2）", () => {
+  const warning = gcSkippedWarning({
+    removedBlobs: 0,
+    bytesFreed: 0,
+    skipped: "entries-unreadable",
+    unreadableSessions: [
+      { sessionId: "session-a", reason: "EISDIR: illegal operation on a directory" },
+      { sessionId: "session-b", reason: "EACCES: permission denied" },
+    ],
+  });
+  // 运维要能按 id 去修复 entries；只报数量的话永远定位不到会话。
+  assert.ok(warning.includes("2 session(s)"), warning);
+  assert.ok(warning.includes("session-a"), warning);
+  assert.ok(warning.includes("session-b"), warning);
+  assert.ok(warning.startsWith("session-rewind: "), warning);
+
+  // 异常/旧形状（没有 id 列表）不抛，也不渲染空括号。
+  const empty = gcSkippedWarning({ unreadableSessions: [] });
+  assert.ok(empty.includes("0 session(s)"), empty);
+  assert.doesNotMatch(empty, /\(\)/u, empty);
+  assert.ok(gcSkippedWarning({}).includes("0 session(s)"));
+  assert.ok(
+    gcSkippedWarning({ unreadableSessions: [{ reason: "no id" }, null] }).includes("2 session(s)"),
+    "没有 id 的条目仍计入数量，只是不拼进列表",
+  );
 });
 
 test("createMarkerMessageInput 是固定文本 + 生产者身份", () => {

@@ -30,6 +30,7 @@ import { buildHealth, sessionHealthFacts } from "./health.js";
 import {
   createMarkerMessageInput,
   ERROR_CODES,
+  gcSkippedWarning,
   RewindRequestError,
   remoteFailureOf,
   resolveRewindTarget,
@@ -337,12 +338,8 @@ export class SessionRewindService extends TypertRemoteService {
       const result = await this.store.collectGarbage();
       if (result.skipped === "entries-unreadable") {
         // fail-closed（复审 N10）：entries 读失败时不猜引用关系，本次一个 blob 都不删。
-        const unreadable = Array.isArray(result.unreadableSessions)
-          ? result.unreadableSessions.length
-          : 0;
-        this.ctx?.logger?.warn?.(
-          `session-rewind: skipped blob GC because file entries are unreadable for ${unreadable} session(s)`,
-        );
+        // warn 带上坏掉的 sessionId（复审 N2）：只报数量的话运维不知道去修哪个会话。
+        this.ctx?.logger?.warn?.(gcSkippedWarning(result));
         return;
       }
       if (result.removedBlobs > 0) {

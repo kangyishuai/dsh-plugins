@@ -193,7 +193,7 @@ tarball 的 HTTP 状态），可见后 `gh run rerun <run-id> --failed` 即可�
 | next-step      | **249**               | 22 PASS / 3 SKIP                | **72 PASS / 2 SKIP**           |
 | projects       | **839**               | 24 PASS / 1 SKIP                | **271 PASS / 1 SKIP**          |
 | session-delete | **138**               | 18 PASS / 4 SKIP                | **33/33 PASS**                 |
-| session-rewind | **295**               | **35 PASS**（含确认框默认聚焦） | **63/63 PASS**                 |
+| session-rewind | **300**               | **35 PASS**（含确认框默认聚焦） | **63/63 PASS**                 |
 
 基线命令：`pnpm verify`（lint/typecheck/check/check:docs/check:public/全部单测）+ `pnpm probe:runtime`（**100 项**，见 [runtime §23](../runtime/0.2.2-rc.5.md#23-2026-11-28-第二轮实测能力挂载时序导航调度契约与命令回执)）。
 
