@@ -22,9 +22,16 @@
 - **session-rewind（复审 N3/N4/N10/N11）**：
   - N3 回收站「清空」内联确认补默认聚焦：主按钮在执行前带 `data-modal-autofocus`（执行中回落「取消」），
     浮层焦点 effect 增加清空状态依赖，并用内联确认优先的选择器避免被抽屉页签抢走焦点。
+    `test/overlay-focus.test.js` 真跑 `RewindOverlay` 的 effect 驱动五态焦点；改回旧选择器或去掉新
+    deps 时该测试会红（复审 M4 不再存活）。
   - N4 缺失 trash id 改用新错误码 `session-rewind/trash-not-found`（中英文案「回收站记录不存在…」），
     不再误报「部分文件处理失败」；部分恢复失败时从 `error.details.files` 取 restored/failed 数量，
-    显示「已恢复 N / M 失败」并刷新回收站与审计列表（此前 `toast.trashPartial` 不可达）。
+    显示「已恢复 N / M 失败」并刷新回收站与审计列表。
+  - N4 线缆形状修复（复审 B1）：本插件 `rethrowRemote` 原先把 details 包成 `{ details: … }` 交给宿主
+    `RemoteError`，而 rc.5 签名第三参就是 details（gateway 原样透传）→ 客户端拿到双层包装，
+    `trashPartialOf` / `conflictPathsOf` / `failedPathsOf` 全部读不到。抽 host-free `remoteFailureOf(error)`
+    平铺 details 后，部分恢复 toast 才真正可达；新增「service → gateway → client」契约测试
+    （把包装改回去时 5 条测试红）。
   - N10 启动/维护 GC 对 entries 读失败 fail-closed：任一会话 `readEntries` 失败就本次不删任何 blob
     （返回 `skipped: "entries-unreadable"`），service 记 warn；超软上限流程遇到 skipped 停止再删 anchor。
   - N11 历史 audit 行（0.7.0 及以前，缺 `removedMessageCount`）在 History 页签改用中性「撤回 N 条上下文

@@ -59,7 +59,7 @@ pnpm gate session-rewind --deep --workspace ~/Workspace/dsh-rewind-ui-smoke
 
 按「便宜的先跑」排序，任何一步失败立刻停并给出下一步提示：
 
-1. `pnpm verify`（lint + 类型 + 规范 + 公开边界 + 290 单测）
+1. `pnpm verify`（lint + 类型 + 规范 + 公开边界 + 295 单测）
 2. `pnpm probe:runtime`（宿主包/API/slot/私有 seam，99 项）
 3. `pnpm smoke:session-rewind`（临时 DSH_HOME 的 web 端到端，约 62 项；本批新增 10 条：可恢复性 / 默认聚焦 / Tab 环绕 / 回收站入口 / 更多设置 / 命令 both 确认 / 跟踪范围 / 面板「选择消息回退」/ 命令候选键盘路径 / 诊断审计计数）
 4. 桌面只读回归（35 项，**永远带 `--require`**：没开调试端口就是失败，不是跳过）
@@ -548,8 +548,8 @@ pnpm smoke:session-rewind-desktop -- --require --recall --deep \
 
 本批只做复审点名且用户可见/低风险可验证的四条，均带单测；不改生产逻辑语义的地方在各项里注明。
 
-**包内单测**：`cd packages/session-rewind && node --test` → **290 pass / 0 fail**（29 suites；
-上一轮 277，+13 条覆盖下面四条）。
+**包内单测**：`cd packages/session-rewind && node --test` → **295 pass / 0 fail**（30 suites；
+上一轮 277；本批 +18 = 四条主体 13 条 + B1 线路契约 4 条 + N3 接线 1 条）。
 
 ### N3 回收站「清空」内联二次确认的默认聚焦
 
@@ -563,7 +563,13 @@ pnpm smoke:session-rewind-desktop -- --require --recall --deep \
   （对话框主按钮 / 抽屉当前页签），最后任意可聚焦元素。
 - 单测：`RescuesTab: 清空需要先看影响面（ADR 0002）` 断言空闲态只有主按钮带 autofocus、执行态只有
   「取消」带；`pickOverlayFocusTarget: 内联清空确认优先于抽屉页签（N3）` 断言选择器优先级。
-- 真机焦点路径未在本轮重跑桌面冒烟（脚本断言在 `scripts/`，本批不动共享脚本）；单测锁结构与优先级，
+- **effect 接线测试（B1 复审 P3-2）**：`test/overlay-focus.test.js` 用 fake hooks（真跑 `useEffect`
+  deps/cleanup）+ fake `document` 驱动**真实的 `RewindOverlay`**，逐步验证「打开抽屉→页签、清空确认
+  加载中→页签、影响面到达→内联主按钮、执行中→取消、确认行收起→页签」。mutation 验证：
+  ① 把 effect 改回旧的 `querySelector("[data-modal-autofocus]") || FOCUSABLE`（复审 M4）→ 该测试红
+  （`inline-primary` 变成 `drawer-tab`）；② 去掉新增的 `trashClear*` deps → 该测试红（第 2 步起 effect
+  不再重跑）。恢复后 122 pass（client 121 + overlay 1）。
+- 真机焦点路径未在本轮重跑桌面冒烟（脚本断言在 `scripts/`，本批不动共享脚本）；vm 已覆盖 effect 接线，
   既有桌面只读回归的「确认框默认聚焦主按钮」断言（`smoke-session-rewind-desktop.mjs:1084`）仍覆盖对话框
   那一条。
 
@@ -577,8 +583,20 @@ pnpm smoke:session-rewind-desktop -- --require --recall --deep \
   通用错误，`toast.trashPartial`（已恢复 N / M 失败）永远走不到。新增纯函数 `trashPartialOf(error)`，
   `confirmTrashRestore` 的 catch 命中部分结果时收起确认行、按真实数量 toast 并刷新回收站/审计列表；
   其它错误仍按错误码显示。单测：`trashPartialOf` 单元（无 details / 空数组 / 只失败 / 部分成功）+
-  `restoreTrash 部分失败：报「已恢复/失败」数量并刷新列表`（RPC 桩返回 `details.files`，断言 toast
-  参数与 `rescues`/`audit` 各多一次加载）+ 通用错误仍走错误码。
+  `restoreTrash 部分失败：报「已恢复/失败」数量并刷新列表`（RPC 桩改用生产同一条 `remoteFailureOf`
+  映射生成线缆形状，断言 toast 参数与 `rescues`/`audit` 各多一次加载）+ 通用错误仍走错误码。
+- **（b）的线缆形状修复（B1 复审）**：只加客户端分支时 toast 在生产**仍不可达**——本插件
+  `rethrowRemote` 原来写 `new RemoteError(code, msg, { details: error.details })`，但 rc.5 宿主的
+  `RemoteError` 构造签名是 `(code, message, details, options)`（第三参就是 details），gateway
+  `rpcFailure()` 原样透传 → 客户端拿到的是 `error.details = { details: { files } }`，
+  `trashPartialOf` 恒 `null`。修法：把映射抽成 `operations.js` 的 host-free `remoteFailureOf(error)`
+  （details 平铺、不包层），`service.js` 的 `rethrowRemote` 用它构造 `RemoteError`。
+  契约测试覆盖**全链路**（`test/client.test.js` 的「B1 契约：service → gateway → client 的 details 形状」）：
+  内部错误 → `remoteFailureOf` → 宿主同签名 `RemoteError` → gateway `rpcFailure` 形状 → 客户端
+  `call()` 映射 → 真实 `trashPartialOf` / `failedPathsOf` / `conflictPathsOf`；
+  另加 `test/operations.test.js` 的 `remoteFailureOf` 单测（断�� `details` 与原对象同引用、无
+  `details.details`）。mutation：把 `remoteFailureOf` 改回 `{ details: x }` 包装 → **5 条测试红**
+  （契约 3 条 + operations 1 条 + N4 集成 1 条）。修好后部分恢复 toast 与冲突路径展示才真正可达。
 
 ### N10 启动 GC 对 entries 读失败 fail-closed
 

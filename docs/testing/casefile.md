@@ -278,5 +278,5 @@ cordis.patch.yml` 末尾加 `- id: locale / name: "@deepseek-ai/dsh-client-local
 - **q（0/0 文案）**：`obligations 0/0 closed` / `义务 0/0 已关闭` 在无义务时读着怪。`total === 0` 时
   改用 `overview.obligationsZero`：中文「义务：已关闭 0 / 共 0」、英文 `obligations: 0 of 0 closed`；
   total>0 时保持原文案。中英两套渲染断言都在 `test/client-ux.test.js`。
-- 上一节「真机记录」里截图是修复前（`gap`/`0/0` 旧形态）的历史记录；本轮改动由 vm 渲染单测锁定，
+- 上一节「真机记录」里截图是修复前（`obligations 0/0 closed` 旧形态）的历史记录；本轮改动由 vm 渲染单测锁定，
   未重拍真机截图（隔离实例里的真实数据仍可复用同一套断言路径）。
