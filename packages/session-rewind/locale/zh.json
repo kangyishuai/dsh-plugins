@@ -197,6 +197,9 @@
     "state.separator": "、",
     "timeline.kindRescue": "文件恢复",
     "timeline.rescueMeta": "从救援点恢复 {restored} 个文件 · {id}",
-    "settings.nav": "会话回溯"
+    "settings.nav": "会话回溯",
+    "settings.saveFailed": "保存失败",
+    "settings.saveFailedStorage": "本地存储不可用，改动只在本次打开期间有效",
+    "settings.retry": "重试"
   }
 }
