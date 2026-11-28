@@ -251,3 +251,20 @@ await page.evaluate(`(() => { ... })()`);
 | 场景     | 结果                                               | 截图                                                 |
 | -------- | -------------------------------------------------- | ---------------------------------------------------- |
 | 打开分节 | `data-state=readonly`、「诊断信息 · 无可保存设置」 | `/tmp/dsh-sim-rel/shots/settings-casefile-clean.png` |
+
+### A5 概览卡 kind / summary 本地化（2026-11-28）
+
+缺陷：概览卡直接渲染服务端中文 `overview.summary`，且 `byKind` tag 用原始枚举（`binary × 1`）。
+修法：客户端用结构化字段 + locale 组装摘要（`overview.projects/obligations/unknowns`），kind 走既有
+`vocab(t,"kind",…)`；`test/i18n-parity.test.js` 锁中英键集，`test/client-ux.test.js` 渲染真实页面断言
+中文/英文两套输出不混入原始枚举。
+
+**切英文界面的方法（隔离实例，供下次复用）**：真实桌面版没有语言开关 UI；在 `$DSH_HOME/profiles/desktop/
+cordis.patch.yml` 末尾加 `- id: locale / name: "@deepseek-ai/dsh-client-locale" / config: { preference: en }`
+并重启桌面版即可（宿主 locale runtime 从 settings 命名空间读 preference）。
+
+**真机记录（隔离实例 CDP 9410，英文界面）**：
+
+| 场景                   | 结果                                                                                                                   | 截图                                                   |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| 两个项目（binary/web） | 概览卡 `2 projects · obligations 0/0 closed · open unknowns: 0`，tag `Web / URL × 1`、`Binary × 1`；无中文、无原始枚举 | `/tmp/dsh-sim-rel/shots/nits-casefile-overview-en.png` |

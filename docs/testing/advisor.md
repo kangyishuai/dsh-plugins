@@ -639,3 +639,20 @@ pnpm smoke:advisor-desktop --require --advice
 | 无改动   | `data-state=clean`、「· 已保存」，保存按钮 `disabled`（opacity .6） | `/tmp/dsh-sim-rel/shots/settings-advisor-clean.png` |
 | 改模式后 | `data-state=dirty`、「有未保存的改动」，保存按钮可点                | `/tmp/dsh-sim-rel/shots/settings-advisor-dirty.png` |
 | 点保存后 | `data-state=saved`、绿色「已保存」                                  | `/tmp/dsh-sim-rel/shots/settings-advisor-saved.png` |
+
+### 回执/轻提示不再遮挡输入区（发版后真机 P2，2026-11-28）
+
+缺陷：命令回执固定 `right:24px;bottom:24px`；1280×820 有会话时回执高 204px，composer 在
+y=700–736、发送按钮 y=748–782，回执把两者盖住（overlap y=36，证据脚本 `/tmp/advisor-receipt-overlap2.mjs`）。
+
+修法：渲染时量 `[data-composer-input]` 顶部，`bottom = innerHeight - composerTop + 12`（无 composer
+回退 24px），窗口 resize / composer 变高时重算；回执 `max-height` 按可用空间收缩，避免顶出视口。
+纯函数 `toastBottomOffset` / `toastMaxHeight` / `toastBodyMaxHeight` 由 `test/client.test.js` 锁定，
+桌面冒烟新增「回执 rect 与 composer/发送按钮无重叠」的几何断言。
+
+**真机记录（隔离实例 CDP 9410，`pnpm pack` 后 `dsh plugin add file:<tgz>` 替换安装并重启）**：
+
+| 场景     | 结果                                                                                                   | 截图                                              |
+| -------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------- |
+| 空白会话 | 回执 bottom=399、composer top=411（间距 12px），与 composer/send 的重叠均为 0，回执完整在视口内        | `/tmp/dsh-sim-rel/shots/nits-advisor-empty.png`   |
+| 有会话   | 回执 bottom=688、composer top=700（间距 12px），与 composer/send 的重叠均为 0；max-height 收缩到 680px | `/tmp/dsh-sim-rel/shots/nits-advisor-session.png` |

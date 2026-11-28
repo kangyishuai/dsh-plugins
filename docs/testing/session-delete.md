@@ -498,3 +498,19 @@ DSH_AGENT_TOOL_PATCH=/tmp/model-overlay.yml ZHINAO_API_KEY=<key> pnpm smoke:agen
 | -------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------ |
 | 无改动                     | `data-state=clean`、「· 已保存」                           | `/tmp/dsh-sim-rel/shots/settings-session-delete-clean.png`   |
 | 拨「记住同时删除子会话」后 | `data-state=saved`、绿色「已保存」（约 2.5s 后回落 clean） | `/tmp/dsh-sim-rel/shots/settings-session-delete-changed.png` |
+
+### O2 删除影响面文案与侧栏状态不一致（2026-11-28）
+
+缺陷：确认框写「正在运行，会先停止」，但侧栏同一会话显示「空闲」。根因：`plan.live` 是
+`sessions.get(sessionId)`（会话在本机宿主进程里注册/已打开），并不等于「回合正在跑」；
+`summarizePlan` 用的「会话正在本机打开」才是真实含义。
+
+修法：`confirm.live` / `confirm.workspace.live` 改为「本机已打开，会先关闭」（en: `open in this window;
+closed first`），不再声称正在运行。plan 仍是预览时快照，确认时若 live 发生变化，digest 校验会拒绝旧确认，
+不需要额外「可能滞后」提示。
+
+**真机记录（隔离实例 CDP 9410，中文界面）**：
+
+| 场景                      | 结果                                                                       | 截图                                                     |
+| ------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------- |
+| 右键会话行 →「删除会话…」 | 影响面 `约 38 KB · 本机已打开，会先关闭`，侧栏该会话显示「21 分钟 / 空闲」 | `/tmp/dsh-sim-rel/shots/nits-session-delete-confirm.png` |
