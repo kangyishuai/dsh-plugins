@@ -496,8 +496,26 @@ export function checkRepo(root = REPO_ROOT) {
       }
     }
 
-    // 图标：必须存在于包目录内、进 files 白名单、≤256 KiB，且文件头是宿主接受的图片格式。
-    if (pkg.icon !== undefined) {
+    // 图标：顶层 `icon` 是宿主「已安装/详情」页的图标来源（宿主读顶层字段、不走 exports），
+    // 缺了会静默回退通用图形，和发现页（读索引条目的 `icon`）对不上。已登记索引源且版本
+    // 离开 0.0.0 的正式插件**必须**有它；0.0.0 脚手架只告警（模板自带占位 `icon.svg`，
+    // 发版前要换成自己的图），未登记插件由 build-index 的登记检查兜底。
+    // 有 `icon` 时再校验：包内相对路径、文件存在、进 files 白名单、≤256 KiB、文件头合法。
+    // 之前这段整体挂在 `if (pkg.icon !== undefined)` 下，删掉顶层字段就能让身份校验整段跳过
+    // （2026-11-28 复审 N2：已登记的正式插件删 icon 仍 0 错），所以缺字段也要单独判。
+    if (pkg.icon === undefined) {
+      if (identityEnforced) {
+        report(
+          "error",
+          "已登记索引源且版本非 0.0.0，必须有 package.json 顶层 icon（宿主读它当「已安装」图标，缺了会回退通用图形）",
+        );
+      } else if (registered) {
+        report(
+          "warn",
+          "已登记索引源但缺少 package.json 顶层 icon：版本离开 0.0.0 后会按 error 拦（模板自带 icon.svg）",
+        );
+      }
+    } else {
       const icon = pkg.icon;
       if (typeof icon !== "string" || icon.trim() === "") {
         report("error", "package.json 的 icon 必须是非空相对路径");
