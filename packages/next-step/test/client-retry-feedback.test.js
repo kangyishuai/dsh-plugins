@@ -15,13 +15,16 @@
 // 时序：client 内部的 grace / 轮询 / 客户端超时都走 `setTimeout` + `Date.now()`（线上 2.5s / 2s /
 // 30–60s，这里缩短成 5ms / 10ms / 40ms）。这些用例**不再用真实 sleep 猜时序**——并行全仓测试时
 // 40ms 窗口会被调度抖动吃掉，把 `error.schema` 判成 `error.timeout`；`sleep(4)` 也可能实际睡几百
-// 毫秒，把「loading」断言拖成「error」。现在装一个测试侧假时钟手动推进（见 `installClock`），断言
-// 一律「等到目标相位」（`waitPhase`），不再依赖「睡多久才够」。
+// 毫秒，把「loading」断言拖成「error」。现在用测试侧假时钟手动推进（`test/helpers/clock.js` 的
+// `installClock()`，与 `settings-save-status.test.js` 共用），断言一律「等到目标相位」（`waitPhase`），
+// 不再依赖「睡多久才够」。
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+
+import { installClock, waitFor } from "./helpers/clock.js";
 
 const CLIENT = join(dirname(fileURLToPath(import.meta.url)), "..", "lib", "client.js");
 const SESSION = "session-1";
@@ -173,157 +176,6 @@ function createHooks() {
     },
     flush,
   };
-}
-
-/**
- * 受控假时钟：接管本进程的 `setTimeout` / `clearTimeout` / `Date.now`，由测试手动推进。
- *
- * 为什么需要：client 半用 `setTimeout` + `Date.now()` 表达 grace、`generateState` 轮询和客户端
- * 超时。真实定时器在**并行全仓测试**（8 包并发、机器负载高）下会被调度抖动吃掉，40ms 窗口里两次
- * 10ms 轮询还没跑完就判成超时（复审报告里的 `error.timeout` ≠ `error.schema`）。改成假时钟后时序
- * 完全确定，也不需要「睡多久才够」的经验值；Node 22/24 都能跑，且不引入任何依赖。
- *
- * 只替换全局函数，`restore()` 原样还回去（每个用例的 finally 里调用）。
- * @returns {{ advance: (ms: number, flush: () => void) => Promise<void>, restore: () => void }}
- */
-function installClock() {
-  const realSetTimeout = globalThis.setTimeout;
-  const realClearTimeout = globalThis.clearTimeout;
-  const realDateNow = Date.now;
-  let now = 1_000_000;
-  let nextId = 1;
-  let sequence = 0;
-  /** @type {Map<number, { id: number, at: number, sequence: number, run: Function, args: any[] }>} */
-  const timers = new Map();
-
-  /**
-   * @param {Function} fn
-   * @param {number} [ms]
-   * @param {...any} args
-   * @returns {number}
-   */
-  function fakeSetTimeout(fn, ms = 0, ...args) {
-    const id = nextId++;
-    timers.set(id, {
-      id,
-      at: now + Math.max(0, Number(ms) || 0),
-      sequence: sequence++,
-      run: fn,
-      args,
-    });
-    return id;
-  }
-
-  /** @param {any} id */
-  function fakeClearTimeout(id) {
-    timers.delete(Number(id));
-  }
-
-  Object.defineProperty(globalThis, "setTimeout", {
-    configurable: true,
-    writable: true,
-    value: fakeSetTimeout,
-  });
-  Object.defineProperty(globalThis, "clearTimeout", {
-    configurable: true,
-    writable: true,
-    value: fakeClearTimeout,
-  });
-  Object.defineProperty(Date, "now", {
-    configurable: true,
-    writable: true,
-    value: () => now,
-  });
-
-  /** 跑完微任务队列：一次 await 就会清空当前队列，多来几轮兜住链式 then。 */
-  async function drain() {
-    for (let i = 0; i < 8; i += 1) await Promise.resolve();
-  }
-
-  /** drain 微任务 + 重渲染（重渲染才会跑 effect、注册下一次定时器）。 @param {() => void} flush */
-  async function settle(flush) {
-    await drain();
-    flush();
-    await drain();
-  }
-
-  /**
-   * 触发所有到期时间 ≤ target 的定时器（按 at、注册顺序），每次触发后 drain + flush，
-   * 让「轮询 → promise → setState → 重渲染 → 下一次 setTimeout」的链条一步步接上。
-   * @param {number} target @param {() => void} flush
-   */
-  async function fireDue(target, flush) {
-    for (;;) {
-      await settle(flush);
-      /** @type {any} */
-      let next = null;
-      for (const timer of timers.values()) {
-        if (timer.at > target) continue;
-        if (
-          next === null ||
-          timer.at < next.at ||
-          (timer.at === next.at && timer.sequence < next.sequence)
-        ) {
-          next = timer;
-        }
-      }
-      if (next === null) return;
-      now = Math.max(now, next.at);
-      timers.delete(next.id);
-      next.run(...next.args);
-    }
-  }
-
-  return {
-    /**
-     * 把假时间往前推 ms 毫秒，并跑完期间到期的所有定时器。
-     * @param {number} ms @param {() => void} flush
-     */
-    async advance(ms, flush) {
-      const target = now + ms;
-      await fireDue(target, flush);
-      now = target;
-      // flush 里可能又排了 0ms 定时器：再收一遍（client 里没有 0ms，防御性处理）。
-      await fireDue(target, flush);
-    },
-    restore() {
-      Object.defineProperty(globalThis, "setTimeout", {
-        configurable: true,
-        writable: true,
-        value: realSetTimeout,
-      });
-      Object.defineProperty(globalThis, "clearTimeout", {
-        configurable: true,
-        writable: true,
-        value: realClearTimeout,
-      });
-      Object.defineProperty(Date, "now", {
-        configurable: true,
-        writable: true,
-        value: realDateNow,
-      });
-      timers.clear();
-    },
-  };
-}
-
-/**
- * 确定性地等到条件成立：每次推进 step 假毫秒（默认 1ms）并 flush，直到 predicate 为真。
- * 超过 maxMs 假毫秒仍不成立时返回 false，交给调用方的断言报错（不会无限等）。
- * @param {ReturnType<typeof installClock>} clock
- * @param {any} hooks
- * @param {() => boolean} predicate
- * @param {{ step?: number, maxMs?: number }} [options]
- * @returns {Promise<boolean>}
- */
-async function waitFor(clock, hooks, predicate, options = {}) {
-  const step = options.step ?? 1;
-  const maxMs = options.maxMs ?? 200;
-  for (let elapsed = 0; ; elapsed += step) {
-    if (predicate()) return true;
-    if (elapsed >= maxMs) return false;
-    await clock.advance(step, hooks.flush);
-  }
 }
 
 /** 极简浏览器全局（client 半只在样式注入与键帽探测处碰它们）。 */

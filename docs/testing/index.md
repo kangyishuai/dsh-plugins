@@ -190,7 +190,7 @@ tarball 的 HTTP 状态），可见后 `gh run rerun <run-id> --failed` 即可�
 | artifacts      | **100**               | 4 PASS                          | **12/12 PASS**                 |
 | btw            | **125**               | 21 PASS / 1 SKIP                | **24 PASS / 3 SKIP**（默认段） |
 | casefile       | **283**               | 26 PASS / 5 SKIP                | **69/69 PASS**                 |
-| next-step      | **248**               | 22 PASS / 3 SKIP                | **72 PASS / 2 SKIP**           |
+| next-step      | **249**               | 22 PASS / 3 SKIP                | **72 PASS / 2 SKIP**           |
 | projects       | **839**               | 24 PASS / 1 SKIP                | **271 PASS / 1 SKIP**          |
 | session-delete | **138**               | 18 PASS / 4 SKIP                | **33/33 PASS**                 |
 | session-rewind | **295**               | **35 PASS**（含确认框默认聚焦） | **63/63 PASS**                 |
