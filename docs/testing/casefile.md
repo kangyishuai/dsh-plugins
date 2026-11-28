@@ -228,3 +228,26 @@ await page.evaluate(`(() => { ... })()`);
 - **A6 无项目时假绿**：桌面脚本把空 profile 上 4 条危险操作断言从「记 PASS」改成 **SKIP 并计数**（收尾行变成 `N PASS / M SKIP / 0 FAIL`，并打印 SKIP 原因）；同一类问题的「有项目时空态不可见」也一并改 SKIP。
 
 **验证（2026-11-28，本 worktree）**：`node --test`（包内）**279 pass / 0 fail**（277 → 279：A2 审计口径 1 条 + A3 焦点/播报 1 条；tools 回收站用例扩了 agent 来源断言）。桌面脚本改动**未在 live 桌面重跑**（需发版门禁），断言本身是只读的（dry-run 预览 + 取消），SKIP 计入计数。
+
+## 设置保存状态（USIM-U1-10，2026-11-28）
+
+设置分节统一加了「保存状态」行与稳定锚点（[plugin-conventions §7.2.6](../plugin-conventions.md#72-设置页)）。
+本节记录**桌面只读断言**（按约定只写不跑；真机证据见下面的 2026-11-28 记录）与单测覆盖位置。
+
+**单测（每次提交都跑）**：`test/settings-save-status.test.js` —— 用迷你 hooks 运行时驱动
+`lib/client.js` 里的真实组件，不复制实现。
+
+该分节**没有可保存的设置**（项目数 / 数据根 / REA 连接都是只读诊断），
+因此不伪造「已保存」，只标 `readonly` 并写「无可保存设置」：
+
+**桌面只读断言**：
+
+1. 设置 → 案卷：`[data-casefile-settings]` 存在。
+2. `[data-casefile-settings-status]` 的 `data-state` 为 `readonly`，文本是「诊断信息 · 无可保存设置」。
+3. 不存在 `[data-casefile-settings-save]`，也不存在任何 `data-casefile-settings-status[data-state="saved"]`。
+
+**真机记录（同上）**：
+
+| 场景     | 结果                                               | 截图                                                 |
+| -------- | -------------------------------------------------- | ---------------------------------------------------- |
+| 打开分节 | `data-state=readonly`、「诊断信息 · 无可保存设置」 | `/tmp/dsh-sim-rel/shots/settings-casefile-clean.png` |
