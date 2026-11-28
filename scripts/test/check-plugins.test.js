@@ -125,7 +125,19 @@ function errorsOf(root) {
     .join("\n");
 }
 
-test("默认 fixture（通配 locale exports + meta + icon）零错误", () => {
+/**
+ * 插件 demo 的 warning 文案（用于验证 0.0.0 脚手架「只告警」的口径）。
+ * @param {string} root
+ * @returns {string}
+ */
+function warningsOf(root) {
+  return checkRepo(root)
+    .filter((issue) => issue.level === "warn" && issue.plugin === "demo")
+    .map((issue) => issue.message)
+    .join("\n");
+}
+
+test("默认 fixture（通配 locale exports + meta + 合法 icon）零错误", () => {
   const { root } = makeRepo();
   assert.equal(errorsOf(root), "");
 });
@@ -248,6 +260,36 @@ test("合法 PNG 图标通过文件头嗅探", () => {
   // 8 字节 PNG magic 就够了：真实宿主拿浏览器解码，这里只校验「不是坏文件」。
   writeFileSync(join(dir, "icon.png"), Buffer.from("89504e470d0a1a0a", "hex"));
   assert.equal(errorsOf(root), "");
+});
+
+test("已登记索引源的正式插件必须有顶层 icon（删掉字段不再静默跳过身份校验）", () => {
+  const { root, dir } = makeRepo();
+  const pkg = readPkg(dir);
+  // 只删**顶层字段**，icon.svg 文件与 files 白名单都还在：旧实现整段校验挂在
+  // `if (pkg.icon !== undefined)` 下，删字段后 0 错（2026-11-28 复审 N2 的复现条件）。
+  delete pkg.icon;
+  writePkg(dir, pkg);
+  assert.match(errorsOf(root), /已登记索引源且版本非 0\.0\.0，必须有 package\.json 顶层 icon/);
+});
+
+test("登记但仍为 0.0.0 的脚手架缺 icon 只告警（发版前不变红）", () => {
+  const { root, dir } = makeRepo();
+  const pkg = readPkg(dir);
+  pkg.version = "0.0.0";
+  delete pkg.icon;
+  writePkg(dir, pkg);
+  assert.equal(errorsOf(root), "");
+  assert.match(warningsOf(root), /已登记索引源但缺少 package\.json 顶层 icon/);
+});
+
+test("未登记索引源的 0.0.0 插件缺 icon 完全豁免（不告警）", () => {
+  const { root, dir } = makeRepo({ indexMeta: false });
+  const pkg = readPkg(dir);
+  pkg.version = "0.0.0";
+  delete pkg.icon;
+  writePkg(dir, pkg);
+  assert.equal(errorsOf(root), "");
+  assert.equal(warningsOf(root), "");
 });
 
 test("未登记索引源的 0.0.0 插件不强制身份（刚生成、还没登记索引源时不会当场变红）", () => {

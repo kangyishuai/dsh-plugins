@@ -36,7 +36,7 @@ The scaffold already wires the plugin identity DSH reads without activating the 
 - `locale/en.json` / `locale/zh.json` — root `meta.title` and `meta.description`; the scaffold fills a sentence-case English title plus your description, and leaves explicit Chinese "replace me" placeholders in `zh.json`. Replace both before publishing.
 - `package.json` — keep `icon`, `files` (must list `icon.svg`) and the `"./locale/*.json"` export together. If DSH cannot resolve a locale file it silently falls back to the npm package name and the long English description.
 
-Then register the plugin in `scripts/index-meta.json` (see AGENTS.md): once the version leaves `0.0.0`, `pnpm check` enforces the identity.
+Then register the plugin following AGENTS.md (development flow step 6): add a row to **both** root plugin lists — `README.md` and `README.zh-CN.md` — and an entry in `scripts/index-meta.json`. `pnpm check` errors until all three are there, and the Chinese `title` / `descriptionZh` in `index-meta.json` must be the **same text** as `locale/zh.json`'s `meta` (otherwise `pnpm check` reports a mismatch between the index and the installed plugin). Once the version leaves `0.0.0`, `pnpm check` also enforces the identity fields above.
 
 ## License
 

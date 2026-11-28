@@ -29,17 +29,25 @@ export function scaffold({ root = REPO_ROOT, name, description = "TODO: one-line
   cpSync(join(REPO_ROOT, "templates", "plugin"), target, { recursive: true });
   copyFileSync(join(REPO_ROOT, "LICENSE"), join(target, "LICENSE"));
 
+  /** @type {Record<string, string>} */
   const vars = {
-    __NAME__: name,
-    __CAMEL__: toCamel(name),
-    __TITLE__: toTitle(name),
-    __DESCRIPTION__: description,
+    NAME: name,
+    CAMEL: toCamel(name),
+    TITLE: toTitle(name),
+    DESCRIPTION: description,
   };
+  // 占位有两种写法，都必须在**生成后**消失：
+  //   - `__NAME__`：JSON/JS/YAML 里的占位；
+  //   - `**NAME**`：Markdown 里的占位。Markdown 的 `__NAME__` 就是粗体语法，`biome`（pre-commit
+  //     的 lint-staged 与 `pnpm format`）会把它规范化成 `**NAME**`，所以模板 README 用的是粗体
+  //     形式——生成器必须同时认识，否则新插件的 README 会原样留 `**NAME**`（2026-11-28 复审 N1）。
+  const placeholderRe =
+    /__(NAME|CAMEL|TITLE|DESCRIPTION)__|\*\*(NAME|CAMEL|TITLE|DESCRIPTION)\*\*/g;
   for (const file of walk(target)) {
     const text = readFileSync(file, "utf8");
     const out = text.replace(
-      /__(NAME|CAMEL|TITLE|DESCRIPTION)__/g,
-      (m) => vars[/** @type {keyof typeof vars} */ (m)],
+      placeholderRe,
+      (_match, underscoreKey, boldKey) => vars[underscoreKey ?? boldKey] ?? _match,
     );
     if (out !== text) writeFileSync(file, out);
   }
