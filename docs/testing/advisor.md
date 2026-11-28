@@ -656,3 +656,21 @@ y=700–736、发送按钮 y=748–782，回执把两者盖住（overlap y=36，
 | -------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------- |
 | 空白会话 | 回执 bottom=399、composer top=411（间距 12px），与 composer/send 的重叠均为 0，回执完整在视口内        | `/tmp/dsh-sim-rel/shots/nits-advisor-empty.png`   |
 | 有会话   | 回执 bottom=688、composer top=700（间距 12px），与 composer/send 的重叠均为 0；max-height 收缩到 680px | `/tmp/dsh-sim-rel/shots/nits-advisor-session.png` |
+
+### 复审后补强：composer 暂缺时回退位会重测（2026-11-28）
+
+复审指出：回执出现时若量不到 `[data-composer-input]`，`measureToastLayout` 回退 24px 且不会重试，
+可能停在旧 bug 位（压 composer）。修法：位置 effect 改为「出现时同步一次 + 每 1s 复核（只在 bottom 变化时
+重渲染）+ resize/ResizeObserver」，composer 换节点/稍后挂载都能重新量到；轻提示也复用同一套
+`maxHeight` 收缩（矮窗口不向上顶出视口）。注意它依赖宿主 DOM 锚点 `[data-composer-input]`，
+事实已记入 [runtime §23.9](../runtime/0.2.2-rc.5.md)。
+
+**真机记录（隔离实例 CDP 9410，`pnpm pack` 替换安装后重启）**：
+
+| 场景                                 | 结果                                                               | 截图/证据                                            |
+| ------------------------------------ | ------------------------------------------------------------------ | ---------------------------------------------------- |
+| 会话里有回执                         | 回执 bottom=688、composer top=700（间距 12）                       | `/tmp/dsh-sim-rel/shots/nits2-advisor-bump.json`     |
+| 切到项目主面板（composer 卸载）      | 回执重新测量回退到 `style.bottom=24px`（不再停在旧 132px）         | `/tmp/dsh-sim-rel/shots/nits2-advisor-fallback.png`  |
+| 切回会话（composer 回来后 ≤1s 复核） | `style.bottom=132px`、回执 bottom=688、与 composer/send 重叠均为 0 | `/tmp/dsh-sim-rel/shots/nits2-advisor-recovered.png` |
+
+轻提示 maxHeight 未在真机单独触发（无低成本触发入口）；与回执共用 `toastMaxHeight` 单测路径。

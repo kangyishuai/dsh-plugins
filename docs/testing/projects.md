@@ -1290,3 +1290,15 @@ projectId 丢弃，不会污染状态行或写错项目。
 | 创建 Routine 成功      | 表单 `name=''`、`instructions=''`、frequency=daily、time=09:00；routine 行出现                                        | `/tmp/dsh-sim-rel/shots/nits-projects-routine-form-reset.png`     |
 | 点 Routine「删除」     | 先出确认框：`每日巡检-nits · 每天 · 宿主任务 schedule-… · 正在自动投递 · 删除后不可恢复…`，主按钮已聚焦；Esc 关闭不删 | `/tmp/dsh-sim-rel/shots/nits-projects-routine-delete-confirm.png` |
 | 确认删除               | routine 行消失；`projects.json` 审计新增 `routine/deleted`                                                            | `/tmp/dsh-sim-rel/shots/nits-projects-routine-after-delete.png`   |
+
+### B1 复审回归：创建 routine 期间显示「正在创建…」（2026-11-28 复审后修复）
+
+- 缺陷：`runAction` 的 busy 值被改成本地化文案（`"创建"/"Create"`），而按钮文案判等仍是字面量
+  `"create"` → 创建期间只有 disabled、文案一直「创建」，`routines.creating` 成死键。
+- 修法：`runAction(label, promise, busyKey?)`——busy 用稳定 key（创建传 `"create"`），提示文案仍用本地化
+  label；按钮判等保持 `busy === "create"`。行为测试 `test/client-nits.test.js`「B1：创建 routine 时按钮文案是
+  「正在创建…」」用迷你 hooks 运行时驱动真实 `RoutinesView`，把 `createRoutine` 钉在 pending 上断言按钮
+  `disabled=true` 且文案为「正在创建…」（mutation：去掉稳定 key → 该用例红）。
+- 真机记录（隔离实例 CDP 9410，tarball 替换安装后重启；MutationObserver 采样 create 按钮）：
+  `创建/disabled=false` → **`正在创建…/disabled=true`** → `创建/disabled=false`，
+  完整序列在 `/tmp/dsh-sim-rel/shots/nits2-b1-routine-creating.json`。
