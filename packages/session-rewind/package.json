@@ -2,6 +2,7 @@
   "name": "@kangyishuai/dsh-session-rewind",
   "version": "0.8.0",
   "description": "In-place conversation rewind for DSH: withdraw a user message and everything after it, then refill the composer",
+  "icon": "icon.svg",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -26,12 +27,15 @@
   "exports": {
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
+    "./locale/en.json": "./locale/en.json",
+    "./locale/zh.json": "./locale/zh.json",
     "./package.json": "./package.json"
   },
   "files": [
     "cordis.patch.yml",
     "lib",
     "locale",
+    "icon.svg",
     "README.md",
     "README.zh-CN.md",
     "LICENSE"
