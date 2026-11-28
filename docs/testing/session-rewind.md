@@ -232,12 +232,27 @@ pnpm smoke:session-rewind
 
 ### 2.6.1 `--deep` 的运行前提（2026-11-28 校准）
 
-1. **专用目录必须是已注册的桌面工作区**（唯一的人工前置）：
-   桌面「工作区 → 添加工作区」选一次该目录。脚本只读侧栏、不写宿主注册表；缺了它侧栏里
-   根本没有「在 X 中新建会话」按钮（旧版脚本在这里 `no-button` 静默失败，接着模型在**别的**
-   会话里跑，文件永远不出现）。
-2. **macOS 的 `/tmp` 是 `/private/tmp` 的软链，必须按真实路径注册**。宿主用真实路径绑定会话
-   cwd；按 `/tmp/...` 注册时「新建会话」会先建出会话再 attach 失败（日志
+1. **专用目录必须是已注册的桌面工作区**（唯一需要改宿主注册表的前置）。
+   用 helper 注册（推荐；幂等，已有 `workspace.json` 先备份 `workspace.json.bak-<ts>` 再原子写，
+   只追加/复用一条工作区记录）：
+
+   ```bash
+   # 隔离实例（推荐走这条）：--home 指向临时 DSH_HOME 的数据根
+   node scripts/register-test-workspace.mjs --home /tmp/dsh-home --path ~/Workspace/dsh-rewind-ui-smoke
+
+   # 真实桌面版（在该实例上跑 --deep 时才需要）：数据根是 ~/.dsh，必须显式 --allow-live
+   node scripts/register-test-workspace.mjs --home ~/.dsh --path ~/Workspace/dsh-rewind-ui-smoke --allow-live
+   ```
+
+   `--dry-run` 只打印计划不写盘；`--title` 覆盖工作区标题（默认目录名）。helper 默认拒绝
+   `$HOME/.dsh` 及其 `profiles/*` 子目录，避免把测试目录写进 live home。也可以沿用桌面 UI：
+   「工作区 → 添加工作区」选一次该目录。**注册要在桌面版启动前完成，或注册后重启桌面版**——
+   宿主在启动时读 `storages/workspace.json`，运行中的实例可能用内存态把它写回。
+   脚本自己只读侧栏、不写宿主注册表；缺了注册，侧栏里根本没有「在 X 中新建会话」按钮
+   （旧版脚本在这里 `no-button` 静默失败，接着模型在**别的**会话里跑，文件永远不出现）。
+2. **macOS 的 `/tmp` 是 `/private/tmp` 的软链，必须按真实路径注册**。helper 会对 `--path` 做
+   `realpath` 再写（桌面 UI 选目录拿到的也是真实路径）。宿主用真实路径绑定会话 cwd；按
+   `/tmp/...` 注册时「新建会话」会先建出会话再 attach 失败（日志
    `session/workspace-attach-failed: its cwd resolves to '/private/tmp/...'`），界面**静默停在
    旧会话**上。脚本因此对 `--workspace` 做 `realpath` 再用它做文件断言。
 3. **模型凭据可用**（要发 4~5 轮真实请求，花额度）；会话标题、回复文案都不参与断言。
@@ -292,7 +307,8 @@ pnpm smoke:session-rewind-desktop -- --require --recall --deep \
   时 3 条 SKIP，见 §2.6）→ 冲突拒绝 → 时间线出现 `rescue-restore` 节点。
 
 安全闸：**必须**用 `--workspace` 显式给一个已存在、且不在本仓库内的目录，否则该项 FAIL 并跳过
-后续步骤；目录没注册成工作区时给一条可执行的提示后停下（不猜、不用别的会话）。它只读写该目录里的
+后续步骤；目录没注册成工作区时给一条可执行的提示（`scripts/register-test-workspace.mjs` 命令 +
+桌面 UI 两条路）后停下（不猜、不用别的会话）。它只读写该目录里的
 那一个测试文件名，但会消耗模型额度，并在侧栏留下一个测试会话（需要时手动删掉）。
 
 **2026-11-28 校准修掉的三类坑**（都发生在隔离实例首跑 52 PASS / 8 FAIL 里）：

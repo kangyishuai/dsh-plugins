@@ -134,6 +134,8 @@ packages/<name>/
 | 断言要**轮询宿主状态**（文件系统 / 工具卡 `data-tool` / 工作区选择器），不依赖模型回复文案    | 模型回复、会话标题、提示文案都会变；`execCommand("delete")` 改得动 DOM 却清不掉 Lexical 草稿，会让下一轮 prompt 叠成「旧任务 + 新任务」                    |
 | 宿主确实缺少被验证的能力时记 **SKIP + 理由**，不改断言语义                                    | 例：0.2.2-rc.5 四个 agent 预设都关了 `tool-fs.applyPatch`，`--deep` 的删除重建只能 SKIP；为了 0 FAIL 放宽断言等于自欺                                      |
 
+`--deep` 的工作区前置不用每次手点桌面 UI：`node scripts/register-test-workspace.mjs --home <DSH_HOME> --path <目录>` 幂等注册（写前备份 `workspace.json`、原子写、按 realpath 去重；默认拒绝 live home，真实桌面版加 `--allow-live`；注册后重启桌面版才生效）。细节与 `--dry-run` 见 [testing/session-rewind.md](testing/session-rewind.md) §2.6.1。
+
 为什么必须做：client 半大量依赖宿主**私有 seam**（slot、`extraActions`、`views` 接管、`commandUi.decorate`…），
 这些没有类型、没有契约，单测和 web 冒烟都覆盖不到**真实 Electron 渲染进程**里的行为。
 
