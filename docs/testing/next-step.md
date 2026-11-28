@@ -201,15 +201,32 @@ pnpm verify                          # 仓库门禁（含单测、规范、文�
 | 生成失败反馈与超时 | `test/generate-status.test.js`：宿主侧「每会话最近一次生成」记录（成功/失败归一、detail 截断、FIFO、空 id）。`test/client-retry-feedback.test.js`（迷你 hooks 驱动真实 client）：手动失败 → loading 结束 + 一行原因 + 「重试」+ 详情可展开；自动生成失败/刷新后靠 `generateState` 显示同一套反馈；RPC 挂起 → 客户端超时、**先 `cancelGenerate` 再**显示「生成超时，可重试」；`inflight` 进入等待态轮询后台状态；旧宿主缺 `generateState` 时静默降级（USIM-U2-04）。 |
 | 卡片 ⌘↵ 登记时序   | `test/client-card-shortcut.test.js`（迷你 hooks 运行时驱动**真实 client 源码**）：尾部先挂载、卡片晚到后 `⌘↵` 仍须被接管（一粒 / 两粒胶囊都覆盖）；草稿非空 / 未揭示 / 已决策一律透传。回归哨兵：卡片是投影晚到的，登记 effect 漏了可见性就永远登记不上（点击正常、快捷键静默失效）。**别按胶囊数量归因**：0.4.0 上晚到的**一粒**卡片同样不接管。                                                                                                                   |
 
-**时序用例用假时钟，不要用 `sleep` 猜时序**：`test/client-retry-feedback.test.js` 里的 grace /
-`generateState` 轮询 / 客户端超时都走 `setTimeout` + `Date.now()`（线上 2.5s / 2s / 30–60s，测试缩短成
-5ms / 10ms / 40ms）。该文件用测试侧 `installClock()` 接管 `setTimeout` / `clearTimeout` / `Date.now`，
-由 `waitPhase()` 一步一步推进假时间并断言「等到目标相位」，**没有真实 sleep**。原因是 2026-11-28 复审
-记录的已知 flake：并行全仓测试（`pnpm verify` 里 8 包并发、机器负载高）时真实定时器会被调度抖动吃掉——
-40ms 窗口里两次 10ms 轮询还没跑完就判成 `error.timeout`（期望 `error.schema`），`sleep(4)` 也可能实际
-睡几百毫秒，把「loading」断言拖成「error」；单包顺序跑则一直是绿的。假时钟下这些用例的时序完全确定
-（整文件单跑从 ~430ms 降到 ~60ms），并在断言「后台失败 → `error.schema`」的两条用例里把客户端超时窗口
-另放大到 5s 作双保险。新增时序用例请沿用 `installClock()` + `waitPhase()`，不要退回 `sleep(ms)`。
+**时序用例用假时钟，不要用 `sleep` 猜时序**：`test/client-retry-feedback.test.js` 的 grace /
+`generateState` 轮询 / 客户端超时，以及 `test/settings-save-status.test.js` 的「已保存」复位窗口，都走
+`setTimeout` + `Date.now()`（线上 2.5s / 2s / 30–60s / 2.5s，测试里缩短成 5ms / 10ms / 40ms / 300ms）。
+这两个文件共用 **`test/helpers/clock.js`**：`installClock()` 接管 `setTimeout` / `clearTimeout` /
+`Date.now`，由 `waitFor()` 一步一步推进假时间并断言「等到目标状态」，**没有真实 sleep**。原因是
+2026-11-28 复审记录的已知 flake：并行全仓测试（`pnpm verify` 里 8 包并发、机器负载高）时真实定时器会被
+调度抖动吃掉——
+
+- `client-retry-feedback`：40ms 窗口里两次 10ms 轮询还没跑完就判成 `error.timeout`（期望
+  `error.schema`），`sleep(4)` 也可能实际睡几百毫秒，把「loading」断言拖成「error」（断言「后台失败 →
+  `error.schema`」的两条用例还把客户端超时窗口另放大到 5s 作双保险）；
+- `settings-save-status`：`sleep(4)` 睡过 client 内 300ms 的「已保存」复位窗口，断言 `saved` 时状态
+  已经回落成 `clean`（2026-11-28 实测：16 路并发 ×6 轮共 96 次里红 4 次，报错 `'clean' !== 'saved'`，
+  两个用例都会中；单包顺序跑则一直是绿的）。
+
+假时钟下这些用例的时序完全确定（整个 `client-retry-feedback` 单跑从 ~430ms 降到 ~60ms，
+`settings-save-status` 从 ~500ms 降到 ~5ms），并且 `settings-save-status` 仍保留完整语义：
+`waitFor()` 等到 `saved` 出现后，再 `advance(RESET_MS + 1)` 越过复位窗口，断言必须回落 `clean`——
+不靠真实毫秒，也没有弱化「已保存是短暂态」这条断言。
+
+**约束**：新增时序用例沿用 `installClock()` + `waitFor()`，不要再抄第二份实现、更不要退回
+`sleep(ms)`。两个文件共用同一个 helper 的前提是它只碰全局定时器与 `Date.now`，且每个用例的 `finally`
+里都 `clock.restore()`（`node --test` 按文件隔离进程，但同一文件内的用例共用进程，漏 restore 会把假时钟
+漏给后面的用例）。`test/helpers/clock.js` 会被 `node --test` 当成一个空测试文件收进去（与
+`packages/advisor/test/temp.js` 同一情况），所以包内 `node --test` 的计数从 **248 → 249**，多出来的这
+一条不是新用例；全仓计数表（`docs/testing/index.md`）由计数回填批次统一更新。
 
 **没覆盖**：真实宿主槽位、真实 Electron 渲染进程、真实的 `setDraft` → `submit` 时序。所以下面两层不能省。
 （`test/client-card-shortcut.test.js` 已经用迷你 hooks 运行时贴近了「投影晚到 + 重渲染」的时序，但仍不是真实 React 与真实槽位。）
@@ -775,7 +792,9 @@ ls ~/.dsh/next-step/report-*.md
 本节记录**桌面只读断言**（按约定只写不跑；真机证据见下面的 2026-11-28 记录）与单测覆盖位置。
 
 **单测（每次提交都跑）**：`test/settings-save-status.test.js` —— 用迷你 hooks 运行时驱动
-`lib/client.js` 里的真实组件，不复制实现。
+`lib/client.js` 里的真实组件，不复制实现。时序走 `test/helpers/clock.js` 的假时钟（与
+`test/client-retry-feedback.test.js` 共用）：`waitFor()` 等到 `saved` 出现，再 `advance()` 越过
+`timings.settingsSaveResetMs` 断言回落 `clean`，**不依赖真实毫秒**（见 §1 的已知 flake 说明）。
 
 **桌面只读断言**（不拨开关）：
 

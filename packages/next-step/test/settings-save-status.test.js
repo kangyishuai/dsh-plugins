@@ -4,14 +4,24 @@
 // next-step 的形态是**自动保存**（拨开关/选分档立刻写盘，没有保存按钮）：本文件用迷你 hooks
 // 运行时驱动真实 client 源码的 NextStepSettings，断言 `data-next-step-settings-status`
 // 的 clean → saving → saved → clean 与 error → retry 两条路径。
+//
+// 时序：「已保存」是短暂态，client 用 `setTimeout`（线上 2.5s，这里缩短成 300ms）复位回
+// 「· 已保存」。这些用例**不再用真实 sleep 猜时序**——并行压测时 `sleep(4)` 可能实际睡几百毫秒，
+// 越过复位窗口，断言 `saved` 时状态已回落成 `clean`（2026-11-28 实测：16 路并发 ×6 轮 96 次里
+// 红 4 次，报错 `'clean' !== 'saved'`）。现在和 `client-retry-feedback.test.js` 共用
+// `test/helpers/clock.js` 的假时钟：`waitFor()` 推进假时间直到目标状态出现，再推进到复位窗口后
+// 断言回落，完全不依赖真实毫秒。
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { installClock, waitFor } from "./helpers/clock.js";
+
 const CLIENT = join(dirname(fileURLToPath(import.meta.url)), "..", "lib", "client.js");
-const sleep = (/** @type {number} */ ms) => new Promise((resolve) => setTimeout(resolve, ms));
+/** 「已保存」短暂态在单测里的复位窗口（生产默认 2500ms，见 `__test.timings`）。 */
+const RESET_MS = 300;
 
 /** 迷你 hooks 运行时（与 next-step 既有 client 单测同一套路）。 */
 function createHooks() {
@@ -296,12 +306,25 @@ function switchOf(fiber, key) {
   return found;
 }
 
-/** @param {any} hooks @param {number} [times] */
-async function pump(hooks, times = 3) {
-  for (let i = 0; i < times; i += 1) {
-    await sleep(4);
-    hooks.flush();
-  }
+/** 找到某个开关（没有则 undefined，不抛错）。 @param {any} fiber @param {string} key */
+const findSwitch = (fiber, key) =>
+  findElement(fiber.element, (element) => element?.props?.["data-next-step-switch"] === key);
+
+/** 当前保存状态（锚点还没渲染出来时是 undefined）。 @param {any} fiber */
+const saveStateOf = (fiber) => statusOf(fiber)?.props?.["data-state"];
+
+/**
+ * 挂载设置分节并等到 settings RPC 回来（开关出现）。时间由假时钟推进，不依赖真实 sleep。
+ * @param {ReturnType<typeof installClock>} clock
+ * @param {any} hooks
+ * @param {any} Component
+ * @param {any} props
+ */
+async function mountSettings(clock, hooks, Component, props) {
+  const fiber = hooks.mount(Component, props);
+  const ready = await waitFor(clock, hooks, () => findSwitch(fiber, "card") !== undefined);
+  assert.ok(ready, "settings 载入后应该出现开关");
+  return fiber;
 }
 
 /** 假 api：settings 返回固定快照；updateSettings 按用例替换。 */
@@ -348,14 +371,17 @@ function fakeApi() {
 }
 
 test("next-step 设置：无改动时状态为「· 已保存」，自动保存成功后先显示「已保存」再回落", async () => {
+  const clock = installClock();
   const hooks = createHooks();
   const booted = bootSettings(hooks);
   const previous = booted.__test.timings.settingsSaveResetMs;
-  booted.__test.timings.settingsSaveResetMs = 300;
+  booted.__test.timings.settingsSaveResetMs = RESET_MS;
   try {
     const { api } = fakeApi();
-    const fiber = hooks.mount(booted.Component, { api: api, t: booted.t });
-    await pump(hooks);
+    const fiber = await mountSettings(clock, hooks, booted.Component, {
+      api: api,
+      t: booted.t,
+    });
     const status = statusOf(fiber);
     assert.ok(status, "缺少 data-next-step-settings-status 锚点");
     assert.equal(status.props["data-state"], "clean");
@@ -364,34 +390,42 @@ test("next-step 设置：无改动时状态为「· 已保存」，自动保存�
 
     switchOf(fiber, "card").props.onClick();
     hooks.flush();
-    assert.equal(statusOf(fiber).props["data-state"], "saving", "写盘期间要有「保存中…」");
-    await pump(hooks);
-    assert.equal(statusOf(fiber).props["data-state"], "saved");
+    assert.equal(saveStateOf(fiber), "saving", "写盘期间要有「保存中…」");
+    // 写盘成功 → 短暂显示「已保存」：假时间推进到出现 saved，而不是睡固定毫秒。
+    const saved = await waitFor(clock, hooks, () => saveStateOf(fiber) === "saved");
+    assert.ok(saved, "自动保存成功后要短暂显示「已保存」");
+    assert.equal(saveStateOf(fiber), "saved");
     assert.match(textOf(statusOf(fiber)), /settings\.saved/u);
 
-    await sleep(360);
-    hooks.flush();
-    assert.equal(statusOf(fiber).props["data-state"], "clean");
+    // 「已保存」是短暂态：推进假时间越过复位窗口（TIMINGS.settingsSaveResetMs）后必须回落 clean。
+    await clock.advance(RESET_MS + 1, hooks.flush);
+    assert.equal(saveStateOf(fiber), "clean", "复位窗口过后要回落到「· 已保存」");
+    assert.match(textOf(statusOf(fiber)), /settings\.saved/u);
   } finally {
     booted.__test.timings.settingsSaveResetMs = previous;
     booted.browser.restore();
+    clock.restore();
   }
 });
 
 test("next-step 设置：保存失败显示「保存失败：原因」，恢复后可重试", async () => {
+  const clock = installClock();
   const hooks = createHooks();
   const booted = bootSettings(hooks);
   const previous = booted.__test.timings.settingsSaveResetMs;
-  booted.__test.timings.settingsSaveResetMs = 300;
+  booted.__test.timings.settingsSaveResetMs = RESET_MS;
   try {
     const { api, behavior, calls } = fakeApi();
-    const fiber = hooks.mount(booted.Component, { api: api, t: booted.t });
-    await pump(hooks);
+    const fiber = await mountSettings(clock, hooks, booted.Component, {
+      api: api,
+      t: booted.t,
+    });
 
     behavior.updateSettings = () => Promise.resolve({ ok: false, error: { message: "disk full" } });
     switchOf(fiber, "card").props.onClick();
-    await pump(hooks);
-    assert.equal(statusOf(fiber).props["data-state"], "error");
+    const failed = await waitFor(clock, hooks, () => saveStateOf(fiber) === "error");
+    assert.ok(failed, "保存失败要显示 error 状态");
+    assert.equal(saveStateOf(fiber), "error");
     assert.match(textOf(statusOf(fiber)), /settings\.updateFailed/u);
     assert.match(textOf(statusOf(fiber)), /disk full/u);
     const retry = retryOf(fiber);
@@ -400,11 +434,13 @@ test("next-step 设置：保存失败显示「保存失败：原因」，恢复�
     behavior.updateSettings = () =>
       Promise.resolve({ ok: true, settings: Object.assign({}, { card: false }) });
     retry.props.onClick();
-    await pump(hooks);
-    assert.equal(statusOf(fiber).props["data-state"], "saved");
+    const saved = await waitFor(clock, hooks, () => saveStateOf(fiber) === "saved");
+    assert.ok(saved, "重试成功后要显示「已保存」");
+    assert.equal(saveStateOf(fiber), "saved");
     assert.equal(calls.filter((call) => call.method === "updateSettings").length, 2);
   } finally {
     booted.__test.timings.settingsSaveResetMs = previous;
     booted.browser.restore();
+    clock.restore();
   }
 });
