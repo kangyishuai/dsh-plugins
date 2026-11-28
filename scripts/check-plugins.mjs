@@ -209,8 +209,9 @@ export function checkRepo(root = REPO_ROOT) {
     const pkg = readJson(join(base, "package.json"));
     const expectedName = `${PREFIX}${dir}`;
     // 插件身份（locale meta / 顶层 icon）只在「登记进索引源的正式版本插件」上强制：
-    // 模板/脚手架生成的 0.0.0 临时插件由 build-index 的登记检查兜底，F3 补模板之前
-    // 不因此让 `pnpm new` 的 check 变红；首个 changeset 版本号离开 0.0.0 后开始强制。
+    // 模板/脚手架生成的 0.0.0 临时插件还没登记索引源，身份缺失由 build-index 的登记检查兜底；
+    // 首个 changeset 让版本号离开 0.0.0 后开始强制。模板本身已自带身份三件套，
+    // 断言见 scripts/test/scaffold-and-check.test.js（不依赖这里的豁免）。
     const registered = indexMeta?.plugins?.[expectedName];
     const identityEnforced = Boolean(registered) && pkg.version !== "0.0.0";
 

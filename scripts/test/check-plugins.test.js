@@ -250,7 +250,7 @@ test("合法 PNG 图标通过文件头嗅探", () => {
   assert.equal(errorsOf(root), "");
 });
 
-test("未登记索引源的 0.0.0 脚手架插件不强制身份（模板仍能通过 check，F3 前不阻塞 pnpm new）", () => {
+test("未登记索引源的 0.0.0 插件不强制身份（刚生成、还没登记索引源时不会当场变红）", () => {
   const { root, dir } = makeRepo({ indexMeta: false });
   const pkg = readPkg(dir);
   pkg.version = "0.0.0";

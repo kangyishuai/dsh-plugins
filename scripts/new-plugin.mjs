@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import { join, relative } from "node:path";
 import { parseArgs } from "node:util";
-import { isMain, NAME_RE, REPO_ROOT, toCamel } from "./lib/repo.mjs";
+import { isMain, NAME_RE, REPO_ROOT, toCamel, toTitle } from "./lib/repo.mjs";
 
 /**
  * @param {{ root?: string, name: string, description?: string }} options
@@ -29,11 +29,16 @@ export function scaffold({ root = REPO_ROOT, name, description = "TODO: one-line
   cpSync(join(REPO_ROOT, "templates", "plugin"), target, { recursive: true });
   copyFileSync(join(REPO_ROOT, "LICENSE"), join(target, "LICENSE"));
 
-  const vars = { __NAME__: name, __CAMEL__: toCamel(name), __DESCRIPTION__: description };
+  const vars = {
+    __NAME__: name,
+    __CAMEL__: toCamel(name),
+    __TITLE__: toTitle(name),
+    __DESCRIPTION__: description,
+  };
   for (const file of walk(target)) {
     const text = readFileSync(file, "utf8");
     const out = text.replace(
-      /__(NAME|CAMEL|DESCRIPTION)__/g,
+      /__(NAME|CAMEL|TITLE|DESCRIPTION)__/g,
       (m) => vars[/** @type {keyof typeof vars} */ (m)],
     );
     if (out !== text) writeFileSync(file, out);
@@ -122,6 +127,9 @@ if (isMain(import.meta.url)) {
     console.log(`  gh label create "plugin:${name}" --color 7057ff`);
     console.log(
       `已生成 scripts/smoke-${name}-desktop.mjs（桌面端冒烟骨架，去把 TODO 换成真实断言）`,
+    );
+    console.log(
+      "已生成插件身份占位（icon.svg + locale/*.json 的 meta.title/description）——发布前替换图标与中英文文案",
     );
     console.log("下一步：pnpm install && pnpm check");
     console.log(`本地安装：dsh plugin --profile desktop add "link:${target}"`);
