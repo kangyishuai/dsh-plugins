@@ -10,12 +10,12 @@ https://cdn.jsdelivr.net/npm/@kangyishuai/dsh-plugin-index/index.json
 
 ## 1. 自动化
 
-| 命令                                                                   | 覆盖什么                                                                                                           | 前置                            |
-| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------- |
-| `node --test scripts/test/index-build.test.js`（`pnpm test` 的一部分） | 生成器与校验器的离线单测：预发布/stub/无发布时间被排除、版本降序、`repository` 转换、meta 双向一致、宿主会拒的形态 | 无                              |
-| `pnpm check` / `pnpm check:index`                                      | `scripts/index-meta.json` 与 `packages/` 双向一致；`build/index.json` 存在时校验其结构                             | 无                              |
-| `pnpm index`                                                           | 从 npm registry 现场生成 `build/index.json`（不提交）                                                              | 联网                            |
-| `pnpm smoke:index`                                                     | 真机端到端：临时 `DSH_HOME` + 真实宿主 + 真实「发现」页；加 `SMOKE_INDEX_URL=<url>` 则直接验**线上**索引源         | 本机 `dsh`、`ego-browser`；联网 |
+| 命令                                                                   | 覆盖什么                                                                                                                                                                                                                                    | 前置                            |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| `node --test scripts/test/index-build.test.js`（`pnpm test` 的一部分） | 生成器与校验器的离线单测：预发布/stub/无发布时间被排除、版本降序、`repository` 转换、meta 双向一致、图标内联/校验（8 个正常、缺文件、超限、坏 SVG、非法 data URL）、宿主会拒的形态                                                          | 无                              |
+| `pnpm check` / `pnpm check:index`                                      | `scripts/index-meta.json` 与 `packages/` 双向一致；每个正式插件的图标文件（`package.json#icon`，默认 `icon.svg`）能内联成宿主接受的 data URL（反解后 sha256 与本地一致）；`build/index.json` 存在时校验结构、双向核对条目并逐条核对图标字节 | 无                              |
+| `pnpm index`                                                           | 从 npm registry 现场生成 `build/index.json`（不提交）                                                                                                                                                                                       | 联网                            |
+| `pnpm smoke:index`                                                     | 真机端到端：临时 `DSH_HOME` + 真实宿主 + 真实「发现」页；加 `SMOKE_INDEX_URL=<url>` 则直接验**线上**索引源                                                                                                                                  | 本机 `dsh`、`ego-browser`；联网 |
 
 `pnpm smoke:index` 的 13 条断言（2026-11-20 在 0.2.2-rc.5 上 **13/13 PASS**；rc.3 那轮是 12 条）：
 
@@ -55,6 +55,43 @@ https://cdn.jsdelivr.net/npm/@kangyishuai/dsh-plugin-index/index.json
 
 排障开关：`SMOKE_DEBUG=1` 打印浏览器脚本完整输出；`SMOKE_KEEP=1` 保留临时目录（`host.log`、生成的 `index.json`、截图）。冒烟**从不等**安装完成，也不发起模型调用。
 
+### 发现页图标（来自索引的 `icon`，2026-11-28）
+
+「已安装」页的图标来自插件包 `package.json` 顶层 `icon`（文件路径，默认 `icon.svg`，也可以是 png/jpeg/webp）；**「发现」页不读包内文件**，
+只读索引条目的 `icon` 字段。所以只把图标文件放进包里，发现页仍是通用图形——必须重建索引（`index.yml`）。
+
+- **宿主规则**（随包源码 `app.asar/dsh/node_modules/@deepseek-ai/dsh-plugin-market-index/src/index.ts` 的 `icon()`）：
+  `icon` 可选；内联形态**只接受 base64** 的 `image/svg+xml|png|jpeg|webp` data URL，解码后 **≤32 KiB**
+  (`MAX_INLINE_ICON_BYTES`)；URI 编码的 data URL 会让整份索引被拒收；非 data URL 按索引 URL 解析，
+  必须解析到 https 或与索引源同源。发现页用 36px 渲染（48px 帧），**加载失败静默回退通用图形**，
+  所以坏图标只能靠生成器与 `--check` 提前拦。
+- **生成器**：`scripts/build-index.mjs` 按 `package.json#icon` 找图标文件（默认 `icon.svg`，也支持
+  png/jpeg/webp 并按扩展名校验文件头），内联成 `data:<mime>;base64,…` 写进条目 `icon`——跟着宿主的
+  顶层 `icon` 走，避免某插件以后换 png 时「已安装」与「发现」两个页面的图不一致。
+  8 个图标源文件合计 **5 412 B**；索引内 data URL 合计 **7 440 B**（其中 base64 载荷 **7 232 B**，
+  其余是 8 个 `data:image/svg+xml;base64,` 前缀）；`build/index.json` **15 019 B → 22 539 B**
+  （均含末尾换行）。单个图标解码后超过 32 KiB 或文件头与扩展名不符都直接报错，不生成索引。
+- **离线防线**：`pnpm check:index` / `pnpm check` 会
+  1. 校验每个正式插件（登记进 `scripts/index-meta.json` 且版本非 `0.0.0`）都有可内联的图标文件
+     （`package.json#icon`，默认 `icon.svg`）
+     （`0.0.0` 脚手架只告警：模板已自带占位 `icon.svg`，发版前要换成该插件自己的图）；
+  2. 把内联 data URL 反解，按 sha256 与本地文件比对（不依赖 `build/index.json` 是否存在）；
+  3. 若 `build/index.json` 存在，再双向核对条目（索引多出的 ghost 插件也报错）、核对图标存在、可解码、
+     与本地图标文件字节一致——
+     读不到、缺图标或内容不一致都让 check 退出码非 0。
+     单测见 `scripts/test/index-build.test.js` 的「索引图标」段：8 个正常且互异、缺 icon 文件、超 32 KiB、
+     坏文件头（SVG/PNG）、非法 data URL（URI 编码/非 base64/长度非 4 倍数/坏 payload）、同长度内容改动、
+     索引缺图标/ghost 条目/内容过期、0.0.0 脚手架豁免、模板占位图标告警、`package.json#icon` 推导（含 png）。
+- **【实测】2026-11-28 隔离桌面实例（CDP 9417，profile 复制自 live、只把 `plugin-market` 的索引源换成
+  `http://127.0.0.1:…/index.json`）**：发现页 8 张卡片的 `<img src>` 与本地索引条目的 `icon` 逐字节相同，
+  `naturalWidth×naturalHeight = 36×36`，8 个图标互不相同；点进条目详情页头部也显示同一个图标。
+  这证明宿主接受本生成器的 data URL 且按 36px 渲染（此前线上索引没带 icon，卡片是通用图形）。
+- **本地真机验证（发版前）**：`pnpm index` 生成 `build/index.json` → 用本地 http 服务把它作为索引源
+  （隔离 profile 的 `plugin-market` 配置或发现页「添加索引源」）→ 打开「插件 → 发现」，确认 8 张卡片
+  图标互不相同、不是通用图形。注意索引源 URL 必须 http(s)、不带 query/fragment。
+- **发布后才对用户生效**：`index.yml` 在 Release 后重建并发布 `@kangyishuai/dsh-plugin-index`；之后按
+  [§2](#2-发版后要确认什么) 的清单核对。本地 `build/index.json` 不会改变用户已配置的线上索引源。
+
 ## 2. 发版后要确认什么
 
 `.github/workflows/index.yml` 由 `release: published`（每个包一条 Release）触发，依次做：
@@ -70,6 +107,8 @@ https://cdn.jsdelivr.net/npm/@kangyishuai/dsh-plugin-index/index.json
 - [ ] Actions 里 `Plugin index` 最近一次是绿的，summary 里有全部插件（当前 8 个）和正确版本；
 - [ ] `curl -s https://cdn.jsdelivr.net/npm/@kangyishuai/dsh-plugin-index/index.json | head -c 200` 返回 JSON（不是 404）；
 - [ ] 真实桌面版：**插件 → 发现**，切换索引后卡片上的版本等于刚发的版本；
+- [ ] 真实桌面版：**插件 → 发现**，8 张卡片各有自己的图标（互不相同、不是通用图形）——图标只来自索引，
+  本地 `build/index.json` 不会改变用户已配置的线上索引源；CDN 滞后时先用固定版本 URL 核对；
 - [ ] 点一张卡进详情页，**安装**按钮可用（不要真装，除非是在临时 profile 里）。
 
 **CDN 滞后（2026-11-21 实测）**：`index.json` 的 `cache-control` 是 `max-age=604800, s-maxage=43200`，
@@ -137,7 +176,7 @@ tarball 的 HTTP 状态），可见后 `gh run rerun <run-id> --failed` 即可�
   workflow 现在会对比线上内容与本次构建，不一致只告警不失败（npm 才是权威）。
 - **首次发布会有延迟**：2026-11-15 实测，registry 约 **5 分 21 秒**才可见、jsDelivr 的 `latest` 约 **9 分钟**（第二次 purge 后才 200）。后续发版仍要等 registry，但 CDN 已经认识这个包，通常快得多。
 - **灾备 URL**：如果 jsDelivr 不可达，可以把 `build/index.json` 放到任意 https 直链（GitHub raw 对现成文件不跳转，实测 `cache-control: max-age=300`）临时顶上；宿主要求 URL **不带 query/fragment** 且**不跟随重定向**。
-- **发现页的图标来自索引条目的 `icon` 字段**：`scripts/build-index.mjs` 目前不写这个字段，所以发现页卡片用面板默认图标；插件包自己的 `icon.svg` 只在「已安装」生效（2026-11-28 实测）。
+- **发现页的图标来自索引条目的 `icon` 字段**（不是包内 `icon.svg`）：生成器已内置 8 个图标（data URL，源文件合计 5 412 B），发版后由 `index.yml` 重建索引才在用户端生效；`icon` 在格式里是可选字段，别人的索引条目没带图标时宿主回退通用图形。详见上文「发现页图标」小节。
 - **不写 `engines.dsh`**：发现页因此不会按版本过滤；兼容性以各插件 README 的表格为准。
 
 ## 4. 2026-11-28 全插件体检/修复后的当前计数
