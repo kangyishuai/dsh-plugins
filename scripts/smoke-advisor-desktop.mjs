@@ -1136,6 +1136,32 @@ const main = async () => {
   let settingsOpened = false;
   try {
     // ---------- A. 页面与插件加载 ----------
+    // 紧接着别的 GUI 冒烟（projects/artifacts 等）跑时，界面可能停在项目/设置等非会话视图，
+    // composer=null 会让后面的「输入框可编辑」直接 FAIL——那不是产品问题。先回到聊天会话再断言。
+    const chatView = await cdp.evaluate(`(() => {
+      const hasComposer = () =>
+        Boolean(document.querySelector('[contenteditable="true"]') || document.querySelector('[data-composer-input]'));
+      if (hasComposer()) return { status: "already" };
+      const row = document.querySelector('[data-row-key^="session:"]');
+      if (row) {
+        row.click();
+        return { status: "clicked-session", key: row.getAttribute("data-row-key") };
+      }
+      const btn = Array.from(document.querySelectorAll("button")).find(
+        (node) => (node.getAttribute("aria-label") || "") === "新建会话",
+      );
+      if (btn) {
+        btn.click();
+        return { status: "clicked-new-session" };
+      }
+      return { status: "no-target" };
+    })()`);
+    if (chatView && chatView.status !== "already") {
+      console.log(
+        `      诊断：初始视图无 composer（${JSON.stringify(chatView)}），已尝试切回聊天会话。`,
+      );
+      await sleep(1200);
+    }
     const page = await cdp.evaluate(PAGE_STATE);
     check(
       "连接到 DSH 桌面 UI",
