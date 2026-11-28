@@ -1,5 +1,11 @@
 # @kangyishuai/dsh-next-step
 
+## 0.5.2
+
+### Patch Changes
+
+- [#399](https://github.com/kangyishuai/dsh-plugins/pull/399) [`31201db`](https://github.com/kangyishuai/dsh-plugins/commit/31201db8fc9a90793f506a9e8e457dd274ba659a) Thanks [@kangyishuai](https://github.com/kangyishuai)! - 空输出（推理模型把预算全用在推理块上）不再被当成格式错误直接放弃：重试同一个请求并把输出预算升到至少 3000（封顶 4000），仍空才要求只输出 JSON；默认 `maxTokens` 从 500 提到 2000。修复真机 `json:empty` 且点重试仍失败的问题。
+
 ## 0.5.1
 
 ### Patch Changes
