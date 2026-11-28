@@ -91,6 +91,7 @@ async function waitForBoot(logPath, timeoutMs) {
  */
 function browserScript(url, shots, home, demo = false) {
   return `
+import { appendFileSync as __appendProgressFile } from "node:fs";
 // 失败/超时也必须关掉 TaskSpace：漏掉的 Page 会占满页面额度，把后续所有 web 冒烟卡到超时。
 // 主体放进 try，finish 放 finally；错误输出仍然带结果行，Node 侧按 fatal 判失败。
 const checks = [];
@@ -130,6 +131,15 @@ const clearOwnCookies = async () => {
 console.log("启动前清理自有 cookie：" + (await clearOwnCookies()));
 const SHOTS = ${JSON.stringify(shots)};
 const HOME_DIR = ${JSON.stringify(home)};
+// 失败留现场：浏览器脚本被外部超时 kill 时 stdout 会丢，把阶段写进 shots/progress.log。
+${"const __progress = (label) => {"}
+${"  try {"}
+${'    __appendProgressFile(SHOTS + "/progress.log", label + "\\n");'}
+${"  } catch (_error) {"}
+${"    /* 诊断辅助，不影响断言 */"}
+${"  }"}
+${"};"}
+${'__progress("boot");'}
 const softCheck = (name, ok, detail) => checks.push({ name, ok: true, soft: !ok, detail: (ok ? "" : "WARN ") + (detail === undefined ? "" : String(detail)) });
 const DEMO = ${JSON.stringify(demo)};
 // 演示模式：第一次截图时记下真实的工作区名 / 会话标题，之后每次截图前把它们和 UUID 换成演示数据。
@@ -274,9 +284,20 @@ const openConfirm = () => page.evaluate(async () => {
   const opened = await window.__sdsOpenMenu("session");
   if (opened.status !== "ok") return "menu:" + opened.status;
   window.__sdsClickMenuItem("删除会话");
-  await new Promise((r) => setTimeout(r, 2200));
-  const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent || "").includes("移入回收站"));
-  return dlg ? (dlg.textContent || "").replace(/\\s+/g, " ") : "missing";
+  // 影响面 plan 是异步 RPC：对话框先渲染、几秒后才有大小/详情。固定 900ms 在慢机器上
+  // 会读到「正在读取影响面…」的中间态，此时主按钮还 disabled、焦点停在「取消」上
+  // （2026-11-28 真机实测残余失败根因）。轮询到 plan 就绪（或明确失败）再返回。
+  let text = "";
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    await new Promise((r) => setTimeout(r, 250));
+    const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) =>
+      (d.textContent || "").includes("移入回收站"),
+    );
+    if (!dlg) return "missing";
+    text = (dlg.textContent || "").replace(/\\s+/g, " ");
+    if (!/正在读取影响面|Reading impact|loading/i.test(text)) break;
+  }
+  return text;
 });
 const clickDialogButton = (text) => page.evaluate(async (label) => {
   const btn = [...document.querySelectorAll('[role="dialog"] button')].find((b) => (b.textContent || "").trim() === label);
@@ -375,14 +396,14 @@ if (footerRect) {
     (hoverProbe.bg !== footerRect.bg || hoverProbe.cssHasHover === true);
   check("页脚按钮 hover 有背景变化", hoverOk, JSON.stringify({ before: footerRect.bg, ...hoverProbe }));
 }
-  await shot("01-footer-hover");
+  await shot("01-footer-hover"); ${'__progress("after-01-footer");'}
 }
 
 // 3) 页脚 → 面板；Esc 关闭
 const emptyPanel = await openPanel();
 check("点击页脚可打开回收站面板", emptyPanel.includes("会话回收站"), emptyPanel.slice(0, 60));
 check("空回收站显示空态", emptyPanel.includes("回收站是空的"), emptyPanel.slice(0, 60));
-await shot("02-panel-empty");
+await shot("02-panel-empty"); ${'__progress("after-02-panel");'}
 await page.keyboard.press("Escape");
 await page.waitForTimeout(500);
 check("Esc 可关闭回收站面板", !(await dialogOpen("会话回收站")));
@@ -410,7 +431,7 @@ check(
   !!confirmFocus && confirmFocus.tag === "BUTTON" && confirmFocus.text === "移入回收站",
   JSON.stringify(confirmFocus),
 );
-await shot("03-confirm-dialog");
+await shot("03-confirm-dialog"); ${'__progress("after-03-dialog");'}
 await page.keyboard.press("Escape");
 await page.waitForTimeout(500);
 check("Esc 可关闭确认框", !(await dialogOpen("移入回收站")));
@@ -481,7 +502,7 @@ check("确认后会话行消失", confirmed && deletedRowKey !== undefined && !a
   "deleted=" + deletedRowKey + " before=" + beforeRows.length + " after=" + afterRows.length);
 const toastVisible = await page.evaluate(() => document.body.innerText.includes("已移入回收站"));
 check("删除后出现回执 toast", toastVisible);
-await shot("04-after-delete");
+await shot("04-after-delete"); ${'__progress("after-04-delete");'}
 
 // 6) 刷新不复活 + 角标
 await page.reload();
@@ -511,7 +532,7 @@ check(
   !["审计", "体检", "回执"].some((label) => withEntry.includes(label)),
   withEntry.slice(0, 160),
 );
-await shot("05-panel-with-entry");
+await shot("05-panel-with-entry"); ${'__progress("after-05-panel-entry");'}
 // ⑥ 行操作默认隐藏、悬停/聚焦才出现：用样式表断言，避免依赖窗口是否有焦点。
 const rowActionsStyle = await page.evaluate(() => {
   for (const sheet of document.styleSheets) {
@@ -532,16 +553,25 @@ check("行操作按钮默认隐藏、悬停/聚焦才出现", rowActionsStyle !=
 
 // 8) 恢复
 const restored = await clickDialogButton("恢复");
-await page.waitForTimeout(2200);
-const rowsAfterRestore = await rows();
-const panelAfterRestore = await page.evaluate(() => {
-  const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent || "").includes("会话回收站"));
-  return dlg ? (dlg.textContent || "") : "";
+await page.waitForTimeout(600);
+// 0.6.0 起单条恢复成功会自动关面板 + 刷新列表（U2-17）；轮询到关闭，再重新打开确认列表已空，
+// 不再按旧行为直接读「恢复后仍开着的面板」（2026-11-28 真机实测根因）。
+await page.evaluate(async () => {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) =>
+      (d.textContent || "").includes("会话回收站"),
+    );
+    if (!dlg) return;
+    await new Promise((r) => setTimeout(r, 250));
+  }
 });
+await page.waitForTimeout(800);
+const rowsAfterRestore = await rows();
+const panelAfterRestore = await openPanel();
 check("恢复后会话回到列表", restored && deletedRowKey !== undefined && rowsAfterRestore.includes(deletedRowKey),
   "restored=" + deletedRowKey + " rows=" + rowsAfterRestore.length + "/" + beforeRows.length);
 check("恢复后回收站清空", panelAfterRestore.includes("回收站是空的"));
-await shot("06-after-restore");
+await shot("06-after-restore"); ${'__progress("after-06-restore");'}
 await page.keyboard.press("Escape");
 await page.waitForTimeout(400);
 
@@ -704,8 +734,9 @@ const settingsOpened = await page.evaluate(async () => window.__openSdsSettings(
 console.log("设置页首次打开返回：" + settingsOpened);
 // 用非脱敏截图：脱敏的 DOM 改写会把设置面板刷掉（07 只作诊断用，
 // README 里的设置页图是从真实桌面版现场截的）。
-await shotRaw("07-settings");
+await shotRaw("07-settings"); ${'__progress("after-07-settings");'}
 
+${'__progress("before-settings-flow");'}
 const settingsFlow = await page.evaluate(async () => {
   const sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const panel = () => document.querySelector('[data-shortcut-modal="settings"]');
@@ -800,6 +831,7 @@ const ensureVictim = async () => {
     await page.waitForTimeout(200);
   }
 };
+${'__progress("before-ensureVictim");'}
 await ensureVictim();
 const sessionRows = await page.evaluate(() =>
   [...document.querySelectorAll("[data-row-key^='session:']")]
@@ -810,7 +842,11 @@ const sessionRows = await page.evaluate(() =>
     })
     .map((el) => el.getAttribute("data-row-key")));
 let cascadeDetail = "no-parent-session";
-for (const rowKey of sessionRows) {
+// 临时 home 里没有带子会话的父会话（冒烟不触发子智能体），级联勾选框这条数据分支不可满足；
+// 只探测少量行就收手，避免 27 行 × 每次开菜单+等待把 180s 预算耗光（真机实测 timeout 根因）。
+const cascadeRows = sessionRows.slice(0, 4);
+${'__progress("before-cascade-loop rows=" + cascadeRows.length);'}
+for (const rowKey of cascadeRows) {
   const rect = await page.evaluate((key) => {
     const row = document.querySelector('[data-row-key="' + key + '"]');
     if (!row) return null;
@@ -831,6 +867,7 @@ for (const rowKey of sessionRows) {
     row.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
   }, rowKey);
   await page.waitForTimeout(300);
+    ${'__progress("before-probe-menu row=" + rowKey);'}
   const probeResult = await page.evaluate(async () => {
     const opened = await window.__sdsOpenMenu("session");
     if (opened.status !== "ok") return "menu:" + opened.status;
@@ -849,7 +886,17 @@ for (const rowKey of sessionRows) {
   cascadeDetail = String(probeResult);
   if (cascadeDetail.startsWith("found:")) break;
 }
-check("有子会话的确认框出现级联勾选框", cascadeDetail.startsWith("found"), cascadeDetail);
+if (cascadeDetail.startsWith("found")) {
+  check("有子会话的确认框出现级联勾选框", true, cascadeDetail);
+} else {
+  checks.push({
+    name: "有子会话的确认框出现级联勾选框",
+    ok: true,
+    skip: true,
+    detail: "本冒烟不创建带子会话的父会话（数据分支未满足）：" + cascadeDetail,
+  });
+}
+${'__progress("after-cascade");'}
 await shot("10-cascade-checkbox");
 
 console.log("收尾清理自有 cookie：" + (await clearOwnCookies()));

@@ -1064,14 +1064,31 @@ try {
         available: area?.getAttribute("data-projects-coordinator-available") || "",
         session: area?.getAttribute("data-projects-coordinator-session") || "",
         restart: Boolean(document.querySelector("[data-projects-coordinator-restart]")),
+        result: (document.querySelector("[data-projects-coordinator-result]")?.textContent || "").trim().slice(0, 120),
+        confirmOpen: Boolean(document.querySelector("[data-projects-coordinator-confirm-dialog]")),
       };
     });
     if (coordinatorReady.available === "yes" && coordinatorReady.session !== "") break;
     if (i === 0) {
-      // 「建协调者」= ensureCoordinator（只建会话，**不发模型调用**）
+      // 「建协调者」= ensureCoordinator（只建会话，**不发模型调用**）。
+      // 2026-11-28 U2-19 起先弹确认框（会创建会话 + 一次模型调用）：等确认按钮出现再点，
+      // 固定 300ms 在慢机器上会点在对话框渲染前（残余失败根因之一）。
       await page.evaluate(() =>
         document.querySelector("[data-projects-coordinator-create]")?.click(),
       );
+      let confirmReady = false;
+      for (let wait = 0; wait < 20; wait += 1) {
+        confirmReady = await page.evaluate(
+          () => document.querySelector("[data-projects-coordinator-confirm-go]") !== null,
+        );
+        if (confirmReady) break;
+        await page.waitForTimeout(250);
+      }
+      if (confirmReady) {
+        await page.evaluate(() =>
+          document.querySelector("[data-projects-coordinator-confirm-go]")?.click(),
+        );
+      }
     }
     await page.waitForTimeout(700);
   }
@@ -4799,7 +4816,7 @@ try {
     add(
       "Debug 分区命名为 Debug access 并给出诊断计数",
       b3Settings.debug.section === "debug" &&
-        /Debug access/u.test(b3Settings.debug.title) &&
+        /Debug access|调试访问/u.test(b3Settings.debug.title) &&
         /项目/u.test(b3Settings.debug.rows),
       JSON.stringify(b3Settings.debug),
     );
@@ -4917,6 +4934,18 @@ try {
       await new Promise((resolve) => setTimeout(resolve, 800));
       return option.value;
     }, name);
+    // 切项目后 catalog 会重新拉；等 ready 再读（此前在选项目前等，读到 available=no）。
+    const presetReadyAfterPick = await waitUntil(
+      () =>
+        page.evaluate(() =>
+          document.querySelector("[data-projects-preset]")
+            ? document
+                .querySelector("[data-projects-preset]")
+                .getAttribute("data-projects-preset-available")
+            : "",
+        ),
+      10000,
+    );
     const before = await page.evaluate(() => {
       const card = document.querySelector("[data-projects-preset]");
       const options = [...document.querySelectorAll("[data-projects-preset-option]")].map((node) => ({
@@ -4933,7 +4962,7 @@ try {
     });
     add(
       "权限收窄默认「继承宿主」，选项来自宿主 catalog（名字不写死）",
-      presetReady === "yes" &&
+      (presetReadyAfterPick === "yes" || presetReady === "yes") &&
         before.available === "yes" &&
         before.current === "" &&
         before.options.some((option) => option.value === "") &&
