@@ -234,20 +234,24 @@ pnpm smoke:session-rewind
 
 1. **专用目录必须是已注册的桌面工作区**（唯一需要改宿主注册表的前置）。
    用 helper 注册（推荐；幂等，已有 `workspace.json` 先备份 `workspace.json.bak-<ts>` 再原子写，
-   只追加/复用一条工作区记录）：
+   只追加/复用一条工作区记录）。helper 要求 `--home` 与 `--path` **已存在**：
 
    ```bash
-   # 隔离实例（推荐走这条）：--home 指向临时 DSH_HOME 的数据根
-   node scripts/register-test-workspace.mjs --home /tmp/dsh-home --path ~/Workspace/dsh-rewind-ui-smoke
+   # 隔离实例（推荐走这条）：$H = 隔离实例的 DSH_HOME，$WS = 专用测试目录
+   H=/tmp/dsh-test-rewind
+   WS=~/Workspace/dsh-rewind-ui-smoke
+   mkdir -p "$H" "$WS"
+   node scripts/register-test-workspace.mjs --home "$H" --path "$WS"
 
    # 真实桌面版（在该实例上跑 --deep 时才需要）：数据根是 ~/.dsh，必须显式 --allow-live
-   node scripts/register-test-workspace.mjs --home ~/.dsh --path ~/Workspace/dsh-rewind-ui-smoke --allow-live
+   # 时序：先退出桌面版 → 注册 → 再启动（运行中注册可能被宿主内存态写回）
+   node scripts/register-test-workspace.mjs --home ~/.dsh --path "$WS" --allow-live
    ```
 
    `--dry-run` 只打印计划不写盘；`--title` 覆盖工作区标题（默认目录名）。helper 默认拒绝
    `$HOME/.dsh` 及其 `profiles/*` 子目录，避免把测试目录写进 live home。也可以沿用桌面 UI：
-   「工作区 → 添加工作区」选一次该目录。**注册要在桌面版启动前完成，或注册后重启桌面版**——
-   宿主在启动时读 `storages/workspace.json`，运行中的实例可能用内存态把它写回。
+   「工作区 → 添加工作区」选一次该目录。**live 实例的时序是先退出桌面版 → 注册 → 再启动**：
+   宿主在启动时读 `storages/workspace.json`，运行中的实例退出时可能用内存态把它写回。
    脚本自己只读侧栏、不写宿主注册表；缺了注册，侧栏里根本没有「在 X 中新建会话」按钮
    （旧版脚本在这里 `no-button` 静默失败，接着模型在**别的**会话里跑，文件永远不出现）。
 2. **macOS 的 `/tmp` 是 `/private/tmp` 的软链，必须按真实路径注册**。helper 会对 `--path` 做
