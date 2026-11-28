@@ -293,6 +293,8 @@ web 冒烟 + 桌面只读回归（桌面步骤永远带 `--require`；web 与桌
 （结束时会提示门禁不完整）。**幂等自检**用 `--repeat 2`：桌面回归连跑两次，任何一次 FAIL 都判红；
 两次计数不同（数据相关 SKIP 分支）只打印提示、不判失败。
 
+可选加深桌面 `--deep`（当前只对 session-rewind 追加文件模式 e2e）：`pnpm gate:all --deep --workspace <已注册的专用测试目录> --idle-session <空闲会话标题>`。白名单、工作区注册前置与 deep 的计数口径见 [docs/plugin-conventions §6.1](docs/plugin-conventions.md#61-桌面端自动化测试是硬性要求)。
+
 本地跑 `pnpm version-packages` 需要 `GITHUB_TOKEN`，因为 changelog 由 `@changesets/changelog-github` 生成。
 
 `.changeset/` 已在 `biome.json` 里排除格式化——否则 Biome 会把 frontmatter 改写成 Markdown 标题，导致 changesets 解析失败。
