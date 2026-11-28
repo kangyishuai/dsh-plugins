@@ -157,6 +157,12 @@ test("体检报告操作日志里的损坏/残留记录（F4：坏 journal 不�
   const finding = report.findings.find((/** @type {any} */ f) => f.id === "journal-unreadable");
   assert.ok(finding, "损坏/残留的 journal 记录必须出现在体检里，而不是被静默跳过");
   assert.equal(finding.severity, "info");
+  // 设置页只渲染 label（不显示 items），所以条数必须进 label；文件名留在体检数据的 items 里。
+  assert.match(
+    String(finding.label),
+    /操作日志里有 2 条损坏或残留的记录/u,
+    "finding 标题要带条数，否则设置页只剩一句泛泛提示",
+  );
   assert.deepEqual([...finding.items].sort(), ["crashed.json.tmp", "truncated.json"]);
   // 只报告，不进入自动清理（清理只动登记表）。
   assert.equal(report.cleanable?.total, 3);

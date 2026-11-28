@@ -1079,7 +1079,7 @@ export function createOperations({ ctx, dataRoot, logger }) {
     if (unreadable.length > 0) {
       findings.push({
         id: "journal-unreadable",
-        label: "操作日志里有损坏或残留的记录（仅报告，不自动删除）",
+        label: `操作日志里有 ${unreadable.length} 条损坏或残留的记录（仅报告，不自动删除）`,
         severity: "info",
         items: unreadable.map((entry) => entry.name),
       });

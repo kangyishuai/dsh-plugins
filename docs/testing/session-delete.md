@@ -263,7 +263,7 @@ pnpm smoke:session-delete
 | J3  | P1     | 制造一条归档幽灵（手工往 workspace.json 的 archivedSessionIds 塞不存在的 id） | 报告「归档集合里的失效条目」，清理按钮出现                 |
 | J4  | P1     | 点清理并确认                                                                  | 只改登记表；workspace.json 里该 id 消失；审计多一条 health |
 | J5  | P2     | 制造孤儿会话目录                                                              | 仅报告，不提供删除动作                                     |
-| J6  | P2     | 手工写坏一条操作日志（`session-trash/journal/<id>.json` 截断，或留一个 `<id>.json.tmp`） | 体检多一条「操作日志里有损坏或残留的记录」finding，列出文件名；**只报告、不自动删除**，坏文件仍在 |
+| J6  | P2     | 手工写坏一条操作日志（`session-trash/journal/<id>.json` 截断，或留一个 `<id>.json.tmp`） | 体检多一条「操作日志里有 **N 条**损坏或残留的记录」finding（标题带条数；文件名在体检数据的 `items` 里，设置页只显示标题）；**只报告、不自动删除**，坏文件仍在 |
 
 ### L. 设置页（会话回收站）
 
