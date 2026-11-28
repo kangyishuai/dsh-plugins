@@ -27,7 +27,11 @@ function loadModule() {
   let captured = null;
   const reactStub = {
     // 渲染断言的测试要看到 props（B7 的 toast 语义只能从真实 createElement 树读）。
-    createElement: (/** @type {any} */ type, /** @type {any} */ props, ...children) => ({
+    createElement: (
+      /** @type {any} */ type,
+      /** @type {any} */ props,
+      /** @type {any[]} */ ...children
+    ) => ({
       type,
       props: { ...(props || {}) },
       children,
