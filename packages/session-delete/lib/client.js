@@ -148,6 +148,10 @@ window.__ModuleLoader__.load({
       "settings.audit.empty": "还没有审计记录。",
       "settings.audit.path": "日志文件：{path}",
       "settings.loading": "读取中…",
+      "settings.saved": "已保存",
+      "settings.saving": "保存中…",
+      "settings.saveFailedDetail": "保存失败：{reason}",
+      "settings.retry": "重试",
       "confirm.workspace.title": "删除「{name}」里的全部会话？",
       "confirm.workspace.summary": "{n} 个会话 · 约 {size}",
       "confirm.workspace.live": "{n} 个正在运行，会先停止",
@@ -261,6 +265,10 @@ window.__ModuleLoader__.load({
       "settings.audit.empty": "No audit entries yet.",
       "settings.audit.path": "Log file: {path}",
       "settings.loading": "Loading…",
+      "settings.saved": "Saved",
+      "settings.saving": "Saving…",
+      "settings.saveFailedDetail": "Save failed: {reason}",
+      "settings.retry": "Retry",
       "confirm.workspace.title": 'Delete every session in "{name}"?',
       "confirm.workspace.summary": "{n} session(s) · about {size}",
       "confirm.workspace.live": "{n} running; their work stops first",
@@ -1932,6 +1940,19 @@ window.__ModuleLoader__.load({
       var msgState = React.useState("");
       var message = msgState[0];
       var setMessage = msgState[1];
+      /**
+       * 保存状态（[plugin-conventions §7.2.6]）：偏好是自动保存的，改完必须能确认落盘结果。
+       * state: clean | saving | saved | error（error 保留最后一次写入，可重试）。
+       */
+      var saveStateHook = React.useState({
+        state: "clean",
+        errorText: "",
+        retryable: false,
+      });
+      var save = saveStateHook[0];
+      var setSave = saveStateHook[1];
+      var saveTimerRef = React.useRef(null);
+      var lastSaveRef = React.useRef(null);
 
       var loader = React.useMemo(
         () =>
@@ -1962,9 +1983,37 @@ window.__ModuleLoader__.load({
       }
       var cascade = prefs ? prefs.cascadeChildren === true : false;
 
-      var setCascade = (/** @type {any} */ next) => {
+      /** 保存成功：短暂显示「已保存」，之后回落「· 已保存」。 */
+      var markSaveOk = () => {
+        if (saveTimerRef.current !== null) clearTimeout(saveTimerRef.current);
+        setSave({ state: "saved", errorText: "", retryable: false });
+        saveTimerRef.current = setTimeout(() => {
+          saveTimerRef.current = null;
+          setSave({ state: "clean", errorText: "", retryable: false });
+        }, SETTINGS_SAVE_TIMING.resetMs);
+      };
+
+      /**
+       * 写偏好：仍然乐观更新（勾选立刻生效），但把 RPC 结果如实反映到状态行；
+       * 失败保留最后一次写入，状态行进给「重试」。
+       * @param {boolean} next
+       */
+      var writePrefs = (next) => {
         props.prefsStore.set({ cascadeChildren: next });
-        props.call("setPrefs", { cascadeChildren: next }).catch(() => {});
+        setSave({ state: "saving", errorText: "", retryable: false });
+        lastSaveRef.current = next;
+        props.call("setPrefs", { cascadeChildren: next }).then(
+          () => {
+            markSaveOk();
+          },
+          (/** @type {any} */ reason) => {
+            setSave({ state: "error", errorText: errorText(reason), retryable: true });
+          },
+        );
+      };
+
+      var setCascade = (/** @type {any} */ next) => {
+        writePrefs(next === true);
       };
 
       var runScan = () => {
@@ -2232,6 +2281,51 @@ window.__ModuleLoader__.load({
               message,
             )
           : null,
+        // 保存状态行固定在本分节底部（[plugin-conventions §7.2.6]）：
+        // 自动保存也要能确认「已保存」，失败给原因并可重试。
+        h(
+          "div",
+          {
+            "data-session-delete-settings-status": save.state,
+            "data-state": save.state,
+            role: "status",
+            "aria-live": "polite",
+            style: {
+              display: "flex",
+              gap: "8px",
+              alignItems: "center",
+              paddingTop: "10px",
+              fontSize: "12px",
+              color: save.state === "error" ? T.danger : T.dim,
+            },
+          },
+          h(
+            "span",
+            null,
+            save.state === "error"
+              ? props.t("settings.saveFailedDetail", { reason: save.errorText })
+              : save.state === "saved"
+                ? props.t("settings.saved")
+                : save.state === "saving"
+                  ? props.t("settings.saving")
+                  : `· ${props.t("settings.saved")}`,
+          ),
+          save.state === "error" && save.retryable === true
+            ? h(
+                "button",
+                {
+                  type: "button",
+                  className: "dsh-sdel-btn dsh-sdel-btn--tight",
+                  style: { padding: "2px 8px", borderRadius: "8px", fontSize: "12px" },
+                  "data-session-delete-settings-retry": "",
+                  onClick: () => {
+                    if (lastSaveRef.current !== null) writePrefs(lastSaveRef.current);
+                  },
+                },
+                props.t("settings.retry"),
+              )
+            : null,
+        ),
       );
     }
 
@@ -2603,6 +2697,11 @@ window.__ModuleLoader__.load({
 
     /** 单批条目数：既让「处理中 n/total」有节奏，也避免一次 RPC 太久没有反馈。 */
     var BATCH_CHUNK = 20;
+    /**
+     * 设置分节「已保存」短暂态保留时长（ms）。生产 2500；单测通过 `__test.settingsSaveTiming` 改短
+     * （[plugin-conventions §7.2.6]：自动保存也要有可见的保存状态）。
+     */
+    var SETTINGS_SAVE_TIMING = { resetMs: 2500 };
 
     /**
      * 等 contextMenus 服务就绪的宽限期（毫秒）。Cordis 的 inject 只有「必须」语义，
@@ -3319,6 +3418,8 @@ window.__ModuleLoader__.load({
         joinList: joinList,
         impactLine: impactLine,
         batchChunk: BATCH_CHUNK,
+        // 单测把「已保存」短暂态改短，避免真等 2.5s（生产值不变）。
+        settingsSaveTiming: SETTINGS_SAVE_TIMING,
         menuFallback: MENU_FALLBACK,
         createPanelLoader: createPanelLoader,
         createSettingsLoader: createSettingsLoader,
