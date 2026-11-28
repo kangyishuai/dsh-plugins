@@ -27,7 +27,7 @@ DSH_HOME="$H" dsh --profile web --port 0 --no-open
 
 | 命令                                            | 覆盖什么                                                                                                                                                                                                             | 前置                                    |
 | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
-| `pnpm --filter @kangyishuai/dsh-artifacts test` | 存储 9、store-integrity 5、封面 10、工具 14、路由 16、契约层 29、契约对账 6、审计 6、client 5（共 **100** 条）                                                                                                       | 无                                      |
+| `pnpm --filter @kangyishuai/dsh-artifacts test` | 存储 9、store-integrity 5、封面 10、工具 14、路由 16、契约层 29、契约对账 6、审计 6、client 6（共 **101** 条）                                                                                                       | 无                                      |
 | `pnpm verify`                                   | 上面全部 + lint/typecheck/check/check:docs/check:public                                                                                                                                                              | 无                                      |
 | `pnpm smoke:artifacts`                          | 临时 home + 真实宿主 + 浏览器：库 → 面板 → 追加两版 → 原地刷新 → 刷新恢复 → **按 projectId 过滤的库视图** → **markdown/图片预览** → 路由 200/401/404/**400**/封面/**面板 iframe 的 CSP+sandbox 硬化**（**12 PASS**） | 本机 `dsh`、`ego-browser`               |
 | `pnpm smoke:artifacts-desktop --require`        | 真实桌面版只读回归：插件已加载、页签类型存在、库能打开且不崩                                                                                                                                                         | 桌面版 + `--remote-debugging-port=9222` |
@@ -114,10 +114,11 @@ console.log("trash:", JSON.stringify((await lib.trash()).artifacts.length), meta
 5. **刷新恢复**：刷新页面 → 之前打开的页签仍在，显示最新版；若页签被恢复但参数丢失，应回退到"上次打开的工件"，不得出现空白错误态。
 6. **库（0.2 起是列表视图）**：右栏页签的添加入口 → 「Artifacts」→ 列表：每行有缩略图（`naturalWidth=320`）、标题、类型、`vN`、字节、项目 id、更新时间；顶部有 `n 条 · X KiB` 汇总；搜索框按标题过滤，类型按钮按 `html/markdown/json/csv/image` 过滤；点行打开面板，`‹` 返回库。
 7. **多类型预览**：让模型用 `kind: "markdown"` / `"json"` / `"csv"` 各发布一个 → 面板显示 `<pre>` 文本；用 `kind: "image"` + data URL 发布 → 面板显示图片；三者都能在库里列出并显示类型。
-8. **项目过滤视图（需求 9）**：在页面 console 执行 `window.__dshArtifactsOpenTab({ projectId: "<id>" })`（见 §1.3）→ 右栏 `artifact` 页签变成库视图，`data-dsh-artifact-library-scope` 等于项目 id，行只含该项目产物；没有产物时显示「这个项目还没有产物。」。正式入口是 projects 0.10.x 项目页的 Library / 「打开产物库」，它用同一组 params 打开。
-9. **路由**：浏览器打开 `http://127.0.0.1:<port>/artifacts/<id>` → 有内容；未登录/无 token 访问应为 401；未知 id 404；`?v=1` 返回第一版；`?download=1` 变成附件下载；图片 URL 返回 `image/png`。
-10. **级联清理**：调用 `artifacts/remove`（先 `dryRun: true`）→ 只移走该项目的产物，别的项目原样；`artifacts-trash/` 里能看到；`artifacts/restore` 能恢复；`artifacts/purge` 之后目录消失。
-11. **降级**：在 `headless` profile 里装同一包 → 能启动、无报错、工具可用（`url` 省略）。
+8. **空态（USIM-U1-20）**：右栏「Artifacts」在没有任何工件时显示「还没有工件。」，下面一行解释工件是什么、怎么让 AI 用 `artifact` 工具发布一个（`data-dsh-artifact-empty-hint`）；项目范围显示「这个项目还没有产物。」+ 对应提示。
+9. **项目过滤视图（需求 9）**：在页面 console 执行 `window.__dshArtifactsOpenTab({ projectId: "<id>" })`（见 §1.3）→ 右栏 `artifact` 页签变成库视图，`data-dsh-artifact-library-scope` 等于项目 id，行只含该项目产物；没有产物时显示「这个项目还没有产物。」。正式入口是 projects 0.10.x 项目页的 Library / 「打开产物库」，它用同一组 params 打开。
+10. **路由**：浏览器打开 `http://127.0.0.1:<port>/artifacts/<id>` → 有内容；未登录/无 token 访问应为 401；未知 id 404；`?v=1` 返回第一版；`?download=1` 变成附件下载；图片 URL 返回 `image/png`。
+11. **级联清理**：调用 `artifacts/remove`（先 `dryRun: true`）→ 只移走该项目的产物，别的项目原样；`artifacts-trash/` 里能看到；`artifacts/restore` 能恢复；`artifacts/purge` 之后目录消失。
+12. **降级**：在 `headless` profile 里装同一包 → 能启动、无报错、工具可用（`url` 省略）。
 
 ## 3. 每次提交的最小集
 

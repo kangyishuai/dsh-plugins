@@ -381,11 +381,17 @@ export class CaseStore {
   markLastOpened(projectId) {
     const id = String(projectId ?? "");
     if (!ID_RE.test(id)) return;
-    this.writeJson(join(this.dataRoot, "last-opened.json"), {
-      version: 1,
-      projectId: id,
-      at: nowIso(),
-    });
+    // 「最近打开」只用于缺 projectId 时的提示；数据根只读/磁盘写满时写不进去，
+    // 不能因此让纯读动作（get/list）失败（复审 F6）。
+    try {
+      this.writeJson(join(this.dataRoot, "last-opened.json"), {
+        version: 1,
+        projectId: id,
+        at: nowIso(),
+      });
+    } catch (error) {
+      this.logger.warn(`casefile: 记「最近打开」失败（忽略，不影响本次读取）：${String(error)}`);
+    }
   }
 
   /**
