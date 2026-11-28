@@ -1,4 +1,8 @@
 {
+  "meta": {
+    "title": "Advisor",
+    "description": "An on-demand second opinion: the main model decides when to consult a separately configured advisor model; advice only, never approvals. Configure it in Settings → Advisor or type /advisor."
+  },
   "advisor": {
     "title": "Pair the main model with a stronger advisor model it can consult at key moments",
     "notReady.label": "Advisor is not ready · run /advisor doctor",
