@@ -134,3 +134,43 @@ export async function listPending(dataRoot) {
   out.sort((a, b) => String(a.startedAt).localeCompare(String(b.startedAt)));
   return out;
 }
+
+/**
+ * 列出「读不出来」或残留的日志记录（体检用：只报告，不自动删除）。
+ *
+ * 启动对账只消费能读的记录；写到一半被截断的 JSON、以及 `writeAtomic` 在 rename 之前崩溃
+ * 留下的 `<id>.json.tmp`，以前既不会被对账看到、也不会被体检暴露（复审 F4）。这里只把它们
+ * 列出来交给设置页，删不删由用户决定——日志是审计现场，插件不替用户清。
+ * @param {string} dataRoot
+ * @returns {Promise<{ name: string, reason: "corrupt" | "temp" }[]>}
+ */
+export async function listUnreadable(dataRoot) {
+  /** @type {string[]} */
+  let names = [];
+  try {
+    names = await readdir(journalDir(dataRoot));
+  } catch {
+    return [];
+  }
+  /** @type {{ name: string, reason: "corrupt" | "temp" }[]} */
+  const out = [];
+  for (const name of names) {
+    // writeAtomic 的临时文件是 `<file>.tmp`，即 `<id>.json.tmp`；它在 rename 前崩溃时会留下。
+    if (name.endsWith(".json.tmp")) {
+      out.push({ name: name, reason: "temp" });
+      continue;
+    }
+    if (!name.endsWith(".json")) continue;
+    try {
+      const record = JSON.parse(await readFile(join(journalDir(dataRoot), name), "utf8"));
+      // 合法 JSON 但形状不对（null / 数字 / 缺 state）同样读不出状态，算损坏。
+      if (record === null || typeof record !== "object" || typeof record.state !== "string") {
+        out.push({ name: name, reason: "corrupt" });
+      }
+    } catch {
+      out.push({ name: name, reason: "corrupt" });
+    }
+  }
+  out.sort((left, right) => left.name.localeCompare(right.name));
+  return out;
+}

@@ -81,7 +81,7 @@ Everything starts from a session row in the sidebar:
    - **purge** it permanently;
    - read the audit log.
 
-**Health check**: Settings → Session trash → Maintenance. It is **user-triggered** — opening the settings section no longer scans your library — and the last result is cached for the rest of the page session. The check reconciles the session store against the workspace bookkeeping and reports dangling references (archived/pinned ghosts, workspace membership, orphan session dirs, broken trash entries, unfinished operations that startup reconciliation could not settle). Cleaning removes **bookkeeping only** — session files are never touched.
+**Health check**: Settings → Session trash → Maintenance. It is **user-triggered** — opening the settings section no longer scans your library — and the last result is cached for the rest of the page session. The check reconciles the session store against the workspace bookkeeping and reports dangling references (archived/pinned ghosts, workspace membership, orphan session dirs, broken trash entries, unfinished operations that startup reconciliation could not settle, and unreadable or leftover operation-journal records). Cleaning removes **bookkeeping only** — session files are never touched.
 
 ## Side effects & risks
 

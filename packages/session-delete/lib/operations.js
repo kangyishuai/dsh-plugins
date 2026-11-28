@@ -6,7 +6,13 @@ import { join } from "node:path";
 import { setTimeout as delayMs } from "node:timers/promises";
 import { createAudit } from "./audit.js";
 import { describeCapabilities, probeCapabilities } from "./capability.js";
-import { beginOperation, finishOperation, listPending, updateOperation } from "./journal.js";
+import {
+  beginOperation,
+  finishOperation,
+  listPending,
+  listUnreadable,
+  updateOperation,
+} from "./journal.js";
 import { directorySize, locateSession } from "./locate.js";
 import { auditPath, requireSessionId, sessionsRoot, trashRoot } from "./paths.js";
 import { buildPlan, digestOfWorkspace, planExecutable, summarizePlan } from "./plan.js";
@@ -1065,6 +1071,17 @@ export function createOperations({ ctx, dataRoot, logger }) {
         label: "未完成的操作（重启后自动对账；仍未处理需人工核对）",
         severity: "info",
         items: pending.map((record) => record.id),
+      });
+    }
+
+    // 读不出来的日志记录：对账会跳过它们，以前连体检也看不见（复审 F4）。只报告、不删除。
+    const unreadable = await listUnreadable(dataRoot);
+    if (unreadable.length > 0) {
+      findings.push({
+        id: "journal-unreadable",
+        label: "操作日志里有损坏或残留的记录（仅报告，不自动删除）",
+        severity: "info",
+        items: unreadable.map((entry) => entry.name),
       });
     }
 

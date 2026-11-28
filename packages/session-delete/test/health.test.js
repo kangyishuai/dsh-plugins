@@ -145,3 +145,20 @@ test("宿主没有 list 时体检明确不可用，而不是假装健康", async
   await assert.rejects(ops.cleanHealth(), /无法体检|health-unavailable/);
   await rm(dataRoot, { recursive: true, force: true });
 });
+
+test("体检报告操作日志里的损坏/残留记录（F4：坏 journal 不再永远看不见）", async () => {
+  const { dataRoot, ops } = await fixture();
+  const journal = join(dataRoot, "session-trash", "journal");
+  await mkdir(journal, { recursive: true });
+  // 截断的 JSON（崩溃在写一半）与 writeAtomic 的 .tmp 残留。
+  await writeFile(join(journal, "truncated.json"), '{"id":"trunc', "utf8");
+  await writeFile(join(journal, "crashed.json.tmp"), "{}", "utf8");
+  const report = await ops.scanHealth();
+  const finding = report.findings.find((/** @type {any} */ f) => f.id === "journal-unreadable");
+  assert.ok(finding, "损坏/残留的 journal 记录必须出现在体检里，而不是被静默跳过");
+  assert.equal(finding.severity, "info");
+  assert.deepEqual([...finding.items].sort(), ["crashed.json.tmp", "truncated.json"]);
+  // 只报告，不进入自动清理（清理只动登记表）。
+  assert.equal(report.cleanable?.total, 3);
+  await rm(dataRoot, { recursive: true, force: true });
+});
