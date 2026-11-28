@@ -134,7 +134,7 @@ packages/<name>/
 
 参考实现：
 
-- `scripts/smoke-session-rewind-desktop.mjs`（25 项只读，2026-11-19 在 rc.5 实测 25/25；`--recall` 再加 7 项输入框召回；`--deep` 再加文件模式 e2e，合计 40 项）
+- `scripts/smoke-session-rewind-desktop.mjs`（35 项只读，2026-11-28 在 rc.5 实测 35/35；`--recall` 再加 7 项输入框召回；`--deep` 再加 27 项文件模式 e2e，合计 62 项 / 全量 69 项；`--deep` 的「删除→重建」在宿主未注册 `apply_patch` 时按环境分支 SKIP）
 - `scripts/smoke-session-delete-desktop.mjs`（18 项只读，2026-11-19 在 rc.5 实测 **16 PASS + 2 SKIP**——本机回收站为空时，「保留全选与批量操作」「条目布局」是**数据相关分支**，空态下不渲染工具条/条目行，按 SKIP 记；非空时照旧断言。带 `--workspace` 时另有写文件段落。这条脚本 2026-11-19 修过一次假红，见 [runtime rc.5 §6.1](runtime/0.2.2-rc.5.md#61-session-delete-桌面回归空回收站会假红)）
 - `scripts/smoke-advisor-desktop.mjs`（20 项，2026-11-19 在 rc.5 实测 19 PASS + 1 SKIP；SKIP 是「该会话没有顾问记录」——脚本不制造徵询）
 - `scripts/smoke-next-step-desktop.mjs`（22 项只读，2026-11-20 在 rc.5 复跑 **20–21 PASS + 1–2 SKIP**——SKIP 都是数据相关分支：「该卡没有展开按钮」「只有一粒胶囊」；**默认只读不点 ✕**（decision 是写操作、不可撤销，会让连跑不幂等），点 ✕ 归 `--deep`；胶囊按 1–2 粒断言）。**2026-11-28 起为 25 项**：新增 3 条旧卡折叠断言（只读态卡折叠成一行、折叠行无提问/胶囊/✕、折叠行文本有界），「有没有更早的只读卡」是数据相关分支（不满足时这 3 条记 SKIP）
