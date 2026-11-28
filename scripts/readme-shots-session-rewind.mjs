@@ -240,7 +240,9 @@ const main = async () => {
   // 驱动浏览器：打开会话 → ↶ 确认框截图 → 执行回溯 → 面板截图
   const browser = `(async () => {
 const task = await taskSpace("dsh readme shots");
-const page = task.page("p1");
+// ego-browser 0.6.3.17 起 task.page(label) 只引用已存在的页；复用的空 space 没有 p1。
+// 先拿本 space 的第一个页，没有再新建（旧版本也兼容）。
+const page = (await task.pages())[0] ?? (await task.newPage());
 const OUT = ${JSON.stringify(join(work, "shots"))};
 // 只清掉本脚本自己那个临时宿主留下的 loopback cookie；清空整个浏览器会毁掉用户真实登录态。
 const purgeLoopbackCookies = async () => {

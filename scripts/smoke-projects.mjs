@@ -254,7 +254,9 @@ const waitUntil = async (fn, timeout = 12000, step = 200) => {
 let task = null;
 try {
   task = await taskSpace("smoke projects ${PROJECT_NAME_TOKEN}");
-  const page = task.page("p1");
+  // ego-browser 0.6.3.17 起 task.page(label) 只引用已存在的页；复用的空 space 没有 p1。
+// 先拿本 space 的第一个页，没有再新建（旧版本也兼容）。
+const page = (await task.pages())[0] ?? (await task.newPage());
   // 带 token 的入口会 303 到 /（用 cookie 认证）。某些 Chromium 版本会把这次 303 当成
   // 「无效导航响应」直接报 ERR_HTTP_RESPONSE_CODE_FAILURE。这里容错：失败就改导航到
   // 已由 303 设好 cookie 的根路径，语义等价（token 只需要握手一次）。

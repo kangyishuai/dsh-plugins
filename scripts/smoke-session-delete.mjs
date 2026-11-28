@@ -106,7 +106,9 @@ const finishTask = async () => {
 const check = (name, ok, detail) => checks.push({ name, ok: !!ok, detail: detail === undefined ? "" : String(detail) });
 try {
 task = await taskSpace("dsh smoke: session-delete");
-const page = task.page("p1");
+// ego-browser 0.6.3.17 起 task.page(label) 只引用已存在的页；复用的空 space 没有 p1。
+// 先拿本 space 的第一个页，没有再新建（旧版本也兼容）。
+const page = (await task.pages())[0] ?? (await task.newPage());
 // cookie 卫生：宿主每个临时实例用新 token，而 cookie 名里带 token（dsh-auth-<hash>），
 // 于是每轮冒烟都会新增一条、而不是覆盖旧的。攒够了请求头超过宿主上限，页面直接 431
 // （ego 报 ERR_HTTP_RESPONSE_CODE_FAILURE）。

@@ -108,7 +108,7 @@ function browserScript(url, deep) {
     "// 失败/超时也必须关掉 TaskSpace：漏掉的 Page 会占满页面额度，把后续所有 web 冒烟卡到超时。",
     "try {",
     '  task = await taskSpace("dsh btw smoke");',
-    '  page = task.page("p1");',
+    "  page = (await task.pages())[0] ?? (await task.newPage());",
     "  const clearedBefore = await clearAuthCookies();",
     '  console.log("cleared auth cookies before: " + clearedBefore);',
     `  await page.goto(${JSON.stringify(url)}, { waitUntil: "domcontentloaded" });`,
