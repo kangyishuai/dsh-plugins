@@ -2,19 +2,27 @@
 // @ts-check
 // 用法：pnpm index                     —— 从 npm registry 重建索引（联网）
 //       pnpm index --out build/index.json
-//       pnpm check:index               —— 离线校验：meta ↔ packages 一致 + 已有输出结构合法
+//       pnpm check:index               —— 离线校验：meta ↔ packages 一致 + 图标内联自检
+//                                         + 已有输出结构/图标字节核对
 //
 // 生成 DSH 的插件索引源（plugin market index format 1）：一个列出本仓库全部插件、
 // 全部正式版本的 JSON，用户把它加到「插件 → 发现 → 添加索引源」，就能在发现页里
 // 搜索、查看、安装。格式的权威定义是宿主包 `@deepseek-ai/dsh-plugin-market-index`；
 // 本仓库不能把宿主包当依赖（AGENTS 硬性约定 3），所以这里按它的规则写了一份
-// 独立校验器，规则来源与实测坑位记在 docs/runtime/0.2.2-rc.3.md。
+// 独立校验器，规则来源与实测坑位记在 docs/runtime/0.2.2-rc.3.md 与 0.2.2-rc.5.md §23.8。
+//
+// 发现页卡片上的图标只认索引条目的 `icon` 字段（不读包内 icon.svg），所以每个条目都按
+// package.json#icon（默认 icon.svg，也支持 png/jpeg/webp）把图标内联成 base64 data URL；
+// 宿主上限是解码后 32 KiB，本仓库 8 个图标都在 1 KiB 以内。`--check` 会反解 data URL 并按
+// sha256 与本地文件逐字节核对。
 //
 // 为什么在发版后重建、而不是每次手写：format 1 是**写死的版本清单**，宿主的
 // Discover 只信索引里列出的版本，不会自己去 registry 补全。少更新一次，用户看到
 // 的就是旧版本，点安装也会装到旧版本。所以版本列表一律从 registry 现场枚举。
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { extname, join, resolve } from "node:path";
 import { isMain, listPluginDirs, REPO_ROOT, readJson } from "./lib/repo.mjs";
 
 /** 索引源的对外地址；`icon` 相对路径按它解析，这里只用于文档与校验提示。 */
@@ -32,6 +40,20 @@ export const SEMVER_RE =
 const LANGUAGE_ID = /^[a-z]{2,8}(?:-[a-z0-9]{1,8})*$/u;
 const PATH_SEGMENT = /^[A-Za-z0-9._@+-]+$/u;
 const MAX_PUBLISH_TIMESTAMP = 1e11;
+
+/**
+ * 宿主 `@deepseek-ai/dsh-plugin-market-index` 对内联图标的硬限制：**解码后 32 KiB**
+ * （源码 `src/index.ts` 的 `MAX_INLINE_ICON_BYTES`）。本仓库 8 个 `icon.svg` 都在 1 KiB
+ * 以内，这里只是兜底，挡住将来把大图 base64 塞进 `build/index.json`。
+ */
+export const MAX_INDEX_ICON_BYTES = 32 * 1024;
+/**
+ * 宿主只接受 **base64** 的 SVG/PNG/JPEG/WebP data URL（源码 `DATA_ICON`）；URI 编码的
+ * `data:image/svg+xml,%3Csvg…` 会被整份索引拒收（`plugin-market/invalid-index`）。
+ */
+export const INDEX_ICON_DATA_URL_RE =
+  /^data:(?:image\/svg\+xml|image\/png|image\/jpeg|image\/webp);base64,([A-Za-z0-9+/]*={0,2})$/u;
+const BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
 
 /** 索引不合规；`path` 是出错值的 JSON 路径，`reason` 是被违反的规则。 */
 export class IndexError extends Error {
@@ -77,6 +99,130 @@ function localizedText(value, path) {
   }
   if (!Object.hasOwn(text, "en")) fail(path, "必须包含 en");
   return text;
+}
+
+/**
+ * 文件头像不像一份 SVG 文档：跳过 BOM、空白、XML 声明与注释，然后必须由 `<svg` 开头。
+ * 与 `scripts/check-plugins.mjs` 的文件头嗅探同一个判定，避免「已安装能显示、发现页却被
+ * 宿主当坏图回退」的两套标准。
+ * @param {Buffer} bytes
+ * @returns {boolean}
+ */
+function looksLikeSvg(bytes) {
+  let text = bytes
+    .toString("utf8")
+    .replace(/^\uFEFF/u, "")
+    .trimStart();
+  for (;;) {
+    if (text.startsWith("<?xml")) {
+      const end = text.indexOf("?>");
+      if (end === -1) return false;
+      text = text.slice(end + 2).trimStart();
+      continue;
+    }
+    if (text.startsWith("<!--")) {
+      const end = text.indexOf("-->");
+      if (end === -1) return false;
+      text = text.slice(end + 3).trimStart();
+      continue;
+    }
+    break;
+  }
+  return /^<svg[\s/>]/iu.test(text);
+}
+
+/**
+ * 宿主接受的四种图标 MIME；键是文件扩展名，与 `scripts/check-plugins.mjs` 的白名单一致。
+ * 发现页与「已安装」页要显示同一个图标，所以文件从 `package.json#icon` 推导（默认
+ * `icon.svg`），而不是写死 svg——将来某插件换成 png，两边才不会漂移。
+ */
+/** @type {Record<string, string>} */
+const ICON_MIME_BY_EXT = {
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+};
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const JPEG_SIGNATURE = Buffer.from([0xff, 0xd8, 0xff]);
+
+/**
+ * 图标字节的文件头是否与声明的 MIME 一致。宿主把 data URL 交给浏览器解码，坏文件只会
+ * 静默回退通用图形，所以生成器要自己拦（与 check-plugins 的嗅探同一套判定）。
+ * @param {Buffer} bytes @param {string} mime
+ * @returns {boolean}
+ */
+function hasIconSignature(bytes, mime) {
+  switch (mime) {
+    case "image/svg+xml":
+      return looksLikeSvg(bytes);
+    case "image/png":
+      return bytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE);
+    case "image/jpeg":
+      return bytes.subarray(0, JPEG_SIGNATURE.length).equals(JPEG_SIGNATURE);
+    case "image/webp":
+      return (
+        bytes.length >= 12 &&
+        bytes.toString("latin1", 0, 4) === "RIFF" &&
+        bytes.toString("latin1", 8, 12) === "WEBP"
+      );
+    default:
+      return false;
+  }
+}
+
+/**
+ * 本地图标文件的字节 → 宿主接受的**内联 data URL**（base64）。
+ *
+ * 为什么内联而不是相对 URL：索引包发布到 npm、用户从 jsDelivr 读取，相对 URL 会把
+ * 每个图标变成一次额外请求（还会把用户 IP 暴露给 CDN）；data URL 让索引自包含，
+ * 宿主 `dsh-plugin-market-index` 的 `types.ts` 明确支持，且解码后 ≤32 KiB。
+ * @param {Buffer} bytes 本地图标文件内容
+ * @param {string} label 报错里显示的路径（如 `packages/advisor/icon.svg`）
+ * @param {string} [mime] 图标 MIME，默认 `image/svg+xml`
+ * @returns {string}
+ */
+export function iconDataUrl(bytes, label, mime = "image/svg+xml") {
+  if (bytes.length === 0) throw new Error(`${label} 是空文件`);
+  if (bytes.length > MAX_INDEX_ICON_BYTES) {
+    throw new Error(
+      `${label} ${bytes.length} 字节，超过宿主内联图标上限 ${MAX_INDEX_ICON_BYTES} 字节`,
+    );
+  }
+  if (!hasIconSignature(bytes, mime)) {
+    throw new Error(`${label} 的文件头不是 ${mime}（与扩展名 / package.json#icon 不符）`);
+  }
+  return `data:${mime};base64,${bytes.toString("base64")}`;
+}
+
+/**
+ * 把索引条目里的 `icon` 解回字节，按宿主 `dsh-plugin-market-index` 的 `icon()` 规则校验。
+ * 校验失败一律抛 `IndexError`（`path` 是 JSON 路径），与其它字段的报错方式一致。
+ * @param {unknown} value
+ * @param {string} path
+ * @returns {Buffer}
+ */
+export function decodeIconDataUrl(value, path) {
+  const text = stringAt(value, path);
+  const payload = INDEX_ICON_DATA_URL_RE.exec(text)?.[1];
+  if (payload === undefined || payload === "" || !BASE64_RE.test(payload)) {
+    fail(path, "必须是 base64 的 SVG/PNG/JPEG/WebP data URL（URI 编码的内联 SVG 宿主不收）");
+  }
+  // 先按长度挡一次，避免为了报「超限」去解码一个超大 payload。
+  if (payload.length > Math.ceil(MAX_INDEX_ICON_BYTES / 3) * 4) {
+    fail(path, `解码后超过宿主上限 ${MAX_INDEX_ICON_BYTES} 字节`);
+  }
+  const bytes = Buffer.from(payload, "base64");
+  if (bytes.length > MAX_INDEX_ICON_BYTES) {
+    fail(path, `解码后 ${bytes.length} 字节，超过宿主上限 ${MAX_INDEX_ICON_BYTES} 字节`);
+  }
+  return bytes;
+}
+
+/** @param {Buffer | string} value @returns {string} */
+export function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 /**
@@ -218,9 +364,19 @@ export function buildIndex({ manifests, meta, packuments }) {
         );
       }
       try {
+        // 发现页卡片只认索引条目的 `icon`，不读包内 icon.svg（宿主实测，见
+        // docs/runtime/0.2.2-rc.5.md §23.8）；缺图标就直接失败，不生成只有默认图的索引。
+        if (typeof manifest.icon !== "string" || manifest.icon === "") {
+          throw new Error(
+            `缺少可内联的图标（packages/${manifest.dir}/icon.svg）${
+              manifest.iconError === undefined ? "" : `：${manifest.iconError}`
+            }`,
+          );
+        }
         return {
           name: manifest.name,
           title: entry.title,
+          icon: manifest.icon,
           description: {
             en: stringAt(manifest.description, `${manifest.name}.description`),
             zh: entry.descriptionZh,
@@ -292,6 +448,23 @@ export function validateIndex(value) {
       if (url.protocol !== "https:" && url.protocol !== "http:")
         fail(`${at}.homepage`, "必须是 http(s)");
     }
+    // 与宿主 `parseMarketIndex` 一致：icon 可省略，存在就必须是合法 base64 data URL 或 URL 引用。
+    // 本仓库只产出 data URL（自包含），所以这里对远程 URL 形态只做「能解析成 URL」的宽校验。
+    if (plugin.icon !== undefined) {
+      const text = stringAt(plugin.icon, `${at}.icon`);
+      if (text.startsWith("data:")) decodeIconDataUrl(text, `${at}.icon`);
+      else {
+        let resolved;
+        try {
+          resolved = new URL(text, INDEX_URL);
+        } catch {
+          fail(`${at}.icon`, "必须是 base64 data URL 或 URL 引用");
+        }
+        if (resolved.protocol !== "https:" && resolved.origin !== new URL(INDEX_URL).origin) {
+          fail(`${at}.icon`, "URL 引用必须解析到 https 或索引源同源地址");
+        }
+      }
+    }
     const category = plugin.metadata?.category;
     if (category !== undefined && !declared.has(stringAt(category, `${at}.metadata.category`))) {
       fail(`${at}.metadata.category`, `引用了未声明的分类 ${String(category)}`);
@@ -346,11 +519,99 @@ export function validateIndex(value) {
 }
 
 /**
- * 读 packages/ 下的插件清单（只需要索引用到的字段）。
+ * 从 `package.json#icon` 推导图标相对包目录的路径（默认 `icon.svg`），并拒绝逃出包目录
+ * 或带协议的值。宿主的「已安装」页读同一个字段，生成器跟着它走，不写死 svg。
+ * @param {string} dir @param {Record<string, any>} manifest
+ * @returns {{ relative: string } | { iconError: string }}
+ */
+function iconRelativePath(dir, manifest) {
+  const declared = manifest.icon;
+  if (declared !== undefined && (typeof declared !== "string" || declared.trim() === "")) {
+    return { iconError: "package.json 的 icon 必须是非空相对路径" };
+  }
+  const value = typeof declared === "string" ? declared.trim().replace(/^\.\//u, "") : "icon.svg";
+  if (
+    value.startsWith("/") ||
+    /^[A-Za-z][A-Za-z\d+.-]*:/u.test(value) ||
+    value.split("/").includes("..")
+  ) {
+    return { iconError: `package.json 的 icon「${value}」必须是包目录内的相对路径` };
+  }
+  return { relative: `packages/${dir}/${value}` };
+}
+
+/**
+ * 读包内图标并转成宿主接受的 data URL。**不抛错**：返回 `{ icon }` 或 `{ iconError }`，
+ * 由调用方决定算错误还是跳过——`pnpm new` 的模板自带占位 `icon.svg`，0.0.0 脚手架还没
+ * 换成自己的图时只告警；正式插件缺图标才算错。
+ * @param {string} root @param {string} dir @param {Record<string, any>} manifest
+ * @param {string | undefined} placeholderSha256 模板占位图标的 sha256（用于提醒替换）
+ * @returns {{
+ *   icon?: string, iconSha256?: string, iconPath?: string,
+ *   iconIsTemplatePlaceholder?: boolean, iconError?: string,
+ * }}
+ */
+function readPackageIcon(root, dir, manifest, placeholderSha256) {
+  const derived = iconRelativePath(dir, manifest);
+  if ("iconError" in derived) return { iconError: derived.iconError };
+  const relative = derived.relative;
+  const mime = ICON_MIME_BY_EXT[extname(relative).toLowerCase()];
+  if (mime === undefined) {
+    return {
+      iconPath: relative,
+      iconError: `${relative} 的扩展名必须是 svg/png/jpg/jpeg/webp（宿主只接受这四种图标）`,
+    };
+  }
+  let bytes;
+  try {
+    bytes = readFileSync(join(root, relative));
+  } catch (error) {
+    return {
+      iconPath: relative,
+      iconError:
+        /** @type {any} */ (error)?.code === "ENOENT"
+          ? `${relative} 不存在`
+          : `${relative} 读取失败：${/** @type {Error} */ (error).message}`,
+    };
+  }
+  try {
+    const iconSha256 = sha256(bytes);
+    return {
+      icon: iconDataUrl(bytes, relative, mime),
+      iconSha256,
+      iconPath: relative,
+      iconIsTemplatePlaceholder:
+        placeholderSha256 !== undefined && iconSha256 === placeholderSha256,
+    };
+  } catch (error) {
+    return { iconPath: relative, iconError: /** @type {Error} */ (error).message };
+  }
+}
+
+/**
+ * 模板占位图标的 sha256；没有模板目录（单测 fixture / 老分支）时返回 undefined。
+ * @param {string} root @returns {string | undefined}
+ */
+function templateIconSha256(root) {
+  try {
+    return sha256(readFileSync(join(root, "templates", "plugin", "icon.svg")));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * 读 packages/ 下的插件清单（只需要索引用到的字段），并把各包图标内联成索引条目要的
+ * data URL（文件从 `package.json#icon` 推导，默认 `icon.svg`）。
  * @param {string} root
- * @returns {{ dir: string, name: string, version: string, description: any, homepage: any, repository: Record<string, any> }[]}
+ * @returns {{
+ *   dir: string, name: string, version: string, description: any, homepage: any,
+ *   repository: Record<string, any>, icon?: string, iconSha256?: string, iconPath?: string,
+ *   iconIsTemplatePlaceholder?: boolean, iconError?: string,
+ * }[]}
  */
 export function collectPackages(root) {
+  const placeholderSha256 = templateIconSha256(root);
   return listPluginDirs(root).map((dir) => {
     const manifest = readJson(join(root, "packages", dir, "package.json"));
     return {
@@ -360,8 +621,164 @@ export function collectPackages(root) {
       description: manifest.description,
       homepage: manifest.homepage,
       repository: objectAt(manifest.repository, `packages/${dir}/package.json#repository`),
+      ...readPackageIcon(root, dir, manifest, placeholderSha256),
     };
   });
+}
+
+/**
+ * 「正式插件」= 已登记进索引源且版本不是 0.0.0；与 `scripts/check-plugins.mjs` 的
+ * identityEnforced 判定一致。0.0.0 脚手架从模板继承的占位图标不强制替换（只告警），
+ * 离开 0.0.0 后 `pnpm check` 才按正式插件要求。
+ * @param {{ name: string, version: string }} manifest @param {any} meta
+ * @returns {boolean}
+ */
+export function isFormalPlugin(manifest, meta) {
+  const registered = objectAt(meta?.plugins ?? {}, "$.meta.plugins");
+  return Object.hasOwn(registered, manifest.name) && manifest.version !== "0.0.0";
+}
+
+/**
+ * 离线审计「索引该带上的图标」：正式插件缺图标是错误（发现页会退回通用图形），
+ * 0.0.0 脚手架只告警；仍在用模板占位图标时，正式/脚手架都提醒替换。
+ * @param {{
+ *   dir: string, name: string, version: string, icon?: string, iconPath?: string,
+ *   iconIsTemplatePlaceholder?: boolean, iconError?: string,
+ * }[]} manifests
+ * @param {any} meta
+ * @returns {{ errors: string[], warnings: string[] }}
+ */
+export function checkIcons(manifests, meta) {
+  /** @type {{ errors: string[], warnings: string[] }} */
+  const result = { errors: [], warnings: [] };
+  for (const manifest of manifests) {
+    const formal = isFormalPlugin(manifest, meta);
+    const iconPath = manifest.iconPath ?? `packages/${manifest.dir}/icon.svg`;
+    if (manifest.icon === undefined) {
+      const detail = manifest.iconError ?? `${iconPath} 不存在`;
+      if (formal) {
+        result.errors.push(
+          `${manifest.name} 没有可用的图标：${detail}（每个正式插件都要有 36×36 的图标，否则发现页退回通用图形）`,
+        );
+      } else {
+        result.warnings.push(
+          `${manifest.name} 没有可用的图标：${detail}（0.0.0 脚手架暂不强制；模板自带占位 icon.svg，发版前替换成这个插件自己的图标）`,
+        );
+      }
+      continue;
+    }
+    if (manifest.iconIsTemplatePlaceholder === true) {
+      result.warnings.push(
+        `${manifest.name} 仍在使用模板占位图标 templates/plugin/icon.svg，发版前替换成这个插件自己的 36×36 图标`,
+      );
+    }
+  }
+  return result;
+}
+
+/**
+ * 对比「已生成的索引」与本地图标：双向核对 name 集合（索引里多出的 ghost 条目也点名），
+ * 必需插件（默认全部 manifests；`--check` 传正式插件集合）要有条目、有 icon，且解码后
+ * 的 sha256 与本地文件一致。未进索引的 0.0.0 脚手架不算错，若已在索引里也照样核对。
+ * @param {any} index 已通过 `validateIndex` 的索引对象
+ * @param {{ dir: string, name: string, iconPath?: string, iconSha256?: string }[]} manifests
+ * @param {Set<string>} [requiredNames] 默认要求 manifests 里全部插件
+ * @returns {{ errors: string[], icons: { name: string, bytes: number, sha256: string }[], totalBytes: number }}
+ */
+export function iconDrift(
+  index,
+  manifests,
+  requiredNames = new Set(manifests.map((manifest) => manifest.name)),
+) {
+  /** @type {string[]} */
+  const errors = [];
+  /** @type {{ name: string, bytes: number, sha256: string }[]} */
+  const icons = [];
+  const plugins = /** @type {any[]} */ (index.plugins);
+  const byName = new Map(plugins.map((plugin) => [plugin.name, plugin]));
+  for (const manifest of manifests) {
+    const required = requiredNames.has(manifest.name);
+    const iconPath = manifest.iconPath ?? `packages/${manifest.dir}/icon.svg`;
+    const entry = byName.get(manifest.name);
+    if (!entry) {
+      if (required) errors.push(`索引里没有 ${manifest.name}（重建索引）`);
+      continue;
+    }
+    if (entry.icon === undefined) {
+      if (required) {
+        errors.push(
+          `${manifest.name} 的索引条目没有 icon（发现页会退回通用图形；重建索引：pnpm index）`,
+        );
+      }
+      continue;
+    }
+    if (manifest.iconSha256 === undefined) {
+      if (required) errors.push(`${manifest.name} 本地没有可用的 ${iconPath}，无法核对索引图标`);
+      continue;
+    }
+    let bytes;
+    try {
+      bytes = decodeIconDataUrl(entry.icon, `${manifest.name}.icon`);
+    } catch (error) {
+      errors.push(`${manifest.name} 的索引 icon 不合法：${/** @type {Error} */ (error).message}`);
+      continue;
+    }
+    if (sha256(bytes) !== manifest.iconSha256) {
+      errors.push(
+        `${manifest.name} 的索引 icon 与 ${iconPath} 不一致（sha256 ${sha256(bytes)} ≠ ${manifest.iconSha256}）`,
+      );
+      continue;
+    }
+    icons.push({ name: manifest.name, bytes: bytes.length, sha256: manifest.iconSha256 });
+  }
+  const localNames = new Set(manifests.map((manifest) => manifest.name));
+  for (const plugin of plugins) {
+    if (!localNames.has(plugin.name)) {
+      errors.push(`${plugin.name} 在索引里但 packages/ 下没有对应插件（ghost 条目；重建索引）`);
+    }
+  }
+  return {
+    errors,
+    icons,
+    totalBytes: icons.reduce((sum, icon) => sum + icon.bytes, 0),
+  };
+}
+
+/**
+ * 离线自检「将要写进索引的内联结果与本地图标文件一致」：把 collectPackages 产出的
+ * data URL 解回来，按 sha256 与本地文件比对。不联网、不依赖 build/index.json 存在，
+ * 所以 `pnpm check` 在裸检出上也能拦住「图标转换写坏」。
+ * @param {{ name: string, icon?: string, iconPath?: string, iconSha256?: string }[]} manifests
+ * @returns {{ errors: string[], icons: { name: string, bytes: number, sha256: string }[], totalBytes: number }}
+ */
+export function localIconAudit(manifests) {
+  /** @type {string[]} */
+  const errors = [];
+  /** @type {{ name: string, bytes: number, sha256: string }[]} */
+  const icons = [];
+  for (const manifest of manifests) {
+    if (manifest.icon === undefined || manifest.iconSha256 === undefined) continue;
+    const iconPath = manifest.iconPath ?? "icon.svg";
+    let bytes;
+    try {
+      bytes = decodeIconDataUrl(manifest.icon, `${manifest.name}.icon`);
+    } catch (error) {
+      errors.push(`${manifest.name} 的内联图标不合法：${/** @type {Error} */ (error).message}`);
+      continue;
+    }
+    if (sha256(bytes) !== manifest.iconSha256) {
+      errors.push(
+        `${manifest.name} 的内联图标与本地 ${iconPath} 不一致（sha256 ${sha256(bytes)} ≠ ${manifest.iconSha256}）`,
+      );
+      continue;
+    }
+    icons.push({ name: manifest.name, bytes: bytes.length, sha256: manifest.iconSha256 });
+  }
+  return {
+    errors,
+    icons,
+    totalBytes: icons.reduce((sum, icon) => sum + icon.bytes, 0),
+  };
 }
 
 /**
@@ -496,7 +913,14 @@ export async function main(argv = process.argv.slice(2)) {
   const registry =
     registryAt === -1 ? DEFAULT_REGISTRY : /** @type {string} */ (argv[registryAt + 1]);
   const meta = await readMetaFile(join(REPO_ROOT, "scripts", "index-meta.json"));
-  const manifests = collectPackages(REPO_ROOT);
+  /** @type {ReturnType<typeof collectPackages>} */
+  let manifests;
+  try {
+    manifests = collectPackages(REPO_ROOT);
+  } catch (error) {
+    console.error(`读取 packages/ 失败：${/** @type {Error} */ (error).message}`);
+    return 1;
+  }
 
   const drift = checkMeta(manifests, meta);
   if (drift.length > 0) {
@@ -505,15 +929,43 @@ export async function main(argv = process.argv.slice(2)) {
     return 1;
   }
 
+  // 图标审计放在联网之前：正式插件缺图标/转换写坏时直接失败，不浪费几分钟去拉 registry。
+  const iconIssues = checkIcons(manifests, meta);
+  for (const warning of iconIssues.warnings) console.warn(`warn: ${warning}`);
+  const localIcons = localIconAudit(manifests);
+  const iconErrors = [...iconIssues.errors, ...localIcons.errors];
+  if (iconErrors.length > 0) {
+    console.error("插件图标不能写进索引：");
+    for (const line of iconErrors) console.error(`  - ${line}`);
+    return 1;
+  }
+  const iconSummary = `${localIcons.icons.length} 个图标（源文件合计 ${localIcons.totalBytes} B）`;
+
   if (check) {
-    // 离线：只验证 meta 一致性与（存在时的）输出文件结构，不联网。
+    // 离线：meta 一致性 + 图标内联自检 +（存在时的）输出文件结构与图标字节核对，不联网。
     try {
       const existing = JSON.parse(await readFile(out, "utf8"));
       validateIndex(existing);
-      console.log(`check: ${out} 是合法的 format 1 索引（${existing.plugins.length} 个插件）`);
+      // 只有正式插件（登记且非 0.0.0）必须出现在索引里；0.0.0 脚手架还没发版不硬报错。
+      const formalNames = new Set(
+        manifests
+          .filter((manifest) => isFormalPlugin(manifest, meta))
+          .map((manifest) => manifest.name),
+      );
+      const comparison = iconDrift(existing, manifests, formalNames);
+      if (comparison.errors.length > 0) {
+        console.error(`${out} 与本地包不一致：`);
+        for (const line of comparison.errors) console.error(`  - ${line}`);
+        return 1;
+      }
+      console.log(
+        `check: ${out} 是合法的 format 1 索引（${existing.plugins.length} 个插件）；${comparison.icons.length} 个图标与本地图标文件逐字节一致（合计 ${comparison.totalBytes} B）`,
+      );
     } catch (error) {
       if (/** @type {any} */ (error)?.code !== "ENOENT") throw error;
-      console.log(`check: meta 一致；还没有生成 ${out}（发版时由 workflow 生成）`);
+      console.log(
+        `check: meta 一致；${iconSummary}可内联；还没有生成 ${out}（发版时由 workflow 生成）`,
+      );
     }
     return 0;
   }
@@ -560,11 +1012,14 @@ export async function main(argv = process.argv.slice(2)) {
   const index = buildIndex({ manifests, meta, packuments });
   await mkdir(join(out, ".."), { recursive: true });
   // 压缩成一行：宿主读取有 15 秒预算，缩进纯属浪费带宽。
-  await writeFile(out, `${JSON.stringify(index)}\n`);
-  /** @type {{ name: string, versions: { version: string }[] }[]} */
+  const body = `${JSON.stringify(index)}\n`;
+  await writeFile(out, body);
+  /** @type {{ name: string, icon?: string, versions: { version: string }[] }[]} */
   const plugins = index.plugins;
   const versionCount = plugins.reduce((sum, plugin) => sum + plugin.versions.length, 0);
-  console.log(`wrote ${out}：${plugins.length} 个插件 / ${versionCount} 个版本`);
+  console.log(
+    `wrote ${out}：${plugins.length} 个插件 / ${versionCount} 个版本 / ${iconSummary}；内联图标的索引共 ${Buffer.byteLength(body)} B`,
+  );
   for (const plugin of plugins) {
     console.log(
       `  ${plugin.name.padEnd(42)} ${plugin.versions[0].version}（${plugin.versions.length} 个版本）`,
