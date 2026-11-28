@@ -16,6 +16,18 @@ export function toCamel(kebab) {
 }
 
 /**
+ * kebab-case 目录名 → 宿主建议的 sentence-case 显示名（只把第一个词首字母大写）。
+ * 用于脚手架生成的 locale `meta.title` 占位：`hello-world` → `Hello world`。
+ * @param {string} kebab
+ */
+export function toTitle(kebab) {
+  return kebab
+    .split("-")
+    .map((word, index) => (index === 0 ? `${word.charAt(0).toUpperCase()}${word.slice(1)}` : word))
+    .join(" ");
+}
+
+/**
  * 列出 packages/ 下的插件目录（跳过以 . 或 _ 开头的）
  * @param {string} root
  */

@@ -1,4 +1,8 @@
 {
+  "meta": {
+    "title": "插件标题（待替换）",
+    "description": "一句话说明这个插件做什么（待替换）"
+  },
   "__CAMEL__": {
     "title": "__DESCRIPTION__"
   }

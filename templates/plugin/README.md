@@ -28,6 +28,16 @@ TODO: list every file it reads/writes and every destructive action. Write "None"
 | ------ | --------------- |
 | 0.0.0  | 0.2.2-rc.3      |
 
+## Before publishing
+
+The scaffold already wires the plugin identity DSH reads without activating the plugin. Replace the placeholders before you publish:
+
+- `icon.svg` — a neutral 36×36 placeholder; draw your own icon (transparent, no background tile, no text).
+- `locale/en.json` / `locale/zh.json` — root `meta.title` and `meta.description`; the scaffold fills a sentence-case English title plus your description, and leaves explicit Chinese "replace me" placeholders in `zh.json`. Replace both before publishing.
+- `package.json` — keep `icon`, `files` (must list `icon.svg`) and the `"./locale/*.json"` export together. If DSH cannot resolve a locale file it silently falls back to the npm package name and the long English description.
+
+Then register the plugin in `scripts/index-meta.json` (see AGENTS.md): once the version leaves `0.0.0`, `pnpm check` enforces the identity.
+
 ## License
 
 MIT
