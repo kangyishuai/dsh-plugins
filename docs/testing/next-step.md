@@ -226,7 +226,7 @@ pnpm verify                          # 仓库门禁（含单测、规范、文�
 里都 `clock.restore()`（`node --test` 按文件隔离进程，但同一文件内的用例共用进程，漏 restore 会把假时钟
 漏给后面的用例）。`test/helpers/clock.js` 会被 `node --test` 当成一个空测试文件收进去（与
 `packages/advisor/test/temp.js` 同一情况），所以包内 `node --test` 的计数从 **248 → 249**，多出来的这
-一条不是新用例；全仓计数表（`docs/testing/index.md`）由计数回填批次统一更新。
+一条不是新用例；全仓计数表（`docs/testing/index.md`）已同步为 249。
 
 **没覆盖**：真实宿主槽位、真实 Electron 渲染进程、真实的 `setDraft` → `submit` 时序。所以下面两层不能省。
 （`test/client-card-shortcut.test.js` 已经用迷你 hooks 运行时贴近了「投影晚到 + 重渲染」的时序，但仍不是真实 React 与真实槽位。）
