@@ -55,6 +55,7 @@ window.__ModuleLoader__.load({
       "kind.other": "其他",
       "overview.projects": "{count} 个项目",
       "overview.obligations": "义务 {pass}/{total} 已关闭",
+      "overview.obligationsZero": "义务：已关闭 {pass} / 共 {total}",
       "overview.unknowns": "未解决未知项 {count}",
       "scope.all": "全部范围",
       "scope.selected": "选定范围",
@@ -223,6 +224,7 @@ window.__ModuleLoader__.load({
       "kind.other": "Other",
       "overview.projects": "{count} projects",
       "overview.obligations": "obligations {pass}/{total} closed",
+      "overview.obligationsZero": "obligations: {pass} of {total} closed",
       "overview.unknowns": "open unknowns: {count}",
       "scope.all": "All scope",
       "scope.selected": "Selected scope",
@@ -437,12 +439,48 @@ window.__ModuleLoader__.load({
       return raw;
     }
 
+    /** 只接受真正的数字字段（`null`/`""` 不当 0）。 */
+    function finiteNumberField(/** @type {any} */ value) {
+      if (value === null || value === undefined || value === "") return null;
+      var number = Number(value);
+      return Number.isFinite(number) ? number : null;
+    }
+
+    /**
+     * 概览卡是否有可渲染的结构化事实。
+     *
+     * 复审（user-visible-nits §3.6 p）：概览卡原来用 `overview?.summary` 当渲染条件，
+     * 但 A5 之后 UI 已不再渲染服务端 summary（硬编码中文），只按 `projects / obligations /
+     * openUnknowns / byKind` 组装。继续依赖 summary 会让「宿主不返回 summary」时整卡消失——
+     * 改为按 UI 真正要显示的结构化字段判断。
+     * @param {any} overview
+     * @returns {boolean}
+     */
+    function hasOverviewFacts(overview) {
+      if (!overview || typeof overview !== "object") return false;
+      if (finiteNumberField(overview.projects) !== null) return true;
+      var obligations = overview.obligations;
+      if (obligations && typeof obligations === "object") {
+        if (
+          finiteNumberField(obligations.pass) !== null ||
+          finiteNumberField(obligations.total) !== null
+        ) {
+          return true;
+        }
+      }
+      if (finiteNumberField(overview.openUnknowns) !== null) return true;
+      var byKind = overview.byKind;
+      return !!byKind && typeof byKind === "object" && Object.keys(byKind).length > 0;
+    }
+
     /**
      * 跨项目总览的一行摘要（按当前语言组装）。
      *
      * A5（复审）：服务端 `overview.summary` 是硬编码中文
      * （如「3 个项目（binary×2 web×1）· 义务 4/7 已关闭 · 未解决未知项 2」），
      * 英文界面会直接露出来。这里只用结构化字段 + locale 组装；枚举（kind）走 vocab。
+     * 复审 q：`obligations 0/0 closed` 在无义务时读着怪，total=0 改用
+     * 「义务：已关闭 0 / 共 0」→ 英文 `obligations: 0 of 0 closed`。
      * @param {any} t
      * @param {any} overview
      * @returns {string}
@@ -450,16 +488,20 @@ window.__ModuleLoader__.load({
     function overviewLine(t, overview) {
       if (!overview || typeof overview !== "object") return "";
       var parts = [];
-      var projects = Number(overview.projects);
-      if (Number.isFinite(projects)) parts.push(text(t, "overview.projects", { count: projects }));
+      var projects = finiteNumberField(overview.projects);
+      if (projects !== null) parts.push(text(t, "overview.projects", { count: projects }));
       var obligations = overview.obligations || {};
-      var pass = Number(obligations.pass);
-      var total = Number(obligations.total);
-      if (Number.isFinite(pass) && Number.isFinite(total)) {
-        parts.push(text(t, "overview.obligations", { pass: pass, total: total }));
+      var pass = finiteNumberField(obligations.pass);
+      var total = finiteNumberField(obligations.total);
+      if (pass !== null && total !== null) {
+        parts.push(
+          total === 0
+            ? text(t, "overview.obligationsZero", { pass: pass, total: total })
+            : text(t, "overview.obligations", { pass: pass, total: total }),
+        );
       }
-      var openUnknowns = Number(overview.openUnknowns);
-      if (Number.isFinite(openUnknowns)) {
+      var openUnknowns = finiteNumberField(overview.openUnknowns);
+      if (openUnknowns !== null) {
         parts.push(text(t, "overview.unknowns", { count: openUnknowns }));
       }
       return parts.join(" · ");
@@ -1718,7 +1760,7 @@ window.__ModuleLoader__.load({
           h(
             "div",
             { className: "cf-detail" },
-            overview?.summary
+            hasOverviewFacts(overview)
               ? h(
                   "div",
                   {

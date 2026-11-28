@@ -1105,3 +1105,60 @@ test("A5：概览卡按 vocab 映射 kind，summary 用 locale 组装而不是�
   assert.doesNotMatch(enText, /个项目|义务|未解决/u, `英文界面混入中文：${enText}`);
   assert.doesNotMatch(enText, /binary ×/u, "原始 kind 枚举不能出现在界面上");
 });
+
+test("复审 p：概览卡按结构化字段渲染，不再依赖服务端 summary", async () => {
+  // 宿主只返回结构化字段（没有 summary）：卡片仍要出现，内容按 locale 组装。
+  const structured = {
+    projects: 2,
+    byKind: { binary: 1, web: 1 },
+    obligations: { pass: 1, total: 3 },
+    openUnknowns: 2,
+  };
+  const client = loadClient();
+  client.setRpc(makeRpc({ listProjects: () => [PROJECT], overview: () => structured }));
+  const zhView = client.mount("main");
+  await pump(zhView);
+  const zhText = textContent(findData(zhView.session.tree, "data-casefile-overview"));
+  assert.match(zhText, /2 个项目/u, `summary 缺失时概览卡不能消失：${zhText}`);
+  assert.match(zhText, /义务 1\/3 已关闭/u, `summary 缺失时义务进度仍要显示：${zhText}`);
+  assert.match(zhText, /未解决未知项 2/u, `summary 缺失时未知项仍要显示：${zhText}`);
+
+  // 连结构化字段都没有（空对象）：没有可渲染事实，卡片不出现。
+  const bare = loadClient();
+  bare.setRpc(makeRpc({ listProjects: () => [PROJECT], overview: () => ({}) }));
+  const bareView = bare.mount("main");
+  await pump(bareView);
+  assert.equal(
+    findAll(
+      bareView.session.tree,
+      (node) =>
+        node.kind === "host" && node.props && node.props["data-casefile-overview"] !== undefined,
+    ).length,
+    0,
+    "没有结构化事实时不应渲染空的概览卡",
+  );
+});
+
+test("复审 q：无义务时概览文案中英都可读（0/0 不再写作 obligations 0/0 closed）", async () => {
+  const overview = {
+    projects: 2,
+    byKind: { binary: 1, web: 1 },
+    obligations: { pass: 0, total: 0 },
+    openUnknowns: 0,
+  };
+  const client = loadClient();
+  client.setRpc(makeRpc({ listProjects: () => [PROJECT], overview: () => overview }));
+  const zhView = client.mount("main");
+  await pump(zhView);
+  const zhText = textContent(findData(zhView.session.tree, "data-casefile-overview"));
+  assert.match(zhText, /义务：已关闭 0 \/ 共 0/u, `中文 0/0 文案要可读：${zhText}`);
+  assert.doesNotMatch(zhText, /义务 0\/0 已关闭/u, `中文不应再出现 0/0 紧邻「已关闭」：${zhText}`);
+
+  const dicts = client.dicts();
+  const enT = (/** @type {string} */ key) => dicts.en?.[key] ?? key;
+  const enView = client.mount("main", { t: enT });
+  await pump(enView);
+  const enText = textContent(findData(enView.session.tree, "data-casefile-overview"));
+  assert.match(enText, /obligations: 0 of 0 closed/u, `英文 0/0 文案要可读：${enText}`);
+  assert.doesNotMatch(enText, /obligations 0\/0 closed/u, `英文不应再出现 0/0 closed：${enText}`);
+});
