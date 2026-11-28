@@ -184,16 +184,16 @@ tarball 的 HTTP 状态），可见后 `gh run rerun <run-id> --failed` 即可�
 > 来源：2026-11-28 的审计修复与 3 个用户模拟画像修复批次（PR #352–#371）合并后的实测；
 > 历史记录保留在各插件文档里，下列是**当前状态**。web 冒烟已在独占 ego 窗口全量复跑（2026-11-28 11:00，8/8 全绿）；桌面只读回归在隔离桌面实例（`--port`）上跑（**8/8 插件 174 PASS / 16 SKIP / 0 FAIL**，每插件重启后跑）。
 
-| 插件           | 单测（`node --test`） | 桌面只读回归（2026-11-28 复跑） | web 冒烟（2026-11-28 复跑）    |
-| -------------- | --------------------- | ------------------------------- | ------------------------------ |
-| advisor        | **244**               | 24 PASS / 2 SKIP                | **16/16 PASS**                 |
-| artifacts      | **100**               | 4 PASS                          | **12/12 PASS**                 |
-| btw            | **125**               | 21 PASS / 1 SKIP                | **24 PASS / 3 SKIP**（默认段） |
-| casefile       | **283**               | 26 PASS / 5 SKIP                | **69/69 PASS**                 |
-| next-step      | **252**               | 22 PASS / 3 SKIP                | **72 PASS / 2 SKIP**           |
-| projects       | **839**               | 24 PASS / 1 SKIP                | **271 PASS / 1 SKIP**          |
-| session-delete | **138**               | 18 PASS / 4 SKIP                | **33/33 PASS**                 |
-| session-rewind | **300**               | **35 PASS**（含确认框默认聚焦） | **63/63 PASS**                 |
+| 插件           | 单测（`node --test`） | 桌面只读回归（2026-11-28 23:0x gate:all 复跑） | web 冒烟（2026-11-28 23:0x gate:all 复跑） |
+| -------------- | --------------------- | ---------------------------------------------- | ------------------------------------------ |
+| advisor        | **244**               | 27 PASS / 0 SKIP                               | **16/16 PASS**                             |
+| artifacts      | **100**               | 4 PASS                                         | **12/12 PASS**                             |
+| btw            | **125**               | 16 PASS / 2 SKIP                               | **24 PASS / 3 SKIP**（默认段）             |
+| casefile       | **283**               | 31 PASS / 1 SKIP                               | **69/69 PASS**                             |
+| next-step      | **253**               | 21 PASS / 4 SKIP                               | **74 PASS / 0 SKIP**                       |
+| projects       | **839**               | 24 PASS / 1 SKIP                               | **271 PASS / 1 SKIP**                      |
+| session-delete | **138**               | 20 PASS / 2 SKIP                               | **32 PASS / 1 SKIP**                       |
+| session-rewind | **300**               | **35 PASS**（含确认框默认聚焦）                | **63/63 PASS**                             |
 
 基线命令：`pnpm verify`（lint/typecheck/check/check:docs/check:public/全部单测）+ `pnpm probe:runtime`（**100 项**，见 [runtime §23](../runtime/0.2.2-rc.5.md#23-2026-11-28-第二轮实测能力挂载时序导航调度契约与命令回执)）。
 
