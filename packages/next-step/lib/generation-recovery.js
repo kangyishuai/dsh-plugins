@@ -56,6 +56,7 @@ import { emptyOutputSummary, recoveryFor } from "./generation-budget.js";
  * @property {Parse} parse 解析模型输出
  * @property {number} baseMaxTokens 设置里的输出预算（升级策略的起点）
  * @property {(message: string) => void} [warn] 诊断日志出口（失败路径不静默）
+ * @property {() => void} [onEscalate] 真正发升级预算请求**之前**回调（诊断计数用；这样中途超时/取消也算一次升级）
  */
 
 /**
@@ -217,14 +218,17 @@ export async function runWithRecovery(input) {
   const plan = recoveryFor({ raw: state.raw, baseMaxTokens: base, problem });
 
   if (plan.plan === "escalate") {
+    // 预算没变（例如设置已是上限 4000）时不算「升级」：仍重试，但不计 esc、不写升级计数。
+    const escalated = plan.budget > base;
+    if (escalated) input.onEscalate?.();
     // 空输出：先解释清楚为什么重试，再**原样重发**（请求体一个字都不改，只换预算）。
     warn(
       `model output did not match the card schema (${problem.kind}: ${problem.detail}), empty output (${emptyOutputSummary(
         { finish: lastFinish, usage: lastUsage, budget: base },
-      )}), retrying with maxTokens=${plan.budget}`,
+      )}), retrying with maxTokens=${plan.budget}${escalated ? "" : " (already at cap)"}`,
     );
     state = await call(input.messages, plan.budget);
-    if (parsedOk(state.parsed)) return outcomeOf("retry", true, state);
+    if (parsedOk(state.parsed)) return outcomeOf("retry", escalated, state);
 
     const retryProblem = state.parsed?.problem ?? null;
     if (state.raw.trim() === "") {
@@ -239,7 +243,7 @@ export async function runWithRecovery(input) {
         buildRepairMessages({ transcript, raw: "", problem: "json", detail: "empty output" }),
         plan.budget,
       );
-      return outcomeOf("repair", true, state);
+      return outcomeOf("repair", escalated, state);
     }
     // 重试回来有内容但格式错：按**真实输出**修格式（问题描述也用这一次的解析结果，
     // 不能用首轮那条 json:empty —— 那会把「value 不合法」误导成「不是 JSON」）。
@@ -252,7 +256,7 @@ export async function runWithRecovery(input) {
       buildRepairMessages({ transcript, raw: state.raw, problem: kind, detail }),
       plan.budget,
     );
-    return outcomeOf("repair", true, state);
+    return outcomeOf("repair", escalated, state);
   }
 
   // 有内容但格式不对：带同一段对话再要一次，只要求它修格式，预算保持设置值。

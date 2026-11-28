@@ -403,3 +403,78 @@ test("自定义 parse 报失败却没给 problem：不做恢复（与旧 service
   assert.equal(outcome.escalated, false);
   assert.deepEqual(outcome.parsed, { suggestion: null, problem: null });
 });
+
+test("预算已是上限（base=4000）时重试不算升级：escalated=false、不触发 onEscalate、不写 esc", async () => {
+  const fake = scriptedModel([
+    { text: "", finish: "max-tokens" },
+    { text: validOutput(), finish: "stop" },
+  ]);
+  let escalations = 0;
+  const outcome = await runWithRecovery({
+    callModel: fake.callModel,
+    messages: buildMessages({ transcript: TRANSCRIPT }),
+    transcript: TRANSCRIPT,
+    buildRepairMessages: buildRepairMessage,
+    parse: parseSuggestion,
+    baseMaxTokens: 4000,
+    onEscalate: () => {
+      escalations += 1;
+    },
+  });
+  assert.equal(outcome.recovery, "retry");
+  assert.equal(outcome.escalated, false, "预算没涨就不能算升级");
+  assert.equal(escalations, 0);
+  assert.deepEqual(
+    fake.calls.map((call) => call.budget),
+    [4000, 4000],
+    "仍然重试，但预算没变",
+  );
+  assert.deepEqual(candidateRecoveryFields(outcome.recovery, outcome.escalated), {
+    parse: "retried",
+  });
+});
+
+test("升级预算请求真正发出前就回调 onEscalate（中途超时/取消也算一次升级）", async () => {
+  let escalations = 0;
+  const fake = scriptedModel([
+    { text: "", finish: "max-tokens" },
+    new Error("model call was aborted"),
+  ]);
+  await assert.rejects(
+    runWithRecovery({
+      callModel: fake.callModel,
+      messages: buildMessages({ transcript: TRANSCRIPT }),
+      transcript: TRANSCRIPT,
+      buildRepairMessages: buildRepairMessage,
+      parse: parseSuggestion,
+      baseMaxTokens: BASE,
+      onEscalate: () => {
+        escalations += 1;
+      },
+    }),
+    /aborted/,
+    "callModel 抛错必须原样上抛",
+  );
+  assert.equal(escalations, 1, "回调发生在第二次调用之前，所以超时也能记到这次升级");
+});
+
+test("callModel 回报更高实际预算时，诊断用实际值而不是设置值", async () => {
+  const calls = [];
+  /** @param {any[]} messages @param {number} budget */
+  const callModel = async (messages, budget) => {
+    calls.push({ messages, budget });
+    // 模拟 provider 不支持 reasoningEffort=off、宿主把预算抬到 4500
+    return { text: "", finish: "max-tokens", usage: { outputTokens: 4500 }, budget: 4500 };
+  };
+  const outcome = await runWithRecovery({
+    callModel,
+    messages: buildMessages({ transcript: TRANSCRIPT }),
+    transcript: TRANSCRIPT,
+    buildRepairMessages: buildRepairMessage,
+    parse: parseSuggestion,
+    baseMaxTokens: BASE,
+  });
+  assert.equal(outcome.calls, 3, "空 → 升级再空 → JSON-only 修复，共 3 次");
+  assert.equal(outcome.lastBudget, 4500);
+  assert.equal(failureSummaryOf(outcome), "finish=max-tokens outputTokens=4500 maxTokens=4500");
+});

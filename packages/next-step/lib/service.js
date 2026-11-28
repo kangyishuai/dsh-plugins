@@ -913,8 +913,7 @@ export class NextStepService extends TypertRemoteService {
     const locale = this.localeName();
     const system = buildSystemPrompt({ locale });
     const transcript = context.transcript;
-    /** 最近一次 usage chunk（成功返回带上；沿用 0.5.2 口径：最后一次见到的 usage）。 @type {any} */
-    let usage;
+
     const startedAt = Date.now();
 
     /**
@@ -942,6 +941,8 @@ export class NextStepService extends TypertRemoteService {
           (controls) => ({ ...controls }),
         );
         const assembler = new BlockAssembler();
+        /** 这一次调用的 usage（不要沿用上一次调用的值）。 @type {any} */
+        let usage = null;
         for await (const chunk of call.stream({
           ...call.config,
           messages: messages.map((message) =>
@@ -971,7 +972,7 @@ export class NextStepService extends TypertRemoteService {
         return {
           text,
           finish: typeof finish?.kind === "string" ? finish.kind : null,
-          usage: usage ?? null,
+          usage,
           // 回报**实际**预算：provider 不支持 reasoningEffort=off 时下面会抬高它，失败诊断要如实。
           budget: attemptBudget,
         };
@@ -997,9 +998,9 @@ export class NextStepService extends TypertRemoteService {
       parse: parseSuggestion,
       baseMaxTokens: maxTokens,
       warn: (/** @type {string} */ message) => this.warn(message),
+      // 诊断计数：真正发起升级预算请求时 +1（中途超时/取消也算；预算已是上限时不涨预算、不计）。
+      onEscalate: () => countBudgetEscalation(this.counters, { escalated: true }),
     });
-    // 诊断计数：每次 generate 走升级路径 +1（升级后仍空再修复也只算一次）。
-    countBudgetEscalation(this.counters, outcome);
     const parsed = outcome.parsed;
     const recovery = outcome.recovery;
     if (parsed.suggestion === null) {
@@ -1031,7 +1032,7 @@ export class NextStepService extends TypertRemoteService {
       repaired: recovery === "repair",
       recovery,
       escalated: outcome.escalated,
-      ...(usage === undefined ? {} : { usage }),
+      ...(outcome.lastUsage == null ? {} : { usage: outcome.lastUsage }),
     };
   }
 
