@@ -808,3 +808,13 @@ ls ~/.dsh/next-step/report-*.md
 | ------------------------ | -------------------------------- | ------------------------------------------------------- |
 | 无改动                   | `data-state=clean`、「· 已保存」 | `/tmp/dsh-sim-rel/shots/settings-next-step-clean.png`   |
 | 拨「回答下方的决策卡」后 | `data-state=saved`、「已保存」   | `/tmp/dsh-sim-rel/shots/settings-next-step-changed.png` |
+
+## 空输出预算升级（2026-11-28）
+
+真实用户反馈「建议卡生成失败：模型输出不符合卡片格式（`json:empty`），点重试也失败」。隔离实例复现与根因：
+
+- 会话模型 `zhinao/deepseek-v4.1-flash`（reasoning Max）+ 默认 `maxTokens: 500` 时，第一次补全的块只有 `reasoning`、`finish=max-tokens`、`outputTokens=500`、文本长度 0 → 解析器报 `json:empty`；原逻辑「原样重发」第二次仍空。真机日志（`/tmp/ns-diag.log` 临时插桩）：
+  `{"budget":500,"finish":"max-tokens","usage":{"outputTokens":500},"textLen":0,"blocks":["reasoning"]}`
+  把同一请求预算升到 3000 后：`{"budget":3000,"finish":"stop","outputTokens":735,"textLen":473}`，卡片正常生成。
+- 修复：`lib/generation-budget.js`（`escalatedTokenBudget`/`recoveryFor`/`emptyOutputSummary`）——空输出走「原请求 + 预算升级（≥3000，封顶 4000）」重试；仍空才带 transcript 要求只输出 JSON；非空格式错误仍走修复请求。`settings.maxTokens` 默认 500 → **2000**（只是上限，卡片本身不会变长）。失败日志带 `finish/outputTokens/maxTokens` 诊断，用户可见 detail 保持 `json:empty` 以兼容报告分桶。
+- 验证：`packages/next-step` **252 pass / 0 fail**；真实隔离实例用旧 `maxTokens: 500` 设置生成卡片成功（无 schema error）；默认 2000 同样成功。
