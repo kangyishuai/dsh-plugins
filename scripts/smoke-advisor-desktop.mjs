@@ -1562,6 +1562,8 @@ const main = async () => {
         const composer = geometry?.composer ?? null;
         const overlapComposer = geometry?.overlapComposer ?? null;
         const overlapSend = geometry?.overlapSend ?? null;
+        /** @param {any} value */
+        /** @param {any} value */
         const noOverlap = (value) => value === null || value.x === 0 || value.y === 0;
         check(
           "/advisor status 回执不遮挡输入框/发送按钮（DOM 几何）",
