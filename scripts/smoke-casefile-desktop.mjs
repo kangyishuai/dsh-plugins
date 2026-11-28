@@ -150,10 +150,28 @@ async function clickTextScoped(page, label, scopeSelector) {
   return page.evaluate(`(() => {
     const scope = document.querySelector(${JSON.stringify(scopeSelector)});
     if (!scope) return false;
-    const nodes = Array.from(scope.querySelectorAll('button,[role="button"],a,div,span'));
-    const hit = nodes.find((node) => (node.textContent || '').trim() === ${JSON.stringify(label)});
+    // 优先只在可点击元素里找：危险操作区里父级 div 的 textContent 与按钮完全相同，
+    // 按文档序会先命中父 div（无 onClick）→ 点了没反应（2026-11-28 真机实测）。
+    const clickable = Array.from(
+      scope.querySelectorAll('button,[role="button"],[role="menuitem"],[role="option"],[role="tab"],a'),
+    ).filter(
+      (node) => !node.disabled && (node.textContent || '').trim() === ${JSON.stringify(label)},
+    );
+    const hit =
+      clickable[0] ||
+      Array.from(scope.querySelectorAll('div,span,summary')).find(
+        (node) => (node.textContent || '').trim() === ${JSON.stringify(label)},
+      );
     if (!hit) return false;
-    (hit.closest('button,[role="button"],a') || hit).click();
+    const target = hit.closest('button,[role="button"],[role="menuitem"],[role="option"],[role="tab"],a') || hit;
+    if (target.tagName === 'DIV' || target.tagName === 'SPAN') {
+      // 最后兜底：文本容器本身不可点时不伪造成功
+      const inner = hit.querySelector('button,[role="button"],a');
+      if (!inner) return false;
+      inner.click();
+      return true;
+    }
+    target.click();
     return true;
   })()`);
 }
@@ -352,8 +370,22 @@ async function main() {
         dangerOpen === false,
         `open=${String(dangerOpen)}`,
       );
+      // <details> 默认收起：子节点仍在 DOM，但真实用户要先展开才看得到/点得到（复审 A4 的延伸）。
+      const dangerOpened = await page.evaluate(`(() => {
+        const el = document.querySelector("[data-casefile-danger]");
+        if (!el) return false;
+        if (el.open !== true) {
+          el.open = true;
+          el.dispatchEvent(new Event("toggle", { bubbles: true }));
+        }
+        return el.open === true;
+      })()`);
+      await sleep(150);
       const dropHit = await clickTextScoped(page, "移入回收站…", "[data-casefile-danger]");
       const preview = await waitFor(page, "[data-casefile-drop-preview]", 4000);
+      if (dangerOpened !== true) {
+        check("「危险操作」可展开（真实用户点得到入口）", false, "open=false");
+      }
       check("drop 入口先展示影响面（dry-run，不执行）", dropHit === true && preview === true);
       const previewText = await textOf(page, "[data-casefile-drop-preview]");
       check(
@@ -376,10 +408,46 @@ async function main() {
     }
 
     // 5) 设置分节：账号菜单 → 设置 → 在设置面板内点「案卷」
-    const menuHit = await clickAria(page, "账号菜单");
+    // Radix 菜单要求窗口在前台才展开：连续冒烟时窗口可能失去焦点，先拉回前台并重试打开。
+    await page.send("Page.bringToFront").catch(() => undefined);
+    await page.evaluate("document.body.focus()").catch(() => undefined);
+    await sleep(250);
+    let menuHit = false;
+    let menuReady = false;
+    for (let attempt = 0; attempt < 8 && !menuReady; attempt += 1) {
+      if (attempt === 0) menuHit = await clickAria(page, "账号菜单");
+      else {
+        await page.send("Page.bringToFront").catch(() => undefined);
+        await clickAria(page, "账号菜单");
+      }
+      await sleep(300);
+      menuReady = await exists(page, '[role="menu"]');
+    }
     check("能打开账号菜单", menuHit === true);
-    await sleep(600);
-    const settingsHit = await clickTextScoped(page, "设置", "body");
+    check("账号菜单已展开", menuReady === true);
+    // 菜单项按钮的 textContent 含快捷键（「设置⌘,」），label 在内部 span；按可见文本找并点最近的可点祖先，
+    // 菜单晚挂/重渲染时重试，避免 600ms 固定等待（2026-11-28 真机复跑实测会偶发）。
+    let settingsHit = false;
+    for (let attempt = 0; attempt < 20 && !settingsHit; attempt += 1) {
+      settingsHit = await page.evaluate(`(() => {
+        const nodes = Array.from(document.querySelectorAll('button[role="menuitem"],[role="menuitem"],button,a'));
+        const hit = nodes.find((node) => (node.textContent || '').trim() === "设置" || (node.textContent || '').trim().startsWith("设置"));
+        if (hit) {
+          hit.click();
+          return true;
+        }
+        const spans = Array.from(document.querySelectorAll('span,div')).filter(
+          (node) => (node.textContent || '').trim() === "设置",
+        );
+        const target = spans[0] && spans[0].closest('button,[role="menuitem"],a');
+        if (target) {
+          target.click();
+          return true;
+        }
+        return false;
+      })()`);
+      if (!settingsHit) await sleep(150);
+    }
     check("能打开设置页", settingsHit === true);
     const dialogOpen = await waitFor(page, '[role="dialog"]', 4000);
     check("设置面板已出现", dialogOpen === true);
