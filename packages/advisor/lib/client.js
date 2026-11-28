@@ -43,8 +43,15 @@ window.__ModuleLoader__.load({
     const TOAST_LAYOUT = {
       /** 量不到 composer 时的回退底距（与 CSS 的 bottom:24px 一致）。 */
       baseBottom: 24,
-      /** 回执底边与 composer 顶部的间距。 */
-      gap: 12,
+      /**
+       * 回执底边与 `[data-composer-input]`（输入框）顶部的间距。
+       *
+       * 视觉目标是和 **composer 卡片上沿**留 8px。卡片自身在输入框上方还有一层内边距/边框
+       * （0.2.2-rc.5 实测约 8px，见 docs/runtime/0.2.2-rc.5.md §23.9），量的是输入框而不是卡片，
+       * 所以常量取 `8 + 8 = 16`：底边落在卡片顶上沿下方 8px。复审 nit（user-visible-nits §5.2）：
+       * 原值 12 让卡片视觉间距只剩 4px，看起来像贴在输入框上。
+       */
+      gap: 16,
       /** 距视口上沿的最小留白。 */
       edge: 8,
       /** 窗口很矮时至少给回执留的可见高度（更矮就只能少遮一点算一点）。 */
@@ -425,7 +432,8 @@ window.__ModuleLoader__.load({
      * toast / 命令回执的底部偏移（px，从视口底边算）。
      *
      * 目标是放在 composer **上方**：`bottom = viewportHeight - composerTop + gap`，
-     * 这样回执底边与输入框顶部隔开 gap，不再压住输入区和发送按钮。
+     * 其中 `composerTop` 是 `[data-composer-input]` 顶部；`gap`（16）含卡片自身的 8px 内边距，
+     * 视觉上回执底边与 composer 卡片上沿隔 8px，不再压住输入区和发送按钮。
      * - 没有 composer（或量不到）→ 回退 `baseBottom`（24px，与 CSS 一致）。
      * - 窗口很矮时右下界用 `minVisible` 兜住：宁可少量重叠，也不让整块回执顶出视口。
      * @param {{ composerTop?: any, viewportHeight?: any }} [input]
