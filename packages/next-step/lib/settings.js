@@ -34,7 +34,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
   maxCardsPerSession: 60,
   pauseUntil: 0,
   timeoutMs: 20000,
-  maxTokens: 500,
+  // 500 在被推理块吃光时会稳定产出空文本（2026-11-28 zhinao/deepseek-v4.1-flash 实测）；
+  // 2000 足够「推理 + 卡片 JSON」，且只是上限、不会让卡片本身变长。
+  maxTokens: 2000,
   provider: "",
   model: "",
   contextMessages: 12,
